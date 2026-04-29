@@ -49,6 +49,17 @@ if (!result.valid) {
 - **No AST transformation** — the IR is read-only; transformations are not
   part of the v0 scope.
 
+## Strict-subset scope
+
+`validateStrictSubset` and `validateStrictSubsetFile` validate **block sources**
+(seed contract implementations under `packages/seeds/src/blocks/**`), NOT the IR
+toolchain itself. The CLI (`pnpm strict-subset`) defaults to that directory: if it
+does not exist yet (before WI-006 lands), the command exits 0 with a diagnostic
+message. Explicit file paths override the default. The IR toolchain files
+(`strict-subset.ts`, `block-parser.ts`, etc.) import `ts-morph` and `node:fs` and
+are intentionally outside the strict-subset grammar — they are the validator, not
+the validated.
+
 ## License
 
 This package is dedicated to the public domain under [The Unlicense](../../LICENSE).

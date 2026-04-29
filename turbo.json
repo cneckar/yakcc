@@ -6,7 +6,7 @@
       "outputs": ["dist/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "lint"],
       "outputs": []
     },
     "test": {
@@ -14,6 +14,10 @@
       "outputs": []
     },
     "lint": {
+      "outputs": []
+    },
+    "strict-subset": {
+      "dependsOn": ["^build", "build"],
       "outputs": []
     }
   }

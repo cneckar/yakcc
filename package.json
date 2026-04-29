@@ -9,6 +9,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "turbo run lint",
+    "strict-subset": "turbo run strict-subset",
     "yakcc": "pnpm --filter @yakcc/cli exec yakcc"
   },
   "devDependencies": {
