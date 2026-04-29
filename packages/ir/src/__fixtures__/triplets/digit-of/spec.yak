@@ -1,0 +1,20 @@
+{
+  "name": "digitOf",
+  "inputs": [{ "name": "s", "type": "string" }],
+  "outputs": [{ "name": "result", "type": "number" }],
+  "preconditions": [],
+  "postconditions": ["result >= 0", "result <= 9"],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Parse a single ASCII digit character '0'-'9' to its integer value.",
+  "guarantees": [{ "id": "pure", "description": "Referentially transparent." }],
+  "errorConditions": [
+    { "description": "Input is not a single digit character.", "errorType": "RangeError" }
+  ],
+  "nonFunctional": { "time": "O(1)", "space": "O(1)", "purity": "pure", "threadSafety": "safe" },
+  "propertyTests": [
+    { "id": "zero", "description": "digitOf('0') === 0" },
+    { "id": "nine", "description": "digitOf('9') === 9" }
+  ]
+}

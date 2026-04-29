@@ -7,6 +7,7 @@
     "types": ["node"]
   },
   "include": ["src"],
+  "exclude": ["src/__fixtures__", "src/**/*.test.ts"],
   "references": [
     { "path": "../contracts" }
   ]

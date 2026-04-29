@@ -1,0 +1,5 @@
+{
+  "artifacts": [
+    { "kind": "property_tests", "path": "tests.fast-check.ts" }
+  ]
+}

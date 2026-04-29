@@ -1,7 +1,9 @@
 // @decision DEC-IR-FACADE-V0: The v0 IR exposes typed interfaces and opaque
 // AST types with facade implementations that accept all input as valid.
-// Status: superseded — WI-004 delivered real implementations in strict-subset.ts,
-// annotations.ts, and block-parser.ts. This barrel re-exports everything.
+// Status: superseded — WI-T02 replaced the inline-CONTRACT path (annotations.ts,
+// parseBlock) with the directory-based block authoring path (parseBlockTriplet).
+// The barrel re-exports the new public API surface. The old parseBlock and all
+// annotation symbols are deleted per Sacred Practice #12 (single source of truth).
 // Rationale: Downstream packages need a stable API surface; the barrel is the
 // single import point.
 
@@ -15,19 +17,10 @@ export {
   validateStrictSubsetFile,
 } from "./strict-subset.js";
 
-// Contract-annotation extractor
-export type { ExtractionErrorKind } from "./annotations.js";
-export {
-  ContractExtractionError,
-  EXTRACTION_ERROR_KIND,
-  extractContract,
-  extractContractFromAst,
-} from "./annotations.js";
-
-// Block parser
-export type { Block, ParseBlockOptions, SubBlockReference } from "./block-parser.js";
-export { parseBlock } from "./block-parser.js";
-
-// Legacy type kept for downstream packages that imported BlockAst from WI-001 facade.
-// This is a structural alias; WI-005 will replace it with the real AST node type.
-export type BlockAst = { readonly __kind: "BlockAst"; readonly _raw: string };
+// Block parser (directory-based triplet authoring — replaces inline-CONTRACT parseBlock)
+export type {
+  BlockTripletParseResult,
+  ParseBlockTripletOptions,
+  SubBlockRef,
+} from "./block-parser.js";
+export { parseBlockTriplet } from "./block-parser.js";

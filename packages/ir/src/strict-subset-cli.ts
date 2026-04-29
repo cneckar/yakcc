@@ -1,30 +1,29 @@
-// @decision DEC-IR-CLI-001: strict-subset CLI defaults to packages/seeds/src/blocks/**/*.ts.
-// Status: implemented (WI-004)
-// Rationale: The strict-subset validator is meant to validate BLOCK sources (seed
-// contract implementations), NOT the IR toolchain itself. The CLI defaults to the
-// canonical block directory so `pnpm strict-subset` is meaningful without args.
-// When the block directory doesn't exist yet (before WI-006), the CLI exits 0 with
-// a clear message rather than erroring — this prevents CI breakage during the
-// WI-005/WI-006 gap. Explicit file/glob arguments override the default.
+// @decision DEC-IR-CLI-002: strict-subset CLI updated for directory-based triplet authoring (WI-T02).
+// Status: implemented (WI-T02)
+// Rationale: The old CLI validated individual .ts files against the strict-subset banlist.
+// WI-T02 replaces the inline-CONTRACT single-file shape with directory triplets
+// (spec.yak, impl.ts, proof/manifest.json). The CLI now accepts a triplet directory
+// as its argument and delegates to parseBlockTriplet, which validates spec.yak,
+// manifest.json, and impl.ts (strict-subset) in one call. Exit codes are unchanged:
+// 0=clean, 1=validation errors. When no argument is supplied, the CLI defaults to
+// scanning packages/seeds/src/blocks/ as before, expecting each subdirectory to be
+// a block triplet. Explicit directory argument overrides the default.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateStrictSubsetFile } from "./strict-subset.js";
+import { type BlockTripletParseResult, parseBlockTriplet } from "./block-parser.js";
 
 // ---------------------------------------------------------------------------
-// Path discovery
+// Directory discovery
 // ---------------------------------------------------------------------------
 
-/** Walk a directory recursively and collect .ts files (excluding .d.ts). */
-function collectTsFiles(dir: string): string[] {
+/** Walk a directory one level deep and collect subdirectory entries. */
+function collectTripletDirs(dir: string): string[] {
   const results: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
-      results.push(...collectTsFiles(full));
-    } else if (full.endsWith(".ts") && !full.endsWith(".d.ts")) {
+    if (statSync(full).isDirectory()) {
       results.push(full);
     }
   }
@@ -35,48 +34,69 @@ function collectTsFiles(dir: string): string[] {
 // Main
 // ---------------------------------------------------------------------------
 
-/** Resolve the default block directory relative to the project root.
+/** Resolve the default block triplet root relative to the project root.
  *  The CLI lives in packages/ir/dist/strict-subset-cli.js, so the project root
  *  is four levels up: dist → ir → packages → <worktree-root>. */
 function defaultBlockDir(): string {
   const cliFile = fileURLToPath(import.meta.url);
-  // dist/strict-subset-cli.js → go up four levels to reach the worktree root.
   const projectRoot = resolve(cliFile, "..", "..", "..", "..");
   return join(projectRoot, "packages", "seeds", "src", "blocks");
 }
 
-function main(): void {
-  const explicit = process.argv.slice(2);
-  let files: string[];
+/**
+ * Validate a single triplet directory via parseBlockTriplet.
+ * Returns true if validation is clean; writes errors to stderr and returns false otherwise.
+ */
+function validateTripletDir(dir: string): boolean {
+  let result: BlockTripletParseResult;
+  try {
+    result = parseBlockTriplet(dir);
+  } catch (err) {
+    process.stderr.write(
+      `strict-subset: ${dir}: schema validation failed — ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return false;
+  }
 
-  if (explicit.length > 0) {
-    // Caller supplied explicit paths — use them directly.
-    files = explicit;
+  if (!result.validation.ok) {
+    for (const e of result.validation.errors) {
+      process.stderr.write(`${e.file}:${e.line}:${e.column} ${e.rule}: ${e.message}\n`);
+    }
+    return false;
+  }
+
+  return true;
+}
+
+function main(): void {
+  const args = process.argv.slice(2);
+
+  let dirs: string[];
+
+  if (args.length > 0) {
+    // Caller supplied an explicit triplet directory — validate it directly.
+    dirs = args;
   } else {
-    // Default: scan packages/seeds/src/blocks/**/*.ts
+    // Default: scan packages/seeds/src/blocks/ subdirectories as triplet dirs.
     const blockDir = defaultBlockDir();
     if (!existsSync(blockDir)) {
       process.stdout.write(
-        `strict-subset: no block sources found at ${blockDir} (this is expected before WI-006 lands)\n`,
+        `strict-subset: no block triplets found at ${blockDir} (this is expected before WI-006 lands)\n`,
       );
       process.exit(0);
     }
-    files = collectTsFiles(blockDir);
-    if (files.length === 0) {
+    dirs = collectTripletDirs(blockDir);
+    if (dirs.length === 0) {
       process.stdout.write(
-        `strict-subset: block directory exists but contains no .ts files at ${blockDir}\n`,
+        `strict-subset: block directory exists but contains no triplet subdirectories at ${blockDir}\n`,
       );
       process.exit(0);
     }
   }
 
   let failed = false;
-  for (const f of files) {
-    const result = validateStrictSubsetFile(f);
-    if (!result.ok) {
-      for (const e of result.errors) {
-        process.stderr.write(`${e.file}:${e.line}:${e.column} ${e.rule}: ${e.message}\n`);
-      }
+  for (const dir of dirs) {
+    if (!validateTripletDir(dir)) {
       failed = true;
     }
   }
@@ -85,7 +105,7 @@ function main(): void {
     process.exit(1);
   }
 
-  process.stdout.write(`strict-subset: ${files.length} file(s) validated OK\n`);
+  process.stdout.write(`strict-subset: ${dirs.length} triplet(s) validated OK\n`);
 }
 
 main();

@@ -1,0 +1,15 @@
+{
+  "name": "badIdentity",
+  "inputs": [{ "name": "x", "type": "unknown" }],
+  "outputs": [{ "name": "result", "type": "unknown" }],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Returns its argument unchanged. Invalid fixture: impl uses any.",
+  "guarantees": [],
+  "errorConditions": [],
+  "nonFunctional": { "time": "O(1)", "space": "O(1)", "purity": "pure", "threadSafety": "safe" },
+  "propertyTests": []
+}

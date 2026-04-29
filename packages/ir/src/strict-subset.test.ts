@@ -13,8 +13,8 @@ import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { validateStrictSubset, validateStrictSubsetFile } from "./strict-subset.js";
 
-// Resolve the fixture block directory relative to this test file.
-const FIXTURE_DIR = join(fileURLToPath(import.meta.url), "..", "__fixtures__", "blocks");
+// Resolve the fixture triplet directory relative to this test file.
+const FIXTURE_DIR = join(fileURLToPath(import.meta.url), "..", "__fixtures__", "triplets");
 
 // ---------------------------------------------------------------------------
 // Helper: assert violation
@@ -450,17 +450,17 @@ export function f(x: any): any {
 });
 
 // ---------------------------------------------------------------------------
-// Path-discovery: validateStrictSubsetFile against fixture blocks
+// Path-discovery: validateStrictSubsetFile against triplet fixture impl files
 //
 // This section proves the strict-subset validator works on real files and that
 // the path-discovery pattern used by the CLI is non-vacuous. Fixtures live at
-// src/__fixtures__/blocks/ (in scope for WI-004). The valid fixture passes all
-// rules; the invalid fixture fails with no-any.
+// src/__fixtures__/triplets/ (in scope for WI-T02). The digit-of impl passes
+// all rules; the invalid-uses-any impl fails with no-any.
 // ---------------------------------------------------------------------------
 
 describe("path-discovery: fixture block files", () => {
-  it("accepts valid-block.ts fixture (strict-subset compliant)", () => {
-    const path = join(FIXTURE_DIR, "valid-block.ts");
+  it("accepts digit-of triplet impl.ts (strict-subset compliant)", () => {
+    const path = join(FIXTURE_DIR, "digit-of", "impl.ts");
     // Ensure the fixture exists — a missing file would silently skip validation.
     const source = readFileSync(path, "utf-8");
     expect(source.length).toBeGreaterThan(0);
@@ -468,13 +468,13 @@ describe("path-discovery: fixture block files", () => {
     const result = validateStrictSubsetFile(path);
     if (!result.ok) {
       const msgs = result.errors.map((e) => `  ${e.rule}: ${e.message}`).join("\n");
-      throw new Error(`valid-block.ts should pass but got errors:\n${msgs}`);
+      throw new Error(`digit-of/impl.ts should pass but got errors:\n${msgs}`);
     }
     expect(result.ok).toBe(true);
   });
 
-  it("rejects invalid-block.ts fixture (contains any)", () => {
-    const path = join(FIXTURE_DIR, "invalid-block.ts");
+  it("rejects invalid-uses-any triplet impl.ts (contains any)", () => {
+    const path = join(FIXTURE_DIR, "invalid-uses-any", "impl.ts");
     const source = readFileSync(path, "utf-8");
     expect(source.length).toBeGreaterThan(0);
 
@@ -486,7 +486,7 @@ describe("path-discovery: fixture block files", () => {
   });
 
   it("file path is reported correctly in ValidationError", () => {
-    const path = join(FIXTURE_DIR, "invalid-block.ts");
+    const path = join(FIXTURE_DIR, "invalid-uses-any", "impl.ts");
     const result = validateStrictSubsetFile(path);
     expect(result.ok).toBe(false);
     if (!result.ok) {

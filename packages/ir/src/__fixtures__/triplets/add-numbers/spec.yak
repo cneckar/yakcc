@@ -1,0 +1,20 @@
+{
+  "name": "addNumbers",
+  "inputs": [
+    { "name": "a", "type": "number" },
+    { "name": "b", "type": "number" }
+  ],
+  "outputs": [{ "name": "result", "type": "number" }],
+  "preconditions": [],
+  "postconditions": ["result === a + b"],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Return the sum of two numbers.",
+  "guarantees": [{ "id": "pure", "description": "Referentially transparent." }],
+  "errorConditions": [],
+  "nonFunctional": { "time": "O(1)", "space": "O(1)", "purity": "pure", "threadSafety": "safe" },
+  "propertyTests": [
+    { "id": "commutative", "description": "addNumbers(a, b) === addNumbers(b, a)" }
+  ]
+}
