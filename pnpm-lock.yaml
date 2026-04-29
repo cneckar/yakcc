@@ -127,6 +127,28 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17))
 
+  packages/seeds:
+    dependencies:
+      '@yakcc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@yakcc/ir':
+        specifier: workspace:*
+        version: link:../ir
+      '@yakcc/registry':
+        specifier: workspace:*
+        version: link:../registry
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      fast-check:
+        specifier: ^4.7.0
+        version: 4.7.0
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17))
+
 packages:
 
   '@biomejs/biome@1.9.4':

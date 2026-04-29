@@ -1,0 +1,30 @@
+{
+  "name": "@yakcc/seeds",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Unlicense",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./blocks/*": "./dist/blocks/*.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "lint": "biome check src/",
+    "strict-subset": "node ../../packages/ir/dist/strict-subset-cli.js"
+  },
+  "dependencies": {
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/ir": "workspace:*",
+    "@yakcc/registry": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "fast-check": "^4.7.0",
+    "vitest": "^4.1.5"
+  }
+}
