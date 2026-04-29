@@ -400,3 +400,160 @@ describe("runCli error paths", () => {
     expect(logger.errLines.some((l) => l.includes("unknown command"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 7: hooks claude-code install
+// ---------------------------------------------------------------------------
+
+describe("hooks claude-code install", () => {
+  it("exits 0, creates .claude/CLAUDE.md in target dir, and prints confirmation", async () => {
+    const targetDir = mkdtempSync(join(tmpdir(), "yakcc-hooks-test-"));
+    try {
+      const logger = new CollectingLogger();
+      const code = await runCli(["hooks", "claude-code", "install", "--target", targetDir], logger);
+      expect(code).toBe(0);
+      expect(existsSync(join(targetDir, ".claude", "CLAUDE.md"))).toBe(true);
+      expect(logger.logLines.some((l) => l.includes("yakcc hooks installed"))).toBe(true);
+      expect(logger.logLines.some((l) => l.includes("/yakcc"))).toBe(true);
+    } finally {
+      try {
+        rmSync(targetDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal cleanup.
+      }
+    }
+  });
+
+  it("CLAUDE.md contains the stub response message", async () => {
+    const targetDir = mkdtempSync(join(tmpdir(), "yakcc-hooks-stub-"));
+    try {
+      const logger = new CollectingLogger();
+      await runCli(["hooks", "claude-code", "install", "--target", targetDir], logger);
+      const content = readFileSync(join(targetDir, ".claude", "CLAUDE.md"), "utf-8");
+      expect(content).toContain("v0.5 feature");
+      expect(content).toContain("/yakcc");
+    } finally {
+      try {
+        rmSync(targetDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal cleanup.
+      }
+    }
+  });
+
+  it("is idempotent — second install exits 0 and overwrites CLAUDE.md", async () => {
+    const targetDir = mkdtempSync(join(tmpdir(), "yakcc-hooks-idem-"));
+    try {
+      const logger1 = new CollectingLogger();
+      const code1 = await runCli(
+        ["hooks", "claude-code", "install", "--target", targetDir],
+        logger1,
+      );
+      expect(code1).toBe(0);
+      const logger2 = new CollectingLogger();
+      const code2 = await runCli(
+        ["hooks", "claude-code", "install", "--target", targetDir],
+        logger2,
+      );
+      expect(code2).toBe(0);
+    } finally {
+      try {
+        rmSync(targetDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal cleanup.
+      }
+    }
+  });
+
+  it("exits 1 for unknown hooks claude-code subcommand", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["hooks", "claude-code", "notacommand"], logger);
+    expect(code).toBe(1);
+    expect(
+      logger.errLines.some((l) => l.includes("unknown hooks claude-code subcommand")),
+    ).toBe(true);
+  });
+
+  it("exits 1 for unknown hooks subcommand", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["hooks", "notaplatform"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.some((l) => l.includes("unknown hooks subcommand"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 8: compile — manifest determinism (exit criterion 3)
+// ---------------------------------------------------------------------------
+
+describe("compile manifest determinism", () => {
+  it("two consecutive compiles of list-of-ints produce byte-identical manifests", async () => {
+    const outDir1 = join(suiteDir, "manifest-det-run1");
+    const outDir2 = join(suiteDir, "manifest-det-run2");
+
+    const logger1 = new CollectingLogger();
+    const code1 = await runCli(
+      ["compile", listOfIntsId, "--registry", registryPath, "--out", outDir1],
+      logger1,
+    );
+    expect(code1).toBe(0);
+
+    const logger2 = new CollectingLogger();
+    const code2 = await runCli(
+      ["compile", listOfIntsId, "--registry", registryPath, "--out", outDir2],
+      logger2,
+    );
+    expect(code2).toBe(0);
+
+    const manifest1 = readFileSync(join(outDir1, "manifest.json"), "utf-8");
+    const manifest2 = readFileSync(join(outDir2, "manifest.json"), "utf-8");
+    expect(manifest1).toBe(manifest2);
+
+    // Also verify module.ts is byte-identical across runs.
+    const module1 = readFileSync(join(outDir1, "module.ts"), "utf-8");
+    const module2 = readFileSync(join(outDir2, "module.ts"), "utf-8");
+    expect(module1).toBe(module2);
+  });
+
+  it("directory-form compile (via contract.json) produces the same manifest as ContractId form", async () => {
+    // Write the list-of-ints spec to a temp directory so we can test the directory form.
+    const exampleDir = mkdtempSync(join(tmpdir(), "yakcc-dir-compile-"));
+    try {
+      const reg = await openRegistry(":memory:");
+      await seedRegistry(reg);
+      const contract = await reg.getContract(listOfIntsId);
+      await reg.close();
+      if (contract === null) throw new Error("listOfInts not in registry");
+
+      writeFileSync(join(exampleDir, "contract.json"), JSON.stringify(contract.spec), "utf-8");
+
+      const outDirDirect = join(suiteDir, "manifest-direct");
+      const loggerDirect = new CollectingLogger();
+      const codeDirect = await runCli(
+        ["compile", listOfIntsId, "--registry", registryPath, "--out", outDirDirect],
+        loggerDirect,
+      );
+      expect(codeDirect).toBe(0);
+
+      // The directory form resolves contract.json and writes to <dir>/dist by default.
+      // Supply an explicit --out to compare manifests.
+      const outDirDir = join(suiteDir, "manifest-dir-form");
+      const loggerDir = new CollectingLogger();
+      const codeDir = await runCli(
+        ["compile", exampleDir, "--registry", registryPath, "--out", outDirDir],
+        loggerDir,
+      );
+      expect(codeDir).toBe(0);
+
+      const manifestDirect = readFileSync(join(outDirDirect, "manifest.json"), "utf-8");
+      const manifestDir = readFileSync(join(outDirDir, "manifest.json"), "utf-8");
+      expect(manifestDirect).toBe(manifestDir);
+    } finally {
+      try {
+        rmSync(exampleDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal cleanup.
+      }
+    }
+  });
+});

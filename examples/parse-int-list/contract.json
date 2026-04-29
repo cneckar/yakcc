@@ -1,0 +1,97 @@
+{
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "A JSON-style list of integers string."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "ReadonlyArray<number>",
+      "description": "The parsed list of non-negative integers."
+    }
+  ],
+  "behavior": "Parse a string of the form '[i1,i2,...,iN]' where each element is a non-negative decimal integer. Surrounding whitespace around elements is allowed. Returns the parsed numbers as a readonly array. Throws SyntaxError on malformed input and RangeError on non-ASCII input.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "empty-ok",
+      "description": "Accepts '[]' and returns an empty array."
+    },
+    {
+      "id": "composition",
+      "description": "Implemented by composing nonAsciiRejector, bracket, optionalWhitespace, peekChar, emptyListContent, nonemptyListContent, and eofCheck."
+    },
+    {
+      "id": "no-trailing",
+      "description": "Rejects input with characters after the closing ']'."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input does not start with '['.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains non-ASCII characters.",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "List elements are not valid non-negative integers.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Trailing characters after closing ']'.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input ends before closing ']'.",
+      "errorType": "SyntaxError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "list-empty",
+      "description": "listOfInts('[]') returns []"
+    },
+    {
+      "id": "list-single",
+      "description": "listOfInts('[1]') returns [1]"
+    },
+    {
+      "id": "list-multiple",
+      "description": "listOfInts('[1,2,3]') returns [1, 2, 3]"
+    },
+    {
+      "id": "list-spaces",
+      "description": "listOfInts('[ 42 ]') returns [42]"
+    },
+    {
+      "id": "list-incomplete",
+      "description": "listOfInts('[1,2,') throws SyntaxError"
+    },
+    {
+      "id": "list-non-digit",
+      "description": "listOfInts('[abc]') throws SyntaxError"
+    },
+    {
+      "id": "list-no-open",
+      "description": "listOfInts('1,2,3]') throws SyntaxError"
+    },
+    {
+      "id": "list-trailing",
+      "description": "listOfInts('[1]x') throws SyntaxError"
+    }
+  ]
+}

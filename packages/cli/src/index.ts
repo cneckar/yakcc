@@ -19,6 +19,7 @@
 // the logger is an optional final parameter defaulting to CONSOLE_LOGGER.
 
 import { compile } from "./commands/compile.js";
+import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { propose } from "./commands/propose.js";
 import { registryInit } from "./commands/registry-init.js";
 import { search } from "./commands/search.js";
@@ -81,13 +82,15 @@ USAGE
 
 COMMANDS
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
-  compile <entry> [--registry <p>]    Assemble a module from a contract id or spec file
-               [--out <dir>]          Output directory (default: ./yakcc-out)
+  compile <entry> [--registry <p>]    Assemble a module from a contract id, spec file, or directory
+               [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
   propose <contract-file>             Check registry for a matching contract
           [--registry <p>]
   search <query> [--registry <p>]     Search registry by spec file or free text
          [--top <k>]                  Max results (default: 10)
   seed [--registry <p>]               Ingest the seed corpus into the registry
+  hooks claude-code install           Install /yakcc slash command for Claude Code
+                [--target <dir>]      Target project directory (default: .)
 
 FLAGS
   --help, -h                          Print this help and exit
@@ -150,6 +153,24 @@ export async function runCli(
       // seed has no positional; subcommand may be a flag like --registry.
       const seedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return seed(seedArgv, logger);
+    }
+
+    case "hooks": {
+      // `yakcc hooks claude-code install [--target <dir>]`
+      if (subcommand === "claude-code") {
+        const [hooksSub, ...hooksRest] = rest;
+        if (hooksSub === "install") {
+          return hooksClaudeCodeInstall(hooksRest, logger);
+        }
+        logger.error(
+          `error: unknown hooks claude-code subcommand: ${hooksSub ?? "(none)"}. Did you mean 'hooks claude-code install'?`,
+        );
+        return 1;
+      }
+      logger.error(
+        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install'?`,
+      );
+      return 1;
     }
 
     case undefined:

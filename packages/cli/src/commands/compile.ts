@@ -1,14 +1,16 @@
 // @decision DEC-CLI-COMPILE-001: compile command reads the entry as either a 64-hex
-// ContractId or a path to a JSON ContractSpec file. When a path is given, contractId()
-// derives the id from the spec. The assembled artifact is written to <out>/module.ts
-// and <out>/manifest.json. assemble() receives knownContractIds from seedRegistry so
-// the pre-scan can build the full stem index before DFS traversal.
-// Status: implemented (WI-007)
-// Rationale: The compile engine requires knownContractIds to resolve relative sub-block
-// imports (DEC-COMPILE-ASSEMBLE-001). The CLI seeds the registry and passes the resulting
-// contractIds as AssembleOptions.knownContractIds — mirroring the pattern in assemble.test.ts.
+// ContractId, a path to a JSON ContractSpec file, or a directory path. When a directory
+// is given, it resolves to <dir>/contract.json and defaults --out to <dir>/dist. When a
+// file path is given, contractId() derives the id from the spec. The assembled artifact
+// is written to <out>/module.ts and <out>/manifest.json. assemble() receives
+// knownContractIds from seedRegistry so the pre-scan can build the full stem index before
+// DFS traversal.
+// Status: updated (WI-009) — added directory path support for examples/
+// Rationale: The directory form lets callers say `yakcc compile examples/parse-int-list`
+// rather than `yakcc compile examples/parse-int-list/contract.json --out examples/parse-int-list/dist`,
+// which matches the documented 15-minute path in the README.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Artifact, assemble } from "@yakcc/compile";
@@ -46,31 +48,59 @@ export async function compile(argv: readonly string[], logger: Logger): Promise<
 
   const entryArg = positionals[0];
   if (entryArg === undefined || entryArg === "") {
-    logger.error("error: compile requires an <entry> argument (ContractId or spec file path)");
+    logger.error(
+      "error: compile requires an <entry> argument (ContractId, spec file, or directory)",
+    );
     return 1;
   }
 
   const registryPath = values.registry ?? DEFAULT_REGISTRY_PATH;
-  const outDir = values.out ?? "./yakcc-out";
+
+  // Resolve the spec file path and output directory.
+  // If entryArg is a directory, look for contract.json inside it and default
+  // --out to <dir>/dist. Otherwise treat it as a spec file (or ContractId).
+  let specFilePath: string | null = null;
+  let outDir: string;
+
+  if (!isValidContractId(entryArg)) {
+    // Check whether the arg is a directory.
+    let isDir = false;
+    try {
+      isDir = statSync(entryArg).isDirectory();
+    } catch {
+      // stat failed — not a directory (or doesn't exist); fall through to file path handling.
+    }
+
+    if (isDir) {
+      specFilePath = join(entryArg, "contract.json");
+      outDir = values.out ?? join(entryArg, "dist");
+    } else {
+      specFilePath = entryArg;
+      outDir = values.out ?? "./yakcc-out";
+    }
+  } else {
+    outDir = values.out ?? "./yakcc-out";
+  }
 
   // Resolve the entry ContractId.
   let entryId: ContractId;
   if (isValidContractId(entryArg)) {
     entryId = entryArg as ContractId;
   } else {
-    // Treat as a path to a JSON ContractSpec file.
+    // Treat as a path to a JSON ContractSpec file (or resolved from directory above).
+    const resolvedPath = specFilePath ?? entryArg;
     let specJson: string;
     try {
-      specJson = readFileSync(entryArg, "utf-8");
+      specJson = readFileSync(resolvedPath, "utf-8");
     } catch (err) {
-      logger.error(`error: cannot read spec file ${entryArg}: ${String(err)}`);
+      logger.error(`error: cannot read spec file ${resolvedPath}: ${String(err)}`);
       return 1;
     }
     let spec: ContractSpec;
     try {
       spec = JSON.parse(specJson) as ContractSpec;
     } catch (err) {
-      logger.error(`error: invalid JSON in spec file ${entryArg}: ${String(err)}`);
+      logger.error(`error: invalid JSON in spec file ${resolvedPath}: ${String(err)}`);
       return 1;
     }
     entryId = contractId(spec);

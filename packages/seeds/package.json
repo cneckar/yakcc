@@ -11,7 +11,7 @@
     "./blocks/*": "./dist/blocks/*.js"
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "tsc -p . && cp src/blocks/*.ts dist/blocks/",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",
     "lint": "biome check src/",
