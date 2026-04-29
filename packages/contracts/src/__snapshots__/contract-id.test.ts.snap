@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`contractId > known-good tripwire > BASE_SPEC produces a stable known content-address 1`] = `"64091ad13b90699dbe1199af9ed76597878ff77767c56d3d5c204e68a99e8a9c"`;
