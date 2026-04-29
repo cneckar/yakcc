@@ -148,40 +148,78 @@ wedge for the project — especially in security-conscious contexts — is that
 every line of code in a Yakcc-assembled program points to something verified
 and minimal.
 
-### Library absorption
+### Sub-function decomposition
 
 A registry of hand-authored blocks is a demo. A registry that can absorb the
-working ecosystem block-by-block is the answer to the supply-chain problem.
-v0 stands up the substrate; v0.5 lets AI synthesize blocks the registry is
-missing; v0.7 ingests the libraries that already exist by decomposing them.
+working ecosystem at the right granularity is the answer to the supply-chain
+problem. v0 stands up the substrate; v0.5 lets AI synthesize blocks the
+registry is missing; v0.7 ingests existing libraries by **recursive
+decomposition down to atomic blocks**.
 
-Decomposition takes a third-party library's source tree and walks it for
-discrete contract-shaped units — a single function, a single exported
-binding, a method that cleanly factors out of its class. For each unit the
-decomposition engine proposes a `ContractSpec`, derives or synthesizes a
-property-test corpus (preferring the library's own tests where adaptable,
-falling back to its published usage examples, then to AI-derived cases),
-and ingests the unit as a strict-TS block in the registry. Provenance —
-source URL, upstream commit SHA, file path, line range, original license —
-attaches as mutable metadata on the immutable contract id.
+**Function-level contracts are a means; atomic blocks are the end.** This
+is the load-bearing v0.7 principle. A function-level contract for
+`parseIntList` says "given a string of the form `[i1,i2,...,iN]`, return
+the integers." Useful, but not minimum-viable. The hand-authored
+`parseIntList` in `packages/seeds/src/blocks/list-of-ints.ts` decomposes
+into seven primitives — `bracket`, `digit`, `comma`, `optionalWhitespace`,
+`peekChar`, `nonAsciiRejector`, `eofCheck`. Each primitive is a single
+behavioral act. That is the granularity v0.7 must reach when it ingests
+an equivalent function from a third-party library, or it has not done its
+job. "Did not reach atoms" is a v0.7 failure, not an acceptable
+approximation.
 
-The point of this is concrete: a caller asking for `debounce` should get
-just the `debounce` block, not the rest of lodash. A caller asking for an
-`ms`-style millisecond-string parser should get just that parser, with
-provenance back to the line of upstream source it was extracted from. The
-supply-chain claim — "you get exactly what you asked for, with no attached
-attack surface" — only stops being theoretical when the registry can absorb
-existing libraries this way. Decomposition is the bootstrap path for that.
+Decomposition takes a permissively-licensed third-party library's source
+tree and walks it for candidate units. For each unit the engine extracts
+an *intent card* (LLM-derived structured purpose, inputs, outputs, error
+semantics, security posture), proposes a `ContractSpec`, and then asks:
+*can this be expressed as a non-trivial composition of two or more
+sub-blocks?* If yes, recurse on each sub-block. If no — at most one
+control-flow boundary, no further factorable structure, no near-duplicate
+of an existing registry atom — register it as an atom. The result is a
+recursion tree, not a flat list, and every level of that tree gets
+ingested with parent-block links recorded as provenance metadata.
 
-Each absorbed block passes the same gates as a fresh block: the strict TS
-subset, a property-test corpus, content-addressed identity. Upstream
-licenses are recorded but not relicensed — the commons absorbs without
-rewriting attribution. v0.7 gates absorption on property tests; v1 adds
-differential execution against the upstream source as the harder, slower,
-more thorough check that the absorbed block actually behaves like the
-original on a large input corpus. Until that v1 check exists, decomposed
-blocks should be treated as candidate replacements pending manual audit
-in security-critical contexts, not drop-in substitutes.
+When the same shape appears in multiple libraries, three rules govern
+what gets registered as the canonical contract:
+
+- **Safety = intersection.** A guarantee is registered only if every
+  observed implementation provides it.
+- **Behavioral = majority-vote.** Where implementations differ on
+  optional behavior, the most common interpretation wins.
+- **Capability = union.** The set of supported inputs is the union
+  across implementations.
+
+These rules, plus 7-dimension variance scoring (security 0.35,
+behavioral 0.25, error_handling 0.20, performance 0.10, interface
+0.10) and CWE-474 family mapping for the security dimension, are
+**ported from librAIrian** — the Python research prototype at
+`/Users/cris/src/librAIrian/` that demonstrated decomposition-by-LLM
+at function-level granularity. librAIrian is a study reference for
+Future Implementers, *not* a runtime dependency: yakcc is
+self-contained, TS-only, and re-implements these concepts natively
+inside `@yakcc/shave` against the Anthropic SDK directly. No Python
+in the runtime path.
+
+The point of this is concrete: a caller asking for `parseArgv` should
+get just the tokenizer / flag-classifier / value-coercer atoms — not
+the rest of `mri` (the v0.7 demo target), and certainly not the rest
+of `yargs`. A caller asking for an `ascii-digit` predicate should get
+back the same hand-authored `digit` atom whether they shaved it from
+`mri`, from a JSON parser, or from the seed corpus — content-addressed
+identity collapses the duplicates.
+
+Each ingested block passes the same gates as a fresh block: the strict
+TS subset, a property-test corpus, content-addressed identity. Only
+permissive licenses are accepted at the ingestion boundary (Unlicense,
+MIT, BSD-2/3, Apache-2.0, ISC, 0BSD, public-domain dedications);
+copyleft and proprietary licenses are refused with a clear error.
+Upstream licenses are recorded but not relicensed — the commons
+absorbs without rewriting attribution. v0.7 gates absorption on
+property tests plus a focused differential test against the upstream
+package's published test corpus; v1 adds large-scale fuzz-driven
+differential execution as the deeper check. Until v1, shaved blocks
+should be treated as candidate replacements pending manual audit in
+security-critical contexts, not drop-in substitutes.
 
 ---
 
@@ -201,19 +239,19 @@ section is the map.
                         |          @yakcc/cli         |
                         |  propose | search | compile  |
                         |  registry init | block author|
-                        |  decompose (v0.7)            |
+                        |  shave (v0.7)                |
                         +--------------+--------------+
                                        |
    +-------------+-------------+-------+-------+-------------+
    |             |             |               |             |
    v             v             v               v             v
 +--------+ +-----------+ +-----------+ +-------------+ +------+
-|contracts| | registry | |  compile  | | decompose   | |  ir  |
+|contracts| | registry | |  compile  | |   shave     | |  ir  |
 |spec    | | SQLite + | | IR -> TS  | | (v0.7)      | |strict|
-|canon.  | | sqlite-  | | whole-    | | AI-driven   | | TS   |
-|content-| | vec      | | program   | | absorption  | |subset|
-|address | | match    | | assembly  | | of existing | |ts-   |
-|embed   | | select   | | provenance| | libraries   | |morph |
+|canon.  | | sqlite-  | | whole-    | | recursive   | | TS   |
+|content-| | vec      | | program   | | sub-function| |subset|
+|address | | match    | | assembly  | | decomposit. | |ts-   |
+|embed   | | select   | | provenance| | + atoms     | |morph |
 |pipeline| |          | | manifest  | | + provenance| |      |
 +---+----+ +----+-----+ +----+------+ +------+------+ +---+--+
     |           |             |              |           ^
@@ -286,35 +324,122 @@ output becomes a reference to a registry entry rather than a wall of
 generated code. That is when Yakcc starts paying for itself in real authoring
 loops.
 
-### `@yakcc/decompose` (v0.7)
+### `@yakcc/shave` (v0.7)
 
-The library-absorption engine. Input is a source tree from an existing
-library; output is a set of registry rows, one per discrete contract-shaped
-unit identified in the source, each carrying provenance back to the upstream
-URL, commit SHA, file, and line range, plus the original library license.
+The sub-function decomposition engine. Input is a source tree from an
+existing permissively-licensed TS/JS library; output is a *recursion
+tree* of registry rows — root entries for top-level public bindings,
+intermediate entries for cleanly-factorable sub-components, and leaf
+atoms (single behavioral primitives) at the bottom. Every level
+records provenance back to the upstream URL, commit SHA, file, line
+range, original license, and parent block in the recursion tree.
 
-The engine is AI-driven: identifying which units cleanly factor out, deriving
-their `ContractSpec`, and producing a property-test corpus all involve model
-calls. The engine is *not* a free pass past the substrate's gates — every
-absorbed block passes the strict-TS IR validator, every absorbed block has a
-property-test corpus that passes before ingestion, and every absorbed block
-gets a content-addressed identity via the same canonicalization path as a
-hand-authored block. The substrate cannot tell, at lookup time, whether a
-candidate came from a human, from v0.5 synthesis, or from v0.7 decomposition;
-only the provenance metadata records the difference.
+The engine is AI-driven for its three model-bound steps:
 
-License compatibility is enforced at the ingestion boundary. Permissive
-upstream licenses (MIT, BSD, Apache-2.0, ISC, 0BSD, Unlicense, public domain)
-are accepted with their license recorded; non-permissive licenses are
-refused with a clear error. The Unlicense remains the standard for fresh
-contributions per the cornerstone — absorbed third-party code carries its
-original license, the commons does not rewrite upstream attribution.
+1. **Intent extraction** (Anthropic Haiku, `claude-haiku-4-5-20251001`)
+   — given a unit's source plus surrounding context, produce a
+   structured intent card (purpose, inputs, outputs, error semantics,
+   side effects, security posture). Cards are cached on disk keyed
+   by source SHA so re-shaving is local and deterministic across
+   runs.
+2. **Decomposition proposal** (Anthropic Sonnet) — given a candidate
+   block, propose whether it factors into two or more sub-blocks.
+   Recursion bottoms out at atoms (the Sub-function Granularity
+   Principle, see core concepts above).
+3. **Property-test corpus synthesis** (Anthropic Sonnet) — generate
+   property-test cases against the proposed contract when upstream
+   tests cannot be adapted and documented usage examples are absent.
 
-v0.7 gates absorption on property tests. v1 adds differential execution
-against upstream as the deeper check, surfaced as a non-functional property
-on the contract id. The v0.7 demo target is `vercel/ms` — a single-purpose
-~100 LOC library with well-understood semantics, chosen specifically as a
-low-risk first proof of the pipeline.
+The engine is *not* a free pass past the substrate's gates. Every
+shaved block passes the strict-TS IR validator. Every shaved block
+has a property-test corpus that passes before ingestion. Every
+shaved block gets a content-addressed identity via the same
+canonicalization path as a hand-authored block. The substrate
+cannot tell, at lookup time, whether a candidate came from a human,
+from v0.5 synthesis, or from v0.7 shaving; only the provenance
+metadata records the difference. Shaved atoms with the same
+canonical contract as a hand-authored seed atom collapse to the
+same content-address — the registry is a commons, not a
+catalogue-of-origins.
+
+License compatibility is enforced at the ingestion boundary.
+Accepted: Unlicense, MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0,
+ISC, 0BSD, explicit public-domain dedications. Refused with a
+clear error: GPL/AGPL/LGPL/copyleft, proprietary, unidentifiable.
+The Unlicense remains the standard for fresh contributions per the
+cornerstone — shaved third-party code carries its original
+license, the commons does not rewrite upstream attribution.
+
+**`librAIrian` is a prototype reference.** The Python project at
+`/Users/cris/src/librAIrian/` (Phases 0-4 + R1-R22) demonstrated
+intent extraction, star-topology variance scoring, contract
+design rules (safety = intersection, behavioral = majority-vote,
+capability = union), permissive-license-only ingestion, and
+differential testing across implementations. `@yakcc/shave` ports
+those concepts in TypeScript natively. **It does not invoke
+librAIrian as a subprocess, library, or service.** Future
+Implementers should read librAIrian's source under `src/librairian/`
+(notably `analyzer/`, `proposer/`, `validator/`, `catalog/`) as a
+study reference for *how decomposition can work*, not as code to
+call. yakcc is self-contained.
+
+v0.7 gates absorption on property tests plus a focused differential
+test against the upstream package's published test corpus. v1 adds
+fuzz-driven differential execution at scale, surfaced as a
+non-functional property on the contract id. The v0.7 demo target
+is `lukeed/mri` — a permissive (MIT) ~200 LOC argv parser whose
+source naturally factors into a tokenizer, flag classifier, alias
+resolver, and value coercer, each of which itself decomposes into
+atoms (char-class predicates, single-effect primitives) that
+resemble the seed corpus. `mri` was chosen over `vercel/ms` (the
+earlier candidate) precisely because `ms` is regex-monolithic and
+would not exercise the recursion at all. See
+DEC-DECOMPOSE-STAGE-015-CORRECTION in `MASTER_PLAN.md` for the
+audit trail on this swap.
+
+---
+
+## Self-hosting (v2)
+
+A compiler is not complete until it can compile itself from scratch.
+Yakcc is not complete until `yakcc shave` can be run against yakcc's
+own source tree and `yakcc compile` can reassemble every package
+from its content-addressed atoms. Turtles (or Yaks) all the way down.
+
+Self-hosting is **a load-bearing future property of the build
+pipeline**, not an experimental nice-to-have. It is the final test
+of the cornerstone: if our own substrate cannot express its own
+implementation in atomic, content-addressed terms, then the claims
+this DESIGN.md makes about supply-chain minimality are claims we
+exempt ourselves from. The v2 stage exists so we cannot do that.
+
+Concretely, v2 demands:
+
+- `yakcc shave` runs across every yakcc package
+  (`@yakcc/contracts`, `@yakcc/registry`, `@yakcc/ir`,
+  `@yakcc/compile`, `@yakcc/cli`, `@yakcc/hooks-claude-code`,
+  `@yakcc/shave`, plus anything added between v0.7 and v2).
+- The recursion bottoms out at atoms — the same atom test from
+  v0.7 applies, and a v2 reviewer rejects the build if any leaf
+  block fails it.
+- A new "registry-assembled build" mode reassembles every package
+  from registered atoms, ignoring source-tree files.
+- `pnpm test` passes on both the from-source build and the
+  registry-assembled build with byte-identical test output.
+- The yakcc CLI binary built from registry-assembled artifacts
+  behaves identically to the from-source binary on the v0
+  demoable artifact and the v0.7 demoable artifact.
+
+Things v2 explicitly does not require: federation (orthogonal —
+v1's job), runtime hot-swap of registry blocks (the registry-
+assembled build is a build-time property), deletion of the
+from-source build (both paths remain valid), or shave-of-shave
+bootstrap circularity (a research question, not a v2 exit
+criterion). See DEC-SELF-HOSTING-016 in `MASTER_PLAN.md` for the
+full decision rationale.
+
+When you write code in this repo today, write it as though it will
+become a registry atom tomorrow. It is going to.
 
 ---
 
@@ -355,7 +480,7 @@ forking the parser is a v1+ conversation if it ever happens.
 |---|---|---|
 | Local-only registry | A single-file, no-server, demoable substrate | v1 (federation) |
 | TS-only backend | Single-target compile path; no native-binding ops in v0 | v1 (WASM, then native) |
-| Manual block authoring | No coupling to a moving model surface; substrate trustable in isolation | v0.5 (AI synthesis), v0.7 (library absorption) |
+| Manual block authoring | No coupling to a moving model surface; substrate trustable in isolation | v0.5 (AI synthesis), v0.7 (`yakcc shave` sub-function decomposition) |
 | Facade hook | Locked install/command surface; v0.5 is behavioral not structural | v0.5 (live intercept) |
 | Hand-picked seed corpus | Demoable composition story; reviewer-sized | v0.5 (corpus grows organically once hook is live) |
 | Contributor-declared strictness | Tractable in v0; gameable in principle | v1 (trust layer) |
@@ -381,6 +506,31 @@ forking the parser is a v1+ conversation if it ever happens.
   to attack.
 - **Seed-corpus bias.** Whatever ~20 blocks we pick will shape composition
   taste. We accept the bias and rely on v0.5's authoring loops to dilute it.
+- **Sub-function granularity: when is a block atomic?** v0.7 demands
+  decomposition recurse to atoms — single behavioral primitives that
+  cannot be expressed as a non-trivial composition of two or more
+  sub-blocks. The seed corpus pins the lower bound by example
+  (`digit`, `bracket`, `comma`, `optionalWhitespace`, etc.). The
+  upper bound — *when has the recursion gone too far?* — is bounded
+  mechanically: at most one control-flow boundary, no further
+  factorable structure, no near-duplicate of an existing registry
+  atom. The hard residual problem is **near-duplicate atoms across
+  decompositions of different libraries**: two libraries' `isDigit`
+  predicates may differ in micro-detail (one accepts non-ASCII digit
+  characters, one does not). The consolidation policy in
+  `@yakcc/contracts` collapses true duplicates by content-address and
+  surfaces near-duplicates as distinct contracts in the partial-
+  strictness order. The gameable cases — adversarially-crafted near-
+  duplicates designed to dodge the consolidation gate — are out of
+  scope until v1's trust layer exists to address them.
+- **LLM dependency in v0.7 (air-gap regression).** v0 is fully
+  air-gappable; v0.7 introduces an Anthropic API dependency for
+  intent extraction and decomposition proposals. Mitigation in the
+  v0.7 plan: intent cards cached on disk by source SHA, so re-shaving
+  is local. Future work: a local-LLM provider behind the same
+  interface (Ollama, transformers.js text-generation) so air-gappable
+  shaving becomes a supported configuration. See
+  `MASTER_PLAN.md` riskiest assumption #12.
 
 ---
 
