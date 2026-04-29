@@ -1,0 +1,31 @@
+{
+  "name": "@yakcc/cli",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Unlicense",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "bin": {
+    "yakcc": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "echo \"no tests yet\"",
+    "lint": "echo \"no lint yet\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  },
+  "dependencies": {
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/registry": "workspace:*",
+    "@yakcc/ir": "workspace:*",
+    "@yakcc/compile": "workspace:*",
+    "@yakcc/hooks-claude-code": "workspace:*"
+  }
+}

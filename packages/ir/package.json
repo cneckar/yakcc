@@ -1,0 +1,21 @@
+{
+  "name": "@yakcc/ir",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Unlicense",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "echo \"no tests yet\"",
+    "lint": "echo \"no lint yet\""
+  },
+  "dependencies": {
+    "@yakcc/contracts": "workspace:*"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "yakcc",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Unlicense",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "yakcc": "pnpm --filter @yakcc/cli exec yakcc"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}
