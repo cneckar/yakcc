@@ -8,3 +8,5 @@ dist/
 .env.local
 .yakcc/
 tmp/
+.claude/
+.worktrees/
