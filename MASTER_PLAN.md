@@ -174,7 +174,7 @@ is no. v0 either honors them or v0 is not Yakcc.
 
 ## Architecture (one paragraph; full detail in DESIGN.md)
 
-Seven packages. `@yakcc/contracts` defines what a contract *is* and how it
+Yakcc has three orthogonal axes: substrate maturity (this document, v0..v2), verification rigor (`VERIFICATION.md`, L0..L3), and trust/scale participation (`FEDERATION.md`, F0..F4); a user sits at any `(v, F, L)` coordinate, and the F0 single-machine deployment is first-class at every substrate level. Seven packages. `@yakcc/contracts` defines what a contract *is* and how it
 canonicalizes to a content-address. `@yakcc/registry` stores contracts and
 implementations in SQLite + sqlite-vec, performs vector candidate retrieval and
 structured matching, and resolves selection. `@yakcc/ir` defines the strict
@@ -590,19 +590,77 @@ proof point that the substrate is real.
 
 ---
 
+## Trust/Scale Axis
+
+The substrate ladder above (v0..v2) describes *what yakcc can do*. It is
+orthogonal to the trust/scale axis (F0..F4) described in `FEDERATION.md`,
+which describes *how many machines participate and what economic primitives
+are available*, and to the verification ladder (L0..L3) described in
+`VERIFICATION.md`, which describes *how confident we are in each block*. A
+user sits at any `(v, F, L)` coordinate; the cornerstone-preserving move is
+that the F0 single-machine deployment is first-class at every substrate
+level. Federation features are imported, not inherited.
+
+Brief index — see `FEDERATION.md` for the full design:
+
+- **F0** — single-machine. `@yakcc/core` only. No network. Full substrate
+  capability up to and including v2 self-hosting.
+- **F1** — federated read-only mirror. `@yakcc/core` + `@yakcc/federation`.
+  Pull attestations and content from a public registry; execute locally.
+- **F2** — attested mirror. Add a local verifier identity; sign and
+  publish attestations as a verifier-citizen.
+- **F3** — ZK supply-chain. Cryptographic proof that the local
+  executable's bytes hash to on-chain attestations.
+- **F4** — economic-commons participant. `@yakcc/core` +
+  `@yakcc/federation` + `@yakcc/incentives`. Bounty submissions,
+  Proof of Fuzz, stake-to-refine, deprecation-as-slashing.
+
+Tokens at F4 reward **compute and verification labor**, not block
+authorship — the cornerstone (no ownership) is preserved because a block,
+once registered, belongs to the public domain under The Unlicense.
+Slashing is *deprecation* of the failing block at the registry level, not
+seizure of any submitter's stake (there is no submitter identity to attach
+a stake to).
+
+The F-axis is the answer to "how does yakcc scale to a public commons
+without violating the cornerstone?" Substrate work (v-axis) and
+verification work (L-axis) are independent of it; advancing the substrate
+does not advance the F-axis, and a private deployment can sit at
+`(v0.7, F0, L0)` indefinitely.
+
+Concrete F1+ work items will be enumerated as a separate initiative once
+the v0/v0.7 work items in "Active Initiatives" land. v1's "Federation,
+additional targets, additional hooks, faithful absorption" stage above
+remains the substrate-side gate that unlocks F1+ in practice; this section
+is the index pointing to the F-axis design, not a re-statement of v1.
+
+---
+
 ## Hard problems we are deferring
 
 These are *known* unsolved problems. v0 is engineered to be compatible with
 better answers later, not to pretend they don't exist.
 
+Items previously listed here that **the verification ladder
+(`VERIFICATION.md`) and trust/scale axis (`FEDERATION.md`) now address** —
+*Contract equivalence is undecidable in general*, *Provenance and trust*,
+*Adversarial contributions* — have been retired from this table. The
+addressing is not "solved"; it is "moved to documents that own the design
+surface for the solution." The DEC-V-* and DEC-F-* logs in those documents
+carry the load-bearing decisions.
+
+The residual hard problems v0 still defers:
+
 | Problem | v0 stance | Future work |
 |---|---|---|
-| Contract equivalence is undecidable in general | Declared strictness ordering + structural sanity checks + shared property-test corpora. Near-duplicates are tolerated; selection picks deterministically. | Differential execution at scale (v0.5); formal-property declarations and proof-carrying entries (v1+). |
-| Composition is not free (errors, resources, perf don't decompose cleanly) | IR makes composition explicit; v0 limits itself to pure, total, side-effect-free seed blocks where composition is well-behaved. | First-class effect/resource/perf composition rules in the IR (v0.5+). |
-| Provenance and trust | None. Public-domain commons, no author identity, no signatures, no trust metadata. The cornerstone forbids it. | A trust-metadata layer attached to immutable contract ids (v1). Reproducible builds, signed contributions, and formal proofs are all candidates — none are committed to today. |
-| Adversarial contributions (passes tests, contains backdoor) | Out of scope. v0 has no shared registry, so this is not yet a live attack surface. | Addressed alongside the v1 trust-metadata layer. |
+| Composition is not free (errors, resources, perf don't decompose cleanly) | IR makes composition explicit; v0 limits itself to pure, total, side-effect-free seed blocks where composition is well-behaved. | First-class effect/resource/perf composition rules in the IR (v0.5+); ocap effect signatures formalized in `VERIFICATION.md` extend this. |
 | Embedding-similarity drift (semantically distinct contracts close in vector space) | Embedding only surfaces candidates; structural matching is the gate. Selection never reads cosine distance. | Better encoders, contract-aware embedding training (v0.5+). |
 | Seed-corpus bias | We pick the ~20 seeds. Whatever we pick, future composition shape inherits our taste. | Once the hook is live (v0.5), real authoring loops add corpus mass we didn't bias. |
+| Verifier governance (default trust list authority) | F0/F1/F2 deployments configure their own trust lists; the question of who maintains the *shipped default* trust list is unresolved. | F3/F4 deployment forces a governance choice (multi-sig, on-chain vote, federation-of-attesters). Surfaced in `FEDERATION.md` as a user-decision boundary, not a v0/v1 deliverable. |
+| Microarchitectural covert channels (timing, cache, speculation) | The static `constant_time` analysis catches data-dependent branching/indexing in source. It does not catch Spectre-class side-channels. | Open research. Caller responsibility for crypto-sensitive code; the substrate has no story below the source-language level. See `VERIFICATION.md` "Hard problems". |
+| L3 economic premium tuning | The ~10x L2/L3 reward asymmetry is illustrative, not derived. | F4 deployment empirically tunes the multiplier against observed cost ratios; the principle is the asymmetry, not the constant. See `FEDERATION.md`. |
+| BMC's confidence-not-certainty ceiling for crypto-sensitive blocks | L2/BMC attestations are bounded ("no counterexample at depth ≤ N"). For cryptographic primitives, depth-N is meaningless without depth-∞. | Crypto blocks need L3 (proof) or a parallel argument (deployment history, paper-level analysis). The substrate cannot mechanically promote a BMC attestation to crypto-worthy. See `VERIFICATION.md`. |
+| Retroactive unsoundness response time | The attestation ledger supports revocation; recovery from a major verifier unsoundness still takes hours-to-days. | Disclosure-and-rotation discipline is human-loop work; auditable revocation events make post-hoc detection of impacted builds tractable. |
 
 ---
 
@@ -681,6 +739,7 @@ Concrete work items will be enumerated when v0.7 lands. The v2 stage section abo
 | DEC-WI005-REGISTRY-PRIMITIVES-014 | WI-005 scope expanded to include bounded additions to the `@yakcc/registry` interface — `getContract(id)` and `getImplementation(id)` — restricted to `packages/registry/src/index.ts` and `packages/registry/src/storage.ts` (search/select/schema and all registry tests remain forbidden) | The compile engine fundamentally needs direct content-address lookup of contracts and their best implementation source to traverse the composition graph; this gap was flagged in the WI-005 dispatch and closing it inside WI-005 is more coherent than a separate work item. The expansion is bounded to two specific methods on two specific files with explicit forbidden_paths constraining every other registry surface, and a `forbidden_shortcuts` rule prevents unbounded interface drift. |
 | DEC-DECOMPOSE-STAGE-015 | Add a dedicated **v0.7** stage between v0.5 and v1 introducing a seventh package focused on absorbing existing TS/JS libraries into the registry with full provenance. Differential execution against upstream is deferred to v1. **Correction (post-landing, see DEC-DECOMPOSE-STAGE-015-CORRECTION below):** the original entry framed the package as `@yakcc/decompose` doing AI-driven library absorption from scratch with `vercel/ms` as the first demo target. Three user corrections supersede that framing: (1) `librAIrian` (Python, `/Users/cris/src/librAIrian/`) is the *prototype* whose concepts are ported into yakcc natively in TS — it is not a runtime dependency; (2) librAIrian's contracts are function-shaped, but yakcc must recurse to **atomic** blocks (the Sub-function Granularity Principle); (3) the demo target swaps from `vercel/ms` (monolithic regex, no recursive structure) to `lukeed/mri` (compositional argv parser that exercises the atom recursion). The package is `@yakcc/shave` and the CLI verb is `yakcc shave`. | The user identified that without a path to absorb existing libraries, the registry only contains hand-authored or fresh AI-synthesized blocks and the supply-chain story remains theoretical. Folding into v0.5 conflates synthesize-the-missing with absorb-the-existing; pushing into v1 ties it to federation timing it does not need. The correction strengthens the original direction: porting librAIrian's concepts (intent extraction, star-topology variance, contract design rules) preserves the substantive insight while keeping the runtime self-contained, and recursing to atoms is what makes "minimum-viable code" mechanically enforceable rather than aspirational. |
 | DEC-DECOMPOSE-STAGE-015-CORRECTION | Supersede the original v0.7 framing with three corrections: (a) librAIrian-as-prototype-not-dependency, (b) Sub-function Granularity Principle (recurse to atoms), (c) demo target `lukeed/mri`. Package renamed `@yakcc/shave`. Atom test is a hard reviewer gate at WI-012; "did not reach atoms" is a v0.7 failure. | User corrections, verbatim: *"You should treat librAIrian as a prototype for what you will need to do, and you should use those concepts and steal as much as you can to not build this from scratch but yakcc should be self contained."* *"I don't think the way librAIrian works will get us all the way down the tree to the most basic blocks. The contracts that it proposes tend to be function level reusable components, not all the way down to the basic block level."* *"Eventually we will want to decompose this project itself (yakcc) into the paradigm that we are building... that's the goal here, eventually the code that you are emitting right now will become just basic blocks in the repo. Turtles (or Yaks) all the way down."* The third quote drives DEC-SELF-HOSTING-016 separately. The first two drive this correction. The seed corpus (`packages/seeds/src/blocks/`) — `digit`, `bracket`, `comma`, `optionalWhitespace`, etc. — is the existence proof that atoms are the right granularity: the hand-authored `parseIntList` decomposes into 7 of them, and `shave` must reproduce that structure when it ingests an equivalent function. |
+| DEC-AXIS-017 | Yakcc has three orthogonal axes: substrate maturity (v-axis, this document, v0..v2), verification rigor (L-axis, `VERIFICATION.md`, L0..L3), and trust/scale participation (F-axis, `FEDERATION.md`, F0..F4). A user sits at any `(v, F, L)` coordinate. The F0 single-machine deployment is first-class at every substrate level — federation features are imported, not inherited. This DEC owns the meta-architectural commitment to the axis decomposition; the load-bearing decisions on each axis live in the documents that own that axis. Forward-references: `VERIFICATION.md` owns DEC-VERIFY-001..DEC-VERIFY-008 (verification levels, triplet identity, ocap discipline, totality, SMT/BMC, Lean L3, TCB hardening, verifier-as-block); `FEDERATION.md` owns DEC-FED-001..DEC-FED-006 (orthogonal axes, package decomposition, DA layer, slashing-as-deprecation, F4 economic primitives, trust-list governance). | The v0..v2 ladder describes capability growth; the L0..L3 ladder describes verification growth; the F0..F4 ladder describes participation growth. Conflating them produces planning drift (e.g., "we need federation before we can do formal verification" — false; a single-machine F0 deployment can run L3 locally). The user's "optional sidecar" framing — *"This should all be an optional layer that can be super imposed for the public repository. The yakcc backend should be usable as a private set of recomposable blocks for anyone to use."* — formalizes here as: each axis is independent, and the F-axis is opt-in via package selection (`@yakcc/federation`, `@yakcc/incentives`) rather than a precondition for substrate maturity. |
 | DEC-SELF-HOSTING-016 | Add a new **v2 — Self-Hosting** stage after v1. Exit criteria: `yakcc shave` runs across yakcc's own packages, `yakcc compile` reassembles each package from the registered atoms, and a "registry-assembled build" passes `pnpm test` byte-identically with the from-source build. Self-hosting is a property of the build pipeline; not a runtime hot-swap; not a federation prerequisite. | User framing, verbatim: *"It's like the idea of a compiler not being complete until it can compile itself from scratch... that's the goal here, eventually the code that you are emitting right now will become just basic blocks in the repo. Turtles (or Yaks) all the way down."* This is the standard compiler-bootstrap test applied to yakcc: if the substrate cannot express its own implementation, it has not proven what it claims. v2 isolates this property from v1 federation (orthogonal concerns, different complexity) and from runtime hot-swap (out of scope). Placed at v2 rather than folded into v0.7 because (a) it depends on shave being trustworthy at sub-function granularity first, and (b) v1's federation trust mechanisms inform how a registry-assembled build's atoms get verified at scale, even though v2 itself works on a single-machine registry. |
 
 ---
@@ -753,7 +812,52 @@ disagree with before the orchestrator builds against them.
     (`mri`) was chosen specifically because its semantics are simple,
     its source is naturally compositional, and its published test corpus
     is small enough to use as a v0.7 differential-test gate.
-12. **LLM dependency in v0.7 is a property regression from v0.** v0 is
+12. **AI proof synthesis becomes good enough at scale.** The verification
+    ladder in `VERIFICATION.md` describes L3 (Lean-paired refinement
+    proofs) and an actor-critic fuzzing fallback that aspires to populate
+    the L3 tier as proof-synthesis tooling improves. The F4 economic
+    premium (`FEDERATION.md`) prices L3 attestations ~10x L2 to
+    incentivize proof writing. **Both rely on AI proof synthesis being on
+    a trajectory that makes L3 cost-of-production drop into the same
+    order of magnitude as fuzz-driven verification within the v0.7 → v1
+    → v2 horizon.** If the trajectory flattens — if proof synthesis
+    remains 100x more expensive than fuzzing rather than 10x — the L3
+    tier stays sparse and the verification spine's strongest pitch
+    weakens. The substrate stays useful (L0/L1/L2 still work) but the
+    "machine-checked supply-chain confidence" claim degrades to "BMC-
+    bounded confidence." This is a research bet, not a settled outcome.
+
+13. **Totality discipline (L1) is acceptable to authors.** L1 in
+    `VERIFICATION.md` requires structural recursion or explicit fuel
+    parameters — `while (true)` with internal `break` on a runtime
+    condition is rejected by the syntactic checker. **This is a real
+    ergonomic cost.** Authors of code that naturally expresses as
+    unbounded iteration (event loops, generators with external
+    termination, work queues that drain dynamically) have to refactor or
+    stay at L0. The bet is that the cost is paid once per author and the
+    discipline becomes habitual; the alternative bet is that the
+    discipline is too painful and L1 stays sparsely populated, reducing
+    the verification spine to "L0 plus a long tail of partially-attested
+    L2/L3 niche blocks." The seed corpus is naturally L1 (every block is
+    a single-pass primitive over bounded input), which is encouraging —
+    but the seed corpus is the easy case.
+
+14. **Verifier governance is solvable under the no-ownership cornerstone.**
+    `FEDERATION.md` documents the default-trust-list governance question
+    as a user-decision boundary deferred to F3/F4 deployment. **The
+    substrate's coherence depends on the question being answerable in a
+    way that does not violate the cornerstone.** Three candidate models
+    (multi-sig of named maintainers, on-chain vote weighted by attestation
+    history, federation-of-attesters with rotation) each have failure
+    modes — capture, Sybil, factional drift — and none of them is
+    obviously safe. The bet is that *one of these models* is good enough
+    when augmented with per-caller trust lists (which mechanically
+    foreclose on absolutist failure). The risk is that none of them is
+    good enough at public-network scale and the F3+ deployment never
+    achieves credible neutrality. F0/F1/F2 work without resolving this;
+    the bet only matters at F3+.
+
+15. **LLM dependency in v0.7 is a property regression from v0.** v0 is
     air-gappable: `transformers.js` runs locally, the registry is SQLite
     on disk, the IR validator is ts-morph in-process, no network is
     touched after `pnpm install`. v0.7 introduces a hard dependency on

@@ -98,6 +98,31 @@ have wildly different semantics — off-by-one, endianness, error handling,
 thread safety. If embedding similarity ever becomes a correctness criterion,
 the substrate has silently failed.
 
+### Verification ladder
+
+A registry of content-addressed blocks needs an orthogonal answer to "how
+much do we believe this block does what it says?" Property tests
+(v0's floor) catch bugs in expectation; they do not establish absence of
+counterexamples. The verification ladder formalizes the next steps:
+
+- **L0** — strict-TS subset, property tests pass. The v0 floor.
+- **L1** — total functional: structural recursion or explicit fuel; the
+  static totality checker rejects unbounded iteration.
+- **L2** — SMT-decidable theory declared in `spec.yak`; Z3 / BMC proves
+  refinement against the contract spec; bounded fallback to actor-critic
+  fuzzing when the solver cannot reach.
+- **L3** — paired Lean (or Coq / Agda) refinement proof, machine-checked.
+
+Each level strictly refines the level below (a stricter contract about the
+same behavior). Levels are declared per block in `spec.yak` and
+mechanically enforced by the registry; a block claiming L2 that only
+passes L1 is rejected, not silently downgraded. Levels are opt-in — a v0
+deployment running purely on L0 blocks is first-class.
+
+See `VERIFICATION.md` for the full design (block-as-triplet identity,
+object-capability discipline, totality regime, SMT/BMC/Lean tooling, TCB
+hardening, verifier-as-block).
+
 ### Composition from minimal blocks
 
 Every component decomposes into smaller contracts that compose back into
@@ -223,10 +248,98 @@ security-critical contexts, not drop-in substitutes.
 
 ---
 
+## Orthogonal axes
+
+Yakcc has three independent axes. A user sits at any `(v, F, L)`
+coordinate; advancing on one axis does not require advancing on another.
+
+```
+                          Trust/Scale (FEDERATION.md)
+                          F0 → F1 → F2 → F3 → F4
+                          ──────────────────────────►
+
+Substrate (MASTER_PLAN)   ▲
+v0 → v0.5 → v0.7          │           Verification (VERIFICATION.md)
+v1 → v2                   │           ▲
+                          │           │
+                          │           │  L0 → L1 → L2 → L3
+                          │           │
+                          ▼           ▼
+```
+
+- **v-axis (substrate maturity)** — what the substrate can do
+  (`MASTER_PLAN.md` stages v0..v2). Local-only TS substrate → AI
+  synthesis → sub-function decomposition → federation/WASM/multi-hook →
+  self-hosting.
+- **F-axis (trust/scale)** — how many machines participate
+  (`FEDERATION.md`). F0 single-machine → F1 read-only mirror → F2
+  attested mirror → F3 ZK supply-chain → F4 economic-commons participant.
+- **L-axis (verification rigor)** — how confident we are
+  (`VERIFICATION.md`). L0 property tests → L1 totality → L2 SMT/BMC → L3
+  Lean refinement proof.
+
+The cornerstone-preserving move: **F0 is first-class at every substrate
+level**. A user running yakcc privately at `(v0.7, F0, L0)` has the full
+v0.7 capability without ever touching a network. Federation features are
+imported, not inherited — `@yakcc/federation` is an opt-in package, not
+a default. The economic primitives at F4 live in a separate
+`@yakcc/incentives` package and are isolated from everything else; a user
+who wants F1/F2/F3 capability without economic exposure simply does not
+install that package.
+
+Each axis has its own document because each axis has its own design
+surface and its own decision log. Substrate decisions live in
+`MASTER_PLAN.md`. Verification decisions live in `VERIFICATION.md`
+(DEC-VERIFY-NNN). Federation/economics decisions live in
+`FEDERATION.md` (DEC-FED-NNN). The meta-commitment to the axis
+decomposition itself is DEC-AXIS-017 in `MASTER_PLAN.md`.
+
+---
+
 ## Architecture
 
-Seven packages. Read the per-package README for the full contract; this
-section is the map.
+Three package groups, organized by which axis they live on. Read the
+per-package README for the full contract; this section is the map.
+
+```
+@yakcc/core                        # F0 — every yakcc deployment
+├── @yakcc/contracts               # spec, canonicalization, content-address
+├── @yakcc/registry                # local SQLite + sqlite-vec store
+├── @yakcc/ir                      # strict-TS subset validator
+├── @yakcc/compile                 # whole-program assembly
+├── @yakcc/seeds                   # the ~20-block seed corpus
+├── @yakcc/cli                     # `yakcc` command surface
+├── @yakcc/hooks-claude-code       # facade in v0, live v0.5+
+└── @yakcc/shave                   # v0.7 sub-function decomposition
+
+@yakcc/federation                  # F1+ — opt-in (does not exist yet)
+├── attestation lookup             # consult remote verifiers
+├── content mirroring              # pull/push content-addressed blocks
+├── attestation publishing         # F2+ — local verifier signs and propagates
+└── ZK supply-chain proofs         # F3 — cryptographic artifact map
+
+@yakcc/incentives                  # F4 — opt-in, chain-bound (does not exist yet)
+├── bounty submission
+├── proof-of-fuzz miner
+├── stake-to-refine
+└── slashing/deprecation
+```
+
+Everything currently in v0 (`contracts`, `registry`, `ir`, `compile`,
+`seeds`, `cli`, `hooks-claude-code`) belongs to the `@yakcc/core` group.
+The v-axis advances entirely within `@yakcc/core` — v0.7 adds
+`@yakcc/shave` to the same group; v2 self-hosting is an additional build
+mode in the same group. **`@yakcc/federation` and `@yakcc/incentives` do
+not exist as packages yet**; they are documented here so the architecture
+is coherent, and v1's federation work is what populates them. See
+`FEDERATION.md` for the F-axis design.
+
+The dependency graph is a DAG flowing `incentives → federation → core`;
+nothing flows the other way. The IR validator does not know federation
+exists; the registry does not know about chains. This is what makes the
+F0 deployment first-class.
+
+Substrate-internal flow within `@yakcc/core`:
 
 ```
                         +-----------------------------+
@@ -268,6 +381,53 @@ behavioral guarantees, error conditions, and non-functional properties
 make two equivalent specs hash identically. The embedding pipeline produces
 a vector representation behind a provider interface — `transformers.js`
 locally in v0, hosted providers swappable later.
+
+#### Block representation: v0 transitional shape and v1+ triplet
+
+In v0, a block is a single TypeScript file with an embedded `CONTRACT`
+literal — the spec lives inside the same file as the implementation, and
+`ContractId = hash(canonical-spec)`. This is the **v0 transitional
+shape**. It is L0 by construction (strict-TS subset + property tests)
+and was correct for v0 because the substrate did not yet need to carry
+verification artifacts beyond property tests.
+
+v1+ moves to a **cryptographic triplet** under the verification ladder:
+
+```
+Block = (spec.yak, impl.ts, proof/)
+BlockMerkleRoot = MerkleRoot(spec.yak, impl.ts, proof/)
+```
+
+- **`spec.yak`** — JSON-shaped (LLM-friendly), with first-class fields
+  for preconditions, postconditions, invariants, capability requirements
+  (object-capability effect signature), totality witnesses, declared
+  verification level, and declared SMT theory at L2.
+- **`impl.ts`** — the strict-TS-subset implementation already validated
+  by `@yakcc/ir`. At L1+ the totality check extends the validator; at
+  L2+ the implementation must be liftable into the declared SMT theory.
+- **`proof/`** — a *directory with a manifest*, not a single file. The
+  manifest is a tagged-union declaration of which verification artifacts
+  are present (property tests, SMT certs, Lean proofs, fuzz-bounds
+  witnesses) and which checker each invokes.
+
+Block identity becomes `BlockMerkleRoot`; the spec hash becomes an
+**index** over blocks (`spec_hash → [BlockMerkleRoot, ...]`). The
+selector continues to find candidate implementations by spec hash; each
+candidate now carries its own verification evidence under its own
+identity.
+
+The v0 → v1+ migration is mechanical: a one-shot extraction tool walks
+each seed block, parses the embedded `CONTRACT` literal via `ts-morph`,
+and emits a `spec.yak` JSON file alongside the `.ts`. All ~20 v0 seeds
+become L0 by construction; `proof/` is backfilled incrementally as
+contributors add SMT certs or Lean proofs. **There is no parallel
+authority for block identity** — once the migration completes, the v0
+`ContractId = hash(spec)` model is retired, not preserved as a
+transitional alias indefinitely.
+
+See `VERIFICATION.md` for the full triplet specification, the migration
+path, and DEC-VERIFY-002 / DEC-VERIFY-003 for the load-bearing
+decisions.
 
 ### `@yakcc/registry`
 
@@ -492,18 +652,33 @@ forking the parser is a v1+ conversation if it ever happens.
 
 ## Hard problems we explicitly aren't solving in v0
 
-`MASTER_PLAN.md` carries the live deferral table. The summary:
+`MASTER_PLAN.md` carries the live deferral table.
+`VERIFICATION.md` and `FEDERATION.md` now own the design surfaces that
+address contract equivalence, provenance/trust, and adversarial
+contributions — items that previously lived purely as deferred notes.
+The summary as it applies to v0 specifically:
 
-- **Contract equivalence is undecidable in general.** We rely on declared
-  strictness, structural sanity checks, and shared property-test corpora.
-  Near-duplicates are tolerated.
+- **Contract equivalence is undecidable in general.** v0 relies on
+  declared strictness, structural sanity checks, and shared
+  property-test corpora. Near-duplicates are tolerated. The
+  verification ladder in `VERIFICATION.md` (L2 SMT-decidable theories,
+  L3 Lean-paired proofs) is the longer-term answer; v0 ships at L0 and
+  the ladder is opt-in per block as it populates.
 - **Composition is not free.** Errors, resources, and performance don't
-  decompose cleanly. v0 limits seed blocks to pure, total, side-effect-free
-  cases where composition is well-behaved.
+  decompose cleanly. v0 limits seed blocks to pure, total,
+  side-effect-free cases where composition is well-behaved. The
+  ocap effect-signature work in `VERIFICATION.md` formalizes effect
+  composition for v1+.
 - **Provenance and trust.** None in v0. Public-domain commons. Trust
-  mechanisms are a v1 design pass.
-- **Adversarial contributions.** Out of scope until a shared registry exists
-  to attack.
+  mechanisms attach to immutable contract ids in a sidecar layer per
+  `FEDERATION.md` (attestations from content-addressed verifiers, with
+  `valid_until_revoked` semantics). v0 ships without attestations; F1+
+  introduces them.
+- **Adversarial contributions.** Out of scope at v0 because there is no
+  shared registry to attack. `VERIFICATION.md` (verifier-as-block,
+  attestation revocation, TCB hardening) and `FEDERATION.md` (Proof of
+  Fuzz, deprecation-as-slashing, canonicalization engine) are the
+  design surfaces that address this when a shared registry exists.
 - **Seed-corpus bias.** Whatever ~20 blocks we pick will shape composition
   taste. We accept the bias and rely on v0.5's authoring loops to dilute it.
 - **Sub-function granularity: when is a block atomic?** v0.7 demands
@@ -540,7 +715,16 @@ forking the parser is a v1+ conversation if it ever happens.
   truth for *why*.
 - `MASTER_PLAN.md` — staged plan, exit criteria, non-goals, live work
   items, decision log, riskiest assumptions. Source of truth for *what
-  next*.
+  next* on the substrate (v-axis).
+- `VERIFICATION.md` — the verification spine. Verification levels
+  L0..L3, block-as-triplet identity, object-capability discipline,
+  totality regime, SMT/BMC and Lean L3, TCB hardening, verifier-as-block.
+  Source of truth for the L-axis.
+- `FEDERATION.md` — the trust/scale axis. F0..F4 levels, package
+  decomposition (`@yakcc/core`, `@yakcc/federation`, `@yakcc/incentives`),
+  attestation protocol, F4 economic primitives (Proof of Fuzz,
+  bounties, stake-to-refine), governance of the default trust list.
+  Source of truth for the F-axis.
 - `AGENTS.md` — orientation for AI agents who land in the repo.
 - `packages/<name>/README.md` — per-package contract. The package's
   promises, its public surface, and what it does not do. (Authored
