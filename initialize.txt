@@ -1,0 +1,113 @@
+Yakcc — Project Scoping & Planning Prompt
+You are being asked to scope, plan, and begin implementing a research project called Yakcc. This document is your single source of truth for what we're building and why. Read it end-to-end before producing any output.
+Your first deliverables are:
+
+A clarifying-questions pass on anything in this document that is ambiguous or under-specified.
+A staged implementation plan with milestones, exit criteria, and explicit non-goals per stage.
+A monorepo skeleton (pnpm workspaces + Turborepo, matching the conventions already in use on cognitive-stack) with placeholder packages for each component identified below.
+A DESIGN.md at the repo root that captures the philosophy and architecture in your own words, written so a new contributor could orient themselves in 15 minutes.
+
+Do not start implementing components beyond stubs until the plan is reviewed.
+
+Philosophy (read this first)
+Traditional software development assembles applications from large, generic, modular components — JSON parsers, HTTP clients, ORM frameworks — that try to handle every conceivable use case. These components are maintained by large teams, carry significant complexity, and import vast attack surface that the average caller never exercises. A program that needs to parse a list of integers pulls in a full JSON library and inherits every CVE that library will ever have.
+AI-driven development has made this worse, not better. AI coding agents reflexively reach for the most popular library they remember from training, often at outdated versions, and ignore the long tail of well-suited smaller libraries entirely. When the agent can't find the right library quickly, it just reimplements the functionality inline — burning compute on emitting the same React boilerplate, the same debounce, the same parseInt wrapper, ten million times across ten million projects. Generation is cheaper than retrieval-plus-comprehension, so generation wins, and the long tail of correct, audited, minimal implementations rots.
+Yakcc inverts this. Software is assembled from minimal, contract-addressed basic blocks drawn from a global registry. Each block is written exactly once — by the first caller who needs it — and improves monotonically over time as stricter or faster implementations are contributed. The result is software that is smaller, more auditable, more secure, and dramatically cheaper to generate, because we stop emitting the same code over and over.
+The project is named Yakcc because it is, self-evidently, the most ambitious yak shave in history: a massive prerequisite undertaking whose explicit purpose is to abolish all future yak shaves. We shave once, so callers never shave again. The double-c is a nod to GCC and the long lineage of terse compiler names.
+
+Core concepts
+Contracts
+A contract is a precise behavioral specification of what a piece of code does. "Parse a JSON array of integers, no other types, no escapes, fail on malformed input" is a contract. "Match an opening bracket character" is a contract. "Compute SHA-256 of a byte array, FIPS-compliant, constant-time" is a contract.
+Contracts are partially ordered by strictness. A stricter contract is a refinement of a looser one — it does less, but guarantees more about what it does. A bug fix is a contract that is strictly stricter than the buggy version (it advertises that it correctly handles a case the prior version mishandled). A performance improvement is a contract with the same behavioral semantics but stronger non-functional guarantees (lower time complexity, smaller memory footprint, etc.).
+Contract identity is not a hash of the code, a name, or a semver. It is the structured behavioral specification itself, plus verification evidence. Two implementations satisfying the same contract are interchangeable from the caller's perspective.
+The embedding is just an index
+Vector embeddings of contracts exist solely as an associative-memory trick to find candidate contracts for a given need. They are the search mechanism, not the contract. Selection from candidates is governed by structured contract matching plus verification, not by embedding similarity alone. Do not let embedding similarity become a correctness criterion. Near-neighbors in embedding space can have wildly different semantics (off-by-one, endianness, error handling, thread safety).
+Composition from minimal blocks
+The core compositional move: every component decomposes into smaller contracts that compose back into more complex ones. A list-of-ints JSON parser composes an integer-recognizer, a bracket-matcher, and a comma-separator. A full JSON parser is built atop the list-of-ints parser plus string-recognizer, plus object-recognizer, etc. Each level only inherits the surface area it actually exercises.
+This is the answer to the supply-chain problem: a caller who needs to parse a list of integers gets exactly that, with no JSON-the-language attack surface attached.
+The registry is monotonic and version-free
+Old implementations are never deleted. They simply stop winning selection because newer entries advertise stricter contracts (bug fixes) or better non-functional properties (faster, smaller, lower-memory). There is no semver, no breaking-change event, no "upgrade." The substrate gets quietly better over time.
+This is a load-bearing property. Versioning is one of the largest sources of accidental complexity in modern software, and Yakcc designs it out by making contracts the identity rather than names.
+Minimum-viable code
+Yakcc produces minimum-viable code — the smallest implementation whose contract is a superset of what the caller actually needs. This is the opposite of how libraries are written today, where authors maximize generality to maximize adoption. The wedge for the project, especially in security-conscious contexts, is that every line of code in a Yakcc-assembled program points to a verified, reused basic block with a known test history and minimum necessary surface area.
+
+Components
+The project consists of five primary components. Treat these as packages in the monorepo.
+1. Contract proposal mechanism (@yakcc/contracts)
+Defines what contracts look like as data structures. Provides:
+
+A schema for declaring contracts (input/output types, behavioral guarantees, error conditions, non-functional properties like time/space complexity, purity, side effects, thread safety).
+A proposal protocol: when a caller needs functionality, they submit a contract proposal. The system either matches it to an existing contract in the registry or, if no match exists, accepts the proposal and routes it to synthesis.
+An embedding generation pipeline that produces a vector representation of each contract for the search index.
+A consolidation policy: when a new contract proposal is sufficiently close to an existing contract, the system prefers widening the existing contract over creating a duplicate. The registry must resist combinatorial explosion of near-duplicate contracts.
+
+Open question for planning: what is the minimum viable contract format for v0? Likely candidates: a TypeScript-style type signature plus a free-text behavioral description plus a property-test corpus. Pick something that is easy to author, easy to embed, and admits machine verification later.
+2. Search and selection mechanism (@yakcc/registry)
+The registry of contracts and implementations. Provides:
+
+Vector search over contract embeddings to surface candidates for a proposal.
+Structured contract-matching to filter candidates that don't actually satisfy the caller's needs (the embedding gives candidates; structural matching confirms fit).
+Selection logic when multiple implementations satisfy the same contract — chooses based on stricter contracts winning over looser ones, and on advertised non-functional properties.
+Provenance and trust metadata: who authored each implementation, what tests passed, what differential testing has been done, runtime/production exposure, formal verification status.
+
+Open question for planning: where does the registry live? For v0, a local content-addressed store (probably SQLite + a vector index like sqlite-vec or LanceDB) is sufficient. The federated/global registry is a v2+ concern but the data model should not preclude it.
+3. AI-native intermediate representation (@yakcc/ir)
+The representation language for basic blocks. Constraints:
+
+Must be trivially easy for LLMs to read and emit. This is the load-bearing requirement. The IR exists to be authored by AI and humans interchangeably.
+Should look like a language LLMs already speak natively. Strong recommendation: a strict subset of TypeScript with first-class contract annotations. TypeScript is chosen over Rust for v0 because (a) training data density is dramatically higher, (b) structural typing matches contract subtyping naturally, (c) the type system is already used to encode behavioral contracts in the wild (branded types, template literal types), and (d) it admits a free fallback codegen path: transpile to vanilla TS and run on Node/Deno/Bun if no native backend exists yet.
+The strict subset must exclude any, eval, untyped imports, runtime reflection, and other escape hatches that defeat contract verification.
+Contract metadata is first-class IR syntax, not a comment convention. The IR makes composition explicit — error propagation, resource ownership, and non-functional property composition are machine-readable.
+
+Open question for planning: should we extend an existing TS toolchain (tsc, swc, esbuild) or build a parser from scratch? For v0, extending is almost certainly correct.
+4. Compilation engine (@yakcc/compile)
+Converts IR to executable code for various targets. Provides:
+
+A backend interface that can be implemented per target.
+v0 backends: vanilla TypeScript/JavaScript (the fallback path) and WebAssembly (the portable runtime).
+Future backends: native code via LLVM, JVM bytecode, etc. Design for extensibility but do not implement these in v0.
+Whole-program assembly: given a top-level contract and the registry, resolve all sub-contracts, fetch implementations, and produce a single artifact.
+
+The compilation engine does not generate code itself — it composes pre-written basic blocks from the registry. Code synthesis happens elsewhere (see hooks below).
+5. IDE / agent hooks (@yakcc/hooks-*)
+Integrations that enforce the Yakcc paradigm in AI coding tools. v0 targets, in priority order:
+
+Claude Code (highest priority — this is where we live).
+Cursor.
+Codex / generic OpenAI-compatible coding agents.
+
+Each hook intercepts the agent's "I need to write code that does X" moment and reroutes it: instead of emitting code inline, the agent submits a contract proposal, the registry returns either an existing implementation or a synthesis request, and the agent's output becomes a reference to a registry entry rather than a wall of generated code.
+This is the leverage point for the entire project. Without hooks, Yakcc is a curiosity. With hooks, every line written by Claude Code becomes either a registry hit (free) or a registry contribution (one-time cost amortized across all future callers).
+Open question for planning: what is the minimal hook for Claude Code? Likely a slash command + a project-level configuration that registers Yakcc as a tool the agent must consult before emitting more than N lines of code in a basic-block-shaped function.
+
+Hard design questions to surface, not solve, in v0
+The following are known-hard problems. v0 should make pragmatic choices that don't preclude better answers later, and DESIGN.md should call these out explicitly:
+
+Contract equivalence is undecidable in general. v0 will rely on a mix of declared formal properties, shared property-test corpora, and differential execution. The registry will sometimes contain near-duplicate contracts. Selection must handle this gracefully.
+Composition is not free. Error propagation, resource ownership, and performance composition don't decompose cleanly. The IR must make composition explicit.
+Provenance and trust are critical. A program assembled from 47 basic blocks pulled from a registry has 47 supply-chain points. The registry's metadata model must support author identity, test history, formal verification claims, and runtime exposure data from day one, even if v0 only populates a fraction of these fields.
+Adversarial contributions. Eventually someone will submit a contract implementation that satisfies all advertised tests but contains a backdoor. v0 does not need to solve this, but the architecture should be compatible with future trust mechanisms (signed contributions, reproducible builds, formal proofs).
+
+
+Repo conventions
+Match the existing cognitive-stack conventions:
+
+pnpm workspaces + Turborepo.
+Strict TypeScript (no any, strict null checks, no implicit any).
+Facade-first rule applies here too: any backend that isn't built yet should expose a fully-implemented interface with plausible stub responses. No mock-revealing language in user-facing surfaces ("this is a placeholder", "TODO", etc.).
+Per-package README.md describing the package's contract (meta-appropriate for this project).
+AI discoverability artifacts: top-level AGENTS.md and a DESIGN.md that explain the project to a fresh agent context.
+
+
+What I want from you in this scoping pass
+In your first response:
+
+Clarifying questions on anything genuinely ambiguous. Do not ask questions whose answers are inferable from this document; do ask about things I genuinely haven't specified (e.g., target deployment story, expected scale of v0 registry, whether we ship a CLI in v0 or only a library).
+A staged plan — I'd suggest something like: v0 (local-only, TS-only, manual contract authoring, no AI synthesis), v0.5 (Claude Code hook, AI-driven contract proposal), v1 (federated registry, additional codegen targets). But propose your own staging if you see a better cut.
+Exit criteria per stage — what does "done" look like for each? Tests passing isn't sufficient; what is the demoable artifact?
+Non-goals per stage — what we are explicitly not building yet, with reasoning.
+The repo skeleton — actual directories and package.json files, with stub interfaces in each package. Make the facade real even where the backend is empty.
+DESIGN.md at repo root — your synthesis of the philosophy and architecture above, written for a new contributor.
+
+Do not begin implementing component logic beyond what's needed for the facade interfaces. The plan is the deliverable here, not the system.
+When you're done, end with a short list of the riskiest assumptions you made while planning, so I can push back on the ones I disagree with before you start building for real.
