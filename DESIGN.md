@@ -148,12 +148,47 @@ wedge for the project — especially in security-conscious contexts — is that
 every line of code in a Yakcc-assembled program points to something verified
 and minimal.
 
+### Library absorption
+
+A registry of hand-authored blocks is a demo. A registry that can absorb the
+working ecosystem block-by-block is the answer to the supply-chain problem.
+v0 stands up the substrate; v0.5 lets AI synthesize blocks the registry is
+missing; v0.7 ingests the libraries that already exist by decomposing them.
+
+Decomposition takes a third-party library's source tree and walks it for
+discrete contract-shaped units — a single function, a single exported
+binding, a method that cleanly factors out of its class. For each unit the
+decomposition engine proposes a `ContractSpec`, derives or synthesizes a
+property-test corpus (preferring the library's own tests where adaptable,
+falling back to its published usage examples, then to AI-derived cases),
+and ingests the unit as a strict-TS block in the registry. Provenance —
+source URL, upstream commit SHA, file path, line range, original license —
+attaches as mutable metadata on the immutable contract id.
+
+The point of this is concrete: a caller asking for `debounce` should get
+just the `debounce` block, not the rest of lodash. A caller asking for an
+`ms`-style millisecond-string parser should get just that parser, with
+provenance back to the line of upstream source it was extracted from. The
+supply-chain claim — "you get exactly what you asked for, with no attached
+attack surface" — only stops being theoretical when the registry can absorb
+existing libraries this way. Decomposition is the bootstrap path for that.
+
+Each absorbed block passes the same gates as a fresh block: the strict TS
+subset, a property-test corpus, content-addressed identity. Upstream
+licenses are recorded but not relicensed — the commons absorbs without
+rewriting attribution. v0.7 gates absorption on property tests; v1 adds
+differential execution against the upstream source as the harder, slower,
+more thorough check that the absorbed block actually behaves like the
+original on a large input corpus. Until that v1 check exists, decomposed
+blocks should be treated as candidate replacements pending manual audit
+in security-critical contexts, not drop-in substitutes.
+
 ---
 
 ## Architecture
 
-Six packages. Read the per-package README for the full contract; this section
-is the map.
+Seven packages. Read the per-package README for the full contract; this
+section is the map.
 
 ```
                         +-----------------------------+
@@ -166,27 +201,25 @@ is the map.
                         |          @yakcc/cli         |
                         |  propose | search | compile  |
                         |  registry init | block author|
+                        |  decompose (v0.7)            |
                         +--------------+--------------+
                                        |
-              +------------------------+------------------------+
-              |                        |                        |
-              v                        v                        v
-   +--------------------+  +--------------------+  +--------------------+
-   |  @yakcc/contracts  |  |   @yakcc/registry  |  |   @yakcc/compile   |
-   |  spec schema       |  |  SQLite +          |  |  IR -> TS backend  |
-   |  canonicalization  |  |  sqlite-vec        |  |  whole-program     |
-   |  content-address   |  |  vector candidates |  |  assembly          |
-   |  embedding pipeline|  |  structural match  |  |  provenance        |
-   |                    |  |  selection         |  |  manifest          |
-   +---------+----------+  +---------+----------+  +---------+----------+
-             |                       |                        |
-             |                       v                        |
-             |             +--------------------+             |
-             +------------>|     @yakcc/ir      |<------------+
-                           |  strict TS subset  |
-                           |  ts-morph + ESLint |
-                           |  composition rules |
-                           +--------------------+
+   +-------------+-------------+-------+-------+-------------+
+   |             |             |               |             |
+   v             v             v               v             v
++--------+ +-----------+ +-----------+ +-------------+ +------+
+|contracts| | registry | |  compile  | | decompose   | |  ir  |
+|spec    | | SQLite + | | IR -> TS  | | (v0.7)      | |strict|
+|canon.  | | sqlite-  | | whole-    | | AI-driven   | | TS   |
+|content-| | vec      | | program   | | absorption  | |subset|
+|address | | match    | | assembly  | | of existing | |ts-   |
+|embed   | | select   | | provenance| | libraries   | |morph |
+|pipeline| |          | | manifest  | | + provenance| |      |
++---+----+ +----+-----+ +----+------+ +------+------+ +---+--+
+    |           |             |              |           ^
+    |           |             |              |           |
+    +-----------+-------------+--------------+-----------+
+                  (all blocks pass through @yakcc/ir)
 ```
 
 ### `@yakcc/contracts`
@@ -253,6 +286,36 @@ output becomes a reference to a registry entry rather than a wall of
 generated code. That is when Yakcc starts paying for itself in real authoring
 loops.
 
+### `@yakcc/decompose` (v0.7)
+
+The library-absorption engine. Input is a source tree from an existing
+library; output is a set of registry rows, one per discrete contract-shaped
+unit identified in the source, each carrying provenance back to the upstream
+URL, commit SHA, file, and line range, plus the original library license.
+
+The engine is AI-driven: identifying which units cleanly factor out, deriving
+their `ContractSpec`, and producing a property-test corpus all involve model
+calls. The engine is *not* a free pass past the substrate's gates — every
+absorbed block passes the strict-TS IR validator, every absorbed block has a
+property-test corpus that passes before ingestion, and every absorbed block
+gets a content-addressed identity via the same canonicalization path as a
+hand-authored block. The substrate cannot tell, at lookup time, whether a
+candidate came from a human, from v0.5 synthesis, or from v0.7 decomposition;
+only the provenance metadata records the difference.
+
+License compatibility is enforced at the ingestion boundary. Permissive
+upstream licenses (MIT, BSD, Apache-2.0, ISC, 0BSD, Unlicense, public domain)
+are accepted with their license recorded; non-permissive licenses are
+refused with a clear error. The Unlicense remains the standard for fresh
+contributions per the cornerstone — absorbed third-party code carries its
+original license, the commons does not rewrite upstream attribution.
+
+v0.7 gates absorption on property tests. v1 adds differential execution
+against upstream as the deeper check, surfaced as a non-functional property
+on the contract id. The v0.7 demo target is `vercel/ms` — a single-purpose
+~100 LOC library with well-understood semantics, chosen specifically as a
+low-risk first proof of the pipeline.
+
 ---
 
 ## Why a strict subset of TypeScript is the IR
@@ -292,7 +355,7 @@ forking the parser is a v1+ conversation if it ever happens.
 |---|---|---|
 | Local-only registry | A single-file, no-server, demoable substrate | v1 (federation) |
 | TS-only backend | Single-target compile path; no native-binding ops in v0 | v1 (WASM, then native) |
-| Manual block authoring | No coupling to a moving model surface; substrate trustable in isolation | v0.5 (AI synthesis) |
+| Manual block authoring | No coupling to a moving model surface; substrate trustable in isolation | v0.5 (AI synthesis), v0.7 (library absorption) |
 | Facade hook | Locked install/command surface; v0.5 is behavioral not structural | v0.5 (live intercept) |
 | Hand-picked seed corpus | Demoable composition story; reviewer-sized | v0.5 (corpus grows organically once hook is live) |
 | Contributor-declared strictness | Tractable in v0; gameable in principle | v1 (trust layer) |

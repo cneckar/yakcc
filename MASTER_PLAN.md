@@ -174,7 +174,7 @@ is no. v0 either honors them or v0 is not Yakcc.
 
 ## Architecture (one paragraph; full detail in DESIGN.md)
 
-Six packages. `@yakcc/contracts` defines what a contract *is* and how it
+Seven packages. `@yakcc/contracts` defines what a contract *is* and how it
 canonicalizes to a content-address. `@yakcc/registry` stores contracts and
 implementations in SQLite + sqlite-vec, performs vector candidate retrieval and
 structured matching, and resolves selection. `@yakcc/ir` defines the strict
@@ -185,7 +185,17 @@ artifact plus a provenance manifest. `@yakcc/cli` exposes the developer
 surface (`propose`, `search`, `compile`, `registry init`, `block author`).
 `@yakcc/hooks-claude-code` is the leverage point — in v0 it ships as a facade
 (real command surface, stubbed proposal flow); in v0.5 it intercepts AI
-emission and reroutes through the registry.
+emission and reroutes through the registry. `@yakcc/decompose` (v0.7) is the
+library-absorption engine: input is a source tree from an existing library,
+process is AI-driven analysis that identifies discrete contract-shaped units,
+derives or synthesizes property-test corpora, and ingests each as a registry
+block with full provenance back to the source (commit SHA, file, line range);
+output is registry rows that absorb existing software block-by-block. Each
+absorbed block passes the same gates as fresh blocks: strict TS subset,
+property tests, content-addressed identity. The supply-chain promise — "you
+get exactly what you asked for, with no attached attack surface" — only
+becomes real when the registry can absorb the existing ecosystem;
+`@yakcc/decompose` is that bootstrap path.
 
 ---
 
@@ -287,13 +297,108 @@ Yakcc starts paying for itself in real authoring loops.
    ingested into the local registry on acceptance.
 3. Hit/miss/synthesize counts are queryable via `yakcc telemetry`.
 
-**Non-goals.** Federation. Cursor/Codex hooks. Trust metadata.
+**Non-goals.** Federation. Cursor/Codex hooks. Trust metadata. Library
+absorption (v0.7). Differential execution against original libraries (v1).
 
-### v1 — Federation, additional targets, additional hooks
+### v0.7 — Library Absorption
+
+**Thesis.** Yakcc absorbs existing libraries by AI-driven decomposition. The
+registry stops being a hand-authored corpus and starts being an alternative
+front-end for the working ecosystem. v0 proved the substrate; v0.5 proved AI
+synthesis into the substrate; v0.7 proves the substrate can ingest the
+ecosystem that already exists. This is the stage where Yakcc's supply-chain
+thesis stops being theoretical and starts being something a caller can
+actually feel: ask for `debounce`, get just the `debounce` block — not all
+of lodash — with provenance back to the source line.
+
+**In scope.**
+
+- `@yakcc/decompose` package. Public API:
+  `decomposeLibrary(sourcePath, registry, options): Promise<DecompositionResult>`.
+- AI-driven contract proposal per identified discrete unit (function, exported
+  binding, class method where it cleanly factors). Each unit becomes a
+  candidate `ContractSpec` plus a candidate strict-TS block.
+- Property-test corpus synthesis. Extract from the library's own test suite
+  where present and adaptable; synthesize from the library's published usage
+  examples where tests are absent or unsuitable; fall back to AI-derived
+  cases against the proposed contract. Every ingested block must arrive with
+  a corpus that passes.
+- Provenance. Each ingested block records source URL, commit SHA, file path,
+  line range, and the original library license. Provenance attaches to the
+  immutable contract id as mutable metadata; the cornerstone holds.
+- License compatibility check. Refuse to ingest from incompatible licenses
+  (GPL-family and any non-permissive license at this layer). Permissive
+  source licenses (MIT, BSD, Apache-2.0, ISC, 0BSD, Unlicense, public domain)
+  are recorded but not relicensed — the ingested block carries its original
+  license metadata. Fresh contributions remain Unlicense per DEC-LICENSE-012;
+  the commons absorbs without rewriting upstream attribution.
+- CLI surface. `yakcc decompose <path-or-url> [--registry <p>]` runs the
+  decomposition and ingests results. `yakcc search "debounce"` returns
+  decomposed-from-lodash candidates alongside hand-authored ones. `yakcc
+  compile <id>` works identically against ingested or fresh blocks.
+- Selection-signal augmentation with provenance. When the registry holds a
+  hand-authored block AND a decomposed-from-source block satisfying the
+  same contract, default tie-break is stricter-contract-wins, then declared
+  non-functional properties; users may force a preference via flag (e.g.
+  `--prefer hand-authored`, `--prefer decomposed`).
+
+**Exit criteria.**
+
+1. `yakcc decompose ms@2.x` (or a local clone of `vercel/ms`) ingests every
+   public function from the `ms` library into a fresh registry as discrete
+   blocks. `ms` is the chosen first target — a single-purpose ~100 LOC
+   millisecond-parsing library, well-understood semantics, low risk for a
+   first proof.
+2. Each ingested block passes its property-test corpus.
+3. `yakcc compile <ms-parse-id>` produces a runnable module that matches
+   `ms`'s actual behavior on the canonical test vectors
+   (`ms("2 days") === 172_800_000`, the published edge cases, the round-trip
+   forms).
+4. The provenance manifest names `vercel/ms@<commit-sha>`, the file, and the
+   line range for every ingested block.
+5. Each ingested block records its original license; the registry surface
+   exposes that license to callers and refuses ingestion from incompatible
+   licenses with a clear error.
+6. `yakcc search "milliseconds string parser"` returns the decomposed-from-ms
+   candidates with provenance, indistinguishable in interface from any other
+   query result.
+
+**Demoable artifact.**
+
+```
+yakcc decompose ms@2.1.3 --registry ./.yakcc/registry.sqlite \
+  && yakcc compile <ms-parse-id> \
+  && node ./yakcc-out/module.js -e 'ms("2 days")'
+# => 172800000
+# manifest credits vercel/ms@<commit> as the source.
+```
+
+**Non-goals (explicit, with reasoning).**
+
+- *No differential execution against the original library.* Property tests
+  gate v0.7; differential execution against the upstream implementation is
+  a v1 hardening pass and rides alongside federation's trust mechanisms.
+  v0.7 proves we can absorb; v1 proves the absorption is faithful at scale.
+- *No native-code library decomposition.* C, Rust, Go libraries are out of
+  scope. The IR is strict TS; the input must be expressible in it.
+- *No dynamic-language library decomposition.* Python, Ruby, et al. are out
+  of scope at this stage. TS/JS-only input.
+- *No federation of decomposed corpora.* Federation is v1. v0.7 is local-only,
+  same as v0.
+- *No re-licensing.* We record the upstream license; we do not rewrite it.
+  Public-domain dedication under DEC-LICENSE-012 governs *fresh* commons
+  contributions, not absorbed third-party code.
+- *No round-trip decompose-then-recompose-byte-equal-original guarantee.*
+  Impossible in general; explicitly not a goal.
+- *No automatic absorption of every library that resolves.* `yakcc decompose`
+  runs only on explicit invocation against an explicit source target.
+
+### v1 — Federation, additional targets, additional hooks, faithful absorption
 
 **Thesis.** Make the commons real: a federated registry, additional codegen
-targets starting with WASM, hooks beyond Claude Code, and the first concrete
-trust mechanisms.
+targets starting with WASM, hooks beyond Claude Code, the first concrete
+trust mechanisms, and differential-execution validation of v0.7's library
+absorption against upstream sources.
 
 **In scope.**
 
@@ -303,6 +408,11 @@ trust mechanisms.
 - `@yakcc/hooks-cursor` and `@yakcc/hooks-codex`.
 - A trust-metadata layer that stays compatible with the cornerstone (the layer
   attaches to the immutable contract id; identity is still hash, not signer).
+- Differential-execution validation of v0.7-decomposed blocks against their
+  upstream library sources, surfaced as a non-functional property on the
+  contract id. This is what lets a caller distinguish "decomposed and
+  property-tested" from "decomposed and behaviorally indistinguishable from
+  upstream on a large corpus."
 
 **Exit criteria.** TBD at end of v0.5; the v1 design pass is itself the next
 planning artifact, not a v0 deliverable.
@@ -379,6 +489,7 @@ Dependency waves: `{WI-001} → {WI-002, WI-004} → {WI-003, WI-006} → {WI-00
 | DEC-LICENSE-012 | **The Unlicense** (public-domain dedication) across the repo and every registered block | The user requested "MIT or even more permissive license for all (there is NO ownership allowed)." The Unlicense is the strongest available interpretation: an explicit dedication of the work to the public domain rather than a permissive copyright license. 0BSD and CC0 were the alternative finalists; the user chose the Unlicense. This decision is locked. |
 | DEC-DEMO-013 | v0 demoable artifact is `yakcc compile examples/parse-int-list` producing runnable TS + provenance manifest | One concrete artifact ties every v0 work item to a single end-to-end check. |
 | DEC-WI005-REGISTRY-PRIMITIVES-014 | WI-005 scope expanded to include bounded additions to the `@yakcc/registry` interface — `getContract(id)` and `getImplementation(id)` — restricted to `packages/registry/src/index.ts` and `packages/registry/src/storage.ts` (search/select/schema and all registry tests remain forbidden) | The compile engine fundamentally needs direct content-address lookup of contracts and their best implementation source to traverse the composition graph; this gap was flagged in the WI-005 dispatch and closing it inside WI-005 is more coherent than a separate work item. The expansion is bounded to two specific methods on two specific files with explicit forbidden_paths constraining every other registry surface, and a `forbidden_shortcuts` rule prevents unbounded interface drift. |
+| DEC-DECOMPOSE-STAGE-015 | Add a dedicated **v0.7 — Library Absorption** stage between v0.5 and v1, introducing `@yakcc/decompose` as a seventh component. v0.7 ships AI-driven decomposition of existing TS/JS libraries into discrete contract-shaped registry blocks with full provenance back to source (URL, commit SHA, file, line range) and license metadata. First demo target is `vercel/ms`. Differential execution against upstream is explicitly deferred to v1 alongside federation's trust mechanisms. | The user identified that without a path to absorb existing libraries, the registry only contains hand-authored or fresh AI-synthesized blocks and the supply-chain story remains theoretical — a caller asking for `debounce` cannot get just the `debounce` block from the working ecosystem. Folding decomposition into v0.5 conflates two distinct theses (synthesize-the-missing vs absorb-the-existing); pushing it into v1 ties it to federation timing it does not need. A discrete v0.7 keeps each stage demoable and lets v1 focus on federation, additional targets, trust, and the differential-execution hardening that decomposed blocks need to be trusted in security-critical contexts. `ms` was chosen as the first target because its semantics are simple, well-understood, and ~100 LOC — proving the pipeline before harder libraries stress it. |
 
 ---
 
@@ -438,6 +549,17 @@ disagree with before the orchestrator builds against them.
     builds, and `transformers.js` model download. If any one of those
     regresses, the criterion regresses with it. We ship the criterion
     anyway because vague exit criteria rot.
+11. **Decomposing an existing library is genuinely harder than decomposing
+    fresh code.** Subtle invariants in the original — security-critical
+    timing, side-channel resistance, undocumented call patterns maintainers
+    relied on, idiosyncratic error semantics callers built around — may not
+    survive contract extraction. Property tests in v0.7 will catch obvious
+    behavioral mismatches; differential execution in v1 will catch
+    sophisticated drift. Until v1, callers depending on decomposed-from-source
+    blocks for security-critical code should treat them as candidate
+    replacements pending manual audit, not drop-in substitutes. The first
+    target (`ms`) was chosen specifically because its semantics are simple
+    and well-understood, so v0.7 proves the pipeline before v1 hardens it.
 
 ---
 
