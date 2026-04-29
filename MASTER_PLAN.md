@@ -276,6 +276,162 @@ prove the substrate is real before anyone is asked to live inside it.
   the narrower one. Yakcc cannot ship its own substrate by importing the
   problem it claims to solve.
 
+### v0.6 — Triplet substrate (block-as-cryptographic-triplet migration)
+
+**Thesis.** v0 modeled a block as a single `.ts` file with an embedded
+`CONTRACT` literal, identified by `ContractId = hash(canonical-spec)`. The
+verification ladder in `VERIFICATION.md` (DEC-VERIFY-002, DEC-VERIFY-003)
+demands a richer shape: every block is a directory triplet
+`(spec.yak, impl.ts, proof/)` whose identity is the Merkle root of those
+three artifacts, and the spec hash demotes from identity to selector index.
+v0.6 is the substrate-shape bridge that makes the v0 demo conform to the
+verification paradigm without yet adding L1+ checks. It is not a new
+capability stage; it is a foundation upgrade that v0.5 (live AI synthesis)
+and v0.7 (`yakcc shave`) both build on. Sacred Practice #12 (single source
+of truth) requires the inline-`CONTRACT`-literal mechanism to be **removed**
+in this stage, not preserved alongside the triplet form.
+
+This stage is **L0-only**. L1 totality, L2 SMT, L3 Lean, and the expanded
+ocap banishment list from `VERIFICATION.md` are deferred to a later
+substrate stage (likely paired with v1 federation or as their own L-axis
+work). v0.6 ships the triplet *shape* and the L0 verifier (existing
+strict-TS subset + existing fast-check property tests, repackaged as the
+`property_tests` artifact in `proof/manifest.json`).
+
+**In scope.**
+
+- `spec.yak` JSON schema and validator in `@yakcc/contracts`. Required fields
+  per `VERIFICATION.md` §spec.yak: `name`, `inputs`, `outputs`,
+  `preconditions`, `postconditions`, `invariants`, `effects`, `level`. At L0
+  every seed declares `effects: []` and `level: "L0"`. Pre/post/invariants
+  may be empty arrays for now (the existing `behavior` + `guarantees` +
+  `errorConditions` from v0's `ContractSpec` map cleanly to these fields).
+  Optional level-dependent fields (`theory`, `bounds`, `totality_witness`,
+  `proof_kind`, `constant_time`) are accepted but unused at L0.
+- `BlockMerkleRoot` derivation in `@yakcc/contracts`. Concrete encoding
+  decided in this stage and recorded as `@decision` at the implementation
+  site: at L0, `impl_hash = BLAKE3(impl.ts file bytes)` (deterministic
+  ts-morph normalization is deferred to L1+ where the totality pass
+  normalizes the AST anyway); `proof_root = BLAKE3(canonical(manifest.json)
+  || hash(artifact_1) || ... || hash(artifact_N))` with manifest order
+  authoritative; `BlockMerkleRoot = BLAKE3(spec_hash || impl_hash ||
+  proof_root)`. Property-tested for determinism on every triplet across
+  re-builds.
+- Directory-based block authoring in `@yakcc/ir`. `parseBlockTriplet(dir)`
+  replaces `parseBlock(source)`. Reads the three artifacts, runs the existing
+  strict-subset validator on `impl.ts`, validates `spec.yak` against the
+  schema, validates `proof/manifest.json` against the L0 manifest schema
+  (must declare exactly one `property_tests` artifact). The CONTRACT-literal
+  extractor (`packages/ir/src/annotations.ts`) is **removed**.
+- Registry schema migration in `@yakcc/registry`. The `contracts` and
+  `implementations` tables are replaced by a single `blocks` table keyed by
+  `block_merkle_root` with a non-unique `spec_hash` index. Selection moves
+  from `selectImplementation(contractId)` to
+  `selectBlocks(specHash) → BlockMerkleRoot[]`. The migration is a clean
+  schema bump (DEC-NO-PARALLEL-AUTHORITY); the seed corpus has not been
+  published externally so its content-addresses re-derive cleanly.
+- Compile resolver update in `@yakcc/compile`. `resolveComposition` walks
+  the graph by `BlockMerkleRoot`; sub-block references in `impl.ts` resolve
+  through `spec_hash → [block_merkle_root]` (at L0-only, exactly one match
+  per spec_hash for the seed corpus). The provenance manifest emits
+  `BlockMerkleRoot` plus `spec_hash` for each entry. Byte-identical re-emit
+  on an unchanged registry is preserved.
+- Seed corpus migration in `@yakcc/seeds`. Each of the 20 hand-authored
+  blocks becomes a directory `packages/seeds/src/blocks/<name>/` with
+  `spec.yak`, `impl.ts`, and `proof/manifest.json`. Existing fast-check
+  property tests are repackaged as the `property_tests` artifact named in
+  the manifest. The seed loader (`packages/seeds/src/seed.ts`) walks block
+  directories and uses `parseBlockTriplet`.
+- Demo migration in `examples/parse-int-list`. The existing
+  `examples/parse-int-list/contract.json` becomes
+  `examples/parse-int-list/spec.yak` (rename + addition of required v1
+  fields). A new `examples/parse-int-list/proof/manifest.json` declares the
+  existing property-test artifact. `yakcc compile examples/parse-int-list`
+  produces a runnable module that parses `"[1,2,3]"` to `[1,2,3]` and a
+  provenance manifest naming every block by `BlockMerkleRoot`.
+- Plan re-anchoring (executed inline in this planning slice). v0.7's
+  WI-010..WI-015 wording is updated to reference triplet shape, not inline
+  `CONTRACT` literals. DEC-IDENTITY-005 receives an amendment cross-
+  referencing DEC-VERIFY-002.
+
+**Exit criteria (each is a concrete, demoable check, not a vague claim).**
+
+1. `pnpm install && pnpm build` from a clean clone produces a green Turbo
+   pipeline. The strict-TS subset validator runs against every seed's
+   `impl.ts`, not against legacy `.ts`+`CONTRACT` files.
+2. `yakcc registry init` ingests the 20-block seed corpus as triplets,
+   emitting one row per block in the new `blocks` table with a stable
+   `block_merkle_root` and a `spec_hash` index entry. Re-running `yakcc
+   registry init` on a clean DB produces byte-identical Merkle roots
+   (determinism property test).
+3. `yakcc compile examples/parse-int-list` produces a runnable TS module
+   that parses `"[1,2,3]"` to `[1,2,3]` on Node, plus a provenance manifest
+   naming every block by `BlockMerkleRoot` with its `spec_hash` recorded
+   alongside. Re-running on an unchanged registry produces a byte-identical
+   artifact and manifest (the v0 byte-identical invariant is preserved).
+4. The compiled `parse-int-list` module imports zero runtime dependencies
+   beyond what the seed blocks themselves require. The supply-chain claim
+   remains demonstrable.
+5. The full pre-existing test suite survives the migration: the 28 CLI
+   tests, the seed corpus property tests under `fast-check`, the `@yakcc/ir`
+   strict-subset tests, the `@yakcc/contracts` canonicalization tests, the
+   `@yakcc/registry` storage and selection tests, and the `@yakcc/compile`
+   resolve / assemble tests must all pass green at every work-item boundary.
+   New tests are added for `spec.yak` schema validation, `proof/manifest.json`
+   schema validation, MerkleRoot determinism, and `parseBlockTriplet`
+   directory parsing.
+6. The inline-`CONTRACT`-literal reading code (`packages/ir/src/annotations.ts`,
+   the `BLOCK_FILES` flat list in `packages/seeds/src/seed.ts`, the
+   `parseBlock(source)` signature in `packages/ir/src/block-parser.ts`, and
+   any `extractContractFromAst` callers) is **removed** in this stage. There
+   is no reading of `export const CONTRACT` literals after WI-T05 lands. A
+   grep over `packages/` for `extractContractFromAst` and `export const
+   CONTRACT` returns empty.
+7. The 7 v0 stage exit criteria are re-validated under the triplet shape and
+   recorded as still passing in WI-T06's acceptance evidence.
+
+**Non-goals (explicit, with reasoning).**
+
+- *No L1 totality check.* The `level: "L0"` declaration is the floor. L1
+  requires structural-recursion analysis or fuel parameters; the seed corpus
+  is naturally L1-shaped but the syntactic checker is its own work. Defer to
+  a later L-axis stage.
+- *No L2 SMT or L3 Lean.* Same reason — out of v0.6 scope. `spec.yak` accepts
+  the optional `theory`, `proof_kind`, `bounds` fields without enforcing
+  them; an L0 block that declares them is silently L0 (no upgrade path until
+  the higher-level checkers ship).
+- *No expanded ocap banishment list.* `VERIFICATION.md` §"Static banishment
+  list" extends the v0 banlist (no `Math.random`, no `Date.now`, no module-
+  level mutable bindings, etc.). The current `@yakcc/ir` validator already
+  bans `any`, `eval`, untyped imports, runtime reflection, dynamic property
+  access on caps. Keeping the existing banlist for v0.6; the expansion is
+  paid-for at the L1+ ocap-discipline stage.
+- *No `proof/` artifact kinds beyond `property_tests`.* `smt_cert`, `lean_proof`,
+  `coq_proof`, etc. are valid schema entries but rejected by the L0 manifest
+  validator. They become accepted at L2/L3 stages.
+- *No federation or attestation surface.* Attestations live in F2+
+  (`FEDERATION.md`); this stage produces blocks ready to be attested but
+  ships no attestation table.
+- *No verifier-as-block.* The verifier is internal to `@yakcc/ir` and
+  `@yakcc/contracts` for v0.6; making it content-addressed is a v1+ work
+  item.
+- *No proof-checker plumbing.* L0 has only property tests; the existing
+  fast-check runner is the checker.
+
+**Demoable artifact.**
+
+```
+yakcc registry init                                  # ingests 20 triplet blocks
+yakcc compile examples/parse-int-list                # emits dist/module.ts + provenance
+node examples/parse-int-list/src/main.js             # → [1, 2, 3]
+cat examples/parse-int-list/dist/manifest.json       # every entry is a BlockMerkleRoot
+```
+
+The provenance manifest and the byte-identical re-emit invariant are the
+two things that change visibly: every entry now carries `block_merkle_root`
+plus `spec_hash`, and the `block_merkle_root` is reproducible from the
+on-disk triplet bytes.
+
 ### v0.5 — Hooks live, AI synthesis on
 
 **Thesis.** Turn the Claude Code hook from facade into live interceptor and
@@ -680,24 +836,137 @@ Status: in progress.
 | WI-006 | Seed corpus | ~20 hand-authored, IR-conformant contracts demonstrating composition. Includes full chain for `examples/parse-int-list`. fast-check property tests for each. | WI-002, WI-004 | review | [x] done — landed at 3b54421 |
 | WI-007 | CLI | `yakcc propose | search | compile | registry init | block author`. Thin; defers all real logic to packages. | WI-003, WI-005 | review | [x] done |
 | WI-008 | Claude Code hook facade | Real slash-command surface, project config, install command. Proposal flow stubbed with a clear "v0.5" message. No interception logic yet. | WI-007 | review | [x] done |
-| WI-009 | Demo + acceptance | `examples/parse-int-list` end-to-end. Verifies all v0 exit criteria. Documents the 15-minute new-contributor path. **This work item is the v0 closer; it is independent of v0.7 and is the next item to dispatch after this plan rewrite lands.** | WI-005, WI-006, WI-007, WI-008 | approve | next |
+| WI-009 | Demo + acceptance | `examples/parse-int-list` end-to-end. Verifies all v0 exit criteria. Documents the 15-minute new-contributor path. **Subsumed by WI-T06** (v0.6 triplet-form demo + acceptance) per DEC-WI009-SUBSUMED-021 — the 7 v0 exit criteria are preserved as a strict subset of WI-T06's acceptance gate so the demo is not run twice with two different block shapes. | WI-005, WI-006, WI-007, WI-008 | approve | superseded by WI-T06 |
 
-Dependency waves: `{WI-001} → {WI-002, WI-004} → {WI-003, WI-006} → {WI-005, WI-007} → {WI-008} → {WI-009}`. Critical path runs through WI-001 → WI-002 → WI-003 → WI-005 → WI-009.
+Dependency waves: `{WI-001} → {WI-002, WI-004} → {WI-003, WI-006} → {WI-005, WI-007} → {WI-008} → {WI-009}`. Critical path runs through WI-001 → WI-002 → WI-003 → WI-005 → WI-009. WI-009 is now subsumed by WI-T06 in the v0.6 triplet initiative below.
 
-### Initiative: v0.7 sub-function decomposition (`yakcc shave`)
+### Initiative: v0.6 triplet substrate migration
 
-Status: planned, gated on v0 closure (WI-009 done).
+Status: in progress. This initiative is the substrate-shape bridge from v0
+(inline-`CONTRACT`-literal blocks) to v1 (verification-ready triplet
+blocks). It blocks v0.5 and v0.7 because both stages produce blocks and
+must produce them in the triplet shape, not in the deprecated v0 shape.
+See DEC-TRIPLET-MIGRATION-018, DEC-TRIPLET-L0-ONLY-019, DEC-TRIPLET-IDENTITY-020,
+DEC-WI009-SUBSUMED-021. Source-of-truth design: `VERIFICATION.md`
+§"Block as cryptographic triplet" (DEC-VERIFY-002, DEC-VERIFY-003).
 
 | ID | Title | Description | Deps | Gate | State |
 |---|---|---|---|---|---|
-| WI-010 | `@yakcc/shave` package skeleton + intent extraction | Stand up `packages/shave/` as a real typed-interface facade with one live capability: intent extraction. Public API `shave(...)` returns a stubbed tree; private `extractIntent(unitSource, context)` calls Anthropic Haiku (`claude-haiku-4-5-20251001`) directly via the SDK and returns a structured intent card. On-disk cache keyed by source SHA so re-runs are local and deterministic. No decomposition recursion yet. | WI-009 | review | not started |
-| WI-011 | Variance scoring + contract design rules | Port librAIrian's star-topology variance comparison and contract-design rules (safety = intersection, behavioral = majority-vote, capability = union) into TS. 7-dimension weights inherited verbatim: security 0.35, behavioral 0.25, error_handling 0.20, performance 0.10, interface 0.10. CWE-474 family mapping for the security dimension. Pure-function module with property tests; no LLM calls in this work item. | WI-010 | review | not started |
-| WI-012 | Atomic decomposition recursion (load-bearing) | The Sub-function Granularity Principle made executable. Implements the recursion that decomposes each candidate block until it bottoms out at atoms. AST-based atom test: at most one control-flow boundary, no further non-trivial sub-block in the registry. LLM-proposed decompositions that would create cycles or near-duplicate atoms are collapsed by the consolidation policy in `@yakcc/contracts`. **Reviewer must gate on the atom test for every leaf in the recursion tree.** "Did not reach atoms" is a hard failure. | WI-010, WI-011 | approve | not started |
-| WI-013 | Property-test corpus per recursion level + license gate | Property-test corpus extraction (upstream tests where adaptable, documented usage where absent, AI-derived as last resort). License detector that accepts only Unlicense / MIT / BSD-2 / BSD-3 / Apache-2.0 / ISC / 0BSD / public-domain dedications and refuses everything else with a clear error citing the detected license string. Differential test runner across implementations satisfying the same contract. | WI-012 | review | not started |
-| WI-014 | Shave CLI surface + provenance manifest | `yakcc shave <path-or-url>` wired into `@yakcc/cli`. Provenance manifest extended with parent-block links forming the recursion tree. `yakcc search` returns shaved atoms indistinguishable in interface from hand-authored ones; selection-signal augmentation per stage spec. | WI-012, WI-013 | review | not started |
-| WI-015 | v0.7 demo + acceptance against `mri` | Vendor `lukeed/mri` at a pinned commit under `vendor/mri/`. Run `yakcc shave` end-to-end. Verify all eight v0.7 exit criteria, including (a) atom test on every leaf, (b) `yakcc compile` output matches `mri`'s published test corpus byte-identically, (c) intent-card cache hit on a repeated run requires zero Anthropic API calls (network-sandboxed), (d) GPL-prepared input refused with a clear error. | WI-010, WI-011, WI-012, WI-013, WI-014 | approve | not started |
+| WI-T01 | `spec.yak` schema, `proof/manifest.json` schema, MerkleRoot derivation in `@yakcc/contracts` | Add `SpecYak` type + JSON schema (required: `name`, `inputs`, `outputs`, `preconditions`, `postconditions`, `invariants`, `effects`, `level`; optional: `theory`, `bounds`, `totality_witness`, `proof_kind`, `constant_time`). Add `ProofManifest` type + L0 schema (must declare exactly one `property_tests` artifact at L0; other artifact kinds are schema-valid but L0-rejected). Add `BlockMerkleRoot` branded type. Implement `blockMerkleRoot(triplet) → BlockMerkleRoot` with the encoding decided in this stage (`impl_hash = BLAKE3(impl.ts file bytes)` at L0; `proof_root = BLAKE3(canonical(manifest.json) \|\| concat(BLAKE3(artifact_bytes_in_manifest_order)))`; `block_merkle_root = BLAKE3(spec_hash \|\| impl_hash \|\| proof_root)`) and record the encoding as a `@decision` annotation. Property tests for determinism (re-derive on the same triplet returns the same root) and for sensitivity (any byte change in any artifact changes the root). `ContractId` (the spec hash) is retained as `SpecHash` and continues to derive from `canonicalize(spec.yak)`. | — | review | not started |
+| WI-T02 | Directory-based block authoring in `@yakcc/ir` | Add `parseBlockTriplet(directoryPath, registry?) → BlockTripletParseResult`. Reads `spec.yak`, `impl.ts`, `proof/manifest.json` from the directory; runs the existing strict-subset validator on `impl.ts` (no banlist expansion); validates `spec.yak` against the WI-T01 schema; validates `proof/manifest.json` against the L0 manifest schema; resolves sub-block references in `impl.ts` (existing import-detection logic) into `SpecHash` references that the registry uses for the `spec_hash → BlockMerkleRoot` lookup. **Remove** `packages/ir/src/annotations.ts` (CONTRACT-literal extractor) and the `parseBlock(source)` signature from `block-parser.ts` — the inline-CONTRACT mechanism is the deprecated path and must not coexist with the triplet path (Sacred Practice #12). Update or remove tests under `packages/ir/src/__fixtures__` that exercised the CONTRACT-literal shape. | WI-T01 | review | not started |
+| WI-T03 | Registry schema migration in `@yakcc/registry` | Replace `contracts` and `implementations` tables with a single `blocks` table: `blocks(block_merkle_root TEXT PRIMARY KEY, spec_hash TEXT NOT NULL, spec_canonical_bytes BLOB NOT NULL, impl_source TEXT NOT NULL, proof_manifest_json TEXT NOT NULL, level TEXT NOT NULL CHECK(level IN ('L0','L1','L2','L3')), created_at INTEGER NOT NULL)` plus index `idx_blocks_spec_hash ON blocks(spec_hash)`. Update `contract_embeddings` virtual table to key on `spec_hash` (since two blocks sharing a spec share an embedding). Replace `selectImplementation(contractId)` with `selectBlocks(specHash) → BlockMerkleRoot[]` and add `getBlock(merkleRoot) → BlockTripletRow`. Increment `SCHEMA_VERSION` to 2 and write the migration as a clean re-create (no v0/v1 tables coexist). Update `test_history`, `runtime_exposure`, `strictness_edges` to reference `block_merkle_root` instead of `contract_id` where applicable. The seed corpus has not been published externally so re-derived addresses are acceptable (DEC-TRIPLET-IDENTITY-020). | WI-T01 | review | not started |
+| WI-T04 | Compile resolver and provenance manifest update in `@yakcc/compile` | `resolveComposition` walks the graph by `BlockMerkleRoot`. Sub-block imports detected by `parseBlockTriplet` resolve through `selectBlocks(spec_hash)` (at L0-only with the seed corpus, exactly one match per spec_hash). Provenance manifest (`buildManifest`) emits one `ProvenanceEntry` per block with both `block_merkle_root` and `spec_hash` recorded; `verificationStatus` continues to derive from `test_history`. The byte-identical re-emit invariant is preserved (the order of entries follows topological order of the resolution result, same as v0). All `resolve.test.ts`, `assemble.test.ts`, `manifest.test.ts`, and `ts-backend.test.ts` survive the migration; new tests cover MerkleRoot-driven traversal. | WI-T02, WI-T03 | review | not started |
+| WI-T05 | Seed corpus migration in `@yakcc/seeds` | Convert each of the 20 hand-authored blocks under `packages/seeds/src/blocks/` from a single `.ts` file into a directory `<name>/` containing `spec.yak`, `impl.ts`, and `proof/manifest.json`. Lift each existing `export const CONTRACT` literal into `spec.yak` (preserving `behavior`, `guarantees`, `errorConditions`, `nonFunctional`, `propertyTests`; adding `name`, `level: "L0"`, `effects: []`, and empty `preconditions`/`postconditions`/`invariants` arrays at minimum — derive richer pre/post from existing guarantees where the existing language permits a clean lift). Move the implementation function into `impl.ts` (byte-identical to the current function body). Move the existing fast-check tests into the location named by `proof/manifest.json` (`tests.fast-check.ts` per the VERIFICATION.md example, or another path the manifest declares). Update `packages/seeds/src/seed.ts` to enumerate block directories (replacing the hand-maintained `BLOCK_FILES` list) and to use `parseBlockTriplet` instead of `parseBlock`. Update `packages/seeds/src/seed.test.ts` to assert against the new triplet shape (157 existing property tests must continue to pass). | WI-T02, WI-T04 | approve | not started |
+| WI-T06 | Demo migration + v0/v0.6 acceptance gate (`examples/parse-int-list`) | Rename `examples/parse-int-list/contract.json` → `examples/parse-int-list/spec.yak` and add the v1-required fields (`name`, `level: "L0"`, `effects: []`, plus empty pre/post/invariants arrays — pre/post can grow as a follow-up). Add `examples/parse-int-list/proof/manifest.json` declaring the existing property-test artifact. Verify `yakcc compile examples/parse-int-list` resolves the listOfInts triplet through the new `spec_hash → block_merkle_root` index, walks the composition graph through the seed-corpus triplets, emits `dist/module.ts` plus `dist/manifest.json` (provenance manifest now keyed by `BlockMerkleRoot`), and the runnable module parses `"[1,2,3]"` to `[1,2,3]` on Node. Re-validate all 7 v0 stage exit criteria under the triplet shape (per DEC-WI009-SUBSUMED-021). | WI-T03, WI-T04, WI-T05 | approve | not started |
 
-v0.7 dependency waves: `{WI-010} → {WI-011} → {WI-012} → {WI-013} → {WI-014} → {WI-015}` with WI-011 and WI-013 each running independent of the wave above them once their inputs are ready. Critical path runs WI-009 → WI-010 → WI-012 → WI-015 (the atom-test gate at WI-012 is the load-bearing review).
+v0.6 dependency waves: `{WI-T01} → {WI-T02, WI-T03} → {WI-T04} → {WI-T05} → {WI-T06}`. Critical path runs WI-T01 → WI-T02 → WI-T04 → WI-T05 → WI-T06. WI-T03 (registry schema) and WI-T02 (parser) are independent given WI-T01's schema, but WI-T04 depends on both. Max wave width: 2 (WI-T02 and WI-T03 in parallel).
+
+#### v0.6 Evaluation Contracts and Scope Manifests
+
+Each work item below is guardian-bound. The Evaluation Contract names the
+acceptance target the implementer is building toward and the reviewer is
+verifying against; the Scope Manifest names the file boundaries hooks
+enforce. These are the slice-level invariants — Sacred Practice #12 (no
+parallel mechanisms) is load-bearing across every WI-T0*.
+
+**WI-T01 — `spec.yak` schema, `proof/manifest.json` schema, MerkleRoot derivation**
+
+- *Evaluation Contract — required tests:* (a) `spec.yak` schema validator round-trips every legal v0 ContractSpec lifted into the v1-required-fields shape (positive cases include all 20 seed specs); (b) schema validator rejects each missing required field with a typed error naming the field; (c) `blockMerkleRoot(triplet)` is deterministic across re-runs on the same triplet (property test, ≥1000 cases); (d) `blockMerkleRoot` is sensitive — a single byte change in `spec.yak`, `impl.ts`, or any artifact named in `proof/manifest.json` produces a different root (property test); (e) `SpecHash = blake3(canonicalize(spec.yak))` agrees with the existing `contractId(ContractSpec)` derivation when applied to a spec that omits the v1-only required fields (so the migration path can re-index without recomputing `SpecHash` from scratch — call this the "spec-hash continuity" check).
+- *Evaluation Contract — required real-path checks:* `pnpm --filter @yakcc/contracts test` is green; `pnpm --filter @yakcc/contracts build` produces a clean strict-TS build; `pnpm build` at the workspace root remains green (no downstream package is broken yet because WI-T01 is additive — it adds new types and functions, removes nothing).
+- *Evaluation Contract — required authority invariants:* `@yakcc/contracts` remains the single canonical authority for content-addressing (DEC-IDENTITY-005, DEC-CANON-001, DEC-HASH-WI002). The MerkleRoot encoding is recorded as a `@decision` annotation in the implementation file so it is auditable and superseding it requires an explicit DEC entry.
+- *Evaluation Contract — required integration points:* No downstream callers in this WI; WI-T02 / WI-T03 / WI-T04 will consume these types in subsequent work items.
+- *Evaluation Contract — forbidden shortcuts:* No coexistence of v0 and v1 schema validators (do not ship `validateContractSpecV0` and `validateSpecYakV1` side-by-side — the v0 ContractSpec interface stays in `index.ts` only as a structural ancestor of `SpecYak` if needed, but no parallel "validate the deprecated shape" entry point ships); no use of `JSON.stringify` in the canonicalization path (DEC-CANON-001); no use of a non-BLAKE3 hash anywhere in identity derivation (DEC-HASH-WI002).
+- *Evaluation Contract — ready-for-guardian:* all required tests pass; the new types and functions are exported from `@yakcc/contracts/src/index.ts`; the MerkleRoot encoding `@decision` annotation is present in the implementation file.
+- *Scope Manifest — allowed:* `packages/contracts/src/**`, `packages/contracts/package.json`, `packages/contracts/tsconfig.json`.
+- *Scope Manifest — required:* `packages/contracts/src/index.ts` (re-exports), at least one new module under `packages/contracts/src/` for the schema and Merkle derivation (implementer's choice of name, e.g. `spec-yak.ts`, `merkle.ts`).
+- *Scope Manifest — forbidden:* `packages/ir/**`, `packages/registry/**`, `packages/compile/**`, `packages/seeds/**`, `packages/cli/**`, `packages/hooks-claude-code/**`, `examples/**`, every other top-level path enumerated in the workflow contract's `forbidden_paths`.
+- *Scope Manifest — state authorities touched:* contract-canonicalization authority (`@yakcc/contracts`); content-addressing authority (`@yakcc/contracts`).
+- *Rollback boundary:* WI-T01 is additive. If reviewer rejects, revert is a single-package rollback; no downstream consumers depend on the new types yet.
+
+**WI-T02 — Directory-based block authoring in `@yakcc/ir`**
+
+- *Evaluation Contract — required tests:* (a) `parseBlockTriplet(dir)` returns a typed result for each of the 20 seed-block triplet fixtures (set up under `packages/ir/src/__fixtures__/triplets/`) with strict-subset validation passing; (b) malformed `spec.yak` (missing required field) produces a typed validation error; (c) malformed `proof/manifest.json` (no `property_tests` artifact at L0) produces a typed validation error; (d) `impl.ts` containing `any` / `eval` / banned imports still fails the strict-subset validator with the v0 banlist exactly (no banlist regression, no banlist expansion); (e) sub-block import detection still resolves seed-pattern imports to `SpecHash` references; (f) the `parseBlock(source)` symbol is **not exported** from `@yakcc/ir`'s public surface (grep test).
+- *Evaluation Contract — required real-path checks:* `pnpm --filter @yakcc/ir test` is green; `pnpm --filter @yakcc/ir build` succeeds; the strict-subset CLI (`packages/ir/src/strict-subset-cli.ts`) is updated to operate on triplet directories and a smoke-test invocation against one seed triplet succeeds.
+- *Evaluation Contract — required authority invariants:* `@yakcc/ir` remains the single canonical authority for the strict-TS subset (DEC-IR-008). The CONTRACT-literal extraction code in `packages/ir/src/annotations.ts` is **deleted**, not commented out, not flagged behind a feature flag (Sacred Practice #12).
+- *Evaluation Contract — required integration points:* downstream consumers of `parseBlock` (`@yakcc/seeds/src/seed.ts`, `@yakcc/compile/src/resolve.ts`) will be updated in WI-T05 / WI-T04 respectively; WI-T02 ships the new API alongside a deprecation barrier — the old `parseBlock(source)` symbol is removed in this WI, so any unmigrated consumer fails to compile until its consuming WI is run. This is intentional: it forces every consumer through the new API before T02 lands.
+- *Evaluation Contract — forbidden shortcuts:* no parallel `parseBlock(source)` and `parseBlockTriplet(dir)` exports — the inline-CONTRACT path is removed in this WI; no shadow function that "wraps" an inline-CONTRACT block as a synthetic triplet on the fly (Sacred Practice #12); no expansion of the banlist (defer that to a later L-axis WI).
+- *Evaluation Contract — ready-for-guardian:* all required tests pass; `parseBlockTriplet` is exported from `@yakcc/ir/src/index.ts`; `packages/ir/src/annotations.ts` and any references to it are deleted; `parseBlock(source)` is removed.
+- *Scope Manifest — allowed:* `packages/ir/src/**`, `packages/ir/package.json`, `packages/ir/tsconfig.json`.
+- *Scope Manifest — required:* `packages/ir/src/block-parser.ts` (rewritten for triplets), `packages/ir/src/index.ts` (exports updated), `packages/ir/src/__fixtures__/**` (triplet fixtures added; legacy fixtures removed); `packages/ir/src/annotations.ts` (file deleted).
+- *Scope Manifest — forbidden:* `packages/contracts/**` (depend on, do not modify), `packages/registry/**`, `packages/compile/**`, `packages/seeds/**`, `packages/cli/**`, `packages/hooks-claude-code/**`, `examples/**`.
+- *Scope Manifest — state authorities touched:* strict-TS-subset authority (`@yakcc/ir`).
+- *Rollback boundary:* WI-T02 deletes the inline-CONTRACT mechanism. Rollback restores it from git history; downstream consumers (T04, T05) are not yet migrated, so a T02 rollback before T04/T05 is clean. After T05 lands, T02 can no longer be rolled back without also rolling back T05.
+
+**WI-T03 — Registry schema migration in `@yakcc/registry`**
+
+- *Evaluation Contract — required tests:* (a) fresh-DB migration to `SCHEMA_VERSION = 2` creates the new `blocks` table with the documented column shape and the `idx_blocks_spec_hash` index; (b) `selectBlocks(specHash)` returns the expected `BlockMerkleRoot[]` for the seed corpus once T05 ingests it (T03 itself does not ingest; T03 ships the API + schema + storage primitives and is tested with synthetic triplet rows); (c) `getBlock(merkleRoot)` returns the stored triplet row; (d) the existing `test_history`, `runtime_exposure`, `strictness_edges` tests continue to pass with `block_merkle_root` references; (e) the storage benchmark suite (`storage.benchmark.test.ts`) survives the migration (no perf regression > 2x on insert/select).
+- *Evaluation Contract — required real-path checks:* `pnpm --filter @yakcc/registry test` is green; `pnpm --filter @yakcc/registry build` succeeds; the `vec0` virtual table is re-keyed on `spec_hash` and an embedding round-trip test passes.
+- *Evaluation Contract — required authority invariants:* `@yakcc/registry` remains the single canonical authority for block storage (DEC-STORAGE-009). No `author`, `author_email`, `signature`, or any ownership-shaped column appears in the new schema (DEC-NO-OWNERSHIP-011 — invariant test must continue to pass).
+- *Evaluation Contract — required integration points:* the migration is a clean `SCHEMA_VERSION` bump from 1 to 2 with the v0 tables dropped; no v0/v1 dual-table coexistence (Sacred Practice #12). WI-T05 will populate the new table; WI-T04 will read from it.
+- *Evaluation Contract — forbidden shortcuts:* no `contracts` and `implementations` tables alongside the new `blocks` table (clean re-create only); no read-only alias view that mimics the v0 schema for "transition support"; no fallback path that re-derives `block_merkle_root` from `spec_hash + impl_source` at read time (the column must be stored).
+- *Evaluation Contract — ready-for-guardian:* all required tests pass; `SCHEMA_VERSION` is 2; the migration applies cleanly on a fresh DB and on a v0-shaped DB (the v0 DB is wiped per DEC-TRIPLET-IDENTITY-020 since the seed corpus is not externally published); `selectBlocks` and `getBlock` are exported from `@yakcc/registry/src/index.ts`.
+- *Scope Manifest — allowed:* `packages/registry/src/**`, `packages/registry/package.json`, `packages/registry/tsconfig.json`.
+- *Scope Manifest — required:* `packages/registry/src/schema.ts` (new migration), `packages/registry/src/storage.ts`, `packages/registry/src/select.ts`, `packages/registry/src/search.ts`, `packages/registry/src/index.ts` (exports updated).
+- *Scope Manifest — forbidden:* `packages/contracts/**`, `packages/ir/**`, `packages/compile/**`, `packages/seeds/**`, `packages/cli/**`, `packages/hooks-claude-code/**`, `examples/**`.
+- *Scope Manifest — state authorities touched:* registry-schema authority (`@yakcc/registry`); block-storage authority (`@yakcc/registry`); selection authority (`@yakcc/registry`).
+- *Rollback boundary:* a fresh-DB migration is destructive of any existing v0 registry contents on the developer's machine. The seed corpus has not been published externally so this is acceptable (DEC-TRIPLET-IDENTITY-020). Rollback restores the v0 schema from git history and requires re-running `yakcc registry init` against the unmigrated seed corpus (which will not yet exist after T05 lands).
+
+**WI-T04 — Compile resolver and provenance manifest update in `@yakcc/compile`**
+
+- *Evaluation Contract — required tests:* (a) `resolveComposition` walks the seed-corpus composition graph by `BlockMerkleRoot` from a synthetic triplet-populated registry (T04's fixtures pre-populate the `blocks` table since T05 has not yet run); (b) topological order is preserved (existing `resolve.test.ts` invariants); (c) cycle detection still fires on cyclic synthetic graphs; (d) `buildManifest` emits `BlockMerkleRoot` plus `spec_hash` per entry; (e) byte-identical re-emit invariant: running `assemble` twice on an unchanged registry produces byte-identical artifact and manifest.
+- *Evaluation Contract — required real-path checks:* `pnpm --filter @yakcc/compile test` is green; `pnpm --filter @yakcc/compile build` succeeds.
+- *Evaluation Contract — required authority invariants:* `@yakcc/compile` remains the single canonical authority for whole-program assembly. The byte-identical re-emit invariant (a v0 cornerstone exit criterion) is preserved.
+- *Evaluation Contract — required integration points:* depends on `@yakcc/registry`'s `selectBlocks` / `getBlock` (T03) and `@yakcc/ir`'s `parseBlockTriplet` (T02). Does not yet depend on T05's seed corpus — T04's tests use synthetic triplet fixtures.
+- *Evaluation Contract — forbidden shortcuts:* no resolver that resolves through `ContractId` and "looks up by spec hash as a fallback" — the resolver walks `BlockMerkleRoot` exclusively after sub-block imports are resolved through `selectBlocks(spec_hash)`; no manifest entry that omits `block_merkle_root`.
+- *Evaluation Contract — ready-for-guardian:* all required tests pass; `resolveComposition` and `buildManifest` use the new types; the byte-identical re-emit test passes against a synthetic triplet registry.
+- *Scope Manifest — allowed:* `packages/compile/src/**`, `packages/compile/package.json`, `packages/compile/tsconfig.json`.
+- *Scope Manifest — required:* `packages/compile/src/resolve.ts`, `packages/compile/src/manifest.ts`, `packages/compile/src/assemble.ts`, `packages/compile/src/ts-backend.ts`, `packages/compile/src/index.ts`.
+- *Scope Manifest — forbidden:* `packages/contracts/**`, `packages/ir/**`, `packages/registry/**`, `packages/seeds/**`, `packages/cli/**`, `packages/hooks-claude-code/**`, `examples/**`.
+- *Scope Manifest — state authorities touched:* compile/assembly authority (`@yakcc/compile`); provenance-manifest authority (`@yakcc/compile`).
+- *Rollback boundary:* T04 is the first WI where the byte-identical re-emit invariant is at risk. Rollback restores v0 resolver/manifest behavior; T05 / T06 cannot proceed without T04.
+
+**WI-T05 — Seed corpus migration in `@yakcc/seeds`**
+
+- *Evaluation Contract — required tests:* (a) every block under `packages/seeds/src/blocks/<name>/` parses successfully via `parseBlockTriplet`; (b) the existing fast-check property test corpus (currently distributed across the seed `.ts` files; total 157 tests per dispatch context) continues to pass against the migrated impls — same input/output behavior, byte-identical function bodies; (c) `seedRegistry()` populates the `blocks` table with 20 rows, one per directory; (d) re-running `seedRegistry()` on a clean DB produces byte-identical `block_merkle_root` for every block (determinism); (e) the `seed.test.ts` end-to-end seed-then-resolve check passes.
+- *Evaluation Contract — required real-path checks:* `pnpm --filter @yakcc/seeds test` is green; `pnpm --filter @yakcc/seeds build` succeeds; `pnpm test` at the workspace root is green (every package's tests pass against the migrated seed corpus).
+- *Evaluation Contract — required authority invariants:* the seed corpus is the canonical L0 reference set; every triplet declares `level: "L0"` and `effects: []`. The `BLOCK_FILES` flat list in `packages/seeds/src/seed.ts` is replaced by directory enumeration — no hand-maintained list of block names.
+- *Evaluation Contract — required integration points:* depends on T01 (schema), T02 (parser), T03 (registry), T04 (resolver). Downstream consumer is T06 (the demo).
+- *Evaluation Contract — forbidden shortcuts:* no preserved `.ts` files alongside the migrated triplet directories (Sacred Practice #12); no parallel `BLOCK_FILES` constant after directory enumeration is in place; no synthesized `proof/manifest.json` that points at a property-test artifact that doesn't exist on disk; no L0 manifest with a non-`property_tests` artifact (deferred to L1+).
+- *Evaluation Contract — ready-for-guardian:* every block is a triplet directory; the 157 fast-check property tests pass; `seedRegistry()` re-runs deterministically; the workspace-root `pnpm test` is fully green.
+- *Scope Manifest — allowed:* `packages/seeds/src/**`, `packages/seeds/package.json`, `packages/seeds/tsconfig.json`.
+- *Scope Manifest — required:* `packages/seeds/src/blocks/<name>/spec.yak`, `packages/seeds/src/blocks/<name>/impl.ts`, `packages/seeds/src/blocks/<name>/proof/manifest.json` for each of the 20 blocks; `packages/seeds/src/seed.ts` (loader rewritten); `packages/seeds/src/seed.test.ts` (assertions updated). Existing `packages/seeds/src/blocks/<name>.ts` files are deleted.
+- *Scope Manifest — forbidden:* `packages/contracts/**`, `packages/ir/**`, `packages/registry/**`, `packages/compile/**`, `packages/cli/**`, `packages/hooks-claude-code/**`, `examples/**`.
+- *Scope Manifest — state authorities touched:* seed-corpus authority (`@yakcc/seeds`); seed-loader authority (`@yakcc/seeds`).
+- *Rollback boundary:* T05 is destructive of the inline-CONTRACT seed files (they are deleted, not preserved alongside). Rollback restores them from git history. After T06 lands, the migrated triplet seeds are the registry's only source of truth for the seed corpus.
+
+**WI-T06 — Demo migration + v0/v0.6 acceptance gate**
+
+- *Evaluation Contract — required tests:* (a) `yakcc compile examples/parse-int-list` succeeds and emits `dist/module.ts` plus `dist/manifest.json`; (b) running the emitted module on Node parses `"[1,2,3]"` to `[1,2,3]` (existing v0 demo invariant); (c) the manifest names every block by `BlockMerkleRoot` plus `spec_hash`; (d) re-running `yakcc compile examples/parse-int-list` produces byte-identical `module.ts` and `manifest.json` (byte-identical re-emit invariant); (e) the compiled module imports zero runtime dependencies beyond what the seed blocks themselves require (existing v0 supply-chain invariant); (f) all 7 v0 stage exit criteria are re-validated and recorded as passing under the triplet shape (DEC-WI009-SUBSUMED-021).
+- *Evaluation Contract — required real-path checks:* full `pnpm install && pnpm build && pnpm test` from a clean clone is green; the 28-test CLI suite passes; the seed-corpus 157 property tests pass; `yakcc registry init` ingests the 20-block seed corpus as triplets and `yakcc search` round-trips every block's `BlockMerkleRoot`.
+- *Evaluation Contract — required authority invariants:* the cornerstone invariants (`MASTER_PLAN.md` §Cornerstone) are preserved; the verification-axis identity invariant (DEC-VERIFY-002, DEC-TRIPLET-IDENTITY-020) is enforced — every block in the registry is identified by `BlockMerkleRoot`, every selection goes through `spec_hash`.
+- *Evaluation Contract — required integration points:* depends on every prior v0.6 WI (T01..T05); is the v0/v0.6 closer.
+- *Evaluation Contract — forbidden shortcuts:* no demo-side patch that bypasses the new resolver to make the test pass; no manifest entry with a placeholder `block_merkle_root` value; no skipped exit criterion from the v0 stage list.
+- *Evaluation Contract — ready-for-guardian:* every required test passes; the demoable artifact runs end-to-end; the byte-identical re-emit invariant holds; the 7 v0 exit criteria are recorded as passing under the triplet shape; the README's documented new-contributor command sequence reproduces the demo on a clean machine.
+- *Scope Manifest — allowed:* `examples/parse-int-list/**`. (Note: the workflow contract scope says `forbidden: examples/**, packages/**`. WI-T06 is the work item where that scope must be widened by the implementer dispatch — planner flags this here so the dispatch context is explicit. The same is true for WI-T01..WI-T05 with respect to their `packages/<name>/**` paths. The `forbidden_paths` list in the slice's overall workflow contract is the *planner's* default scope while writing the plan; each implementer dispatch sets the per-WI scope manifest as its allowed paths.)
+- *Scope Manifest — required:* `examples/parse-int-list/spec.yak` (renamed from `contract.json`), `examples/parse-int-list/proof/manifest.json` (new), `examples/parse-int-list/src/main.ts` (updated if the manifest path changes).
+- *Scope Manifest — forbidden:* `packages/**` (the package-level migrations are complete by T05; T06 only touches the demo and verifies end-to-end), `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.claude/**`, `.gitignore`, `AGENTS.md`, `initialize.txt`, `README.md`, `FEDERATION.md`, `tmp/**`.
+- *Scope Manifest — state authorities touched:* demo-acceptance authority (`examples/parse-int-list`); v0-stage exit-criteria authority (`MASTER_PLAN.md` v0 stage; verified, not modified, by T06).
+- *Rollback boundary:* T06 is the v0/v0.6 closer. Rollback restores the demo's `contract.json` and removes `proof/manifest.json` from git history; T05's seed-corpus migration remains in place but the demo no longer has a triplet shape, which is an inconsistent half-migrated state — a T06 rollback after T05 lands implies a T05 rollback as well to return to a coherent substrate.
+
+### Initiative: v0.7 sub-function decomposition (`yakcc shave`)
+
+Status: planned, gated on v0.6 triplet closure (WI-T06 done; WI-T06 also closes the v0 substrate per DEC-WI009-SUBSUMED-021). All v0.7 work items below assume blocks are triplets, not inline-`CONTRACT`-literal `.ts` files; shaved blocks are emitted into the registry as triplets and identified by `BlockMerkleRoot` with `spec_hash` as the selector index.
+
+| ID | Title | Description | Deps | Gate | State |
+|---|---|---|---|---|---|
+| WI-010 | `@yakcc/shave` package skeleton + intent extraction | Stand up `packages/shave/` as a real typed-interface facade with one live capability: intent extraction. Public API `shave(...)` returns a stubbed tree; private `extractIntent(unitSource, context)` calls Anthropic Haiku (`claude-haiku-4-5-20251001`) directly via the SDK and returns a structured intent card. The intent card is the upstream input to `spec.yak` generation in WI-012. On-disk cache keyed by source SHA so re-runs are local and deterministic. No decomposition recursion yet. | WI-T06 | review | not started |
+| WI-011 | Variance scoring + contract design rules | Port librAIrian's star-topology variance comparison and contract-design rules (safety = intersection, behavioral = majority-vote, capability = union) into TS. 7-dimension weights inherited verbatim: security 0.35, behavioral 0.25, error_handling 0.20, performance 0.10, interface 0.10. CWE-474 family mapping for the security dimension. Pure-function module with property tests; no LLM calls in this work item. | WI-010 | review | not started |
+| WI-012 | Atomic decomposition recursion (load-bearing) | The Sub-function Granularity Principle made executable. Implements the recursion that decomposes each candidate block until it bottoms out at atoms. AST-based atom test: at most one control-flow boundary, no further non-trivial sub-block in the registry. Each emitted atom is a triplet: a generated `spec.yak` (derived from the intent card and the inferred input/output types), an `impl.ts` extracted from the source AST sub-range, and a `proof/manifest.json` declaring the synthesized property-test artifact (WI-013). LLM-proposed decompositions that would create cycles or near-duplicate atoms are collapsed by `selectBlocks(spec_hash)` returning an existing `BlockMerkleRoot` rather than ingesting a duplicate. **Reviewer must gate on the atom test for every leaf in the recursion tree.** "Did not reach atoms" is a hard failure. | WI-010, WI-011 | approve | not started |
+| WI-013 | Property-test corpus per recursion level + license gate | Property-test corpus extraction (upstream tests where adaptable, documented usage where absent, AI-derived as last resort). License detector that accepts only Unlicense / MIT / BSD-2 / BSD-3 / Apache-2.0 / ISC / 0BSD / public-domain dedications and refuses everything else with a clear error citing the detected license string. Differential test runner across implementations satisfying the same contract. | WI-012 | review | not started |
+| WI-014 | Shave CLI surface + provenance manifest | `yakcc shave <path-or-url>` wired into `@yakcc/cli`. Provenance manifest entries are keyed by `BlockMerkleRoot` (per WI-T04) and extended with parent-block links forming the recursion tree (each non-root entry names its parent's `BlockMerkleRoot`). `yakcc search` returns shaved atoms indistinguishable in interface from hand-authored ones — both are triplets in the `blocks` table; selection-signal augmentation per stage spec. | WI-012, WI-013 | review | not started |
+| WI-015 | v0.7 demo + acceptance against `mri` | Vendor `lukeed/mri` at a pinned commit under `vendor/mri/`. Run `yakcc shave` end-to-end. Each ingested atom is a triplet under `packages/seeds/src/blocks/<shaved-name>/` (or wherever the shaved-corpus root is configured) with `spec.yak`, `impl.ts`, `proof/manifest.json`. Verify all eight v0.7 exit criteria, including (a) atom test on every leaf, (b) `yakcc compile` output matches `mri`'s published test corpus byte-identically, (c) intent-card cache hit on a repeated run requires zero Anthropic API calls (network-sandboxed), (d) GPL-prepared input refused with a clear error, (e) the provenance manifest names every atom by `BlockMerkleRoot` with parent-block links. | WI-010, WI-011, WI-012, WI-013, WI-014 | approve | not started |
+
+v0.7 dependency waves: `{WI-010} → {WI-011} → {WI-012} → {WI-013} → {WI-014} → {WI-015}` with WI-011 and WI-013 each running independent of the wave above them once their inputs are ready. Critical path runs WI-T06 → WI-010 → WI-012 → WI-015 (the atom-test gate at WI-012 is the load-bearing review). v0.7 cannot start until WI-T06 closes the v0.6 triplet substrate, because every block `shave` ingests must be a triplet — not an inline-`CONTRACT`-literal `.ts` file.
 
 ### Initiative: v2 self-hosting
 
@@ -741,6 +1010,10 @@ Concrete work items will be enumerated when v0.7 lands. The v2 stage section abo
 | DEC-DECOMPOSE-STAGE-015-CORRECTION | Supersede the original v0.7 framing with three corrections: (a) librAIrian-as-prototype-not-dependency, (b) Sub-function Granularity Principle (recurse to atoms), (c) demo target `lukeed/mri`. Package renamed `@yakcc/shave`. Atom test is a hard reviewer gate at WI-012; "did not reach atoms" is a v0.7 failure. | User corrections, verbatim: *"You should treat librAIrian as a prototype for what you will need to do, and you should use those concepts and steal as much as you can to not build this from scratch but yakcc should be self contained."* *"I don't think the way librAIrian works will get us all the way down the tree to the most basic blocks. The contracts that it proposes tend to be function level reusable components, not all the way down to the basic block level."* *"Eventually we will want to decompose this project itself (yakcc) into the paradigm that we are building... that's the goal here, eventually the code that you are emitting right now will become just basic blocks in the repo. Turtles (or Yaks) all the way down."* The third quote drives DEC-SELF-HOSTING-016 separately. The first two drive this correction. The seed corpus (`packages/seeds/src/blocks/`) — `digit`, `bracket`, `comma`, `optionalWhitespace`, etc. — is the existence proof that atoms are the right granularity: the hand-authored `parseIntList` decomposes into 7 of them, and `shave` must reproduce that structure when it ingests an equivalent function. |
 | DEC-AXIS-017 | Yakcc has three orthogonal axes: substrate maturity (v-axis, this document, v0..v2), verification rigor (L-axis, `VERIFICATION.md`, L0..L3), and trust/scale participation (F-axis, `FEDERATION.md`, F0..F4). A user sits at any `(v, F, L)` coordinate. The F0 single-machine deployment is first-class at every substrate level — federation features are imported, not inherited. This DEC owns the meta-architectural commitment to the axis decomposition; the load-bearing decisions on each axis live in the documents that own that axis. Forward-references: `VERIFICATION.md` owns DEC-VERIFY-001..DEC-VERIFY-008 (verification levels, triplet identity, ocap discipline, totality, SMT/BMC, Lean L3, TCB hardening, verifier-as-block); `FEDERATION.md` owns DEC-FED-001..DEC-FED-006 (orthogonal axes, package decomposition, DA layer, slashing-as-deprecation, F4 economic primitives, trust-list governance). | The v0..v2 ladder describes capability growth; the L0..L3 ladder describes verification growth; the F0..F4 ladder describes participation growth. Conflating them produces planning drift (e.g., "we need federation before we can do formal verification" — false; a single-machine F0 deployment can run L3 locally). The user's "optional sidecar" framing — *"This should all be an optional layer that can be super imposed for the public repository. The yakcc backend should be usable as a private set of recomposable blocks for anyone to use."* — formalizes here as: each axis is independent, and the F-axis is opt-in via package selection (`@yakcc/federation`, `@yakcc/incentives`) rather than a precondition for substrate maturity. |
 | DEC-SELF-HOSTING-016 | Add a new **v2 — Self-Hosting** stage after v1. Exit criteria: `yakcc shave` runs across yakcc's own packages, `yakcc compile` reassembles each package from the registered atoms, and a "registry-assembled build" passes `pnpm test` byte-identically with the from-source build. Self-hosting is a property of the build pipeline; not a runtime hot-swap; not a federation prerequisite. | User framing, verbatim: *"It's like the idea of a compiler not being complete until it can compile itself from scratch... that's the goal here, eventually the code that you are emitting right now will become just basic blocks in the repo. Turtles (or Yaks) all the way down."* This is the standard compiler-bootstrap test applied to yakcc: if the substrate cannot express its own implementation, it has not proven what it claims. v2 isolates this property from v1 federation (orthogonal concerns, different complexity) and from runtime hot-swap (out of scope). Placed at v2 rather than folded into v0.7 because (a) it depends on shave being trustworthy at sub-function granularity first, and (b) v1's federation trust mechanisms inform how a registry-assembled build's atoms get verified at scale, even though v2 itself works on a single-machine registry. |
+| DEC-TRIPLET-MIGRATION-018 | Insert a new **v0.6 — Triplet substrate** stage between v0 and v0.5/v0.7. The stage migrates every block from the v0 inline-`CONTRACT`-literal `.ts` shape to the v1 cryptographic-triplet shape `(spec.yak, impl.ts, proof/)` per `VERIFICATION.md` DEC-VERIFY-002 / DEC-VERIFY-003. The inline-`CONTRACT`-literal mechanism is **removed**, not preserved alongside the triplet form (Sacred Practice #12). v0.6 is L0-only; L1/L2/L3 enforcement is deferred to a later L-axis stage. | The verification ladder requires the triplet shape to be coherent (you cannot attest a block's behavior without an artifact bundle that includes the proof evidence under the same identity as the spec and the impl). v0.5 (live AI synthesis) and v0.7 (`yakcc shave`) both produce blocks; if either ships before the substrate is in triplet form, those blocks land in the v0 shape and have to be re-migrated later. Doing the substrate-shape change as its own discrete stage between v0 and v0.5/v0.7 honors single-source-of-truth and makes the dependency explicit. The cornerstone is preserved: cornerstone #3 still says "a contract's identity is the hash of its canonicalized spec" — that is now the `spec_hash` index; what changes is that *block* identity (no longer = contract identity) is the MerkleRoot of the triplet (DEC-TRIPLET-IDENTITY-020). |
+| DEC-TRIPLET-L0-ONLY-019 | v0.6 ships **L0 only**. The `spec.yak` schema accepts the optional level-dependent fields (`theory`, `bounds`, `totality_witness`, `proof_kind`, `constant_time`) without enforcing them. The `proof/manifest.json` schema accepts `smt_cert` / `lean_proof` / `coq_proof` artifact kinds at the type level but the L0 manifest validator rejects any artifact kind other than `property_tests`. The v0 `@yakcc/ir` strict-subset banlist is preserved as-is; the expanded ocap banlist from `VERIFICATION.md` §"Static banishment list" (no `Math.random`, no `Date.now`, no module-level mutable bindings, etc.) is deferred. The L1 totality checker, the L2 SMT encoder, and the L3 Lean checker are all deferred. | Scope discipline: shipping the triplet shape is a substrate-foundation move that v0.5 and v0.7 are blocked on; layering L1+ checks on top of the same slice would balloon the work and entangle independent unknowns (totality-checker design, SMT theory selection, Lean toolchain pinning). The current substrate already satisfies L0: strict-TS subset + fast-check property tests. Repackaging that into the triplet form is the minimum viable change. L1+ becomes its own L-axis initiative, likely paired with v1 federation when attestation surfaces motivate the higher-level checkers. |
+| DEC-TRIPLET-IDENTITY-020 | Block identity migrates from `ContractId = BLAKE3(canonicalize(spec))` to `BlockMerkleRoot = BLAKE3(spec_hash \|\| impl_hash \|\| proof_root)` per VERIFICATION.md DEC-VERIFY-002. The spec hash is retained as `SpecHash` and continues to derive from `canonicalize(spec.yak)`; it becomes the **index** used by `selectBlocks(specHash) → BlockMerkleRoot[]`, not the block's identity. The 20 hand-authored seed blocks have not been published anywhere external (only on `cneckar/yakcc`), so re-derivation under the new shape is acceptable — there are no external consumers whose references would break. DEC-IDENTITY-005 is read in this slice as: *spec identity remains the hash of the canonical spec; block identity is the MerkleRoot of the triplet, which strictly extends the v0 framing rather than contradicting it.* Concrete L0 encoding decided in this stage: `impl_hash = BLAKE3(impl.ts file bytes)` (no ts-morph normalization at L0; deferred to L1+ where the AST is normalized by the totality pass anyway); `proof_root = BLAKE3(canonicalize(manifest.json) \|\| concat(BLAKE3(artifact_bytes_in_manifest_order)))`; `block_merkle_root = BLAKE3(spec_hash \|\| impl_hash \|\| proof_root)`. Recorded as `@decision` in WI-T01's implementation. | Identity migration is the single highest-risk operation in v0.6 because every downstream system that referred to a block by `ContractId` now refers to it by `BlockMerkleRoot`, with `SpecHash` as the looser "find me an implementation of this contract" key. The 20-block seed corpus's not-yet-published-externally property is what makes a clean re-derivation acceptable rather than catastrophic; we do not have to honor any pinned `ContractId` references in external consumers. The L0-specific encoding choice (file bytes for `impl_hash`, no AST normalization) is bounded to L0: at L1+ the totality checker normalizes the AST to verify structural recursion, and ts-morph deterministic-print becomes the canonical impl encoding under that level. Picking a simpler L0 encoding now and a richer L1+ encoding later is consistent with the strict partial-order refinement in `VERIFICATION.md` §"What each level guarantees". |
+| DEC-WI009-SUBSUMED-021 | WI-009 (v0 demo + acceptance) is **subsumed** by WI-T06 (v0.6 triplet-form demo + acceptance). The 7 v0 stage exit criteria are preserved verbatim as a strict subset of WI-T06's acceptance gate, which adds the triplet-shape requirements on top. WI-009's row in the v0 substrate initiative table is marked `superseded by WI-T06`. The v0 demo is **not** run under the inline-`CONTRACT`-literal shape and then re-run under the triplet shape — it is run once, under the triplet shape, after WI-T05 lands. | Running WI-009 under the inline-CONTRACT-literal shape and then immediately re-migrating the demo to the triplet shape duplicates work and creates a transient state where the demo passes under the deprecated shape. Sacred Practice #12 forbids parallel mechanisms; running the demo on the deprecated mechanism even once is mechanism-coexistence in time, which is its own form of dual-authority bug. WI-T06 closes both the v0 substrate and the v0.6 triplet substrate at the same gate. |
 
 ---
 
