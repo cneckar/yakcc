@@ -234,3 +234,11 @@ export {
   createLocalEmbeddingProvider,
   generateEmbedding,
 } from "./embeddings.js";
+export { type SpecHash, type SpecYak, type SpecYakParameter, validateSpecYak } from "./spec-yak.js";
+export {
+  type ProofArtifact,
+  type ProofManifest,
+  type ArtifactKind,
+  validateProofManifestL0,
+} from "./proof-manifest.js";
+export { type BlockTriplet, type BlockMerkleRoot, blockMerkleRoot, specHash } from "./merkle.js";
