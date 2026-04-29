@@ -286,6 +286,38 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // getContract — direct id lookup (added WI-005)
+  // -------------------------------------------------------------------------
+
+  async getContract(id: ContractId): Promise<Contract | null> {
+    this.assertOpen();
+    const row = this.db
+      .prepare<[string], ContractRow>("SELECT * FROM contracts WHERE id = ?")
+      .get(id);
+    if (row === undefined) return null;
+    return this.hydrateContract(row);
+  }
+
+  // -------------------------------------------------------------------------
+  // getImplementation — fetch source by contract id (added WI-005)
+  // -------------------------------------------------------------------------
+
+  async getImplementation(id: ContractId): Promise<Implementation | null> {
+    this.assertOpen();
+    const row = this.db
+      .prepare<[string], ImplRow>(
+        "SELECT * FROM implementations WHERE contract_id = ? ORDER BY created_at ASC LIMIT 1",
+      )
+      .get(id);
+    if (row === undefined) return null;
+    return {
+      source: row.source,
+      blockId: row.id,
+      contractId: row.contract_id as ContractId,
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // getProvenance
   // -------------------------------------------------------------------------
 

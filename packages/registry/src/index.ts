@@ -7,11 +7,7 @@
 // reserved columns for either in any type exported from this package.
 // Status: decided (MASTER_PLAN.md DEC-NO-OWNERSHIP-011)
 
-import type {
-  ContractId,
-  ContractSpec,
-  Contract,
-} from "@yakcc/contracts";
+import type { Contract, ContractId, ContractSpec } from "@yakcc/contracts";
 
 // ---------------------------------------------------------------------------
 // Registry value types
@@ -150,6 +146,29 @@ export interface Registry {
    * recorded yet — absence of evidence is not evidence of absence.
    */
   getProvenance(id: ContractId): Promise<Provenance>;
+
+  /**
+   * Direct lookup of a stored contract by its content-addressed id.
+   *
+   * Returns null when no contract with the given id is registered.
+   * Added in WI-005 to support compile-engine composition-graph traversal,
+   * which receives ContractIds from sub-block references and must resolve them
+   * to their full Contract records (including ContractSpec) to traverse further.
+   */
+  getContract(id: ContractId): Promise<Contract | null>;
+
+  /**
+   * Retrieve the best implementation stored under a given contract id.
+   *
+   * When multiple implementations are registered for the same contract, returns
+   * the one stored earliest (lowest created_at). Returns null when no
+   * implementation is found.
+   *
+   * Added in WI-005 to support compile-engine composition-graph traversal:
+   * the compiler resolves each block in topological order and needs the source
+   * text for each block to compose the assembled module.
+   */
+  getImplementation(id: ContractId): Promise<Implementation | null>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;
