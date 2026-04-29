@@ -35,10 +35,19 @@ importers:
       '@yakcc/registry':
         specifier: workspace:*
         version: link:../registry
+      '@yakcc/seeds':
+        specifier: workspace:*
+        version: link:../seeds
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17))
 
   packages/compile:
     dependencies:
