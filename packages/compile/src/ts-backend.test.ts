@@ -4,6 +4,10 @@
  * Production sequence exercised:
  *   tsBackend().emit(resolution) → assembled module source string
  *
+ * Tests use pre-built ResolutionResult objects with BlockMerkleRoot keys
+ * (WI-T04 triplet schema). Synthetic blockMerkleRoot values are computed via
+ * blockMerkleRoot() from @yakcc/contracts so the fixture types are correct.
+ *
  * Tests cover:
  *   - Single-block emission: non-empty source, exported function preserved
  *   - Two-deep composition: both functions present, no duplicate ContractSpec import
@@ -15,11 +19,17 @@
  * objects rather than going through the full assemble() pipeline, to keep the
  * backend unit tests decoupled from the resolution graph traversal. The compound
  * interaction test in assemble.test.ts covers the full pipeline.
- * Status: implemented (WI-005)
+ * Updated (WI-T04): fixture helpers now compute real BlockMerkleRoots via
+ * blockMerkleRoot() from @yakcc/contracts (previously used ContractId keys).
+ * Status: updated (WI-T04)
  */
 
-import { type ContractId, contractId } from "@yakcc/contracts";
-import type { ContractSpec } from "@yakcc/contracts";
+import {
+  type BlockMerkleRoot,
+  type SpecYak,
+  blockMerkleRoot,
+  specHash,
+} from "@yakcc/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
 import { assembleModule, tsBackend } from "./ts-backend.js";
@@ -28,10 +38,21 @@ import { assembleModule, tsBackend } from "./ts-backend.js";
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-function makeSpec(behavior: string): ContractSpec {
+/**
+ * Build a minimal SpecYak for testing. Each unique behavior string produces
+ * a distinct specHash (and thus a distinct BlockMerkleRoot when combined with
+ * distinct impl sources).
+ */
+function makeSpecYak(name: string, behavior: string): SpecYak {
   return {
+    name,
     inputs: [{ name: "input", type: "string" }],
-    outputs: [{ name: "result", type: "number" }],
+    outputs: [{ name: "result", type: "string" }],
+    preconditions: [],
+    postconditions: [],
+    invariants: [],
+    effects: [],
+    level: "L0",
     behavior,
     guarantees: [],
     errorConditions: [],
@@ -40,27 +61,56 @@ function makeSpec(behavior: string): ContractSpec {
   };
 }
 
-function makeContractId(spec: ContractSpec): ContractId {
-  return contractId(spec) as ContractId;
+const MINIMAL_MANIFEST_JSON = JSON.stringify({
+  artifacts: [{ kind: "property_tests", path: "tests.fast-check.ts" }],
+});
+
+/**
+ * Compute a real BlockMerkleRoot for (name, behavior, implSource).
+ * Deterministic: same inputs always produce the same root.
+ */
+function makeMerkleRoot(name: string, behavior: string, implSource: string): BlockMerkleRoot {
+  const spec = makeSpecYak(name, behavior);
+  const manifest = JSON.parse(MINIMAL_MANIFEST_JSON) as {
+    artifacts: Array<{ kind: string; path: string }>;
+  };
+  const artifactBytes = new TextEncoder().encode(implSource);
+  const artifactsMap = new Map<string, Uint8Array>();
+  for (const art of manifest.artifacts) {
+    artifactsMap.set(art.path, artifactBytes);
+  }
+  return blockMerkleRoot({
+    spec,
+    implSource,
+    manifest: manifest as Parameters<typeof blockMerkleRoot>[0]["manifest"],
+    artifacts: artifactsMap,
+  });
 }
 
 /**
- * Build a minimal ResolutionResult from a list of (contractId, source) pairs.
+ * Build a minimal ResolutionResult from a list of (merkleRoot, source) pairs.
  * Order is the same as the input array (caller is responsible for topological ordering).
- * The entry is the last element's contractId.
+ * The entry is the last element's merkleRoot.
  */
 function makeResolution(
-  blocks: ReadonlyArray<{ id: ContractId; source: string; subBlocks?: ContractId[] }>,
+  blocks: ReadonlyArray<{
+    id: BlockMerkleRoot;
+    source: string;
+    subBlocks?: BlockMerkleRoot[];
+    specHashVal?: ReturnType<typeof specHash>;
+  }>,
 ): ResolutionResult {
-  const blockMap = new Map<ContractId, ResolvedBlock>();
-  const order: ContractId[] = [];
+  const blockMap = new Map<BlockMerkleRoot, ResolvedBlock>();
+  const order: BlockMerkleRoot[] = [];
 
-  for (const { id, source, subBlocks = [] } of blocks) {
-    blockMap.set(id, { contractId: id, source, subBlocks });
+  for (const { id, source, subBlocks = [], specHashVal } of blocks) {
+    // Use a synthetic specHash if not provided (computed from a placeholder spec).
+    const sh = specHashVal ?? specHash(makeSpecYak(id.slice(0, 8), `behavior-${id.slice(0, 8)}`));
+    blockMap.set(id, { merkleRoot: id, specHash: sh, source, subBlocks });
     order.push(id);
   }
 
-  const entry = order[order.length - 1] as ContractId;
+  const entry = order[order.length - 1] as BlockMerkleRoot;
   return { entry, blocks: blockMap, order };
 }
 
@@ -80,39 +130,36 @@ describe("tsBackend — single block", () => {
   });
 
   it("emits non-empty source for a single block", async () => {
-    const spec = makeSpec("Return 42");
-    const id = makeContractId(spec);
-    const source = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(spec)};
+    const implSource = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Return 42" } as unknown as ContractSpec;
 export function answer(): number { return 42; }
 `;
-    const resolution = makeResolution([{ id, source }]);
+    const id = makeMerkleRoot("answer", "Return 42", implSource);
+    const resolution = makeResolution([{ id, source: implSource }]);
     const emitted = await backend.emit(resolution);
 
     expect(emitted.trim().length).toBeGreaterThan(0);
   });
 
   it("emits source containing the exported function from the block", async () => {
-    const spec = makeSpec("Return the integer 42");
-    const id = makeContractId(spec);
-    const source = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(spec)};
+    const implSource = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Return the integer 42" } as unknown as ContractSpec;
 export function theAnswer(): number { return 42; }
 `;
-    const resolution = makeResolution([{ id, source }]);
+    const id = makeMerkleRoot("theAnswer", "Return the integer 42", implSource);
+    const resolution = makeResolution([{ id, source: implSource }]);
     const emitted = await backend.emit(resolution);
 
     expect(emitted).toContain("function theAnswer");
   });
 
   it("emits exactly one @yakcc/contracts import line even if block has one", async () => {
-    const spec = makeSpec("Identity function");
-    const id = makeContractId(spec);
-    const source = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(spec)};
+    const implSource = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Identity function" } as unknown as ContractSpec;
 export function identity(x: string): string { return x; }
 `;
-    const resolution = makeResolution([{ id, source }]);
+    const id = makeMerkleRoot("identity", "Identity function", implSource);
+    const resolution = makeResolution([{ id, source: implSource }]);
     const emitted = await backend.emit(resolution);
 
     const contractsImportLines = emitted.split("\n").filter((l) => l.includes("@yakcc/contracts"));
@@ -120,13 +167,12 @@ export function identity(x: string): string { return x; }
   });
 
   it("re-exports the entry function as the module public surface", async () => {
-    const spec = makeSpec("Returns a greeting");
-    const id = makeContractId(spec);
-    const source = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(spec)};
+    const implSource = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Returns a greeting" } as unknown as ContractSpec;
 export function greet(): string { return "hello"; }
 `;
-    const resolution = makeResolution([{ id, source }]);
+    const id = makeMerkleRoot("greet", "Returns a greeting", implSource);
+    const resolution = makeResolution([{ id, source: implSource }]);
     const emitted = await backend.emit(resolution);
 
     expect(emitted).toContain("export { greet }");
@@ -139,27 +185,28 @@ export function greet(): string { return "hello"; }
 
 describe("tsBackend — two-deep composition", () => {
   it("includes both leaf and parent functions in emitted source", async () => {
-    const leafSpec = makeSpec("Return character code at position");
-    const leafId = makeContractId(leafSpec);
-    const leafSource = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(leafSpec)};
+    const leafImpl = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Return character code at position" } as unknown as ContractSpec;
 export function charCode(s: string, i: number): number { return s.charCodeAt(i); }
 `;
+    const leafId = makeMerkleRoot("charCode", "Return character code at position", leafImpl);
 
-    const parentSpec = makeSpec("Check if character is open bracket");
-    const parentId = makeContractId(parentSpec);
-    // Parent references leaf via intra-corpus import type
-    const parentSource = `import type { ContractSpec } from "@yakcc/contracts";
+    const parentImpl = `import type { ContractSpec } from "@yakcc/contracts";
 import type { charCode } from "./char-code.js";
 type _CharCode = typeof charCode;
-export const CONTRACT: ContractSpec = ${JSON.stringify(parentSpec)};
+export const CONTRACT: ContractSpec = { behavior: "Check if character is open bracket" } as unknown as ContractSpec;
 export function isBracket(s: string, i: number): boolean { return s[i] === "["; }
 `;
+    const parentId = makeMerkleRoot(
+      "isBracket",
+      "Check if character is open bracket",
+      parentImpl,
+    );
 
     // Topological order: leaf first, parent last
     const resolution = makeResolution([
-      { id: leafId, source: leafSource, subBlocks: [] },
-      { id: parentId, source: parentSource, subBlocks: [leafId] },
+      { id: leafId, source: leafImpl, subBlocks: [] },
+      { id: parentId, source: parentImpl, subBlocks: [leafId] },
     ]);
     const emitted = await tsBackend().emit(resolution);
 
@@ -168,25 +215,23 @@ export function isBracket(s: string, i: number): boolean { return s[i] === "["; 
   });
 
   it("does not emit duplicate @yakcc/contracts import lines", async () => {
-    const leafSpec = makeSpec("Leaf block");
-    const leafId = makeContractId(leafSpec);
-    const leafSource = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(leafSpec)};
+    const leafImpl = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Leaf block" } as unknown as ContractSpec;
 export function leaf(): number { return 0; }
 `;
+    const leafId = makeMerkleRoot("leaf", "Leaf block", leafImpl);
 
-    const parentSpec = makeSpec("Parent block");
-    const parentId = makeContractId(parentSpec);
-    const parentSource = `import type { ContractSpec } from "@yakcc/contracts";
+    const parentImpl = `import type { ContractSpec } from "@yakcc/contracts";
 import type { leaf } from "./leaf.js";
 type _Leaf = typeof leaf;
-export const CONTRACT: ContractSpec = ${JSON.stringify(parentSpec)};
+export const CONTRACT: ContractSpec = { behavior: "Parent block" } as unknown as ContractSpec;
 export function parent(): number { return leaf() + 1; }
 `;
+    const parentId = makeMerkleRoot("parent", "Parent block", parentImpl);
 
     const resolution = makeResolution([
-      { id: leafId, source: leafSource },
-      { id: parentId, source: parentSource, subBlocks: [leafId] },
+      { id: leafId, source: leafImpl },
+      { id: parentId, source: parentImpl, subBlocks: [leafId] },
     ]);
     const emitted = await tsBackend().emit(resolution);
 
@@ -197,25 +242,23 @@ export function parent(): number { return leaf() + 1; }
   });
 
   it("strips intra-corpus import type lines from assembled output", async () => {
-    const leafSpec = makeSpec("Leaf with relative import");
-    const leafId = makeContractId(leafSpec);
-    const leafSource = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(leafSpec)};
+    const leafImpl = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Leaf with relative import" } as unknown as ContractSpec;
 export function leafFn(): string { return "leaf"; }
 `;
+    const leafId = makeMerkleRoot("leafFn", "Leaf with relative import", leafImpl);
 
-    const parentSpec = makeSpec("Parent with relative import ref");
-    const parentId = makeContractId(parentSpec);
-    const parentSource = `import type { ContractSpec } from "@yakcc/contracts";
+    const parentImpl = `import type { ContractSpec } from "@yakcc/contracts";
 import type { leafFn } from "./leaf-fn.js";
 type _LeafFn = typeof leafFn;
-export const CONTRACT: ContractSpec = ${JSON.stringify(parentSpec)};
+export const CONTRACT: ContractSpec = { behavior: "Parent with relative import ref" } as unknown as ContractSpec;
 export function parentFn(): string { return "parent"; }
 `;
+    const parentId = makeMerkleRoot("parentFn", "Parent with relative import ref", parentImpl);
 
     const resolution = makeResolution([
-      { id: leafId, source: leafSource },
-      { id: parentId, source: parentSource, subBlocks: [leafId] },
+      { id: leafId, source: leafImpl },
+      { id: parentId, source: parentImpl, subBlocks: [leafId] },
     ]);
     const emitted = await tsBackend().emit(resolution);
 
@@ -224,25 +267,23 @@ export function parentFn(): string { return "parent"; }
   });
 
   it("strips shadow type alias lines from assembled output", async () => {
-    const leafSpec = makeSpec("Leaf for shadow alias test");
-    const leafId = makeContractId(leafSpec);
-    const leafSource = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(leafSpec)};
+    const leafImpl = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Leaf for shadow alias test" } as unknown as ContractSpec;
 export function shadowLeaf(): void { return; }
 `;
+    const leafId = makeMerkleRoot("shadowLeaf", "Leaf for shadow alias test", leafImpl);
 
-    const parentSpec = makeSpec("Parent with shadow alias");
-    const parentId = makeContractId(parentSpec);
-    const parentSource = `import type { ContractSpec } from "@yakcc/contracts";
+    const parentImpl = `import type { ContractSpec } from "@yakcc/contracts";
 import type { shadowLeaf } from "./shadow-leaf.js";
 type _ShadowLeaf = typeof shadowLeaf;
-export const CONTRACT: ContractSpec = ${JSON.stringify(parentSpec)};
+export const CONTRACT: ContractSpec = { behavior: "Parent with shadow alias" } as unknown as ContractSpec;
 export function shadowParent(): void { return; }
 `;
+    const parentId = makeMerkleRoot("shadowParent", "Parent with shadow alias", parentImpl);
 
     const resolution = makeResolution([
-      { id: leafId, source: leafSource },
-      { id: parentId, source: parentSource, subBlocks: [leafId] },
+      { id: leafId, source: leafImpl },
+      { id: parentId, source: parentImpl, subBlocks: [leafId] },
     ]);
     const emitted = await tsBackend().emit(resolution);
 
@@ -252,26 +293,24 @@ export function shadowParent(): void { return; }
 
   it("entry block function is re-exported and can be called from the assembled module", async () => {
     // This is the compound-interaction test: both functions present and entry is callable.
-    const leafSpec = makeSpec("Leaf double function");
-    const leafId = makeContractId(leafSpec);
-    const leafSource = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(leafSpec)};
+    const leafImpl = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Leaf double function" } as unknown as ContractSpec;
 export function doubler(n: number): number { return n * 2; }
 `;
+    const leafId = makeMerkleRoot("doubler", "Leaf double function", leafImpl);
 
-    const parentSpec = makeSpec("Parent triple function");
-    const parentId = makeContractId(parentSpec);
     // Parent references leaf via intra-corpus import but inlines logic itself
-    const parentSource = `import type { ContractSpec } from "@yakcc/contracts";
+    const parentImpl = `import type { ContractSpec } from "@yakcc/contracts";
 import type { doubler } from "./doubler.js";
 type _Doubler = typeof doubler;
-export const CONTRACT: ContractSpec = ${JSON.stringify(parentSpec)};
+export const CONTRACT: ContractSpec = { behavior: "Parent triple function" } as unknown as ContractSpec;
 export function tripler(n: number): number { return n * 3; }
 `;
+    const parentId = makeMerkleRoot("tripler", "Parent triple function", parentImpl);
 
     const resolution = makeResolution([
-      { id: leafId, source: leafSource },
-      { id: parentId, source: parentSource, subBlocks: [leafId] },
+      { id: leafId, source: leafImpl },
+      { id: parentId, source: parentImpl, subBlocks: [leafId] },
     ]);
     const emitted = await tsBackend().emit(resolution);
 
@@ -289,62 +328,61 @@ export function tripler(n: number): number { return n * 3; }
 
 describe("assembleModule internal helper", () => {
   it("header comment is always present", () => {
-    const spec = makeSpec("Any block");
-    const id = makeContractId(spec);
-    const source = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(spec)};
+    const implSource = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Any block" } as unknown as ContractSpec;
 export function anyFn(): void { return; }
 `;
-    const resolution = makeResolution([{ id, source }]);
+    const id = makeMerkleRoot("anyFn", "Any block", implSource);
+    const resolution = makeResolution([{ id, source: implSource }]);
     const output = assembleModule(resolution);
 
     expect(output).toContain("Assembled by @yakcc/compile");
     expect(output).toContain("no code was generated");
   });
 
-  it("emits block separator comment with contractId", () => {
-    const spec = makeSpec("Block with separator");
-    const id = makeContractId(spec);
-    const source = `import type { ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(spec)};
+  it("emits block separator comment with BlockMerkleRoot", () => {
+    const implSource = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Block with separator" } as unknown as ContractSpec;
 export function separatorFn(): void { return; }
 `;
-    const resolution = makeResolution([{ id, source }]);
+    const id = makeMerkleRoot("separatorFn", "Block with separator", implSource);
+    const resolution = makeResolution([{ id, source: implSource }]);
     const output = assembleModule(resolution);
 
     expect(output).toContain(`// --- block: ${id} ---`);
   });
 
-  it("deduplicates ContractId symbol from @yakcc/contracts imports across two blocks", () => {
-    const leafSpec = makeSpec("Leaf with ContractId import");
-    const leafId = makeContractId(leafSpec);
-    const leafSource = `import type { ContractId, ContractSpec } from "@yakcc/contracts";
-export const CONTRACT: ContractSpec = ${JSON.stringify(leafSpec)};
-type _Id = ContractId;
-export function idLeaf(): string { return "leaf"; }
+  it("deduplicates ContractSpec symbol from @yakcc/contracts imports across two blocks", () => {
+    const leafImpl = `import type { ContractSpec } from "@yakcc/contracts";
+export const CONTRACT: ContractSpec = { behavior: "Leaf with ContractSpec import" } as unknown as ContractSpec;
+type _Spec = ContractSpec;
+export function specLeaf(): string { return "leaf"; }
 `;
+    const leafId = makeMerkleRoot("specLeaf", "Leaf with ContractSpec import", leafImpl);
 
-    const parentSpec = makeSpec("Parent also importing ContractSpec");
-    const parentId = makeContractId(parentSpec);
-    const parentSource = `import type { ContractSpec } from "@yakcc/contracts";
-import type { idLeaf } from "./id-leaf.js";
-type _IdLeaf = typeof idLeaf;
-export const CONTRACT: ContractSpec = ${JSON.stringify(parentSpec)};
-export function idParent(): string { return "parent"; }
+    const parentImpl = `import type { ContractSpec } from "@yakcc/contracts";
+import type { specLeaf } from "./spec-leaf.js";
+type _SpecLeaf = typeof specLeaf;
+export const CONTRACT: ContractSpec = { behavior: "Parent also importing ContractSpec" } as unknown as ContractSpec;
+export function specParent(): string { return "parent"; }
 `;
+    const parentId = makeMerkleRoot(
+      "specParent",
+      "Parent also importing ContractSpec",
+      parentImpl,
+    );
 
     const resolution = makeResolution([
-      { id: leafId, source: leafSource },
-      { id: parentId, source: parentSource, subBlocks: [leafId] },
+      { id: leafId, source: leafImpl },
+      { id: parentId, source: parentImpl, subBlocks: [leafId] },
     ]);
     const output = assembleModule(resolution);
 
-    // Should have exactly one @yakcc/contracts import containing both symbols.
+    // Should have exactly one @yakcc/contracts import.
     const contractsLines = output.split("\n").filter((l) => l.includes("@yakcc/contracts"));
     expect(contractsLines.length).toBe(1);
-    // Both symbols should be in that one line.
+    // ContractSpec should be in that one line.
     const importLine = contractsLines[0] ?? "";
-    expect(importLine).toContain("ContractId");
     expect(importLine).toContain("ContractSpec");
   });
 });

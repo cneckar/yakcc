@@ -1,12 +1,14 @@
-// @decision DEC-COMPILE-INDEX-001: @yakcc/compile barrel re-exports all public types
-// and functions. The legacy Backend interface (compile(blocks, entry)) is replaced by
-// the WI-005 Backend interface (emit(resolution)), which accepts a ResolutionResult.
-// Status: supersedes DEC-COMPILE-FACADE-V0 (WI-005 wires the real backend).
+// @decision DEC-COMPILE-INDEX-002: @yakcc/compile barrel re-exports all public types
+// and functions updated for the triplet substrate (WI-T04).
+// Status: implemented (WI-T04); supersedes DEC-COMPILE-INDEX-001 (ContractId-based,
+// WI-005). The ContractId re-export is removed; BlockMerkleRoot and SpecHash are
+// the new identity types. AssembleOptions.knownContractIds → knownMerkleRoots.
 // Rationale: The public API surface is: assemble(), tsBackend(), and the associated
 // types Artifact, ProvenanceManifest, ProvenanceEntry, VerificationStatus, Backend.
-// ContractId is re-exported for callers who need it without importing @yakcc/contracts.
+// BlockMerkleRoot and SpecHash are re-exported for callers who need them without
+// importing @yakcc/contracts directly.
 
-export type { ContractId } from "@yakcc/contracts";
+export type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 
 // Provenance manifest types
 export type { VerificationStatus, ProvenanceEntry, ProvenanceManifest } from "./manifest.js";

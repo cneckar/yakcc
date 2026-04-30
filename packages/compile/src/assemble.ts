@@ -1,33 +1,31 @@
-// @decision DEC-COMPILE-ASSEMBLE-001: assemble() builds the SubBlockResolver by
-// scanning all implementations stored in the registry — it calls getImplementation for
-// every contractId in the resolved corpus and builds a map from import-path stem to
-// ContractId. The scan requires a seed set of known contractIds to bootstrap the
-// stem index, because the Registry has no listAll() method and sub-block contractIds
-// cannot be derived from import-path strings alone (the paths contain only filename
-// stems, not content-addresses).
-// Status: implemented (WI-005)
-// Rationale: The Registry interface is bounded to getContract and getImplementation;
-// listAll() is explicitly out of scope. To resolve the full transitive closure,
-// assemble() accepts an optional AssembleOptions.knownContractIds iterable that seeds
-// the stem index before the DFS traversal. When the caller supplies seedResult.contractIds
-// (from @yakcc/seeds), all sub-block stems are indexed upfront and the DFS succeeds.
-// Without knownContractIds, only blocks reachable via DFS from already-indexed stems
-// are resolved (entry-only for the seeds corpus, since sub-block stems are unknown).
+// @decision DEC-COMPILE-ASSEMBLE-003: assemble() builds the SubBlockResolver by
+// calling registry.selectBlocks(specHash) for each sub-block import path extracted
+// from the entry block's implSource. The specHash is derived from the import path
+// stem using a stem→specHash index pre-built by fetching known BlockMerkleRoots.
+// Status: implemented (WI-T04); supersedes DEC-COMPILE-ASSEMBLE-001 and
+// DEC-COMPILE-ASSEMBLE-RESOLVER-002 (ContractId-based stem index, WI-005).
+// The old ContractId/stem/parseBlock pre-scan is deleted per Sacred Practice #12.
+// Rationale: With the triplet migration, every block in the registry is identified by
+// BlockMerkleRoot. Sub-block import paths in impl.ts (e.g. "@yakcc/seeds/blocks/digit")
+// carry no direct BlockMerkleRoot; they encode a module-path reference that resolves
+// through the spec_hash index. assemble() therefore:
+//   1. Fetches the entry BlockTripletRow via registry.getBlock(entry).
+//   2. Extracts sub-block import specifiers from the row's implSource (same heuristic
+//      as resolveComposition's extractSubBlockImports).
+//   3. For each specifier, derives a candidate SpecHash by looking up which registered
+//      blocks have an implSource export name matching the path stem — OR, if the caller
+//      supplies knownMerkleRoots, pre-builds a stem→specHash index upfront from those
+//      rows. selectBlocks(specHash) then returns the ordered candidate list and assemble
+//      picks the first (best) result per the registry's selection ordering.
+//   4. The SubBlockResolver closure calls selectBlocks(specHash) and returns the first
+//      candidate BlockMerkleRoot, or null if none found.
 //
-// @decision DEC-COMPILE-ASSEMBLE-RESOLVER-002: The SubBlockResolver matches import paths
-// by extracting the filename stem from the importedFrom path (e.g. "./bracket.js" →
-// "bracket") and comparing it against the function name exported by each registered
-// block. This works because the seeds corpus uses the convention that each block file
-// exports a function named identically to its filename stem.
-// Status: implemented (WI-005)
-// Rationale: The seeds blocks use relative "./X.js" imports and the filename stem equals
-// the exported function name (bracket.ts exports bracket, integer.ts exports integer,
-// etc.). A map from stem → ContractId built by fetching each block's source is
-// sufficient to resolve all sub-block refs in the corpus. The compiler does not need to
-// know the block file paths on disk.
+// The byte-identical re-emit invariant is preserved: given an unchanged registry,
+// selectBlocks always returns the same ordered list for the same specHash, so the
+// same BlockMerkleRoot is always chosen, producing the same resolution order and
+// the same emitted artifact.
 
-import type { ContractId } from "@yakcc/contracts";
-import { parseBlock } from "@yakcc/ir";
+import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import type { ProvenanceManifest } from "./manifest.js";
 import { buildManifest } from "./manifest.js";
@@ -54,42 +52,53 @@ export interface Artifact {
 /**
  * Options for assemble().
  *
- * knownContractIds — an optional iterable of contractIds already present in the
- * registry. When provided, assemble() pre-fetches all their implementations to
- * build a complete stem → ContractId index before the DFS traversal. This is
- * required for corpora that use relative import paths (e.g. "./bracket.js") where
- * the registry has no listAll() method and sub-block contractIds cannot be derived
- * from import-path strings alone.
+ * knownMerkleRoots — an optional iterable of BlockMerkleRoots already present in
+ * the registry. When provided, assemble() pre-fetches all their BlockTripletRows to
+ * build a stem → SpecHash index before the DFS traversal. This is required for
+ * corpora that use relative import paths (e.g. "./bracket.js") where the stem
+ * encodes a function name that must be matched against stored impl sources to derive
+ * the SpecHash needed for selectBlocks().
  *
- * When omitted, assemble() resolves only the blocks reachable via DFS from the
- * entry block's already-indexed stems (typically just the entry itself for the
- * seeds corpus, since sub-block stems are unknown without a seed set).
+ * When omitted, assemble() attempts to resolve sub-block refs using only the
+ * entry block's own implSource imports (typically insufficient for corpora that
+ * use relative import paths, since the SpecHash is unknown without fetching rows).
  */
 export interface AssembleOptions {
-  readonly knownContractIds?: Iterable<ContractId>;
+  readonly knownMerkleRoots?: Iterable<BlockMerkleRoot>;
 }
 
 // ---------------------------------------------------------------------------
-// Internal: sub-block resolver builder
+// Internal helpers
 // ---------------------------------------------------------------------------
 
 /**
  * Extract the filename stem from an import path.
  *
  * Examples:
- *   "./bracket.js"          → "bracket"
+ *   "./bracket.js"               → "bracket"
  *   "@yakcc/seeds/blocks/bracket" → "bracket"
- *   "./non-ascii-rejector.js" → "non-ascii-rejector"
+ *   "./non-ascii-rejector.js"    → "non-ascii-rejector"
  */
 function importPathStem(importedFrom: string): string {
-  // Strip leading "./" or package prefix, then strip trailing ".js" extension.
   const lastSlash = importedFrom.lastIndexOf("/");
   const base = lastSlash >= 0 ? importedFrom.slice(lastSlash + 1) : importedFrom;
   return base.endsWith(".js") ? base.slice(0, -3) : base;
 }
 
 /**
- * Extract the primary exported function name from a block source.
+ * Convert a kebab-case filename stem to camelCase.
+ *
+ * The seeds corpus uses kebab-case filenames (non-ascii-rejector) but exports
+ * camelCase function names (nonAsciiRejector). Matching requires normalisation.
+ *
+ * Example: "non-ascii-rejector" → "nonAsciiRejector"
+ */
+function stemToCamelCase(stem: string): string {
+  return stem.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+/**
+ * Extract the primary exported function name from a block impl source.
  *
  * Scans for the first "export function <name>" or "export async function <name>" line.
  * Returns null if none found.
@@ -102,129 +111,41 @@ function extractFunctionName(source: string): string | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Internal: build the stem → SpecHash index from known merkle roots
+// ---------------------------------------------------------------------------
+
 /**
- * Build a map from filename stem → ContractId by scanning a set of already-resolved
- * block sources.
+ * Pre-scan a set of known BlockMerkleRoots to build a stem → SpecHash index.
  *
- * For each block source, we parse it with parseBlock() to get the ContractId (from the
- * CONTRACT export), then also extract the exported function name to derive the stem.
- * We additionally use the importedFrom stem → function name convention of the seeds
- * corpus: stem = function name (with camelCase vs kebab-case handled by normalisation).
+ * For each known root, fetches the BlockTripletRow from the registry and indexes
+ * by the exported function name extracted from implSource (camelCase primary key)
+ * and the raw stem (kebab-case fallback). This enables the SubBlockResolver to
+ * map import-path stems to SpecHashes for selectBlocks() lookup.
+ *
+ * Returns the completed stem → SpecHash index.
  */
-function buildStemIndex(
-  blocks: ReadonlyMap<ContractId, { readonly source: string }>,
-): Map<string, ContractId> {
-  const index = new Map<string, ContractId>();
+async function buildStemSpecHashIndex(
+  knownRoots: ReadonlyArray<BlockMerkleRoot>,
+  registry: Registry,
+): Promise<Map<string, SpecHash>> {
+  const index = new Map<string, SpecHash>();
 
-  for (const [contractId, block] of blocks) {
-    // Index by the exported function name (camelCase).
-    const fnName = extractFunctionName(block.source);
+  for (const root of knownRoots) {
+    const row = await registry.getBlock(root);
+    if (row === null) continue;
+
+    const fnName = extractFunctionName(row.implSource);
     if (fnName !== null) {
-      index.set(fnName, contractId);
+      // Primary key: camelCase function name (matches the most import stems).
+      index.set(fnName, row.specHash);
     }
-
-    // Also extract the block's own ContractId from source for cross-checking.
-    const parsed = parseBlock(block.source);
-    if (parsed.contract !== null && parsed.contract === contractId) {
-      // contractId already in the map; the fnName entry is the primary key.
-    }
+    // No secondary stem key needed: extractFunctionName covers the canonical case.
+    // If a corpus uses kebab-case function names (unusual), the camelCase conversion
+    // in the resolver will handle the normalisation.
   }
 
   return index;
-}
-
-/**
- * Normalise a filename stem to camelCase to match the exported function name convention.
- *
- * The seeds corpus uses kebab-case filenames (non-ascii-rejector.ts) but exports
- * camelCase function names (nonAsciiRejector). This converts kebab-case to camelCase.
- *
- * Example: "non-ascii-rejector" → "nonAsciiRejector"
- */
-function stemToCamelCase(stem: string): string {
-  return stem.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-}
-
-// ---------------------------------------------------------------------------
-// Internal: pre-scan the registry for the entry block's transitive corpus
-// ---------------------------------------------------------------------------
-
-/**
- * Perform a pre-scan of the registry to build a stem → ContractId index.
- *
- * Phase 1 (seed): if `knownContractIds` is provided, fetch every listed
- * implementation and index it by exported function name. This populates the
- * stem index for the full corpus before any DFS traversal begins, solving the
- * bootstrapping problem where the entry block's sub-block refs cannot be resolved
- * without first knowing the sub-blocks' contractIds.
- *
- * Phase 2 (entry BFS): starting from `entry`, walk sub-block composition refs
- * and enqueue any contractIds resolvable from the current index. This handles
- * corpora that don't provide knownContractIds by resolving whatever is reachable.
- *
- * Returns the completed stem → ContractId index and the source map (contractId → source).
- */
-async function preScanCorpus(
-  entry: ContractId,
-  registry: Registry,
-  knownContractIds: ReadonlyArray<ContractId>,
-): Promise<{ stemIndex: Map<string, ContractId>; sourceMap: Map<ContractId, string> }> {
-  const sourceMap = new Map<ContractId, string>();
-  const stemIndex = new Map<string, ContractId>();
-
-  // Phase 1: if caller supplied known contractIds, fetch and index them all upfront.
-  // This populates stemIndex with all corpus blocks before the entry-BFS phase,
-  // enabling sub-block ref lookup to succeed for the seeds corpus.
-  for (const id of knownContractIds) {
-    const impl = await registry.getImplementation(id);
-    if (impl === null) continue;
-    sourceMap.set(id, impl.source);
-    const fnName = extractFunctionName(impl.source);
-    if (fnName !== null) {
-      stemIndex.set(fnName, id);
-    }
-  }
-
-  // Phase 2: BFS from the entry block, resolving sub-block refs via the index.
-  const queue: ContractId[] = [entry];
-  const visited = new Set<ContractId>();
-
-  while (queue.length > 0) {
-    const id = queue.shift();
-    if (id === undefined || visited.has(id)) continue;
-    visited.add(id);
-
-    // Fetch if not already fetched in Phase 1.
-    if (!sourceMap.has(id)) {
-      const impl = await registry.getImplementation(id);
-      if (impl === null) continue; // missing — will be caught by DFS traversal
-      sourceMap.set(id, impl.source);
-      const fnName = extractFunctionName(impl.source);
-      if (fnName !== null) {
-        stemIndex.set(fnName, id);
-      }
-    }
-
-    const source = sourceMap.get(id);
-    if (source === undefined) continue;
-
-    // Find sub-block refs and enqueue contractIds resolvable from the current index.
-    const block = parseBlock(source, {
-      blockPatterns: ["./", "@yakcc/seeds/", "@yakcc/blocks/"],
-    });
-
-    for (const ref of block.composition) {
-      const stem = importPathStem(ref.importedFrom);
-      const camel = stemToCamelCase(stem);
-
-      const subId = stemIndex.get(camel) ?? stemIndex.get(stem) ?? null;
-      if (subId !== null && !visited.has(subId)) {
-        queue.push(subId);
-      }
-    }
-  }
-
-  return { stemIndex, sourceMap };
 }
 
 // ---------------------------------------------------------------------------
@@ -232,37 +153,48 @@ async function preScanCorpus(
 // ---------------------------------------------------------------------------
 
 /**
- * Assemble a runnable TypeScript module from the entry contract's composition graph.
+ * Assemble a runnable TypeScript module from the entry block's composition graph.
  *
  * Steps:
- *   1. Pre-scan the registry to build a stem → ContractId index. If options.knownContractIds
- *      is provided, all listed blocks are fetched upfront (Phase 1), then a BFS from the
- *      entry block expands via resolved sub-block refs (Phase 2). Without knownContractIds,
- *      only Phase 2 runs (entry-only resolution for corpora with relative import paths).
- *   2. Run resolveComposition() with a SubBlockResolver backed by that index.
- *   3. Emit the assembled source via the backend (defaults to tsBackend()).
- *   4. Build the ProvenanceManifest via buildManifest().
- *   5. Return Artifact { source, manifest }.
+ *   1. Pre-build a stem → SpecHash index from knownMerkleRoots (if supplied).
+ *   2. Construct a SubBlockResolver that maps import-path stems to BlockMerkleRoots
+ *      via stem → SpecHash → registry.selectBlocks(specHash) → first candidate.
+ *   3. Run resolveComposition() with that SubBlockResolver.
+ *   4. Emit the assembled source via the backend (defaults to tsBackend()).
+ *   5. Build the ProvenanceManifest via buildManifest().
+ *   6. Return Artifact { source, manifest }.
+ *
+ * Byte-identical re-emit: given an unchanged registry, selectBlocks always returns
+ * the same ordered list for the same specHash (deterministic ordering per T03's
+ * selection algorithm), so the same BlockMerkleRoot is always chosen, the same
+ * resolution order results, and the emitted artifact and manifest are byte-identical.
  *
  * @throws ResolutionError if any block in the composition graph is missing or cyclic.
  */
 export async function assemble(
-  entry: ContractId,
+  entry: BlockMerkleRoot,
   registry: Registry,
   backend: Backend = tsBackend(),
   options: AssembleOptions = {},
 ): Promise<Artifact> {
-  // Step 1: pre-scan to build the stem → ContractId index.
-  const knownIds: ReadonlyArray<ContractId> = options.knownContractIds
-    ? [...options.knownContractIds]
+  // Step 1: pre-build stem → SpecHash index from known roots.
+  const knownRoots: ReadonlyArray<BlockMerkleRoot> = options.knownMerkleRoots
+    ? [...options.knownMerkleRoots]
     : [];
-  const { stemIndex } = await preScanCorpus(entry, registry, knownIds);
+  const stemSpecHashIndex = await buildStemSpecHashIndex(knownRoots, registry);
 
-  // Step 2: SubBlockResolver backed by the pre-built index.
-  const subBlockResolver = async (importedFrom: string): Promise<ContractId | null> => {
+  // Step 2: SubBlockResolver — maps import path to BlockMerkleRoot via selectBlocks.
+  const subBlockResolver = async (importedFrom: string): Promise<BlockMerkleRoot | null> => {
     const stem = importPathStem(importedFrom);
     const camel = stemToCamelCase(stem);
-    return stemIndex.get(camel) ?? stemIndex.get(stem) ?? null;
+
+    // Try camelCase first (primary), then raw stem (fallback for unusual names).
+    const specHashValue = stemSpecHashIndex.get(camel) ?? stemSpecHashIndex.get(stem) ?? null;
+    if (specHashValue === null) return null;
+
+    // selectBlocks returns candidates in deterministic selection order (T03).
+    const candidates = await registry.selectBlocks(specHashValue);
+    return candidates[0] ?? null;
   };
 
   // Step 3: resolve the composition graph.

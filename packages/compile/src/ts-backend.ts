@@ -3,7 +3,10 @@
 // deduplicating type imports from @yakcc/contracts, stripping intra-corpus import
 // statements, type aliases, CONTRACT declarations, and re-exporting the entry block's
 // primary function as the module's public surface.
-// Status: implemented (WI-005)
+// Status: updated (WI-T04) — block separator comment now uses BlockMerkleRoot instead
+// of ContractId. The emit logic itself is unchanged; only the identity type used in
+// comments and the block-map key type changed (BlockMerkleRoot ↔ ContractId).
+// Original decision recorded at WI-005.
 // Rationale: Blocks are self-contained — each inlines its sub-block logic rather than
 // calling sibling functions at runtime. Composition is documented via "import type"
 // declarations only. The backend therefore:
@@ -25,17 +28,8 @@
 // verbatim per the no-code-generation constraint). ts-morph would be accurate for
 // arbitrary input but the strict-subset validator already guarantees the block sources
 // are well-formed; line-level processing is sufficient and measurably cheaper.
-//
-// @decision DEC-COMPILE-TS-BACKEND-AST-001: Import stripping uses line-level string
-// processing rather than ts-morph AST manipulation.
-// Status: decided (WI-005)
-// Rationale: The seeds blocks follow a predictable structure. Line-level processing is
-// simpler, faster, and has no risk of reformatting block source (which must be preserved
-// verbatim per the no-code-generation constraint). ts-morph would be accurate for
-// arbitrary input but the strict-subset validator already guarantees the block sources
-// are well-formed; line-level processing is sufficient and measurably cheaper.
 
-import type { ContractId } from "@yakcc/contracts";
+import type { BlockMerkleRoot } from "@yakcc/contracts";
 import type { ResolutionResult } from "./resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -196,8 +190,8 @@ function extractEntryFunctionName(source: string): string | null {
 function assembleModule(resolution: ResolutionResult): string {
   // Pass 1: collect all @yakcc/contracts type imports across all blocks.
   const allContractsSymbols = new Set<string>();
-  for (const contractId of resolution.order) {
-    const block = resolution.blocks.get(contractId);
+  for (const merkleRoot of resolution.order) {
+    const block = resolution.blocks.get(merkleRoot);
     if (block === undefined) continue;
     for (const sym of extractContractsImports(block.source)) {
       allContractsSymbols.add(sym);
@@ -221,14 +215,14 @@ function assembleModule(resolution: ResolutionResult): string {
   }
 
   // Pass 2: emit each block's cleaned source in topological order (leaves first).
-  for (const contractId of resolution.order) {
-    const block = resolution.blocks.get(contractId);
+  for (const merkleRoot of resolution.order) {
+    const block = resolution.blocks.get(merkleRoot);
     if (block === undefined) continue;
 
     const cleaned = cleanBlockSource(block.source);
     if (cleaned.trim().length === 0) continue;
 
-    parts.push(`\n// --- block: ${contractId} ---\n${cleaned}`);
+    parts.push(`\n// --- block: ${merkleRoot} ---\n${cleaned}`);
   }
 
   // Re-export the entry function as the module's named public surface.
@@ -272,5 +266,5 @@ export function tsBackend(): Backend {
 /** @internal — exposed for ts-backend unit tests only. */
 export { cleanBlockSource, extractEntryFunctionName, assembleModule };
 
-// Unused import suppression for ContractId (used in ResolutionResult type).
-type _ContractId = ContractId;
+// Unused import suppression for BlockMerkleRoot (used in ResolutionResult type).
+type _BlockMerkleRoot = BlockMerkleRoot;
