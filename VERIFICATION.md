@@ -332,6 +332,164 @@ only; v1+ moves to `spec.yak`.
 
 ---
 
+## Semantic AST canonicalization (the universalizer pre-filter)
+
+> Source artifact: `suggestions.txt`, ask #1 ("Semantic AST Canonicalization
+> (The Pre-Filter)"). The user framed canonicalization as a *constitutional*
+> property of the substrate, not as an F4 economic anti-spam guard. This
+> section encodes that framing in the verification spine and supersedes the
+> earlier framing in `FEDERATION.md` §"Canonicalization engine" (now
+> reduced-to-amplifier, see `FEDERATION.md` DEC-FED-007).
+
+Before a block enters the registry — before its triplet's `BlockMerkleRoot`
+is computed for storage and before any L0..L3 check runs — the
+`@yakcc/contracts` canonicalizer derives a **canonical-AST hash** from
+`impl.ts` and stores it as a registry-level structural-equivalence key. Two
+blocks whose `impl.ts` differs only in variable names, argument order on
+commutative operators, comment density, or pure-function nesting structure
+will produce different `impl_hash` values (and therefore different
+`BlockMerkleRoot`s — those triplets are not byte-equal and cannot share a
+cache line) but **will produce the same `canonical_ast_hash`**, and the
+registry flags them as semantic equivalents.
+
+This is a constitutional property. Every yakcc deployment runs the
+canonicalizer — F0 single-machine, F1 read-only-mirror, all the way through
+F4. A yakcc-private installation gets duplicate detection, structural
+equivalence indexing, and the universalizer's spam resistance for free; the
+federation does not own the pass.
+
+### Scope of canonicalization
+
+Canonicalization runs over `impl.ts` only. The spec (`spec.yak`) is already
+canonical-JSON-hashed via `SpecHash`, and the proof bundle (`proof/`) is
+artifact-Merkleized by manifest order. The structural-equivalence question
+the universalizer answers is "are these two implementations the same
+algorithm written differently"; the spec hash already answers "are these two
+contracts the same contract."
+
+A block's full identity tuple in the registry therefore becomes:
+
+```
+spec_hash         = blake3(canonicalize(spec.yak))
+canonical_ast_hash = blake3(canonicalize_ast(impl.ts))
+impl_hash         = blake3(impl.ts file bytes)        // L0; ts-morph-print at L1+
+proof_root        = MerkleRoot(manifest.json, ...)
+block_merkle_root = blake3(spec_hash || impl_hash || proof_root)
+```
+
+`canonical_ast_hash` is a fourth column on the `blocks` table, indexed for
+duplicate-equivalence lookup. It is **not** part of `BlockMerkleRoot`
+derivation (the Merkle root remains exactly what `VERIFICATION.md`
+DEC-VERIFY-002 specifies — variable renaming produces a new
+`BlockMerkleRoot` because the bytes change). It is a sidecar index over
+blocks, parallel to `spec_hash`, that the registry consults at submission
+time.
+
+### Normalization rules
+
+The canonicalizer operates as a deterministic pass over the `ts-morph` AST
+of `impl.ts` after the strict-TS-subset validator has accepted the block. At
+L0 the rules are:
+
+1. **De Bruijn renaming.** Every locally-bound identifier (function
+   parameters, `const`/`let` introductions, destructured names, type
+   parameters) is replaced by an index counted from its enclosing binder.
+   Free identifiers (calls into other registry blocks, capability tokens
+   passed in via the spec's effect list) keep their content-addressed names
+   so cross-block references survive canonicalization.
+2. **Commutative-operator normalization.** For every pure commutative
+   operator over total-ordered operand classes — `+`, `*`, `&`, `|`, `^`,
+   `&&`, `||`, `===`, `!==`, `==`, `!=` — the operands are sorted by their
+   own canonicalized hash. `b + a` and `a + b` both serialize to the same
+   ordered-operand form. Non-commutative operators (`-`, `/`, `%`, `<<`,
+   string `+` over string operands) are left in source order.
+3. **Pure-function flattening.** A pure single-call expression nested in a
+   block whose only purpose is to forward arguments (`const x = f(a, b);
+   return g(x);` where `x` has one use) is collapsed to `return g(f(a,
+   b));`. Aliasing through unused intermediates does not produce a distinct
+   canonical form.
+4. **Bounded-recursion structural representation.** A `for (let i = 0; i <
+   n; i++) body` and a structural recursion `loop(0, n, body)` over the same
+   `body` against the same bound `n` produce the same canonical-AST
+   fragment. The canonicalizer collapses the two iteration shapes into a
+   shared "bounded-iteration-with-fuel" node when the totality witness or
+   the loop's syntactic structure proves the fuel bound.
+5. **Comment and whitespace stripping.** Comments do not enter the canonical
+   form. Whitespace is normalized by `ts-morph`'s deterministic-print pass
+   before AST canonicalization.
+
+The hash function is **BLAKE3** (DEC-HASH-WI002) over the deterministic
+serialization of the canonical AST. The serialization format is a recorded
+`@decision` annotation on the canonicalization implementation file so
+superseding it requires an explicit DEC entry (Sacred Practice #12).
+
+### Submission-time semantics
+
+When a contributor proposes a block:
+
+1. The strict-TS-subset validator (`@yakcc/ir`) accepts or rejects `impl.ts`
+   per its existing rules.
+2. The canonicalizer derives `canonical_ast_hash` from the accepted AST.
+3. The registry queries: does any existing block share this
+   `canonical_ast_hash`?
+   - If yes, the submission is **rejected as a structural duplicate**, with
+     the existing block's `BlockMerkleRoot` returned as the canonical
+     pointer the contributor should reference instead. No `BlockMerkleRoot`
+     is registered for the duplicate; no L0..L3 verification work is run; no
+     bounty is paid (at F4); no spam attestation is produced.
+   - If no, registration continues: `block_merkle_root` is computed,
+     `spec_hash`, `canonical_ast_hash`, `block_merkle_root`, and the triplet
+     contents are written to the `blocks` table, and the L-axis check
+     declared in `spec.yak` runs.
+4. The selector exposes `canonical_ast_hash` to consumers as a non-functional
+   "structural family" marker. Two blocks with the same `canonical_ast_hash`
+   but different `spec_hash` are interesting (the same algorithm reused for
+   different contracts); two blocks with the same `spec_hash` but different
+   `canonical_ast_hash` are alternative implementations that the L-axis
+   distinguishes.
+
+### Interaction with strictness ordering
+
+Open question: when a contributor submits a block whose `canonical_ast_hash`
+collides with an existing block, but the new submission declares a stricter
+`level` than the existing one (e.g., the existing block is at L0 with only
+property tests; the new one carries the same canonicalized impl at L2 with
+an SMT cert in `proof/`), which wins selection?
+
+The cornerstone-honoring answer: **the existing block is the structural
+truth; its `BlockMerkleRoot` does not change**. The new submission contributes
+its `proof/` artifacts to the existing block by re-attestation under the new
+verifier (`VERIFICATION.md` §"Verifier-as-block"), not by registering a
+parallel block. The cornerstone forbids parallel-but-equivalent blocks — two
+identical algorithms with two `BlockMerkleRoot`s differing only in proof
+artifacts is the dual-authority bug Sacred Practice #12 forbids. The
+canonicalizer enforces this at submission time by rejecting the second
+registration and routing the contributor toward attesting the existing
+block.
+
+This rule is **load-bearing for the L-axis** because it makes
+attestation-monotonicity tractable: an existing block accumulates
+attestations as new verifiers reach it; it does not re-derive its identity
+when its proof bundle grows. A contributor who genuinely wants a different
+algorithm shape for the same contract writes a different algorithm — the
+canonicalizer's De-Bruijn / commutative / flattening rules deliberately do
+not unify algorithmically distinct implementations.
+
+@decision: DEC-VERIFY-009 — Semantic AST canonicalization is a
+constitutional pre-ledger pass in `@yakcc/contracts`. Every yakcc
+deployment (F0..F4) runs it. The canonicalizer derives a
+`canonical_ast_hash` (BLAKE3 over a De-Bruijn-renamed,
+commutative-normalized, pure-function-flattened AST) on `impl.ts` only
+(`spec.yak` and `proof/` are content-addressed by their own existing
+hashes). The hash is sidecar to `BlockMerkleRoot` — it does not change the
+Merkle root, but it gates submission: a structural duplicate is rejected at
+ingest with the existing block's `BlockMerkleRoot` returned. When a
+contributor wants a stricter L-axis level on an existing canonical-AST,
+they re-attest the existing block, they do not register a parallel one
+(Sacred Practice #12). Source: `suggestions.txt` ask #1.
+
+---
+
 ## Object-capability discipline
 
 The v0 IR validator already bans the most flagrant escape hatches (`any`,
@@ -751,6 +909,143 @@ a documented uncertainty, not as a settled outcome.
 
 ---
 
+## Behavioral embeddings (deferred to L1+)
+
+> Source artifact: `suggestions.txt`, ask #3 ("Behavioral Embeddings
+> (Execution Traces)"). The user identified embedding-similarity drift —
+> already a documented riskiest assumption — as a discovery-layer failure
+> mode that propagates structurally to bounty farming under F4. This section
+> records the eventual replacement of docstring-derived embeddings with
+> execution-trace-derived embeddings. **The substrate cannot ship this in
+> v0/v0.6/L0** because deriving a behavioral embedding requires sandboxed
+> execution of arbitrary blocks against a fuzzed input matrix, which
+> requires the object-capability discipline of L1+ (DEC-TRIPLET-L0-ONLY-019;
+> see "Object-capability discipline" above). The section is here to lock the
+> design direction so v0.7's `yakcc shave` work and v1's federation
+> attestation surface know what discovery layer they are eventually
+> replacing.
+
+### The replacement
+
+v0's `@yakcc/registry` derives candidate-retrieval vectors from the
+`spec.yak` text via `transformers.js` (DEC-EMBED-010). At L1+ this provider
+interface is augmented with a **behavioral provider** that derives the
+vector from the block's execution behavior over a standardized fuzzed input
+matrix instead of from natural-language text. Search-by-behavior replaces
+search-by-description for blocks that have reached L1+; L0 blocks continue
+to embed via the textual provider.
+
+The two providers coexist in the registry per block. A block carries:
+
+- `text_embedding` — derived by the existing `transformers.js`-class
+  provider over `spec.yak`'s textual fields. Available at every level.
+- `behavioral_embedding` — derived by sandboxed execution of `impl.ts`
+  against the fuzzed input matrix. Available only for blocks at L1+ that
+  passed sandbox execution; absent for L0 blocks.
+
+The selector at L1+ prefers `behavioral_embedding` when both are available;
+at L0 it falls back to `text_embedding`. Two implementations of the same
+contract that satisfy `behavioral_embedding`-equivalence within a declared
+tolerance are flagged as behaviorally equivalent regardless of textual
+divergence — closing the embedding-similarity-drift class of failures
+(`MASTER_PLAN.md` Riskiest Assumption #4 in part, and the bounty-farming
+exploit suggestions.txt names: an attacker rewriting variable names and
+comments cannot move a block in `behavioral_embedding` space).
+
+### The fuzzed input matrix protocol
+
+The matrix is a **content-addressed governance artifact**, not a private
+property of any verifier. It enumerates input-class buckets relevant to the
+substrate's seed shapes:
+
+- bounded-integer fuzzers (signed/unsigned, common widths: 8, 16, 32, 64).
+- bounded-string fuzzers (ASCII, Unicode, structured tokens, parser-edge
+  inputs: empty string, single char, very long, mixed scripts).
+- bounded-array/list fuzzers (empty, singleton, large, sorted/reverse,
+  duplicates).
+- structured-record fuzzers (JSON-shaped inputs at common depths).
+- domain-specific fuzzers as the corpus grows (URL, email, semver, char
+  predicates, etc.).
+
+Each bucket is itself a content-addressed block in the registry — the
+fuzzer is verifiable, reproducible, and rotatable under the
+verifier-as-block discipline (DEC-VERIFY-008). The behavioral embedding is
+the deterministic vector produced by hashing the input-output pairs the
+implementation produced over the matrix, projected through a
+behavior-aware encoder (a research artifact of its own — likely a
+contrastive-loss model trained on registered (impl, behavior-vector) pairs;
+the encoder is itself a content-addressed block on the trust list).
+
+Curation of the matrix is the **discovery-layer governance artifact**. The
+default matrix shipped with `@yakcc/registry` is governance in exactly the
+sense the default trust list is governance (`FEDERATION.md` §"Governance"):
+its choice determines what "behavioral equivalence" means substrate-wide.
+The same per-caller-sovereign-trust-list pattern applies — a caller can run
+their own fuzz matrix locally; the public default is what 99% of users will
+accept and is therefore the canonical thing.
+
+### Why this is L1+
+
+Deriving a behavioral embedding requires:
+
+1. running `impl.ts` against the fuzzed inputs without trusting the impl —
+   the registry executes each candidate block in a sandbox.
+2. proving that the block's effects during execution stay within its
+   declared `effects` — a block that declares `effects: []` but writes to
+   the filesystem during fuzzing is structurally adversarial and must be
+   caught.
+3. bounded execution per input — every fuzz input must terminate inside a
+   declared budget, which only L1+ blocks satisfy (totality is L1's
+   guarantee).
+
+Each of these is an L1+ property:
+- sandbox execution requires the expanded ocap banishment list
+  (`VERIFICATION.md` §"Object-capability discipline" — `Math.random`,
+  `Date.now`, ambient `globalThis`, etc.) so the sandbox can isolate the
+  block's behavior from environmental nondeterminism.
+- effect-conformance requires capability tokens being passed in explicitly
+  rather than imported, so the sandbox can refuse to provide unauthorized
+  caps.
+- bounded execution requires totality, which is L1's registration
+  requirement.
+
+L0 blocks therefore continue to use textual embeddings (the v0
+`transformers.js` path); the behavioral provider activates per block as
+that block's level claim reaches L1+.
+
+### Implications for the discovery layer
+
+- **Selection is topology-based at L1+.** Two blocks with the same
+  `canonical_ast_hash` collapse via DEC-VERIFY-009; two algorithmically
+  distinct blocks with similar `behavioral_embedding`s but different
+  `canonical_ast_hash`es are genuine alternative implementations and the
+  L-axis distinguishes them by attestation depth, not by text-search
+  proximity.
+- **F4 bounty farming via cosmetic rewrites is structurally foreclosed.**
+  Suggestions.txt's threat model — an LLM rewrites variable names and
+  comments to bypass similarity matching — collapses against
+  behavioral-embedding equivalence: rewritten variables produce the same
+  behavioral vector. (DEC-VERIFY-009 already forecloses on the
+  syntactic-rewrite axis at submission time; behavioral embeddings
+  foreclose on the search-time axis.)
+- **`MASTER_PLAN.md` Riskiest Assumption #4 ("transformers.js for local
+  embeddings") narrows in scope.** The textual-embedding provider remains
+  the L0 path; the L1+ path no longer leans on natural-language
+  embedding fidelity for correctness — it leans on sandbox correctness
+  and matrix-curation governance. Different research bet.
+
+@decision: DEC-VERIFY-010 — Behavioral embeddings replace docstring-derived
+embeddings at L1+. Each block at L1+ carries a `behavioral_embedding`
+derived by sandbox execution of `impl.ts` against a content-addressed
+fuzzed input matrix; L0 blocks continue to use the textual embedding
+provider per DEC-EMBED-010. The fuzzed input matrix and the behavior-aware
+encoder are content-addressed blocks on the per-caller trust list. This is
+explicitly **deferred to L1+** because it depends on the expanded ocap
+discipline and the L1 totality guarantee (DEC-TRIPLET-L0-ONLY-019). Source:
+`suggestions.txt` ask #3.
+
+---
+
 ## TCB hardening
 
 Every verification result is conditional on the trusted computing base — the
@@ -976,6 +1271,29 @@ research surface.
   require effect-system extensions whose soundness is its own research
   problem. v0/v1 ships with bounded synchronous effects only.
 
+- **AST canonicalization completeness vs. soundness.** The De Bruijn /
+  commutative / pure-flatten rules in DEC-VERIFY-009 are *sound*
+  (semantically equivalent algorithms collapse to the same canonical form
+  for all the rewrites the rules cover) but not *complete* (two genuinely
+  equivalent algorithms can serialize differently if one uses a rewrite the
+  rules do not normalize — e.g., loop-to-recursion transforms beyond the
+  bounded-iteration node, or algebraic identities like `x * 2 == x + x`).
+  Closing the gap further is undecidable in general; the v0.7+ rule set is
+  what we ship and contributors who hit equivalence-not-detected cases can
+  re-attest the existing block instead of registering a new one. Open
+  research surface; not v1-blocking.
+
+- **Standardized fuzz matrix as governance.** The behavioral-embedding
+  matrix in DEC-VERIFY-010 is a substrate-wide governance artifact: it
+  defines what "behavioral equivalence" means at L1+ for everyone using the
+  default. Who curates it? Multi-sig of named curators, federation-of-
+  fuzz-matrix-attesters, or per-caller curation that defaults to a content-
+  addressed seed are all candidate models, and the same caller-sovereign-
+  trust-list pattern from `FEDERATION.md` §"Governance" applies. The
+  behavior-aware encoder (the model that projects (input, output) pairs
+  into vector space) is a parallel governance artifact with the same shape
+  of question. Deferred to L1+ deployment, not v0/v0.7 work.
+
 ---
 
 ## Decision log
@@ -994,3 +1312,5 @@ silent edits.
 | DEC-VERIFY-006 | L3 verification pairs a TypeScript implementation with a Lean (or Coq / Agda) refinement proof. The proof checks against a Lean-shaped translation of the implementation; cited sub-block lemmas must come from content-addressed `proof/` artifacts. Proofs are erased at runtime. |
 | DEC-VERIFY-007 | TCB hardening: deterministic-WASM TCB binary, content-addressed and audited via the same ledger as blocks; pinned toolchain (`TRUSTED_BASE.md`, deferred); CakeML-style bootstrap as the long-term target. Unsoundness bounties priced ~10x completeness; unsoundness reports require a counterexample witness. |
 | DEC-VERIFY-008 | The verifier is a content-addressed block. Attestations are sidecar metadata `(verifier_hash, block_hash, level, evidence, valid_until_revoked)` living in the federation layer. Verifier rotation is graceful (lazy re-verification, attestation transfer for compatible upgrades, retroactive unsoundness via revocation). Trust list is per-caller; the shipped default is governance, deferred to `FEDERATION.md`. |
+| DEC-VERIFY-009 | Semantic AST canonicalization is a constitutional pre-ledger pass in `@yakcc/contracts`, not an F4 economic guard. Every yakcc deployment (F0..F4) runs it. The canonicalizer derives a `canonical_ast_hash` (BLAKE3 over a De-Bruijn-renamed, commutative-normalized, pure-function-flattened AST of `impl.ts` only). The hash is sidecar to `BlockMerkleRoot` and gates submission: a structural duplicate is rejected at ingest with the existing block's `BlockMerkleRoot` returned. A contributor wanting a stricter L-axis level on an existing canonical-AST re-attests the existing block, never registers a parallel one (Sacred Practice #12). Source: `suggestions.txt` ask #1. |
+| DEC-VERIFY-010 | Behavioral embeddings replace docstring-derived embeddings at L1+. Each L1+ block carries a `behavioral_embedding` derived by sandbox execution of `impl.ts` against a content-addressed fuzzed input matrix; L0 blocks continue to use the textual embedding provider per DEC-EMBED-010. The fuzzed input matrix and the behavior-aware encoder are content-addressed blocks on the per-caller trust list. Deferred to L1+ because sandbox execution requires expanded ocap discipline and the L1 totality guarantee (DEC-TRIPLET-L0-ONLY-019). Source: `suggestions.txt` ask #3. |

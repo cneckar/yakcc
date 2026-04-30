@@ -557,6 +557,49 @@ would not exercise the recursion at all. See
 DEC-DECOMPOSE-STAGE-015-CORRECTION in `MASTER_PLAN.md` for the
 audit trail on this swap.
 
+**Continuous-shave reframe.** v0.7 also widens `@yakcc/shave`'s scope
+from "one-shot library ingestion" to a **universalizer pipeline that
+runs at every proposal-time entry point**. The same decomposition,
+canonicalization, and atom-test machinery activates inside `yakcc
+compile` (every monolithic candidate is sliced before it binds) and
+inside `yakcc propose` / the v0.5 hook intercept (every fresh
+proposal flows through the slicer before reaching the registry).
+The slicer queries `canonical_ast_hash` (the constitutional pass
+owned by `@yakcc/contracts`, see "Canonicalization in core" below)
+and `selectBlocks(spec_hash)` to identify existing primitives and
+replaces redundant code with pointers to existing `BlockMerkleRoot`s;
+only the **novel "glue"** is synthesized and stored. See
+DEC-CONTINUOUS-SHAVE-022 in `MASTER_PLAN.md`.
+
+### Canonicalization in core
+
+A constitutional pre-ledger pass in `@yakcc/contracts` derives a
+`canonical_ast_hash` from `impl.ts` (BLAKE3 over a De-Bruijn-renamed,
+commutative-normalized, pure-function-flattened AST). The hash is a
+sidecar to `BlockMerkleRoot`: it does not change a block's identity,
+but it gates submission. A structural duplicate — same algorithm
+written with different variable names, different commutative-operand
+order, or different cosmetic factoring — is rejected at ingest with
+the existing block's `BlockMerkleRoot` returned as the canonical
+pointer. Every yakcc deployment runs this pass, F0 through F4; the
+F4 economic flows (Stake-to-Refine, Bounties, batch-resolution
+windows) consult it without owning it. See `VERIFICATION.md`
+DEC-VERIFY-009 and `FEDERATION.md` DEC-FED-007.
+
+### Behavioral embeddings (deferred to L1+)
+
+At L1+ each block also carries a `behavioral_embedding` derived by
+sandboxed execution of `impl.ts` against a content-addressed fuzzed
+input matrix; selection-by-behavior replaces selection-by-description
+for blocks that have reached L1+. L0 blocks continue to use the
+textual embedding provider per DEC-EMBED-010. The behavioral
+embedding closes the embedding-similarity-drift class of failures and
+forecloses on the cosmetic-rewrite bounty-farming attack at search
+time (DEC-VERIFY-009 closes it at submission time). Explicitly
+deferred: deriving a behavioral embedding requires the expanded ocap
+discipline and the L1 totality guarantee, neither of which v0.6/L0
+provides. See `VERIFICATION.md` DEC-VERIFY-010.
+
 ---
 
 ## Self-hosting (v2)

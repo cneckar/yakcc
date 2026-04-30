@@ -458,26 +458,61 @@ the block*. Claims are signed by the staker's keypair, not their email.
 Lost stake to a failed claim is a recoverable mistake; the staker has not
 lost authorship of anything because they never had it.
 
-### Canonicalization engine
+### Canonicalization engine (constitutional, not F4-owned)
 
-Before any proposal hits the ledger, a **canonicalizer** normalizes the AST
-against pre-computed atomic patterns and tries to map the canonical form
-to an existing block. If the canonical form maps to an existing block,
-the submission is rejected as duplicate (no bounty paid; no spam
-attestation produced).
+The canonicalizer that collapses cosmetic-rewrite spam in F4 bounty
+windows is **not an F4 mechanism**. It is the constitutional pre-ledger
+canonicalization pass owned by `VERIFICATION.md` §"Semantic AST
+canonicalization" (DEC-VERIFY-009), running in `@yakcc/contracts`, on
+**every** yakcc deployment from F0 single-machine outward. F4 does not
+add the canonicalizer; F4 *amplifies its reach* across the commons by
+applying it to every cross-deployment proposal that hits the bounty
+batch.
 
-This is what makes batch-resolution windows tractable. Without
-canonicalization, an attacker's "spam many low-quality submissions"
-attack works: each submission is a distinct AST and gets evaluated
-separately. With canonicalization, ten variations of the same block all
-collapse to the same content-address and are visible as duplicates *before*
-the resolution window closes.
+Concretely:
 
-The canonicalization engine is itself a content-addressed block. It is
-governed by the trust list. v0.7's sub-function granularity work makes
-the canonicalizer tractable: atoms are small, finite, enumerable, and
-two implementations of `digit` should canonicalize to the same atom-
-shaped form regardless of cosmetic differences.
+- **At F0/F1/F2/F3:** the canonicalizer runs at submission time on every
+  block proposal. A structural duplicate is rejected at ingest with the
+  existing block's `BlockMerkleRoot` returned. The yakcc-private operator
+  gets duplicate detection and structural-equivalence indexing for free —
+  the user's "optional layer" framing means private deployments inherit
+  the universalizer pipeline, not just the public commons.
+- **At F4 specifically:** the same canonicalizer also gates the bounty
+  batch-resolution window. An attacker submitting ten cosmetic
+  variations of the same block produces ten submissions that all
+  canonicalize to the same `canonical_ast_hash`; nine collapse to
+  duplicates of the first; only the first gets evaluated for the
+  bounty payout. This is the F4 amplification: the constitutional pass
+  is the same pass; the F4 deployment runs it across a wider input set
+  with economic stakes attached.
+
+Why this matters for federation architecture: an earlier draft of this
+document framed the canonicalization engine as F4 anti-spam. That framing
+was wrong because it implied yakcc-private installations did not get the
+universalizer's spam-resistance. Per the cornerstone (no ownership) and
+the user's "optional layer" framing, **private use is the amplified mode
+of public use, not the degraded mode**. The canonicalizer belongs in
+`@yakcc/core` (under `@yakcc/contracts`), not in `@yakcc/federation` or
+`@yakcc/incentives`.
+
+`Stake-to-Refine` claims, `Bounties` submissions, and direct
+`yakcc propose` invocations all pass through the same canonicalization
+pass. The canonicalizer is a content-addressed block on the per-caller
+trust list (verifier-as-block discipline; `VERIFICATION.md` DEC-VERIFY-008);
+v0.7's sub-function granularity work makes the canonicalizer tractable:
+atoms are small, finite, enumerable, and two implementations of `digit`
+canonicalize to the same atom-shaped form regardless of cosmetic
+differences.
+
+@decision: DEC-FED-007 — The canonicalization engine is constitutional,
+not F4-owned. It lives in `@yakcc/contracts` (per `VERIFICATION.md`
+DEC-VERIFY-009), runs at every level from F0 outward, and is amplified
+(not introduced) at F4. Earlier drafts of `FEDERATION.md` §"Canonicalization
+engine" framed it as F4 anti-spam; that framing is superseded. F4 economic
+flows (Stake-to-Refine, Bounties, batch-resolution windows) consult the
+constitutional canonicalizer; they do not own a parallel one (Sacred
+Practice #12). Source: `suggestions.txt` ask #1, surfaced into the
+constitutional layer.
 
 ### L3 economic premium
 
@@ -740,3 +775,4 @@ reference, not silent edits.
 | DEC-FED-004 | Slashing is deprecation of the failing block at the registry level, not seizure of submitter assets. The cornerstone forbids submitter identity; there is no asset to seize. A block losing selection because PoF found a counterexample is the economic consequence; the public-domain commitment is preserved. |
 | DEC-FED-005 | F4 economic primitives: Proof of Fuzz (rewards finding contract deviations; deprecates failing blocks), Bounties (reward synthesizers of unmatched proposals; batch-resolution windows mitigate front-running), Stake-to-Refine (refinement claims require stake; benchmarker-verified; failed/backdoored claims burn stake). The canonicalization engine collapses duplicates before resolution. L3 attestations earn ~10x L2 to populate the proof tier; TCB unsoundness bounties earn ~10x completeness bounties. |
 | DEC-FED-006 | Trust list governance is per-caller (sovereign local policy). The shipped default is itself governance and is deferred as a user-decision boundary, not chosen unilaterally by this document. F0/F1/F2 ship without a default; F3/F4 require the governance question to be answered by whoever deploys the public network. |
+| DEC-FED-007 | The canonicalization engine is constitutional (lives in `@yakcc/contracts`), not F4-owned. It runs on every yakcc deployment from F0 outward; F4 amplifies its reach (across bounty batch windows) but does not own it. Earlier drafts framed it as F4 anti-spam; that framing is superseded. F4 economic flows (Stake-to-Refine, Bounties, batch-resolution windows) consult the constitutional canonicalizer; they do not maintain a parallel one (Sacred Practice #12). The user's "optional layer" framing requires this — private use must remain first-class, including its access to the universalizer pipeline. Source: `suggestions.txt` ask #1, surfaced into the constitutional layer per `VERIFICATION.md` DEC-VERIFY-009. |
