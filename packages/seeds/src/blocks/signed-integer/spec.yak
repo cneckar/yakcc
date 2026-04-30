@@ -1,0 +1,84 @@
+{
+  "name": "signed-integer",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Zero-based start position."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [number, number]",
+      "description": "[parsedValue, newPosition] where parsedValue may be negative."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Parse an optional '-' sign followed by one or more decimal digits. Returns [value, newPosition]. A bare '-' with no digits throws SyntaxError. Negative zero is represented as 0.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "greedy",
+      "description": "Consumes as many digits as possible after the optional sign."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "No digit follows an optional '-' sign.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "No digit or '-' found at position.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "signed-int-positive",
+      "description": "signedInteger('42', 0) returns [42, 2]"
+    },
+    {
+      "id": "signed-int-negative",
+      "description": "signedInteger('-7', 0) returns [-7, 2]"
+    },
+    {
+      "id": "signed-int-bare-minus",
+      "description": "signedInteger('-x', 0) throws SyntaxError"
+    },
+    {
+      "id": "signed-int-no-digit",
+      "description": "signedInteger('abc', 0) throws SyntaxError"
+    },
+    {
+      "id": "signed-int-eof",
+      "description": "signedInteger('', 0) throws SyntaxError"
+    },
+    {
+      "id": "signed-int-negative-pos",
+      "description": "signedInteger('1', -1) throws RangeError"
+    }
+  ]
+}

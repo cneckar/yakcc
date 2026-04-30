@@ -1,0 +1,85 @@
+{
+  "name": "string-from-position",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "start",
+      "type": "number",
+      "description": "Zero-based start index (inclusive)."
+    },
+    {
+      "name": "end",
+      "type": "number",
+      "description": "Zero-based end index (exclusive)."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "string",
+      "description": "Substring input[start..end]."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Return the substring of input from start (inclusive) to end (exclusive). Equivalent to input.slice(start, end) but with explicit bounds validation.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "length",
+      "description": "Result length equals end - start when inputs are valid."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "start < 0 or end < 0.",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "start > end.",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "end > input.length.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "strfrompos-basic",
+      "description": "stringFromPosition('abcde', 1, 3) returns 'bc'"
+    },
+    {
+      "id": "strfrompos-empty",
+      "description": "stringFromPosition('abc', 1, 1) returns ''"
+    },
+    {
+      "id": "strfrompos-negative-start",
+      "description": "stringFromPosition('abc', -1, 2) throws RangeError"
+    },
+    {
+      "id": "strfrompos-start-gt-end",
+      "description": "stringFromPosition('abc', 2, 1) throws RangeError"
+    },
+    {
+      "id": "strfrompos-end-oob",
+      "description": "stringFromPosition('abc', 0, 4) throws RangeError"
+    }
+  ]
+}

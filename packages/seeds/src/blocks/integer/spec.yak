@@ -1,0 +1,84 @@
+{
+  "name": "integer",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Zero-based start position."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [number, number]",
+      "description": "[parsedValue, newPosition] tuple."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Parse a sequence of one or more ASCII decimal digits starting at position. Returns [value, newPosition] where value is the decimal integer and newPosition is one past the last digit. Throws SyntaxError if no digit is found at position.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "greedy",
+      "description": "Consumes as many digits as possible from position."
+    },
+    {
+      "id": "non-negative",
+      "description": "Parsed value is always >= 0."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "No digit character found at position.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "integer-single",
+      "description": "integer('5', 0) returns [5, 1]"
+    },
+    {
+      "id": "integer-multi",
+      "description": "integer('123', 0) returns [123, 3]"
+    },
+    {
+      "id": "integer-mid",
+      "description": "integer('a42b', 1) returns [42, 3]"
+    },
+    {
+      "id": "integer-no-digit",
+      "description": "integer('abc', 0) throws SyntaxError"
+    },
+    {
+      "id": "integer-eof",
+      "description": "integer('', 0) throws SyntaxError"
+    },
+    {
+      "id": "integer-negative-pos",
+      "description": "integer('1', -1) throws RangeError"
+    }
+  ]
+}

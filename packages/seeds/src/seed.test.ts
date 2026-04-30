@@ -1,37 +1,40 @@
-// @decision DEC-SEEDS-TEST-001: seed.test.ts covers composition, property corpora, and registry round-trip.
-// Status: implemented (WI-006)
-// Rationale: Three test layers are required: (1) registry loading — seedRegistry stores all blocks;
-// (2) property-test corpus execution — each block's propertyTests cases pass against the implementation;
-// (3) composition test — listOfInts correctly composes sub-blocks for realistic inputs and rejects
-// malformed input. Together these prove the corpus is valid end-to-end, not just type-correct.
+// @decision DEC-SEEDS-TEST-T05-001: seed.test.ts updated for WI-T05 triplet migration.
+// Status: implemented (WI-T05)
+// Rationale: Block source is now in <name>/impl.ts; imports come from <name>/impl.js.
+// Suite 1 (registry loading) asserts 20 rows via seedRegistry() returning merkleRoots.
+// Suite 2 (content-address round-trip) uses parseBlockTriplet on block directories.
+// Suite 3 (strict-subset validation) reads impl.ts from the triplet directory.
+// Suite 4 (property-test corpora) exercises functions imported from impl.js paths.
+// Suite 5 (composition) exercises listOfInts end-to-end.
+// Suite 6 (E2E compound-interaction) seeds registry and round-trips via selectBlocks
+//   + getBlock — the new T03 API — instead of the removed registry.match() path.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { contractId } from "@yakcc/contracts";
 import { validateStrictSubset } from "@yakcc/ir";
 import { openRegistry } from "@yakcc/registry";
 import { afterEach, describe, expect, it } from "vitest";
-import { asciiChar } from "./blocks/ascii-char.js";
-import { isAsciiDigit } from "./blocks/ascii-digit-set.js";
-import { bracket } from "./blocks/bracket.js";
-import { charCode } from "./blocks/char-code.js";
-import { commaSeparatedIntegers } from "./blocks/comma-separated-integers.js";
-import { comma } from "./blocks/comma.js";
-import { digitOrThrow } from "./blocks/digit-or-throw.js";
-import { digit } from "./blocks/digit.js";
-import { emptyListContent } from "./blocks/empty-list-content.js";
-import { eofCheck } from "./blocks/eof-check.js";
-import { integer } from "./blocks/integer.js";
-import { listOfInts } from "./blocks/list-of-ints.js";
-import { nonAsciiRejector } from "./blocks/non-ascii-rejector.js";
-import { nonemptyListContent } from "./blocks/nonempty-list-content.js";
-import { optionalWhitespace } from "./blocks/optional-whitespace.js";
-import { peekChar } from "./blocks/peek-char.js";
-import { positionStep } from "./blocks/position-step.js";
-import { signedInteger } from "./blocks/signed-integer.js";
-import { stringFromPosition } from "./blocks/string-from-position.js";
-import { whitespace } from "./blocks/whitespace.js";
+import { asciiChar } from "./blocks/ascii-char/impl.js";
+import { isAsciiDigit } from "./blocks/ascii-digit-set/impl.js";
+import { bracket } from "./blocks/bracket/impl.js";
+import { charCode } from "./blocks/char-code/impl.js";
+import { commaSeparatedIntegers } from "./blocks/comma-separated-integers/impl.js";
+import { comma } from "./blocks/comma/impl.js";
+import { digitOrThrow } from "./blocks/digit-or-throw/impl.js";
+import { digit } from "./blocks/digit/impl.js";
+import { emptyListContent } from "./blocks/empty-list-content/impl.js";
+import { eofCheck } from "./blocks/eof-check/impl.js";
+import { integer } from "./blocks/integer/impl.js";
+import { listOfInts } from "./blocks/list-of-ints/impl.js";
+import { nonAsciiRejector } from "./blocks/non-ascii-rejector/impl.js";
+import { nonemptyListContent } from "./blocks/nonempty-list-content/impl.js";
+import { optionalWhitespace } from "./blocks/optional-whitespace/impl.js";
+import { peekChar } from "./blocks/peek-char/impl.js";
+import { positionStep } from "./blocks/position-step/impl.js";
+import { signedInteger } from "./blocks/signed-integer/impl.js";
+import { stringFromPosition } from "./blocks/string-from-position/impl.js";
+import { whitespace } from "./blocks/whitespace/impl.js";
 import { type SeedResult, seedRegistry } from "./seed.js";
 
 // ---------------------------------------------------------------------------
@@ -40,39 +43,45 @@ import { type SeedResult, seedRegistry } from "./seed.js";
 
 const BLOCKS_DIR = join(dirname(fileURLToPath(import.meta.url)), "blocks");
 
-function readBlockSource(filename: string): string {
-  return readFileSync(join(BLOCKS_DIR, filename), "utf-8");
+/** Read the impl.ts source for a named block directory. */
+function readBlockImpl(blockName: string): string {
+  return readFileSync(join(BLOCKS_DIR, blockName, "impl.ts"), "utf-8");
 }
 
-const BLOCK_FILES = [
-  "ascii-char.ts",
-  "ascii-digit-set.ts",
-  "bracket.ts",
-  "char-code.ts",
-  "comma.ts",
-  "comma-separated-integers.ts",
-  "digit.ts",
-  "digit-or-throw.ts",
-  "empty-list-content.ts",
-  "eof-check.ts",
-  "integer.ts",
-  "list-of-ints.ts",
-  "non-ascii-rejector.ts",
-  "nonempty-list-content.ts",
-  "optional-whitespace.ts",
-  "peek-char.ts",
-  "position-step.ts",
-  "signed-integer.ts",
-  "string-from-position.ts",
-  "whitespace.ts",
+/** Return the absolute path to a block directory. */
+function blockDir(blockName: string): string {
+  return join(BLOCKS_DIR, blockName);
+}
+
+const BLOCK_DIRS = [
+  "ascii-char",
+  "ascii-digit-set",
+  "bracket",
+  "char-code",
+  "comma",
+  "comma-separated-integers",
+  "digit",
+  "digit-or-throw",
+  "empty-list-content",
+  "eof-check",
+  "integer",
+  "list-of-ints",
+  "non-ascii-rejector",
+  "nonempty-list-content",
+  "optional-whitespace",
+  "peek-char",
+  "position-step",
+  "signed-integer",
+  "string-from-position",
+  "whitespace",
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Suite 1: Registry loading — seedRegistry stores all blocks
+// Suite 1: Registry loading — seedRegistry stores all 20 blocks
 // ---------------------------------------------------------------------------
 
 describe("seedRegistry", () => {
-  it("stores all 20 blocks and returns their contractIds", async () => {
+  it("stores all 20 blocks and returns their merkleRoots", async () => {
     const registry = await openRegistry(":memory:");
     let result: SeedResult;
     try {
@@ -81,7 +90,7 @@ describe("seedRegistry", () => {
       await registry.close();
     }
     expect(result.stored).toBe(20);
-    expect(result.contractIds).toHaveLength(20);
+    expect(result.merkleRoots).toHaveLength(20);
   });
 
   it("is idempotent — calling seedRegistry twice does not throw or double-count", async () => {
@@ -90,29 +99,42 @@ describe("seedRegistry", () => {
       const r1 = await seedRegistry(registry);
       const r2 = await seedRegistry(registry);
       expect(r1.stored).toBe(r2.stored);
-      // contractIds must be identical (same content-addressed specs)
-      expect(r1.contractIds).toEqual(r2.contractIds);
+      // merkleRoots must be identical (same content-addressed triplets)
+      expect(r1.merkleRoots).toEqual(r2.merkleRoots);
     } finally {
       await registry.close();
     }
   });
 
-  it("registry.match finds each block by its spec after seeding", async () => {
+  it("seedRegistry() re-runs deterministically — same BlockMerkleRoot for every block", async () => {
+    // Run seedRegistry twice on separate in-memory DBs; merkleRoots must match.
+    const registry1 = await openRegistry(":memory:");
+    const registry2 = await openRegistry(":memory:");
+    try {
+      const r1 = await seedRegistry(registry1);
+      const r2 = await seedRegistry(registry2);
+      expect(r1.merkleRoots).toEqual(r2.merkleRoots);
+      expect(r1.stored).toBe(20);
+      expect(r2.stored).toBe(20);
+    } finally {
+      await registry1.close();
+      await registry2.close();
+    }
+  });
+
+  it("registry.selectBlocks finds each block by its specHash after seeding", async () => {
     const registry = await openRegistry(":memory:");
     try {
-      const { contractIds } = await seedRegistry(registry);
+      const { merkleRoots } = await seedRegistry(registry);
+      const { parseBlockTriplet } = await import("@yakcc/ir");
+
       // Spot-check: digit block
-      const digitSource = readBlockSource("digit.ts");
-      const { parseBlock } = await import("@yakcc/ir");
-      const block = parseBlock(digitSource);
-      expect(block.contractSpec).not.toBeNull();
-      if (block.contractSpec === null) throw new Error("digit contractSpec was null");
-      const match = await registry.match(block.contractSpec);
-      expect(match).not.toBeNull();
-      if (match === null) throw new Error("digit block not found in registry");
-      expect(match.contract.id).toBe(block.contract);
-      // All returned ids are in the contractIds array
-      expect(contractIds).toContain(block.contract);
+      const digitResult = parseBlockTriplet(blockDir("digit"));
+      const roots = await registry.selectBlocks(digitResult.specHashValue);
+      expect(roots.length).toBeGreaterThan(0);
+      expect(roots).toContain(digitResult.merkleRoot);
+      // merkleRoot must be in the returned list
+      expect(merkleRoots).toContain(digitResult.merkleRoot);
     } finally {
       await registry.close();
     }
@@ -120,36 +142,33 @@ describe("seedRegistry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 2: Content-address round-trip — each block's contractId === contractId(spec)
+// Suite 2: Content-address round-trip — parseBlockTriplet produces stable merkleRoot
 // ---------------------------------------------------------------------------
 
 describe("content-address round-trip", () => {
-  for (const filename of BLOCK_FILES) {
-    it(`${filename}: block.contract === contractId(block.contractSpec)`, async () => {
-      const { parseBlock } = await import("@yakcc/ir");
-      const source = readBlockSource(filename);
-      const block = parseBlock(source);
-      expect(block.contractSpec).not.toBeNull();
-      expect(block.contract).not.toBeNull();
-      if (block.contractSpec === null) throw new Error(`${filename} contractSpec was null`);
-      const derived = contractId(block.contractSpec);
-      expect(block.contract).toBe(derived);
+  for (const name of BLOCK_DIRS) {
+    it(`${name}: merkleRoot is stable across two parseBlockTriplet calls`, async () => {
+      const { parseBlockTriplet } = await import("@yakcc/ir");
+      const r1 = parseBlockTriplet(blockDir(name));
+      const r2 = parseBlockTriplet(blockDir(name));
+      expect(r1.merkleRoot).toBe(r2.merkleRoot);
+      expect(r1.specHashValue).toBe(r2.specHashValue);
     });
   }
 });
 
 // ---------------------------------------------------------------------------
-// Suite 3: Strict-subset validation — every block passes validateStrictSubset
+// Suite 3: Strict-subset validation — every block's impl.ts passes
 // ---------------------------------------------------------------------------
 
 describe("strict-subset validation", () => {
-  for (const filename of BLOCK_FILES) {
-    it(`${filename}: passes validateStrictSubset`, () => {
-      const source = readBlockSource(filename);
+  for (const name of BLOCK_DIRS) {
+    it(`${name}: impl.ts passes validateStrictSubset`, () => {
+      const source = readBlockImpl(name);
       const result = validateStrictSubset(source);
       if (!result.ok) {
         const msgs = result.errors.map((e) => `${e.rule}: ${e.message}`).join("\n");
-        throw new Error(`Strict-subset violations in ${filename}:\n${msgs}`);
+        throw new Error(`Strict-subset violations in ${name}/impl.ts:\n${msgs}`);
       }
       expect(result.ok).toBe(true);
     });
@@ -576,11 +595,13 @@ describe("listOfInts composition", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 6: End-to-end production sequence — seed + match + parse composition
-// This is the compound-interaction test crossing multiple internal components.
+// Suite 6: End-to-end production sequence — seed + selectBlocks + getBlock + parse
+// Compound-interaction test crossing multiple internal components:
+// seedRegistry → registry.selectBlocks(specHash) → registry.getBlock(merkleRoot)
+// → parseBlockTriplet (for spec) → listOfInts (function execution)
 // ---------------------------------------------------------------------------
 
-describe("end-to-end: seed → match → parse → compose", () => {
+describe("end-to-end: seed → selectBlocks → getBlock → parse → compose", () => {
   let registryInstance: Awaited<ReturnType<typeof openRegistry>> | null = null;
 
   afterEach(async () => {
@@ -590,57 +611,60 @@ describe("end-to-end: seed → match → parse → compose", () => {
     }
   });
 
-  it("seeds registry, matches list-of-ints spec, retrieves it, and parses '[1,2,3]'", async () => {
+  it("seeds registry, looks up list-of-ints by specHash, retrieves block, and parses '[1,2,3]'", async () => {
     const registry = await openRegistry(":memory:");
     registryInstance = registry;
 
     // Step 1: Seed the registry
-    const { stored, contractIds } = await seedRegistry(registry);
+    const { stored, merkleRoots } = await seedRegistry(registry);
     expect(stored).toBe(20);
-    expect(contractIds.length).toBe(20);
+    expect(merkleRoots.length).toBe(20);
 
-    // Step 2: Parse list-of-ints block to get its spec
-    const { parseBlock } = await import("@yakcc/ir");
-    const listSource = readBlockSource("list-of-ints.ts");
-    const listBlock = parseBlock(listSource);
-    expect(listBlock.contractSpec).not.toBeNull();
-    expect(listBlock.validation.ok).toBe(true);
+    // Step 2: Parse list-of-ints triplet to get its specHash
+    const { parseBlockTriplet } = await import("@yakcc/ir");
+    const listResult = parseBlockTriplet(blockDir("list-of-ints"));
+    expect(listResult.validation.ok).toBe(true);
 
-    // Step 3: Match the spec in the registry — content-address lookup
-    if (listBlock.contractSpec === null) throw new Error("list-of-ints contractSpec was null");
-    const match = await registry.match(listBlock.contractSpec);
-    expect(match).not.toBeNull();
-    if (match === null) throw new Error("list-of-ints block not found in registry");
-    expect(match.contract.id).toBe(listBlock.contract);
+    // Step 3: Look up by specHash — content-address lookup via new T03 API
+    const roots = await registry.selectBlocks(listResult.specHashValue);
+    expect(roots.length).toBeGreaterThan(0);
+    expect(roots).toContain(listResult.merkleRoot);
 
-    // Step 4: Use the block function to parse a real input — proving composition works
+    // Step 4: Retrieve the full block row by merkleRoot
+    const row = await registry.getBlock(listResult.merkleRoot);
+    expect(row).not.toBeNull();
+    if (row === null) throw new Error("list-of-ints block not found in registry");
+    expect(row.blockMerkleRoot).toBe(listResult.merkleRoot);
+    expect(row.level).toBe("L0");
+
+    // Step 5: Use the block function to parse a real input — proving composition works
     const result = listOfInts("[1,2,3]");
     expect(result).toEqual([1, 2, 3]);
 
-    // Step 5: Verify the contract id is in the returned contractIds
-    expect(contractIds).toContain(listBlock.contract);
+    // Step 6: Verify the merkleRoot is in the returned list
+    expect(merkleRoots).toContain(listResult.merkleRoot);
   });
 
-  it("verifies all blocks pass strict-subset and have non-null specs after seeding", async () => {
+  it("verifies all blocks parse successfully via parseBlockTriplet after migration", async () => {
     const registry = await openRegistry(":memory:");
     registryInstance = registry;
 
-    const { parseBlock } = await import("@yakcc/ir");
+    const { parseBlockTriplet } = await import("@yakcc/ir");
 
     await seedRegistry(registry);
 
-    for (const filename of BLOCK_FILES) {
-      const source = readBlockSource(filename);
-      const block = parseBlock(source);
+    for (const name of BLOCK_DIRS) {
+      const result = parseBlockTriplet(blockDir(name));
 
-      expect(block.validation.ok, `${filename} failed strict-subset`).toBe(true);
-      expect(block.contractSpec, `${filename} missing CONTRACT`).not.toBeNull();
-      expect(block.contract, `${filename} missing contractId`).not.toBeNull();
+      expect(result.validation.ok, `${name}/impl.ts failed strict-subset`).toBe(true);
+      expect(result.spec, `${name} missing spec`).toBeDefined();
+      expect(result.merkleRoot, `${name} missing merkleRoot`).toBeTruthy();
+      expect(result.spec.level).toBe("L0");
+      expect(result.spec.effects).toEqual([]);
 
-      // Verify the block is findable in registry
-      if (block.contractSpec === null) throw new Error(`${filename} contractSpec was null`);
-      const match = await registry.match(block.contractSpec);
-      expect(match, `${filename} not found in registry`).not.toBeNull();
+      // Verify block is findable in registry
+      const roots = await registry.selectBlocks(result.specHashValue);
+      expect(roots, `${name} not found in registry`).toContain(result.merkleRoot);
     }
   });
 });

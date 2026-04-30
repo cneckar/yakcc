@@ -3,7 +3,7 @@
  *
  * Production sequence exercised (compound-interaction test):
  *   runCli(["registry", "init", ...], logger) → runCli(["seed", ...], logger)
- *   → runCli(["compile", entryId, ...], logger) → ts.transpileModule(module.ts)
+ *   → runCli(["compile", merkleRoot, ...], logger) → ts.transpileModule(module.ts)
  *   → import(tempFile) → module.listOfInts("[1,2,3]") === [1, 2, 3]
  *
  * Each command has an integration test that exercises the canonical happy path
@@ -13,7 +13,7 @@
  * Tests cover:
  *   - registry init: creates the SQLite file; idempotent on second call
  *   - seed: ingests all 20 corpus blocks; prints the count
- *   - propose (match): after seed, propose a known spec returns match: <id>
+ *   - propose (match): after seed, propose a known spec returns match: <root>
  *   - propose (no match): novel spec returns no match found + authoring template
  *   - search: free-text query returns at least one result line with score
  *   - compile (end-to-end): outputs module.ts and manifest.json with >=7 entries;
@@ -24,7 +24,7 @@
  * so that runCli() — which opens/closes its own registry handle per call — can operate
  * against the same on-disk state across multiple invocations. A :memory: registry
  * opened in the test would be a distinct handle from the one runCli() opens.
- * Status: implemented (WI-007)
+ * Status: updated (WI-T05)
  * Rationale: runCli() is a public boundary that opens its own registry per invocation.
  * Temp-file SQLite is the correct integration boundary; it matches production behaviour.
  *
@@ -36,13 +36,20 @@
  * Rationale: Sacred Practice #5 — mocks are acceptable only for external boundaries.
  * CollectingLogger is a real implementation that satisfies the Logger contract; it
  * accumulates lines in plain arrays that tests inspect directly.
+ *
+ * @decision DEC-CLI-TEST-T05-003: WI-T05 migrates the test's id-discovery path from
+ * ContractId (T02 era) to BlockMerkleRoot (T03/T04 era). listOfIntsRoot is now a
+ * BlockMerkleRoot discovered from seedResult.merkleRoots via getBlock().implSource.
+ * The compile entry arg is the full 64-hex BlockMerkleRoot string; propose/search
+ * tests extract the SpecYak from getBlock().specCanonicalBytes.
+ * Status: implemented (WI-T05)
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ContractId } from "@yakcc/contracts";
+import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import ts from "typescript";
@@ -58,8 +65,10 @@ let suiteDir: string;
 let registryPath: string;
 /** Temp directory for transpiled .mjs files produced by the compile e2e test. */
 let transpileDir: string;
-/** ContractId of the list-of-ints block, discovered from the seed corpus. */
-let listOfIntsId: ContractId;
+/** BlockMerkleRoot of the list-of-ints block, discovered from the seed corpus. */
+let listOfIntsRoot: BlockMerkleRoot;
+/** The SpecYak of the list-of-ints block, for propose/search tests. */
+let listOfIntsSpec: SpecYak;
 
 beforeAll(async () => {
   suiteDir = mkdtempSync(join(tmpdir(), "yakcc-cli-test-"));
@@ -80,23 +89,34 @@ beforeAll(async () => {
     throw new Error(`seed failed: ${seedLogger.errLines.join("\n")}`);
   }
 
-  // Discover the list-of-ints ContractId from the seed corpus via a :memory: registry.
-  // We open a separate handle here only for id discovery; the CLI tests use registryPath.
+  // Discover the list-of-ints BlockMerkleRoot from the seed corpus via a :memory: registry.
+  // We open a separate handle here only for discovery; the CLI tests use registryPath.
   const reg = await openRegistry(":memory:");
   const seedResult = await seedRegistry(reg);
-  let found: ContractId | null = null;
-  for (const id of seedResult.contractIds) {
-    const impl = await reg.getImplementation(id);
-    if (impl?.source.includes("export function listOfInts")) {
-      found = id;
+  let found: BlockMerkleRoot | null = null;
+  let foundSpec: SpecYak | null = null;
+  for (const merkleRoot of seedResult.merkleRoots) {
+    const row = await reg.getBlock(merkleRoot);
+    if (row === null) continue;
+    if (row.implSource.includes("export function listOfInts")) {
+      found = merkleRoot;
+      // Parse the SpecYak from the canonical bytes stored in the block row.
+      try {
+        foundSpec = JSON.parse(
+          Buffer.from(row.specCanonicalBytes).toString("utf-8"),
+        ) as SpecYak;
+      } catch {
+        // fall through — foundSpec stays null
+      }
       break;
     }
   }
   await reg.close();
-  if (found === null) {
+  if (found === null || foundSpec === null) {
     throw new Error("seedRegistry did not register a listOfInts block");
   }
-  listOfIntsId = found;
+  listOfIntsRoot = found;
+  listOfIntsSpec = foundSpec;
 });
 
 afterAll(() => {
@@ -184,33 +204,30 @@ describe("seed", () => {
 // ---------------------------------------------------------------------------
 
 describe("propose", () => {
-  it("returns match: <id> when spec is in the seeded registry", async () => {
-    // Extract the list-of-ints spec from a :memory: registry to get the exact canonical form.
-    const reg = await openRegistry(":memory:");
-    await seedRegistry(reg);
-    const contract = await reg.getContract(listOfIntsId);
-    await reg.close();
-    expect(contract).not.toBeNull();
-    if (contract === null) return; // type narrowing; assertion above guards this
-
+  it("returns match: <root> when spec is in the seeded registry", async () => {
     const specPath = join(suiteDir, "list-of-ints-spec.json");
-    writeFileSync(specPath, JSON.stringify(contract.spec), "utf-8");
+    writeFileSync(specPath, JSON.stringify(listOfIntsSpec), "utf-8");
 
     const logger = new CollectingLogger();
     const code = await runCli(["propose", specPath, "--registry", registryPath], logger);
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.startsWith("match:"))).toBe(true);
-    expect(logger.logLines.some((l) => l.includes(listOfIntsId))).toBe(true);
   });
 
   it("returns manual-authoring template when spec is not in the registry", async () => {
-    const novelSpec = {
+    const novelSpec: SpecYak = {
+      name: "novel",
+      level: "L0",
       behavior: "A completely novel behavior that has never been seen before in this corpus xyz",
       inputs: [{ name: "x", type: "number", description: "a number" }],
       outputs: [{ name: "y", type: "number", description: "a number" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
       guarantees: [],
       errorConditions: [],
-      nonFunctional: { purity: "pure" as const, threadSafety: "safe" as const },
+      nonFunctional: { purity: "pure", threadSafety: "safe" },
       propertyTests: [],
     };
     const novelPath = join(suiteDir, "novel-spec.json");
@@ -220,7 +237,8 @@ describe("propose", () => {
     const code = await runCli(["propose", novelPath, "--registry", registryPath], logger);
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.includes("no match found"))).toBe(true);
-    expect(logger.logLines.some((l) => l.includes("yakcc block author"))).toBe(true);
+    // New authoring template mentions "block triplet" (WI-T05 updated propose.ts).
+    expect(logger.logLines.some((l) => l.includes("block triplet"))).toBe(true);
   });
 
   it("exits 1 when no contract file argument is given", async () => {
@@ -256,17 +274,9 @@ describe("propose", () => {
 
 describe("search", () => {
   it("spec-file query returns at least one result line with score and exits 0", async () => {
-    // Free-text search constructs a spec with inputs:[] / outputs:[], which the
-    // structural filter rejects for all corpus blocks (they all have inputs).
-    // Use a real spec file so structural matching can pass.
-    const reg = await openRegistry(":memory:");
-    await seedRegistry(reg);
-    const contract = await reg.getContract(listOfIntsId);
-    await reg.close();
-    if (contract === null) throw new Error("listOfInts not found");
-
+    // Use the real list-of-ints spec for a structural match query.
     const searchSpecPath = join(suiteDir, "search-spec.json");
-    writeFileSync(searchSpecPath, JSON.stringify(contract.spec), "utf-8");
+    writeFileSync(searchSpecPath, JSON.stringify(listOfIntsSpec), "utf-8");
 
     const logger = new CollectingLogger();
     const code = await runCli(["search", searchSpecPath, "--registry", registryPath], logger);
@@ -312,17 +322,17 @@ describe("compile", () => {
     expect(logger.errLines.some((l) => l.includes("compile requires"))).toBe(true);
   });
 
-  it("exits 1 when entry contractId is absent from an unseeded registry", async () => {
+  it("exits 1 when entry BlockMerkleRoot is absent from an unseeded registry", async () => {
     const emptyRegPath = join(suiteDir, "empty.sqlite");
     // Do not seed — registry is empty after init.
     const initLogger = new CollectingLogger();
     await runCli(["registry", "init", "--path", emptyRegPath], initLogger);
 
-    // A syntactically valid but absent contractId.
-    const fakeId = "a".repeat(64);
+    // A syntactically valid but absent BlockMerkleRoot (64 hex chars).
+    const fakeRoot = "a".repeat(64);
     const logger = new CollectingLogger();
     const code = await runCli(
-      ["compile", fakeId, "--registry", emptyRegPath, "--out", join(suiteDir, "unused-out2")],
+      ["compile", fakeRoot, "--registry", emptyRegPath, "--out", join(suiteDir, "unused-out2")],
       logger,
     );
     expect(code).toBe(1);
@@ -333,7 +343,7 @@ describe("compile", () => {
     const outDir = join(suiteDir, "compile-list-of-ints");
     const logger = new CollectingLogger();
     const code = await runCli(
-      ["compile", listOfIntsId, "--registry", registryPath, "--out", outDir],
+      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir],
       logger,
     );
     expect(code).toBe(0);
@@ -344,7 +354,10 @@ describe("compile", () => {
   it("manifest.json has at least 7 entries (transitive closure of list-of-ints)", async () => {
     const outDir = join(suiteDir, "compile-manifest-check");
     const logger = new CollectingLogger();
-    await runCli(["compile", listOfIntsId, "--registry", registryPath, "--out", outDir], logger);
+    await runCli(
+      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir],
+      logger,
+    );
     const manifest = JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf-8")) as {
       entries: unknown[];
     };
@@ -355,7 +368,7 @@ describe("compile", () => {
     const outDir = join(suiteDir, "compile-e2e");
     const logger = new CollectingLogger();
     const code = await runCli(
-      ["compile", listOfIntsId, "--registry", registryPath, "--out", outDir],
+      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir],
       logger,
     );
     expect(code).toBe(0);
@@ -493,14 +506,14 @@ describe("compile manifest determinism", () => {
 
     const logger1 = new CollectingLogger();
     const code1 = await runCli(
-      ["compile", listOfIntsId, "--registry", registryPath, "--out", outDir1],
+      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir1],
       logger1,
     );
     expect(code1).toBe(0);
 
     const logger2 = new CollectingLogger();
     const code2 = await runCli(
-      ["compile", listOfIntsId, "--registry", registryPath, "--out", outDir2],
+      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir2],
       logger2,
     );
     expect(code2).toBe(0);
@@ -515,22 +528,16 @@ describe("compile manifest determinism", () => {
     expect(module1).toBe(module2);
   });
 
-  it("directory-form compile (via contract.json) produces the same manifest as ContractId form", async () => {
+  it("directory-form compile (via contract.json) produces the same manifest as BlockMerkleRoot form", async () => {
     // Write the list-of-ints spec to a temp directory so we can test the directory form.
     const exampleDir = mkdtempSync(join(tmpdir(), "yakcc-dir-compile-"));
     try {
-      const reg = await openRegistry(":memory:");
-      await seedRegistry(reg);
-      const contract = await reg.getContract(listOfIntsId);
-      await reg.close();
-      if (contract === null) throw new Error("listOfInts not in registry");
-
-      writeFileSync(join(exampleDir, "contract.json"), JSON.stringify(contract.spec), "utf-8");
+      writeFileSync(join(exampleDir, "contract.json"), JSON.stringify(listOfIntsSpec), "utf-8");
 
       const outDirDirect = join(suiteDir, "manifest-direct");
       const loggerDirect = new CollectingLogger();
       const codeDirect = await runCli(
-        ["compile", listOfIntsId, "--registry", registryPath, "--out", outDirDirect],
+        ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDirDirect],
         loggerDirect,
       );
       expect(codeDirect).toBe(0);

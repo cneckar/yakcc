@@ -1,0 +1,88 @@
+{
+  "name": "nonempty-list-content",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Position immediately after '['."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [ReadonlyArray<number>, number]",
+      "description": "[parsedValues, newPosition] where newPosition is after the closing ']'."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Parse one or more comma-separated integers followed by ']'. Skips optional whitespace around each integer. Returns [values, newPosition] where newPosition is after the closing ']'. Throws SyntaxError if the first character is not a digit or if ']' is not found after all elements.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "nonempty",
+      "description": "Result array always contains at least one element."
+    },
+    {
+      "id": "closes",
+      "description": "newPosition is always after the closing ']' on success."
+    },
+    {
+      "id": "composition",
+      "description": "Implemented by composing optionalWhitespace, integer, peekChar, comma, and bracket."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "No digit found where first integer is expected.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Missing ']' after last integer.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "nonempty-single",
+      "description": "nonemptyListContent('1]', 0) returns [[1], 2]"
+    },
+    {
+      "id": "nonempty-multiple",
+      "description": "nonemptyListContent('1,2,3]', 0) returns [[1, 2, 3], 6]"
+    },
+    {
+      "id": "nonempty-spaces",
+      "description": "nonemptyListContent(' 42 ]', 0) returns [[42], 5]"
+    },
+    {
+      "id": "nonempty-no-digit",
+      "description": "nonemptyListContent('x]', 0) throws SyntaxError"
+    },
+    {
+      "id": "nonempty-no-close",
+      "description": "nonemptyListContent('1,2', 0) throws SyntaxError"
+    }
+  ]
+}

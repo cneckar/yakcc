@@ -1,0 +1,80 @@
+{
+  "name": "digit-or-throw",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Zero-based position to read from."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [number, number]",
+      "description": "[digitValue, newPosition] where newPosition = position + 1."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Read the character at position, parse it as a decimal digit 0-9, and return [value, position + 1]. Throws SyntaxError with position context if the character is not a digit or position is out of bounds.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "advance-1",
+      "description": "newPosition is always position + 1 on success."
+    },
+    {
+      "id": "range",
+      "description": "digitValue is in [0, 9] on success."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "position >= input.length or character is not a digit.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(1)",
+    "space": "O(1)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "digitorthrow-zero",
+      "description": "digitOrThrow('0x', 0) returns [0, 1]"
+    },
+    {
+      "id": "digitorthrow-nine",
+      "description": "digitOrThrow('9', 0) returns [9, 1]"
+    },
+    {
+      "id": "digitorthrow-letter",
+      "description": "digitOrThrow('a', 0) throws SyntaxError"
+    },
+    {
+      "id": "digitorthrow-eof",
+      "description": "digitOrThrow('', 0) throws SyntaxError"
+    },
+    {
+      "id": "digitorthrow-negative",
+      "description": "digitOrThrow('5', -1) throws RangeError"
+    }
+  ]
+}

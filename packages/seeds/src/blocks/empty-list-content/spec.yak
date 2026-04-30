@@ -1,0 +1,80 @@
+{
+  "name": "empty-list-content",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Position immediately after '['."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "newPosition",
+      "type": "number",
+      "description": "Position after the closing ']'."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Assert that the character at position is ']', indicating an empty list. Returns position + 1. Throws SyntaxError if anything other than ']' is found.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "advance-1",
+      "description": "Returns position + 1 on success."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Character at position is not ']'.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position >= input.length.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(1)",
+    "space": "O(1)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "empty-list-ok",
+      "description": "emptyListContent(']', 0) returns 1"
+    },
+    {
+      "id": "empty-list-mid",
+      "description": "emptyListContent('[]', 1) returns 2"
+    },
+    {
+      "id": "empty-list-nonempty",
+      "description": "emptyListContent('[1]', 1) throws SyntaxError"
+    },
+    {
+      "id": "empty-list-eof",
+      "description": "emptyListContent('', 0) throws SyntaxError"
+    },
+    {
+      "id": "empty-list-negative",
+      "description": "emptyListContent(']', -1) throws RangeError"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "name": "comma-separated-integers",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Position immediately after the first integer."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [ReadonlyArray<number>, number]",
+      "description": "Tuple of [additionalValues, newPosition] for zero or more ', integer' pairs."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Parse zero or more ', integer' sequences. Each iteration skips optional whitespace, expects ',', skips optional whitespace, then parses an integer. Returns [values, newPosition] where values is the list of additional integers found. Stops when the next character is not ','.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "greedy",
+      "description": "Consumes as many comma-integer pairs as possible."
+    },
+    {
+      "id": "empty-ok",
+      "description": "Returns [[], position] when no comma follows."
+    },
+    {
+      "id": "composition",
+      "description": "Implemented by composing peekChar, comma, optionalWhitespace, and integer."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "A comma is present but not followed by a valid integer.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "commasep-none",
+      "description": "commaSeparatedIntegers(']', 0) returns [[], 0]"
+    },
+    {
+      "id": "commasep-one",
+      "description": "commaSeparatedIntegers(',2]', 0) returns [[2], 2]"
+    },
+    {
+      "id": "commasep-two",
+      "description": "commaSeparatedIntegers(',2,3]', 0) returns [[2, 3], 4]"
+    },
+    {
+      "id": "commasep-trailing-comma",
+      "description": "commaSeparatedIntegers(',]', 0) throws SyntaxError"
+    },
+    {
+      "id": "commasep-negative-pos",
+      "description": "commaSeparatedIntegers(',1', -1) throws RangeError"
+    }
+  ]
+}

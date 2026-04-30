@@ -1,56 +1,30 @@
-// @decision DEC-SEEDS-LOADER-001: seedRegistry reads block .ts source files from disk at runtime.
-// Status: implemented (WI-006)
-// Rationale: The source text of each block is needed to compute the blockId (BLAKE3 of source
-// bytes) and to pass to parseBlock for validation. Reading the .ts files directly avoids
-// maintaining a separate source-string constant in each block file (which biome rejects as
-// noUnusedTemplateLiteral and is duplicative). The seed package is always invoked in a context
-// where the source tree is present (tests via vitest, CLI via ts-node or tsx). Post-build
-// dist-only invocation is not a v0 requirement.
+// @decision DEC-SEEDS-LOADER-T05-001: seedRegistry enumerates block directories.
+// Status: implemented (WI-T05)
+// Rationale: WI-T05 migrates each block from a single .ts file with an embedded
+// CONTRACT literal to a directory triplet (spec.yak, impl.ts, proof/). The
+// BLOCK_FILES hand-maintained list is replaced by directory enumeration via
+// readdirSync (Sacred Practice #12 — no parallel mechanism). Each directory is
+// parsed via parseBlockTriplet from @yakcc/ir, which validates spec.yak, runs
+// the strict-subset validator on impl.ts, and derives the BlockMerkleRoot.
+// The result is stored via registry.storeBlock(row: BlockTripletRow).
 //
-// @decision DEC-SEEDS-BLOCKID-001: blockId is BLAKE3 over the raw source bytes, computed by
-// @yakcc/registry's internal storage module. We derive it identically here via contractIdFromBytes
-// applied to the source bytes so the Implementation record's blockId is consistent with what
-// the registry would compute on store.
+// @decision DEC-SEEDS-STOREBLOCK-T05-002: seedRegistry builds BlockTripletRow
+// from BlockTripletParseResult for storeBlock.
+// Status: implemented (WI-T05)
+// Rationale: storeBlock requires specCanonicalBytes (BLAKE3(canonicalize(spec))),
+// specHash (derived by parseBlockTriplet as specHashValue), implSource, and
+// proofManifestJson. All are available from BlockTripletParseResult. The
+// canonicalize() function from @yakcc/contracts is used to compute the canonical
+// bytes; this matches how the registry's storeBlock() internally verifies integrity.
+// createdAt is set to 0 so the registry uses Date.now() (DEC-STORAGE-IDEMPOTENT-001).
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  type Contract,
-  type ContractId,
-  contractIdFromBytes,
-  contractId as deriveContractId,
-} from "@yakcc/contracts";
-import { parseBlock } from "@yakcc/ir";
-import type { Implementation, Registry } from "@yakcc/registry";
-
-// ---------------------------------------------------------------------------
-// Block source file registry
-// Each entry maps a block name to its .ts filename in src/blocks/.
-// ---------------------------------------------------------------------------
-
-const BLOCK_FILES = [
-  "ascii-char.ts",
-  "ascii-digit-set.ts",
-  "bracket.ts",
-  "char-code.ts",
-  "comma.ts",
-  "comma-separated-integers.ts",
-  "digit.ts",
-  "digit-or-throw.ts",
-  "empty-list-content.ts",
-  "eof-check.ts",
-  "integer.ts",
-  "list-of-ints.ts",
-  "non-ascii-rejector.ts",
-  "nonempty-list-content.ts",
-  "optional-whitespace.ts",
-  "peek-char.ts",
-  "position-step.ts",
-  "signed-integer.ts",
-  "string-from-position.ts",
-  "whitespace.ts",
-] as const;
+import { type BlockMerkleRoot, type SpecHash, canonicalize } from "@yakcc/contracts";
+import { parseBlockTriplet } from "@yakcc/ir";
+import type { BlockTripletRow, Registry } from "@yakcc/registry";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,17 +32,7 @@ const BLOCK_FILES = [
 
 export interface SeedResult {
   readonly stored: number;
-  readonly contractIds: ReadonlyArray<ContractId>;
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/** Derive a blockId (hex string) from raw UTF-8 source bytes. Mirrors registry/storage.ts#implId. */
-function blockIdFromSource(source: string): string {
-  const bytes = new TextEncoder().encode(source);
-  return contractIdFromBytes(bytes);
+  readonly merkleRoots: ReadonlyArray<BlockMerkleRoot>;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,70 +42,69 @@ function blockIdFromSource(source: string): string {
 /**
  * Seed a Registry with all blocks in the seed corpus.
  *
- * For each block:
- * 1. Reads the .ts source file from packages/seeds/src/blocks/.
- * 2. Parses and validates it via @yakcc/ir parseBlock.
- * 3. Derives the Contract (id from spec, empty evidence).
- * 4. Derives the Implementation (blockId from source bytes).
- * 5. Stores both in the registry.
+ * Enumerates directories under packages/seeds/src/blocks/, calls
+ * parseBlockTriplet on each, then stores the result via registry.storeBlock.
  *
- * Returns the total stored count and the list of ContractIds in block-file order.
+ * For each block directory:
+ * 1. parseBlockTriplet reads spec.yak, impl.ts, proof/manifest.json.
+ * 2. Validates spec.yak via validateSpecYak (throws TypeError on failure).
+ * 3. Runs the strict-subset validator on impl.ts (result.validation.ok).
+ * 4. Builds a BlockTripletRow with blockMerkleRoot, specHash, specCanonicalBytes,
+ *    implSource, proofManifestJson, level, and createdAt=0.
+ * 5. Calls registry.storeBlock(row) — idempotent (INSERT OR IGNORE).
  *
- * @throws Error if any block source file is missing or fails strict-subset validation.
+ * Returns stored count and the list of BlockMerkleRoots in directory order.
+ *
+ * @throws Error if any block directory fails spec validation, strict-subset
+ *   validation, or has a missing/malformed proof/manifest.json.
  */
 export async function seedRegistry(registry: Registry): Promise<SeedResult> {
-  // Resolve the blocks directory relative to this source file.
-  // import.meta.url points to seed.ts (or seed.js post-build).
-  // In both cases, ../blocks/ is the correct relative path.
   const blocksDir = join(dirname(fileURLToPath(import.meta.url)), "blocks");
 
-  const contractIds: ContractId[] = [];
+  // Enumerate block directories (directories only, sorted for determinism)
+  const entries = readdirSync(blocksDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+
+  const merkleRoots: BlockMerkleRoot[] = [];
   let stored = 0;
 
-  for (const filename of BLOCK_FILES) {
-    const filePath = join(blocksDir, filename);
-    const source = readFileSync(filePath, "utf-8");
+  for (const name of entries) {
+    const blockDir = join(blocksDir, name);
 
-    // blockPatterns: ["./"] enables extractComposition to recognise relative sibling
-    // imports (import type { X } from "./sub-block.js") as sub-block composition
-    // references, populating the provenance manifest without requiring the full
-    // @yakcc/seeds/ package prefix that is unusable from within the package itself.
-    const block = parseBlock(source, { blockPatterns: ["./"] });
+    // Parse the triplet (reads spec.yak, impl.ts, proof/manifest.json, artifact bytes).
+    // No extra blockPatterns needed: the @yakcc/ir isBlockImport builtin already
+    // recognises "@yakcc/seeds/" as a block-import prefix, and composition imports
+    // in impl.ts files use "@yakcc/seeds/blocks/<name>" (WI-T05-fix).
+    const result = parseBlockTriplet(blockDir);
 
-    if (!block.validation.ok) {
-      const msgs = block.validation.errors.map((e) => `${e.rule}: ${e.message}`).join("; ");
-      throw new Error(`Block ${filename} failed strict-subset validation: ${msgs}`);
+    if (!result.validation.ok) {
+      const msgs = result.validation.errors.map((e) => `${e.rule}: ${e.message}`).join("; ");
+      throw new Error(`Block ${name} failed strict-subset validation: ${msgs}`);
     }
 
-    if (block.contractSpec === null || block.contract === null) {
-      throw new Error(`Block ${filename} has no CONTRACT export`);
-    }
+    // Build specCanonicalBytes: BLAKE3(canonicalize(spec.yak)) — matches what
+    // storeBlock uses internally for embedding and integrity verification.
+    const specCanonicalBytes = canonicalize(
+      result.spec as unknown as Parameters<typeof canonicalize>[0],
+    );
 
-    const contractId = block.contract;
-    const evidenceId = deriveContractId(block.contractSpec); // re-derive via canonical serialization
-
-    if (evidenceId !== contractId) {
-      throw new Error(
-        `Block ${filename}: contractId mismatch — derived ${contractId} vs re-derived ${evidenceId}`,
-      );
-    }
-
-    const contract: Contract = {
-      id: contractId,
-      spec: block.contractSpec,
-      evidence: { testHistory: [] },
+    const row: BlockTripletRow = {
+      blockMerkleRoot: result.merkleRoot,
+      specHash: result.specHashValue as SpecHash,
+      specCanonicalBytes,
+      implSource: result.implSource,
+      proofManifestJson: JSON.stringify(result.manifest),
+      level: result.spec.level,
+      // createdAt=0 signals the registry to use Date.now() (DEC-STORAGE-IDEMPOTENT-001)
+      createdAt: 0,
     };
 
-    const impl: Implementation = {
-      source,
-      blockId: blockIdFromSource(source),
-      contractId,
-    };
-
-    await registry.store(contract, impl);
-    contractIds.push(contractId);
+    await registry.storeBlock(row);
+    merkleRoots.push(result.merkleRoot);
     stored++;
   }
 
-  return { stored, contractIds };
+  return { stored, merkleRoots };
 }

@@ -1,24 +1,26 @@
-// @decision DEC-CLI-PROPOSE-001: propose reads a JSON ContractSpec file, derives its
-// content-address, then calls registry.match() for exact lookup. On hit: prints the
-// matched id and exits 0. On miss: prints the contract id plus a manual-authoring
-// template instructing the caller to author the block and register it. Both paths exit 0.
-// Status: implemented (WI-007)
-// Rationale: v0 has no AI synthesis; an unmatched proposal kicks the manual-authoring
-// flow (DEC-V0-SYNTH-003). The printed template gives the contract id and next-step
-// guidance without fabricating a placeholder body.
+// @decision DEC-CLI-PROPOSE-001: propose reads a JSON SpecYak file, derives its
+// specHash, then calls registry.selectBlocks(specHash) for exact lookup. On hit:
+// prints the matched merkle root and exits 0. On miss: prints a manual-authoring
+// template. Both paths exit 0.
+// Status: updated (WI-T05)
+// Rationale: WI-T03 removed registry.match() and ContractId. The exact-match path
+// now uses specHash() + selectBlocks() — the canonical T03 lookup API.
+// v0 has no AI synthesis; an unmatched proposal kicks the manual-authoring
+// flow (DEC-V0-SYNTH-003).
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { type ContractSpec, contractId } from "@yakcc/contracts";
+import { type SpecYak, specHash } from "@yakcc/contracts";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
 
 /**
- * Handler for `yakcc propose <contract-file> [--registry <p>]`.
+ * Handler for `yakcc propose <spec-file> [--registry <p>]`.
  *
- * Reads a JSON ContractSpec, derives its ContractId, and checks the registry for
- * an exact match. Prints either `match: <id>` or a manual-authoring template.
+ * Reads a JSON SpecYak, derives its specHash, and checks the registry for
+ * an exact match via selectBlocks. Prints either `match: <merkleRoot>` or a
+ * manual-authoring template.
  *
  * @param argv - Remaining argv after `propose` has been consumed (includes the positional).
  * @param logger - Output sink; defaults to console via the caller.
@@ -42,7 +44,7 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
 
   const registryPath = values.registry ?? DEFAULT_REGISTRY_PATH;
 
-  // Read and parse the contract spec file.
+  // Read and parse the spec file.
   let specJson: string;
   try {
     specJson = readFileSync(specFilePath, "utf-8");
@@ -51,15 +53,15 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
     return 1;
   }
 
-  let spec: ContractSpec;
+  let spec: SpecYak;
   try {
-    spec = JSON.parse(specJson) as ContractSpec;
+    spec = JSON.parse(specJson) as SpecYak;
   } catch (err) {
     logger.error(`error: invalid JSON in spec file ${specFilePath}: ${String(err)}`);
     return 1;
   }
 
-  const id = contractId(spec);
+  const hash = specHash(spec);
 
   // Open the registry and check for a match.
   let registry: Registry;
@@ -71,25 +73,22 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
   }
 
   try {
-    const matchResult = await registry.match(spec);
+    const roots = await registry.selectBlocks(hash);
 
-    if (matchResult !== null) {
-      logger.log(`match: ${matchResult.contract.id}`);
+    if (roots.length > 0) {
+      // Return the best matching block (first in selection order).
+      logger.log(`match: ${roots[0]}`);
       return 0;
     }
 
     // No match — print a manual-authoring template.
-    logger.log(`no match found for contract ${id}`);
+    logger.log(`no match found for contract ${hash}`);
     logger.log("");
-    logger.log("contract spec:");
+    logger.log("spec:");
     logger.log(JSON.stringify(spec, null, 2));
     logger.log("");
-    logger.log(
-      "To register an implementation, author a strict-TypeScript block with a CONTRACT export",
-    );
-    logger.log(
-      `matching the spec above, then run: yakcc block author <impl-file> --contract ${id}`,
-    );
+    logger.log("To register an implementation, author a block triplet (spec.yak, impl.ts, proof/)");
+    logger.log(`matching the spec above, then seed the registry.`);
     return 0;
   } finally {
     await registry.close();
