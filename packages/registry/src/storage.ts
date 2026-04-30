@@ -13,50 +13,38 @@
 // they have a real registry when they don't. Fail loudly with a descriptive
 // error so the operator knows immediately that the DB is unavailable.
 
-// @decision DEC-STORAGE-IDEMPOTENT-001: store() uses INSERT OR IGNORE for
-// contracts and implementations to ensure idempotency on re-store of the same
-// content-addressed id. The vector table uses DELETE+INSERT for the same reason
-// (vec0 does not support INSERT OR IGNORE / ON CONFLICT). Status: decided (WI-003)
-// Rationale: Contract identity is content-addressed; the same id always means
-// the same content. Idempotent store means callers never need to check for
-// existence before storing.
+// @decision DEC-STORAGE-IDEMPOTENT-001: storeBlock() uses INSERT OR IGNORE for
+// the blocks table to ensure idempotency on re-store of the same
+// content-addressed block_merkle_root. The vector table uses DELETE+INSERT for
+// the same reason (vec0 does not support INSERT OR IGNORE / ON CONFLICT).
+// Status: decided (WI-T03, continuing DEC-STORAGE-IDEMPOTENT-001 from WI-003)
+// Rationale: Block identity is content-addressed; the same block_merkle_root
+// always means the same content. Idempotent store means callers never need to
+// check for existence before storing.
 
-import { blake3 } from "@noble/hashes/blake3.js";
+// @decision DEC-SCHEMA-MIGRATION-002: WI-T03 clean re-create schema.
+// Status: decided (MASTER_PLAN.md WI-T03 Evaluation Contract)
+// Rationale: The v0 (contracts, implementations) two-table schema is replaced
+// with a single `blocks` table keyed by block_merkle_root with a spec_hash
+// index. No dual-table coexistence; no read-time fallback derivation of
+// block_merkle_root (the column must be stored). See schema.ts for DDL.
+
 import {
-  type Contract,
-  type ContractId,
-  type ContractSpec,
+  type BlockMerkleRoot,
   type EmbeddingProvider,
+  type SpecHash,
+  type SpecYak,
   canonicalize,
-  contractId as deriveContractId,
   generateEmbedding,
 } from "@yakcc/contracts";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import type { Candidate, Implementation, Match, Provenance, Registry } from "./index.js";
+import type { BlockTripletRow, Provenance, Registry } from "./index.js";
 import { applyMigrations } from "./schema.js";
-import { structuralMatch } from "./search.js";
-import { type CandidateProvenance, type StrictnessEdge, select as selectImpl } from "./select.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Convert a Uint8Array to lowercase hex. */
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-/**
- * Derive a content-address for an implementation's source text.
- * BLAKE3-256 over the UTF-8 bytes of the source.
- */
-function implId(source: string): string {
-  const bytes = new TextEncoder().encode(source);
-  return bytesToHex(blake3(bytes));
-}
 
 /** Serialize a Float32Array to a Buffer for sqlite-vec storage. */
 function serializeEmbedding(vec: Float32Array): Buffer {
@@ -67,17 +55,13 @@ function serializeEmbedding(vec: Float32Array): Buffer {
 // Internal DB row shapes
 // ---------------------------------------------------------------------------
 
-interface ContractRow {
-  id: string;
-  canonical_bytes: Buffer;
-  spec_json: string;
-  created_at: number;
-}
-
-interface ImplRow {
-  id: string;
-  contract_id: string;
-  source: string;
+interface BlockRow {
+  block_merkle_root: string;
+  spec_hash: string;
+  spec_canonical_bytes: Buffer;
+  impl_source: string;
+  proof_manifest_json: string;
+  level: string;
   created_at: number;
 }
 
@@ -93,12 +77,12 @@ interface RuntimeExposureRow {
 }
 
 interface StrictnessEdgeRow {
-  stricter_id: string;
-  looser_id: string;
+  stricter_root: string;
+  looser_root: string;
 }
 
 // ---------------------------------------------------------------------------
-// SQLite-backed Registry implementation
+// SQLite-backed Registry implementation (v0.6 triplet schema)
 // ---------------------------------------------------------------------------
 
 class SqliteRegistry implements Registry {
@@ -112,234 +96,190 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
-  // store
+  // storeBlock
   // -------------------------------------------------------------------------
 
-  async store(contract: Contract, impl: Implementation): Promise<void> {
+  async storeBlock(row: BlockTripletRow): Promise<void> {
     this.assertOpen();
 
-    const canonicalBytes = canonicalize(contract.spec);
-    const specJson = JSON.stringify(contract.spec);
-    const now = Date.now();
-    const embedding = await generateEmbedding(contract.spec, this.embeddings);
+    const now = row.createdAt > 0 ? row.createdAt : Date.now();
 
-    // All three DB operations run in a single transaction for consistency.
-    const insertContract = this.db.prepare<[string, Buffer, string, number]>(
-      "INSERT OR IGNORE INTO contracts(id, canonical_bytes, spec_json, created_at) VALUES (?, ?, ?, ?)",
+    // Parse the spec canonical bytes back to a SpecYak so we can generate an
+    // embedding. The canonical bytes were produced by canonicalize(spec), so
+    // we JSON-parse them (canonicalize produces UTF-8 JSON) to get the spec.
+    // We need the spec text (its canonical JSON) for embedding generation.
+    // The embedding provider accepts a text string derived from the spec.
+    // We use the UTF-8 string of the canonical bytes as the embedding input,
+    // consistent with the v0 approach (generateEmbedding expects a ContractSpec
+    // but we pass the decoded canonical text as a surrogate spec string).
+    const specText = Buffer.from(row.specCanonicalBytes).toString("utf-8");
+    // Parse the canonical JSON to get the spec object for the embedding provider.
+    const specObj = JSON.parse(specText) as SpecYak;
+    const embedding = await generateEmbedding(
+      specObj as unknown as Parameters<typeof generateEmbedding>[0],
+      this.embeddings,
     );
-    const insertImpl = this.db.prepare<[string, string, string, number]>(
-      "INSERT OR IGNORE INTO implementations(id, contract_id, source, created_at) VALUES (?, ?, ?, ?)",
+
+    const insertBlock = this.db.prepare<[string, string, Buffer, string, string, string, number]>(
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     );
-    // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so we use
-    // DELETE + INSERT to make this idempotent (DEC-STORAGE-IDEMPOTENT-001).
+
+    // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
+    // to make this idempotent (DEC-STORAGE-IDEMPOTENT-001).
     const deleteEmbedding = this.db.prepare<[string]>(
-      "DELETE FROM contract_embeddings WHERE contract_id = ?",
+      "DELETE FROM contract_embeddings WHERE spec_hash = ?",
     );
     const insertEmbedding = this.db.prepare<[string, Buffer]>(
-      "INSERT INTO contract_embeddings(contract_id, embedding) VALUES (?, ?)",
+      "INSERT INTO contract_embeddings(spec_hash, embedding) VALUES (?, ?)",
     );
 
-    const implIdValue = impl.blockId !== "" ? impl.blockId : implId(impl.source);
     const embeddingBuf = serializeEmbedding(embedding);
 
     const txn = this.db.transaction(() => {
-      insertContract.run(contract.id, Buffer.from(canonicalBytes), specJson, now);
-      insertImpl.run(implIdValue, contract.id, impl.source, now);
-      deleteEmbedding.run(contract.id);
-      insertEmbedding.run(contract.id, embeddingBuf);
+      insertBlock.run(
+        row.blockMerkleRoot,
+        row.specHash,
+        Buffer.from(row.specCanonicalBytes),
+        row.implSource,
+        row.proofManifestJson,
+        row.level,
+        now,
+      );
+      // Only write the embedding if the spec_hash doesn't already have one.
+      // Check by attempting DELETE (no-op if absent) then INSERT.
+      // This is safe for idempotent re-stores of the same spec_hash because
+      // the embedding is deterministic for the same spec.
+      deleteEmbedding.run(row.specHash);
+      insertEmbedding.run(row.specHash, embeddingBuf);
     });
 
     txn();
   }
 
   // -------------------------------------------------------------------------
-  // match — exact content-address lookup
+  // selectBlocks — return all BlockMerkleRoots for a given spec hash
   // -------------------------------------------------------------------------
 
-  async match(spec: ContractSpec): Promise<Match | null> {
+  async selectBlocks(specHash: SpecHash): Promise<BlockMerkleRoot[]> {
     this.assertOpen();
 
-    const id = deriveContractId(spec);
-    const row = this.db
-      .prepare<[string], ContractRow>("SELECT * FROM contracts WHERE id = ?")
-      .get(id);
-
-    if (row === undefined) return null;
-
-    const contract = this.hydrateContract(row);
-    return { contract, score: 1.0 };
-  }
-
-  // -------------------------------------------------------------------------
-  // search — vector k-NN followed by structural filter
-  // -------------------------------------------------------------------------
-
-  async search(spec: ContractSpec, k: number): Promise<Candidate[]> {
-    this.assertOpen();
-
-    if (k <= 0) return [];
-
-    const embedding = await generateEmbedding(spec, this.embeddings);
-    const embeddingBuf = serializeEmbedding(embedding);
-
-    // vec0 KNN query: returns rows ordered by ascending distance.
-    const vecRows = this.db
-      .prepare<[Buffer, number], { contract_id: string; distance: number }>(
-        "SELECT contract_id, distance FROM contract_embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+    // Load all blocks for this spec_hash.
+    const blockRows = this.db
+      .prepare<[string], BlockRow>(
+        "SELECT * FROM blocks WHERE spec_hash = ? ORDER BY created_at ASC",
       )
-      .all(embeddingBuf, k);
+      .all(specHash);
 
-    if (vecRows.length === 0) return [];
+    if (blockRows.length === 0) return [];
 
-    // Hydrate each candidate's contract row.
-    const candidates: Candidate[] = [];
-    for (const vecRow of vecRows) {
-      const contractRow = this.db
-        .prepare<[string], ContractRow>("SELECT * FROM contracts WHERE id = ?")
-        .get(vecRow.contract_id);
-
-      if (contractRow === undefined) continue;
-
-      const contract = this.hydrateContract(contractRow);
-
-      // Structural filter: skip candidates that don't satisfy the spec.
-      const result = structuralMatch(spec, contract.spec);
-      if (!result.matches) continue;
-
-      // score: convert distance to similarity in [0,1].
-      // vec0 returns L2 distance; we convert to similarity = 1 / (1 + distance).
-      const score = 1 / (1 + vecRow.distance);
-
-      // Fetch one implementation for this contract.
-      const implRow = this.db
-        .prepare<[string], ImplRow>("SELECT * FROM implementations WHERE contract_id = ? LIMIT 1")
-        .get(vecRow.contract_id);
-
-      if (implRow === undefined) continue;
-
-      const impl: Implementation = {
-        source: implRow.source,
-        blockId: implRow.id,
-        contractId: implRow.contract_id as ContractId,
-      };
-
-      candidates.push({ match: { contract, score }, implementation: impl });
-    }
-
-    return candidates;
-  }
-
-  // -------------------------------------------------------------------------
-  // select — delegates to the pure select() function in select.ts
-  // -------------------------------------------------------------------------
-
-  select(matches: readonly Match[]): Match {
-    this.assertOpen();
-
-    if (matches.length === 0) {
-      throw new Error("Registry.select: matches array must be non-empty");
-    }
-    if (matches.length === 1) {
-      const first = matches[0];
-      if (first === undefined) throw new Error("Registry.select: undefined match");
-      return first;
-    }
-
-    // Load strictness edges for the candidate set.
-    const ids = matches.map((m) => m.contract.id);
-    const placeholders = ids.map(() => "?").join(", ");
+    // Load strictness edges for these blocks (by block_merkle_root).
+    const roots = blockRows.map((r) => r.block_merkle_root);
+    const placeholders = roots.map(() => "?").join(", ");
     const edgeRows = this.db
       .prepare<string[], StrictnessEdgeRow>(
-        `SELECT stricter_id, looser_id FROM strictness_edges WHERE stricter_id IN (${placeholders}) OR looser_id IN (${placeholders})`,
+        `SELECT stricter_root, looser_root FROM strictness_edges WHERE stricter_root IN (${placeholders}) OR looser_root IN (${placeholders})`,
       )
-      .all(...ids, ...ids);
+      .all(...roots, ...roots);
 
-    const strictnessEdges: StrictnessEdge[] = edgeRows.map((r) => ({
-      stricterId: r.stricter_id as ContractId,
-      looserId: r.looser_id as ContractId,
-    }));
-
-    // Load passing test counts for each candidate.
-    const provenance: CandidateProvenance[] = ids.map((id) => {
+    // Load passing test counts for each block.
+    const passingRunsMap = new Map<string, number>();
+    for (const root of roots) {
       const row = this.db
         .prepare<[string], { passing: number }>(
-          "SELECT COUNT(*) AS passing FROM test_history WHERE contract_id = ? AND passed = 1",
+          "SELECT COUNT(*) AS passing FROM test_history WHERE block_merkle_root = ? AND passed = 1",
         )
-        .get(id);
-      return {
-        contractId: id,
-        passingRuns: row?.passing ?? 0,
-      };
+        .get(root);
+      passingRunsMap.set(root, row?.passing ?? 0);
+    }
+
+    // Build edge set restricted to roots in the candidate set.
+    const rootSet = new Set(roots);
+    type EdgeKey = string;
+    const edgeSet = new Set<EdgeKey>();
+    for (const e of edgeRows) {
+      if (
+        rootSet.has(e.stricter_root) &&
+        rootSet.has(e.looser_root) &&
+        e.stricter_root !== e.looser_root
+      ) {
+        edgeSet.add(`${e.stricter_root}|${e.looser_root}`);
+      }
+    }
+
+    // Sort by: (1) maximally-strict first, (2) non-functional quality of the
+    // spec (parsed from canonical bytes), (3) passing test runs, (4) lex root.
+    // For simplicity at v0.6 (all blocks for the same spec_hash share the same
+    // spec, so NF tiebreak is the same for all siblings), we sort by:
+    //   - strictness partial order (stricter first)
+    //   - more passing test runs
+    //   - lexicographically smaller block_merkle_root
+    const sorted = [...blockRows].sort((a, b) => {
+      // Strictness: if a is declared stricter than b, a comes first.
+      const aStricterThanB = isStricterThan(
+        a.block_merkle_root,
+        b.block_merkle_root,
+        edgeSet,
+        roots,
+      );
+      const bStricterThanA = isStricterThan(
+        b.block_merkle_root,
+        a.block_merkle_root,
+        edgeSet,
+        roots,
+      );
+      if (aStricterThanB && !bStricterThanA) return -1;
+      if (bStricterThanA && !aStricterThanB) return 1;
+
+      // Passing test runs — more is better.
+      const passingA = passingRunsMap.get(a.block_merkle_root) ?? 0;
+      const passingB = passingRunsMap.get(b.block_merkle_root) ?? 0;
+      if (passingA !== passingB) return passingB - passingA;
+
+      // Lexicographic tiebreak — smaller root first.
+      return a.block_merkle_root < b.block_merkle_root ? -1 : 1;
     });
 
-    const result = selectImpl(matches, strictnessEdges, provenance);
-    if (result === null) {
-      const first = matches[0];
-      if (first === undefined) throw new Error("Registry.select: no result");
-      return first;
-    }
-    // selectImpl returns SelectMatch (a structural subset of Match) but the
-    // actual runtime value is one of the Match objects that were passed in —
-    // it carries `evidence` at runtime even though SelectMatch doesn't declare it.
-    // Cast through unknown to satisfy the narrower return type declaration.
-    return result as unknown as Match;
+    return sorted.map((r) => r.block_merkle_root as BlockMerkleRoot);
   }
 
   // -------------------------------------------------------------------------
-  // getContract — direct id lookup (added WI-005)
+  // getBlock — retrieve a full block row by BlockMerkleRoot
   // -------------------------------------------------------------------------
 
-  async getContract(id: ContractId): Promise<Contract | null> {
+  async getBlock(merkleRoot: BlockMerkleRoot): Promise<BlockTripletRow | null> {
     this.assertOpen();
+
     const row = this.db
-      .prepare<[string], ContractRow>("SELECT * FROM contracts WHERE id = ?")
-      .get(id);
+      .prepare<[string], BlockRow>("SELECT * FROM blocks WHERE block_merkle_root = ?")
+      .get(merkleRoot);
+
     if (row === undefined) return null;
-    return this.hydrateContract(row);
+    return hydrateBlock(row);
   }
 
   // -------------------------------------------------------------------------
-  // getImplementation — fetch source by contract id (added WI-005)
+  // getProvenance — test history + runtime exposure for a block
   // -------------------------------------------------------------------------
 
-  async getImplementation(id: ContractId): Promise<Implementation | null> {
-    this.assertOpen();
-    const row = this.db
-      .prepare<[string], ImplRow>(
-        "SELECT * FROM implementations WHERE contract_id = ? ORDER BY created_at ASC LIMIT 1",
-      )
-      .get(id);
-    if (row === undefined) return null;
-    return {
-      source: row.source,
-      blockId: row.id,
-      contractId: row.contract_id as ContractId,
-    };
-  }
-
-  // -------------------------------------------------------------------------
-  // getProvenance
-  // -------------------------------------------------------------------------
-
-  async getProvenance(id: ContractId): Promise<Provenance> {
+  async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
     this.assertOpen();
 
     const testRows = this.db
       .prepare<[string], TestHistoryRow>(
-        "SELECT suite_id, passed, at FROM test_history WHERE contract_id = ? ORDER BY at ASC",
+        "SELECT suite_id, passed, at FROM test_history WHERE block_merkle_root = ? ORDER BY at ASC",
       )
-      .all(id);
+      .all(merkleRoot);
 
     const exposureRow = this.db
       .prepare<[string], RuntimeExposureRow>(
-        "SELECT requests_seen, last_seen FROM runtime_exposure WHERE contract_id = ?",
+        "SELECT requests_seen, last_seen FROM runtime_exposure WHERE block_merkle_root = ?",
       )
-      .get(id);
+      .get(merkleRoot);
 
     const testHistory = testRows.map((r) => ({
       runAt: new Date(r.at).toISOString(),
       passed: r.passed === 1,
-      caseCount: 0, // test_history schema stores suite_id/passed/at; caseCount not persisted in v0
+      caseCount: 0, // caseCount not persisted in v0.6 schema
     }));
 
     const runtimeExposure =
@@ -347,7 +287,7 @@ class SqliteRegistry implements Registry {
         ? [
             {
               observedAt: new Date(exposureRow.last_seen ?? Date.now()).toISOString(),
-              assembledInto: id, // placeholder: real assembledInto tracked by compile in WI-005
+              assembledInto: merkleRoot, // placeholder; real assembledInto tracked by compile
             },
           ]
         : [];
@@ -374,15 +314,53 @@ class SqliteRegistry implements Registry {
       throw new Error("Registry has been closed");
     }
   }
+}
 
-  private hydrateContract(row: ContractRow): Contract {
-    const spec = JSON.parse(row.spec_json) as ContractSpec;
-    return {
-      id: row.id as ContractId,
-      spec,
-      evidence: { testHistory: [] },
-    };
+// ---------------------------------------------------------------------------
+// Pure helpers (module-level to avoid closure overhead in tight loops)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hydrate a DB row into a BlockTripletRow.
+ */
+function hydrateBlock(row: BlockRow): BlockTripletRow {
+  return {
+    blockMerkleRoot: row.block_merkle_root as BlockMerkleRoot,
+    specHash: row.spec_hash as SpecHash,
+    specCanonicalBytes: new Uint8Array(row.spec_canonical_bytes),
+    implSource: row.impl_source,
+    proofManifestJson: row.proof_manifest_json,
+    level: row.level as "L0" | "L1" | "L2" | "L3",
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Return true if `aRoot` is declared strictly stronger than `bRoot`
+ * (directly or transitively) within the edge set.
+ * Uses iterative BFS to avoid call-stack blowup on large graphs.
+ */
+function isStricterThan(
+  aRoot: string,
+  bRoot: string,
+  edgeSet: ReadonlySet<string>,
+  allRoots: readonly string[],
+): boolean {
+  const visited = new Set<string>();
+  const queue: string[] = [aRoot];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === undefined) break;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const id of allRoots) {
+      if (!visited.has(id) && edgeSet.has(`${current}|${id}`)) {
+        if (id === bRoot) return true;
+        queue.push(id);
+      }
+    }
   }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,3 +419,9 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
 
   return new SqliteRegistry(db, embeddingProvider);
 }
+
+// ---------------------------------------------------------------------------
+// Internal re-export for schema inspection (tests only)
+// ---------------------------------------------------------------------------
+
+export { canonicalize };

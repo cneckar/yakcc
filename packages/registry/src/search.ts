@@ -12,7 +12,15 @@
 // error conditions. This is sufficient for the seed corpus and flags divergences
 // at selection time. Refinements land in v0.5+.
 
-import type { ContractSpec } from "@yakcc/contracts";
+// @decision DEC-SEARCH-SPECYAK-MIGRATE-001: structuralMatch now operates on
+// SpecYak instead of ContractSpec. The internal logic (deep-equal on type
+// signatures, subset-check on errors) is unchanged. SpecYak's nonFunctional,
+// errorConditions, inputs, and outputs fields are optional (for v0 lift
+// compatibility), so absent fields on caller or candidate are treated as
+// "no constraint" and match anything.
+// Status: decided (WI-T03)
+
+import type { SpecYak } from "@yakcc/contracts";
 
 // ---------------------------------------------------------------------------
 // Public result type
@@ -39,41 +47,40 @@ export type MatchResult =
  *
  * v0 matching rules (each failure appends a string to `reasons`):
  *
- * 1. Input signatures must match exactly in count, name, and type.
+ * 1. Input signatures must match exactly in count, name, and type (when both
+ *    specs declare inputs; absent inputs fields are treated as "no constraint").
  * 2. Output signatures must match exactly in count, name, and type.
  * 3. The candidate's declared error conditions must be a subset of the
  *    conditions the caller's spec declares — extra undeclared errors on the
- *    candidate mean the caller might not handle them.
+ *    candidate mean the caller might not handle them. When caller has no
+ *    errorConditions field, it is treated as an empty array (no tolerance).
  * 4. Non-functional properties that the caller specifies must be at least as
  *    strong on the candidate (same purity, same thread-safety, compatible
- *    time/space complexity).
+ *    time/space complexity). When nonFunctional is absent, no NF check is done.
  *
  * Monotonicity invariant (tested in search.test.ts): relaxing a caller's
  * requirement (removing a constraint from `spec`) must not turn a
- * `matches: true` into `matches: false` for the same candidate. Equivalently,
- * if `candidate` matches `spec`, it must also match any looser spec.
+ * `matches: true` into `matches: false` for the same candidate.
  *
- * @param spec      - The caller's required contract specification.
+ * @param spec      - The caller's required spec.
  * @param candidate - The registry candidate being evaluated.
  */
-export function structuralMatch(
-  spec: ContractSpec,
-  candidate: ContractSpec,
-): MatchResult {
+export function structuralMatch(spec: SpecYak, candidate: SpecYak): MatchResult {
   const reasons: string[] = [];
 
   // -----------------------------------------------------------------------
   // 1. Input signatures — exact match (count, name, type)
   // -----------------------------------------------------------------------
-  if (spec.inputs.length !== candidate.inputs.length) {
+  const callerInputs = spec.inputs;
+  const candidateInputs = candidate.inputs;
+  if (callerInputs.length !== candidateInputs.length) {
     reasons.push(
-      `input count mismatch: caller needs ${spec.inputs.length}, candidate has ${candidate.inputs.length}`,
+      `input count mismatch: caller needs ${callerInputs.length}, candidate has ${candidateInputs.length}`,
     );
   } else {
-    for (let i = 0; i < spec.inputs.length; i++) {
-      const want = spec.inputs[i];
-      const got = candidate.inputs[i];
-      // noUncheckedIndexedAccess: both arrays are same length so neither is undefined
+    for (let i = 0; i < callerInputs.length; i++) {
+      const want = callerInputs[i];
+      const got = candidateInputs[i];
       if (want === undefined || got === undefined) continue;
       if (want.name !== got.name) {
         reasons.push(
@@ -91,14 +98,16 @@ export function structuralMatch(
   // -----------------------------------------------------------------------
   // 2. Output signatures — exact match (count, name, type)
   // -----------------------------------------------------------------------
-  if (spec.outputs.length !== candidate.outputs.length) {
+  const callerOutputs = spec.outputs;
+  const candidateOutputs = candidate.outputs;
+  if (callerOutputs.length !== candidateOutputs.length) {
     reasons.push(
-      `output count mismatch: caller needs ${spec.outputs.length}, candidate has ${candidate.outputs.length}`,
+      `output count mismatch: caller needs ${callerOutputs.length}, candidate has ${candidateOutputs.length}`,
     );
   } else {
-    for (let i = 0; i < spec.outputs.length; i++) {
-      const want = spec.outputs[i];
-      const got = candidate.outputs[i];
+    for (let i = 0; i < callerOutputs.length; i++) {
+      const want = callerOutputs[i];
+      const got = candidateOutputs[i];
       if (want === undefined || got === undefined) continue;
       if (want.name !== got.name) {
         reasons.push(
@@ -116,86 +125,82 @@ export function structuralMatch(
   // -----------------------------------------------------------------------
   // 3. Error conditions — candidate's errors ⊆ caller's tolerated errors
   //
-  //    If the caller's spec declares no error conditions, it means "I don't
-  //    tolerate any errors." If the candidate has error conditions the caller
-  //    hasn't declared, those are unexpected errors the caller won't handle.
+  //    If the caller's spec declares no error conditions (or omits the field),
+  //    it means "I don't tolerate any errors." If the candidate has error
+  //    conditions the caller hasn't declared, those are unexpected errors the
+  //    caller won't handle.
   //
   //    Matching is by errorType string when present, otherwise by description.
   // -----------------------------------------------------------------------
-  for (const candidateErr of candidate.errorConditions) {
+  const callerErrors = spec.errorConditions ?? [];
+  const candidateErrors = candidate.errorConditions ?? [];
+  for (const candidateErr of candidateErrors) {
     const key = candidateErr.errorType ?? candidateErr.description;
-    const callerTolerates = spec.errorConditions.some(
-      (e) => (e.errorType ?? e.description) === key,
-    );
+    const callerTolerates = callerErrors.some((e) => (e.errorType ?? e.description) === key);
     if (!callerTolerates) {
-      reasons.push(
-        `candidate declares error condition not tolerated by caller: "${key}"`,
-      );
+      reasons.push(`candidate declares error condition not tolerated by caller: "${key}"`);
     }
   }
 
   // -----------------------------------------------------------------------
   // 4. Non-functional properties — candidate must be at least as strong
-  //
-  //    - purity: candidate must be at least as pure as the caller requires
-  //    - threadSafety: candidate must be at least as safe as the caller requires
-  //    - time/space: if caller specifies a complexity, candidate must match or
-  //      declare a complexity that is no worse (free-form strings: exact match
-  //      in v0; later refinements can parse Big-O).
+  //    Only checked when both caller and candidate declare nonFunctional.
+  //    If either omits the field, the check is skipped (no constraint).
   // -----------------------------------------------------------------------
   const callerNF = spec.nonFunctional;
   const candidateNF = candidate.nonFunctional;
 
-  // Purity ordering: pure > io > stateful > nondeterministic.
-  // A candidate is at least as pure as the caller if its purity rank >= caller's.
-  const PURITY_RANK: Record<string, number> = {
-    pure: 3,
-    io: 2,
-    stateful: 1,
-    nondeterministic: 0,
-  };
-  const callerPurityRank = PURITY_RANK[callerNF.purity] ?? 0;
-  const candidatePurityRank = PURITY_RANK[candidateNF.purity] ?? 0;
-  if (candidatePurityRank < callerPurityRank) {
-    reasons.push(
-      `purity mismatch: caller requires "${callerNF.purity}", candidate offers "${candidateNF.purity}"`,
-    );
-  }
+  if (callerNF !== undefined && candidateNF !== undefined) {
+    // Purity ordering: pure > io > stateful > nondeterministic.
+    const PURITY_RANK: Record<string, number> = {
+      pure: 3,
+      io: 2,
+      stateful: 1,
+      nondeterministic: 0,
+    };
+    const callerPurityRank = PURITY_RANK[callerNF.purity] ?? 0;
+    const candidatePurityRank = PURITY_RANK[candidateNF.purity] ?? 0;
+    if (candidatePurityRank < callerPurityRank) {
+      reasons.push(
+        `purity mismatch: caller requires "${callerNF.purity}", candidate offers "${candidateNF.purity}"`,
+      );
+    }
 
-  // Thread-safety ordering: safe > sequential > unsafe.
-  const THREAD_RANK: Record<string, number> = {
-    safe: 2,
-    sequential: 1,
-    unsafe: 0,
-  };
-  const callerThreadRank = THREAD_RANK[callerNF.threadSafety] ?? 0;
-  const candidateThreadRank = THREAD_RANK[candidateNF.threadSafety] ?? 0;
-  if (candidateThreadRank < callerThreadRank) {
-    reasons.push(
-      `threadSafety mismatch: caller requires "${callerNF.threadSafety}", candidate offers "${candidateNF.threadSafety}"`,
-    );
-  }
+    // Thread-safety ordering: safe > sequential > unsafe.
+    const THREAD_RANK: Record<string, number> = {
+      safe: 2,
+      sequential: 1,
+      unsafe: 0,
+    };
+    const callerThreadRank = THREAD_RANK[callerNF.threadSafety] ?? 0;
+    const candidateThreadRank = THREAD_RANK[candidateNF.threadSafety] ?? 0;
+    if (candidateThreadRank < callerThreadRank) {
+      reasons.push(
+        `threadSafety mismatch: caller requires "${callerNF.threadSafety}", candidate offers "${candidateNF.threadSafety}"`,
+      );
+    }
 
-  // Time complexity: if caller specifies, candidate must match (exact in v0).
-  if (
-    callerNF.time !== undefined &&
-    candidateNF.time !== undefined &&
-    callerNF.time !== candidateNF.time
-  ) {
-    reasons.push(
-      `time complexity mismatch: caller requires "${callerNF.time}", candidate offers "${candidateNF.time}"`,
-    );
-  }
+    // Time complexity: if caller specifies, candidate must match (exact in v0).
+    if (
+      callerNF.time !== undefined &&
+      candidateNF.time !== undefined &&
+      callerNF.time !== candidateNF.time
+    ) {
+      reasons.push(
+        `time complexity mismatch: caller requires "${callerNF.time}", candidate offers "${candidateNF.time}"`,
+      );
+    }
 
-  // Space complexity: same.
-  if (
-    callerNF.space !== undefined &&
-    candidateNF.space !== undefined &&
-    callerNF.space !== candidateNF.space
-  ) {
-    reasons.push(
-      `space complexity mismatch: caller requires "${callerNF.space}", candidate offers "${candidateNF.space}"`,
-    );
+    // Space complexity: same.
+    if (
+      callerNF.space !== undefined &&
+      candidateNF.space !== undefined &&
+      callerNF.space !== candidateNF.space
+    ) {
+      reasons.push(
+        `space complexity mismatch: caller requires "${callerNF.space}", candidate offers "${candidateNF.space}"`,
+      );
+    }
   }
 
   if (reasons.length === 0) {

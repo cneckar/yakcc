@@ -14,18 +14,28 @@
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import type { ContractSpec } from "@yakcc/contracts";
+import type { SpecYak } from "@yakcc/contracts";
 import { structuralMatch } from "./search.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-/** A minimal ContractSpec for test fixtures. */
-function makeSpec(overrides: Partial<ContractSpec> = {}): ContractSpec {
+/**
+ * A minimal SpecYak for test fixtures (WI-T03: structuralMatch now takes SpecYak).
+ * The required SpecYak fields (name, preconditions, postconditions, invariants,
+ * effects, level) are populated with sensible defaults; overrides merge in.
+ */
+function makeSpec(overrides: Partial<SpecYak> = {}): SpecYak {
   return {
+    name: "test-spec",
     inputs: [{ name: "value", type: "string" }],
     outputs: [{ name: "result", type: "number" }],
+    preconditions: [],
+    postconditions: ["result is an integer"],
+    invariants: [],
+    effects: [],
+    level: "L0",
     behavior: "Parse an integer from a string",
     guarantees: [{ id: "total", description: "Always returns or throws." }],
     errorConditions: [
@@ -284,7 +294,7 @@ describe("structuralMatch — monotonicity invariant", () => {
     () => {
       fc.assert(
         fc.property(
-          // Generate a ContractSpec where caller and candidate share inputs/outputs
+          // Generate a SpecYak where caller and candidate share inputs/outputs
           // and have a common set of error conditions.
           fc.record({
             behaviorCaller: fc.string({ minLength: 1, maxLength: 30 }),

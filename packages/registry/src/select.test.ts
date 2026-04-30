@@ -10,15 +10,14 @@
  *   - Three-way comparable chain A < B < C: C wins
  *   - Incomparable pair: stronger non-functional properties win
  *   - Tiebreak by test history: more passing runs win
- *   - Final fallback: lexicographically-smaller contract id wins
+ *   - Final fallback: lexicographically-smaller block merkle root wins
  *
- * Production sequence: storage.ts calls select(candidates.map(c => c.match))
- * after search() + structural filtering. The result is the contract the
- * assembler uses to resolve a block.
+ * Production sequence: storage.ts calls select() after search() + structural
+ * filtering. The result is the block the assembler uses to resolve a spec.
  */
 
 import { describe, it, expect } from "vitest";
-import type { ContractId, ContractSpec } from "@yakcc/contracts";
+import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
 import { select } from "./select.js";
 import type { SelectMatch, StrictnessEdge, CandidateProvenance } from "./select.js";
 
@@ -27,14 +26,20 @@ import type { SelectMatch, StrictnessEdge, CandidateProvenance } from "./select.
 // ---------------------------------------------------------------------------
 
 /**
- * Make a minimal ContractSpec. Defaults to pure/safe with O(n) time — the
+ * Make a minimal SpecYak. Defaults to pure/safe with O(n) time — the
  * highest quality non-functional tier. Tests that need weaker specs override
  * the nonFunctional field.
  */
-function makeSpec(overrides: Partial<ContractSpec> = {}): ContractSpec {
+function makeSpec(overrides: Partial<SpecYak> = {}): SpecYak {
   return {
+    name: "test-spec",
     inputs: [{ name: "value", type: "string" }],
     outputs: [{ name: "result", type: "number" }],
+    preconditions: [],
+    postconditions: ["result is an integer"],
+    invariants: [],
+    effects: [],
+    level: "L0",
     behavior: "Parse an integer from a string",
     guarantees: [{ id: "total", description: "Always returns or throws." }],
     errorConditions: [],
@@ -50,39 +55,39 @@ function makeSpec(overrides: Partial<ContractSpec> = {}): ContractSpec {
 }
 
 /**
- * Build a SelectMatch with the given contractId suffix (padded to 64 chars)
+ * Build a SelectMatch with the given root suffix (padded to 64 chars)
  * and optional spec overrides.
  *
- * The contract id is synthetic: we use a repeating-character string so ids
+ * The block root is synthetic: we use a repeating-character string so roots
  * are predictable and their lexicographic ordering is controlled by the char.
  */
 function makeMatch(
-  idChar: string,
-  specOverrides: Partial<ContractSpec> = {},
+  rootChar: string,
+  specOverrides: Partial<SpecYak> = {},
   score = 0.9,
 ): SelectMatch {
-  const id = idChar.repeat(64) as ContractId;
+  const root = rootChar.repeat(64) as BlockMerkleRoot;
   return {
-    contract: {
-      id,
+    block: {
+      root,
       spec: makeSpec(specOverrides),
     },
     score,
   };
 }
 
-/** Shorthand for a StrictnessEdge: stricterId beats looserId. */
+/** Shorthand for a StrictnessEdge: stricterRoot beats looserRoot. */
 function edge(stricterChar: string, looserChar: string): StrictnessEdge {
   return {
-    stricterId: stricterChar.repeat(64) as ContractId,
-    looserId: looserChar.repeat(64) as ContractId,
+    stricterRoot: stricterChar.repeat(64) as BlockMerkleRoot,
+    looserRoot: looserChar.repeat(64) as BlockMerkleRoot,
   };
 }
 
 /** Shorthand for a CandidateProvenance entry. */
-function prov(idChar: string, passingRuns: number): CandidateProvenance {
+function prov(rootChar: string, passingRuns: number): CandidateProvenance {
   return {
-    contractId: idChar.repeat(64) as ContractId,
+    blockRoot: rootChar.repeat(64) as BlockMerkleRoot,
     passingRuns,
   };
 }
@@ -114,7 +119,7 @@ describe("select — explicit strictness edge", () => {
     const b = makeMatch("b");
     // B stricter than A
     const result = select([a, b], [edge("b", "a")], []);
-    expect(result?.contract.id).toBe("b".repeat(64));
+    expect(result?.block.root).toBe("b".repeat(64));
   });
 
   it("returns the stricter candidate regardless of input order (stricter first)", () => {
@@ -122,14 +127,14 @@ describe("select — explicit strictness edge", () => {
     const b = makeMatch("b");
     // Passed in reversed order
     const result = select([b, a], [edge("b", "a")], []);
-    expect(result?.contract.id).toBe("b".repeat(64));
+    expect(result?.block.root).toBe("b".repeat(64));
   });
 
   it("returns the stricter candidate when A is declared stricter than B", () => {
     const a = makeMatch("a");
     const b = makeMatch("b");
     const result = select([a, b], [edge("a", "b")], []);
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 });
 
@@ -145,7 +150,7 @@ describe("select — three-way comparable chain", () => {
 
     // A < B and B < C. By transitivity C should dominate.
     const result = select([a, b, c], [edge("b", "a"), edge("c", "b")], []);
-    expect(result?.contract.id).toBe("c".repeat(64));
+    expect(result?.block.root).toBe("c".repeat(64));
   });
 
   it("selects C when all three edges are explicit (redundant transitivity)", () => {
@@ -158,17 +163,17 @@ describe("select — three-way comparable chain", () => {
       [edge("b", "a"), edge("c", "b"), edge("c", "a")],
       [],
     );
-    expect(result?.contract.id).toBe("c".repeat(64));
+    expect(result?.block.root).toBe("c".repeat(64));
   });
 
-  it("edges involving ids not in the match set are ignored", () => {
+  it("edges involving roots not in the match set are ignored", () => {
     const a = makeMatch("a");
     const b = makeMatch("b");
 
     // An edge referencing "z" (not in matches) should be ignored.
     const result = select([a, b], [edge("b", "a"), edge("z", "b")], []);
     // B is still strictest in the candidate set.
-    expect(result?.contract.id).toBe("b".repeat(64));
+    expect(result?.block.root).toBe("b".repeat(64));
   });
 });
 
@@ -188,7 +193,7 @@ describe("select — tiebreak by non-functional properties", () => {
     });
 
     const result = select([a, b], [], []);
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 
   it("pure/safe beats pure/unsafe (thread-safety tiebreak)", () => {
@@ -202,7 +207,7 @@ describe("select — tiebreak by non-functional properties", () => {
     });
 
     const result = select([a, b], [], []);
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 
   it("O(n) time complexity beats O(n²) — reflected in non-functional purity tier", () => {
@@ -216,7 +221,7 @@ describe("select — tiebreak by non-functional properties", () => {
     });
 
     const result = select([onSquaredSpec, onSpec], [], []);
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 });
 
@@ -232,7 +237,7 @@ describe("select — tiebreak by test history (passing runs)", () => {
 
     // B has more passing runs.
     const result = select([a, b], [], [prov("a", 3), prov("b", 10)]);
-    expect(result?.contract.id).toBe("b".repeat(64));
+    expect(result?.block.root).toBe("b".repeat(64));
   });
 
   it("candidate with zero passing runs loses to one with any runs", () => {
@@ -240,7 +245,7 @@ describe("select — tiebreak by test history (passing runs)", () => {
     const b = makeMatch("b");
 
     const result = select([a, b], [], [prov("a", 0), prov("b", 1)]);
-    expect(result?.contract.id).toBe("b".repeat(64));
+    expect(result?.block.root).toBe("b".repeat(64));
   });
 
   it("missing provenance entry is treated as 0 passing runs", () => {
@@ -249,23 +254,23 @@ describe("select — tiebreak by test history (passing runs)", () => {
 
     // Only A has provenance; B implicitly has 0.
     const result = select([a, b], [], [prov("a", 5)]);
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 });
 
 // ---------------------------------------------------------------------------
-// Final fallback: lexicographic id ordering
+// Final fallback: lexicographic block merkle root ordering
 // ---------------------------------------------------------------------------
 
-describe("select — final fallback: lexicographic id", () => {
-  it("returns the lexicographically smaller id when everything else is identical", () => {
+describe("select — final fallback: lexicographic block merkle root", () => {
+  it("returns the lexicographically smaller root when everything else is identical", () => {
     // Both pure/safe, no provenance, no edges. 'a' < 'b' lexicographically.
     const a = makeMatch("a");
     const b = makeMatch("b");
 
     const result = select([a, b], [], []);
     // 'a'.repeat(64) < 'b'.repeat(64)
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 
   it("lexicographic fallback is stable regardless of input order", () => {
@@ -275,8 +280,8 @@ describe("select — final fallback: lexicographic id", () => {
     const r1 = select([a, b], [], []);
     const r2 = select([b, a], [], []);
 
-    expect(r1?.contract.id).toBe(r2?.contract.id);
-    expect(r1?.contract.id).toBe("a".repeat(64));
+    expect(r1?.block.root).toBe(r2?.block.root);
+    expect(r1?.block.root).toBe("a".repeat(64));
   });
 
   it("'c' beats 'd' on lexicographic tiebreak among three candidates", () => {
@@ -286,7 +291,7 @@ describe("select — final fallback: lexicographic id", () => {
 
     // No edges, identical nf, no provenance.
     const result = select([e, d, c], [], []);
-    expect(result?.contract.id).toBe("c".repeat(64));
+    expect(result?.block.root).toBe("c".repeat(64));
   });
 });
 
@@ -307,7 +312,7 @@ describe("select — strictness ordering dominates all tiebreaks", () => {
 
     const result = select([a, b], [edge("a", "b")], []);
     // A wins because it's declared strictly stronger, despite weaker nf.
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 
   it("stricter candidate wins even when it has fewer passing test runs", () => {
@@ -316,6 +321,6 @@ describe("select — strictness ordering dominates all tiebreaks", () => {
 
     // B has far more passing runs, but A is declared stricter.
     const result = select([a, b], [edge("a", "b")], [prov("a", 0), prov("b", 100)]);
-    expect(result?.contract.id).toBe("a".repeat(64));
+    expect(result?.block.root).toBe("a".repeat(64));
   });
 });

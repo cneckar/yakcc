@@ -8,37 +8,44 @@
 // Status: decided (WI-003)
 // Rationale: When multiple candidates are incomparable under strictness_edges,
 // selection must be deterministic so the same input always returns the same
-// contract. Tiebreaker priority: (1) stronger non-functional properties
+// block. Tiebreaker priority: (1) stronger non-functional properties
 // (purity rank, then thread-safety rank), (2) more passing test history entries,
-// (3) lexicographically smaller contract id (always unique, so always decisive).
+// (3) lexicographically smaller block merkle root (always unique, decisive).
 
-import type { ContractId, ContractSpec } from "@yakcc/contracts";
+// @decision DEC-SELECT-TIEBREAK-MIGRATE-001: lexicographic comparator for the
+// final tiebreak now operates on BlockMerkleRoot instead of ContractId. Both
+// are 64-char hex strings, so the comparison is identical. The NF tiebreak
+// uses SpecYak.nonFunctional (optional in SpecYak; absent values rank as 0).
+// Status: decided (WI-T03)
+
+import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
 /**
- * A contract paired with a similarity score. Re-declared locally to avoid a
- * circular import with index.ts; the shapes are identical. The storage layer
- * passes Match[] values from its own internal hydration, and index.ts re-exports
- * both types from the same surface.
+ * A candidate block paired with a similarity score. The block is identified by
+ * its BlockMerkleRoot; the spec is the SpecYak that the block was registered
+ * under, used for non-functional tiebreaking.
+ *
+ * select() is a pure function testable without a DB (DEC-SELECT-001).
  */
 export interface SelectMatch {
-  readonly contract: {
-    readonly id: ContractId;
-    readonly spec: ContractSpec;
+  readonly block: {
+    readonly root: BlockMerkleRoot;
+    readonly spec: SpecYak;
   };
   readonly score: number;
 }
 
 /**
- * A strictness edge: `stricterId` is declared strictly stronger than `looserId`.
- * Both ids must be present in the candidate set for the edge to influence selection.
+ * A strictness edge: `stricterRoot` is declared strictly stronger than `looserRoot`.
+ * Both roots must be present in the candidate set for the edge to influence selection.
  */
 export interface StrictnessEdge {
-  readonly stricterId: ContractId;
-  readonly looserId: ContractId;
+  readonly stricterRoot: BlockMerkleRoot;
+  readonly looserRoot: BlockMerkleRoot;
 }
 
 /**
@@ -46,7 +53,7 @@ export interface StrictnessEdge {
  * `passingRuns` is the count of `test_history` rows where `passed = 1`.
  */
 export interface CandidateProvenance {
-  readonly contractId: ContractId;
+  readonly blockRoot: BlockMerkleRoot;
   readonly passingRuns: number;
 }
 
@@ -73,42 +80,42 @@ const THREAD_RANK: Readonly<Record<string, number>> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a set of (stricterId, looserId) pairs restricted to ids present in
- * the candidate set. Returns a Set of "stricterId|looserId" composite keys
- * for O(1) lookup.
+ * Build a set of (stricterRoot, looserRoot) pairs restricted to roots present
+ * in the candidate set. Returns a Set of "stricterRoot|looserRoot" composite
+ * keys for O(1) lookup.
  */
 function buildEdgeSet(
-  candidateIds: ReadonlySet<ContractId>,
+  candidateRoots: ReadonlySet<BlockMerkleRoot>,
   edges: readonly StrictnessEdge[],
 ): Set<string> {
   const edgeSet = new Set<string>();
   for (const edge of edges) {
     if (
-      candidateIds.has(edge.stricterId) &&
-      candidateIds.has(edge.looserId) &&
-      edge.stricterId !== edge.looserId
+      candidateRoots.has(edge.stricterRoot) &&
+      candidateRoots.has(edge.looserRoot) &&
+      edge.stricterRoot !== edge.looserRoot
     ) {
-      edgeSet.add(`${edge.stricterId}|${edge.looserId}`);
+      edgeSet.add(`${edge.stricterRoot}|${edge.looserRoot}`);
     }
   }
   return edgeSet;
 }
 
 /**
- * Return true if `aId` is declared strictly stronger than `bId`
+ * Return true if `aRoot` is declared strictly stronger than `bRoot`
  * (directly or transitively) within the edge set.
  *
  * Uses iterative BFS to avoid call-stack blowup on large graphs.
  */
 function isStricterThan(
-  aId: ContractId,
-  bId: ContractId,
+  aRoot: BlockMerkleRoot,
+  bRoot: BlockMerkleRoot,
   edgeSet: ReadonlySet<string>,
-  allIds: readonly ContractId[],
+  allRoots: readonly BlockMerkleRoot[],
 ): boolean {
-  // BFS from aId following "is stricter than" edges.
-  const visited = new Set<ContractId>();
-  const queue: ContractId[] = [aId];
+  // BFS from aRoot following "is stricter than" edges.
+  const visited = new Set<BlockMerkleRoot>();
+  const queue: BlockMerkleRoot[] = [aRoot];
 
   while (queue.length > 0) {
     const current = queue.shift();
@@ -116,9 +123,9 @@ function isStricterThan(
     if (visited.has(current)) continue;
     visited.add(current);
 
-    for (const id of allIds) {
+    for (const id of allRoots) {
       if (!visited.has(id) && edgeSet.has(`${current}|${id}`)) {
-        if (id === bId) return true;
+        if (id === bRoot) return true;
         queue.push(id);
       }
     }
@@ -129,10 +136,12 @@ function isStricterThan(
 /**
  * Non-functional quality score for tiebreaking: higher is better.
  * Components: purity (0–3) and thread-safety (0–2).
+ * SpecYak.nonFunctional is optional; absent values score 0 in each component.
  */
-function nfScore(spec: ContractSpec): number {
-  return (PURITY_RANK[spec.nonFunctional.purity] ?? 0) * 10 +
-    (THREAD_RANK[spec.nonFunctional.threadSafety] ?? 0);
+function nfScore(spec: SpecYak): number {
+  const nf = spec.nonFunctional;
+  if (nf === undefined) return 0;
+  return (PURITY_RANK[nf.purity] ?? 0) * 10 + (THREAD_RANK[nf.threadSafety] ?? 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +160,11 @@ function nfScore(spec: ContractSpec): number {
  * 4. Tiebreak among incomparable maximal nodes:
  *    a. Higher non-functional quality score (purity rank × 10 + thread-safety rank).
  *    b. More passing test-history runs (from `provenance`).
- *    c. Lexicographically smaller contract id (deterministic last resort).
+ *    c. Lexicographically smaller block merkle root (deterministic last resort).
  * 5. Returns null if `matches` is empty.
  *
  * @param matches          - Candidate matches to select from.
- * @param strictnessEdges  - Declared partial order edges (may include ids not in matches).
+ * @param strictnessEdges  - Declared partial order edges (may include roots not in matches).
  * @param provenance       - Per-candidate test-history counts for tiebreaking.
  */
 export function select(
@@ -166,26 +175,25 @@ export function select(
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0] ?? null;
 
-  const allIds = matches.map((m) => m.contract.id);
-  const candidateIdSet = new Set<ContractId>(allIds);
-  const edgeSet = buildEdgeSet(candidateIdSet, strictnessEdges);
+  const allRoots = matches.map((m) => m.block.root);
+  const candidateRootSet = new Set<BlockMerkleRoot>(allRoots);
+  const edgeSet = buildEdgeSet(candidateRootSet, strictnessEdges);
 
   // Build a provenance lookup for tiebreaking.
-  const provenanceMap = new Map<ContractId, number>();
+  const provenanceMap = new Map<BlockMerkleRoot, number>();
   for (const p of provenance) {
-    if (candidateIdSet.has(p.contractId)) {
-      provenanceMap.set(p.contractId, p.passingRuns);
+    if (candidateRootSet.has(p.blockRoot)) {
+      provenanceMap.set(p.blockRoot, p.passingRuns);
     }
   }
 
   // Find maximally-strict candidates: those where no other candidate is
   // declared stricter than them.
   const maximal = matches.filter((m) => {
-    const id = m.contract.id;
+    const root = m.block.root;
     // Is any other candidate declared stricter than this one?
-    return !allIds.some(
-      (otherId) =>
-        otherId !== id && isStricterThan(otherId, id, edgeSet, allIds),
+    return !allRoots.some(
+      (otherRoot) => otherRoot !== root && isStricterThan(otherRoot, root, edgeSet, allRoots),
     );
   });
 
@@ -197,17 +205,17 @@ export function select(
   // Tiebreak deterministically.
   const sorted = [...pool].sort((a, b) => {
     // a. Non-functional quality score — higher wins.
-    const nfA = nfScore(a.contract.spec);
-    const nfB = nfScore(b.contract.spec);
+    const nfA = nfScore(a.block.spec);
+    const nfB = nfScore(b.block.spec);
     if (nfA !== nfB) return nfB - nfA; // descending
 
     // b. Passing test history runs — more wins.
-    const passingA = provenanceMap.get(a.contract.id) ?? 0;
-    const passingB = provenanceMap.get(b.contract.id) ?? 0;
+    const passingA = provenanceMap.get(a.block.root) ?? 0;
+    const passingB = provenanceMap.get(b.block.root) ?? 0;
     if (passingA !== passingB) return passingB - passingA; // descending
 
-    // c. Lexicographically smaller id — a < b means a wins (ascending).
-    return a.contract.id < b.contract.id ? -1 : 1;
+    // c. Lexicographically smaller block merkle root — a < b means a wins.
+    return a.block.root < b.block.root ? -1 : 1;
   });
 
   return sorted[0] ?? null;
