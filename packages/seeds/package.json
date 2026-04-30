@@ -8,10 +8,10 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./blocks/*": "./dist/blocks/*.js"
+    "./blocks/*": "./dist/blocks/*/impl.js"
   },
   "scripts": {
-    "build": "tsc -p . && cp src/blocks/*.ts dist/blocks/",
+    "build": "tsc -p .",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",
     "lint": "biome check src/",

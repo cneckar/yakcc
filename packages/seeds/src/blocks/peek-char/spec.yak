@@ -1,0 +1,76 @@
+{
+  "name": "peek-char",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "The full input string."
+    },
+    {
+      "name": "position",
+      "type": "number",
+      "description": "Zero-based position to peek at."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "char",
+      "type": "string | null",
+      "description": "Character at position, or null if at end of input."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Return the character at the given position without advancing. Returns null if position is at or beyond the end of input. Throws RangeError if position is negative.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "no-advance",
+      "description": "Does not modify position; caller position is unchanged."
+    },
+    {
+      "id": "null-at-eof",
+      "description": "Returns null exactly when position >= input.length."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "position < 0.",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(1)",
+    "space": "O(1)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "peek-char-first",
+      "description": "peekChar('abc', 0) returns 'a'"
+    },
+    {
+      "id": "peek-char-eof",
+      "description": "peekChar('abc', 3) returns null"
+    },
+    {
+      "id": "peek-char-negative",
+      "description": "peekChar('abc', -1) throws RangeError"
+    },
+    {
+      "id": "peek-char-empty-input",
+      "description": "peekChar('', 0) returns null"
+    },
+    {
+      "id": "peek-char-last",
+      "description": "peekChar('abc', 2) returns 'c'"
+    }
+  ]
+}

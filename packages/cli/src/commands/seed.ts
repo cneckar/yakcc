@@ -1,10 +1,11 @@
 // @decision DEC-CLI-SEED-001: seed opens the registry and delegates to seedRegistry()
 // from @yakcc/seeds. seedRegistry() is idempotent (INSERT OR IGNORE), so running seed
 // on an already-seeded registry is safe. Prints the stored count and a truncated list
-// of contract ids, then exits 0.
-// Status: implemented (WI-007)
-// Rationale: The CLI seed command mirrors the test setup pattern in assemble.test.ts
-// (openRegistry → seedRegistry). No author/ownership fields touched — DEC-NO-OWNERSHIP-011.
+// of block merkle roots, then exits 0.
+// Status: updated (WI-T05)
+// Rationale: WI-T05 migrated SeedResult from contractIds: ContractId[] to
+// merkleRoots: BlockMerkleRoot[] (T03/T04 API). Display updated accordingly.
+// No author/ownership fields touched — DEC-NO-OWNERSHIP-011.
 
 import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
@@ -12,14 +13,14 @@ import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
 
-/** Maximum number of contract ids to print in the summary line. */
-const MAX_IDS_SHOWN = 5;
+/** Maximum number of merkle roots to print in the summary line. */
+const MAX_ROOTS_SHOWN = 3;
 
 /**
  * Handler for `yakcc seed [--registry <p>]`.
  *
  * Opens the registry and calls seedRegistry() to ingest all seed corpus blocks.
- * Prints a summary of stored contracts and exits 0.
+ * Prints a summary of stored blocks and exits 0.
  *
  * @param argv - Remaining argv after `seed` has been consumed.
  * @param logger - Output sink; defaults to console via the caller.
@@ -48,11 +49,12 @@ export async function seed(argv: readonly string[], logger: Logger): Promise<num
   try {
     const result = await seedRegistry(registry);
 
-    const shown = result.contractIds.slice(0, MAX_IDS_SHOWN);
-    const rest = result.contractIds.length - shown.length;
-    const idList = rest > 0 ? `${shown.join(", ")}, … (+${rest} more)` : shown.join(", ");
+    // Show abbreviated roots (first 8 hex chars each) for readability.
+    const shown = result.merkleRoots.slice(0, MAX_ROOTS_SHOWN).map((r) => r.slice(0, 8));
+    const rest = result.merkleRoots.length - shown.length;
+    const rootList = rest > 0 ? `${shown.join(", ")}, … (+${rest} more)` : shown.join(", ");
 
-    logger.log(`seeded ${result.stored} contracts; ids: ${idList}`);
+    logger.log(`seeded ${result.stored} contracts; ids: ${rootList}`);
     return 0;
   } catch (err) {
     logger.error(`error: seed failed: ${String(err)}`);
