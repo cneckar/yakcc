@@ -16,6 +16,7 @@
     "build": "tsc -p .",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "biome check src/"
   },
   "dependencies": {
@@ -28,6 +29,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "fast-check": "^3.23.2",
     "vitest": "^4.1.5"
   }
 }

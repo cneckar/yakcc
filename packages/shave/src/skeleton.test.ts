@@ -1,31 +1,32 @@
 /**
- * WI-010-01 skeleton tests.
+ * WI-010-01 skeleton tests — updated in WI-010-03 to reflect live wiring.
  *
- * These tests verify that the public API stubs:
- *   1. compile and are importable
- *   2. return the correct stubbed shapes (empty arrays for atoms/slicePlan/
- *      matchedPrimitives, diagnostics.stubbed includes "decomposition")
- *   3. createIntentExtractionHook produces a usable hook that runs to completion
+ * What remains here:
+ *   1. shave() shape contract — still a stub returning empty atoms/intentCards.
+ *   2. createIntentExtractionHook() shape — id and intercept present.
+ *      NOTE: intercept() now delegates to the live universalize() which calls
+ *      extractIntent(); invoking it without a cache hit or API key throws
+ *      AnthropicApiKeyMissingError. The shape test only checks the object.
+ *   3. universalize() live-wiring smoke test — calling without an API key or
+ *      cache must throw AnthropicApiKeyMissingError, proving the sentinel path
+ *      is gone and extractIntent is wired.
  *
- * Production trigger: shave() is called by the CLI's `yakcc shave <file>`
- * command (WI-010-02 wires that entry point). universalize() is called by the
- * continuous universalizer loop that processes candidate blocks extracted by
- * the DFG slicer (WI-012). These tests exercise the same public call sequence
- * to prove the stubs satisfy the shape contract before the real implementations
- * land.
+ * All deeper universalize/extract tests live in index.test.ts and
+ * src/intent/extract.test.ts where mock-client injection is available.
  *
- * Compound-interaction test: the final test exercises shave → universalize →
- * createIntentExtractionHook → intercept in the same sequence a CLI user
- * would trigger, crossing all three public entry points.
+ * Production trigger: shave() is called by the CLI's `yakcc shave <file>`.
+ * createIntentExtractionHook() is called by the hook pipeline. universalize()
+ * is called by the continuous universalizer loop (WI-012).
  */
 
 import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import { createIntentExtractionHook, shave, universalize } from "./index.js";
+import { AnthropicApiKeyMissingError } from "./index.js";
 import type { ShaveRegistryView } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// Minimal noop registry — satisfies ShaveRegistryView without any storage
+// Minimal noop registry
 // ---------------------------------------------------------------------------
 
 const noopRegistry: ShaveRegistryView = {
@@ -38,7 +39,7 @@ const noopRegistry: ShaveRegistryView = {
 };
 
 // ---------------------------------------------------------------------------
-// shave() stub tests
+// shave() stub tests — unchanged from WI-010-01
 // ---------------------------------------------------------------------------
 
 describe("shave()", () => {
@@ -56,7 +57,7 @@ describe("shave()", () => {
     expect(result.diagnostics.stubbed).toContain("decomposition");
   });
 
-  it("reports zero cache hits and misses (no extractor yet)", async () => {
+  it("reports zero cache hits and misses (shave is still a stub)", async () => {
     const result = await shave("dummy.ts", noopRegistry);
 
     expect(result.diagnostics.cacheHits).toBe(0);
@@ -65,40 +66,31 @@ describe("shave()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// universalize() stub tests
+// universalize() — live-wiring smoke test
+// WI-010-03: universalize is now wired to extractIntent. Without an API key
+// or pre-seeded cache, calling it must throw AnthropicApiKeyMissingError —
+// proving the sentinel IntentCard path is removed.
 // ---------------------------------------------------------------------------
 
-describe("universalize()", () => {
-  it("returns UniversalizeResult with empty slicePlan and matchedPrimitives", async () => {
-    const result = await universalize({ source: "const x = 1;" }, noopRegistry);
-
-    expect(result.slicePlan).toEqual([]);
-    expect(result.matchedPrimitives).toEqual([]);
-  });
-
-  it("returns a sentinel intentCard with schemaVersion 1", async () => {
-    const result = await universalize({ source: "x" }, noopRegistry);
-
-    expect(result.intentCard.schemaVersion).toBe(1);
-    expect(typeof result.intentCard.behavior).toBe("string");
-    expect(result.intentCard.behavior.length).toBeGreaterThan(0);
-  });
-
-  it("sentinel sourceHash is 64 hex zeros", async () => {
-    const result = await universalize({ source: "x" }, noopRegistry);
-
-    expect(result.intentCard.sourceHash).toBe("0".repeat(64));
-  });
-
-  it("includes 'decomposition' in diagnostics.stubbed", async () => {
-    const result = await universalize({ source: "x" }, noopRegistry);
-
-    expect(result.diagnostics.stubbed).toContain("decomposition");
+describe("universalize() — live-wiring guard", () => {
+  it("throws AnthropicApiKeyMissingError when called without API key (sentinel removed)", async () => {
+    // Remove the API key so the error is deterministic
+    const orig = process.env.ANTHROPIC_API_KEY;
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      await expect(universalize({ source: "const x = 1;" }, noopRegistry)).rejects.toThrow(
+        AnthropicApiKeyMissingError,
+      );
+    } finally {
+      if (orig !== undefined) process.env.ANTHROPIC_API_KEY = orig;
+    }
   });
 });
 
 // ---------------------------------------------------------------------------
-// createIntentExtractionHook() stub tests
+// createIntentExtractionHook() — shape tests only
+// Invocation tests live in index.test.ts with mock-client injection.
 // ---------------------------------------------------------------------------
 
 describe("createIntentExtractionHook()", () => {
@@ -108,47 +100,9 @@ describe("createIntentExtractionHook()", () => {
     expect(hook.id).toBe("yakcc.shave.default");
   });
 
-  it("hook.intercept runs to completion and returns UniversalizeResult shape", async () => {
+  it("hook has an intercept function", () => {
     const hook = createIntentExtractionHook();
-    const result = await hook.intercept({ source: "function foo() {}" }, noopRegistry);
 
-    expect(result.slicePlan).toEqual([]);
-    expect(result.matchedPrimitives).toEqual([]);
-    expect(result.intentCard.schemaVersion).toBe(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Compound-interaction test: shave → universalize → hook.intercept sequence
-// ---------------------------------------------------------------------------
-
-describe("compound: shave → universalize → hook pipeline", () => {
-  it("produces consistent stubbed results across all three entry points", async () => {
-    // Step 1: shave a file
-    const shaveResult = await shave("/tmp/example.ts", noopRegistry);
-    expect(shaveResult.atoms).toEqual([]);
-    expect(shaveResult.diagnostics.stubbed).toContain("decomposition");
-
-    // Step 2: universalize a candidate (as the continuous loop would)
-    const uResult = await universalize(
-      { source: "const x = 1;", hint: { name: "example" } },
-      noopRegistry,
-    );
-    expect(uResult.slicePlan).toEqual([]);
-    expect(uResult.matchedPrimitives).toEqual([]);
-
-    // Step 3: run the same candidate through a hook (as the hook registry would)
-    const hook = createIntentExtractionHook();
-    const hookResult = await hook.intercept(
-      { source: "const x = 1;", hint: { name: "example", origin: "user" } },
-      noopRegistry,
-    );
-    expect(hookResult.intentCard.schemaVersion).toBe(1);
-    expect(hookResult.slicePlan).toEqual([]);
-
-    // All three paths agree on the stub diagnostic marker
-    expect(shaveResult.diagnostics.stubbed).toContain("decomposition");
-    expect(uResult.diagnostics.stubbed).toContain("decomposition");
-    expect(hookResult.diagnostics.stubbed).toContain("decomposition");
+    expect(typeof hook.intercept).toBe("function");
   });
 });

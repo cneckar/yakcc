@@ -2,9 +2,8 @@
 // Three exported entry points: shave() (one-shot file), universalize()
 // (single-block continuous), createIntentExtractionHook() (hookable pipeline).
 // extractIntent is intentionally NOT exported — it is an internal detail.
-// WI-010-02 implements extractIntent + cache + validateIntentCard but defers
-// wiring universalize → extractIntent to WI-010-03 (where the skeleton tests
-// can be updated to expect a live IntentCard rather than the sentinel).
+// WI-010-03: universalize is now wired to the live extractIntent path.
+// The sentinel IntentCard from WI-010-01 is removed.
 // Status: decided (MASTER_PLAN.md DEC-CONTINUOUS-SHAVE-022)
 // Rationale: Keeping extractIntent internal ensures callers depend only on
 // the stable public surface; the extraction implementation can evolve freely.
@@ -48,13 +47,15 @@ export {
 export { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./intent/constants.js";
 
 // extractIntent is NOT exported — it remains an internal implementation detail.
-// WI-010-03 will wire universalize() to call it after updating skeleton tests.
 
 // ---------------------------------------------------------------------------
-// Sentinel IntentCard used by WI-010-01 stubs
+// Internal imports
 // ---------------------------------------------------------------------------
 
-// These imports are type-only; actual values are assembled below.
+import { join } from "node:path";
+import { DEFAULT_MODEL, INTENT_PROMPT_VERSION } from "./intent/constants.js";
+import { extractIntent } from "./intent/extract.js";
+import { locateProjectRoot } from "./locate-root.js";
 import type {
   CandidateBlock,
   IntentExtractionHook,
@@ -64,40 +65,44 @@ import type {
   UniversalizeResult,
 } from "./types.js";
 
-/** @internal Sentinel IntentCard returned by stubs until WI-010-02 lands. */
-function makeSentinelIntentCard() {
-  return {
-    schemaVersion: 1 as const,
-    behavior: "<wi-010-02 stub: extractIntent not yet wired>",
-    inputs: [],
-    outputs: [],
-    preconditions: [],
-    postconditions: [],
-    notes: ["This sentinel is returned by the WI-010-01 skeleton stub."],
-    modelVersion: "stub",
-    promptVersion: "stub",
-    sourceHash: "0".repeat(64),
-    extractedAt: new Date(0).toISOString(),
-  };
-}
-
 // ---------------------------------------------------------------------------
-// universalize() — single-block stub
+// universalize() — wired to extractIntent (WI-010-03)
 // ---------------------------------------------------------------------------
 
 /**
  * Process a single candidate block through the universalization pipeline.
  *
- * WI-010-01 stub: returns an empty slice plan and no matched primitives.
- * The intentCard is a sentinel value; WI-010-02 wires the real extractIntent.
+ * WI-010-03: wired to the live extractIntent path. Requires either:
+ *   - ANTHROPIC_API_KEY set in the environment, OR
+ *   - options.offline === true with a pre-populated cache entry.
+ *
+ * Throws AnthropicApiKeyMissingError if neither condition is met.
+ * Throws OfflineCacheMissError if offline mode is set and the cache has no entry.
+ *
+ * slicePlan and matchedPrimitives remain empty stubs until WI-012 and WI-011
+ * respectively.
+ *
+ * @param candidate - The source block to universalize.
+ * @param _registry - Registry view (unused until WI-011 variance scoring).
+ * @param options - Optional configuration: cacheDir, model, offline.
  */
 export async function universalize(
   candidate: CandidateBlock,
   _registry: ShaveRegistryView,
-  _options?: ShaveOptions,
+  options?: ShaveOptions,
 ): Promise<UniversalizeResult> {
+  const projectRoot = await locateProjectRoot();
+  const cacheDir = options?.cacheDir ?? join(projectRoot, ".yakcc", "shave-cache", "intent");
+
+  const intentCard = await extractIntent(candidate.source, {
+    model: options?.model ?? DEFAULT_MODEL,
+    promptVersion: INTENT_PROMPT_VERSION,
+    cacheDir,
+    offline: options?.offline,
+  });
+
   return {
-    intentCard: makeSentinelIntentCard(),
+    intentCard,
     slicePlan: [],
     matchedPrimitives: [],
     diagnostics: {
@@ -119,8 +124,8 @@ export async function universalize(
  * `stubbed` field lists all capabilities pending implementation.
  *
  * @param sourcePath - Absolute path to the source file to process.
- * @param registry - Registry view used for block lookups.
- * @param options - Optional configuration overrides.
+ * @param _registry - Registry view used for block lookups.
+ * @param _options - Optional configuration overrides.
  */
 export async function shave(
   sourcePath: string,
@@ -140,15 +145,14 @@ export async function shave(
 }
 
 // ---------------------------------------------------------------------------
-// createIntentExtractionHook() — factory stub
+// createIntentExtractionHook() — factory
 // ---------------------------------------------------------------------------
 
 /**
  * Create the default IntentExtractionHook.
  *
- * WI-010-01 stub: the hook's `intercept` method delegates to universalize(),
- * which itself returns a sentinel. WI-010-02 replaces the inner universalize
- * call with a real extractIntent invocation backed by the Anthropic SDK.
+ * The hook's `intercept` method delegates to universalize(), which in
+ * WI-010-03 is wired to the live extractIntent path.
  */
 export function createIntentExtractionHook(_options?: ShaveOptions): IntentExtractionHook {
   return {
