@@ -86,6 +86,18 @@ export type {
 } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
+// Re-exports — WI-013-01 license gate public surface
+// ---------------------------------------------------------------------------
+
+export { detectLicense } from "./license/detector.js";
+export { licenseGate } from "./license/gate.js";
+export type {
+  AcceptedLicense,
+  LicenseDetection,
+  LicenseGateResult,
+} from "./license/types.js";
+
+// ---------------------------------------------------------------------------
 // Internal imports
 // ---------------------------------------------------------------------------
 
