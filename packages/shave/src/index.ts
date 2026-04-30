@@ -1,8 +1,10 @@
 // @decision DEC-CONTINUOUS-SHAVE-022: Public API entry point for @yakcc/shave.
 // Three exported entry points: shave() (one-shot file), universalize()
 // (single-block continuous), createIntentExtractionHook() (hookable pipeline).
-// extractIntent is intentionally NOT exported — it is an internal detail
-// that WI-010-02 will wire to the Anthropic SDK.
+// extractIntent is intentionally NOT exported — it is an internal detail.
+// WI-010-02 implements extractIntent + cache + validateIntentCard but defers
+// wiring universalize → extractIntent to WI-010-03 (where the skeleton tests
+// can be updated to expect a live IntentCard rather than the sentinel).
 // Status: decided (MASTER_PLAN.md DEC-CONTINUOUS-SHAVE-022)
 // Rationale: Keeping extractIntent internal ensures callers depend only on
 // the stable public surface; the extraction implementation can evolve freely.
@@ -24,6 +26,29 @@ export type {
 } from "./types.js";
 
 export type { IntentCard, IntentParam } from "./intent/types.js";
+
+// ---------------------------------------------------------------------------
+// Re-exports — WI-010-02 public surface
+// ---------------------------------------------------------------------------
+
+// Validator — callers that receive an IntentCard from an external source can
+// call this to verify it conforms to the current schema before use.
+export { validateIntentCard } from "./intent/validate-intent-card.js";
+
+// Error classes — exported as named classes so callers can use instanceof.
+export {
+  AnthropicApiKeyMissingError,
+  IntentCardSchemaError,
+  OfflineCacheMissError,
+} from "./errors.js";
+
+// Version constants — exported so callers can introspect the cache keying
+// policy and detect when their cached results were produced by a different
+// model or prompt version.
+export { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./intent/constants.js";
+
+// extractIntent is NOT exported — it remains an internal implementation detail.
+// WI-010-03 will wire universalize() to call it after updating skeleton tests.
 
 // ---------------------------------------------------------------------------
 // Sentinel IntentCard used by WI-010-01 stubs
