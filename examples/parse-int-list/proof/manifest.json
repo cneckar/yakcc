@@ -1,0 +1,10 @@
+{
+  "level": "L0",
+  "artifacts": [
+    {
+      "kind": "property_tests",
+      "path": "tests.fast-check.ts",
+      "description": "fast-check property tests for parse-int-list (listOfInts)"
+    }
+  ]
+}

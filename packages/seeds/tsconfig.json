@@ -7,6 +7,7 @@
     "types": ["node"]
   },
   "include": ["src"],
+  "exclude": ["src/_scripts"],
   "references": [
     { "path": "../contracts" },
     { "path": "../ir" },

@@ -12,6 +12,7 @@
     { "path": "../registry" },
     { "path": "../ir" },
     { "path": "../compile" },
-    { "path": "../hooks-claude-code" }
+    { "path": "../hooks-claude-code" },
+    { "path": "../seeds" }
   ]
 }

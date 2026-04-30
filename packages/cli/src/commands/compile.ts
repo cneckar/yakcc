@@ -1,16 +1,17 @@
 // @decision DEC-CLI-COMPILE-001: compile command reads the entry as either a BlockMerkleRoot
 // (64-hex string), a path to a JSON SpecYak file, or a directory path. When a directory
-// is given, it resolves to <dir>/contract.json and defaults --out to <dir>/dist. When a
+// is given, it resolves to <dir>/spec.yak and defaults --out to <dir>/dist. When a
 // spec file path is given, specHash() derives the specHash, selectBlocks() fetches all
 // satisfying BlockMerkleRoots, and the first is used as the entry. The assembled artifact
 // is written to <out>/module.ts and <out>/manifest.json. assemble() receives
 // knownMerkleRoots from seedRegistry so the pre-scan can build the full stem index before
 // DFS traversal.
-// Status: updated (WI-T05)
-// Rationale: WI-T03/T04 migrated the compile/registry API from ContractId to
-// BlockMerkleRoot. The entry resolution now calls selectBlocks(specHash) to find the
-// matching BlockMerkleRoot when given a spec file. The knownContractIds option is
-// replaced by knownMerkleRoots. Sacred Practice #12: no parallel mechanisms.
+// Status: updated (WI-T06)
+// Rationale: WI-T06 migrated the demo from contract.json to spec.yak (triplet shape).
+// The directory resolver now looks for spec.yak exclusively — contract.json is deleted
+// (Sacred Practice #12: no parallel mechanisms, DEC-WI009-SUBSUMED-021).
+// WI-T03/T04 migrated the compile/registry API from ContractId to BlockMerkleRoot.
+// The entry resolution calls selectBlocks(specHash) to find the matching BlockMerkleRoot.
 
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -31,7 +32,7 @@ function isHex64(s: string): boolean {
  * Handler for `yakcc compile <entry> [--registry <p>] [--out <dir>]`.
  *
  * <entry> is a BlockMerkleRoot (64-hex string), a path to a JSON SpecYak file,
- * or a directory path containing contract.json.
+ * or a directory path containing spec.yak.
  * Writes <out>/module.ts and <out>/manifest.json.
  *
  * @param argv - Remaining argv after `compile` has been consumed (includes the positional).
@@ -60,7 +61,7 @@ export async function compile(argv: readonly string[], logger: Logger): Promise<
   const registryPath = values.registry ?? DEFAULT_REGISTRY_PATH;
 
   // Resolve the spec file path and output directory.
-  // If entryArg is a directory, look for contract.json inside it and default
+  // If entryArg is a directory, look for spec.yak inside it and default
   // --out to <dir>/dist. Otherwise treat it as a spec file (or BlockMerkleRoot).
   let specFilePath: string | null = null;
   let outDir: string;
@@ -75,7 +76,7 @@ export async function compile(argv: readonly string[], logger: Logger): Promise<
     }
 
     if (isDir) {
-      specFilePath = join(entryArg, "contract.json");
+      specFilePath = join(entryArg, "spec.yak");
       outDir = values.out ?? join(entryArg, "dist");
     } else {
       specFilePath = entryArg;

@@ -528,11 +528,11 @@ describe("compile manifest determinism", () => {
     expect(module1).toBe(module2);
   });
 
-  it("directory-form compile (via contract.json) produces the same manifest as BlockMerkleRoot form", async () => {
+  it("directory-form compile (via spec.yak) produces the same manifest as BlockMerkleRoot form", async () => {
     // Write the list-of-ints spec to a temp directory so we can test the directory form.
     const exampleDir = mkdtempSync(join(tmpdir(), "yakcc-dir-compile-"));
     try {
-      writeFileSync(join(exampleDir, "contract.json"), JSON.stringify(listOfIntsSpec), "utf-8");
+      writeFileSync(join(exampleDir, "spec.yak"), JSON.stringify(listOfIntsSpec), "utf-8");
 
       const outDirDirect = join(suiteDir, "manifest-direct");
       const loggerDirect = new CollectingLogger();
@@ -542,7 +542,7 @@ describe("compile manifest determinism", () => {
       );
       expect(codeDirect).toBe(0);
 
-      // The directory form resolves contract.json and writes to <dir>/dist by default.
+      // The directory form resolves spec.yak and writes to <dir>/dist by default.
       // Supply an explicit --out to compare manifests.
       const outDirDir = join(suiteDir, "manifest-dir-form");
       const loggerDir = new CollectingLogger();
