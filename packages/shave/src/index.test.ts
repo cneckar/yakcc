@@ -110,7 +110,8 @@ async function seedCache(source: string, overrides?: Partial<IntentCard>): Promi
 
 describe("universalize() — wired to extractIntent + decompose + slice", () => {
   it("offline + cache hit: returns the cached IntentCard via universalize", async () => {
-    const source = "function parseIntList(s: string) { return s.split(',').map(Number); }";
+    const source =
+      "// SPDX-License-Identifier: MIT\nfunction parseIntList(s: string) { return s.split(',').map(Number); }";
     const seeded = await seedCache(source);
 
     const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
@@ -127,12 +128,17 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
     // "decomposition" removed from stubbed — it is now live.
     expect(result.diagnostics.stubbed).not.toContain("decomposition");
     expect(result.diagnostics.stubbed).toContain("variance");
-    expect(result.diagnostics.stubbed).toContain("license-gate");
+    // license-gate is now live (WI-013-02) — no longer in stubbed.
+    expect(result.diagnostics.stubbed).not.toContain("license-gate");
   });
 
   it("offline + cache miss: throws OfflineCacheMissError", async () => {
     await expect(
-      universalize({ source: "const x = 999;" }, noopRegistry, { cacheDir, offline: true }),
+      universalize(
+        { source: "// SPDX-License-Identifier: MIT\nconst x = 999;" },
+        noopRegistry,
+        { cacheDir, offline: true },
+      ),
     ).rejects.toThrow(OfflineCacheMissError);
   });
 
@@ -140,12 +146,12 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
     delete process.env.ANTHROPIC_API_KEY;
     await expect(
-      universalize({ source: "const y = 1;" }, noopRegistry, { cacheDir }),
+      universalize({ source: "// SPDX-License-Identifier: MIT\nconst y = 1;" }, noopRegistry, { cacheDir }),
     ).rejects.toThrow(AnthropicApiKeyMissingError);
   });
 
   it("diagnostics always contain cacheHits=0 and cacheMisses=0 (wired stub fields)", async () => {
-    const source = "function diagTest() {}";
+    const source = "// SPDX-License-Identifier: MIT\nfunction diagTest() {}";
     await seedCache(source);
 
     const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
@@ -185,7 +191,8 @@ describe("shave() — remains a stub", () => {
 
 describe("createIntentExtractionHook() — compound interaction", () => {
   it("intercept delegates to universalize and returns cached IntentCard", async () => {
-    const source = "function hookTest(x: number) { return x * 2; }";
+    const source =
+      "// SPDX-License-Identifier: MIT\nfunction hookTest(x: number) { return x * 2; }";
     const seeded = await seedCache(source, { behavior: "Doubles its input" });
 
     const hook = createIntentExtractionHook();
@@ -207,7 +214,11 @@ describe("createIntentExtractionHook() — compound interaction", () => {
   it("hook.intercept offline + cache miss → throws OfflineCacheMissError", async () => {
     const hook = createIntentExtractionHook();
     await expect(
-      hook.intercept({ source: "const z = 42;" }, noopRegistry, { cacheDir, offline: true }),
+      hook.intercept(
+        { source: "// SPDX-License-Identifier: MIT\nconst z = 42;" },
+        noopRegistry,
+        { cacheDir, offline: true },
+      ),
     ).rejects.toThrow(OfflineCacheMissError);
   });
 });

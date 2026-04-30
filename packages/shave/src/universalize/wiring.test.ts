@@ -60,7 +60,8 @@ import { DidNotReachAtomError } from "./recursion.js";
  * This source has zero control-flow boundaries → decompose() classifies the
  * SourceFile as an atom in one step (leafCount === 1, maxDepth === 0).
  */
-const ATOMIC_SOURCE = `const isDigit = (c: string): boolean => c >= "0" && c <= "9";`;
+const ATOMIC_SOURCE = `// SPDX-License-Identifier: MIT
+const isDigit = (c: string): boolean => c >= "0" && c <= "9";`;
 
 // ---------------------------------------------------------------------------
 // Registry stubs
@@ -172,9 +173,9 @@ describe("universalize() wiring — no registry matches", () => {
 
       // "decomposition" must no longer appear in stubbed (it is live).
       expect(result.diagnostics.stubbed).not.toContain("decomposition");
-      // "variance" and "license-gate" remain stubbed.
+      // "variance" remains stubbed; "license-gate" is now live (WI-013-02).
       expect(result.diagnostics.stubbed).toContain("variance");
-      expect(result.diagnostics.stubbed).toContain("license-gate");
+      expect(result.diagnostics.stubbed).not.toContain("license-gate");
     },
   );
 });
@@ -229,7 +230,7 @@ describe("universalize() wiring — decomposition error propagation", () => {
       // children → DidNotReachAtomError.
       //
       // We seed the cache so extractIntent succeeds before decompose() runs.
-      const source = "console.log(1);";
+      const source = "// SPDX-License-Identifier: MIT\nconsole.log(1);";
       await seedCache(source);
 
       await expect(

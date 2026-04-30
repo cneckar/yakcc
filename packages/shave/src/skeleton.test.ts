@@ -79,7 +79,9 @@ describe("universalize() — live-wiring guard", () => {
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
     delete process.env.ANTHROPIC_API_KEY;
     try {
-      await expect(universalize({ source: "const x = 1;" }, noopRegistry)).rejects.toThrow(
+      await expect(
+        universalize({ source: "// SPDX-License-Identifier: MIT\nconst x = 1;" }, noopRegistry),
+      ).rejects.toThrow(
         AnthropicApiKeyMissingError,
       );
     } finally {

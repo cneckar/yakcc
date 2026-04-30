@@ -11,6 +11,7 @@
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { IntentCard } from "./intent/types.js";
+import type { LicenseDetection } from "./license/types.js";
 import type { SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
@@ -60,9 +61,9 @@ export interface ShaveOptions {
  * Diagnostic information returned alongside every shave/universalize result.
  *
  * `stubbed` lists capabilities that are not yet implemented in this work item:
- *   - "decomposition": atom decomposition is a stub (WI-010-01)
- *   - "variance": variance scoring is a stub (WI-011)
- *   - "license-gate": license gating is a stub (future WI)
+ *   - "decomposition": atom decomposition is a stub (WI-010-01; removed WI-012-06)
+ *   - "variance": variance scoring is a stub (WI-011; pending WI-014)
+ *   - "license-gate": license gating is a stub (WI-013-01; removed WI-013-02)
  *
  * `cacheHits` and `cacheMisses` count intent-extraction cache events.
  * Both will be 0 in WI-010-01 stubs; WI-010-02 populates them.
@@ -153,6 +154,12 @@ export interface UniversalizeResult {
     readonly canonicalAstHash: CanonicalAstHash;
     readonly merkleRoot: BlockMerkleRoot;
   }[];
+  /**
+   * The license detection result for the candidate's source — populated by
+   * WI-013-02. The gate ran against this detection before intent extraction;
+   * callers can introspect what signal was found.
+   */
+  readonly licenseDetection: LicenseDetection;
   readonly diagnostics: ShaveDiagnostics;
 }
 

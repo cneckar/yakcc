@@ -38,6 +38,7 @@ export { validateIntentCard } from "./intent/validate-intent-card.js";
 export {
   AnthropicApiKeyMissingError,
   IntentCardSchemaError,
+  LicenseRefusedError,
   OfflineCacheMissError,
 } from "./errors.js";
 
@@ -102,8 +103,11 @@ export type {
 // ---------------------------------------------------------------------------
 
 import { join } from "node:path";
+import { LicenseRefusedError } from "./errors.js";
 import { DEFAULT_MODEL, INTENT_PROMPT_VERSION } from "./intent/constants.js";
 import { extractIntent } from "./intent/extract.js";
+import { detectLicense } from "./license/detector.js";
+import { licenseGate } from "./license/gate.js";
 import { locateProjectRoot } from "./locate-root.js";
 import type {
   CandidateBlock,
@@ -143,13 +147,30 @@ import type { NovelGlueEntry, SlicePlanEntry } from "./universalize/types.js";
  * "decomposition" is removed from diagnostics.stubbed — decomposition is now
  * live. "variance" and "license-gate" remain stubbed (WI-013/014).
  *
+ * @decision DEC-LICENSE-WIRING-002
+ * title: License gate runs first in universalize() (WI-013-02)
+ * status: decided
+ * rationale:
+ *   - The gate is cheap (pure string scan, no I/O) and fail-fast: refusing a
+ *     copyleft candidate before any extractIntent or decompose() call avoids
+ *     wasted API quota and computation.
+ *   - A single source check on candidate.source covers all leaves: every leaf
+ *     produced by decompose() derives from the same source string, so re-checking
+ *     per-leaf would be redundant and would not change the gate outcome.
+ *   - The gate is the second-line defense; detectLicense() is the first signal.
+ *     LicenseRefusedError carries the LicenseDetection so callers can introspect
+ *     why the candidate was refused.
+ *   - "license-gate" is removed from diagnostics.stubbed now that this gate is live.
+ *
  * Process a single candidate block through the universalization pipeline.
  *
  * WI-012-06: wired to decompose() + slice() in addition to extractIntent.
+ * WI-013-02: license gate runs before intent extraction (fail-fast, cheap).
  * Requires either:
  *   - ANTHROPIC_API_KEY set in the environment, OR
  *   - options.offline === true with a pre-populated cache entry.
  *
+ * Throws LicenseRefusedError if the candidate's source carries a refused license.
  * Throws AnthropicApiKeyMissingError if neither condition is met.
  * Throws OfflineCacheMissError if offline mode is set and the cache has no entry.
  * Throws DidNotReachAtomError if decomposition cannot reach atomic leaves.
@@ -168,7 +189,16 @@ export async function universalize(
   const projectRoot = await locateProjectRoot();
   const cacheDir = options?.cacheDir ?? join(projectRoot, ".yakcc", "shave-cache", "intent");
 
-  // Step 1: extract intent card (unchanged from WI-010-03).
+  // Step 1: license gate — cheap, fail-fast, runs before any I/O.
+  // Per DEC-LICENSE-WIRING-002: one check on the full source string covers all
+  // leaves because every leaf derives from the same source text.
+  const detection = detectLicense(candidate.source);
+  const gateResult = licenseGate(detection);
+  if (!gateResult.accepted) {
+    throw new LicenseRefusedError(gateResult.reason, detection);
+  }
+
+  // Step 2: extract intent card (unchanged from WI-010-03).
   const intentCard = await extractIntent(candidate.source, {
     model: options?.model ?? DEFAULT_MODEL,
     promptVersion: INTENT_PROMPT_VERSION,
@@ -176,15 +206,15 @@ export async function universalize(
     offline: options?.offline,
   });
 
-  // Step 2: decompose source into a RecursionTree.
+  // Step 3: decompose source into a RecursionTree.
   // DidNotReachAtomError and RecursionDepthExceededError propagate unwrapped —
   // per DEC-RECURSION-005, these are load-bearing reviewer-gate failures.
   const tree = await decompose(candidate.source, registry, options?.recursionOptions);
 
-  // Step 3: slice the RecursionTree into a SlicePlan.
+  // Step 4: slice the RecursionTree into a SlicePlan.
   const plan = await slice(tree, registry);
 
-  // Step 4: attach intentCard to root NovelGlueEntry for single-leaf trees.
+  // Step 5: attach intentCard to root NovelGlueEntry for single-leaf trees.
   // For multi-leaf trees, per-leaf intent extraction is deferred (see @decision
   // DEC-UNIVERSALIZE-WIRING-001 above). The intentCard field on NovelGlueEntry
   // is optional, so entries for non-root leaves are emitted as-is.
@@ -215,10 +245,12 @@ export async function universalize(
     intentCard,
     slicePlan,
     matchedPrimitives: plan.matchedPrimitives,
+    licenseDetection: detection,
     diagnostics: {
       // "decomposition" removed — decompose() is now live (WI-012-06).
-      // "variance" and "license-gate" remain stubbed (WI-013/014).
-      stubbed: ["variance", "license-gate"],
+      // "license-gate" removed — gate is now live (WI-013-02).
+      // "variance" remains stubbed (WI-014).
+      stubbed: ["variance"],
       cacheHits: 0,
       cacheMisses: 0,
     },
