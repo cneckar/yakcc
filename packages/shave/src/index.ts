@@ -74,6 +74,18 @@ export type {
 } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
+// Re-exports — WI-012-05 DFG slicer public surface
+// ---------------------------------------------------------------------------
+
+export { slice } from "./universalize/slicer.js";
+export type {
+  SlicePlan,
+  SlicePlanEntry,
+  PointerEntry,
+  NovelGlueEntry,
+} from "./universalize/types.js";
+
+// ---------------------------------------------------------------------------
 // Internal imports
 // ---------------------------------------------------------------------------
 

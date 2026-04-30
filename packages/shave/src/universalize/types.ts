@@ -138,3 +138,68 @@ export interface RecursionOptions extends AtomTestOptions {
    */
   readonly maxDepth?: number;
 }
+
+// ---------------------------------------------------------------------------
+// DFG slicer types (WI-012-05)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-SLICER-NOVEL-GLUE-004: DFG slicer type surface.
+// Title: SlicePlan, SlicePlanEntry, PointerEntry, NovelGlueEntry for WI-012-05.
+// Status: proposed
+// Rationale: The slicer produces a SlicePlan that classifies each node in the
+// RecursionTree as either a PointerEntry (matches an existing primitive in the
+// registry by canonicalAstHash) or a NovelGlueEntry (unmatched leaf — new code
+// that must be synthesized). SlicePlan carries both the entries and convenience
+// statistics for reviewer dashboards. The intentCard field on NovelGlueEntry is
+// optional because only AtomLeaf nodes carry one (branch nodes may not).
+
+import type { IntentCard } from "../intent/types.js";
+
+/**
+ * A node in the recursion tree that matched an existing primitive in the registry
+ * by canonicalAstHash. The entire subtree rooted here is replaced by a pointer
+ * to the registered block — no synthesis required.
+ */
+export interface PointerEntry {
+  readonly kind: "pointer";
+  readonly sourceRange: { readonly start: number; readonly end: number };
+  readonly merkleRoot: BlockMerkleRoot;
+  readonly canonicalAstHash: CanonicalAstHash;
+  readonly matchedBy: "canonical_ast_hash";
+}
+
+/**
+ * An unmatched AtomLeaf node — source code that does not exist in the registry
+ * and must be synthesized as novel glue. This is the only code path that
+ * produces new implementations.
+ *
+ * The `intentCard` field is optional: AtomLeaf nodes may carry one if the caller
+ * ran intent extraction; branch nodes never produce NovelGlueEntry.
+ */
+export interface NovelGlueEntry {
+  readonly kind: "novel-glue";
+  readonly sourceRange: { readonly start: number; readonly end: number };
+  readonly source: string;
+  readonly canonicalAstHash: CanonicalAstHash;
+  /** Optional intent card if available (atom leaves carry one); branches may omit. */
+  readonly intentCard?: IntentCard;
+}
+
+/** A discriminated union of the two slicer output kinds. */
+export type SlicePlanEntry = PointerEntry | NovelGlueEntry;
+
+/**
+ * The complete slice plan produced by slice(). Contains the classified entries
+ * in DFS order, a convenience list of matched primitives, and byte-level
+ * statistics for reviewer dashboards.
+ */
+export interface SlicePlan {
+  readonly entries: readonly SlicePlanEntry[];
+  /** All BlockMerkleRoots referenced by PointerEntry — convenience. */
+  readonly matchedPrimitives: readonly {
+    readonly canonicalAstHash: CanonicalAstHash;
+    readonly merkleRoot: BlockMerkleRoot;
+  }[];
+  /** Bytes accounted by pointer vs. novel glue, for reviewer dashboards. */
+  readonly sourceBytesByKind: { readonly pointer: number; readonly novelGlue: number };
+}
