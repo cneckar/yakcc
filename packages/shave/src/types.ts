@@ -8,9 +8,10 @@
 // Rationale: Separating the registry view from the full Registry interface
 // keeps shave testable with lightweight noop stubs and decoupled from storage.
 
-import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { IntentCard } from "./intent/types.js";
+import type { SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -38,6 +39,17 @@ export interface ShaveOptions {
    * Useful for CI environments without API access.
    */
   readonly offline?: boolean | undefined;
+  /**
+   * Tuning options forwarded to decompose() for the AST recursion.
+   * maxDepth (default 8) and maxControlFlowBoundaries (default 1) control
+   * when the recursion stops and what counts as atomic. WI-012-06.
+   */
+  readonly recursionOptions?:
+    | {
+        readonly maxDepth?: number;
+        readonly maxControlFlowBoundaries?: number;
+      }
+    | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,29 +114,43 @@ export interface ShaveResult {
 /**
  * One entry in the slice plan produced by universalize().
  *
- * WI-012's DFG slicer populates the slice plan; in WI-010-01 it is always
- * empty.
+ * WI-012-06 wires universalize() to the real DFG slicer. This is a type alias
+ * for SlicePlanEntry (PointerEntry | NovelGlueEntry), keeping the public
+ * surface aligned with the slicer's discriminated union while letting callers
+ * import UniversalizeSlicePlanEntry from the top-level types path.
+ *
+ * @decision DEC-UNIVERSALIZE-WIRING-001
+ * title: UniversalizeSlicePlanEntry aliased to SlicePlanEntry
+ * status: decided
+ * rationale: The WI-010-01 placeholder shape ({ placeholderId, sourceRange })
+ * was superseded by the slicer's PointerEntry | NovelGlueEntry discriminated
+ * union (WI-012-05). Re-exporting SlicePlanEntry as UniversalizeSlicePlanEntry
+ * avoids two parallel types describing the same thing and keeps the public API
+ * surface stable without requiring callers to import from the sub-module path.
  */
-export interface UniversalizeSlicePlanEntry {
-  readonly placeholderId: string;
-  readonly sourceRange: { readonly start: number; readonly end: number };
-}
+export type UniversalizeSlicePlanEntry = SlicePlanEntry;
 
 /**
  * The result of a universalize() call on a single candidate block.
  *
  * The intentCard is the primary output — it describes the behavioral intent
- * of the candidate. slicePlan and matchedPrimitives are populated by later
- * work items (WI-012 and WI-011 respectively).
+ * of the candidate. slicePlan is populated by WI-012-06 via the real DFG
+ * slicer. matchedPrimitives carries the deduplicated (canonicalAstHash,
+ * merkleRoot) pairs from the slicer. Variance-based matching (WI-011) is
+ * still stubbed and listed in diagnostics.stubbed.
  */
 export interface UniversalizeResult {
   /** The extracted intent card for this candidate. */
   readonly intentCard: IntentCard;
-  /** DFG-based slice plan — empty until WI-012. */
-  readonly slicePlan: readonly UniversalizeSlicePlanEntry[];
-  /** Registry primitives matched by variance scoring — empty until WI-011. */
+  /** DFG-based slice plan — live as of WI-012-06. */
+  readonly slicePlan: readonly SlicePlanEntry[];
+  /**
+   * Registry primitives matched by canonical AST hash — populated by WI-012-06.
+   * Each entry carries (canonicalAstHash, merkleRoot) from the slicer's
+   * PointerEntry nodes. Variance-scored matches (specHash) are WI-011.
+   */
   readonly matchedPrimitives: readonly {
-    readonly specHash: SpecHash;
+    readonly canonicalAstHash: CanonicalAstHash;
     readonly merkleRoot: BlockMerkleRoot;
   }[];
   readonly diagnostics: ShaveDiagnostics;

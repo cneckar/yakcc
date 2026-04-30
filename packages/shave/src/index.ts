@@ -101,36 +101,62 @@ import type {
   ShaveResult,
   UniversalizeResult,
 } from "./types.js";
+import { decompose } from "./universalize/recursion.js";
+import { slice } from "./universalize/slicer.js";
+import type { NovelGlueEntry, SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
-// universalize() — wired to extractIntent (WI-010-03)
+// universalize() — wired to extractIntent + decompose + slice (WI-012-06)
 // ---------------------------------------------------------------------------
 
 /**
+ * @decision DEC-UNIVERSALIZE-WIRING-001
+ * title: universalize() wired to decompose() + slice() (WI-012-06)
+ * status: decided
+ * rationale: WI-012-04 landed decompose() and WI-012-05 landed slice(). This
+ * work item replaces the stubs in universalize() with real calls. The pipeline
+ * is: extractIntent (for intentCard) → decompose (for RecursionTree) → slice
+ * (for SlicePlan). Both decomposition errors (DidNotReachAtomError and
+ * RecursionDepthExceededError) are propagated unwrapped — they are load-bearing
+ * reviewer-gate failures per DEC-RECURSION-005.
+ *
+ * Intent card attachment: for single-leaf trees (root is an AtomLeaf), the
+ * extracted intent card is attached to the one NovelGlueEntry that covers the
+ * root. For multi-leaf trees, per-leaf intent extraction would require calling
+ * extractIntent once per leaf — this is deferred to a future work item. Entries
+ * for non-root leaves are emitted without an intentCard (the field is optional).
+ * TODO(future-WI): call extractIntent per leaf and populate intentCard on each
+ * NovelGlueEntry for multi-leaf trees.
+ *
+ * "decomposition" is removed from diagnostics.stubbed — decomposition is now
+ * live. "variance" and "license-gate" remain stubbed (WI-013/014).
+ *
  * Process a single candidate block through the universalization pipeline.
  *
- * WI-010-03: wired to the live extractIntent path. Requires either:
+ * WI-012-06: wired to decompose() + slice() in addition to extractIntent.
+ * Requires either:
  *   - ANTHROPIC_API_KEY set in the environment, OR
  *   - options.offline === true with a pre-populated cache entry.
  *
  * Throws AnthropicApiKeyMissingError if neither condition is met.
  * Throws OfflineCacheMissError if offline mode is set and the cache has no entry.
- *
- * slicePlan and matchedPrimitives remain empty stubs until WI-012 and WI-011
- * respectively.
+ * Throws DidNotReachAtomError if decomposition cannot reach atomic leaves.
+ * Throws RecursionDepthExceededError if the source AST exceeds maxDepth.
  *
  * @param candidate - The source block to universalize.
- * @param _registry - Registry view (unused until WI-011 variance scoring).
- * @param options - Optional configuration: cacheDir, model, offline.
+ * @param registry  - Registry view used by decompose() and slice() for
+ *                    known-primitive lookups via findByCanonicalAstHash.
+ * @param options   - Optional configuration: cacheDir, model, offline.
  */
 export async function universalize(
   candidate: CandidateBlock,
-  _registry: ShaveRegistryView,
+  registry: ShaveRegistryView,
   options?: ShaveOptions,
 ): Promise<UniversalizeResult> {
   const projectRoot = await locateProjectRoot();
   const cacheDir = options?.cacheDir ?? join(projectRoot, ".yakcc", "shave-cache", "intent");
 
+  // Step 1: extract intent card (unchanged from WI-010-03).
   const intentCard = await extractIntent(candidate.source, {
     model: options?.model ?? DEFAULT_MODEL,
     promptVersion: INTENT_PROMPT_VERSION,
@@ -138,12 +164,49 @@ export async function universalize(
     offline: options?.offline,
   });
 
+  // Step 2: decompose source into a RecursionTree.
+  // DidNotReachAtomError and RecursionDepthExceededError propagate unwrapped —
+  // per DEC-RECURSION-005, these are load-bearing reviewer-gate failures.
+  const tree = await decompose(candidate.source, registry, options?.recursionOptions);
+
+  // Step 3: slice the RecursionTree into a SlicePlan.
+  const plan = await slice(tree, registry);
+
+  // Step 4: attach intentCard to root NovelGlueEntry for single-leaf trees.
+  // For multi-leaf trees, per-leaf intent extraction is deferred (see @decision
+  // DEC-UNIVERSALIZE-WIRING-001 above). The intentCard field on NovelGlueEntry
+  // is optional, so entries for non-root leaves are emitted as-is.
+  let slicePlan: readonly SlicePlanEntry[];
+  const firstEntry = plan.entries[0];
+  if (tree.leafCount === 1 && plan.entries.length === 1 && firstEntry !== undefined) {
+    if (firstEntry.kind === "novel-glue") {
+      // Single AtomLeaf, no registry match: attach the root intentCard.
+      const withCard: NovelGlueEntry = {
+        kind: firstEntry.kind,
+        sourceRange: firstEntry.sourceRange,
+        source: firstEntry.source,
+        canonicalAstHash: firstEntry.canonicalAstHash,
+        intentCard,
+      };
+      slicePlan = [withCard];
+    } else {
+      // Single AtomLeaf matched the registry (PointerEntry) — no intentCard slot.
+      slicePlan = plan.entries;
+    }
+  } else {
+    // Multi-leaf tree: pass entries through unchanged.
+    // Per-leaf intentCard attachment is future work (see @decision above).
+    slicePlan = plan.entries;
+  }
+
   return {
     intentCard,
-    slicePlan: [],
-    matchedPrimitives: [],
+    slicePlan,
+    matchedPrimitives: plan.matchedPrimitives,
     diagnostics: {
-      stubbed: ["decomposition", "variance", "license-gate"],
+      // "decomposition" removed — decompose() is now live (WI-012-06).
+      // "variance" and "license-gate" remain stubbed (WI-013/014).
+      stubbed: ["variance", "license-gate"],
       cacheHits: 0,
       cacheMisses: 0,
     },

@@ -108,7 +108,7 @@ async function seedCache(source: string, overrides?: Partial<IntentCard>): Promi
 // universalize() — wired path tests
 // ---------------------------------------------------------------------------
 
-describe("universalize() — wired to extractIntent", () => {
+describe("universalize() — wired to extractIntent + decompose + slice", () => {
   it("offline + cache hit: returns the cached IntentCard via universalize", async () => {
     const source = "function parseIntList(s: string) { return s.split(',').map(Number); }";
     const seeded = await seedCache(source);
@@ -118,9 +118,16 @@ describe("universalize() — wired to extractIntent", () => {
     expect(result.intentCard.schemaVersion).toBe(1);
     expect(result.intentCard.behavior).toBe(seeded.behavior);
     expect(result.intentCard.sourceHash).toBe(seeded.sourceHash);
-    expect(result.slicePlan).toEqual([]);
+    // WI-012-06: decomposition is now live — slicePlan is populated, not [].
+    expect(result.slicePlan.length).toBeGreaterThan(0);
+    // noopRegistry has no findByCanonicalAstHash → all entries are novel-glue.
+    expect(result.slicePlan.every((e) => e.kind === "novel-glue")).toBe(true);
+    // No registry matches → matchedPrimitives is empty.
     expect(result.matchedPrimitives).toEqual([]);
-    expect(result.diagnostics.stubbed).toContain("decomposition");
+    // "decomposition" removed from stubbed — it is now live.
+    expect(result.diagnostics.stubbed).not.toContain("decomposition");
+    expect(result.diagnostics.stubbed).toContain("variance");
+    expect(result.diagnostics.stubbed).toContain("license-gate");
   });
 
   it("offline + cache miss: throws OfflineCacheMissError", async () => {
@@ -146,6 +153,8 @@ describe("universalize() — wired to extractIntent", () => {
     // sentinel zeros (cache tracking is WI-011). The actual cache hit is transparent.
     expect(result.diagnostics.cacheHits).toBe(0);
     expect(result.diagnostics.cacheMisses).toBe(0);
+    // "decomposition" is no longer in stubbed — it is live as of WI-012-06.
+    expect(result.diagnostics.stubbed).not.toContain("decomposition");
   });
 });
 
@@ -185,7 +194,8 @@ describe("createIntentExtractionHook() — compound interaction", () => {
     const result = await hook.intercept({ source }, noopRegistry, { cacheDir, offline: true });
     expect(result.intentCard.behavior).toBe("Doubles its input");
     expect(result.intentCard.sourceHash).toBe(seeded.sourceHash);
-    expect(result.slicePlan).toEqual([]);
+    // WI-012-06: slicePlan is now populated by the real slicer.
+    expect(result.slicePlan.length).toBeGreaterThan(0);
   });
 
   it("hook shape: id and intercept present", () => {
