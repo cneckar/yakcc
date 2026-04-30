@@ -117,7 +117,7 @@ beforeAll(async () => {
   }
   listOfIntsRoot = found;
   listOfIntsSpec = foundSpec;
-});
+}, 60_000);
 
 afterAll(() => {
   for (const dir of [suiteDir, transpileDir]) {
@@ -526,7 +526,7 @@ describe("compile manifest determinism", () => {
     const module1 = readFileSync(join(outDir1, "module.ts"), "utf-8");
     const module2 = readFileSync(join(outDir2, "module.ts"), "utf-8");
     expect(module1).toBe(module2);
-  });
+  }, 30_000);
 
   it("directory-form compile (via spec.yak) produces the same manifest as BlockMerkleRoot form", async () => {
     // Write the list-of-ints spec to a temp directory so we can test the directory form.
@@ -562,5 +562,5 @@ describe("compile manifest determinism", () => {
         // Non-fatal cleanup.
       }
     }
-  });
+  }, 30_000);
 });

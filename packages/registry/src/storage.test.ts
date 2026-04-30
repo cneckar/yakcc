@@ -16,12 +16,14 @@
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import {
   type BlockMerkleRoot,
+  type CanonicalAstHash,
   type EmbeddingProvider,
   type ProofManifest,
   type SpecHash,
   type SpecYak,
   blockMerkleRoot,
   canonicalize,
+  canonicalAstHash as deriveCanonicalAstHash,
   specHash as deriveSpecHash,
 } from "@yakcc/contracts";
 import { openRegistry } from "./storage.js";
@@ -121,6 +123,7 @@ function makeBlockRow(
     proofManifestJson: JSON.stringify(manifest),
     level: "L0",
     createdAt: Date.now(),
+    canonicalAstHash: deriveCanonicalAstHash(implSource) as CanonicalAstHash,
   };
 }
 
@@ -145,7 +148,7 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("schema migrations", () => {
-  it("fresh DB is at SCHEMA_VERSION = 2 with blocks table and idx_blocks_spec_hash", async () => {
+  it("fresh DB is at SCHEMA_VERSION = 3 with blocks table and idx_blocks_spec_hash", async () => {
     const { applyMigrations, SCHEMA_VERSION } = await import("./schema.js");
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
@@ -155,10 +158,13 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
+    // Note: applyMigrations sets version to 2 for migration 2→3 DDL; openRegistry
+    // bumps to 3 after backfill. On a fresh DB with no rows to backfill, the DDL
+    // runs but the version stays at 2 here since schema.ts leaves the bump to openRegistry.
     expect(row?.version).toBe(2);
 
     // blocks table exists with expected columns.
@@ -171,6 +177,7 @@ describe("schema migrations", () => {
     expect(colNames).toContain("proof_manifest_json");
     expect(colNames).toContain("level");
     expect(colNames).toContain("created_at");
+    expect(colNames).toContain("canonical_ast_hash");
 
     // No ownership columns — DEC-NO-OWNERSHIP-011.
     for (const banned of ["author", "author_email", "signature"]) {
@@ -181,6 +188,7 @@ describe("schema migrations", () => {
     const indexes = db.prepare("PRAGMA index_list(blocks)").all() as Array<{ name: string }>;
     const indexNames = indexes.map((i) => i.name);
     expect(indexNames).toContain("idx_blocks_spec_hash");
+    expect(indexNames).toContain("idx_blocks_canonical_ast_hash");
 
     // v0 tables must NOT exist.
     const tables = db.prepare(
@@ -571,4 +579,99 @@ describe("BlockMerkleRoot determinism", () => {
     const row2 = makeBlockRow(spec, "export function f(): void {}", "// artifact v2");
     expect(row1.blockMerkleRoot).not.toBe(row2.blockMerkleRoot);
   });
+});
+
+// ---------------------------------------------------------------------------
+// findByCanonicalAstHash
+// ---------------------------------------------------------------------------
+
+describe("findByCanonicalAstHash", () => {
+  it("returns [] for a hash with no stored block", async () => {
+    const dummyHash = ("0".repeat(64)) as CanonicalAstHash;
+    const result = await registry.findByCanonicalAstHash(dummyHash);
+    expect(result).toEqual([]);
+  });
+
+  it("returns the merkleRoot for a single stored block matching the hash", async () => {
+    const spec = makeSpecYak("p");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+    const found = await registry.findByCanonicalAstHash(row.canonicalAstHash);
+    expect(found).toEqual([row.blockMerkleRoot]);
+  });
+
+  it("returns multiple merkleRoots when multiple blocks share the same canonicalAstHash", async () => {
+    // Two different specs but same impl source → same canonicalAstHash
+    const implSource = "export function f(x: string): number { return parseInt(x, 10); }";
+    const rowA = makeBlockRow(makeSpecYak("specA", "behavior A"), implSource);
+    const rowB = makeBlockRow(makeSpecYak("specB", "behavior B"), implSource);
+    expect(rowA.canonicalAstHash).toEqual(rowB.canonicalAstHash);  // sanity check
+    expect(rowA.blockMerkleRoot).not.toEqual(rowB.blockMerkleRoot);  // sanity check (different specs → different merkle)
+    await registry.storeBlock(rowA);
+    await registry.storeBlock(rowB);
+    const found = await registry.findByCanonicalAstHash(rowA.canonicalAstHash);
+    expect(found).toContain(rowA.blockMerkleRoot);
+    expect(found).toContain(rowB.blockMerkleRoot);
+    expect(found.length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openRegistry backfill (v2 → v3 migration)
+// ---------------------------------------------------------------------------
+
+describe("openRegistry backfill (v2 → v3 migration)", () => {
+  it("backfills empty canonical_ast_hash on existing rows when reopening a v2 DB", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-backfill-test-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+
+    // Phase 1: directly construct a DB at "schema_version=2" plus the v3 column
+    // (since applyMigrations adds the column but doesn't bump version).
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const { applyMigrations } = await import("./schema.js");
+    const db1 = new Database(dbPath);
+    sqliteVec.load(db1);
+    applyMigrations(db1);
+    // schema_version should be 2 (DDL applied, version not bumped).
+    const versionBeforeBackfill = (db1.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(versionBeforeBackfill).toBe(2);
+
+    // Insert a block row directly with empty canonical_ast_hash.
+    const spec = makeSpecYak();
+    const row = makeBlockRow(spec);
+    db1.prepare(
+      "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(row.blockMerkleRoot, row.specHash, row.specCanonicalBytes, row.implSource, row.proofManifestJson, row.level, row.createdAt, "");
+    db1.close();
+
+    // Phase 2: openRegistry triggers the backfill + version bump.
+    const reg = await openRegistry(dbPath, { embeddings: mockEmbeddingProvider() });
+    const fetched = await reg.getBlock(row.blockMerkleRoot);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.canonicalAstHash).not.toBe("");
+    // The backfilled hash should equal canonicalAstHash(impl_source).
+    expect(fetched!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
+    await reg.close();
+
+    // Verify schema_version is now 3.
+    const db2 = new Database(dbPath);
+    sqliteVec.load(db2);
+    const versionAfterBackfill = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(versionAfterBackfill).toBe(3);
+    db2.close();
+
+    // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
+    const reg2 = await openRegistry(dbPath, { embeddings: mockEmbeddingProvider() });
+    const fetched2 = await reg2.getBlock(row.blockMerkleRoot);
+    expect(fetched2!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
+    await reg2.close();
+
+    // Cleanup
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 30_000);
 });

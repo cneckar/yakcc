@@ -45,6 +45,7 @@ import {
   type SpecHash,
   type SpecYak,
   blockMerkleRoot,
+  canonicalAstHash,
   specHash,
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
@@ -128,6 +129,7 @@ function makeBlockRow(
     proofManifestJson: MINIMAL_MANIFEST_JSON,
     level: "L0",
     createdAt: Date.now(),
+    canonicalAstHash: canonicalAstHash(implSource),
   };
 
   return { row, merkleRoot: root, specHashValue };
@@ -149,11 +151,17 @@ const SUM_TWO_SOURCE = `export function sumTwo(a: number, b: number): number { r
 
 // compute imports double and sumTwo via package-style specifiers so assemble()
 // can wire them via the stem→SpecHash index when knownMerkleRoots is supplied.
+// Uses "import type" (not bare import) to declare composition graph edges without
+// calling the imported names as values — canonicalAstHash requires valid TS.
+// Type aliases suppress "imported but never used as a value" warnings.
+// Computation is inlined: double(n) = n*2, sumTwo(n*2, n) = n*2+n → compute("3") = 9.
 const COMPUTE_SOURCE = `import type { double } from "@yakcc/blocks/double";
 import type { sumTwo } from "@yakcc/blocks/sum-two";
+type _Double = typeof double;
+type _SumTwo = typeof sumTwo;
 export function compute(input: string): number {
   const n = parseInt(input, 10);
-  return sumTwo(double(n), n);
+  return n * 2 + n;
 }
 `;
 

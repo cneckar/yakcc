@@ -22,7 +22,13 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type BlockMerkleRoot, type SpecHash, canonicalize } from "@yakcc/contracts";
+import {
+  type BlockMerkleRoot,
+  type CanonicalAstHash,
+  type SpecHash,
+  canonicalAstHash,
+  canonicalize,
+} from "@yakcc/contracts";
 import { parseBlockTriplet } from "@yakcc/ir";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
 
@@ -99,6 +105,9 @@ export async function seedRegistry(registry: Registry): Promise<SeedResult> {
       level: result.spec.level,
       // createdAt=0 signals the registry to use Date.now() (DEC-STORAGE-IDEMPOTENT-001)
       createdAt: 0,
+      // canonicalAstHash is the content-address of the implementation AST,
+      // used for cross-spec reuse detection (DEC-REGISTRY-CANONICAL-AST-HASH-001).
+      canonicalAstHash: canonicalAstHash(result.implSource) as CanonicalAstHash,
     };
 
     await registry.storeBlock(row);

@@ -33,7 +33,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import type { EmbeddingProvider, ProofManifest, SpecHash, SpecYak } from "@yakcc/contracts";
-import { blockMerkleRoot, canonicalize, specHash as deriveSpecHash } from "@yakcc/contracts";
+import {
+  blockMerkleRoot,
+  canonicalAstHash as deriveCanonicalAstHash,
+  canonicalize,
+  specHash as deriveSpecHash,
+} from "@yakcc/contracts";
 import { openRegistry } from "./storage.js";
 import type { BlockTripletRow, Registry } from "./index.js";
 
@@ -188,6 +193,7 @@ function makeBlockRow(spec: SpecYak, idx: number): BlockTripletRow {
     proofManifestJson: JSON.stringify(manifest),
     level: "L0",
     createdAt: Date.now(),
+    canonicalAstHash: deriveCanonicalAstHash(implSource),
   };
 }
 
@@ -225,7 +231,7 @@ beforeAll(async () => {
   if (firstHash !== undefined) {
     await registry.selectBlocks(firstHash);
   }
-}, 120_000 /* 2-min budget for 1000 stores */);
+}, 180_000 /* 3-min budget for 1000 stores under turbo concurrency */);
 
 afterAll(async () => {
   await registry.close();

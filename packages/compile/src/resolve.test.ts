@@ -21,6 +21,7 @@ import {
   type SpecHash,
   type SpecYak,
   blockMerkleRoot,
+  canonicalAstHash,
   specHash,
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
@@ -109,6 +110,7 @@ function makeBlockRow(
     proofManifestJson: MINIMAL_MANIFEST_JSON,
     level: "L0",
     createdAt: Date.now(),
+    canonicalAstHash: canonicalAstHash(implSource),
   };
 
   return { row, merkleRoot: root, specHashValue };

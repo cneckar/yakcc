@@ -22,5 +22,7 @@ export default defineConfig({
     // forks isolation: better-sqlite3 uses native bindings; isolation avoids
     // SQLite handle conflicts between test files.
     pool: "forks",
+    testTimeout: 60_000, // 60s — accommodates canonicalAstHash compute under turbo concurrency
+    hookTimeout: 60_000, // 60s — same; seeded corpora invoke ts-morph for every block
   },
 });

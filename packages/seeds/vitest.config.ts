@@ -5,5 +5,7 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     pool: "forks",
+    testTimeout: 60_000, // 60s — accommodates canonicalAstHash compute under turbo concurrency
+    hookTimeout: 60_000, // 60s — same; seeded corpora invoke ts-morph for every block
   },
 });

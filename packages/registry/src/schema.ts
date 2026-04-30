@@ -25,7 +25,7 @@
  * The `schema_version` table stores the applied version; `applyMigrations`
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -241,6 +241,39 @@ const MIGRATION_2: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 2 → 3: add canonical_ast_hash column + index
+// ---------------------------------------------------------------------------
+
+// @decision DEC-REGISTRY-AST-HASH-002: Add canonical_ast_hash to blocks table.
+// Status: decided (WI-012-02)
+// Rationale: The canonical AST hash allows deduplication and cross-spec reuse
+// detection: two impls that are semantically equivalent under AST
+// canonicalization share this hash even if their source text differs. Stored
+// as a TEXT column (64 hex chars) with a non-unique index to support
+// findByCanonicalAstHash lookups. Default '' on ADD COLUMN is required by
+// SQLite (not null columns added via ALTER TABLE must have a default); the
+// backfill walk then fills in the real values before bumping the version.
+// The migration is idempotent: re-running on a v3 DB is a no-op.
+
+/**
+ * SQL statements for migration 3.
+ *
+ * Adds `canonical_ast_hash TEXT NOT NULL DEFAULT ''` to the `blocks` table
+ * and creates a non-unique index on it.
+ *
+ * SQLite requires a default value for NOT NULL columns added via ALTER TABLE.
+ * The empty string default is a sentinel; the backfill in `applyMigrations`
+ * immediately walks every existing row and updates it with the real hash
+ * before bumping schema_version to 3.
+ *
+ * On a fresh DB (no existing rows) the backfill walk is a no-op.
+ */
+const MIGRATION_3_DDL: readonly string[] = [
+  `ALTER TABLE blocks ADD COLUMN canonical_ast_hash TEXT NOT NULL DEFAULT ''`,
+  "CREATE INDEX IF NOT EXISTS idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -270,6 +303,34 @@ export interface MigrationsDb {
  * Migration sequence:
  *   0 → 1: initial v0 schema (contracts, implementations, v0 ancillaries).
  *   1 → 2: clean re-create as blocks table (DEC-SCHEMA-MIGRATION-002).
+ *   2 → 3: add canonical_ast_hash column + non-unique index (DEC-REGISTRY-AST-HASH-002).
+ *
+ * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
+ *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
+ *   it adds the `canonical_ast_hash` column with default '' and creates the
+ *   index. It does NOT bump `schema_version` to 3.
+ *
+ *   `openRegistry` in storage.ts owns the backfill + version-bump phase: after
+ *   calling `applyMigrations`, it walks every row with `canonical_ast_hash = ''`
+ *   and fills in the real hash via `canonicalAstHash(impl_source)` from
+ *   `@yakcc/contracts`, then bumps `schema_version` to 3.
+ *
+ *   This split exists because schema.ts is pure DDL — it has no dependency on
+ *   `@yakcc/contracts` and must remain free of business logic. Callers that
+ *   invoke `applyMigrations` directly (without going through `openRegistry`)
+ *   will therefore leave `schema_version` at 2, because the version bump
+ *   requires `canonicalAstHash` which schema.ts does not import.
+ *
+ *   The try/catch on the duplicate-column error makes DDL re-entry safe
+ *   regardless of caller path: if a crash occurs between the ADD COLUMN and the
+ *   caller's version bump, the next open will see version=2 but the column
+ *   already present. The catch absorbs that case and the backfill + bump
+ *   complete normally.
+ *
+ *   Future migrations should follow the same two-phase pattern (DDL here,
+ *   backfill + bump in storage.ts) OR import their backfill helpers into
+ *   schema.ts to keep the invariant single-phase, whichever is appropriate for
+ *   the migration's dependency footprint.
  *
  * Idempotency design:
  *   Bootstrap step creates schema_version with no-op semantics if absent.
@@ -309,5 +370,40 @@ export function applyMigrations(db: MigrationsDb): void {
     }
     db.prepare("UPDATE schema_version SET version = ?").run(2);
   }
-  // Future migrations: add `if (currentVersion < 3) { ... }` blocks here.
+
+  // Migration 2 → 3: add canonical_ast_hash column + index (DEC-REGISTRY-AST-HASH-002).
+  // The backfill of existing rows is performed by the caller (storage.ts openRegistry)
+  // because it requires the canonicalAstHash function from @yakcc/contracts, which
+  // this schema module does not import (schema.ts is pure DDL — no business logic).
+  //
+  // Idempotency note: SQLite has no ADD COLUMN IF NOT EXISTS. If a crash occurs
+  // between the ADD COLUMN and the caller's schema_version bump (which happens
+  // after the backfill), re-entry would see version=2 but the column already
+  // present. We catch the "duplicate column name" error specifically to handle
+  // this partial-migration recovery path. Any other DDL error is re-thrown.
+  // MIGRATION_3_DDL[1] (CREATE INDEX IF NOT EXISTS) is already idempotent and
+  // runs unconditionally within the if block.
+  if (currentVersion < 3) {
+    // Wrap the ALTER TABLE in a try/catch: ADD COLUMN is not idempotent in
+    // SQLite, but a crash between this DDL and the version bump leaves us with
+    // the column present at version=2. On re-entry we must not throw.
+    try {
+      db.exec(MIGRATION_3_DDL[0] as string); // ALTER TABLE ... ADD COLUMN canonical_ast_hash
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name: canonical_ast_hash/i.test(msg)) {
+        throw err;
+      }
+      // Column already exists (partial migration recovery) — continue normally.
+    }
+    // CREATE INDEX IF NOT EXISTS is already idempotent; always safe to re-run.
+    db.exec(MIGRATION_3_DDL[1] as string);
+    // NOTE: schema_version is bumped to 3 by the caller AFTER it performs the
+    // backfill, not here. This lets openRegistry detect a partial migration
+    // (version still 2, column now added) and complete the backfill safely.
+    // On a fresh DB (version 0 → 3 path), currentVersion will be 0 here after
+    // migrations 1 and 2 ran above, so we run the DDL but the caller still does
+    // the backfill (which is a no-op on an empty table) and bumps to 3.
+  }
+  // Future migrations: add `if (currentVersion < 4) { ... }` blocks here.
 }

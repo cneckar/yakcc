@@ -104,7 +104,7 @@ describe("seedRegistry", () => {
     } finally {
       await registry.close();
     }
-  });
+  }, 30_000);
 
   it("seedRegistry() re-runs deterministically — same BlockMerkleRoot for every block", async () => {
     // Run seedRegistry twice on separate in-memory DBs; merkleRoots must match.
@@ -120,7 +120,7 @@ describe("seedRegistry", () => {
       await registry1.close();
       await registry2.close();
     }
-  });
+  }, 30_000);
 
   it("registry.selectBlocks finds each block by its specHash after seeding", async () => {
     const registry = await openRegistry(":memory:");

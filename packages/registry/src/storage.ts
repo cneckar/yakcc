@@ -31,9 +31,11 @@
 
 import {
   type BlockMerkleRoot,
+  type CanonicalAstHash,
   type EmbeddingProvider,
   type SpecHash,
   type SpecYak,
+  canonicalAstHash,
   canonicalize,
   generateEmbedding,
 } from "@yakcc/contracts";
@@ -63,6 +65,7 @@ interface BlockRow {
   proof_manifest_json: string;
   level: string;
   created_at: number;
+  canonical_ast_hash: string;
 }
 
 interface TestHistoryRow {
@@ -120,8 +123,19 @@ class SqliteRegistry implements Registry {
       this.embeddings,
     );
 
-    const insertBlock = this.db.prepare<[string, string, Buffer, string, string, string, number]>(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    // Trust the canonicalAstHash already computed by the caller (e.g. makeBlockRow,
+    // the seed package, and all future write paths). Callers are responsible for
+    // computing canonicalAstHash once at row-construction time; the storage layer
+    // accepts the value as-given rather than re-parsing implSource through ts-morph
+    // on every write. The migration backfill path (see migrateAddCanonicalAstHash)
+    // is the only code path that must compute the hash here because pre-WI-012-02
+    // rows arrive without the field populated.
+    const implAstHash = row.canonicalAstHash;
+
+    const insertBlock = this.db.prepare<
+      [string, string, Buffer, string, string, string, number, string]
+    >(
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -144,6 +158,7 @@ class SqliteRegistry implements Registry {
         row.proofManifestJson,
         row.level,
         now,
+        implAstHash,
       );
       // Only write the embedding if the spec_hash doesn't already have one.
       // Check by attempting DELETE (no-op if absent) then INSERT.
@@ -258,6 +273,22 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // findByCanonicalAstHash — look up blocks by impl canonical AST hash
+  // -------------------------------------------------------------------------
+
+  async findByCanonicalAstHash(hash: CanonicalAstHash): Promise<readonly BlockMerkleRoot[]> {
+    this.assertOpen();
+
+    const rows = this.db
+      .prepare<[string], { block_merkle_root: string }>(
+        "SELECT block_merkle_root FROM blocks WHERE canonical_ast_hash = ? ORDER BY created_at ASC, block_merkle_root ASC",
+      )
+      .all(hash);
+
+    return rows.map((r) => r.block_merkle_root as BlockMerkleRoot);
+  }
+
+  // -------------------------------------------------------------------------
   // getProvenance — test history + runtime exposure for a block
   // -------------------------------------------------------------------------
 
@@ -332,6 +363,7 @@ function hydrateBlock(row: BlockRow): BlockTripletRow {
     proofManifestJson: row.proof_manifest_json,
     level: row.level as "L0" | "L1" | "L2" | "L3",
     createdAt: row.created_at,
+    canonicalAstHash: row.canonical_ast_hash as CanonicalAstHash,
   };
 }
 
@@ -406,7 +438,40 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
   sqliteVec.load(db);
 
   // Apply schema migrations (idempotent).
+  // applyMigrations handles DDL for all migrations including 2→3 (adds the
+  // canonical_ast_hash column). The version-3 backfill and version bump are
+  // performed here because this layer has access to canonicalAstHash() from
+  // @yakcc/contracts (schema.ts is pure DDL and does not import it).
   applyMigrations(db);
+
+  // Migration 2 → 3 backfill: compute and store canonical_ast_hash for any
+  // existing rows that still have the empty-string sentinel value, then bump
+  // schema_version to 3. On a fresh DB the SELECT returns no rows and the
+  // version is bumped immediately. Idempotent: if already at version 3, skip.
+  {
+    const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
+      | { version: number }
+      | undefined;
+    if ((vRow?.version ?? 0) < 3) {
+      const rowsToBackfill = db
+        .prepare<[], { block_merkle_root: string; impl_source: string }>(
+          "SELECT block_merkle_root, impl_source FROM blocks WHERE canonical_ast_hash = ''",
+        )
+        .all();
+
+      const updateHash = db.prepare<[string, string]>(
+        "UPDATE blocks SET canonical_ast_hash = ? WHERE block_merkle_root = ?",
+      );
+
+      const backfillTxn = db.transaction(() => {
+        for (const r of rowsToBackfill) {
+          updateHash.run(canonicalAstHash(r.impl_source), r.block_merkle_root);
+        }
+        db.prepare("UPDATE schema_version SET version = ?").run(3);
+      });
+      backfillTxn();
+    }
+  }
 
   // Resolve the embedding provider: use provided, or import the local default.
   let embeddingProvider: EmbeddingProvider;

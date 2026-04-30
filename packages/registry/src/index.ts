@@ -15,7 +15,7 @@
 // No dual-table coexistence; no fallback path (Sacred Practice #12).
 // Status: decided (MASTER_PLAN.md WI-T03 Evaluation Contract)
 
-import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
 
 // ---------------------------------------------------------------------------
 // Registry value types (v0.6 triplet schema)
@@ -48,6 +48,13 @@ export interface BlockTripletRow {
   readonly level: "L0" | "L1" | "L2" | "L3";
   /** Unix epoch milliseconds of insertion. */
   readonly createdAt: number;
+  /**
+   * BLAKE3 hash of the canonical AST of impl.ts.
+   * Two impls that are semantically identical under AST canonicalization share
+   * this hash even if their source text differs. Used for deduplication and
+   * cross-spec reuse detection. Populated by `canonicalAstHash(implSource)`.
+   */
+  readonly canonicalAstHash: CanonicalAstHash;
 }
 
 /**
@@ -153,6 +160,25 @@ export interface Registry {
    * Returns null when no block with the given merkle root is registered.
    */
   getBlock(merkleRoot: BlockMerkleRoot): Promise<BlockTripletRow | null>;
+
+  /**
+   * Return all BlockMerkleRoots whose impl source has the given canonical AST
+   * hash, ordered by insertion order then lexicographic merkle root
+   * (`ORDER BY created_at ASC, block_merkle_root ASC`).
+   *
+   * This is a structural-equivalence query, not a candidate-ranking query.
+   * It returns every block that was compiled from a semantically identical
+   * impl, regardless of which spec it satisfies. Because canonical-ast-hash
+   * lookup crosses spec boundaries, the strictness partial order and
+   * test-history ranking used by `selectBlocks` do not apply here — those
+   * criteria are only meaningful within a single spec. Results are sorted by
+   * insertion order then merkle root for stable, deterministic iteration;
+   * callers seeking a ranked candidate for a specific spec should use
+   * `selectBlocks` instead.
+   *
+   * Returns an empty array when no blocks match.
+   */
+  findByCanonicalAstHash(hash: CanonicalAstHash): Promise<readonly BlockMerkleRoot[]>;
 
   /**
    * Retrieve provenance metadata for a block by its BlockMerkleRoot.
