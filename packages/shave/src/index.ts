@@ -49,6 +49,14 @@ export { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./i
 // extractIntent is NOT exported — it remains an internal implementation detail.
 
 // ---------------------------------------------------------------------------
+// Re-exports — WI-012-03 atom-test public surface
+// ---------------------------------------------------------------------------
+
+// isAtom predicate — the gate for the WI-012 universalizer recursion.
+export { isAtom } from "./universalize/atom-test.js";
+export type { AtomTestOptions, AtomTestResult, AtomTestReason } from "./universalize/types.js";
+
+// ---------------------------------------------------------------------------
 // Internal imports
 // ---------------------------------------------------------------------------
 

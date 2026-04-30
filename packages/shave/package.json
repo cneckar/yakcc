@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
-    "@noble/hashes": "^1.5.0"
+    "@noble/hashes": "^1.5.0",
+    "ts-morph": "^28.0.0"
   },
   "peerDependencies": {
     "@yakcc/contracts": "workspace:*",
