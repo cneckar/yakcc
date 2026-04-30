@@ -242,3 +242,8 @@ export {
   validateProofManifestL0,
 } from "./proof-manifest.js";
 export { type BlockTriplet, type BlockMerkleRoot, blockMerkleRoot, specHash } from "./merkle.js";
+export {
+  canonicalAstHash,
+  CanonicalAstParseError,
+  type CanonicalAstHash,
+} from "./canonical-ast.js";
