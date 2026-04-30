@@ -1,0 +1,42 @@
+If the Discovery Layer and Canonicalization Engine (the "Meta-Business") are allowed to become a walled garden, Yakcc loses its status as a true public commons. Centralizing the index means whoever controls the search routing controls the network. To fulfill its mandate, Yakcc must absorb these capabilities directly into the federated protocol as a native "universalizer."
+
+Here is how to architect a native decomposition and canonicalization engine that vastly improves upon the v0 approach.
+
+The Problem with v0 Search
+Currently, @yakcc/registry relies on local transformers.js to create vector embeddings of the ContractSpec. It uses cosine similarity as a first pass, followed by structural matching.
+
+This is fundamentally fragile. "Embedding-similarity drift" is already a known deferred problem. Because it embeds the text of the contract, two mathematically identical functions with different English descriptions might sit far apart in vector space. In a tokenized federation, multi-agent systems will exploit this by simply asking an LLM to rewrite a block's variable names and comments to bypass the similarity check and farm duplicate bounties.
+
+The Native Solution: The Universalizer Pipeline
+To solve this, the @yakcc/contracts and @yakcc/registry layers must be upgraded with a native decomposition engine designed to aggressively identify and canonicalize redundant code patterns before they ever reach the ledger.
+
+1. Semantic AST Canonicalization (The Pre-Filter)
+Before a block is embedded or verified, the strict-TypeScript IR must pass through a mathematical normalization pass.
+
+The engine strips all variable names, replacing them with deterministic De Bruijn indices.
+
+It reorders commutative operations (e.g., standardizing b + a to always parse as a + b).
+
+It collapses redundant control flows and flattens nested pure functions.
+
+It generates a structural hash of this normalized Abstract Syntax Tree (AST). If an agent submits a visually obfuscated block that maps to an existing normalized AST hash, the submission is instantly rejected as a duplicate.
+
+2. The Native Decomposition Engine (Auto-Slicing)
+Instead of relying on the submitter to perfectly modularize their code, Yakcc should natively act as a code universalizer.
+
+When a caller proposes a large, monolithic block, the engine's compilation orchestrator analyzes the data-flow graph.
+
+It attempts to automatically slice the monolithic proposal into smaller, independent sub-graphs.
+
+If a user proposes a list-of-ints parser, the engine recursively slices the code, identifies that the logic for an integer-recognizer and a bracket-matcher already exist in the registry, and natively replaces the user's redundant code with pointers to the existing primitives. The network only synthesizes and stores the novel "glue."
+
+3. Behavioral Embeddings (Execution Traces)
+Relying on standard NLP models like all-MiniLM-L6-v2 for code discovery is a dead end. Instead of embedding descriptions, the provider interface in @yakcc/contracts should generate vectors based on execution behavior.
+
+When a block is registered, the network runs it against a standardized, multi-dimensional matrix of fuzzed inputs.
+
+The embedding model processes the resulting matrix of input-to-output transformations.
+
+The search index is now topology-based. When an agent searches for a contract, the network queries by what the function mathematically does, completely ignoring linguistic variations in the spec.
+
+By building this universalizer directly into the node software, the federated network naturally resists spam, instantly deduplicates code, and ensures that the discovery layer remains an open, ownerless protocol rather than a toll road controlled by a private entity.
