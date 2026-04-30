@@ -1,13 +1,14 @@
 # Yakcc
 
-**Status: v0 substrate operational; demo runnable.**
+**Status: v0.6 substrate operational; triplet-directory identity and seed corpus migrated; demo runnable.**
 
 Yakcc is a local-only TypeScript substrate for assembling programs from content-addressed
-basic blocks. A block is a minimal, behaviorally-specified piece of code stored in a
-local SQLite registry under a SHA-256 content-address. The compiler resolves an
-entry-point contract into a runnable TypeScript module and emits a provenance manifest
-that names every constituent block by its content-address — making the full assembly
-traceable and byte-reproducible.
+basic blocks. A block is a triplet directory (`spec.yak` + `impl.ts` + `proof/`) stored
+in a local SQLite registry. The block's identity is its `BlockMerkleRoot =
+BLAKE3(spec_hash || impl_hash || proof_root)` — a cryptographic commitment to the full
+triplet. The compiler resolves an entry-point spec into a runnable TypeScript module and
+emits a provenance manifest that names every constituent block by its `BlockMerkleRoot`,
+making the full assembly traceable and byte-reproducible.
 
 The name is a yak-shave joke that is also a thesis: we shave once so callers never shave
 again. The double-c is a nod to the long lineage of terse compiler names.
@@ -17,6 +18,10 @@ again. The double-c is a nod to the long lineage of terse compiler names.
 - `MASTER_PLAN.md` — architecture decisions, work-item breakdown, and DEC-IDs.
 - `DESIGN.md` — extended design rationale and contract philosophy.
 - `AGENTS.md` — agent role definitions and ClauDEX dispatch conventions.
+- `VERIFICATION.md` — verification ladder L0..L3, ocap discipline, triplet identity, TCB hardening.
+- `FEDERATION.md` — trust/scale axis F0..F4, package decomposition, F4 economics.
+- `MANIFESTO.md` — "The Shave at the End of History": the project's voice and intent.
+- `suggestions.txt` — universalizer pipeline (AST canon, native auto-decomposition, behavioral embeddings); constitutional input.
 
 ## Prerequisites
 
@@ -27,7 +32,7 @@ again. The double-c is a nod to the long lineage of terse compiler names.
 
 ```
 packages/
-  contracts/         @yakcc/contracts   — branded types, ContractSpec, ContractId
+  contracts/         @yakcc/contracts   — branded types: SpecYak, ContractId, BlockMerkleRoot, SpecHash
   registry/          @yakcc/registry    — SQLite-backed registry, openRegistry()
   ir/                @yakcc/ir          — strict-TS-subset IR and block types
   compile/           @yakcc/compile     — TS backend, assembler, provenance manifest
@@ -95,7 +100,7 @@ pnpm install && pnpm build
 node packages/cli/dist/bin.js registry init
 node packages/cli/dist/bin.js seed
 # Expected: "seeded 20 contracts; ids: ..."
-node packages/cli/dist/bin.js search examples/parse-int-list/contract.json
+node packages/cli/dist/bin.js search ./examples/parse-int-list/spec.yak
 # Expected: one result line with score=1.0000
 ```
 
@@ -133,7 +138,7 @@ cat /tmp/yakcc-hooks-check/.claude/CLAUDE.md
 
 ```sh
 pnpm --filter @yakcc/seeds test
-# Expected: "Tests: 157 passed"
+# Expected: "Tests: 158 passed"
 ```
 
 **7. New contributor reaches criterion 3 in < 15 minutes**
