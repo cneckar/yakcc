@@ -57,6 +57,23 @@ export { isAtom } from "./universalize/atom-test.js";
 export type { AtomTestOptions, AtomTestResult, AtomTestReason } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
+// Re-exports — WI-012-04 decomposition recursion public surface
+// ---------------------------------------------------------------------------
+
+export {
+  decompose,
+  DidNotReachAtomError,
+  RecursionDepthExceededError,
+} from "./universalize/recursion.js";
+export type {
+  RecursionNode,
+  AtomLeaf,
+  BranchNode,
+  RecursionTree,
+  RecursionOptions,
+} from "./universalize/types.js";
+
+// ---------------------------------------------------------------------------
 // Internal imports
 // ---------------------------------------------------------------------------
 

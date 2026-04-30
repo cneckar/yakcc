@@ -7,6 +7,14 @@
 // circular imports: the top-level types.ts imports from this file, not
 // vice versa, matching the existing re-export pattern for CandidateBlock.
 
+// @decision DEC-RECURSION-005: Decomposition recursion types.
+// Title: RecursionTree, RecursionNode, AtomLeaf, BranchNode, RecursionOptions
+// Status: proposed
+// Rationale: These types form the stable contract for the decompose() function
+// (WI-012-04). AtomLeaf and BranchNode together describe the recursive tree
+// produced by walking the AST top-down. RecursionOptions extends AtomTestOptions
+// so callers have a single options object for the full decompose() call.
+
 // Universalize sub-module types.
 // Re-exports the slicer-facing types from the top-level types module so that
 // WI-012's DFG slicer can import from this sub-path without a circular
@@ -71,4 +79,62 @@ export interface AtomTestResult {
     readonly canonicalAstHash: CanonicalAstHash;
     readonly subRange: { readonly start: number; readonly end: number };
   };
+}
+
+// ---------------------------------------------------------------------------
+// Decomposition recursion types (WI-012-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * A leaf node in the recursion tree — a node classified as atomic by isAtom().
+ * Carries the source text, range, content-address hash, and the AtomTestResult
+ * that caused it to be classified as an atom.
+ */
+export interface AtomLeaf {
+  readonly kind: "atom";
+  readonly sourceRange: { readonly start: number; readonly end: number };
+  readonly source: string;
+  readonly canonicalAstHash: CanonicalAstHash;
+  readonly atomTest: AtomTestResult;
+}
+
+/**
+ * An internal (branch) node in the recursion tree — a node classified as
+ * non-atomic that was decomposed into children by decomposableChildrenOf().
+ */
+export interface BranchNode {
+  readonly kind: "branch";
+  readonly sourceRange: { readonly start: number; readonly end: number };
+  readonly source: string;
+  readonly canonicalAstHash: CanonicalAstHash;
+  readonly atomTest: AtomTestResult;
+  readonly children: readonly RecursionNode[];
+}
+
+/** A node in the recursion tree produced by decompose(). */
+export type RecursionNode = AtomLeaf | BranchNode;
+
+/**
+ * The complete recursion tree returned by decompose().
+ *
+ * `leafCount` counts the number of AtomLeaf nodes in the tree.
+ * `maxDepth` records the deepest depth actually reached during recursion
+ * (0 means only the root was visited; the root was an atom).
+ */
+export interface RecursionTree {
+  readonly root: RecursionNode;
+  readonly leafCount: number;
+  readonly maxDepth: number;
+}
+
+/**
+ * Options for decompose(). Extends AtomTestOptions so callers pass a single
+ * object that controls both the atom-test predicate and the recursion itself.
+ */
+export interface RecursionOptions extends AtomTestOptions {
+  /**
+   * Hard upper bound on tree depth. decompose() throws RecursionDepthExceededError
+   * when the recursion would descend past this limit. Default: 8.
+   */
+  readonly maxDepth?: number;
 }
