@@ -38,8 +38,21 @@ import { specFromIntent } from "./spec-from-intent.js";
  * This is an intermediate value: callers feed it into a BlockTripletRow for
  * registry storage. It is not the same as @yakcc/contracts BlockTriplet —
  * that type carries an `artifacts` Map required by blockMerkleRoot(); this
- * type carries the pre-computed `merkleRoot` so callers don't need to
- * manage the artifacts Map again.
+ * type also carries the `artifacts` Map so callers can thread it directly
+ * into BlockTripletRow without re-deriving it (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002:
+ * single source of truth — the SAME Map used for blockMerkleRoot() flows to
+ * the row and onto the federation wire; no second Map, no copy, no re-derivation).
+ *
+ * @decision DEC-V1-FEDERATION-WIRE-ARTIFACTS-002
+ * title: BuiltTriplet.artifacts is the canonical artifact-bytes carrier
+ * status: decided (WI-022 slice b)
+ * rationale:
+ *   BlockTripletRow.artifacts (added in slice a) requires the exact Map that
+ *   was passed to blockMerkleRoot(). Exposing `artifacts` on BuiltTriplet
+ *   gives persistNovelGlueAtom a single place to read the Map from — it does
+ *   not reconstruct, copy, or re-derive it. This satisfies Sacred Practice #12
+ *   (single source of truth) and DEC-CONTRACTS-AUTHORITY-001 (blockMerkleRoot
+ *   formula unchanged).
  */
 export interface BuiltTriplet {
   readonly spec: SpecYak;
@@ -48,6 +61,14 @@ export interface BuiltTriplet {
   readonly impl: string;
   readonly manifest: ProofManifest;
   readonly merkleRoot: BlockMerkleRoot;
+  /**
+   * Artifact bytes keyed by manifest-declared path.
+   *
+   * This is the SAME Map<string, Uint8Array> that was passed to blockMerkleRoot()
+   * — not a copy or re-derivation. Callers MUST forward this Map to
+   * BlockTripletRow.artifacts unchanged (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
+   */
+  readonly artifacts: ReadonlyMap<string, Uint8Array>;
 }
 
 /**
@@ -99,8 +120,14 @@ export const L0_BOOTSTRAP_MANIFEST: ProofManifest = {
   ],
 } as const;
 
-/** Artifact bytes map for the L0 bootstrap manifest. */
-function makeBootstrapArtifacts(): Map<string, Uint8Array> {
+/**
+ * Artifact bytes map for the L0 bootstrap manifest.
+ *
+ * Exported so tests can construct the expected bootstrap artifacts without
+ * re-implementing the shape. Do NOT use as a default in production code —
+ * this is the explicit bootstrap opt-in path only (WI-016).
+ */
+export function makeBootstrapArtifacts(): Map<string, Uint8Array> {
   return new Map([[L0_BOOTSTRAP_PATH, EMPTY_BYTES]]);
 }
 
@@ -203,5 +230,8 @@ export function buildTriplet(
     impl,
     manifest,
     merkleRoot,
+    // DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: forward the SAME Map used above for
+    // blockMerkleRoot() — not a copy, not a re-derivation. Single source of truth.
+    artifacts,
   };
 }

@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
+import type { BlockMerkleRoot, CanonicalAstHash, EmbeddingProvider } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
+import { openRegistry } from "@yakcc/registry";
 import { extractCorpus } from "../corpus/index.js";
 import type { CorpusAtomSpec } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import { maybePersistNovelGlueAtom, persistNovelGlueAtom } from "./atom-persist.js";
+import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -394,5 +396,159 @@ describe("WI-016 corpus integration", () => {
 
     // The registry must NOT have been written to (no row committed).
     expect(calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-022 Required Tests: artifact bytes threading through persist layer
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V1-FEDERATION-WIRE-ARTIFACTS-002
+// title: persistNovelGlueAtom threads artifacts from buildTriplet to storeBlock
+// status: decided (WI-022 slice b)
+// rationale:
+//   Three tests exercise the full artifact-threading invariant:
+//   (1) Stub-capture: the row passed to storeBlock carries artifacts byte-identical
+//       to what buildTriplet computed (same Map from blockMerkleRoot() call).
+//   (2) Real-registry round-trip: storeBlock → getBlock returns artifacts
+//       byte-identical to what was passed in.
+//   No second Map, no copy, no re-derivation (Sacred Practice #12).
+
+/**
+ * Deterministic mock embedding provider for registry round-trip tests.
+ * Returns a normalized 384-dim vector without loading ONNX/transformers.js.
+ */
+function mockEmbeddingProvider(): EmbeddingProvider {
+  return {
+    dimension: 384,
+    modelId: "mock/test-provider-shave",
+    async embed(text: string): Promise<Float32Array> {
+      const vec = new Float32Array(384);
+      for (let i = 0; i < 384; i++) {
+        const charCode = text.charCodeAt(i % text.length) / 128;
+        vec[i] = charCode + i * 0.001;
+      }
+      let norm = 0;
+      for (const v of vec) norm += v * v;
+      const scale = norm > 0 ? 1 / Math.sqrt(norm) : 1;
+      for (let i = 0; i < vec.length; i++) {
+        const val = vec[i];
+        if (val !== undefined) vec[i] = val * scale;
+      }
+      return vec;
+    },
+  };
+}
+
+describe("WI-022 artifact threading — stub-capture test", () => {
+  // WI-022 Required Test (atom-persist.test.ts #1):
+  //   Stub registry captures storeBlock argument; assert capturedRow.artifacts
+  //   byte-identical to buildTriplet's computed Map.
+  //
+  // Production sequence: extractCorpus() → buildTriplet() → row construction
+  //   → registry.storeBlock(row). The row.artifacts field must carry the same
+  //   bytes as what buildTriplet would produce for the same corpus.
+
+  it("storeBlock receives a row whose artifacts are byte-identical to buildTriplet's computed Map", async () => {
+    const capturedRows: BlockTripletRow[] = [];
+    const stubRegistry = {
+      storeBlock: vi.fn(async (row: BlockTripletRow) => { capturedRows.push(row); }),
+    } as unknown as Registry;
+
+    const entry = makeEntry();
+
+    // Run the real production persist path.
+    const root = await persistNovelGlueAtom(entry, stubRegistry);
+    expect(root).toBeDefined();
+    expect(capturedRows).toHaveLength(1);
+
+    const capturedRow = capturedRows[0]!;
+
+    // Re-run extractCorpus + buildTriplet with the same inputs to obtain the
+    // reference Map — this mirrors exactly what persistNovelGlueAtom does internally.
+    const atomSpec: CorpusAtomSpec = {
+      source: entry.source,
+      intentCard: entry.intentCard!,
+    };
+    const corpusResult = await extractCorpus(atomSpec);
+    const refTriplet = buildTriplet(
+      entry.intentCard!,
+      entry.source,
+      entry.canonicalAstHash,
+      corpusResult,
+    );
+
+    // The captured row must carry the artifacts field (not missing, not empty).
+    expect(capturedRow.artifacts).toBeDefined();
+    expect(capturedRow.artifacts.size).toBeGreaterThan(0);
+
+    // Every entry in the reference triplet's artifacts must be byte-identical
+    // to the corresponding entry in the captured row.
+    expect(capturedRow.artifacts.size).toBe(refTriplet.artifacts.size);
+    for (const [path, refBytes] of refTriplet.artifacts) {
+      expect(capturedRow.artifacts.has(path)).toBe(true);
+      const capturedBytes = capturedRow.artifacts.get(path)!;
+      expect(capturedBytes.length).toBe(refBytes.length);
+      expect(Array.from(capturedBytes)).toEqual(Array.from(refBytes));
+    }
+  });
+});
+
+describe("WI-022 artifact threading — real-registry round-trip", () => {
+  // WI-022 Required Test (atom-persist.test.ts #2):
+  //   End-to-end real-registry round-trip:
+  //   persistNovelGlueAtom → registry.getBlock → artifacts Map byte-identical to input.
+  //
+  // Production sequence:
+  //   openRegistry(":memory:") → persistNovelGlueAtom(entry, registry)
+  //   → registry.getBlock(merkleRoot) → hydrated.artifacts byte-identical to what
+  //   was stored.
+  //
+  // This crosses the storage boundary (SQLite block_artifacts table write + read)
+  // to prove that artifact bytes survive the full persist-and-retrieve cycle.
+
+  it("artifacts survive registry.storeBlock → registry.getBlock round-trip byte-identically", async () => {
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+    });
+
+    try {
+      const entry = makeEntry();
+
+      // Persist via the production path.
+      const merkleRoot = await persistNovelGlueAtom(entry, registry);
+      expect(merkleRoot).toBeDefined();
+
+      // Retrieve the block.
+      const hydrated = await registry.getBlock(merkleRoot!);
+      expect(hydrated).not.toBeNull();
+      const hydratedRow = hydrated!;
+
+      // Obtain the reference artifacts from a parallel buildTriplet call.
+      const atomSpec: CorpusAtomSpec = {
+        source: entry.source,
+        intentCard: entry.intentCard!,
+      };
+      const corpusResult = await extractCorpus(atomSpec);
+      const refTriplet = buildTriplet(
+        entry.intentCard!,
+        entry.source,
+        entry.canonicalAstHash,
+        corpusResult,
+      );
+
+      // Hydrated artifacts must be non-empty and byte-identical to the reference.
+      expect(hydratedRow.artifacts.size).toBeGreaterThan(0);
+      expect(hydratedRow.artifacts.size).toBe(refTriplet.artifacts.size);
+
+      for (const [path, refBytes] of refTriplet.artifacts) {
+        expect(hydratedRow.artifacts.has(path)).toBe(true);
+        const hydratedBytes = hydratedRow.artifacts.get(path)!;
+        expect(hydratedBytes.length).toBe(refBytes.length);
+        expect(Array.from(hydratedBytes)).toEqual(Array.from(refBytes));
+      }
+    } finally {
+      await registry.close();
+    }
   });
 });
