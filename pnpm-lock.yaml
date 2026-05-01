@@ -47,6 +47,9 @@ importers:
       '@yakcc/seeds':
         specifier: workspace:*
         version: link:../seeds
+      '@yakcc/shave':
+        specifier: workspace:*
+        version: link:../shave
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

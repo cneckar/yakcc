@@ -24,6 +24,7 @@ import { propose } from "./commands/propose.js";
 import { registryInit } from "./commands/registry-init.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
+import { shave } from "./commands/shave.js";
 
 // Re-export ContractId for callers who import from @yakcc/cli.
 export type { ContractId } from "@yakcc/contracts";
@@ -89,6 +90,8 @@ COMMANDS
   search <query> [--registry <p>]     Search registry by spec file or free text
          [--top <k>]                  Max results (default: 10)
   seed [--registry <p>]               Ingest the seed corpus into the registry
+  shave <path> [--registry <p>]       Shave a TS source file into atoms via universalize
+        [--offline]
   hooks claude-code install           Install /yakcc slash command for Claude Code
                 [--target <dir>]      Target project directory (default: .)
 
@@ -153,6 +156,11 @@ export async function runCli(
       // seed has no positional; subcommand may be a flag like --registry.
       const seedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return seed(seedArgv, logger);
+    }
+
+    case "shave": {
+      const shaveArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return shave(shaveArgv, logger);
     }
 
     case "hooks": {

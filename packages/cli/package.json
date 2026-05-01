@@ -30,6 +30,7 @@
     "@yakcc/hooks-claude-code": "workspace:*",
     "@yakcc/ir": "workspace:*",
     "@yakcc/registry": "workspace:*",
-    "@yakcc/seeds": "workspace:*"
+    "@yakcc/seeds": "workspace:*",
+    "@yakcc/shave": "workspace:*"
   }
 }
