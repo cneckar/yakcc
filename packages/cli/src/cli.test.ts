@@ -496,7 +496,28 @@ describe("hooks claude-code install", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 8: compile — manifest determinism (exit criterion 3)
+// Suite 8: federation — printUsage includes the three federation verbs
+//
+// Evaluation Contract: packages/cli/src/cli.test.ts assertion that printUsage
+// includes "federation serve", "federation mirror", and "federation pull".
+// ---------------------------------------------------------------------------
+
+describe("runCli printUsage — federation verbs present", () => {
+  it("printUsage output includes 'federation serve', 'federation mirror', and 'federation pull'", async () => {
+    const logger = new CollectingLogger();
+    // --help triggers printUsage
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+
+    const allOutput = logger.logLines.join("\n");
+    expect(allOutput).toContain("federation serve");
+    expect(allOutput).toContain("federation mirror");
+    expect(allOutput).toContain("federation pull");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 9: compile — manifest determinism (exit criterion 3)
 // ---------------------------------------------------------------------------
 
 describe("compile manifest determinism", () => {

@@ -27,6 +27,7 @@
   "dependencies": {
     "@yakcc/compile": "workspace:*",
     "@yakcc/contracts": "workspace:*",
+    "@yakcc/federation": "workspace:*",
     "@yakcc/hooks-claude-code": "workspace:*",
     "@yakcc/ir": "workspace:*",
     "@yakcc/registry": "workspace:*",
