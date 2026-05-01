@@ -8,39 +8,44 @@ entire monorepo: every other package imports its types from here.
 - **`ContractSpec`** — the structured behavioral specification of a basic block.
   Declares input/output types, behavioral guarantees, error conditions, and
   non-functional properties (time/space complexity, purity, thread safety).
-- **`ContractId`** — a branded string carrying the content-address (hash) of a
-  canonicalized `ContractSpec`. Two specs that canonicalize identically share
+- **`ContractId`** — a branded string carrying the content-address (BLAKE3-256 hash)
+  of a canonicalized `ContractSpec`. Two specs that canonicalize identically share
   an id; two distinct specs have distinct ids.
 - **`Contract`** — an id paired with its spec and attached verification evidence.
   The id is immutable; the evidence is mutable metadata that improves over time.
 - **`ProposalResult`** — the discriminated union returned by `proposeContract`.
   Either the proposal matched an existing contract (`status: "matched"`) or was
   accepted as a new one (`status: "accepted"`).
+- **`BlockTripletRow`** — the canonical persisted shape of a block:
+  - `spec: ContractSpec`
+  - `impl: string` — source text of the implementation
+  - `proofManifest: ProofManifest` — per-atom property tests (non-empty since WI-016)
+  - `artifacts: Map<string, Uint8Array>` — compiled artifact bytes (added in WI-022a)
 - **`canonicalize(spec)`** — deterministic JSON serialization with sorted keys.
   This is the canonical form that content-addressing hashes.
-- **`contractId(spec)`** — derives the `ContractId` from a spec. v0 uses an
-  FNV-style structural hash over the canonical form; WI-002 replaces this with
-  BLAKE3 once the hash dependency is locked.
+- **`specHash(spec)`** — BLAKE3-256 hash of the canonical spec form. Live.
+- **`blockMerkleRoot(triplet)`** — BLAKE3-256 Merkle root over `(spec, impl, proofManifest, artifacts)`.
+  The `artifacts` field is included in the root (WI-022a). This is the stable
+  content-address used throughout the registry and compile pipeline.
 - **`generateEmbedding(spec)`** — returns a 384-dimensional `Float32Array`
-  representing the spec for vector search. v0 returns a zero vector; WI-002
-  wires this to `transformers.js`.
+  representing the spec for vector search. Uses transformers.js local model by
+  default; no API key required.
 - **`proposeContract(spec)`** — submits a proposal and returns a `ProposalResult`.
-  v0 always accepts (returns `{status: "accepted", id}`); WI-003 connects this
-  to the live registry.
+  Connects to the live registry.
 
-## What this package does not do (yet)
+## Canonicalization rules
 
-- **No BLAKE3 hashing** — WI-002 replaces the FNV facade with a real hash.
-- **No live embeddings** — WI-002 wires `transformers.js`; v0 returns zero vectors.
-- **No registry connection** — `proposeContract` is a facade; WI-003 connects it.
-- **No strictness inference** — strictness ordering is contributor-declared in v0;
-  automated inference is a v0.5+ concern.
+The canonicalization rules are locked. Any change to `canonicalize()` would
+invalidate all existing content-addresses, so the schema is stable. The
+`artifacts` field participates in the Merkle root but not in the spec hash —
+two blocks with identical specs but different compiled artifacts have the same
+`ContractId` but different `blockMerkleRoot` values.
 
 ## How callers consume this package
 
 ```ts
-import type { ContractSpec, ContractId } from "@yakcc/contracts";
-import { contractId, canonicalize, proposeContract } from "@yakcc/contracts";
+import type { ContractSpec, ContractId, BlockTripletRow } from "@yakcc/contracts";
+import { specHash, blockMerkleRoot, canonicalize, proposeContract } from "@yakcc/contracts";
 
 const spec: ContractSpec = {
   inputs: [{ name: "s", type: "string" }],
@@ -52,8 +57,11 @@ const spec: ContractSpec = {
   propertyTests: [],
 };
 
-const id = contractId(spec); // stable content-address
+const id = specHash(spec);           // BLAKE3-256 content-address of spec alone
 const result = await proposeContract(spec); // { status: "accepted", id }
+
+const triplet: BlockTripletRow = { spec, impl: "...", proofManifest: { ... }, artifacts: new Map() };
+const root = blockMerkleRoot(triplet); // Merkle root over all four fields
 ```
 
 ## License
