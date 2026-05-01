@@ -209,6 +209,36 @@ export {
 // extractIntent is NOT exported — it remains an internal implementation detail.
 
 // ---------------------------------------------------------------------------
+// Re-exports — WI-024 public cache-helper surface
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-PUBLIC-CACHE-CONSTS-001
+ * @title sourceHash is exported on the main entry point (WI-024)
+ * @status accepted
+ * @rationale
+ *   assemble-candidate.test.ts (in @yakcc/compile) needs to compute the
+ *   source hash that seedIntentCache() uses internally so it can populate
+ *   IntentCard.sourceHash with the exact value that extractIntent() would
+ *   produce. Before WI-024 the test reached into the package via a
+ *   cross-package relative import (../../../packages/shave/src/cache/key.js),
+ *   which caused tsc to emit stray .d.ts/.js/.map artifacts into
+ *   packages/shave/src/ and fail with TS6059/TS6307 when building
+ *   @yakcc/compile.
+ *
+ *   Additive change — no breaking changes to existing callers. DEFAULT_MODEL
+ *   and INTENT_PROMPT_VERSION were already public (WI-018); this adds sourceHash
+ *   alongside them so all the imports in assemble-candidate.test.ts resolve
+ *   through the stable @yakcc/shave workspace alias.
+ *
+ *   sourceHash is a pure function (BLAKE3 of normalized source). Exporting it
+ *   does not expose internal mutable state or implementation details that must
+ *   remain private; the function signature and semantics are already documented
+ *   in cache/key.ts.
+ */
+export { sourceHash } from "./cache/key.js";
+
+// ---------------------------------------------------------------------------
 // Re-exports — WI-012-03 atom-test public surface
 // ---------------------------------------------------------------------------
 

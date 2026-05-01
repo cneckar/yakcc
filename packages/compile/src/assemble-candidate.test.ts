@@ -68,23 +68,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assembleCandidate, CandidateNotResolvableError } from "./assemble-candidate.js";
 
-// ---------------------------------------------------------------------------
-// Internal shave helpers imported via the vitest alias
-// (alias: @yakcc/shave → packages/shave/src/index.ts, same as the main entry)
-// These are internal modules not on the public exports map, accessed only in
-// test code to compute the exact hashes that extractIntent() uses internally.
-// ---------------------------------------------------------------------------
-
-// Dynamic imports used below to access internal modules from shave source tree.
-// The vitest alias for @yakcc/shave resolves to the source directory.
-
-// ---------------------------------------------------------------------------
-// Constants imported from shave source via relative path from the alias root.
-// Must match packages/shave/src/intent/constants.ts exactly.
-// ---------------------------------------------------------------------------
-
-import { DEFAULT_MODEL, INTENT_PROMPT_VERSION } from "../../../packages/shave/src/intent/constants.js";
-import { sourceHash as computeSourceHash } from "../../../packages/shave/src/cache/key.js";
+// WI-024: DEFAULT_MODEL, INTENT_PROMPT_VERSION, and sourceHash are now public
+// exports on @yakcc/shave (DEC-PUBLIC-CACHE-CONSTS-001). Import through the
+// workspace alias to avoid cross-package relative imports that cause tsc to
+// emit stray artifacts into packages/shave/src/ (TS6059/TS6307).
+import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, sourceHash as computeSourceHash } from "@yakcc/shave";
 
 // ---------------------------------------------------------------------------
 // Per-test isolation: cacheDir, registry, API key
