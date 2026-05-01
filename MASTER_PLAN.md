@@ -1027,6 +1027,73 @@ property-test scaffolding contract from WI-T01 hold.
 WI-014-03 is the next implementer dispatch. WI-014-04 and WI-014-05 follow
 sequentially. WI-013-03 stays deferred. WI-015 is the v0.7 closer.
 
+**Closure note (post-v0.7):** WI-014-03 (`3afb72f`), WI-014-04 (`47df53a`),
+WI-014-05 (`2eaa9c1`), and WI-015 (`4ded2c2`, plus vitest-timeout fix
+`e7b2c64`) all landed. The v0.7 demo against `lukeed/mri` is closed under
+the offline-tolerant acceptance harness path. Three v0.7 follow-ups did
+**not** land inside v0.7 and are lifted into v1 below: WI-013-03
+(property-test corpus, was deferred), B-003 (parent-block lineage
+population in `atom-persist`, partial WI-015 acceptance criterion (e)),
+and B-002 (`seedIntentCache` test-helper export needed to re-enable
+three `it.skip`s in `assemble-candidate.test.ts`). All three are
+prerequisites for any external-facing v1 federation work and are
+encoded as v1 work items rather than v0.7 stragglers because the v0.7
+demo and its acceptance bar passed without them per
+DEC-V07-CLOSURE-001 below.
+
+### Initiative: v1 federation + L0 substantiation (`@yakcc/federation`)
+
+Status: **active.** Branched from v0.7 closure at `4ded2c2` on `main`. The
+v1 thesis (federated registry, WASM backend, additional hooks, large-scale
+differential validation) is documented in the v1 stage section above; this
+initiative encodes the **first wave** — substantiating L0 verification and
+shipping an F1 read-only federation mirror against the existing v0.7
+shave/universalize substrate. WASM, additional hook surfaces, large-scale
+differential execution, and F2+ attestation publishing are deferred to a
+follow-on v1 wave or a sibling initiative.
+
+The wave below sequences the work so that the no-ownership / permissive-only
+cornerstones survive the move from single-machine to two-machine. The L0
+verification claim is made substantive **before** any block leaves a single
+machine (WI-016); the federation protocol design is locked **before** any
+package is written against it (WI-019); the federation demo runs on a
+substrate where every shaved atom carries a real property-test artifact
+and a populated parent-block lineage (WI-016 + WI-017 prerequisites). This
+ordering preserves Sacred Practice #12 (no parallel mechanisms): we do not
+ship federation against a nominally-L0 substrate and then retrofit
+property tests on top.
+
+| ID | Title | Description | Deps | Gate | State |
+|---|---|---|---|---|---|
+| WI-016 | Property-test corpus extraction (lifted from WI-013-03) | Generate property tests per atom for the existing `@yakcc/shave` atom-persist path. Lives in `@yakcc/shave` with a new `corpus/` module (per the deferred WI-013-03 description). Three extraction sources, in priority order: (a) **upstream tests where adaptable** — when an atom is shaved from a library that ships its own test corpus (e.g. `mri`'s published tests), extract the relevant cases and translate to `fast-check` properties; (b) **documented usage where absent** — when no upstream tests exist but documented call patterns do (JSDoc `@example`, README), synthesize property tests from those examples; (c) **AI-derived against the proposed contract as last resort** — when neither source applies, prompt Haiku/Sonnet to generate `fast-check` properties from the IntentCard + inferred type signature. Each generated property test is persisted into the atom's `proof/manifest.json` (replacing the empty array or single-tautology placeholder from WI-014-03's bootstrap path), and the manifest validator rejects atoms whose `property_tests` array is still the placeholder once WI-016 lands. The AI-derived path uses the same on-disk cache scheme as `extractIntent` (DEC-SHAVE-003) so re-runs are deterministic and the second `yakcc shave` of the same source is offline. | WI-018 (cache-seed helper for tests), WI-014-03 (already landed, supplies the empty-manifest baseline) | approve | not started |
+| WI-017 | Parent-block lineage population in `atom-persist` (lifted from B-003) | The schema (`packages/registry/src/schema.ts` v4) and the manifest emitter (`packages/compile/src/manifest.ts`) both already accept the parent-block lineage shape: registry rows have a `parent_block_root TEXT NULL` column, and `ProvenanceEntry` accepts an optional `recursionParent: BlockMerkleRoot`. The `@yakcc/shave` atom-persist path currently always writes `parent_block_root = null`; this work item populates it. **Concrete behavior:** when `shave()` (or `universalize()` via the compile resolver) recurses into a nested function declaration, the inner atom's `parent_block_root` is set to the outer atom's `BlockMerkleRoot` at persist time, and `compile`'s provenance manifest records the chain on every non-root entry. Acceptance: the manifest emitted by `yakcc compile` against a synthetic two-level-deep nested function names both atoms by `BlockMerkleRoot` and correctly identifies the inner atom's `recursionParent` as the outer atom's `BlockMerkleRoot`. Crosses `@yakcc/shave` (atom-persist) plus `@yakcc/compile` (manifest emission consumes the new field; no behavior change to existing seed-corpus assemblies, which are flat). | WI-014-03, WI-014-04 (already landed) | review | not started |
+| WI-018 | Public `seedIntentCache` test-helper export from `@yakcc/shave` (lifted from B-002) | Three tests in `packages/compile/src/assemble-candidate.test.ts` are marked `it.skip` because they need to seed the intent-card cache and the only existing path is the internal `dist/cache/file-cache.js` import which vitest cannot resolve through the workspace alias. Add a public test-helper export `seedIntentCache(spec: SeedSpec, card: IntentCard): Promise<void>` on `@yakcc/shave`'s public API surface so the skipped tests can re-enable. The helper writes through the same cache path that `extractIntent` reads from (DEC-SHAVE-003), so any cache-key drift between writer and reader is impossible. Acceptance: the three `it.skip` calls in `assemble-candidate.test.ts` can be re-enabled and pass; no production code path changes (the helper is test-only by convention but exported from the package's main entry — Sacred Practice #12 forbids a parallel `@yakcc/shave/test-helpers` entry that duplicates the cache machinery). | (none — fully unblocked) | review | **not started — next implementer dispatch** |
+| WI-019 | v1 federation protocol design (plan-only) | Design pass producing `FEDERATION_PROTOCOL.md` and the DEC entries that the F1 read-only mirror (WI-020) and the v1 demo (WI-021) build against. **Scope:** wire format for replication requests (content-addressed pull keyed by `BlockMerkleRoot`, with `SpecHash` as the lookup index for "find me an implementation of this contract"); conflict-free monotonic merging rules (the registry already has the right shape — block identity is a Merkle root; merging is set-union of triplets, with monotonic improvement encoded as new triplets at the same `SpecHash`, never as overwrites of an existing `BlockMerkleRoot`); F1 read-only-mirror semantics (a federation peer pulls triplets but does not publish; the trust layer is a follow-on); how `parent_block_root` (WI-017) and the `property_tests` artifacts (WI-016) survive cross-peer transfer (both are atomically part of the triplet, so they survive by construction — WI-019 documents this rather than introducing new machinery). **Plan-only:** no `packages/federation/` source ships in this WI; the artifact is a markdown design document plus DEC entries in MASTER_PLAN.md. The reviewer gate is "every claim in `FEDERATION_PROTOCOL.md` is consistent with `FEDERATION.md`'s F0..F4 axis and with `VERIFICATION.md`'s triplet identity"; the planner gate is "every load-bearing protocol decision has a DEC entry." | (none — fully unblocked, parallel with WI-017 and WI-018) | approve | not started |
+| WI-020 | `@yakcc/federation` package skeleton + content-address mirror sync (F1 read-only) | Stand up `packages/federation/` as a typed-interface package implementing the F1 read-only-mirror behavior designed in WI-019. **Public surface:** `pullBlock(remote, merkleRoot): Promise<BlockTripletRow>` (content-addressed pull); `pullSpec(remote, specHash): Promise<BlockMerkleRoot[]>` (selector-index pull); `mirrorRegistry(remote, local): Promise<MirrorReport>` (bulk pull of every block on a remote whose `BlockMerkleRoot` is not yet in `local`). **Wire transport:** HTTP+JSON for the demo path; transport interface is abstract so a future libp2p/IPFS path slots in without rewriting the merge logic. **No publishing path** in this WI — F1 is read-only mirror. **No trust-list logic** in this WI — pulled blocks are all stored, then trust filtering happens at selection time per `FEDERATION.md` DEC-FED-006 (which is also a follow-on, not WI-020). **Tests:** in-process two-registry round-trip; cross-process two-registry round-trip via local HTTP; verify byte-identical triplet shape on both sides. | WI-019 | approve | not started |
+| WI-021 | v1 federation demo + acceptance | Analogue of WI-015 for federation. Two machines (or two registries on one machine, sandboxed): **machine A** runs `yakcc shave ./vendor/mri/lib/index.js` end-to-end against a fresh empty registry, persisting atoms with real property-test corpora (WI-016) and populated parent-block lineage (WI-017). **Machine B** runs `yakcc federation mirror <machineA-url>` against an empty local registry, then runs `yakcc compile <mri-parse-id>` against `mri`'s published test corpus and verifies byte-identical output to machine A's compile. Acceptance criteria: (a) every atom on B has a `property_tests` artifact whose body matches A's (manifest equality); (b) every non-root atom on B has the same `parent_block_root` value as A; (c) `yakcc compile`'s emitted TS module is byte-identical on A and B; (d) GPL-prepared input fed to A's `shave` path is refused as in WI-015 (the license gate is local to A; the federation pull on B never sees the refused source); (e) the federation pull is **content-addressed only** — B never sees A's local file paths or any author identity (cornerstone preservation, validated against the wire-format spec from WI-019). | WI-016, WI-017, WI-019, WI-020 | approve | not started |
+
+v1 dependency waves: **W1** = `{WI-017, WI-018, WI-019}` (three parallel
+leaves; WI-017 and WI-018 are pure code unblockers, WI-019 is the
+plan-only design pass). **W2** = `{WI-016, WI-020}` (WI-016 depends on
+WI-018's cache-seed helper landing first so the corpus tests can stably
+seed the LLM-cache layer; WI-020 depends on WI-019). **W3** = `{WI-021}`
+(the v1 demo requires real property tests, real parent-block lineage,
+and the read-only-mirror package). Critical path runs WI-018 → WI-016 →
+WI-021. **First implementer dispatch = WI-018** (smallest unblocker;
+fully unblocked; ungates WI-016 + the three skipped `assemble-candidate`
+tests in one move).
+
+**Out of v1 wave-1 (deferred to a follow-on v1 wave or a sibling
+initiative):** WASM backend in `@yakcc/compile`; `@yakcc/hooks-cursor` and
+`@yakcc/hooks-codex`; F2+ attestation publishing path; large-scale
+differential execution against upstream library sources (the v0.7 demo's
+focused per-target test corpus stays the v1 demo's correctness bar; the
+fuzz-driven cross-corpus differential pass deferred per DEC-V1-WAVE-1-SCOPE-001
+below). This deferral is intentional: shipping F1 read-only mirror with
+substantive L0 verification proves the cross-machine federation invariants
+on a smaller surface; expanding to F2 publishing and large-scale fuzzing
+without that proof point would conflate two independent risks.
+
 ### Initiative: v2 self-hosting
 
 Status: planned, gated on v0.7 closure (WI-015 done) and v1 federation deferred.
@@ -1052,6 +1119,31 @@ Concrete work items will be enumerated when v0.7 lands. The v2 stage section abo
 Append-only log of substrate-level milestones. Each entry names what
 shipped, the SHA on `main`, and what it unblocks downstream. New entries
 are added at the top; older entries are not edited.
+
+- **2026-04 — v0.7 closed; v1 wave-1 planning landed.** The v0.7 demo
+  against `lukeed/mri` closed at `4ded2c2` (WI-015 offline-tolerant
+  acceptance harness) plus `e7b2c64` (vitest timeout bump). Per-WI v0.7
+  closure SHAs: WI-014-03 atom-to-triplet persistence at `3afb72f`,
+  WI-014-04 registry schema + manifest parent-block foundation at
+  `47df53a`, WI-014-05 `assembleCandidate` (universalize → compile) at
+  `2eaa9c1`, WI-015 demo at `4ded2c2`. Three v0.7 follow-up items did not
+  land inside v0.7 and are explicitly lifted into v1 wave-1 rather than
+  treated as v0.7 stragglers (DEC-V07-CLOSURE-001): WI-013-03 →
+  WI-016 (property-test corpus), B-003 → WI-017 (parent-block lineage
+  population), B-002 → WI-018 (`seedIntentCache` test-helper export).
+  v1 wave-1 ships **L0 substantiation + F1 read-only-mirror federation
+  only** (DEC-V1-WAVE-1-SCOPE-001): WI-016, WI-017, WI-018, WI-019
+  (federation protocol design, plan-only), WI-020 (`@yakcc/federation`
+  F1 read-only mirror), WI-021 (v1 demo). WASM, additional hooks, F2+
+  attestation publishing, and large-scale differential execution against
+  upstream sources are deferred to a follow-on v1 wave or sibling
+  initiative. First implementer dispatch is WI-018
+  (DEC-V1-FIRST-DISPATCH-WI018-001) — smallest unblocker, ungates
+  WI-016's cache-seeded property-test path and three skipped
+  `assemble-candidate` tests in one move. Critical path runs WI-018 →
+  WI-016 → WI-021. Source: planner dispatch under workflow `yakcc-v1`
+  on branch `plan/v1-scope`; this milestone records the planning
+  landing, not the wave-1 implementation closure.
 
 - **2026-04 — v0.7 atom-test substrate + license gate + shave CLI live.**
   Six substantive landings closed in one session take the v0.7 pipeline
@@ -1169,6 +1261,9 @@ are added at the top; older entries are not edited.
 | DEC-LICENSE-WIRING-002 | The license gate is **structural**, not a flag: there is no `--ignore-license` / `--force` / `--unsafe-licenses` opt-out on `yakcc shave`, and `universalize()` does not accept a `skipLicenseGate: true` parameter. A user who wants to ingest non-permissive code must do so outside `yakcc shave` (e.g. by reauthoring a clean-room TS implementation and feeding that through `yakcc block author`). **Why:** the cornerstone permissive-only commitment is load-bearing for the federation story — once the registry is shared (F1+), a single GPL atom poisons the commons because consumers cannot tell which atoms are safe to redistribute. A bypass flag, even one defaulted off, is a vector for that contamination by accident or social pressure. Aligns with Sacred Practice #12: "no parallel mechanisms" — there cannot be a "permissive-only path" and a "permissive-or-not path" coexisting in the codebase. **How to apply:** any future PR that adds a license-bypass surface (CLI flag, env var, config knob, package option) must be rejected at reviewer; the only legitimate way to expand the accepted-license set is a new DEC entry that updates DEC-LICENSE-GATE-001's table. |
 | DEC-SHAVE-PIPELINE-001 | `shave(sourcePath, registry, options): Promise<ShaveResult>` is implemented as a **thin file-ingestion adapter over `universalize()`**, not as a parallel pipeline. The adapter (a) reads the source file, (b) invokes `universalize(source, registry)`, (c) maps the resulting `SlicePlan` entries to a `ShaveResult` shape that surfaces both pointer entries (resolved primitives) and novel-glue entries (atoms to be persisted). Each `NovelGlueEntry` is given a **deterministic placeholder ID** of the form `"shave-atom-" + canonicalAstHash.slice(0, 8)` — content-addressable and stable across re-runs on the same source. **Why:** a parallel pipeline would duplicate the license gate / intent / decompose / slice machinery and immediately drift from `universalize()`'s invariants (Sacred Practice #12). Making `shave` an adapter means the v0.7 demo's correctness is the same as `universalize()`'s correctness; the only `shave`-specific code is the file-IO and the placeholder-ID scheme. The deterministic placeholder ID matters for WI-014-03 (persistence) and WI-014-05 (resolver wiring): both need to map placeholders back to `BlockMerkleRoot`s, and a non-deterministic placeholder would force a stateful side-channel. **How to apply:** any future ingestion entry point (URL fetch, multi-file directory ingest, streaming) is also implemented as an adapter over `universalize()`; do not duplicate the pipeline. The placeholder-ID scheme is part of the `@yakcc/shave` public contract — changes require a DEC. |
 | DEC-SHAVE-CLI-001 | The `yakcc shave` CLI subcommand bridges `@yakcc/registry`'s `Registry` interface to `@yakcc/shave`'s `ShaveRegistryView` interface via a **local adapter inside the CLI command**, not by changing either upstream API. The adapter's only substantive translation is the `getBlock(merkleRoot)` return type: registry returns `BlockTripletRow \| null`, but `ShaveRegistryView` expects `BlockTripletRow \| undefined`; the adapter does the `null → undefined` bridge inline. **Why:** changing `@yakcc/registry`'s return type to match would ripple into `@yakcc/compile`, `@yakcc/seeds`, and the test corpus — a wide blast radius for a CLI-only ergonomic preference. Changing `@yakcc/shave`'s view interface to match would couple the shave package to the registry's nullability convention, which is itself an implementation choice not a load-bearing invariant. The CLI is the right place to do the translation because the CLI is where `Registry` and `ShaveRegistryView` first meet at runtime. **How to apply:** when a future CLI subcommand needs to bridge the same two interfaces, reuse this adapter (lift it into a shared CLI helper if it gains a second caller); do not push the bridge into the registry or shave packages. |
+| DEC-V07-CLOSURE-001 | v0.7 closes at `4ded2c2` (WI-015 demo + offline-tolerant acceptance harness) plus `e7b2c64` (vitest timeout bump for the integration-test path). The v0.7 demo against `lukeed/mri` passes under the offline-tolerant harness path. **Three follow-up items did not land inside v0.7 and are explicitly lifted into v1 rather than treated as v0.7 stragglers:** WI-013-03 (property-test corpus extraction, was deferred per its own row in the v0.7 ledger) becomes WI-016; B-003 (parent-block lineage population in `atom-persist`, partial WI-015 acceptance criterion (e)) becomes WI-017; B-002 (public `seedIntentCache` test-helper export from `@yakcc/shave`, which left three `assemble-candidate.test.ts` tests skipped) becomes WI-018. **Why lift rather than backfill v0.7:** all three are prerequisites for external-facing federation work (substantive L0 verification, full provenance lineage, unblocked test coverage) and they sequence naturally with v1 wave-1, so re-opening v0.7 to backfill them would re-cut the closed substrate boundary for no operational gain. Sacred Practice #12 is preserved: there is no parallel "v0.7 with backfilled property tests" path coexisting with the closed v0.7 substrate; the property-test work simply happens at the next stage. The v0.7 Plan history milestone above is the durable record of v0.7's actual landed state at closure. |
+| DEC-V1-WAVE-1-SCOPE-001 | v1 wave-1 ships **L0 substantiation + F1 read-only-mirror federation only**. Concrete in-scope: WI-016 (property-test corpus), WI-017 (parent-block lineage), WI-018 (`seedIntentCache` helper), WI-019 (federation protocol design), WI-020 (`@yakcc/federation` F1 read-only mirror), WI-021 (v1 demo). **Out of v1 wave-1 (deferred to a follow-on v1 wave):** the WASM backend in `@yakcc/compile`; `@yakcc/hooks-cursor` and `@yakcc/hooks-codex`; F2+ attestation publishing; large-scale differential execution against upstream library sources beyond the per-target corpus that already gates WI-021. **Why this cut:** the v1 thesis (federation, additional codegen targets, additional hooks, differential validation) is four independent risk surfaces. Shipping all four at once entangles them: a federation-protocol bug looks like a WASM-codegen bug; a Cursor-hook regression looks like an attestation-publishing regression. Wave-1 isolates federation against a substrate that already has substantive L0 (WI-016 + WI-017) so the cross-machine round-trip in WI-021 is the only new variable. The deferred surfaces become independent v1-wave-2 / v1-wave-3 initiatives, each with their own first-implementer slice and Evaluation Contract, planned at the start of that wave rather than pre-committed here. **How to apply:** any PR or DEC that adds WASM/hook/F2-publishing/large-scale-fuzz scope to v1 wave-1 must be rejected at reviewer; the only legitimate way to add scope to wave-1 is a new DEC that supersedes this one with an explicit re-justification. |
+| DEC-V1-FIRST-DISPATCH-WI018-001 | The v1 wave-1 first implementer dispatch is **WI-018** (`seedIntentCache` test-helper export), not WI-016 or WI-017. **Why:** all three of WI-016, WI-017, WI-018 are technically unblocked at the start of v1 wave-1, but WI-018 is the smallest (single helper export plus three test re-enables), is fully self-contained inside `@yakcc/shave`'s test-helper surface, and ungates downstream test coverage that WI-016 (corpus extraction) will lean on for stable cache-seeded property-test runs. Picking WI-019 (federation design) first would block on a longer plan-pass; picking WI-016 or WI-017 first would land code that the WI-018-style cache-seeding tests would then have to retroactively validate. WI-018 → WI-016 → (WI-017, WI-019 in parallel) → WI-020 → WI-021 is the critical-path-shortest sequencing. **How to apply:** if WI-018 is blocked at provision time (e.g. the cache-key surface of `@yakcc/shave` has changed in a way that makes the helper export ill-shaped), the fallback first dispatch is WI-019 (plan-only, also fully unblocked). WI-016 and WI-017 do not become first-dispatch candidates until WI-018 lands; both have transitive dependencies on the cache-seeded test path. |
 
 ---
 
