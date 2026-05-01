@@ -224,6 +224,283 @@ reverse.
 
 ---
 
+## F4 adversarial-dynamics design (forward-looking)
+
+The F4 surface — `@yakcc/incentives`, bounty economy, stake-to-refine,
+Proof-of-Fuzz — is not yet implemented. This section specifies the
+adversarial threat model **before** anyone starts building it. The goal is
+to commit to a security posture now so that the implementation has a target
+rather than discovering the attack surface after the fact.
+
+Each sub-section names a threat, describes the design commitment that
+mitigates it, and lists the open questions that remain for F4 implementation
+work. Nothing here requires code changes to the current v0/v0.7 codebase;
+the current deployment is at F0/F1, and none of these primitives exist yet.
+
+---
+
+### F4-THREAT-1: Weak-spec L3 bounty farm
+
+@decision DEC-F4-THREAT-CANONICAL-SPEC-001
+
+**Threat.** F4's L3 economic premium (per `VERIFICATION.md` "Who pays for
+which level") creates an attack surface: a submitter can write a
+tautological `spec.yak` ("function returns a value of type T"), pair it
+with a useless implementation that trivially refines that spec, and harvest
+L3 bounties. Because L3 verification only checks `impl refines spec`, not
+`spec fitness-for-purpose`, the attacker captures the bounty with no value
+delivered.
+
+**Mitigation.** Bounties attach to **canonical specs**, not arbitrary
+user-submitted specs. A canonical spec is one that has either:
+
+- (a) been promoted by approved-spec-registry quorum after spec-only
+  fuzzing (the registry runs the spec against adversarial inputs to check
+  whether the spec's postconditions are non-trivial — a spec that is
+  satisfied by every possible output fails spec-only fuzzing and cannot be
+  promoted), or
+- (b) been imported from a curated cross-language semantics (e.g., the JS
+  spec for `parseInt`, the IEEE 754 spec for a floating-point rounding
+  mode).
+
+L3 attestations under bounty MUST prove `impl refines canonical_spec`, not
+`impl refines submitter_spec`. An `impl-refines-submitter-spec` proof is
+still verifiable and earns the verification artifact for the triplet
+(`BlockMerkleRoot` gets the L3 annotation); it just does not earn bounty
+payout. The canonical-spec registry records, for each `spec_hash`, a
+`bounty_eligible: bool` field set at spec-promotion time. Bounty-resolution
+logic in `@yakcc/incentives` reads this field before dispatching payout.
+
+Cross-reference: `VERIFICATION.md` §"The verification ladder" for what
+"impl refines spec" means at L3.
+
+**Open questions.** What quorum size and quorum composition trigger
+spec-promotion? How are canonical specs imported from cross-language
+sources without trusting a single curator (likely: multi-sig or
+federation-of-spec-curators with the same governance shape as the default
+trust list)? Who can propose a canonical-spec and what is the challenge
+window? These design questions are tracked as open F4 implementation items.
+
+---
+
+### F4-THREAT-2: Costless asymmetric DoS via no-ownership
+
+@decision DEC-F4-THREAT-DOS-COLLATERAL-001
+
+**Threat.** Yakcc's "no ownership" cornerstone is about IP and copyright —
+no author identity in content-addressed triplets, permissive-only licenses
+— it is NOT a statement about Sybil resistance at the submission layer. At
+F4 with public submission, an attacker can LLM-generate millions of
+canonicalization-evading malicious blocks, exhausting Proof-of-Fuzz miner
+budgets at zero cost while the network spends real compute fuzzing each
+one. The constitutional canonicalizer (DEC-VERIFY-009) forecloses on
+structural duplicates, but a sufficiently diverse generation campaign
+produces genuine syntactic variants that each pass the canonicalization
+gate.
+
+**Mitigation.** Per-submission economic friction proportional to expected
+fuzzing cost. Two non-exclusive paths:
+
+- **Submission collateral (default path).** Every F4 block submission
+  carries a small stake. If PoF miners find a fuzz-budget contract
+  violation before the block reaches the acceptance threshold, the stake
+  slashes to the miners. If the block passes PoF sampling and reaches
+  acceptance, the stake is returned to the submitter. Stake amount tracks
+  the rolling median fuzz-cost-per-block (an on-chain oracle maintained
+  from observed PoF miner reports, auto-adjusted per F4 protocol epoch).
+
+- **Hashcash fallback (F0/F1-friendly alternative).** If token-collateral
+  violates the substrate's onboarding-friction goals (a new user should not
+  need to acquire stake before they can contribute a block), the submission
+  carries a Proof-of-Work nonce whose computational cost equals the
+  network's expected fuzz cost for a block of that complexity class. PoW
+  difficulty auto-adjusts per epoch from the rolling fuzz-cost average.
+  Hashcash requires no token ownership; it requires only computation, which
+  aligns with the cornerstone's "rewards compute and verification labor"
+  framing.
+
+Submission collateral is the default path for F4 participants who already
+hold stake; hashcash is the fallback for first-time contributors and F0/F1
+deployments that want to interoperate with F4 without full economic
+participation.
+
+Cross-reference: "Proof-of-Fuzz" and "Bounties" sections above for the PoF
+mechanics this threat targets.
+
+**Open questions.** How is collateral stake denominated before the network
+has a decided native token? (Yakcc-as-currently-planned does not specify
+token mechanics; stake denomination is a F4 implementation parameter.)
+Hashcash is more cornerstone-aligned because it requires no ownership of
+any specific asset; the design should prefer hashcash unless
+collateral provides a materially stronger DoS floor.
+
+---
+
+### F4-THREAT-3: Benchmark overfitting in batch windows
+
+@decision DEC-F4-THREAT-BENCHMARK-DYNAMIC-001
+
+**Threat.** F4 allows "selection winner" refinement claims — e.g., "I am
+the fastest implementation of contract C on benchmark X; here is my stake."
+If benchmark inputs are publicly known at submission time, an attacker can
+hardcode fast-paths for those exact inputs, winning the speed tie-breaker
+with code that is terrible (or actively malicious) on real workloads. This
+is the standard "Goodhart's Law" failure applied to benchmark-based
+selection.
+
+**Mitigation.** Refinement-claim benchmarks MUST be dynamic at evaluation
+time. Three layers:
+
+- **Fuzz-derived inputs.** The benchmark suite for a refinement claim is
+  generated by the PoF fuzzing engine AFTER the claim is submitted, using
+  the fuzz seeds active in the current verification window. Submitters
+  cannot pre-tune to a known corpus because the corpus does not exist at
+  submission time.
+
+- **Hidden-corpus split.** For refinement claims that need cross-
+  implementation comparison across multiple batch windows (e.g., "I am
+  faster than all three existing selection winners"), publish 20% of the
+  benchmark suite as a public split for local testing and reproducibility,
+  and keep 80% as a hidden split evaluated only by the F2+ verifier-citizen
+  committee (see F4-THREAT-4 for committee selection). The 20/80 split is
+  a protocol parameter adjustable per F4 epoch.
+
+- **Algorithmic-complexity penalty.** The AST canonicalizer
+  (DEC-VERIFY-009) flags blocks whose cyclomatic complexity analysis shows
+  a pattern consistent with "if/else input matching at scale" — a block
+  that branches on specific input values rather than computing a general
+  result. Such blocks receive a structural complexity discount on their
+  refinement score; a block that is fast only because it hardcodes the 80
+  benchmark inputs and is O(n²) on the 80+1th input cannot beat a genuine
+  O(log n) implementation.
+
+Cross-reference: "Stake-to-Refine" above for the broader refinement-claim
+mechanism. Cross-reference F4-THREAT-4 for the committee-selection that
+evaluates the hidden split.
+
+**Open questions.** How does the hidden-corpus 80% reach committee verifiers
+without leaking to the submitter? Likely: VRF-selected committee per
+F4-THREAT-4 receives an encrypted blob whose decryption key is released
+only at evaluation time. Key management for the encrypted blob is an open
+design question.
+
+---
+
+### F4-THREAT-4: Stake-to-refine Sybil collusion
+
+@decision DEC-F4-THREAT-VRF-COMMITTEE-001
+
+**Threat.** Stake-to-refine allows a submitter to claim "my block is
+faster/safer/smaller" with stake at risk. Without committee design, an
+attacker who controls N nodes can self-validate their own refinement claim
+by voting unanimously yes on the committee, slash nothing (their own nodes
+disagree with nobody), and capture network yield while planting backdoors
+in blocks whose refinement claims they validated. At F4 the attacker
+operates N nodes at low marginal cost since they own the stake across all
+of them.
+
+**Mitigation.**
+
+- **Verifier-citizen staking for committee participation.** F2
+  verifier-citizens (who already exist at F2, per the F-axis table above)
+  must stake to participate in refinement-claim validation under F4. "No
+  ownership of code" does not mean "no accountability for verification
+  labor." Staking to validate is conceptually equivalent to staking on a
+  claim: the verifier-citizen vouches that their evaluation is honest and
+  loses stake if the vouching proves wrong. Staking is on verification
+  *labor*, not on code *authorship*; the cornerstone is preserved.
+
+- **VRF committee selection.** When a refinement claim is submitted, a
+  Verifiable Random Function selects a small committee from the pool of
+  staked verifier-citizens. The VRF input includes the refinement claim's
+  content-address (uncontrollable by the submitter) and a network-epoch
+  seed (uncontrollable by any single participant). The submitter cannot
+  predict or influence which nodes will evaluate their claim. Committee
+  size (e.g., 7–21 nodes) and quorum threshold (e.g., 2/3+1) are F4
+  protocol parameters.
+
+- **Consensus slashing.** A verifier-citizen whose vote diverges from the
+  committee majority on a refinement claim loses stake proportional to the
+  divergence. A single outlier on a 15-node committee pays a small
+  penalty; systematic disagreement — as occurs when a Sybil cluster tries
+  to flip a result — requires >50% of total staked verifier weight to vote
+  dishonestly. Sybil attacks become economically viable only when the
+  attacker controls the majority of total staked verifier weight rather
+  than a fixed N cheap nodes.
+
+Cross-reference: F4-THREAT-3 for the hidden-corpus encrypted blob that
+this committee evaluates. Cross-reference "Verifier collusion" in the
+"Adversarial considerations" section above for the F2/F3-level framing of
+this threat class.
+
+**Open questions.** Bootstrapping: how does the network reach enough total
+staked verifier weight that 51% is expensive before the F4 economy is
+mature? Likely: F4 runs with reduced refinement-payout multipliers until
+total staked verifier weight passes a configurable security threshold
+(a protocol parameter). What is that threshold? Empirical; to be tuned
+during F4 deployment.
+
+---
+
+### F4-THREAT-5: Proof-converter trust during verifier-engine upgrade
+
+@decision DEC-F4-THREAT-CONVERTER-SHADOW-001
+
+**Threat.** L3 attestations are produced under a specific verifier-engine
+version (e.g., `lean@4.7.1`). When the verifier engine is upgraded, prior
+L3 attestations must be migrated. A "proof-converter agent" that
+auto-migrates old attestations to new format (see "Attestation transfer"
+in the "Verifier-as-block" section of `VERIFICATION.md`) is a single
+trusted component. If that component is compromised or subtly incorrect
+during the upgrade window, it can mint fake L3 attestations for
+backdoored blocks before the network detects the discrepancy.
+
+**Mitigation.**
+
+- **Self-verification requirement.** The proof-converter must itself be an
+  L3-verified block. The converter's own correctness lemma — formally,
+  "an attestation valid under engine A and convertible by this converter
+  produces a semantically-equivalent attestation under engine B" — must be
+  machine-checked under the OLD engine before the converter is deployed.
+  If no such machine-checked lemma exists (because the upgrade changes
+  semantics in a way that cannot be formally bridged), no auto-conversion
+  is allowed; the network must re-verify all L3 attestations from scratch
+  under the new engine rather than trusting the converter.
+
+- **Shadow-verification window.** Even with a self-verified converter, the
+  network does NOT unilaterally accept its outputs at deployment time. For
+  a configurable window (default: one F4 protocol epoch), the converter
+  PROPOSES new attestation hashes but does not finalize them. During the
+  shadow window, the network randomly samples 1% of proposed conversions
+  and runs full re-verification under the new engine against the sampled
+  set. A proposed conversion goes "official" only after the shadow window
+  completes with zero failures across all sampled conversions.
+
+- **Poison-pill abort.** A single shadow-sample failure — one sampled
+  conversion that does not reproduce under independent re-verification —
+  aborts the entire converter deployment. The converter's content-address
+  is blacklisted, the governance bond of the proposing entity is slashed,
+  and the verifier engine upgrade reverts. The network then chooses between
+  (a) running full re-verification on every existing L3 attestation under
+  the new engine, or (b) rejecting the new engine until a corrected
+  converter is available. Slashing the governance bond makes proposing an
+  incorrect converter economically costly even if the proposal is
+  inadvertent.
+
+Cross-reference: `VERIFICATION.md` §"Verifier rotation" and §"Attestation
+transfer" for the broader rotation mechanics. Cross-reference
+DEC-VERIFY-L3-LIFECYCLE-001 in `VERIFICATION.md` for the L3 attestation
+versioning and lifecycle that this threat model protects.
+
+**Open questions.** Who is the "proposing entity" that holds the governance
+bond? Is "governance bond" a formal F4-level mechanism with its own
+slashing curve, or an informal social commitment formalized later? The
+answer shapes whether F4 needs a separate governance-bond registry or
+whether it reuses the verifier-citizen staking pool. Likely needs its own
+section in a future F4 governance design document.
+
+---
+
 ## Network architecture (F3+)
 
 F3 introduces three layers. None of them is implemented in v0/v0.5/v0.7;
@@ -788,3 +1065,8 @@ reference, not silent edits.
 | DEC-FED-005 | F4 economic primitives: Proof of Fuzz (rewards finding contract deviations; deprecates failing blocks), Bounties (reward synthesizers of unmatched proposals; batch-resolution windows mitigate front-running), Stake-to-Refine (refinement claims require stake; benchmarker-verified; failed/backdoored claims burn stake). The canonicalization engine collapses duplicates before resolution. L3 attestations earn ~10x L2 to populate the proof tier; TCB unsoundness bounties earn ~10x completeness bounties. |
 | DEC-FED-006 | Trust list governance is per-caller (sovereign local policy). The shipped default is itself governance and is deferred as a user-decision boundary, not chosen unilaterally by this document. F0/F1/F2 ship without a default; F3/F4 require the governance question to be answered by whoever deploys the public network. |
 | DEC-FED-007 | The canonicalization engine is constitutional (lives in `@yakcc/contracts`), not F4-owned. It runs on every yakcc deployment from F0 outward; F4 amplifies its reach (across bounty batch windows) but does not own it. Earlier drafts framed it as F4 anti-spam; that framing is superseded. F4 economic flows (Stake-to-Refine, Bounties, batch-resolution windows) consult the constitutional canonicalizer; they do not maintain a parallel one (Sacred Practice #12). The user's "optional layer" framing requires this — private use must remain first-class, including its access to the universalizer pipeline. Source: `suggestions.txt` ask #1, surfaced into the constitutional layer per `VERIFICATION.md` DEC-VERIFY-009. |
+| DEC-F4-THREAT-CANONICAL-SPEC-001 | F4 bounties attach to canonical specs, not arbitrary submitter specs. A canonical spec requires either (a) approved-spec-registry quorum promotion after spec-only fuzzing, or (b) import from curated cross-language semantics. Each spec carries `bounty_eligible: bool`; L3 proofs against non-canonical specs earn verification artifacts but not bounty payout. |
+| DEC-F4-THREAT-DOS-COLLATERAL-001 | Per-submission economic friction proportional to expected PoF cost. Default path: submission collateral (token stake slashed on fuzz-budget violation, returned on acceptance). Fallback: hashcash PoW nonce whose cost equals network's expected fuzz cost. Hashcash preferred for cornerstone alignment (no token ownership required). Stake amounts auto-adjusted per F4 protocol epoch from rolling median fuzz-cost-per-block. |
+| DEC-F4-THREAT-BENCHMARK-DYNAMIC-001 | Refinement-claim benchmark suites are dynamic: generated by PoF fuzzer AFTER submission (no pre-tuning); split 20/80 public/hidden; AST canonicalizer penalizes cyclomatic-complexity patterns consistent with input overfitting. Hidden 80% evaluated by VRF-selected committee only. |
+| DEC-F4-THREAT-VRF-COMMITTEE-001 | Refinement-claim validation uses VRF-selected committees from staked verifier-citizens (F2+ staking extends to F4 validation labor). VRF input = refinement claim content-address + network epoch seed (neither submitter-controllable). Consensus slashing: a verifier whose vote diverges from committee majority loses stake proportional to divergence; Sybil attacks require >50% of total staked verifier weight. |
+| DEC-F4-THREAT-CONVERTER-SHADOW-001 | Proof-converter agents (for L3 attestation migration across verifier-engine upgrades) must: (1) be L3-verified blocks with a machine-checked correctness lemma under the old engine, (2) operate under a shadow-verification window (default: one F4 epoch) during which 1% of conversions are independently re-verified, (3) abort entirely on a single shadow-sample failure with governance bond slashed. No auto-conversion without a machine-checked correctness lemma. |
