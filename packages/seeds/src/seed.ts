@@ -108,6 +108,9 @@ export async function seedRegistry(registry: Registry): Promise<SeedResult> {
       // canonicalAstHash is the content-address of the implementation AST,
       // used for cross-spec reuse detection (DEC-REGISTRY-CANONICAL-AST-HASH-001).
       canonicalAstHash: canonicalAstHash(result.implSource) as CanonicalAstHash,
+      // artifact bytes parsed from proof/ by parseBlockTriplet — required by
+      // BlockTripletRow (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
+      artifacts: result.artifacts,
     };
 
     await registry.storeBlock(row);

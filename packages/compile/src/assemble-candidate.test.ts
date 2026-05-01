@@ -186,6 +186,7 @@ async function storeBlock(
     createdAt: Date.now(),
     canonicalAstHash: canonicalAstHash(implSource),
     parentBlockRoot: null,
+    artifacts: artifactsMap,
   };
 
   await reg.storeBlock(row);

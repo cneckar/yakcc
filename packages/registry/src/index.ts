@@ -7,6 +7,15 @@
 // reserved columns for either in any type exported from this package.
 // Status: decided (MASTER_PLAN.md DEC-NO-OWNERSHIP-011)
 
+// @decision DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: BlockTripletRow.artifacts
+// threads artifact bytes from buildTriplet through registry storage and onto
+// the federation wire. The field is required (NOT optional) — a missing-field
+// default would silently treat "no artifacts" the same as "never threaded
+// artifacts through" (Sacred Practice #5). Keyed by manifest-declared path;
+// no ownership columns (DEC-NO-OWNERSHIP-011). Pre-WI-022 rows backfill with
+// empty Map; their pre-existing blockMerkleRoot values are not recomputed.
+// Status: decided (MASTER_PLAN.md WI-022)
+
 // @decision DEC-SCHEMA-MIGRATION-002: WI-T03 replaces the v0 (contracts,
 // implementations) two-table schema with a single `blocks` table keyed by
 // BlockMerkleRoot with a spec_hash index. The public API surface changes:
@@ -64,6 +73,21 @@ export interface BlockTripletRow {
    * callers should default to null when constructing rows today.
    */
   readonly parentBlockRoot?: BlockMerkleRoot | null;
+  /**
+   * Artifact bytes keyed by manifest-declared path (same paths as
+   * `manifest.artifacts[*].path`). This Map is the single source of truth for
+   * the artifact bytes that fed into `blockMerkleRoot()` — it MUST be the exact
+   * Map passed to `blockMerkleRoot({..., artifacts})` at row-construction time.
+   *
+   * Required (NOT optional). Callers that have no artifact bytes supply
+   * `new Map()`. A missing field is a compile-time error — Sacred Practice #5.
+   *
+   * Pre-WI-022 rows that were persisted before this field existed hydrate with
+   * `new Map()` (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002 migration note).
+   *
+   * No ownership-shaped keys or values — DEC-NO-OWNERSHIP-011.
+   */
+  readonly artifacts: ReadonlyMap<string, Uint8Array>;
 }
 
 /**

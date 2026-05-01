@@ -130,6 +130,7 @@ function makeBlockRow(
     level: "L0",
     createdAt: Date.now(),
     canonicalAstHash: canonicalAstHash(implSource),
+    artifacts: artifactsMap,
   };
 
   return { row, merkleRoot: root, specHashValue };

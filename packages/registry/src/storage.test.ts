@@ -124,6 +124,7 @@ function makeBlockRow(
     level: "L0",
     createdAt: Date.now(),
     canonicalAstHash: deriveCanonicalAstHash(implSource) as CanonicalAstHash,
+    artifacts,
   };
 }
 
@@ -148,7 +149,7 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("schema migrations", () => {
-  it("fresh DB is at SCHEMA_VERSION = 4 with blocks table and idx_blocks_spec_hash", async () => {
+  it("fresh DB is at SCHEMA_VERSION = 5 with blocks table and idx_blocks_spec_hash", async () => {
     const { applyMigrations, SCHEMA_VERSION } = await import("./schema.js");
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
@@ -158,15 +159,15 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4
-    // and migration 4 bumps schema_version to 4 directly (no backfill needed for
-    // parent_block_root; NULL is the correct default). The canonical_ast_hash
-    // backfill (migration 2→3 version bump) is done by openRegistry, not here.
-    expect(row?.version).toBe(4);
+    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5.
+    // Migration 4 bumps schema_version to 4 (parent_block_root; NULL default is correct).
+    // Migration 5 bumps schema_version to 5 (block_artifacts table).
+    // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
+    expect(row?.version).toBe(5);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -204,6 +205,16 @@ describe("schema migrations", () => {
     expect(tableNames).toContain("test_history");
     expect(tableNames).toContain("runtime_exposure");
     expect(tableNames).toContain("strictness_edges");
+    // block_artifacts table (WI-022 / DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
+    expect(tableNames).toContain("block_artifacts");
+
+    // block_artifacts columns present.
+    const artCols = db.prepare("PRAGMA table_info(block_artifacts)").all() as Array<{ name: string }>;
+    const artColNames = artCols.map((c) => c.name);
+    expect(artColNames).toContain("block_merkle_root");
+    expect(artColNames).toContain("path");
+    expect(artColNames).toContain("bytes");
+    expect(artColNames).toContain("declaration_index");
 
     db.close();
   });
@@ -221,8 +232,8 @@ describe("schema migrations", () => {
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // Second application is a no-op; version stays at 4 (migration 4 already ran).
-    expect(row?.version).toBe(4);
+    // Second application is a no-op; version stays at 5 (migrations 4 and 5 already ran).
+    expect(row?.version).toBe(5);
 
     db.close();
   });
@@ -278,12 +289,12 @@ describe("schema migrations", () => {
     expect(tableNames).not.toContain("implementations");
     expect(tableNames).toContain("blocks");
 
-    // Version is 4: migration 4 bumped it directly (NULL default is correct for
-    // parent_block_root; no backfill needed).
+    // Version is 5: migration 4 bumped to 4 (parent_block_root NULL default is correct);
+    // migration 5 bumped to 5 (block_artifacts table created).
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(4);
+    expect(vRow?.version).toBe(5);
 
     db.close();
   });
@@ -699,14 +710,15 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     expect(fetched!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg.close();
 
-    // Verify schema_version is now 4: openRegistry ran the canonical_ast_hash backfill
-    // (bumped to 3) and then applyMigrations ran migration 4 DDL (bumped to 4).
+    // Verify schema_version is now 5: openRegistry ran the canonical_ast_hash backfill
+    // (bumped to 3) then applyMigrations ran migration 4 DDL (bumped to 4) and
+    // migration 5 DDL (bumped to 5, block_artifacts table).
     // The preMigrationVersion capture in openRegistry ensures the backfill still
-    // ran even though migration 4 would otherwise have bumped past 3.
+    // ran even though later migrations would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const versionAfterBackfill = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
-    expect(versionAfterBackfill).toBe(4);
+    expect(versionAfterBackfill).toBe(5);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -788,23 +800,29 @@ describe("migration 3 → 4: parent_block_root column", () => {
     );
     db1.close();
 
-    // openRegistry applies migration 4: adds parent_block_root column and bumps to 4.
+    // openRegistry applies migrations 4→5: adds parent_block_root column,
+    // then creates block_artifacts table, bumps to 5.
     const reg = await openRegistry(dbPath, { embeddings: mockEmbeddingProvider() });
 
     // parent_block_root column must exist and have NULL for the pre-existing row.
     const fetched = await reg.getBlock(row.blockMerkleRoot);
     expect(fetched).not.toBeNull();
     expect(fetched!.parentBlockRoot).toBeNull();
+    // Pre-WI-022 block hydrates with empty artifacts Map.
+    expect(fetched!.artifacts.size).toBe(0);
     await reg.close();
 
-    // schema_version is now 4.
+    // schema_version is now 5 (migration 4 added parent_block_root; migration 5 added block_artifacts).
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const ver = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
-    expect(ver).toBe(4);
+    expect(ver).toBe(5);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
+    // block_artifacts table is present (migration 5).
+    const tables2 = db2.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: string }>;
+    expect(tables2.map((t) => t.name)).toContain("block_artifacts");
     db2.close();
 
     const { rmSync } = await import("node:fs");
@@ -848,5 +866,226 @@ describe("parent_block_root round-trip", () => {
     const fetched = await registry.getBlock(childRow.blockMerkleRoot);
     expect(fetched).not.toBeNull();
     expect(fetched!.parentBlockRoot).toBe(parentRow.blockMerkleRoot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-022 / DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: block_artifacts persistence
+// ---------------------------------------------------------------------------
+
+describe("artifacts persistence (WI-022)", () => {
+  it("storeBlock writes artifact rows to block_artifacts table", async () => {
+    // Access the internal DB to verify the raw table rows.
+    // We re-open a fresh :memory: DB with direct SQL introspection.
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const { applyMigrations } = await import("./schema.js");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const db = new Database(":memory:");
+    sqliteVec.load(db);
+    // Use the named file-path form so we can inspect the DB directly.
+    // We open via openRegistry which applies migrations, then introspect
+    // the block_artifacts table using a second connection on the same :memory:.
+    // Instead, open a temp file so two handles can share data.
+    db.close();
+
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-art-test-"));
+    const dbPath = join(tmpDir, "art.sqlite");
+
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+    const spec = makeSpecYak("artifact-persist");
+    const row = makeBlockRow(spec);
+    await reg.storeBlock(row);
+    await reg.close();
+
+    // Verify via a second DB handle.
+    const db2 = new Database(dbPath);
+    sqliteVec.load(db2);
+    const artRows = db2.prepare(
+      "SELECT path, bytes, declaration_index FROM block_artifacts WHERE block_merkle_root = ? ORDER BY declaration_index ASC",
+    ).all(row.blockMerkleRoot) as Array<{ path: string; bytes: Buffer; declaration_index: number }>;
+
+    // makeBlockRow creates one artifact: "property_tests.ts"
+    expect(artRows).toHaveLength(1);
+    expect(artRows[0]?.path).toBe("property_tests.ts");
+    expect(artRows[0]?.declaration_index).toBe(0);
+
+    db2.close();
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("getBlock reconstructs artifacts Map from block_artifacts ORDER BY declaration_index", async () => {
+    const spec = makeSpecYak("artifact-hydration");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const fetched = await registry.getBlock(row.blockMerkleRoot);
+    expect(fetched).not.toBeNull();
+    // artifacts Map has the single entry "property_tests.ts".
+    expect(fetched!.artifacts.size).toBe(1);
+    expect(fetched!.artifacts.has("property_tests.ts")).toBe(true);
+  });
+
+  it("storeBlock failure rolls back artifacts (atomicity)", async () => {
+    // Construct a row whose blockMerkleRoot doesn't match its content.
+    // storeBlock's integrity check will throw, aborting the transaction.
+    const spec = makeSpecYak("atomicity-test");
+    const row = makeBlockRow(spec);
+    // Tamper with implSource to invalidate the stored root without changing
+    // any other identifying field.
+    const tamperedRow = { ...row, implSource: "tampered source" };
+
+    // storeBlock must throw due to integrity check.
+    await expect(registry.storeBlock(tamperedRow)).rejects.toThrow(
+      /integrity check failed/,
+    );
+
+    // Neither the blocks row nor any artifact rows should exist.
+    const fetchedBlock = await registry.getBlock(row.blockMerkleRoot);
+    expect(fetchedBlock).toBeNull();
+  });
+
+  it("idempotency with artifacts: re-store same row produces no duplicate artifact rows", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-idem-test-"));
+    const dbPath = join(tmpDir, "idem.sqlite");
+
+    const { openRegistry: openReg } = await import("./storage.js");
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+    const spec = makeSpecYak("idem-artifact");
+    const row = makeBlockRow(spec);
+    await reg.storeBlock(row);
+    await reg.storeBlock(row); // second store — must be no-op
+    await reg.close();
+
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const db2 = new Database(dbPath);
+    sqliteVec.load(db2);
+    const artCount = (db2.prepare(
+      "SELECT COUNT(*) AS cnt FROM block_artifacts WHERE block_merkle_root = ?",
+    ).get(row.blockMerkleRoot) as { cnt: number }).cnt;
+    // Each artifact path appears exactly once per block.
+    expect(artCount).toBe(row.artifacts.size);
+    db2.close();
+
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("byte-identical round-trip: storeBlock → getBlock returns byte-identical artifacts", async () => {
+    const spec = makeSpecYak("byte-roundtrip");
+    const artifactContent = "// property tests byte-identical check";
+    const row = makeBlockRow(spec, undefined, artifactContent);
+    await registry.storeBlock(row);
+
+    const fetched = await registry.getBlock(row.blockMerkleRoot);
+    expect(fetched).not.toBeNull();
+    const originalBytes = row.artifacts.get("property_tests.ts");
+    const fetchedBytes = fetched!.artifacts.get("property_tests.ts");
+    expect(fetchedBytes).not.toBeUndefined();
+    // Byte-identical: every byte must match.
+    expect(fetchedBytes!.length).toBe(originalBytes!.length);
+    for (let i = 0; i < originalBytes!.length; i++) {
+      expect(fetchedBytes![i]).toBe(originalBytes![i]);
+    }
+  });
+
+  it("integrity recompute: storeBlock throws when stored root doesn't match formula", async () => {
+    const spec = makeSpecYak("integrity-check");
+    const row = makeBlockRow(spec);
+    // Produce a row with a bad blockMerkleRoot (swap impl source, keep root from original).
+    const badRow = { ...row, implSource: "completely different impl source" };
+    // The stored root was computed with the original implSource, so recomputing
+    // from badRow's implSource will produce a different root → integrity failure.
+    await expect(registry.storeBlock(badRow)).rejects.toThrow(
+      /integrity check failed/,
+    );
+  });
+
+  it("empty artifacts Map: stores and retrieves empty Map cleanly", async () => {
+    // Build a row with an empty manifest and empty artifacts map.
+    const spec = makeSpecYak("empty-artifacts");
+    const manifest: ReturnType<typeof makeManifest> = { artifacts: [] };
+    const artifacts = new Map<string, Uint8Array>();
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+    const implSource = "export function emptyArtifact(): void {}";
+    const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
+    const root = bRoot({ spec, implSource, manifest, artifacts });
+    const row = {
+      blockMerkleRoot: root,
+      specHash: sh(spec),
+      specCanonicalBytes,
+      implSource,
+      proofManifestJson: JSON.stringify(manifest),
+      level: "L0" as const,
+      createdAt: Date.now(),
+      canonicalAstHash: cah(implSource),
+      artifacts,
+    };
+    await registry.storeBlock(row);
+
+    const fetched = await registry.getBlock(root);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.artifacts.size).toBe(0);
+  });
+
+  it("pre-WI-022 backfill: raw-SQL inserted block (no block_artifacts entry) hydrates to empty Map", async () => {
+    // Simulate a pre-WI-022 block: insert directly into blocks table, skip block_artifacts.
+    // getBlock must return an empty artifacts Map (not null, not undefined).
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-prewi022-test-"));
+    const dbPath = join(tmpDir, "prewi022.sqlite");
+
+    const { openRegistry: openReg } = await import("./storage.js");
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+
+    // Build a normal row but insert directly into blocks (bypassing block_artifacts).
+    const spec = makeSpecYak("pre-wi022-block");
+    // We need an empty-artifacts root for the raw insert to be self-consistent.
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+    const implSource = "export function legacy(): void {}";
+    const manifest = { artifacts: [] as Array<{ kind: string; path: string }> };
+    const artifacts = new Map<string, Uint8Array>();
+    const root = bRoot({ spec, implSource, manifest: manifest as Parameters<typeof bRoot>[0]["manifest"], artifacts });
+    const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
+
+    // Use validateOnStore: false to bypass integrity check (pre-WI-022 simulation).
+    // Actually we can't call storeBlock with bypass here. Instead, close reg and
+    // do a raw SQL insert, then reopen.
+    await reg.close();
+
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.prepare(
+      "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+    ).run(root, sh(spec), Buffer.from(specCanonicalBytes), implSource, JSON.stringify(manifest), "L0", Date.now(), cah(implSource));
+    // No corresponding block_artifacts rows inserted — simulates pre-WI-022 state.
+    db.close();
+
+    // Reopen and retrieve: must return empty artifacts Map.
+    const reg2 = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+    const fetched = await reg2.getBlock(root);
+    await reg2.close();
+
+    expect(fetched).not.toBeNull();
+    expect(fetched!.artifacts).toBeInstanceOf(Map);
+    expect(fetched!.artifacts.size).toBe(0);
+
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });

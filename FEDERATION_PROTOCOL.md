@@ -158,7 +158,7 @@ Content-Type: application/json
 
 {
   "protocolVersion": "v1",
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "blockCount": 1234,
   "rootsDigest": "<hex>",
   "rootsDigestAlgorithm": "blake3-256",
@@ -173,7 +173,8 @@ the catalog enumeration. v1 wave-1 implementations may treat this as
 advisory; correctness does not depend on it.
 
 `schemaVersion` matches the registry schema version (`SCHEMA_VERSION` in
-`@yakcc/registry`). v1 wave-1 ships against schema version 4 (current).
+`@yakcc/registry`). v1 wave-1 ships against schema version 5 (current,
+updated by WI-022 which added the `block_artifacts` table).
 A version mismatch is a hard error: the client refuses to mirror.
 
 #### `GET /v1/blocks`
@@ -379,6 +380,25 @@ fields. DEC-NO-OWNERSHIP-011 holds.
   lineage-transfer endpoint. If A's atom-persist set `parentBlockRoot =
   X`, then B's mirrored copy carries `parentBlockRoot = X`. This is one of
   WI-021's acceptance criteria (b).
+- **`artifactBytes`** — the artifact bytes map (added by WI-022,
+  `DEC-V1-FEDERATION-WIRE-ARTIFACTS-002`). Each entry corresponds to one
+  path declared in `proofManifestJson.artifacts[*].path`, in declaration
+  order. The receiver MUST decode each base64 value back to `Uint8Array`,
+  reconstruct a `Map<string, Uint8Array>` in declaration order, and pass
+  it to `@yakcc/contracts` `blockMerkleRoot({ spec, implSource, manifest,
+  artifacts })` to verify the received `blockMerkleRoot`. Missing or extra
+  keys relative to the manifest are an integrity failure. An empty
+  `artifactBytes` object (`{}`) is valid for blocks whose manifest
+  declares zero artifacts; the receiver hydrates it as `new Map()`.
+  Pre-WI-022 blocks that were persisted before this field existed have no
+  `block_artifacts` rows in the registry and hydrate locally as
+  `new Map()` — they are NOT federation-eligible by construction: the
+  wire integrity gate will reject them at the receiver because the
+  recomputed root will not match (the sender included zero artifact bytes
+  in the root, which is only consistent if the manifest also declares
+  zero artifacts). Operators wishing to federate pre-WI-022 blocks must
+  re-persist them through the WI-022 path with explicit artifact bytes.
+  No ownership-shaped keys or values — `DEC-NO-OWNERSHIP-011`.
 
 ### Property-test corpora (WI-016 artifact)
 
@@ -722,9 +742,9 @@ does not reach for any of them:
 - **Delta encoding.** "Give me every block since timestamp T." v1 ships
   set-difference via the catalog cursor; delta-by-time is a performance
   enhancement, not a correctness requirement.
-- **Cross-version migration.** Schema-version 4 talks to schema-version 4
-  and nothing else. v1.1 with schema-version 5 will need a migration
-  story; not v1 wave-1's job.
+- **Cross-version migration.** Schema-version 5 talks to schema-version 5
+  and nothing else. A future v1.1 with schema-version 6+ will need a
+  migration story; not v1 wave-1's job.
 - **Non-HTTP transports.** libp2p, IPFS, custom binary. The `Transport`
   interface (§5) makes these slot-in possible without rewriting the
   merge logic, but no non-HTTP transport ships in v1 wave-1.

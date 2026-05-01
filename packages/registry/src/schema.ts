@@ -25,7 +25,7 @@
  * The `schema_version` table stores the applied version; `applyMigrations`
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -312,6 +312,70 @@ const MIGRATION_4_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 4 → 5: add block_artifacts table (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: Add block_artifacts table.
+// Status: decided (MASTER_PLAN.md WI-022)
+// Rationale: BlockTripletRow.artifacts closes the gap between the contracts
+// blockMerkleRoot() formula (which has folded artifact bytes since v0.6) and
+// the storage/shave persist path (which computed the formula with bytes but
+// then dropped them). The table is keyed by (block_merkle_root, path) with a
+// composite PRIMARY KEY, matching the manifest's declared path set.
+// declaration_index preserves manifest order for deterministic Map hydration.
+//
+// Migration note: pre-WI-022 rows had their merkle root computed against
+// whatever artifact bytes the persister had at write time. Back-deriving bytes
+// for those rows risks producing a different Map and invalidating the stored
+// root. The migration therefore backfills zero rows per pre-existing block
+// (empty Map at hydrate time). Pre-WI-022 rows are NOT federation-eligible
+// by construction (wire integrity gate will reject them); they are NOT
+// corrupted in the local registry.
+//
+// Idempotency note: CREATE TABLE IF NOT EXISTS is used, so the migration is
+// naturally idempotent — no try/catch needed for the CREATE TABLE statement
+// itself. The version bump to 5 is the only state change that needs recovery
+// semantics (a crash between the CREATE TABLE and the version bump leaves
+// table present at version=4; re-entry runs CREATE TABLE IF NOT EXISTS as a
+// no-op and bumps to 5 normally).
+
+/**
+ * SQL statements for migration 5.
+ *
+ * Creates the `block_artifacts` table that stores one row per artifact
+ * entry of a block's proof manifest. Each row holds:
+ *   - block_merkle_root: FK → blocks.block_merkle_root
+ *   - path: the manifest-declared artifact path (e.g. "property_tests.ts")
+ *   - bytes: the raw artifact bytes (BLOB)
+ *   - declaration_index: position in manifest.artifacts array (0-based),
+ *     used to reconstruct the Map in declaration order on hydration.
+ *
+ * Composite PRIMARY KEY (block_merkle_root, path) enforces uniqueness per
+ * block+path combination and provides the idempotency guarantee for re-stores.
+ *
+ * No ownership-shaped columns — DEC-NO-OWNERSHIP-011.
+ */
+const MIGRATION_5_DDL: readonly string[] = [
+  // block_artifacts: one row per artifact entry per block.
+  // block_merkle_root: FK → blocks(block_merkle_root).
+  // path: manifest-declared artifact path (e.g. "property_tests.ts").
+  // bytes: raw artifact bytes, BLOB.
+  // declaration_index: manifest.artifacts array position (0-based).
+  // Composite PK enforces uniqueness; declaration_index enables ordered hydration.
+  // No ownership columns — DEC-NO-OWNERSHIP-011.
+  `CREATE TABLE IF NOT EXISTS block_artifacts (
+    block_merkle_root TEXT    NOT NULL REFERENCES blocks(block_merkle_root),
+    path              TEXT    NOT NULL,
+    bytes             BLOB    NOT NULL,
+    declaration_index INTEGER NOT NULL,
+    PRIMARY KEY (block_merkle_root, path)
+  )`,
+  // Non-unique index on block_merkle_root for efficient artifact hydration
+  // (ORDER BY declaration_index) when loading all artifacts for a given block.
+  "CREATE INDEX IF NOT EXISTS idx_block_artifacts_block_merkle_root ON block_artifacts(block_merkle_root)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -342,6 +406,8 @@ export interface MigrationsDb {
  *   0 → 1: initial v0 schema (contracts, implementations, v0 ancillaries).
  *   1 → 2: clean re-create as blocks table (DEC-SCHEMA-MIGRATION-002).
  *   2 → 3: add canonical_ast_hash column + non-unique index (DEC-REGISTRY-AST-HASH-002).
+ *   3 → 4: add parent_block_root column + non-unique index (DEC-REGISTRY-PARENT-BLOCK-004).
+ *   4 → 5: add block_artifacts table + index (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -468,5 +534,20 @@ export function applyMigrations(db: MigrationsDb): void {
     // Bump version: no backfill required (NULL is the correct default).
     db.prepare("UPDATE schema_version SET version = ?").run(4);
   }
-  // Future migrations: add `if (currentVersion < 5) { ... }` blocks here.
+
+  // Migration 4 → 5: add block_artifacts table + index (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
+  // CREATE TABLE IF NOT EXISTS is naturally idempotent — no try/catch needed for the DDL.
+  // A crash between CREATE TABLE and the version bump leaves the table present at version=4;
+  // re-entry runs CREATE TABLE IF NOT EXISTS as a no-op and bumps to 5 normally.
+  // CREATE INDEX IF NOT EXISTS is always idempotent.
+  //
+  // No backfill: pre-WI-022 blocks get zero rows in block_artifacts (empty Map at hydrate
+  // time). Back-deriving artifact bytes would invalidate pre-existing blockMerkleRoot values
+  // (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002 migration note — forbidden shortcut).
+  if (currentVersion < 5) {
+    db.exec(MIGRATION_5_DDL[0] as string); // CREATE TABLE IF NOT EXISTS block_artifacts
+    db.exec(MIGRATION_5_DDL[1] as string); // CREATE INDEX IF NOT EXISTS idx_block_artifacts_*
+    db.prepare("UPDATE schema_version SET version = ?").run(5);
+  }
+  // Future migrations: add `if (currentVersion < 6) { ... }` blocks here.
 }

@@ -33,10 +33,12 @@ import {
   type BlockMerkleRoot,
   type CanonicalAstHash,
   type EmbeddingProvider,
+  type ProofManifest,
   type SpecHash,
   type SpecYak,
   canonicalAstHash,
   canonicalize,
+  blockMerkleRoot as computeBlockMerkleRoot,
   generateEmbedding,
 } from "@yakcc/contracts";
 import Database from "better-sqlite3";
@@ -86,6 +88,13 @@ interface StrictnessEdgeRow {
   looser_root: string;
 }
 
+/** One row from the block_artifacts table (WI-022 / DEC-V1-FEDERATION-WIRE-ARTIFACTS-002). */
+interface BlockArtifactRow {
+  path: string;
+  bytes: Buffer;
+  declaration_index: number;
+}
+
 // ---------------------------------------------------------------------------
 // SQLite-backed Registry implementation (v0.6 triplet schema)
 // ---------------------------------------------------------------------------
@@ -104,8 +113,43 @@ class SqliteRegistry implements Registry {
   // storeBlock
   // -------------------------------------------------------------------------
 
-  async storeBlock(row: BlockTripletRow): Promise<void> {
+  async storeBlock(row: BlockTripletRow, opts: { validateOnStore?: boolean } = {}): Promise<void> {
     this.assertOpen();
+
+    const validateOnStore = opts.validateOnStore !== false; // default: true
+
+    // -----------------------------------------------------------------------
+    // Integrity check: recompute blockMerkleRoot from stored fields and compare
+    // against row.blockMerkleRoot. Rejects rows whose stored root doesn't match
+    // the canonical contracts formula (DEC-CONTRACTS-AUTHORITY-001).
+    //
+    // The check is default-on (validateOnStore: true). Migration-internal callers
+    // that pre-date artifact threading pass validateOnStore: false to skip.
+    //
+    // @decision DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: Registry-side integrity gate.
+    // Status: decided (WI-022). Rationale: closes the same loop the wire-side
+    // gate will close in WI-020; ensures every persisted row's stored merkle root
+    // matches its bytes — foundational for federation round-trip correctness.
+    // -----------------------------------------------------------------------
+    if (validateOnStore) {
+      const spec = JSON.parse(Buffer.from(row.specCanonicalBytes).toString("utf-8")) as SpecYak;
+      const manifest = JSON.parse(row.proofManifestJson) as ProofManifest;
+      // row.artifacts is ReadonlyMap; blockMerkleRoot() accepts Map — cast is safe.
+      const artifacts = row.artifacts as Map<string, Uint8Array>;
+      const recomputed = computeBlockMerkleRoot({
+        spec: spec as unknown as Parameters<typeof computeBlockMerkleRoot>[0]["spec"],
+        implSource: row.implSource,
+        manifest,
+        artifacts,
+      });
+      if (recomputed !== row.blockMerkleRoot) {
+        const err = new Error(
+          `storeBlock integrity check failed: stored blockMerkleRoot ${row.blockMerkleRoot} does not match recomputed value ${recomputed}`,
+        );
+        (err as Error & { reason: string }).reason = "integrity_failed";
+        throw err;
+      }
+    }
 
     const now = row.createdAt > 0 ? row.createdAt : Date.now();
 
@@ -149,7 +193,18 @@ class SqliteRegistry implements Registry {
       "INSERT INTO contract_embeddings(spec_hash, embedding) VALUES (?, ?)",
     );
 
+    // Artifact INSERT prepared statement. One row per Map entry.
+    // INSERT OR IGNORE: idempotent on re-store of the same (block_merkle_root, path).
+    // The composite PK prevents duplicate rows; a second store is a no-op.
+    const insertArtifact = this.db.prepare<[string, string, Buffer, number]>(
+      "INSERT OR IGNORE INTO block_artifacts(block_merkle_root, path, bytes, declaration_index) VALUES (?, ?, ?, ?)",
+    );
+
     const embeddingBuf = serializeEmbedding(embedding);
+
+    // Capture artifact entries in Map iteration order (= declaration order per
+    // the BlockTriplet contract: keys match manifest.artifacts[*].path in order).
+    const artifactEntries = [...row.artifacts.entries()];
 
     const txn = this.db.transaction(() => {
       insertBlock.run(
@@ -169,6 +224,15 @@ class SqliteRegistry implements Registry {
       // the embedding is deterministic for the same spec.
       deleteEmbedding.run(row.specHash);
       insertEmbedding.run(row.specHash, embeddingBuf);
+      // Persist artifact bytes in declaration order (Map iteration order).
+      // INSERT OR IGNORE ensures idempotency on re-store: the composite PK
+      // (block_merkle_root, path) rejects duplicates without error.
+      for (let i = 0; i < artifactEntries.length; i++) {
+        const entry = artifactEntries[i];
+        if (entry === undefined) continue;
+        const [artifactPath, artifactBytes] = entry;
+        insertArtifact.run(row.blockMerkleRoot, artifactPath, Buffer.from(artifactBytes), i);
+      }
     });
 
     txn();
@@ -272,7 +336,18 @@ class SqliteRegistry implements Registry {
       .get(merkleRoot);
 
     if (row === undefined) return null;
-    return hydrateBlock(row);
+
+    // Eagerly hydrate artifact bytes in declaration order.
+    // Ordered by declaration_index to reconstruct the Map in manifest order.
+    // Pre-WI-022 blocks that have no block_artifacts rows return an empty Map
+    // (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002 migration note).
+    const artifactRows = this.db
+      .prepare<[string], BlockArtifactRow>(
+        "SELECT path, bytes, declaration_index FROM block_artifacts WHERE block_merkle_root = ? ORDER BY declaration_index ASC",
+      )
+      .all(merkleRoot);
+
+    return hydrateBlock(row, artifactRows);
   }
 
   // -------------------------------------------------------------------------
@@ -356,8 +431,22 @@ class SqliteRegistry implements Registry {
 
 /**
  * Hydrate a DB row into a BlockTripletRow.
+ *
+ * @param row          - The blocks table row.
+ * @param artifactRows - Rows from block_artifacts, already ordered by
+ *                       declaration_index ASC (callers are responsible for
+ *                       the ORDER BY). Pre-WI-022 blocks pass an empty array,
+ *                       producing an empty Map (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
  */
-function hydrateBlock(row: BlockRow): BlockTripletRow {
+function hydrateBlock(row: BlockRow, artifactRows: readonly BlockArtifactRow[]): BlockTripletRow {
+  // Reconstruct the artifacts Map in declaration order. Map insertion order in
+  // JavaScript equals iteration order, so inserting in declaration_index order
+  // is sufficient to guarantee correct Map.entries() iteration order.
+  const artifacts = new Map<string, Uint8Array>();
+  for (const ar of artifactRows) {
+    artifacts.set(ar.path, new Uint8Array(ar.bytes));
+  }
+
   return {
     blockMerkleRoot: row.block_merkle_root as BlockMerkleRoot,
     specHash: row.spec_hash as SpecHash,
@@ -368,6 +457,7 @@ function hydrateBlock(row: BlockRow): BlockTripletRow {
     createdAt: row.created_at,
     canonicalAstHash: row.canonical_ast_hash as CanonicalAstHash,
     parentBlockRoot: (row.parent_block_root ?? null) as BlockMerkleRoot | null,
+    artifacts,
   };
 }
 
