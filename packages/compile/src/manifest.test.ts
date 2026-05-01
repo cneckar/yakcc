@@ -88,6 +88,7 @@ function makeRegistryMock(
         createdAt: 0,
         canonicalAstHash: ("0".repeat(64)) as import("@yakcc/contracts").CanonicalAstHash,
         parentBlockRoot: rowMeta.parentBlockRoot,
+        artifacts: new Map(),
       };
     },
     async findByCanonicalAstHash(

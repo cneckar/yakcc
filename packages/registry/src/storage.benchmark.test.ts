@@ -194,6 +194,7 @@ function makeBlockRow(spec: SpecYak, idx: number): BlockTripletRow {
     level: "L0",
     createdAt: Date.now(),
     canonicalAstHash: deriveCanonicalAstHash(implSource),
+    artifacts,
   };
 }
 
