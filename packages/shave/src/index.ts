@@ -102,7 +102,8 @@ export type {
 // Internal imports
 // ---------------------------------------------------------------------------
 
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { LicenseRefusedError } from "./errors.js";
 import { DEFAULT_MODEL, INTENT_PROMPT_VERSION } from "./intent/constants.js";
 import { extractIntent } from "./intent/extract.js";
@@ -258,33 +259,85 @@ export async function universalize(
 }
 
 // ---------------------------------------------------------------------------
-// shave() — one-shot file stub
+// shave() — one-shot file ingestion (WI-014-01)
 // ---------------------------------------------------------------------------
 
 /**
  * Process a source file through the full shave pipeline.
  *
- * WI-010-01 stub: returns empty atoms and intent cards. The diagnostics
- * `stubbed` field lists all capabilities pending implementation.
+ * Reads the source file at `sourcePath`, wraps it in a CandidateBlock, and
+ * runs it through universalize() (license gate → intent extraction →
+ * decompose → slice). Returns a ShaveResult with atoms derived from the
+ * SlicePlan, the extracted intent card, and forwarded diagnostics.
+ *
+ * Throws a plain Error (mentioning the path) if the file is not found.
+ * All universalize() errors (LicenseRefusedError, AnthropicApiKeyMissingError,
+ * OfflineCacheMissError, DidNotReachAtomError, RecursionDepthExceededError)
+ * propagate unwrapped.
  *
  * @param sourcePath - Absolute path to the source file to process.
- * @param _registry - Registry view used for block lookups.
- * @param _options - Optional configuration overrides.
+ * @param registry   - Registry view used for block lookups.
+ * @param options    - Optional configuration overrides.
  */
 export async function shave(
   sourcePath: string,
-  _registry: ShaveRegistryView,
-  _options?: ShaveOptions,
+  registry: ShaveRegistryView,
+  options?: ShaveOptions,
 ): Promise<ShaveResult> {
+  // @decision DEC-SHAVE-PIPELINE-001
+  // title: shave() reads file, wraps as CandidateBlock, delegates to universalize()
+  // status: decided
+  // rationale:
+  //   shave() is a thin file-ingestion adapter over universalize(). All pipeline
+  //   logic (license gate, intent extraction, decompose, slice) lives in
+  //   universalize(). This keeps shave() focused on I/O concerns: file reading
+  //   and result shape translation.
+  //
+  //   PlaceholderId format: "shave-atom-" + canonicalAstHash.slice(0, 8).
+  //   A deterministic id keyed on the canonical AST hash ensures that two runs
+  //   over identical source produce identical placeholder arrays, which is a
+  //   prerequisite for content-addressable provenance tracking (WI-014-02).
+  //   Using a slice of canonicalAstHash rather than a random UUID or
+  //   sequential counter avoids non-determinism while remaining collision-free
+  //   in practice for the v0 demo corpus (< 100 atoms per file).
+  //
+  //   Source file not found: we throw a plain Error with a human-readable
+  //   message including the path. We do not introduce a new SourceFileNotFoundError
+  //   class in this slice (that would require modifying errors.ts, which is
+  //   out of scope for WI-014-01). The fs ENOENT code is preserved in the
+  //   error chain via the `cause` field so callers can inspect it programmatically.
+
+  // Step 1: Read source file.
+  let source: string;
+  try {
+    source = await readFile(sourcePath, "utf-8");
+  } catch (err) {
+    throw new Error(`shave: source file not found: ${sourcePath}`, { cause: err });
+  }
+
+  // Step 2: Wrap in a CandidateBlock with a hint derived from the file name.
+  const candidate: CandidateBlock = {
+    source,
+    hint: { name: basename(sourcePath), origin: "user" },
+  };
+
+  // Step 3: Run through universalize() — errors propagate unwrapped.
+  const result = await universalize(candidate, registry, options);
+
+  // Step 4: Translate UniversalizeResult into ShaveResult.
+  // Each SlicePlanEntry maps to a ShavedAtomStub. The placeholderId is a
+  // deterministic "shave-atom-" prefix + 8-char truncation of canonicalAstHash
+  // (per DEC-SHAVE-PIPELINE-001 rationale above).
+  const atoms = result.slicePlan.map((entry) => ({
+    placeholderId: `shave-atom-${entry.canonicalAstHash.slice(0, 8)}`,
+    sourceRange: entry.sourceRange,
+  }));
+
   return {
     sourcePath,
-    atoms: [],
-    intentCards: [],
-    diagnostics: {
-      stubbed: ["decomposition", "variance", "license-gate"],
-      cacheHits: 0,
-      cacheMisses: 0,
-    },
+    atoms,
+    intentCards: [result.intentCard],
+    diagnostics: result.diagnostics,
   };
 }
 

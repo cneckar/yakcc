@@ -39,29 +39,14 @@ const noopRegistry: ShaveRegistryView = {
 };
 
 // ---------------------------------------------------------------------------
-// shave() stub tests — unchanged from WI-010-01
+// shave() — live file ingestion tests (WI-014-01)
 // ---------------------------------------------------------------------------
 
-describe("shave()", () => {
-  it("returns stubbed ShaveResult with empty atoms and intentCards", async () => {
-    const result = await shave("dummy.ts", noopRegistry);
-
-    expect(result.sourcePath).toBe("dummy.ts");
-    expect(result.atoms).toEqual([]);
-    expect(result.intentCards).toEqual([]);
-  });
-
-  it("includes 'decomposition' in diagnostics.stubbed", async () => {
-    const result = await shave("dummy.ts", noopRegistry);
-
-    expect(result.diagnostics.stubbed).toContain("decomposition");
-  });
-
-  it("reports zero cache hits and misses (shave is still a stub)", async () => {
-    const result = await shave("dummy.ts", noopRegistry);
-
-    expect(result.diagnostics.cacheHits).toBe(0);
-    expect(result.diagnostics.cacheMisses).toBe(0);
+describe("shave() — live file ingestion (WI-014-01)", () => {
+  it("throws when the source file does not exist", async () => {
+    await expect(shave("/nonexistent/path/dummy.ts", noopRegistry)).rejects.toThrow(
+      /source file not found/,
+    );
   });
 });
 

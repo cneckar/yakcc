@@ -165,20 +165,44 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
 });
 
 // ---------------------------------------------------------------------------
-// shave() — still stubbed
+// shave() — live wiring (WI-014-01)
 // ---------------------------------------------------------------------------
+// shave() is now a real file-ingestion pipeline. These tests drive it via
+// a pre-seeded cache (offline=true) so no live Anthropic calls are made.
 
-describe("shave() — remains a stub", () => {
-  it("returns empty atoms and intentCards", async () => {
-    const result = await shave("dummy.ts", noopRegistry);
-    expect(result.atoms).toEqual([]);
-    expect(result.intentCards).toEqual([]);
-    expect(result.sourcePath).toBe("dummy.ts");
+describe("shave() — live wiring (WI-014-01)", () => {
+  it("throws an error mentioning the path when source file is not found", async () => {
+    await expect(shave("/nonexistent/path/dummy.ts", noopRegistry)).rejects.toThrow(
+      /source file not found/,
+    );
   });
 
-  it("includes 'decomposition' in diagnostics.stubbed", async () => {
-    const result = await shave("dummy.ts", noopRegistry);
-    expect(result.diagnostics.stubbed).toContain("decomposition");
+  it("offline + cache hit: returns non-empty atoms and intentCards for a real file", async () => {
+    const source =
+      "// SPDX-License-Identifier: MIT\nfunction shaveTest(x: number) { return x + 1; }";
+    await seedCache(source);
+
+    const { writeFile, rm: rmFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const { randomUUID } = await import("node:crypto");
+
+    const tmpPath = joinPath(tmpdir(), `shave-live-test-${randomUUID()}.ts`);
+    await writeFile(tmpPath, source, "utf-8");
+    try {
+      const result = await shave(tmpPath, noopRegistry, { cacheDir, offline: true });
+      expect(result.sourcePath).toBe(tmpPath);
+      expect(result.intentCards.length).toBeGreaterThan(0);
+      expect(result.atoms.length).toBeGreaterThan(0);
+      // atoms carry deterministic placeholderIds keyed on canonicalAstHash
+      expect(result.atoms[0]?.placeholderId).toMatch(/^shave-atom-/);
+      // "decomposition" is live — not in stubbed
+      expect(result.diagnostics.stubbed).not.toContain("decomposition");
+      // "variance" is still stubbed (WI-014)
+      expect(result.diagnostics.stubbed).toContain("variance");
+    } finally {
+      await rmFile(tmpPath, { force: true });
+    }
   });
 });
 
