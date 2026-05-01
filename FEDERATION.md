@@ -5,6 +5,18 @@
 > `VERIFICATION.md` (L0..L3). Substrate maturity is what yakcc can do;
 > verification is how confident we are in each block; federation is how
 > many machines participate and what economic primitives are available.
+>
+> **Companion: `FEDERATION_PROTOCOL.md`.** This document owns the F0..F4
+> strategic axis. The wire-format and behavioral specification for the v1
+> wave-1 F1 read-only mirror — endpoints, request/response shapes,
+> integrity-check rules, public API surface for `@yakcc/federation`,
+> failure modes, and v1-out-of-scope-named-explicitly — lives in
+> `FEDERATION_PROTOCOL.md`. The strategic decisions in this document
+> (`DEC-FED-001..DEC-FED-007`) are the framing; the protocol document
+> implements F1 within that framing, with one new DEC
+> (`DEC-V1-FEDERATION-PROTOCOL-001` in `MASTER_PLAN.md`) capturing the
+> four protocol-level choices: HTTP+JSON transport, content-addressed
+> identity, nominal trust, pull-only sync direction.
 
 ---
 
