@@ -856,6 +856,59 @@ Lean-shaped translation of the implementation; cited sub-block lemmas must
 come from content-addressed `proof/` artifacts. Proofs are erased at runtime;
 the registry stores the attestation by Merkle root.
 
+### L3 attestation lifecycle and verifier-engine upgrade
+
+@decision DEC-VERIFY-L3-LIFECYCLE-001
+
+**Attestation versioning.** Every L3 attestation records the verifier engine
+and version under which it was produced — e.g., `lean@4.7.1`, `coq@8.20`,
+`agda@2.6.4`. This version tag is a first-class field of the attestation
+tuple (extend the tuple in `FEDERATION.md` §"Attestation protocol") and is
+covered by the attestation signature. An L3 attestation produced under
+`lean@4.7.1` is a distinct object from one produced under `lean@4.8.0` even
+if both cover the same `block_hash`; they cannot be conflated in the ledger.
+
+**Upgrade migration.** When the network upgrades to a new verifier engine
+version, prior L3 attestations are NOT automatically trusted under the new
+engine. The migration path depends on deployment level:
+
+- **At F4 (economic-commons deployments):** prior attestations migrate through
+  the proof-converter shadow process described in `FEDERATION.md`
+  §"F4 adversarial-dynamics design" (DEC-F4-THREAT-CONVERTER-SHADOW-001). A
+  converter agent proposes new attestation hashes; a one-epoch shadow window
+  samples 1% of conversions for independent re-verification; the converter
+  goes official only after the shadow window passes with zero failures. A
+  single shadow failure aborts the converter and slashes the proposer's
+  governance bond. This process is enforced by `@yakcc/incentives`.
+
+- **At F0/F1 (single-machine and read-only mirror deployments):** there is no
+  automated converter. F0/F1 users who require re-validation under a new
+  engine trigger it on demand by running the new verifier locally against the
+  existing triplet. The old attestation (under the old engine version) remains
+  in the registry and continues to satisfy callers whose trust list still
+  accepts that engine version; callers who have updated their trust list to
+  require the new engine version will see the block as un-attested under the
+  new engine until local re-verification runs.
+
+In both cases, the old attestation is never deleted from the ledger. It
+persists as a historical record; callers decide whether to accept it based on
+their per-caller trust list configuration.
+
+**Spec equivalence and bounty payout.** L3 proofs demonstrate
+`impl refines spec`. Under F4 bounty payout, the spec in that proof must be a
+network-canonical spec — not an arbitrary submitter-authored spec — because
+the bounty gate requires `bounty_eligible: true` on the canonical spec
+registry (DEC-F4-THREAT-CANONICAL-SPEC-001, `FEDERATION.md`). Without F4, a
+submitter's L3 proof against their own spec is still a valid verification
+artifact: the triplet's `proof/` directory carries the proof, the registry
+registers the L3 attestation for that `block_merkle_root`, and the attestation
+is discoverable by callers who trust the verifier that checked it. It just
+does not trigger bounty payout because the spec is not canonical. This is a
+deliberate property: F4 economic participation is opt-in, and an F0/F1/F2/F3
+user who writes a genuine L3 proof benefits from the attestation's
+verification-level claim (higher selection priority for callers who sort on
+level) without needing to engage the F4 bounty machinery at all.
+
 ---
 
 ## AI proof synthesis fallback
@@ -1314,3 +1367,4 @@ silent edits.
 | DEC-VERIFY-008 | The verifier is a content-addressed block. Attestations are sidecar metadata `(verifier_hash, block_hash, level, evidence, valid_until_revoked)` living in the federation layer. Verifier rotation is graceful (lazy re-verification, attestation transfer for compatible upgrades, retroactive unsoundness via revocation). Trust list is per-caller; the shipped default is governance, deferred to `FEDERATION.md`. |
 | DEC-VERIFY-009 | Semantic AST canonicalization is a constitutional pre-ledger pass in `@yakcc/contracts`, not an F4 economic guard. Every yakcc deployment (F0..F4) runs it. The canonicalizer derives a `canonical_ast_hash` (BLAKE3 over a De-Bruijn-renamed, commutative-normalized, pure-function-flattened AST of `impl.ts` only). The hash is sidecar to `BlockMerkleRoot` and gates submission: a structural duplicate is rejected at ingest with the existing block's `BlockMerkleRoot` returned. A contributor wanting a stricter L-axis level on an existing canonical-AST re-attests the existing block, never registers a parallel one (Sacred Practice #12). Source: `suggestions.txt` ask #1. |
 | DEC-VERIFY-010 | Behavioral embeddings replace docstring-derived embeddings at L1+. Each L1+ block carries a `behavioral_embedding` derived by sandbox execution of `impl.ts` against a content-addressed fuzzed input matrix; L0 blocks continue to use the textual embedding provider per DEC-EMBED-010. The fuzzed input matrix and the behavior-aware encoder are content-addressed blocks on the per-caller trust list. Deferred to L1+ because sandbox execution requires expanded ocap discipline and the L1 totality guarantee (DEC-TRIPLET-L0-ONLY-019). Source: `suggestions.txt` ask #3. |
+| DEC-VERIFY-L3-LIFECYCLE-001 | L3 attestations record verifier engine + version as a first-class tuple field (e.g., `lean@4.7.1`). Prior attestations are NOT auto-trusted under a new engine. At F4: migration through the proof-converter shadow process (DEC-F4-THREAT-CONVERTER-SHADOW-001, `FEDERATION.md`). At F0/F1: re-verification on demand. Old attestations persist as historical records; caller trust list determines acceptability. L3 proofs against non-canonical specs are valid verification artifacts but do not earn F4 bounty payout (DEC-F4-THREAT-CANONICAL-SPEC-001). |
