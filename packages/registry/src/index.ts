@@ -149,6 +149,112 @@ export interface RuntimeExposureEntry {
 }
 
 // ---------------------------------------------------------------------------
+// WI-025: Intent query shape + vector-search types (findCandidatesByIntent)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-VECTOR-RETRIEVAL-004
+// title: IntentQuery is a local structural type, not an import from @yakcc/shave
+// status: accepted
+// rationale: @yakcc/shave depends on @yakcc/registry, so importing IntentCard
+//   from @yakcc/shave into @yakcc/registry would create a circular dependency.
+//   IntentQuery is a structural subset of IntentCard (same field names and types
+//   for the fields used by findCandidatesByIntent). Any IntentCard value is
+//   assignable to IntentQuery without casting. The query method only needs
+//   behavior, inputs[].{name,typeHint}, and outputs[].{name,typeHint} — the
+//   remaining IntentCard fields (modelVersion, promptVersion, etc.) are
+//   irrelevant to the KNN query. TypeScript's structural typing ensures
+//   IntentCard values pass to findCandidatesByIntent without explicit conversion.
+
+/** A named typed parameter used in an intent query (structural subset of IntentCard). */
+export interface IntentQueryParam {
+  readonly name: string;
+  readonly typeHint: string;
+}
+
+/**
+ * A minimal intent query shape for findCandidatesByIntent().
+ *
+ * Structurally compatible with @yakcc/shave's IntentCard — any IntentCard
+ * is assignable here. @yakcc/registry intentionally does not import IntentCard
+ * to avoid a circular dependency (DEC-VECTOR-RETRIEVAL-004).
+ */
+export interface IntentQuery {
+  readonly behavior: string;
+  readonly inputs: readonly IntentQueryParam[];
+  readonly outputs: readonly IntentQueryParam[];
+}
+
+// ---------------------------------------------------------------------------
+// WI-025: Vector-search result types
+// ---------------------------------------------------------------------------
+
+// @decision DEC-VECTOR-RETRIEVAL-002
+// title: Query-text derivation rule for findCandidatesByIntent
+// status: accepted
+// rationale: The query text is constructed by joining the card's behavior string
+//   with each input's "name: typeHint" and each output's "name: typeHint",
+//   separated by newlines. This produces a text that captures the full functional
+//   signature and behavioral intent in a format the embedding model understands.
+//   The join mirrors what is embedded at write time (storeBlock generates embeddings
+//   from the spec's behavior+parameter text), so query and document vectors are in
+//   the same semantic space. Empty inputs/outputs are handled gracefully (the
+//   behavior string alone is a valid query).
+
+/**
+ * A candidate block returned by findCandidatesByIntent().
+ *
+ * cosineDistance is the raw KNN distance from sqlite-vec (lower = more similar).
+ * structuralScore is present only when rerank: "structural" was requested;
+ * it is the structural match score used in the combined ranking formula.
+ *
+ * Do not use cosineDistance as a correctness criterion — it is a retrieval
+ * index, not a behavioral proof (DEC-EMBED-010, DESIGN.md cornerstone #4).
+ */
+export interface CandidateMatch {
+  /** The full block triplet row. */
+  readonly block: BlockTripletRow;
+  /**
+   * Cosine distance from the query embedding to this block's spec embedding.
+   * Lower values indicate greater semantic similarity.
+   * Results are ordered ascending in cosineDistance by default.
+   */
+  readonly cosineDistance: number;
+  /**
+   * Combined structural match score. Present only when rerank: "structural"
+   * was requested. Derived from structuralMatch(querySpec, candidateSpec).
+   * 1.0 = exact structural match; 0.0 = no structural match.
+   *
+   * @decision DEC-VECTOR-RETRIEVAL-003
+   * @title Structural rerank scoring formula
+   * @status accepted
+   * @rationale The combined ranking score is (1 - cosineDistance) + structuralScore,
+   *   sorted descending. This additive formula gives equal weight to cosine similarity
+   *   and structural match quality. structuralScore from structuralMatch is 0 or 1 at
+   *   v0 (binary: matches or not). A multiplicative formula was rejected because it
+   *   would zero-out structurally-unmatched results, collapsing them all to the same
+   *   rank and making cosine order meaningless among mismatches.
+   */
+  readonly structuralScore?: number | undefined;
+}
+
+/**
+ * Options for findCandidatesByIntent().
+ */
+export interface FindCandidatesOptions {
+  /**
+   * Maximum number of candidates to retrieve from the KNN index.
+   * Defaults to 10.
+   */
+  readonly k?: number | undefined;
+  /**
+   * Reranking strategy. Defaults to "none" (cosine distance order only).
+   * - "none": return KNN results ordered by ascending cosineDistance.
+   * - "structural": reorder by combined (1 - cosineDistance) + structuralScore descending.
+   */
+  readonly rerank?: "structural" | "none" | undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Registry interface (v0.6 triplet schema)
 // ---------------------------------------------------------------------------
 
@@ -220,6 +326,38 @@ export interface Registry {
    * recorded yet — absence of evidence is not evidence of absence.
    */
   getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance>;
+
+  // @decision DEC-VECTOR-RETRIEVAL-001
+  // title: Public vector-search surface on the Registry interface
+  // status: accepted
+  // rationale: WI-025 adds findCandidatesByIntent() as the first semantic
+  //   (embedding-based) retrieval method. Prior retrieval was structural-only
+  //   (selectBlocks by specHash). This new path derives a query text from an
+  //   IntentCard, runs a sqlite-vec KNN query against contract_embeddings, and
+  //   optionally reranks by combined cosine+structural score. The method lives
+  //   on the Registry interface (not a standalone function) so it shares the
+  //   same DB connection, embedding provider, and lifecycle as the rest of the
+  //   registry. WI-026 (Claude Code hook interception) is the primary consumer.
+  /**
+   * Find candidate blocks semantically close to an intent card.
+   *
+   * Derives query text from the card (behavior + "name: typeHint" for each
+   * input and output), generates an embedding, and runs a KNN query against
+   * the contract_embeddings vec0 table. Optionally reranks by combined
+   * cosine + structural score.
+   *
+   * Returns an empty array when the registry has no blocks.
+   * Results are ordered by ascending cosineDistance by default.
+   * When rerank: "structural" is requested, results are reordered by
+   * (1 - cosineDistance) + structuralScore descending.
+   *
+   * @param intentCard - The caller's intent card (e.g. from staticExtract).
+   * @param options    - Optional: k (default 10), rerank ("none" | "structural").
+   */
+  findCandidatesByIntent(
+    intentCard: IntentQuery,
+    options?: FindCandidatesOptions,
+  ): Promise<readonly CandidateMatch[]>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;
