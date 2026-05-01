@@ -19,6 +19,7 @@
 // the logger is an optional final parameter defaulting to CONSOLE_LOGGER.
 
 import { compile } from "./commands/compile.js";
+import { runFederation } from "./commands/federation.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { propose } from "./commands/propose.js";
 import { registryInit } from "./commands/registry-init.js";
@@ -94,6 +95,12 @@ COMMANDS
         [--offline]
   hooks claude-code install           Install /yakcc slash command for Claude Code
                 [--target <dir>]      Target project directory (default: .)
+  federation serve --registry <p>     Start a read-only HTTP registry server
+                [--port <n>] [--host <h>]
+  federation mirror --remote <url>    Mirror all blocks from a remote registry peer
+                --registry <p>
+  federation pull --remote <url>      Pull a single block triplet from a remote peer
+               --root <merkleRoot> --registry <p>
 
 FLAGS
   --help, -h                          Print this help and exit
@@ -161,6 +168,12 @@ export async function runCli(
     case "shave": {
       const shaveArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return shave(shaveArgv, logger);
+    }
+
+    case "federation": {
+      // Reassemble remaining args: subcommand (the federation verb) + rest.
+      const fedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return runFederation(fedArgv, logger);
     }
 
     case "hooks": {
