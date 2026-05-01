@@ -9,6 +9,18 @@
 // Rationale: The seeds package is a devDependency of compile. Modifying seeds
 // is out of scope (packages/seeds/** is forbidden). The vitest alias is the
 // minimal, compile-scoped fix. It does not affect the runtime or production build.
+//
+// @decision DEC-COMPILE-VITEST-CONFIG-002
+// title: vitest alias for @yakcc/shave source entry (WI-018)
+// status: decided (WI-018)
+// rationale:
+//   @yakcc/shave's package.json exports field points to dist/index.js, but the
+//   shave package is not pre-built in the workspace (no dist/ directory). The
+//   compile package's tests resolve @yakcc/shave through a pnpm workspace symlink
+//   pointing at the source tree. Without this alias, vitest fails to resolve the
+//   "." export and assemble-candidate.test.ts cannot load.
+//   Same pattern as @yakcc/seeds (DEC-COMPILE-VITEST-CONFIG-001). Does not affect
+//   production builds.
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
@@ -18,6 +30,9 @@ export default defineConfig({
       // Redirect @yakcc/seeds to its source so that import.meta.url in seed.ts
       // resolves to src/seed.ts (where src/blocks/ exists) not dist/seed.js.
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),
+      // Redirect @yakcc/shave to its source entry point (no dist/ in the workspace).
+      // See DEC-COMPILE-VITEST-CONFIG-002 above.
+      "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
     },
   },
   test: {
