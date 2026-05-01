@@ -32,9 +32,11 @@ import {
   AnthropicApiKeyMissingError,
   OfflineCacheMissError,
   createIntentExtractionHook,
+  seedIntentCache,
   shave,
   universalize,
 } from "./index.js";
+import type { SeedIntentSpec } from "./index.js";
 import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./intent/constants.js";
 import type { IntentCard } from "./intent/types.js";
 import type { ShaveRegistryView } from "./types.js";
@@ -244,5 +246,98 @@ describe("createIntentExtractionHook() — compound interaction", () => {
         { cacheDir, offline: true },
       ),
     ).rejects.toThrow(OfflineCacheMissError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// seedIntentCache() — public API round-trip test (WI-018)
+// ---------------------------------------------------------------------------
+// Compound-interaction: seedIntentCache (public API) → writeIntent (internal)
+// → universalize (public API) → extractIntent (cache read path) → IntentCard
+// returned to caller. Crosses the public boundary, key-derivation module, and
+// file-cache module in the same sequence used by @yakcc/compile offline tests.
+// ---------------------------------------------------------------------------
+
+describe("seedIntentCache() — public API round-trip", () => {
+  it(
+    "seeds intent cache via public API and reads back via universalize (offline)",
+    async () => {
+      // Source: a simple MIT-licensed function so the license gate passes.
+      const source =
+        "// SPDX-License-Identifier: MIT\nfunction seedRoundTrip(n: number) { return n * 3; }";
+
+      // Build a SeedIntentSpec using public types only — no internal imports.
+      const spec: SeedIntentSpec = {
+        source,
+        cacheDir,
+        // model and promptVersion are omitted → default to DEFAULT_MODEL and INTENT_PROMPT_VERSION
+        // to produce the same key that extractIntent() would derive.
+      };
+
+      // Build an IntentCard that matches the source hash the public API derives.
+      // We do NOT use internal sourceHash directly; instead we accept that
+      // seedIntentCache computes the correct sourceHash internally and we
+      // verify correctness by round-tripping through universalize().
+      const card: IntentCard = {
+        schemaVersion: 1,
+        behavior: "Triples its input",
+        inputs: [{ name: "n", typeHint: "number", description: "Input number" }],
+        outputs: [{ name: "result", typeHint: "number", description: "Triple of n" }],
+        preconditions: [],
+        postconditions: [],
+        notes: [],
+        modelVersion: DEFAULT_MODEL,
+        promptVersion: INTENT_PROMPT_VERSION,
+        // sourceHash is pre-computed using the internal helper via a static import
+        // already present in this test file (imported at the top as sourceHash).
+        // This matches what seedIntentCache() derives internally, ensuring the card
+        // round-trips correctly without us hard-coding the hash value.
+        sourceHash: sourceHash(source),
+        extractedAt: "2025-01-01T00:00:00.000Z",
+      };
+
+      // Call the public seedIntentCache API.
+      await seedIntentCache(spec, card);
+
+      // Now verify the entry is readable by calling universalize() with offline: true.
+      // This crosses: universalize → extractIntent → file-cache readIntent → key derivation.
+      const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
+
+      // The round-tripped card should carry our seeded behavior text.
+      expect(result.intentCard.behavior).toBe("Triples its input");
+      // sourceHash in the returned card must match what was stored.
+      expect(result.intentCard.sourceHash).toBe(card.sourceHash);
+      expect(result.intentCard.schemaVersion).toBe(1);
+    },
+  );
+
+  it("seedIntentCache works without ANTHROPIC_API_KEY (DEC-SHAVE-002 offline discipline)", async () => {
+    // ANTHROPIC_API_KEY is already deleted by beforeEach.
+    // This test explicitly verifies that calling seedIntentCache does not touch the SDK.
+    const source = "// SPDX-License-Identifier: MIT\nconst apiKeyTest = 42;";
+    const spec: SeedIntentSpec = { source, cacheDir };
+
+    const sh = sourceHash(source);
+
+    const card: IntentCard = {
+      schemaVersion: 1,
+      behavior: "No API key test",
+      inputs: [],
+      outputs: [],
+      preconditions: [],
+      postconditions: [],
+      notes: [],
+      modelVersion: DEFAULT_MODEL,
+      promptVersion: INTENT_PROMPT_VERSION,
+      sourceHash: sh,
+      extractedAt: "2025-01-01T00:00:00.000Z",
+    };
+
+    // Must not throw — DEC-SHAVE-002: no SDK import needed.
+    await expect(seedIntentCache(spec, card)).resolves.toBeUndefined();
+
+    // Verify the seeded entry is readable.
+    const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
+    expect(result.intentCard.behavior).toBe("No API key test");
   });
 });

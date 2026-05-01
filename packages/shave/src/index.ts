@@ -4,6 +4,8 @@
 // extractIntent is intentionally NOT exported — it is an internal detail.
 // WI-010-03: universalize is now wired to the live extractIntent path.
 // The sentinel IntentCard from WI-010-01 is removed.
+// WI-018: seedIntentCache() is a public test-helper that writes an IntentCard
+// into the file-system cache via the same key-derivation path as extractIntent.
 // Status: decided (MASTER_PLAN.md DEC-CONTINUOUS-SHAVE-022)
 // Rationale: Keeping extractIntent internal ensures callers depend only on
 // the stable public surface; the extraction implementation can evolve freely.
@@ -25,6 +27,99 @@ export type {
 } from "./types.js";
 
 export type { IntentCard, IntentParam } from "./intent/types.js";
+
+// ---------------------------------------------------------------------------
+// Re-exports — WI-018 public test-helper surface
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-SHAVE-SEED-001
+ * title: seedIntentCache is a public test-helper export on the main entry point
+ * status: decided (WI-018)
+ * rationale:
+ *   External consumers (e.g. @yakcc/compile tests) need to pre-populate the
+ *   intent-extraction cache for offline testing without calling the Anthropic
+ *   API. Before WI-018, tests reached into @yakcc/shave/dist/cache/file-cache.js
+ *   directly, which is an unstable internal path not in the package exports map.
+ *
+ *   Design constraints (from DEC-SHAVE-003, Sacred Practice #12):
+ *   - seedIntentCache MUST use the same BLAKE3-based key derivation as
+ *     extractIntent (sourceHash → keyFromIntentInputs). It MUST NOT compute the
+ *     key itself or accept a pre-computed key.
+ *   - seedIntentCache MUST delegate to writeIntent for the actual cache write.
+ *     No parallel cache-write logic, no separate cache directory, no alternative
+ *     serialization format.
+ *   - DEC-SHAVE-002 offline discipline: loading @yakcc/shave and calling
+ *     seedIntentCache MUST work in the unit-test runner without an
+ *     ANTHROPIC_API_KEY environment variable. This function is offline-only —
+ *     it performs no LLM call and MUST NOT trigger the SDK import path.
+ *
+ *   Placement: on the main entry (not a sub-path like @yakcc/shave/test-helpers)
+ *   so there is one public contract for external callers. The function is
+ *   clearly named and typed as a test helper; production code should never
+ *   call it because it writes to the cache from an externally-supplied card
+ *   rather than from a live extraction.
+ */
+
+/**
+ * Inputs that identify a cache slot for intent extraction.
+ *
+ * These mirror the ExtractIntentContext fields that feed into key derivation
+ * (sourceHash → keyFromIntentInputs). Callers supply `source` (the raw source
+ * text) and `cacheDir`; `model` and `promptVersion` default to the package
+ * constants so the seeded key matches what extractIntent would produce under
+ * the same defaults.
+ */
+export interface SeedIntentSpec {
+  /** The raw source text whose BLAKE3 hash is the first key component. */
+  readonly source: string;
+  /** Root cache directory — must match the cacheDir used in the test's ShaveOptions. */
+  readonly cacheDir: string;
+  /** Anthropic model tag. Defaults to DEFAULT_MODEL when omitted. */
+  readonly model?: string | undefined;
+  /** Prompt version tag. Defaults to INTENT_PROMPT_VERSION when omitted. */
+  readonly promptVersion?: string | undefined;
+}
+
+/**
+ * Write an IntentCard into the file-system intent cache under the key that
+ * extractIntent() would produce for the same source+model+promptVersion inputs.
+ *
+ * **Test-helper only.** Do NOT call from production code. Production intent
+ * cards are written exclusively by extractIntent() after a live API round-trip;
+ * bypassing that path in production would produce unvalidated cache entries.
+ *
+ * Key derivation (DEC-SHAVE-003):
+ *   cacheKey = BLAKE3(sourceHash || \x00 || modelTag || \x00 || promptVersion || \x00 || schemaVersion)
+ * where sourceHash = BLAKE3(normalize(spec.source)).
+ * This is identical to the key extractIntent() would derive for the same inputs.
+ *
+ * @param spec - Source text and cache location; identifies the cache slot.
+ * @param card - The IntentCard to write. Must already be validated by the caller
+ *               (validateIntentCard is not called here — this is a raw write).
+ */
+export async function seedIntentCache(spec: SeedIntentSpec, card: IntentCard): Promise<void> {
+  // @decision DEC-SHAVE-SEED-001 (see module comment above)
+  // Delegate to the same key-derivation functions and writeIntent that
+  // extractIntent() uses. No logic is duplicated here.
+  //
+  // Static imports are used (matching the rest of this file's style). These
+  // internal modules (cache/key.js, cache/file-cache.js, intent/constants.js)
+  // do NOT import the Anthropic SDK, so DEC-SHAVE-002 offline discipline is
+  // preserved: calling seedIntentCache() never triggers the SDK code path.
+  const modelTag = spec.model ?? DEFAULT_MODEL;
+  const pv = spec.promptVersion ?? INTENT_PROMPT_VERSION;
+
+  const srcHash = _sourceHash(spec.source);
+  const cacheKey = _keyFromIntentInputs({
+    sourceHash: srcHash,
+    modelTag,
+    promptVersion: pv,
+    schemaVersion: INTENT_SCHEMA_VERSION,
+  });
+
+  await _writeIntent(spec.cacheDir, cacheKey, card);
+}
 
 // ---------------------------------------------------------------------------
 // Re-exports — WI-010-02 public surface
@@ -104,9 +199,15 @@ export type {
 
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { writeIntent as _writeIntent } from "./cache/file-cache.js";
+import {
+  keyFromIntentInputs as _keyFromIntentInputs,
+  sourceHash as _sourceHash,
+} from "./cache/key.js";
 import { LicenseRefusedError } from "./errors.js";
-import { DEFAULT_MODEL, INTENT_PROMPT_VERSION } from "./intent/constants.js";
+import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./intent/constants.js";
 import { extractIntent } from "./intent/extract.js";
+import type { IntentCard } from "./intent/types.js";
 import { detectLicense } from "./license/detector.js";
 import { licenseGate } from "./license/gate.js";
 import { locateProjectRoot } from "./locate-root.js";
