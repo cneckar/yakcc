@@ -22,6 +22,7 @@ import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { propose } from "./commands/propose.js";
+import { query } from "./commands/query.js";
 import { registryInit } from "./commands/registry-init.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
@@ -88,7 +89,10 @@ COMMANDS
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
   propose <contract-file>             Check registry for a matching contract
           [--registry <p>]
-  search <query> [--registry <p>]     Search registry by spec file or free text
+  query <text> [--registry <p>]       Vector-search registry by semantic intent
+        [--top <k>] [--rerank]        Max results (default: 10); --rerank adds structural score
+        [--card-file <f>]             JSON IntentCard/IntentQuery file (alternative to free text)
+  search <query> [--registry <p>]     Search registry by spec file or free text (structural)
          [--top <k>]                  Max results (default: 10)
   seed [--registry <p>]               Ingest the seed corpus into the registry
   shave <path> [--registry <p>]       Shave a TS source file into atoms via universalize
@@ -152,6 +156,11 @@ export async function runCli(
     case "propose": {
       const proposeArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return propose(proposeArgv, logger);
+    }
+
+    case "query": {
+      const queryArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return query(queryArgv, logger);
     }
 
     case "search": {
