@@ -1113,6 +1113,12 @@ substantive L0 verification proves the cross-machine federation invariants
 on a smaller surface; expanding to F2 publishing and large-scale fuzzing
 without that proof point would conflate two independent risks.
 
+### Initiative: v1 wave-2 — Claude Code integration + WASM
+
+| ID | Title | Description | Deps | Gate | State |
+|----|-------|-------------|------|------|-------|
+| WI-025 | Vector-search retrieval API in @yakcc/registry | Wrap sqlite-vec KNN around the existing contract_embeddings table to deliver Registry.findCandidatesByIntent(intentCard, {k?, rerank?}) returning readonly CandidateMatch[]. Pipeline: derive query text from IntentCard (behavior + inputs.name+typeHint + outputs.name+typeHint joined) → generateEmbedding() (existing path) → vec0 KNN top-k against contract_embeddings → optional structural rerank via existing structuralMatch(spec, candidate). New CLI: yakcc query "<query>" [--top k] [--rerank] [--registry <path>] for free-text or card-file input. Embedding storage was wired in v0 (storage.ts:123-126); WI-025 is purely the query-side surface plus the CLI. Closes the gap that yakcc search today does linear-scan structural matching only with no semantic ranking. Acceptance: (i) findCandidatesByIntent returns results ordered by ascending cosineDistance; (ii) rerank: "structural" reorders by combined cosine + structural score; (iii) yakcc query against the seed corpus surfaces a relevant block within top-3 for at least 3 distinct natural-language queries; (iv) pnpm --filter @yakcc/registry test passes including new vector-search tests; (v) pnpm -r build clean. | (none — embedding infra wired in v0) | review | **not started — orchestrator-dispatched 2026-05-01** |
+
 ### Initiative: v2 self-hosting
 
 Status: planned, gated on v0.7 closure (WI-015 done) and v1 federation deferred.

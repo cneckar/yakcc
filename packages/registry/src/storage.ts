@@ -43,8 +43,16 @@ import {
 } from "@yakcc/contracts";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import type { BlockTripletRow, Provenance, Registry } from "./index.js";
+import type {
+  BlockTripletRow,
+  CandidateMatch,
+  FindCandidatesOptions,
+  IntentQuery,
+  Provenance,
+  Registry,
+} from "./index.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
+import { structuralMatch } from "./search.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -402,6 +410,133 @@ class SqliteRegistry implements Registry {
         : [];
 
     return { testHistory, runtimeExposure };
+  }
+
+  // -------------------------------------------------------------------------
+  // findCandidatesByIntent — vector KNN search + optional structural rerank
+  // -------------------------------------------------------------------------
+
+  // @decision DEC-VECTOR-RETRIEVAL-002
+  // title: Query-text derivation for findCandidatesByIntent
+  // status: accepted (see also index.ts DEC-VECTOR-RETRIEVAL-002 annotation)
+  // rationale: behavior + "\n" + "name: typeHint" per input + per output gives
+  //   a text that mirrors the embedding input used at storeBlock time. The
+  //   spec's embedding is derived from its behavior+parameter text; the query
+  //   uses the same template so query and document vectors are comparable.
+
+  async findCandidatesByIntent(
+    card: IntentQuery,
+    options: FindCandidatesOptions = {},
+  ): Promise<readonly CandidateMatch[]> {
+    this.assertOpen();
+
+    const k = options.k ?? 10;
+
+    // Derive query text from the card (DEC-VECTOR-RETRIEVAL-002).
+    // behavior + each input as "name: typeHint" + each output as "name: typeHint"
+    const parts: string[] = [card.behavior];
+    for (const p of card.inputs) {
+      parts.push(`${p.name}: ${p.typeHint}`);
+    }
+    for (const p of card.outputs) {
+      parts.push(`${p.name}: ${p.typeHint}`);
+    }
+    const queryText = parts.join("\n");
+
+    // Generate embedding for the query text by calling the provider directly.
+    // We bypass generateEmbedding() (which calls canonicalizeText on a ContractSpec)
+    // and call embed() directly with our derived query text. This is intentional:
+    // the query text is already in the same format as the text embedded at write time
+    // (storeBlock calls generateEmbedding on the spec, which canonicalizes its JSON;
+    // we match that space by embedding the same behavior+params text directly).
+    const queryEmbedding = await this.embeddings.embed(queryText);
+
+    const queryBuf = serializeEmbedding(queryEmbedding);
+
+    // KNN query against contract_embeddings (vec0 virtual table).
+    // Returns rows ordered by ascending distance (closest first).
+    // The vec0 KNN syntax: WHERE embedding MATCH ? AND k = N ORDER BY distance
+    interface EmbeddingRow {
+      spec_hash: string;
+      distance: number;
+    }
+
+    let embeddingRows: EmbeddingRow[];
+    try {
+      embeddingRows = this.db
+        .prepare<[Buffer, number], EmbeddingRow>(
+          "SELECT spec_hash, distance FROM contract_embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+        )
+        .all(queryBuf, k);
+    } catch {
+      // If the embeddings table is empty, vec0 may throw. Return [] gracefully.
+      return [];
+    }
+
+    if (embeddingRows.length === 0) return [];
+
+    // For each spec_hash, find the best block (first from selectBlocks which uses
+    // the strictness-aware sort). We hydrate one block per spec_hash hit.
+    const results: CandidateMatch[] = [];
+
+    for (const eRow of embeddingRows) {
+      const specHash = eRow.spec_hash as SpecHash;
+      // Get all blocks for this spec, ordered by strictness/quality.
+      const roots = await this.selectBlocks(specHash);
+      if (roots.length === 0) continue;
+
+      // Take the best block (first in strictness order).
+      const bestRoot = roots[0];
+      if (bestRoot === undefined) continue;
+
+      const block = await this.getBlock(bestRoot);
+      if (block === null) continue;
+
+      results.push({
+        block,
+        cosineDistance: eRow.distance,
+      });
+    }
+
+    // Optional structural rerank (DEC-VECTOR-RETRIEVAL-003).
+    if (options.rerank === "structural") {
+      // Build a minimal SpecYak from the card for structural comparison.
+      // structuralMatch requires SpecYak; we construct the minimum valid shape.
+      const querySpec: SpecYak = {
+        name: "query",
+        inputs: card.inputs.map((p) => ({ name: p.name, type: p.typeHint })),
+        outputs: card.outputs.map((p) => ({ name: p.name, type: p.typeHint })),
+        preconditions: [],
+        postconditions: [],
+        invariants: [],
+        effects: [],
+        level: "L0",
+      };
+
+      // Annotate each result with a structural score, then sort by combined score.
+      const annotated = results.map((m) => {
+        const candidateSpec = JSON.parse(
+          Buffer.from(m.block.specCanonicalBytes).toString("utf-8"),
+        ) as SpecYak;
+        const matchResult = structuralMatch(querySpec, candidateSpec);
+        const structuralScore = matchResult.matches ? 1.0 : 0.0;
+        return { ...m, structuralScore };
+      });
+
+      // Sort by combined score descending: (1 - cosineDistance) + structuralScore.
+      // cosineDistance is in [0, 2] on the unit sphere; (1 - d) maps to [-1, 1].
+      // structuralScore is 0 or 1 at v0. Higher combined score = better match.
+      annotated.sort((a, b) => {
+        const sa = 1 - a.cosineDistance + a.structuralScore;
+        const sb = 1 - b.cosineDistance + b.structuralScore;
+        return sb - sa;
+      });
+
+      return annotated;
+    }
+
+    // Default: return in KNN distance order (already ascending from vec0 query).
+    return results;
   }
 
   // -------------------------------------------------------------------------
