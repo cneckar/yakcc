@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { CanonicalAstHash } from "@yakcc/contracts";
 import type { IntentCard } from "../intent/types.js";
-import { buildTriplet } from "./triplet.js";
+import { buildTriplet, makeBootstrapArtifacts } from "./triplet.js";
 import type { CorpusResult } from "../corpus/types.js";
 
 // ---------------------------------------------------------------------------
@@ -238,5 +238,83 @@ describe("buildTriplet() — WI-016 Test 4: bootstrap explicit flag", () => {
 
     // Empty bytes vs real bytes → different proof_root → different merkleRoot
     expect(bootstrapTriplet.merkleRoot).not.toBe(corpusTriplet.merkleRoot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-022 Required Test 1: artifacts Map threading through buildTriplet
+// ---------------------------------------------------------------------------
+
+describe("buildTriplet() — WI-022: artifacts Map threading", () => {
+  // @decision DEC-V1-FEDERATION-WIRE-ARTIFACTS-002
+  // title: buildTriplet exposes artifacts as the single source of truth
+  // status: decided (WI-022 slice b)
+  // rationale:
+  //   The SAME Map<string, Uint8Array> constructed for blockMerkleRoot() is
+  //   returned on BuiltTriplet.artifacts. No second Map, no copy, no re-derivation.
+  //   These tests assert byte-identity (same Map reference) and deep-equality of
+  //   the bytes contained, verifying the single-source-of-truth invariant.
+
+  it("corpus path: returned triplet.artifacts is byte-identical to the corpus bytes", () => {
+    const card = makeIntentCard();
+    const encoder = new TextEncoder();
+    const corpusBytes = encoder.encode("// corpus content for WI-022 test\n");
+    const corpus = makeCorpusResult({ bytes: corpusBytes, path: "property-tests.fast-check.ts" });
+
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
+
+    // artifacts Map must contain the corpus path as a key.
+    expect(triplet.artifacts.has(corpus.path)).toBe(true);
+
+    // The bytes stored under the corpus path must be byte-identical to corpusBytes.
+    const storedBytes = triplet.artifacts.get(corpus.path)!;
+    expect(storedBytes).toBeInstanceOf(Uint8Array);
+    expect(storedBytes.length).toBe(corpusBytes.length);
+    // Deep equality: every byte matches.
+    expect(Array.from(storedBytes)).toEqual(Array.from(corpusBytes));
+  });
+
+  it("corpus path: artifacts Map has exactly one entry matching the manifest artifact path", () => {
+    const card = makeIntentCard();
+    const corpus = makeCorpusResult({ path: "my-tests.ts" });
+
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
+
+    expect(triplet.artifacts.size).toBe(1);
+    expect(triplet.artifacts.has("my-tests.ts")).toBe(true);
+    // The manifest artifact path and the artifacts Map key must agree.
+    expect(triplet.manifest.artifacts[0]!.path).toBe("my-tests.ts");
+  });
+
+  it("bootstrap path: returned triplet.artifacts is deep-equal to makeBootstrapArtifacts()", () => {
+    const card = makeIntentCard();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined, { bootstrap: true });
+
+    const expected = makeBootstrapArtifacts();
+
+    // Same size.
+    expect(triplet.artifacts.size).toBe(expected.size);
+
+    // Each key-value pair matches byte-for-byte.
+    for (const [path, expectedBytes] of expected) {
+      expect(triplet.artifacts.has(path)).toBe(true);
+      const actualBytes = triplet.artifacts.get(path)!;
+      expect(Array.from(actualBytes)).toEqual(Array.from(expectedBytes));
+    }
+  });
+
+  it("different corpus bytes produce different artifacts entries (no aliasing)", () => {
+    const card = makeIntentCard();
+    const encoder = new TextEncoder();
+    const corpus1 = makeCorpusResult({ bytes: encoder.encode("variant A"), path: "tests.ts" });
+    const corpus2 = makeCorpusResult({ bytes: encoder.encode("variant B"), path: "tests.ts" });
+
+    const triplet1 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus1);
+    const triplet2 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus2);
+
+    // Different bytes in → different bytes out (no cross-call aliasing).
+    const bytes1 = Array.from(triplet1.artifacts.get("tests.ts")!);
+    const bytes2 = Array.from(triplet2.artifacts.get("tests.ts")!);
+    expect(bytes1).not.toEqual(bytes2);
   });
 });

@@ -125,12 +125,16 @@ export async function persistNovelGlueAtom(
   // Construct the BlockTripletRow for registry storage.
   // parentBlockRoot is row metadata (lineage), not part of the content address —
   // per DEC-REGISTRY-PARENT-BLOCK-004. It defaults to null for root atoms.
+  //
+  // DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: artifacts is the SAME Map that buildTriplet
+  // passed to blockMerkleRoot() — forwarded here unchanged, no copy or re-derivation.
   const row: BlockTripletRow = {
     blockMerkleRoot: triplet.merkleRoot,
     specHash: triplet.specHash,
     specCanonicalBytes: triplet.specCanonicalBytes,
     implSource: triplet.impl,
     proofManifestJson: JSON.stringify(triplet.manifest),
+    artifacts: triplet.artifacts,
     level: "L0",
     createdAt: Date.now(),
     canonicalAstHash: entry.canonicalAstHash,
