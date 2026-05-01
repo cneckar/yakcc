@@ -72,6 +72,9 @@ importers:
       '@yakcc/registry':
         specifier: workspace:*
         version: link:../registry
+      '@yakcc/shave':
+        specifier: workspace:*
+        version: link:../shave
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

@@ -31,3 +31,7 @@ export { resolveComposition } from "./resolve.js";
 
 // buildManifest is exported for callers who build manifests from external ResolutionResults
 export { buildManifest } from "./manifest.js";
+
+// Candidate assembly entry point (WI-014-05)
+export type { AssembleCandidateOptions } from "./assemble-candidate.js";
+export { assembleCandidate, CandidateNotResolvableError } from "./assemble-candidate.js";

@@ -18,7 +18,8 @@
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
     "@yakcc/registry": "workspace:*",
-    "@yakcc/ir": "workspace:*"
+    "@yakcc/ir": "workspace:*",
+    "@yakcc/shave": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
