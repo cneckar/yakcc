@@ -148,7 +148,7 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("schema migrations", () => {
-  it("fresh DB is at SCHEMA_VERSION = 3 with blocks table and idx_blocks_spec_hash", async () => {
+  it("fresh DB is at SCHEMA_VERSION = 4 with blocks table and idx_blocks_spec_hash", async () => {
     const { applyMigrations, SCHEMA_VERSION } = await import("./schema.js");
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
@@ -158,14 +158,15 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBe(4);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // Note: applyMigrations sets version to 2 for migration 2→3 DDL; openRegistry
-    // bumps to 3 after backfill. On a fresh DB with no rows to backfill, the DDL
-    // runs but the version stays at 2 here since schema.ts leaves the bump to openRegistry.
-    expect(row?.version).toBe(2);
+    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4
+    // and migration 4 bumps schema_version to 4 directly (no backfill needed for
+    // parent_block_root; NULL is the correct default). The canonical_ast_hash
+    // backfill (migration 2→3 version bump) is done by openRegistry, not here.
+    expect(row?.version).toBe(4);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -220,7 +221,8 @@ describe("schema migrations", () => {
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(row?.version).toBe(2);
+    // Second application is a no-op; version stays at 4 (migration 4 already ran).
+    expect(row?.version).toBe(4);
 
     db.close();
   });
@@ -276,11 +278,12 @@ describe("schema migrations", () => {
     expect(tableNames).not.toContain("implementations");
     expect(tableNames).toContain("blocks");
 
-    // Version is 2.
+    // Version is 4: migration 4 bumped it directly (NULL default is correct for
+    // parent_block_root; no backfill needed).
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(2);
+    expect(vRow?.version).toBe(4);
 
     db.close();
   });
@@ -628,15 +631,54 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-backfill-test-"));
     const dbPath = join(tmpDir, "registry.sqlite");
 
-    // Phase 1: directly construct a DB at "schema_version=2" plus the v3 column
-    // (since applyMigrations adds the column but doesn't bump version).
+    // Phase 1: manually construct a DB at "schema_version=2" with the v3 column
+    // added but not backfilled. This simulates the partial-migration state that
+    // openRegistry's preMigrationVersion capture was designed to handle:
+    //   - blocks table exists (post-migration-2 schema)
+    //   - canonical_ast_hash column added (migration-3 DDL ran) but empty string
+    //   - schema_version still = 2 (version bump deferred to openRegistry backfill)
+    // We build this manually because applyMigrations now bumps all the way to 4,
+    // so we cannot use it to obtain a v2-frozen DB.
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
-    const { applyMigrations } = await import("./schema.js");
     const db1 = new Database(dbPath);
     sqliteVec.load(db1);
-    applyMigrations(db1);
-    // schema_version should be 2 (DDL applied, version not bumped).
+    // Build the v2 schema directly: schema_version + blocks table (no canonical_ast_hash yet).
+    db1.exec("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+    db1.exec("INSERT INTO schema_version(version) VALUES (2)");
+    db1.exec(`CREATE VIRTUAL TABLE contract_embeddings USING vec0(
+      spec_hash TEXT PRIMARY KEY, embedding FLOAT[384]
+    )`);
+    db1.exec(`CREATE TABLE blocks (
+      block_merkle_root    TEXT    PRIMARY KEY,
+      spec_hash            TEXT    NOT NULL,
+      spec_canonical_bytes BLOB    NOT NULL,
+      impl_source          TEXT    NOT NULL,
+      proof_manifest_json  TEXT    NOT NULL,
+      level                TEXT    NOT NULL CHECK(level IN ('L0','L1','L2','L3')),
+      created_at           INTEGER NOT NULL
+    )`);
+    db1.exec("CREATE INDEX idx_blocks_spec_hash ON blocks(spec_hash)");
+    db1.exec(`CREATE TABLE test_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      block_merkle_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      suite_id TEXT NOT NULL, passed INTEGER NOT NULL CHECK(passed IN (0,1)), at INTEGER NOT NULL
+    )`);
+    db1.exec(`CREATE TABLE runtime_exposure (
+      block_merkle_root TEXT PRIMARY KEY REFERENCES blocks(block_merkle_root),
+      requests_seen INTEGER NOT NULL DEFAULT 0, last_seen INTEGER
+    )`);
+    db1.exec(`CREATE TABLE strictness_edges (
+      stricter_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      looser_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      created_at INTEGER NOT NULL, PRIMARY KEY (stricter_root, looser_root)
+    )`);
+    // Add the migration-3 column with empty-string sentinel (simulates the DDL-ran,
+    // backfill-pending state that openRegistry is responsible for completing).
+    db1.exec("ALTER TABLE blocks ADD COLUMN canonical_ast_hash TEXT NOT NULL DEFAULT ''");
+    db1.exec("CREATE INDEX idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)");
+    // schema_version stays at 2: openRegistry.preMigrationVersion will see 2 and
+    // trigger the backfill + bump to SCHEMA_VERSION.
     const versionBeforeBackfill = (db1.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
     expect(versionBeforeBackfill).toBe(2);
 
@@ -657,11 +699,14 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     expect(fetched!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg.close();
 
-    // Verify schema_version is now 3.
+    // Verify schema_version is now 4: openRegistry ran the canonical_ast_hash backfill
+    // (bumped to 3) and then applyMigrations ran migration 4 DDL (bumped to 4).
+    // The preMigrationVersion capture in openRegistry ensures the backfill still
+    // ran even though migration 4 would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const versionAfterBackfill = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
-    expect(versionAfterBackfill).toBe(3);
+    expect(versionAfterBackfill).toBe(4);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -674,4 +719,134 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const { rmSync } = await import("node:fs");
     rmSync(tmpDir, { recursive: true, force: true });
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Migration 3 → 4: parent_block_root column
+// ---------------------------------------------------------------------------
+
+describe("migration 3 → 4: parent_block_root column", () => {
+  it("a v3-shaped DB gains parent_block_root column with NULL default after openRegistry", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-migration4-test-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+
+    // Build a v3-shaped DB manually: blocks table with canonical_ast_hash but
+    // without parent_block_root, schema_version = 3.
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const db1 = new Database(dbPath);
+    sqliteVec.load(db1);
+    db1.exec("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+    db1.exec("INSERT INTO schema_version(version) VALUES (3)");
+    db1.exec(`CREATE VIRTUAL TABLE contract_embeddings USING vec0(
+      spec_hash TEXT PRIMARY KEY, embedding FLOAT[384]
+    )`);
+    db1.exec(`CREATE TABLE blocks (
+      block_merkle_root    TEXT    PRIMARY KEY,
+      spec_hash            TEXT    NOT NULL,
+      spec_canonical_bytes BLOB    NOT NULL,
+      impl_source          TEXT    NOT NULL,
+      proof_manifest_json  TEXT    NOT NULL,
+      level                TEXT    NOT NULL CHECK(level IN ('L0','L1','L2','L3')),
+      created_at           INTEGER NOT NULL,
+      canonical_ast_hash   TEXT    NOT NULL DEFAULT ''
+    )`);
+    db1.exec("CREATE INDEX idx_blocks_spec_hash ON blocks(spec_hash)");
+    db1.exec("CREATE INDEX idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)");
+    db1.exec(`CREATE TABLE test_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      block_merkle_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      suite_id TEXT NOT NULL, passed INTEGER NOT NULL CHECK(passed IN (0,1)), at INTEGER NOT NULL
+    )`);
+    db1.exec(`CREATE TABLE runtime_exposure (
+      block_merkle_root TEXT PRIMARY KEY REFERENCES blocks(block_merkle_root),
+      requests_seen INTEGER NOT NULL DEFAULT 0, last_seen INTEGER
+    )`);
+    db1.exec(`CREATE TABLE strictness_edges (
+      stricter_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      looser_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      created_at INTEGER NOT NULL, PRIMARY KEY (stricter_root, looser_root)
+    )`);
+
+    // Insert a block row at v3 (no parent_block_root column yet).
+    const spec = makeSpecYak("v3-migration-test");
+    const row = makeBlockRow(spec);
+    db1.prepare(
+      "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      row.blockMerkleRoot,
+      row.specHash,
+      row.specCanonicalBytes,
+      row.implSource,
+      row.proofManifestJson,
+      row.level,
+      row.createdAt,
+      row.canonicalAstHash,
+    );
+    db1.close();
+
+    // openRegistry applies migration 4: adds parent_block_root column and bumps to 4.
+    const reg = await openRegistry(dbPath, { embeddings: mockEmbeddingProvider() });
+
+    // parent_block_root column must exist and have NULL for the pre-existing row.
+    const fetched = await reg.getBlock(row.blockMerkleRoot);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.parentBlockRoot).toBeNull();
+    await reg.close();
+
+    // schema_version is now 4.
+    const db2 = new Database(dbPath);
+    sqliteVec.load(db2);
+    const ver = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(ver).toBe(4);
+    // parent_block_root column is present.
+    const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain("parent_block_root");
+    db2.close();
+
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// parent_block_root round-trip
+// ---------------------------------------------------------------------------
+
+describe("parent_block_root round-trip", () => {
+  it("storeBlock + getBlock round-trips parent_block_root = null", async () => {
+    const spec = makeSpecYak("parent-null-test");
+    const row = makeBlockRow(spec);
+    // makeBlockRow does not set parentBlockRoot; it should be absent/undefined.
+    // storeBlock accepts undefined as null.
+    await registry.storeBlock(row);
+    const fetched = await registry.getBlock(row.blockMerkleRoot);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.parentBlockRoot).toBeNull();
+  });
+
+  it("storeBlock + getBlock round-trips a non-null parent_block_root", async () => {
+    // Store a "parent" block first.
+    const parentSpec = makeSpecYak("parent-block");
+    const parentRow = makeBlockRow(parentSpec, "export function parent(): void {}");
+    await registry.storeBlock(parentRow);
+
+    // Store a "child" block referencing the parent's root.
+    const childSpec = makeSpecYak("child-block");
+    const childRow = makeBlockRow(
+      childSpec,
+      "export function child(): void {}",
+      "// child artifact",
+    );
+    // Inject the parentBlockRoot field (normally set by the shave persistence layer).
+    const childRowWithParent = { ...childRow, parentBlockRoot: parentRow.blockMerkleRoot };
+    await registry.storeBlock(childRowWithParent);
+
+    const fetched = await registry.getBlock(childRow.blockMerkleRoot);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.parentBlockRoot).toBe(parentRow.blockMerkleRoot);
+  });
 });

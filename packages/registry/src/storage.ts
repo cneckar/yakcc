@@ -42,7 +42,7 @@ import {
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import type { BlockTripletRow, Provenance, Registry } from "./index.js";
-import { applyMigrations } from "./schema.js";
+import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -66,6 +66,8 @@ interface BlockRow {
   level: string;
   created_at: number;
   canonical_ast_hash: string;
+  /** NULL for root blocks; non-NULL for atoms shaved from a parent block. */
+  parent_block_root: string | null;
 }
 
 interface TestHistoryRow {
@@ -133,9 +135,9 @@ class SqliteRegistry implements Registry {
     const implAstHash = row.canonicalAstHash;
 
     const insertBlock = this.db.prepare<
-      [string, string, Buffer, string, string, string, number, string]
+      [string, string, Buffer, string, string, string, number, string, string | null]
     >(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -159,6 +161,7 @@ class SqliteRegistry implements Registry {
         row.level,
         now,
         implAstHash,
+        row.parentBlockRoot ?? null,
       );
       // Only write the embedding if the spec_hash doesn't already have one.
       // Check by attempting DELETE (no-op if absent) then INSERT.
@@ -364,6 +367,7 @@ function hydrateBlock(row: BlockRow): BlockTripletRow {
     level: row.level as "L0" | "L1" | "L2" | "L3",
     createdAt: row.created_at,
     canonicalAstHash: row.canonical_ast_hash as CanonicalAstHash,
+    parentBlockRoot: (row.parent_block_root ?? null) as BlockMerkleRoot | null,
   };
 }
 
@@ -436,41 +440,42 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
 
   // Load the sqlite-vec extension (throws if unavailable).
   sqliteVec.load(db);
+  db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+  db.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (0)");
+  const preMigrationVersionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
+    | { version: number }
+    | undefined;
+  const preMigrationVersion = preMigrationVersionRow?.version ?? 0;
 
   // Apply schema migrations (idempotent).
   // applyMigrations handles DDL for all migrations including 2→3 (adds the
-  // canonical_ast_hash column). The version-3 backfill and version bump are
-  // performed here because this layer has access to canonicalAstHash() from
-  // @yakcc/contracts (schema.ts is pure DDL and does not import it).
+  // canonical_ast_hash column) and 3→4 (adds parent_block_root). The
+  // version-3 backfill and version bump are performed here because this
+  // layer has access to canonicalAstHash() from @yakcc/contracts (schema.ts
+  // is pure DDL and does not import it).
   applyMigrations(db);
+  if (preMigrationVersion < 3) {
+    const rowsToBackfill = db
+      .prepare<[], { block_merkle_root: string; impl_source: string }>(
+        "SELECT block_merkle_root, impl_source FROM blocks WHERE canonical_ast_hash = ''",
+      )
+      .all();
 
-  // Migration 2 → 3 backfill: compute and store canonical_ast_hash for any
-  // existing rows that still have the empty-string sentinel value, then bump
-  // schema_version to 3. On a fresh DB the SELECT returns no rows and the
-  // version is bumped immediately. Idempotent: if already at version 3, skip.
-  {
-    const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
-      | { version: number }
-      | undefined;
-    if ((vRow?.version ?? 0) < 3) {
-      const rowsToBackfill = db
-        .prepare<[], { block_merkle_root: string; impl_source: string }>(
-          "SELECT block_merkle_root, impl_source FROM blocks WHERE canonical_ast_hash = ''",
-        )
-        .all();
+    const updateHash = db.prepare<[string, string]>(
+      "UPDATE blocks SET canonical_ast_hash = ? WHERE block_merkle_root = ?",
+    );
 
-      const updateHash = db.prepare<[string, string]>(
-        "UPDATE blocks SET canonical_ast_hash = ? WHERE block_merkle_root = ?",
-      );
-
-      const backfillTxn = db.transaction(() => {
-        for (const r of rowsToBackfill) {
-          updateHash.run(canonicalAstHash(r.impl_source), r.block_merkle_root);
-        }
-        db.prepare("UPDATE schema_version SET version = ?").run(3);
-      });
-      backfillTxn();
-    }
+    // Bump to SCHEMA_VERSION (not just 3): applyMigrations already ran migration 4
+    // and bumped the DB to SCHEMA_VERSION. The backfill is a prerequisite for all
+    // migrations ≥ 3, so after completing it the version must reflect the full
+    // applied migration chain, not just the migration-3 milestone.
+    const backfillTxn = db.transaction(() => {
+      for (const r of rowsToBackfill) {
+        updateHash.run(canonicalAstHash(r.impl_source), r.block_merkle_root);
+      }
+      db.prepare("UPDATE schema_version SET version = ?").run(SCHEMA_VERSION);
+    });
+    backfillTxn();
   }
 
   // Resolve the embedding provider: use provided, or import the local default.

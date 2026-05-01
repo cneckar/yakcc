@@ -55,6 +55,15 @@ export interface BlockTripletRow {
    * cross-spec reuse detection. Populated by `canonicalAstHash(implSource)`.
    */
   readonly canonicalAstHash: CanonicalAstHash;
+  /**
+   * BlockMerkleRoot of the recursion-tree parent from which this block was shaved.
+   * NULL (or omitted) means this block is the root of its recursion tree — e.g.
+   * a hand-authored seed block or shave's top-level proposal.
+   * Non-null values record lineage for atoms produced during a shave recursion.
+   * Population of this field is deferred to shave persistence (WI-014-04 follow-up);
+   * callers should default to null when constructing rows today.
+   */
+  readonly parentBlockRoot?: BlockMerkleRoot | null;
 }
 
 /**

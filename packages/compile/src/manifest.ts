@@ -36,6 +36,14 @@ export interface ProvenanceEntry {
   /** Direct sub-block dependencies (BlockMerkleRoots). */
   readonly subBlocks: ReadonlyArray<BlockMerkleRoot>;
   readonly verificationStatus: VerificationStatus;
+  /**
+   * The BlockMerkleRoot of the recursion-tree parent from which this block was
+   * shaved. Present only when the registry row has a non-null parent_block_root.
+   * Omitted (field absent) for root blocks — hand-authored seeds and shave's
+   * top-level proposals. Population awaits WI-014-04 shave-persistence follow-up;
+   * all current rows leave this field absent.
+   */
+  readonly recursionParent?: BlockMerkleRoot;
 }
 
 /**
@@ -84,13 +92,20 @@ export async function buildManifest(
     const hasPassing = provenance.testHistory.some((entry) => entry.passed);
     const verificationStatus: VerificationStatus = hasPassing ? "passing" : "unverified";
 
-    entries.push({
+    // Fetch the full block row to read parent_block_root. The registry may return
+    // null if the block has been evicted (should not happen in normal operation, but
+    // we guard defensively). parentBlockRoot is omitted when null (field absent on
+    // ProvenanceEntry) — only set when the registry row carries a non-null value.
+    const blockRow = await registry.getBlock(merkleRoot);
+    const entry: ProvenanceEntry = {
       blockMerkleRoot: merkleRoot,
       specHash: block.specHash,
       source: block.source,
       subBlocks: block.subBlocks,
       verificationStatus,
-    });
+      ...(blockRow?.parentBlockRoot != null ? { recursionParent: blockRow.parentBlockRoot } : {}),
+    };
+    entries.push(entry);
   }
 
   return {

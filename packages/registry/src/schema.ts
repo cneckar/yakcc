@@ -25,7 +25,7 @@
  * The `schema_version` table stores the applied version; `applyMigrations`
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -274,6 +274,44 @@ const MIGRATION_3_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 3 → 4: add parent_block_root column + index
+// ---------------------------------------------------------------------------
+
+// @decision DEC-REGISTRY-PARENT-BLOCK-004: Add parent_block_root to blocks table.
+// Status: decided (WI-014-04)
+// Rationale: Provenance manifest must surface parent-block lineage for atoms shaved
+// from a recursion tree (v0.7 acceptance item (e)). The column is NULL for root
+// blocks (hand-authored seeds, shave's top-level proposals) and non-NULL for
+// atoms that were shaved from a parent block. Population (passing parent-block
+// hashes through shave persistence) is a follow-up; for now the column always
+// stores NULL. Indexed for O(log n) lineage walks.
+// The migration is idempotent: a try/catch on the duplicate-column error handles
+// partial-migration recovery (crash between ADD COLUMN and the version bump).
+
+/**
+ * SQL statements for migration 4.
+ *
+ * Adds `parent_block_root TEXT NULL` to the `blocks` table and creates a
+ * non-unique index on it to support lineage walks.
+ *
+ * NULL means "this block is the root of its recursion tree" (e.g. hand-authored
+ * seed blocks, or shave's top-level proposal). A non-NULL value is the
+ * BlockMerkleRoot of the recursion-tree parent from which this atom was shaved.
+ *
+ * Unlike migration 3 (which requires a backfill via a business-logic function),
+ * migration 4 is purely DDL — the column defaults to NULL for all existing rows,
+ * which is the correct sentinel value. No backfill is needed, so `applyMigrations`
+ * bumps `schema_version` to 4 directly (no two-phase split like migration 3).
+ */
+const MIGRATION_4_DDL: readonly string[] = [
+  // parent_block_root: BlockMerkleRoot of the recursion-tree parent for shaved atoms.
+  // NULL means "this is the root of its recursion tree" (e.g. hand-authored seed
+  // blocks, or shave's top-level proposal). Indexed for quick lineage walks.
+  "ALTER TABLE blocks ADD COLUMN parent_block_root TEXT NULL",
+  "CREATE INDEX IF NOT EXISTS idx_blocks_parent_block_root ON blocks(parent_block_root)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -405,5 +443,30 @@ export function applyMigrations(db: MigrationsDb): void {
     // migrations 1 and 2 ran above, so we run the DDL but the caller still does
     // the backfill (which is a no-op on an empty table) and bumps to 3.
   }
-  // Future migrations: add `if (currentVersion < 4) { ... }` blocks here.
+  // Migration 3 → 4: add parent_block_root column + index (DEC-REGISTRY-PARENT-BLOCK-004).
+  // Unlike migration 3, no backfill is needed: NULL is the correct default for all
+  // existing rows (every pre-existing block is the root of its own recursion tree).
+  // applyMigrations therefore bumps schema_version to 4 directly.
+  //
+  // Idempotency note: SQLite has no ADD COLUMN IF NOT EXISTS. If a crash occurs
+  // between the ADD COLUMN and the version bump, re-entry sees version=3 but the
+  // column already present. We catch the "duplicate column name" error specifically
+  // to handle this partial-migration recovery path. Any other DDL error is re-thrown.
+  // MIGRATION_4_DDL[1] (CREATE INDEX IF NOT EXISTS) is already idempotent.
+  if (currentVersion < 4) {
+    try {
+      db.exec(MIGRATION_4_DDL[0] as string); // ALTER TABLE ... ADD COLUMN parent_block_root
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name: parent_block_root/i.test(msg)) {
+        throw err;
+      }
+      // Column already exists (partial migration recovery) — continue normally.
+    }
+    // CREATE INDEX IF NOT EXISTS is already idempotent; always safe to re-run.
+    db.exec(MIGRATION_4_DDL[1] as string);
+    // Bump version: no backfill required (NULL is the correct default).
+    db.prepare("UPDATE schema_version SET version = ?").run(4);
+  }
+  // Future migrations: add `if (currentVersion < 5) { ... }` blocks here.
 }
