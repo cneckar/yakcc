@@ -341,3 +341,74 @@ describe("seedIntentCache() — public API round-trip", () => {
     expect(result.intentCard.behavior).toBe("No API key test");
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-016 public extractCorpus surface
+// ---------------------------------------------------------------------------
+// Production trigger: extractCorpus() is called by buildTriplet() to produce
+// the "property_tests" artifact for each atom. The production sequence is:
+//   shave(filePath, registry) → universalize → extractCorpus(atomSpec) → CorpusResult
+// These tests exercise extractCorpus via the public surface (index.js re-export),
+// confirming that the function is deterministic and honours the upstream-test
+// priority chain as required by WI-016.
+//
+// DEC-SHAVE-002 offline discipline: extractCorpus sources (a) upstream-test and
+// (b) documented-usage are pure; no API key or network access is needed.
+// ---------------------------------------------------------------------------
+
+describe("WI-016 public extractCorpus surface", () => {
+  it("public extractCorpus round-trip is deterministic", async () => {
+    // @decision DEC-CORPUS-001: upstream-test source is always attempted first
+    // and always succeeds (pure, deterministic). Both calls must return identical
+    // CorpusResult values regardless of call order or timing.
+    //
+    // Production sequence: buildTriplet receives an atom from shave(); it then
+    // calls extractCorpus(atomSpec) to produce the property_tests artifact.
+    // This test cross-exercises the public index.js re-export, the corpus
+    // priority chain, and the upstream-test extractor in the same sequence.
+
+    const source =
+      "// SPDX-License-Identifier: MIT\nfunction addNumbers(a: number, b: number) { return a + b; }";
+
+    // Minimal IntentCard fixture — intentionally uses public CorpusAtomSpec shape
+    // (IntentCardInput) without importing internal intent/types.ts. TypeScript
+    // structural typing ensures compatibility with the full IntentCard type.
+    const atomSpec: import("./index.js").CorpusAtomSpec = {
+      source,
+      intentCard: {
+        behavior: "Returns the sum of two numbers",
+        inputs: [
+          { name: "a", typeHint: "number", description: "First operand" },
+          { name: "b", typeHint: "number", description: "Second operand" },
+        ],
+        outputs: [{ name: "result", typeHint: "number", description: "Sum of a and b" }],
+        preconditions: ["a is a finite number", "b is a finite number"],
+        postconditions: ["result === a + b"],
+        notes: [],
+        sourceHash: "upstream-test",
+        modelVersion: DEFAULT_MODEL,
+        promptVersion: INTENT_PROMPT_VERSION,
+      },
+    };
+
+    // Import the public extractCorpus function (re-exported via ./index.js, not ./corpus/index.js).
+    const { extractCorpus } = await import("./index.js");
+
+    // Call extractCorpus twice — both calls must produce identical results.
+    const result1 = await extractCorpus(atomSpec);
+    const result2 = await extractCorpus(atomSpec);
+
+    // (i) Both results must come from the upstream-test source.
+    expect(result1.source).toBe("upstream-test");
+    expect(result2.source).toBe("upstream-test");
+
+    // (ii) bytes must be byte-identical across calls.
+    expect(Buffer.compare(Buffer.from(result1.bytes), Buffer.from(result2.bytes))).toBe(0);
+
+    // (iii) contentHash must be identical across calls.
+    expect(result1.contentHash).toBe(result2.contentHash);
+
+    // (iv) path must be identical across calls.
+    expect(result1.path).toBe(result2.path);
+  });
+});

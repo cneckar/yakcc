@@ -1,7 +1,14 @@
+// @decision DEC-CORPUS-001 (WI-016)
+// Tests for buildTriplet() with CorpusResult integration (WI-016) and the
+// explicit bootstrap opt-in. Required tests from the WI-016 Evaluation Contract:
+//   - Test 3: with-corpus-result manifest emits non-placeholder artifact.
+//   - Test 4: bootstrap-only path requires explicit flag.
+
 import { describe, expect, it } from "vitest";
 import type { CanonicalAstHash } from "@yakcc/contracts";
 import type { IntentCard } from "../intent/types.js";
 import { buildTriplet } from "./triplet.js";
+import type { CorpusResult } from "../corpus/types.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -34,14 +41,28 @@ const SAMPLE_SOURCE = `function parseIntList(raw: string): number[] {
   return raw.split(",").map(Number).filter(Number.isFinite);
 }`;
 
+/** Build a minimal CorpusResult fixture with deterministic bytes. */
+function makeCorpusResult(overrides: Partial<CorpusResult> = {}): CorpusResult {
+  const content = "// property-test corpus fixture\nimport * as fc from 'fast-check';\n";
+  const encoder = new TextEncoder();
+  return {
+    source: "upstream-test",
+    bytes: encoder.encode(content),
+    path: "property-tests.fast-check.ts",
+    contentHash: "aaaa1234",
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Tests
+// Existing tests — updated to use CorpusResult (WI-016)
 // ---------------------------------------------------------------------------
 
 describe("buildTriplet()", () => {
   it("returns an object with all expected BuiltTriplet fields", () => {
     const card = makeIntentCard();
-    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
 
     // All fields present
     expect(triplet).toHaveProperty("spec");
@@ -54,13 +75,15 @@ describe("buildTriplet()", () => {
 
   it("impl field equals the raw source string passed in", () => {
     const card = makeIntentCard();
-    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
     expect(triplet.impl).toBe(SAMPLE_SOURCE);
   });
 
   it("spec has level=L0, a non-empty name, inputs, and outputs", () => {
     const card = makeIntentCard();
-    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
     const { spec } = triplet;
 
     expect(spec.level).toBe("L0");
@@ -72,36 +95,39 @@ describe("buildTriplet()", () => {
     expect(spec.outputs).toHaveLength(1);
   });
 
-  it("manifest has exactly one 'property_tests' artifact (L0 bootstrap shape)", () => {
+  it("manifest has exactly one 'property_tests' artifact matching the corpus path", () => {
     const card = makeIntentCard();
-    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult({ path: "my-corpus.fast-check.ts" });
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
     const { manifest } = triplet;
 
     expect(Array.isArray(manifest.artifacts)).toBe(true);
     expect(manifest.artifacts).toHaveLength(1);
     expect(manifest.artifacts[0]!.kind).toBe("property_tests");
-    expect(typeof manifest.artifacts[0]!.path).toBe("string");
-    expect(manifest.artifacts[0]!.path.length).toBeGreaterThan(0);
+    expect(manifest.artifacts[0]!.path).toBe("my-corpus.fast-check.ts");
   });
 
   it("merkleRoot is a non-empty string", () => {
     const card = makeIntentCard();
-    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
     expect(typeof triplet.merkleRoot).toBe("string");
     expect(triplet.merkleRoot.length).toBeGreaterThan(0);
   });
 
   it("specCanonicalBytes is a Uint8Array with non-zero length", () => {
     const card = makeIntentCard();
-    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
     expect(triplet.specCanonicalBytes).toBeInstanceOf(Uint8Array);
     expect(triplet.specCanonicalBytes.length).toBeGreaterThan(0);
   });
 
   it("is deterministic: same inputs produce the same merkleRoot", () => {
     const card = makeIntentCard();
-    const triplet1 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
-    const triplet2 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
+    const corpus = makeCorpusResult();
+    const triplet1 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
+    const triplet2 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
 
     expect(triplet1.merkleRoot).toBe(triplet2.merkleRoot);
     expect(triplet1.specHash).toBe(triplet2.specHash);
@@ -112,21 +138,105 @@ describe("buildTriplet()", () => {
     const card = makeIntentCard();
     const source1 = "function foo() { return 1; }";
     const source2 = "function foo() { return 2; }";
+    const encoder = new TextEncoder();
+    const corpus1 = makeCorpusResult({ bytes: encoder.encode("corpus1") });
+    const corpus2 = makeCorpusResult({ bytes: encoder.encode("corpus2") });
 
-    const triplet1 = buildTriplet(card, source1, FAKE_HASH);
-    const triplet2 = buildTriplet(card, source2, FAKE_HASH);
+    const triplet1 = buildTriplet(card, source1, FAKE_HASH, corpus1);
+    const triplet2 = buildTriplet(card, source2, FAKE_HASH, corpus2);
 
     expect(triplet1.merkleRoot).not.toBe(triplet2.merkleRoot);
   });
 
   it("different canonicalAstHashes produce different merkleRoots (via different spec names)", () => {
     const card = makeIntentCard();
+    const corpus = makeCorpusResult();
 
-    const triplet1 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH);
-    const triplet2 = buildTriplet(card, SAMPLE_SOURCE, ALT_HASH);
+    const triplet1 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
+    const triplet2 = buildTriplet(card, SAMPLE_SOURCE, ALT_HASH, corpus);
 
     // The name slug includes the last 6 chars of canonicalAstHash, so names differ
     // → specs differ → merkle roots differ.
     expect(triplet1.merkleRoot).not.toBe(triplet2.merkleRoot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-016 Required Test 3: with-corpus-result manifest emits non-placeholder artifact
+// ---------------------------------------------------------------------------
+
+describe("buildTriplet() — WI-016 Test 3: corpus-result manifest", () => {
+  it("manifest artifact path comes from CorpusResult.path, not a placeholder", () => {
+    const card = makeIntentCard();
+    const corpusPath = "property-tests.fast-check.ts";
+    const corpus = makeCorpusResult({ path: corpusPath });
+
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
+
+    expect(triplet.manifest.artifacts[0]!.path).toBe(corpusPath);
+    // The placeholder path "property-tests.ts" must NOT appear
+    expect(triplet.manifest.artifacts[0]!.path).not.toBe("property-tests.ts");
+  });
+
+  it("corpus bytes affect the merkleRoot (content-dependent identity)", () => {
+    const card = makeIntentCard();
+    const encoder = new TextEncoder();
+
+    const corpus1 = makeCorpusResult({ bytes: encoder.encode("// corpus variant A\n") });
+    const corpus2 = makeCorpusResult({ bytes: encoder.encode("// corpus variant B\n") });
+
+    const triplet1 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus1);
+    const triplet2 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus2);
+
+    // Different corpus bytes → different artifact bytes → different proof_root → different merkleRoot
+    expect(triplet1.merkleRoot).not.toBe(triplet2.merkleRoot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-016 Required Test 4: bootstrap-only path requires explicit flag
+// ---------------------------------------------------------------------------
+
+describe("buildTriplet() — WI-016 Test 4: bootstrap explicit flag", () => {
+  it("throws when corpusResult is undefined and bootstrap flag is absent", () => {
+    const card = makeIntentCard();
+    expect(() => buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined)).toThrow(
+      /bootstrap/,
+    );
+  });
+
+  it("throws when corpusResult is undefined and bootstrap is false", () => {
+    const card = makeIntentCard();
+    expect(() =>
+      buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined, { bootstrap: false }),
+    ).toThrow(/bootstrap/);
+  });
+
+  it("succeeds with empty placeholder bytes when options.bootstrap === true", () => {
+    const card = makeIntentCard();
+    const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined, { bootstrap: true });
+
+    // Bootstrap manifest has one property_tests artifact
+    expect(triplet.manifest.artifacts).toHaveLength(1);
+    expect(triplet.manifest.artifacts[0]!.kind).toBe("property_tests");
+    // The bootstrap path is the well-known placeholder
+    expect(triplet.manifest.artifacts[0]!.path).toBe("property-tests.ts");
+    // merkleRoot is computable even with empty bytes
+    expect(typeof triplet.merkleRoot).toBe("string");
+    expect(triplet.merkleRoot.length).toBeGreaterThan(0);
+  });
+
+  it("bootstrap merkleRoot differs from corpus-populated merkleRoot", () => {
+    const card = makeIntentCard();
+    const encoder = new TextEncoder();
+    const corpus = makeCorpusResult({ bytes: encoder.encode("// real corpus\n") });
+
+    const bootstrapTriplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined, {
+      bootstrap: true,
+    });
+    const corpusTriplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
+
+    // Empty bytes vs real bytes → different proof_root → different merkleRoot
+    expect(bootstrapTriplet.merkleRoot).not.toBe(corpusTriplet.merkleRoot);
   });
 });

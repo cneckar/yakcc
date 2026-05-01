@@ -1,0 +1,182 @@
+diff --git a/packages/shave/src/persist/triplet.ts b/packages/shave/src/persist/triplet.ts
+index 6f02472..e766bc5 100644
+--- a/packages/shave/src/persist/triplet.ts
++++ b/packages/shave/src/persist/triplet.ts
+@@ -6,11 +6,13 @@
+ //   - impl is the raw source text (AtomLeaf.source). No normalization at L0 per
+ //     DEC-TRIPLET-IDENTITY-020: file bytes are the identity unit at L0; AST
+ //     normalization is deferred to L1+ where the totality pass normalizes anyway.
+-//   - ProofManifest at L0 bootstrap: a single "property_tests" artifact with a
+-//     placeholder path ("property-tests.ts") and empty bytes is emitted. This
+-//     satisfies the L0 manifest validator (validateProofManifestL0 requires
+-//     exactly one "property_tests" artifact). The artifact bytes map carries an
+-//     empty Uint8Array for that path. The property-test corpus is WI-013-03.
++//   - ProofManifest at L0: a single "property_tests" artifact is populated from
++//     the CorpusResult produced by extractCorpus() (WI-016). The artifact bytes
++//     map carries the corpus bytes at the corpus path.
++//   - Bootstrap fallback: when `options.bootstrap === true`, an empty-bytes
++//     placeholder manifest is emitted instead of requiring a CorpusResult. This
++//     is an explicit opt-in; the DEFAULT path requires a populated CorpusResult.
++//     "WI-016 retirement of L0_BOOTSTRAP_MANIFEST as the silent default."
+ //   - blockMerkleRoot() from @yakcc/contracts is the canonical identity derivation.
+ //     We do not re-implement the Merkle logic here.
+ 
+@@ -22,6 +24,7 @@ import {
+ } from "@yakcc/contracts";
+ import type { BlockMerkleRoot, ProofManifest, SpecHash, SpecYak } from "@yakcc/contracts";
+ import type { CanonicalAstHash } from "@yakcc/contracts";
++import type { CorpusResult } from "../corpus/types.js";
+ import type { IntentCard } from "../intent/types.js";
+ import { specFromIntent } from "./spec-from-intent.js";
+ 
+@@ -47,45 +50,58 @@ export interface BuiltTriplet {
+   readonly merkleRoot: BlockMerkleRoot;
+ }
+ 
++/**
++ * Options for buildTriplet().
++ */
++export interface BuildTripletOptions {
++  /**
++   * When true, emit an empty-bytes placeholder manifest instead of requiring
++   * a CorpusResult. This is an explicit opt-in for the bootstrap/migration path.
++   *
++   * DEFAULT is false — the normal production path requires a populated CorpusResult
++   * via the `corpusResult` parameter.
++   *
++   * @decision DEC-ATOM-PERSIST-001 (WI-016): L0_BOOTSTRAP_MANIFEST is no longer the
++   * silent default. Callers that still need the bootstrap path must pass bootstrap=true
++   * explicitly. New callers should always provide a CorpusResult via extractCorpus().
++   */
++  readonly bootstrap?: boolean | undefined;
++}
++
+ // ---------------------------------------------------------------------------
+-// Bootstrap L0 manifest constant
++// Bootstrap L0 manifest constant (explicit opt-in only after WI-016)
+ // ---------------------------------------------------------------------------
+ 
+ /**
+- * The placeholder path for the L0 property-test artifact.
+- *
+- * At L0 bootstrap the corpus is empty. We declare one artifact entry so that:
+- *   1. validateProofManifestL0 is satisfied (requires exactly one
+- *      "property_tests" artifact with a non-empty path).
+- *   2. blockMerkleRoot() can compute proof_root (it needs the artifact bytes
+- *      for each declared artifact; we supply empty bytes).
++ * The placeholder path for the L0 bootstrap property-test artifact.
+  *
+- * The property-test corpus is populated by WI-013-03.
++ * Only used when `options.bootstrap === true`. The bootstrap path is an
++ * explicit opt-in after WI-016; the default production path uses a populated
++ * CorpusResult from extractCorpus().
+  */
+-const L0_PROPERTY_TESTS_PATH = "property-tests.ts";
++const L0_BOOTSTRAP_PATH = "property-tests.ts";
+ 
+ /** Empty bytes for the bootstrap property-test artifact. */
+ const EMPTY_BYTES = new Uint8Array(0);
+ 
+ /**
+- * The L0 bootstrap ProofManifest.
++ * The L0 bootstrap ProofManifest (explicit opt-in only).
+  *
+- * Declares one "property_tests" artifact at the placeholder path.
+- * validateProofManifestL0 accepts this as a valid L0 manifest.
+- * The artifact bytes map must carry `L0_PROPERTY_TESTS_PATH → EMPTY_BYTES`.
++ * Declared as a named export so tests can verify bootstrap manifests without
++ * re-implementing the shape. Do NOT use as the default in production code.
+  */
+-const L0_BOOTSTRAP_MANIFEST: ProofManifest = {
++export const L0_BOOTSTRAP_MANIFEST: ProofManifest = {
+   artifacts: [
+     {
+       kind: "property_tests",
+-      path: L0_PROPERTY_TESTS_PATH,
++      path: L0_BOOTSTRAP_PATH,
+     },
+   ],
+ } as const;
+ 
+ /** Artifact bytes map for the L0 bootstrap manifest. */
+ function makeBootstrapArtifacts(): Map<string, Uint8Array> {
+-  return new Map([[L0_PROPERTY_TESTS_PATH, EMPTY_BYTES]]);
++  return new Map([[L0_BOOTSTRAP_PATH, EMPTY_BYTES]]);
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -99,22 +115,31 @@ function makeBootstrapArtifacts(): Map<string, Uint8Array> {
+  *   1. Derive SpecYak from the intent card via specFromIntent().
+  *   2. Compute specHash = BLAKE3(canonicalize(spec)).
+  *   3. impl is the raw source text.
+- *   4. Build L0 bootstrap ProofManifest (one "property_tests" artifact,
+- *      empty bytes). WI-013-03 populates the real corpus.
++ *   4. Build ProofManifest from the CorpusResult (WI-016) OR the bootstrap
++ *      placeholder if `options.bootstrap === true`.
+  *   5. Compute merkleRoot via blockMerkleRoot() from @yakcc/contracts.
+  *
+  * Throws TypeError if specFromIntent produces an invalid spec (validateSpecYak
+  * is called inside specFromIntent).
+  *
++ * Throws Error if `corpusResult` is undefined and `options.bootstrap` is not
++ * explicitly true — the caller must provide a CorpusResult or opt into bootstrap.
++ *
+  * @param intentCard       - The extracted intent card for this atom.
+  * @param source           - The raw source text of the atom (AtomLeaf.source).
+  * @param canonicalAstHash - The canonical AST hash of the atom source.
+  *                           Used for specName uniqueness and stored on the row.
++ * @param corpusResult     - The corpus extraction result (from extractCorpus()).
++ *                           Required unless options.bootstrap === true.
++ * @param options          - Optional configuration. Set bootstrap=true for the
++ *                           empty-placeholder path (explicit opt-in only).
+  */
+ export function buildTriplet(
+   intentCard: IntentCard,
+   source: string,
+   canonicalAstHash: CanonicalAstHash,
++  corpusResult?: CorpusResult | undefined,
++  options?: BuildTripletOptions | undefined,
+ ): BuiltTriplet {
+   // Step 1: derive SpecYak from the intent card.
+   const spec = specFromIntent(intentCard, canonicalAstHash);
+@@ -131,9 +156,37 @@ export function buildTriplet(
+   // Step 3: impl is the raw source text.
+   const impl = source;
+ 
+-  // Step 4: build L0 bootstrap ProofManifest.
+-  const manifest = L0_BOOTSTRAP_MANIFEST;
+-  const artifacts = makeBootstrapArtifacts();
++  // Step 4: build ProofManifest from CorpusResult or bootstrap placeholder.
++  //
++  // @decision DEC-ATOM-PERSIST-001 (WI-016):
++  //   The default path requires a populated CorpusResult from extractCorpus().
++  //   The bootstrap path (options.bootstrap === true) is an explicit opt-in.
++  //   Passing neither throws — no silent fallback to empty bytes.
++  let manifest: ProofManifest;
++  let artifacts: Map<string, Uint8Array>;
++
++  if (corpusResult !== undefined) {
++    // Normal production path: use the extracted corpus.
++    manifest = {
++      artifacts: [
++        {
++          kind: "property_tests",
++          path: corpusResult.path,
++        },
++      ],
++    };
++    artifacts = new Map([[corpusResult.path, corpusResult.bytes]]);
++  } else if (options?.bootstrap === true) {
++    // Explicit bootstrap opt-in: emit placeholder manifest with empty bytes.
++    manifest = L0_BOOTSTRAP_MANIFEST;
++    artifacts = makeBootstrapArtifacts();
++  } else {
++    throw new Error(
++      "buildTriplet: corpusResult is required unless options.bootstrap === true. " +
++        "Call extractCorpus() to produce a CorpusResult, or pass options.bootstrap=true " +
++        "explicitly to use the empty-bytes placeholder (bootstrap/migration path only).",
++    );
++  }
+ 
+   // Step 5: compute BlockMerkleRoot via the canonical derivation in @yakcc/contracts.
+   const merkleRoot = blockMerkleRoot({

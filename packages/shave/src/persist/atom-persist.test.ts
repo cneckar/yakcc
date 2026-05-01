@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
+import { extractCorpus } from "../corpus/index.js";
+import type { CorpusAtomSpec } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import { maybePersistNovelGlueAtom, persistNovelGlueAtom } from "./atom-persist.js";
@@ -221,5 +223,100 @@ describe("maybePersistNovelGlueAtom()", () => {
     // Spec name should incorporate the last 6 chars of FAKE_HASH.
     const storedSpec = JSON.parse(row.proofManifestJson) as { artifacts: Array<{ kind: string }> };
     expect(storedSpec.artifacts[0]!.kind).toBe("property_tests");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: WI-016 corpus integration
+// ---------------------------------------------------------------------------
+
+describe("WI-016 corpus integration", () => {
+  // @decision DEC-ATOM-PERSIST-001 (WI-016):
+  //   These tests validate the production path where extractCorpus() produces a
+  //   real artifact (not the bootstrap placeholder). Source (a) — extractFromUpstreamTest
+  //   — is always available (pure, deterministic, no I/O), so the default call to
+  //   persistNovelGlueAtom with no corpusOptions always succeeds and produces a
+  //   non-empty fast-check artifact at a non-placeholder path.
+  //
+  //   Test 1 verifies the non-placeholder path: the artifact path is NOT the
+  //   bootstrap sentinel ("property-tests.ts") and the bytes contain "fast-check".
+  //
+  //   Test 2 verifies that the bootstrap-empty path is NOT a silent fallback:
+  //   disabling all three corpus sources causes persistNovelGlueAtom to reject with
+  //   a descriptive error and leaves the registry unwritten.
+
+  it("default path produces a non-placeholder artifact with fast-check content", async () => {
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    // Call with no options — source (a) extractFromUpstreamTest is always available.
+    await persistNovelGlueAtom(entry, registry);
+
+    // Registry must have been written exactly once.
+    expect(calls).toHaveLength(1);
+    const row = calls[0]!;
+
+    // (i) proofManifestJson parses and has exactly one artifact with kind === "property_tests".
+    const manifest = JSON.parse(row.proofManifestJson) as {
+      artifacts: Array<{ kind: string; path: string }>;
+    };
+    expect(Array.isArray(manifest.artifacts)).toBe(true);
+    expect(manifest.artifacts).toHaveLength(1);
+    expect(manifest.artifacts[0]!.kind).toBe("property_tests");
+
+    // (ii) The artifact path is NOT the bootstrap sentinel "property-tests.ts".
+    const artifactPath = manifest.artifacts[0]!.path;
+    expect(artifactPath).not.toBe("property-tests.ts");
+
+    // (iii–iv) Re-extract corpus using the same atom spec to obtain the artifact bytes
+    //   (extractFromUpstreamTest is deterministic, so the bytes match what persist used).
+    //   Then verify the bytes are non-empty and contain the "fast-check" import.
+    const atomSpec: CorpusAtomSpec = {
+      source: entry.source,
+      intentCard: entry.intentCard!,
+    };
+    const corpusResult = await extractCorpus(atomSpec);
+
+    // The artifact path from the manifest matches the corpus result's canonical path.
+    expect(corpusResult.path).toBe(artifactPath);
+
+    // (iii) Bytes are non-empty.
+    expect(corpusResult.bytes.length).toBeGreaterThan(0);
+
+    // (iv) Bytes decode as UTF-8 and contain the substring "fast-check".
+    const decoded = new TextDecoder().decode(corpusResult.bytes);
+    expect(decoded).toContain("fast-check");
+  });
+
+  it("all-sources-disabled fails persist and does not write to registry", async () => {
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    // Disable all three corpus extraction sources — extractCorpus() must throw,
+    // and persistNovelGlueAtom() must propagate that error without writing a row.
+    const promise = persistNovelGlueAtom(entry, registry, {
+      corpusOptions: {
+        enableUpstreamTest: false,
+        enableDocumentedUsage: false,
+        enableAiDerived: false,
+      },
+    });
+
+    // The call must reject.
+    await expect(promise).rejects.toThrow();
+
+    // The error message must identify that all enabled sources were exhausted.
+    await expect(
+      persistNovelGlueAtom(entry, registry, {
+        corpusOptions: {
+          enableUpstreamTest: false,
+          enableDocumentedUsage: false,
+          enableAiDerived: false,
+        },
+      }),
+    ).rejects.toThrow("all enabled sources failed or were disabled");
+
+    // The registry must NOT have been written to (no row committed).
+    expect(calls).toHaveLength(0);
   });
 });

@@ -6,6 +6,9 @@
 // The sentinel IntentCard from WI-010-01 is removed.
 // WI-018: seedIntentCache() is a public test-helper that writes an IntentCard
 // into the file-system cache via the same key-derivation path as extractIntent.
+// WI-016: extractCorpus() and seedCorpusCache() are public exports. extractCorpus()
+// is the primary API for property-test corpus extraction. seedCorpusCache() is a
+// test-helper for seeding the AI-derived corpus cache in offline tests.
 // Status: decided (MASTER_PLAN.md DEC-CONTINUOUS-SHAVE-022)
 // Rationale: Keeping extractIntent internal ensures callers depend only on
 // the stable public surface; the extraction implementation can evolve freely.
@@ -27,6 +30,45 @@ export type {
 } from "./types.js";
 
 export type { IntentCard, IntentParam } from "./intent/types.js";
+
+// ---------------------------------------------------------------------------
+// Re-exports — WI-016 public corpus surface
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-CORPUS-001 (see corpus/types.ts and corpus/index.ts)
+ * title: extractCorpus and seedCorpusCache are public exports on the main entry point
+ * status: decided (WI-016)
+ * rationale:
+ *   extractCorpus() is the primary API for property-test corpus extraction. It
+ *   implements a three-source priority chain (upstream-test > documented-usage >
+ *   ai-derived) and returns a CorpusResult suitable for buildTriplet(). Placing it
+ *   on the main entry keeps the public contract stable while letting the corpus
+ *   implementation evolve internally.
+ *
+ *   seedCorpusCache() is the corpus analogue of seedIntentCache(): a test-helper
+ *   that pre-populates the AI-derived corpus cache for offline tests. It MUST use
+ *   the same BLAKE3-based key derivation as the AI-derived extractor so that seeded
+ *   entries are found on the first cache lookup.
+ *
+ *   DEC-SHAVE-002 offline discipline: loadling @yakcc/shave and calling extractCorpus()
+ *   MUST work without ANTHROPIC_API_KEY. Sources (a) and (b) are pure; source (c)
+ *   reads from cache only.
+ */
+
+export { extractCorpus } from "./corpus/index.js";
+export type {
+  CorpusResult,
+  CorpusSource,
+  CorpusAtomSpec,
+  CorpusExtractionOptions,
+} from "./corpus/index.js";
+export {
+  seedCorpusCache,
+  CORPUS_SCHEMA_VERSION,
+  CORPUS_DEFAULT_MODEL,
+  CORPUS_PROMPT_VERSION,
+} from "./corpus/index.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — WI-018 public test-helper surface

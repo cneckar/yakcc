@@ -1,0 +1,9 @@
+total 112
+drwxr-xr-x   8 cris  staff   256 May  1 07:23 .
+drwxr-xr-x  16 cris  staff   512 May  1 07:29 ..
+-rw-r--r--   1 cris  staff  8279 May  1 00:48 ai-derived.ts
+-rw-r--r--   1 cris  staff  7429 May  1 00:47 documented-usage.ts
+-rw-r--r--   1 cris  staff  9962 May  1 07:23 index.test.ts
+-rw-r--r--   1 cris  staff  6500 May  1 00:48 index.ts
+-rw-r--r--   1 cris  staff  4716 May  1 00:45 types.ts
+-rw-r--r--   1 cris  staff  6111 May  1 00:46 upstream-test.ts

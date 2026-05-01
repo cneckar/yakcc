@@ -11,8 +11,11 @@
 //   - Entries without an intentCard (deep leaves in multi-leaf trees per
 //     DEC-UNIVERSALIZE-WIRING-001) are skipped. Future work: per-leaf intent
 //     extraction for multi-leaf trees.
-//   - Property-test corpus is empty at L0 bootstrap (ProofManifest has one
-//     "property_tests" artifact with empty bytes). The real corpus is WI-013-03.
+//   - WI-016: Property-test corpus is extracted via extractCorpus() before buildTriplet().
+//     The CorpusResult is passed to buildTriplet() as the canonical artifact source.
+//     The bootstrap placeholder (empty bytes) is no longer the silent default.
+//   - Corpus extraction source preference: upstream-test (a) > documented-usage (b) > ai-derived (c).
+//     cacheDir is forwarded from PersistOptions when provided, enabling source (c).
 //   - Effect declaration is empty (atoms are pure-by-default at this stage;
 //     effect inference is a future pass).
 //   - The signature takes Registry (full interface) not ShaveRegistryView because
@@ -22,9 +25,33 @@
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
+import { extractCorpus } from "../corpus/index.js";
+import type { CorpusAtomSpec, CorpusExtractionOptions } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import { buildTriplet } from "./triplet.js";
+
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for persistNovelGlueAtom() and maybePersistNovelGlueAtom().
+ */
+export interface PersistOptions {
+  /**
+   * Root cache directory for corpus extraction source (c) — AI-derived synthesis.
+   * When provided, the AI-derived cache path is attempted after (a) and (b).
+   * When omitted, source (c) is skipped (sources (a) and (b) are always available).
+   */
+  readonly cacheDir?: string | undefined;
+
+  /**
+   * Corpus extraction options forwarded to extractCorpus().
+   * Use to disable individual sources (e.g. for testing).
+   */
+  readonly corpusOptions?: CorpusExtractionOptions | undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -43,10 +70,12 @@ import { buildTriplet } from "./triplet.js";
  *                     for persistence; entries without one are skipped.
  * @param registry   - Full Registry interface (requires storeBlock). For callers
  *                     with a read-only view, use the opt-in path in shave() instead.
+ * @param options    - Optional persistence options (cacheDir for corpus source c).
  */
 export async function persistNovelGlueAtom(
   entry: NovelGlueEntry,
   registry: Registry,
+  options?: PersistOptions,
 ): Promise<BlockMerkleRoot | undefined> {
   // Skip atoms without an intent card — deep leaves in multi-leaf trees do not
   // carry one (per DEC-UNIVERSALIZE-WIRING-001; future WI populates per-leaf cards).
@@ -55,8 +84,19 @@ export async function persistNovelGlueAtom(
     return undefined;
   }
 
-  // Build the full block triplet.
-  const triplet = buildTriplet(intentCard, entry.source, entry.canonicalAstHash);
+  // WI-016: Extract the property-test corpus before building the triplet.
+  // The corpus result carries the artifact bytes that become the "property_tests"
+  // entry in the ProofManifest, making the BlockMerkleRoot content-dependent on
+  // the actual test corpus (not empty bytes).
+  const atomSpec: CorpusAtomSpec = {
+    source: entry.source,
+    intentCard,
+    cacheDir: options?.cacheDir,
+  };
+  const corpusResult = await extractCorpus(atomSpec, options?.corpusOptions);
+
+  // Build the full block triplet with the extracted corpus.
+  const triplet = buildTriplet(intentCard, entry.source, entry.canonicalAstHash, corpusResult);
 
   // Construct the BlockTripletRow for registry storage.
   const row: BlockTripletRow = {
@@ -90,12 +130,14 @@ export async function persistNovelGlueAtom(
  *
  * @param entry      - The NovelGlueEntry to potentially persist.
  * @param registry   - A registry view that optionally supports storeBlock.
+ * @param options    - Optional persistence options forwarded to persistNovelGlueAtom.
  */
 export async function maybePersistNovelGlueAtom(
   entry: NovelGlueEntry,
   registry: { storeBlock?: Registry["storeBlock"] } & {
     findByCanonicalAstHash?: (hash: CanonicalAstHash) => Promise<readonly BlockMerkleRoot[]>;
   },
+  options?: PersistOptions,
 ): Promise<BlockMerkleRoot | undefined> {
   if (typeof registry.storeBlock !== "function") {
     return undefined;
@@ -104,5 +146,5 @@ export async function maybePersistNovelGlueAtom(
   // Delegate to the full Registry path. We cast here because the duck-typed
   // registry satisfies the storeBlock contract even if it doesn't implement
   // every Registry method. Only storeBlock is called in this flow.
-  return persistNovelGlueAtom(entry, registry as unknown as Registry);
+  return persistNovelGlueAtom(entry, registry as unknown as Registry, options);
 }
