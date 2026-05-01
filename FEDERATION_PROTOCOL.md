@@ -218,6 +218,9 @@ Content-Type: application/json
   "specCanonicalBytes": "<base64>",
   "implSource": "...",
   "proofManifestJson": "...",
+  "artifactBytes": {
+    "property_tests/cases.cbor": "<base64>"
+  },
   "level": "L0",
   "createdAt": 1714...,
   "canonicalAstHash": "...",
@@ -278,12 +281,62 @@ WireBlockTriplet = {
   specCanonicalBytes: string,      // base64(Uint8Array)
   implSource:      string,         // UTF-8 source text
   proofManifestJson: string,       // JSON text (already a string in the row)
+  artifactBytes:   Record<string, string>,
+                                   // path -> base64(Uint8Array); one entry per
+                                   // path declared in proofManifestJson.artifacts.
+                                   // Required by the contracts blockMerkleRoot()
+                                   // formula (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
   level:           "L0"|"L1"|"L2"|"L3",
   createdAt:       number,         // epoch ms (peer-local; informational)
   canonicalAstHash: string,        // hex(CanonicalAstHash)
   parentBlockRoot: string | null,  // hex(BlockMerkleRoot) | null
 }
 ```
+
+### Artifact bytes on the wire
+
+The receiver's `blockMerkleRoot` recomputation MUST equal the
+`@yakcc/contracts` `blockMerkleRoot()` formula byte-for-byte
+(DEC-TRIPLET-IDENTITY-020), which folds artifact bytes into the proof
+root:
+
+```
+proof_root        = BLAKE3(
+                      canonicalize(manifest.json)
+                      || BLAKE3(artifact[0].bytes)
+                      || BLAKE3(artifact[1].bytes)
+                      || ...  [in manifest declaration order]
+                    )
+block_merkle_root = BLAKE3(spec_hash || impl_hash || proof_root)
+```
+
+Every artifact path declared in `proofManifestJson.artifacts[*].path` MUST
+appear as a key in `artifactBytes` with a base64-encoded `Uint8Array`
+value. Missing or extra keys are an integrity failure. The receiver
+decodes `artifactBytes`, reconstructs a `Map<string, Uint8Array>`, and
+calls `@yakcc/contracts` `blockMerkleRoot({ spec, implSource, manifest,
+artifacts })` directly (no parallel reimplementation of the formula).
+
+This makes the wire shape strictly larger than the registry row: the
+sender pulls artifact bytes from `BlockTripletRow.artifacts` (added by
+WI-022), base64-encodes them per path, and emits them inline. The
+receiver decodes them and stores them through `Registry.storeBlock`
+which writes both the `blocks` row and the matching `block_artifacts`
+rows.
+
+**Why inline (not a separate endpoint):** v1 wave-1 corpora are
+KB-scale (one `property_tests` artifact per atom). Inline keeps the
+wire single-roundtrip, keeps HTTP caching keyed on `BlockMerkleRoot`
+correct (the artifacts are part of the block's identity), and avoids
+introducing a fifth endpoint. A separate `/v1/artifacts/<path>`
+endpoint is a v1-wave-2 surface if measurement shows the inline payload
+is too large; that change requires a new DEC entry per
+DEC-V1-FEDERATION-WIRE-ARTIFACTS-002.
+
+**No-ownership preservation:** `artifactBytes` is keyed by the manifest's
+declared artifact paths. Paths come from the manifest, which itself
+carries no ownership data. The wire shape adds bytes, not identity
+fields. DEC-NO-OWNERSHIP-011 holds.
 
 ### Field-by-field semantics on the wire
 
@@ -612,7 +665,13 @@ any of its claims.
 
 1. `@yakcc/contracts` `canonicalize()` is a pure function of input bytes.
 2. `blockMerkleRoot(triplet)` is a pure function of the canonicalized
-   bytes plus the impl source plus the proof manifest JSON.
+   spec bytes plus the impl source plus the canonicalized proof manifest
+   plus the per-artifact bytes in manifest-declared order
+   (DEC-TRIPLET-IDENTITY-020). The wire's `artifactBytes` field carries
+   those per-artifact bytes verbatim
+   (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002 / §4 "Artifact bytes on the
+   wire") so the receiver can recompute the same value the sender
+   computed at persist time.
 3. `schemaVersion` and `protocolVersion` in the manifest endpoint
    prevent two incompatible canonicalization implementations from
    speaking the protocol at all.
