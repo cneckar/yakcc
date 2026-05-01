@@ -36,7 +36,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeIntent } from "../cache/file-cache.js";
 import { keyFromIntentInputs, sourceHash } from "../cache/key.js";
 import { universalize } from "../index.js";
-import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "../intent/constants.js";
+import {
+  DEFAULT_MODEL,
+  INTENT_PROMPT_VERSION,
+  INTENT_SCHEMA_VERSION,
+} from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import type { ShaveRegistryView } from "../types.js";
 import { DidNotReachAtomError } from "./recursion.js";
@@ -87,8 +91,7 @@ async function registryMatchingSource(source: string): Promise<ShaveRegistryView
   return {
     selectBlocks: async () => [],
     getBlock: async () => undefined,
-    findByCanonicalAstHash: async (h: string) =>
-      h === hash ? [fakeMerkle] : [],
+    findByCanonicalAstHash: async (h: string) => (h === hash ? [fakeMerkle] : []),
   };
 }
 
@@ -148,36 +151,35 @@ async function seedCache(source: string, overrides?: Partial<IntentCard>): Promi
 // ---------------------------------------------------------------------------
 
 describe("universalize() wiring — no registry matches", () => {
-  it(
-    "returns slicePlan with NovelGlueEntry items, empty matchedPrimitives, no decomposition stub",
-    async () => {
-      const seeded = await seedCache(ATOMIC_SOURCE);
+  it("returns slicePlan with NovelGlueEntry items, empty matchedPrimitives, no decomposition stub", async () => {
+    const seeded = await seedCache(ATOMIC_SOURCE);
 
-      const result = await universalize(
-        { source: ATOMIC_SOURCE },
-        emptyRegistry,
-        { cacheDir, offline: true },
-      );
+    // WI-022: intentStrategy: "llm" required — seedCache() uses LLM-mode tags;
+    // the default "static" strategy uses a different key namespace and would miss.
+    const result = await universalize({ source: ATOMIC_SOURCE }, emptyRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
 
-      // intentCard must come from the seeded cache.
-      expect(result.intentCard.behavior).toBe(seeded.behavior);
+    // intentCard must come from the seeded cache.
+    expect(result.intentCard.behavior).toBe(seeded.behavior);
 
-      // slicePlan must be non-empty and contain only novel-glue entries.
-      expect(result.slicePlan.length).toBeGreaterThan(0);
-      for (const entry of result.slicePlan) {
-        expect(entry.kind).toBe("novel-glue");
-      }
+    // slicePlan must be non-empty and contain only novel-glue entries.
+    expect(result.slicePlan.length).toBeGreaterThan(0);
+    for (const entry of result.slicePlan) {
+      expect(entry.kind).toBe("novel-glue");
+    }
 
-      // No registry matches → matchedPrimitives is empty.
-      expect(result.matchedPrimitives).toEqual([]);
+    // No registry matches → matchedPrimitives is empty.
+    expect(result.matchedPrimitives).toEqual([]);
 
-      // "decomposition" must no longer appear in stubbed (it is live).
-      expect(result.diagnostics.stubbed).not.toContain("decomposition");
-      // "variance" remains stubbed; "license-gate" is now live (WI-013-02).
-      expect(result.diagnostics.stubbed).toContain("variance");
-      expect(result.diagnostics.stubbed).not.toContain("license-gate");
-    },
-  );
+    // "decomposition" must no longer appear in stubbed (it is live).
+    expect(result.diagnostics.stubbed).not.toContain("decomposition");
+    // "variance" remains stubbed; "license-gate" is now live (WI-013-02).
+    expect(result.diagnostics.stubbed).toContain("variance");
+    expect(result.diagnostics.stubbed).not.toContain("license-gate");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -185,33 +187,31 @@ describe("universalize() wiring — no registry matches", () => {
 // ---------------------------------------------------------------------------
 
 describe("universalize() wiring — registry match by canonicalAstHash", () => {
-  it(
-    "returns slicePlan with one PointerEntry and matchedPrimitives.length === 1",
-    async () => {
-      await seedCache(ATOMIC_SOURCE);
-      const matchingRegistry = await registryMatchingSource(ATOMIC_SOURCE);
+  it("returns slicePlan with one PointerEntry and matchedPrimitives.length === 1", async () => {
+    await seedCache(ATOMIC_SOURCE);
+    const matchingRegistry = await registryMatchingSource(ATOMIC_SOURCE);
 
-      const result = await universalize(
-        { source: ATOMIC_SOURCE },
-        matchingRegistry,
-        { cacheDir, offline: true },
-      );
+    // WI-022: intentStrategy: "llm" — seedCache() uses LLM-mode tags.
+    const result = await universalize({ source: ATOMIC_SOURCE }, matchingRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
 
-      // intentCard is still produced (extracted from cache).
-      expect(result.intentCard.behavior).toBeTruthy();
+    // intentCard is still produced (extracted from cache).
+    expect(result.intentCard.behavior).toBeTruthy();
 
-      // The single leaf matched the registry → one PointerEntry.
-      expect(result.slicePlan.length).toBe(1);
-      expect(result.slicePlan[0].kind).toBe("pointer");
+    // The single leaf matched the registry → one PointerEntry.
+    expect(result.slicePlan.length).toBe(1);
+    expect(result.slicePlan[0].kind).toBe("pointer");
 
-      // matchedPrimitives carries the one matched entry.
-      expect(result.matchedPrimitives.length).toBe(1);
-      expect(result.matchedPrimitives[0].merkleRoot).toBe("fake-merkle-root-001");
+    // matchedPrimitives carries the one matched entry.
+    expect(result.matchedPrimitives.length).toBe(1);
+    expect(result.matchedPrimitives[0].merkleRoot).toBe("fake-merkle-root-001");
 
-      // "decomposition" not in stubbed.
-      expect(result.diagnostics.stubbed).not.toContain("decomposition");
-    },
-  );
+    // "decomposition" not in stubbed.
+    expect(result.diagnostics.stubbed).not.toContain("decomposition");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -219,29 +219,28 @@ describe("universalize() wiring — registry match by canonicalAstHash", () => {
 // ---------------------------------------------------------------------------
 
 describe("universalize() wiring — decomposition error propagation", () => {
-  it(
-    "propagates DidNotReachAtomError when decompose() cannot reach atoms",
-    async () => {
-      // Strategy: pass maxControlFlowBoundaries: -1 via recursionOptions.
-      // With this setting, cfCount (always ≥ 0) > -1 is always true, so every
-      // node is classified as non-atomic. For a SourceFile with one expression
-      // statement (console.log(1)), decomposableChildrenOf(SourceFile) returns
-      // [ExpressionStatement]. The ExpressionStatement has no decomposable
-      // children → DidNotReachAtomError.
-      //
-      // We seed the cache so extractIntent succeeds before decompose() runs.
-      const source = "// SPDX-License-Identifier: MIT\nconsole.log(1);";
-      await seedCache(source);
+  it("propagates DidNotReachAtomError when decompose() cannot reach atoms", async () => {
+    // Strategy: pass maxControlFlowBoundaries: -1 via recursionOptions.
+    // With this setting, cfCount (always ≥ 0) > -1 is always true, so every
+    // node is classified as non-atomic. For a SourceFile with one expression
+    // statement (console.log(1)), decomposableChildrenOf(SourceFile) returns
+    // [ExpressionStatement]. The ExpressionStatement has no decomposable
+    // children → DidNotReachAtomError.
+    //
+    // We seed the cache so extractIntent succeeds before decompose() runs.
+    const source = "// SPDX-License-Identifier: MIT\nconsole.log(1);";
+    await seedCache(source);
 
-      await expect(
-        universalize(
-          { source },
-          emptyRegistry,
-          { cacheDir, offline: true, recursionOptions: { maxControlFlowBoundaries: -1 } },
-        ),
-      ).rejects.toThrow(DidNotReachAtomError);
-    },
-  );
+    // WI-022: intentStrategy: "llm" + offline — seedCache() uses LLM-mode tags.
+    await expect(
+      universalize({ source }, emptyRegistry, {
+        cacheDir,
+        offline: true,
+        intentStrategy: "llm",
+        recursionOptions: { maxControlFlowBoundaries: -1 },
+      }),
+    ).rejects.toThrow(DidNotReachAtomError);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -250,55 +249,51 @@ describe("universalize() wiring — decomposition error propagation", () => {
 // ---------------------------------------------------------------------------
 
 describe("universalize() wiring — intentCard on root NovelGlueEntry", () => {
-  it(
-    "attaches intentCard to the root NovelGlueEntry for a single atomic leaf with no registry match",
-    async () => {
-      // ATOMIC_SOURCE is a single function with no CF → one AtomLeaf at depth 0.
-      // emptyRegistry → no matches → one NovelGlueEntry.
-      // The intentCard from the cache should be attached to that entry.
-      const seeded = await seedCache(ATOMIC_SOURCE);
+  it("attaches intentCard to the root NovelGlueEntry for a single atomic leaf with no registry match", async () => {
+    // ATOMIC_SOURCE is a single function with no CF → one AtomLeaf at depth 0.
+    // emptyRegistry → no matches → one NovelGlueEntry.
+    // The intentCard from the cache should be attached to that entry.
+    const seeded = await seedCache(ATOMIC_SOURCE);
 
-      const result = await universalize(
-        { source: ATOMIC_SOURCE },
-        emptyRegistry,
-        { cacheDir, offline: true },
-      );
+    // WI-022: intentStrategy: "llm" — seedCache() uses LLM-mode tags.
+    const result = await universalize({ source: ATOMIC_SOURCE }, emptyRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
 
-      // Exactly one entry (single-leaf tree, no registry match).
-      expect(result.slicePlan.length).toBe(1);
-      const entry = result.slicePlan[0];
-      expect(entry.kind).toBe("novel-glue");
+    // Exactly one entry (single-leaf tree, no registry match).
+    expect(result.slicePlan.length).toBe(1);
+    const entry = result.slicePlan[0];
+    expect(entry.kind).toBe("novel-glue");
 
-      // The intentCard from the top-level extractIntent call is attached.
-      if (entry.kind === "novel-glue") {
-        expect(entry.intentCard).toBeDefined();
-        expect(entry.intentCard?.behavior).toBe(seeded.behavior);
-        expect(entry.intentCard?.sourceHash).toBe(seeded.sourceHash);
-      }
+    // The intentCard from the top-level extractIntent call is attached.
+    if (entry.kind === "novel-glue") {
+      expect(entry.intentCard).toBeDefined();
+      expect(entry.intentCard?.behavior).toBe(seeded.behavior);
+      expect(entry.intentCard?.sourceHash).toBe(seeded.sourceHash);
+    }
 
-      // Top-level intentCard is also present.
-      expect(result.intentCard.behavior).toBe(seeded.behavior);
-    },
-  );
+    // Top-level intentCard is also present.
+    expect(result.intentCard.behavior).toBe(seeded.behavior);
+  });
 
-  it(
-    "does not attach intentCard to PointerEntry when the single leaf matches the registry",
-    async () => {
-      await seedCache(ATOMIC_SOURCE);
-      const matchingRegistry = await registryMatchingSource(ATOMIC_SOURCE);
+  it("does not attach intentCard to PointerEntry when the single leaf matches the registry", async () => {
+    await seedCache(ATOMIC_SOURCE);
+    const matchingRegistry = await registryMatchingSource(ATOMIC_SOURCE);
 
-      const result = await universalize(
-        { source: ATOMIC_SOURCE },
-        matchingRegistry,
-        { cacheDir, offline: true },
-      );
+    // WI-022: intentStrategy: "llm" — seedCache() uses LLM-mode tags.
+    const result = await universalize({ source: ATOMIC_SOURCE }, matchingRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
 
-      expect(result.slicePlan.length).toBe(1);
-      const entry = result.slicePlan[0];
-      // Registry match → PointerEntry, which has no intentCard field.
-      expect(entry.kind).toBe("pointer");
-      // PointerEntry type does not have intentCard — verify via discriminant.
-      expect("intentCard" in entry).toBe(false);
-    },
-  );
+    expect(result.slicePlan.length).toBe(1);
+    const entry = result.slicePlan[0];
+    // Registry match → PointerEntry, which has no intentCard field.
+    expect(entry.kind).toBe("pointer");
+    // PointerEntry type does not have intentCard — verify via discriminant.
+    expect("intentCard" in entry).toBe(false);
+  });
 });

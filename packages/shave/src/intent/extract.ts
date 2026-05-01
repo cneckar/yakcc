@@ -8,6 +8,20 @@
 // the cache or constructing partial IntentCards. All extraction must go through
 // this function to guarantee cache consistency and validation invariants.
 
+// @decision DEC-INTENT-STRATEGY-001
+// @title Strategy axis on ExtractIntentContext; "static" as default (WI-022)
+// @status accepted
+// @rationale
+//   The "strategy" field gates whether the miss path calls the Anthropic API
+//   ("llm") or the local TypeScript-Compiler-API + JSDoc extractor ("static").
+//   Default is "static" so the common case never touches the SDK. The "llm"
+//   path is entirely unchanged — all its guards (API-key check, offline check,
+//   fence parser) only run when strategy === "llm". Tests that depend on
+//   Anthropic-specific behavior must pass strategy: "llm" explicitly.
+//   Cache-key computation is unchanged — the model/promptVersion tags for the
+//   static path ("static-ts@1" / "static-jsdoc@1") produce a disjoint key
+//   namespace from any LLM model tag by construction.
+
 import { readIntent, writeIntent } from "../cache/file-cache.js";
 import { sourceHash as computeSourceHash, keyFromIntentInputs } from "../cache/key.js";
 import {
@@ -16,9 +30,8 @@ import {
   OfflineCacheMissError,
 } from "../errors.js";
 import type { AnthropicLikeClient } from "./anthropic-client.js";
-import { createDefaultAnthropicClient } from "./anthropic-client.js";
 import { INTENT_SCHEMA_VERSION } from "./constants.js";
-import { SYSTEM_PROMPT } from "./prompt.js";
+import { staticExtract } from "./static-extract.js";
 import type { IntentCard } from "./types.js";
 import { validateIntentCard } from "./validate-intent-card.js";
 
@@ -29,25 +42,41 @@ import { validateIntentCard } from "./validate-intent-card.js";
 /**
  * Configuration context for a single extractIntent call.
  *
- * All fields are required except `offline`, `client`, and `now`, which have
- * well-defined defaults. The caller (universalize, or a test) assembles this
- * from ShaveOptions + constants.
+ * All fields are required except `offline`, `client`, `now`, and `strategy`,
+ * which have well-defined defaults. The caller (universalize, or a test)
+ * assembles this from ShaveOptions + constants.
  */
 export interface ExtractIntentContext {
-  /** Anthropic model identifier, e.g. DEFAULT_MODEL. */
+  /**
+   * Extraction strategy.
+   *
+   * @decision DEC-INTENT-STRATEGY-001
+   * - "static" (default): TypeScript Compiler API + JSDoc parser. No network,
+   *   no API key, always offline-safe. Uses STATIC_MODEL_TAG / STATIC_PROMPT_VERSION
+   *   as the cache-key components.
+   * - "llm": Anthropic API. Subject to API-key guard, offline check, and
+   *   fence parsing. Uses ctx.model / ctx.promptVersion (DEFAULT_MODEL /
+   *   INTENT_PROMPT_VERSION by default) as cache-key components.
+   *
+   * When omitted, defaults to "static".
+   */
+  readonly strategy?: "static" | "llm" | undefined;
+  /** Anthropic model identifier, e.g. DEFAULT_MODEL. Used only when strategy === "llm". */
   readonly model: string;
-  /** Prompt version tag used in cache key derivation (INTENT_PROMPT_VERSION). */
+  /** Prompt version tag used in cache key derivation. Used only when strategy === "llm". */
   readonly promptVersion: string;
   /** Absolute path to the root of the intent cache directory. */
   readonly cacheDir: string;
   /**
-   * When true, the extractor never makes API calls — throws OfflineCacheMissError
-   * on a cache miss instead.
+   * When true and strategy === "llm", the extractor never makes API calls —
+   * throws OfflineCacheMissError on a cache miss instead.
+   * For strategy === "static" this flag has no effect (static is always offline-safe).
    */
   readonly offline?: boolean | undefined;
   /**
    * Injectable Anthropic client. When provided, used instead of constructing
    * the default SDK client. Allows tests to inject a mock without network access.
+   * Only relevant when strategy === "llm".
    */
   readonly client?: AnthropicLikeClient | undefined;
   /**
@@ -58,11 +87,11 @@ export interface ExtractIntentContext {
 }
 
 // ---------------------------------------------------------------------------
-// JSON fence parser
+// JSON fence parser (LLM path only)
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the content between the first <json>…</json> fence pair.
+ * Extract the content between the first <json>...</json> fence pair.
  *
  * Throws IntentCardSchemaError if fences are absent or the content between
  * them is not parseable as JSON.
@@ -97,38 +126,46 @@ function parseJsonFence(response: string): unknown {
  * Extract the behavioral intent from a unit of source code.
  *
  * This function is INTERNAL — it is not exported from index.ts.
- * WI-010-03 will wire universalize() to call this function.
  *
- * Sequence:
- *   1. Compute sourceHash = BLAKE3(normalize(unitSource)).
- *   2. Derive composite cacheKey from (sourceHash, model, promptVersion, schemaVersion).
- *   3. Attempt cache read via readIntent(cacheDir, cacheKey).
- *      - Hit: validate and return. On validation failure, delete corrupt entry
- *        and proceed as miss.
- *   4. On miss:
- *      a. If offline === true → throw OfflineCacheMissError.
- *      b. If no ANTHROPIC_API_KEY and no ctx.client → throw AnthropicApiKeyMissingError.
- *      c. Call the Anthropic API with the source as user turn.
- *      d. Parse the <json>…</json> fence → throw IntentCardSchemaError on failure.
- *      e. Assemble the full IntentCard (adds envelope fields).
- *      f. validateIntentCard → throw IntentCardSchemaError on violation.
- *      g. writeIntent (atomic) to cache.
- *      h. Return the validated card.
+ * Strategy dispatch (DEC-INTENT-STRATEGY-001):
+ *   Steps 1-3 (hash + cache lookup) run for BOTH strategies.
+ *   Step 4a+ differs:
+ *     - strategy === "static" (default): calls staticExtract(), no API key
+ *       guard, no offline check, no SDK import.
+ *     - strategy === "llm": original Anthropic path (unchanged).
  *
  * @param unitSource - Raw source text of the candidate block.
- * @param ctx - Extraction context (model, promptVersion, cacheDir, flags).
+ * @param ctx - Extraction context (model, promptVersion, cacheDir, strategy, flags).
  * @returns Validated IntentCard.
  */
 export async function extractIntent(
   unitSource: string,
   ctx: ExtractIntentContext,
 ): Promise<IntentCard> {
+  // Resolve effective strategy — default "static" per DEC-INTENT-STRATEGY-001
+  const strategy = ctx.strategy ?? "static";
+
+  // Resolve effective model/promptVersion tags based on strategy.
+  // For "static": use STATIC_MODEL_TAG / STATIC_PROMPT_VERSION (imported lazily
+  // to avoid importing static-extract.ts on the LLM-only path in tests).
+  let modelTag: string;
+  let promptVersion: string;
+
+  if (strategy === "static") {
+    const { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } = await import("./constants.js");
+    modelTag = STATIC_MODEL_TAG;
+    promptVersion = STATIC_PROMPT_VERSION;
+  } else {
+    modelTag = ctx.model;
+    promptVersion = ctx.promptVersion;
+  }
+
   // Step 1 & 2: compute hashes and cache key.
   const srcHash = computeSourceHash(unitSource);
   const cacheKey = keyFromIntentInputs({
     sourceHash: srcHash,
-    modelTag: ctx.model,
-    promptVersion: ctx.promptVersion,
+    modelTag,
+    promptVersion,
     schemaVersion: INTENT_SCHEMA_VERSION,
   });
 
@@ -156,6 +193,32 @@ export async function extractIntent(
     }
   }
 
+  // Step 4: strategy-specific miss handling.
+  const now = (ctx.now ?? (() => new Date()))();
+  // Truncate to whole second for a clean ISO-8601 timestamp.
+  const extractedAt = new Date(Math.floor(now.getTime() / 1000) * 1000).toISOString();
+
+  if (strategy === "static") {
+    // Static path: AST + JSDoc extraction, no network calls.
+    // @decision DEC-INTENT-STRATEGY-001: no API-key guard, no offline check here.
+    const raw = staticExtract(unitSource, {
+      sourceHash: srcHash,
+      modelVersion: modelTag,
+      promptVersion,
+      extractedAt,
+    });
+
+    // Validate (same step as LLM path — both paths must produce a valid card).
+    const validated = validateIntentCard(raw);
+
+    // Write to cache atomically.
+    await writeIntent(ctx.cacheDir, cacheKey, validated);
+
+    return validated;
+  }
+
+  // LLM path (strategy === "llm") — original behavior, entirely unchanged.
+
   // Step 4a: offline mode — no API calls.
   if (ctx.offline === true) {
     throw new OfflineCacheMissError(cacheKey);
@@ -168,6 +231,10 @@ export async function extractIntent(
   }
 
   // Step 4c: resolve client and call the API.
+  // Lazy import of the Anthropic client to keep the static path free from SDK.
+  const { createDefaultAnthropicClient } = await import("./anthropic-client.js");
+  const { SYSTEM_PROMPT } = await import("./prompt.js");
+
   // At this point either ctx.client is set or apiKey is a non-empty string
   // (the guard above ensures at least one is truthy).
   const client = ctx.client ?? (await createDefaultAnthropicClient(apiKey as string));
@@ -189,10 +256,6 @@ export async function extractIntent(
   const raw = parseJsonFence(responseText);
 
   // Step 4e: assemble the full IntentCard.
-  const now = (ctx.now ?? (() => new Date()))();
-  // Truncate to whole second for a clean ISO-8601 timestamp.
-  const extractedAt = new Date(Math.floor(now.getTime() / 1000) * 1000).toISOString();
-
   const card = {
     ...(raw as Record<string, unknown>),
     modelVersion: ctx.model,

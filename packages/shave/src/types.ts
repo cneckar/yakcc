@@ -41,6 +41,18 @@ export interface ShaveOptions {
    */
   readonly offline?: boolean | undefined;
   /**
+   * Intent extraction strategy. (WI-022)
+   *
+   * @decision DEC-INTENT-STRATEGY-001
+   * - "static" (default): TypeScript Compiler API + JSDoc parser. No network,
+   *   no API key required. Offline-safe. Produces deterministic IntentCards.
+   * - "llm": Anthropic API. Requires ANTHROPIC_API_KEY or a ctx.client.
+   *   Subject to offline checks. Produces AI-written documentation fields.
+   *
+   * When omitted, defaults to "static".
+   */
+  readonly intentStrategy?: "static" | "llm" | undefined;
+  /**
    * Tuning options forwarded to decompose() for the AST recursion.
    * maxDepth (default 8) and maxControlFlowBoundaries (default 1) control
    * when the recursion stops and what counts as atomic. WI-012-06.

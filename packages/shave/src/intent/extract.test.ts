@@ -2,6 +2,14 @@
  * Tests for extractIntent() — the core cache-read→miss→API→validate→write
  * sequence.
  *
+ * WI-022: Every test that depends on Anthropic semantics (API-key guard,
+ * OfflineCacheMissError on miss, mock client) now passes explicit
+ * strategy: "llm" in the context. This is required because the default strategy
+ * changed from (implicit LLM) to "static" in WI-022.
+ *
+ * Tests NOT gated with "llm": cache-hit behavior is strategy-agnostic (the
+ * shared cache read→validate path runs identically for both strategies).
+ *
  * Production trigger: universalize() calls extractIntent() for every candidate
  * block. The mock client in these tests replaces the Anthropic SDK, allowing
  * the full extraction pipeline to run without network access.
@@ -37,7 +45,7 @@ import type { IntentCard } from "./types.js";
 // Test infrastructure
 // ---------------------------------------------------------------------------
 
-/** Build the JSON body that the model is expected to return inside <json>…</json>. */
+/** Build the JSON body that the model is expected to return inside <json>...</json>. */
 function makeModelPayload(
   overrides?: Partial<{
     schemaVersion: number;
@@ -64,7 +72,7 @@ function makeModelPayload(
   };
 }
 
-/** Wrap a payload in <json>…</json> fences as the model would. */
+/** Wrap a payload in <json>...</json> fences as the model would. */
 function jsonFence(payload: unknown): string {
   return `<json>\n${JSON.stringify(payload, null, 2)}\n</json>`;
 }
@@ -114,16 +122,18 @@ afterEach(async () => {
 
 describe("extractIntent()", () => {
   // -------------------------------------------------------------------------
-  // Happy path
+  // Happy path — LLM strategy (explicit strategy: "llm" required for mock client)
   // -------------------------------------------------------------------------
 
-  it("happy path: returns a valid IntentCard with correct envelope fields", async () => {
+  it("happy path (llm): returns a valid IntentCard with correct envelope fields", async () => {
     const source = "function add(a: number, b: number) { return a + b; }";
     const model = "claude-haiku-4-5-20251001";
     const promptVersion = "1";
     const { client } = makeMockClient(jsonFence(makeModelPayload()));
 
+    // WI-022: explicit strategy: "llm" required for Anthropic mock client path
     const card = await extractIntent(source, {
+      strategy: "llm",
       model,
       promptVersion,
       cacheDir,
@@ -142,12 +152,14 @@ describe("extractIntent()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache hit: same source → client called once
+  // Cache hit: same source → client called once (LLM path)
   // -------------------------------------------------------------------------
 
-  it("cache hit: same source called twice → mock client called exactly once", async () => {
+  it("cache hit (llm): same source called twice → mock client called exactly once", async () => {
     const source = "function identity(x: string) { return x; }";
+    // WI-022: explicit strategy: "llm" for Anthropic mock path
     const ctx = {
+      strategy: "llm" as const,
       model: "claude-haiku-4-5-20251001",
       promptVersion: "1",
       cacheDir,
@@ -174,11 +186,13 @@ describe("extractIntent()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache miss when source changes
+  // Cache miss when source changes (LLM path)
   // -------------------------------------------------------------------------
 
   it("changing source byte invalidates cache → mock called twice", async () => {
+    // WI-022: explicit strategy: "llm"
     const ctx = {
+      strategy: "llm" as const,
       model: "claude-haiku-4-5-20251001",
       promptVersion: "1",
       cacheDir,
@@ -193,14 +207,16 @@ describe("extractIntent()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache invalidation by model
+  // Cache invalidation by model (LLM path)
   // -------------------------------------------------------------------------
 
   it("changing model invalidates cache → mock called twice", async () => {
     const source = "const x = 1;";
+    // WI-022: explicit strategy: "llm"
     const { client, callCount } = makeMockClient(jsonFence(makeModelPayload()));
 
     await extractIntent(source, {
+      strategy: "llm",
       model: "model-a",
       promptVersion: "1",
       cacheDir,
@@ -208,6 +224,7 @@ describe("extractIntent()", () => {
       now: () => FROZEN_NOW,
     });
     await extractIntent(source, {
+      strategy: "llm",
       model: "model-b",
       promptVersion: "1",
       cacheDir,
@@ -219,14 +236,16 @@ describe("extractIntent()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache invalidation by promptVersion
+  // Cache invalidation by promptVersion (LLM path)
   // -------------------------------------------------------------------------
 
   it("changing promptVersion invalidates cache → mock called twice", async () => {
     const source = "const x = 1;";
+    // WI-022: explicit strategy: "llm"
     const { client, callCount } = makeMockClient(jsonFence(makeModelPayload()));
 
     await extractIntent(source, {
+      strategy: "llm",
       model: "model-a",
       promptVersion: "1",
       cacheDir,
@@ -234,6 +253,7 @@ describe("extractIntent()", () => {
       now: () => FROZEN_NOW,
     });
     await extractIntent(source, {
+      strategy: "llm",
       model: "model-a",
       promptVersion: "2",
       cacheDir,
@@ -245,28 +265,43 @@ describe("extractIntent()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Malformed model output
+  // Malformed model output (LLM path)
   // -------------------------------------------------------------------------
 
   it("model response missing JSON fence → throws IntentCardSchemaError", async () => {
+    // WI-022: explicit strategy: "llm"
     const { client } = makeMockClient("Here is some text without any JSON fence.");
     await expect(
-      extractIntent("const x = 1;", { model: "m", promptVersion: "1", cacheDir, client }),
+      extractIntent("const x = 1;", {
+        strategy: "llm",
+        model: "m",
+        promptVersion: "1",
+        cacheDir,
+        client,
+      }),
     ).rejects.toThrow(IntentCardSchemaError);
   });
 
   it("model response with JSON fence but invalid schema → throws IntentCardSchemaError", async () => {
     // Valid JSON, but schemaVersion wrong + extra field
+    // WI-022: explicit strategy: "llm"
     const badPayload = { schemaVersion: 99, foo: "bar" };
     const { client } = makeMockClient(jsonFence(badPayload));
     await expect(
-      extractIntent("const x = 1;", { model: "m", promptVersion: "1", cacheDir, client }),
+      extractIntent("const x = 1;", {
+        strategy: "llm",
+        model: "m",
+        promptVersion: "1",
+        cacheDir,
+        client,
+      }),
     ).rejects.toThrow(IntentCardSchemaError);
   });
 
   it("model response with no text content block → treats responseText as '' → throws IntentCardSchemaError", async () => {
     // When the API returns a response with no text block, responseText is ""
     // and parseJsonFence throws because there are no fences.
+    // WI-022: explicit strategy: "llm"
     let count = 0;
     const client: AnthropicLikeClient = {
       async create() {
@@ -276,34 +311,55 @@ describe("extractIntent()", () => {
       },
     };
     await expect(
-      extractIntent("const x = 1;", { model: "m", promptVersion: "1", cacheDir, client }),
+      extractIntent("const x = 1;", {
+        strategy: "llm",
+        model: "m",
+        promptVersion: "1",
+        cacheDir,
+        client,
+      }),
     ).rejects.toThrow(IntentCardSchemaError);
     expect(count).toBe(1);
   });
 
   it("model response with JSON fence containing unparseable JSON → throws IntentCardSchemaError", async () => {
+    // WI-022: explicit strategy: "llm"
     const { client } = makeMockClient("<json>{not valid json}</json>");
     await expect(
-      extractIntent("const x = 1;", { model: "m", promptVersion: "1", cacheDir, client }),
+      extractIntent("const x = 1;", {
+        strategy: "llm",
+        model: "m",
+        promptVersion: "1",
+        cacheDir,
+        client,
+      }),
     ).rejects.toThrow(IntentCardSchemaError);
   });
 
   // -------------------------------------------------------------------------
-  // Missing API key guard
+  // Missing API key guard (LLM path only)
   // -------------------------------------------------------------------------
 
   it("missing API key + no client → throws AnthropicApiKeyMissingError", async () => {
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
     delete process.env.ANTHROPIC_API_KEY;
+    // WI-022: explicit strategy: "llm" — this error only fires on the LLM path
     await expect(
-      extractIntent("const x = 1;", { model: "m", promptVersion: "1", cacheDir }),
+      extractIntent("const x = 1;", {
+        strategy: "llm",
+        model: "m",
+        promptVersion: "1",
+        cacheDir,
+      }),
     ).rejects.toThrow(AnthropicApiKeyMissingError);
   });
 
   it("uses real clock when ctx.now is not provided (default now() branch)", async () => {
     const before = Date.now();
+    // WI-022: explicit strategy: "llm" for this test (uses mock client)
     const { client } = makeMockClient(jsonFence(makeModelPayload()));
     const card = await extractIntent("function nowTest() {}", {
+      strategy: "llm",
       model: "claude-haiku-4-5-20251001",
       promptVersion: "1",
       cacheDir,
@@ -321,23 +377,31 @@ describe("extractIntent()", () => {
   it("missing API key guard fires BEFORE the mock would be invoked", async () => {
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
     delete process.env.ANTHROPIC_API_KEY;
+    // WI-022: explicit strategy: "llm" — API-key guard only fires on LLM path
     const { client, callCount } = makeMockClient(jsonFence(makeModelPayload()));
     // client NOT passed — the guard should throw before any client resolution
     await expect(
-      extractIntent("const x = 1;", { model: "m", promptVersion: "1", cacheDir }),
+      extractIntent("const x = 1;", {
+        strategy: "llm",
+        model: "m",
+        promptVersion: "1",
+        cacheDir,
+      }),
     ).rejects.toThrow(AnthropicApiKeyMissingError);
     // client was never called (it wasn't injected)
     expect(callCount()).toBe(0);
   });
 
   // -------------------------------------------------------------------------
-  // Offline mode
+  // Offline mode (LLM path — "static" is always offline-safe)
   // -------------------------------------------------------------------------
 
   it("offline + cache miss → throws OfflineCacheMissError, mock never invoked", async () => {
+    // WI-022: explicit strategy: "llm" — OfflineCacheMissError is LLM-path only
     const { client, callCount } = makeMockClient(jsonFence(makeModelPayload()));
     await expect(
       extractIntent("const x = 1;", {
+        strategy: "llm",
         model: "m",
         promptVersion: "1",
         cacheDir,
@@ -353,7 +417,7 @@ describe("extractIntent()", () => {
     const model = "claude-haiku-4-5-20251001";
     const promptVersion = "1";
 
-    // Pre-seed the cache with a valid card
+    // Pre-seed the cache with a valid card (using LLM-mode tags to match strategy: "llm")
     const sh = sourceHash(source);
     const key = keyFromIntentInputs({
       sourceHash: sh,
@@ -376,8 +440,10 @@ describe("extractIntent()", () => {
     };
     await writeIntent(cacheDir, key, cachedCard);
 
+    // WI-022: explicit strategy: "llm" so key computation matches the seeded key
     const { client, callCount } = makeMockClient(jsonFence(makeModelPayload()));
     const result = await extractIntent(source, {
+      strategy: "llm",
       model,
       promptVersion,
       cacheDir,
@@ -417,6 +483,7 @@ describe("extractIntent()", () => {
       "utf-8",
     );
 
+    // WI-022: explicit strategy: "llm" so cache key matches the planted file
     const { client, callCount } = makeMockClient(
       jsonFence(
         makeModelPayload({
@@ -426,6 +493,7 @@ describe("extractIntent()", () => {
     );
 
     const result = await extractIntent(source, {
+      strategy: "llm",
       model,
       promptVersion,
       cacheDir,
@@ -438,7 +506,7 @@ describe("extractIntent()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Corrupt cache: evicted then re-fetched
+  // Corrupt cache: evicted then re-fetched (LLM path)
   // -------------------------------------------------------------------------
 
   it("corrupt cache file is evicted, then re-fetched via API (mock invoked once)", async () => {
@@ -459,6 +527,7 @@ describe("extractIntent()", () => {
     await fsPromises.mkdir(shardDir, { recursive: true });
     await fsPromises.writeFile(join(shardDir, `${key}.json`), "{corrupt", "utf-8");
 
+    // WI-022: explicit strategy: "llm" so cache key matches the planted file
     const { client, callCount } = makeMockClient(
       jsonFence(
         makeModelPayload({
@@ -468,6 +537,7 @@ describe("extractIntent()", () => {
     );
 
     const result = await extractIntent(source, {
+      strategy: "llm",
       model,
       promptVersion,
       cacheDir,

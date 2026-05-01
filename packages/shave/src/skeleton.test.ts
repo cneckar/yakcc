@@ -59,16 +59,18 @@ describe("shave() — live file ingestion (WI-014-01)", () => {
 
 describe("universalize() — live-wiring guard", () => {
   it("throws AnthropicApiKeyMissingError when called without API key (sentinel removed)", async () => {
-    // Remove the API key so the error is deterministic
+    // WI-022: Default strategy is now "static" (no API key needed). To test the
+    // AnthropicApiKeyMissingError guard, we must explicitly use strategy: "llm".
+    // This proves the sentinel IntentCard path is gone and extractIntent is wired.
     const orig = process.env.ANTHROPIC_API_KEY;
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
     delete process.env.ANTHROPIC_API_KEY;
     try {
       await expect(
-        universalize({ source: "// SPDX-License-Identifier: MIT\nconst x = 1;" }, noopRegistry),
-      ).rejects.toThrow(
-        AnthropicApiKeyMissingError,
-      );
+        universalize({ source: "// SPDX-License-Identifier: MIT\nconst x = 1;" }, noopRegistry, {
+          intentStrategy: "llm",
+        }),
+      ).rejects.toThrow(AnthropicApiKeyMissingError);
     } finally {
       if (orig !== undefined) process.env.ANTHROPIC_API_KEY = orig;
     }

@@ -116,7 +116,12 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
       "// SPDX-License-Identifier: MIT\nfunction parseIntList(s: string) { return s.split(',').map(Number); }";
     const seeded = await seedCache(source);
 
-    const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
+    // WI-022: intentStrategy: "llm" — seedCache() uses LLM-mode tags; default "static" would miss.
+    const result = await universalize({ source }, noopRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
 
     expect(result.intentCard.schemaVersion).toBe(1);
     expect(result.intentCard.behavior).toBe(seeded.behavior);
@@ -135,20 +140,27 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
   });
 
   it("offline + cache miss: throws OfflineCacheMissError", async () => {
+    // WI-022: intentStrategy: "llm" — OfflineCacheMissError is LLM-path only.
+    // The default "static" path never throws OfflineCacheMissError (always offline-safe).
     await expect(
-      universalize(
-        { source: "// SPDX-License-Identifier: MIT\nconst x = 999;" },
-        noopRegistry,
-        { cacheDir, offline: true },
-      ),
+      universalize({ source: "// SPDX-License-Identifier: MIT\nconst x = 999;" }, noopRegistry, {
+        cacheDir,
+        offline: true,
+        intentStrategy: "llm",
+      }),
     ).rejects.toThrow(OfflineCacheMissError);
   });
 
   it("no API key + non-offline: throws AnthropicApiKeyMissingError", async () => {
+    // WI-022: intentStrategy: "llm" — API-key guard is LLM-path only.
+    // The default "static" path never needs an API key.
     // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset (= undefined coerces to "undefined" string)
     delete process.env.ANTHROPIC_API_KEY;
     await expect(
-      universalize({ source: "// SPDX-License-Identifier: MIT\nconst y = 1;" }, noopRegistry, { cacheDir }),
+      universalize({ source: "// SPDX-License-Identifier: MIT\nconst y = 1;" }, noopRegistry, {
+        cacheDir,
+        intentStrategy: "llm",
+      }),
     ).rejects.toThrow(AnthropicApiKeyMissingError);
   });
 
@@ -156,7 +168,12 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
     const source = "// SPDX-License-Identifier: MIT\nfunction diagTest() {}";
     await seedCache(source);
 
-    const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
+    // WI-022: intentStrategy: "llm" — seedCache() uses LLM-mode tags.
+    const result = await universalize({ source }, noopRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
     // The diagnostics.cacheHits/cacheMisses in the UniversalizeResult envelope are
     // sentinel zeros (cache tracking is WI-011). The actual cache hit is transparent.
     expect(result.diagnostics.cacheHits).toBe(0);
@@ -224,7 +241,12 @@ describe("createIntentExtractionHook() — compound interaction", () => {
     const hook = createIntentExtractionHook();
     expect(hook.id).toBe("yakcc.shave.default");
 
-    const result = await hook.intercept({ source }, noopRegistry, { cacheDir, offline: true });
+    // WI-022: intentStrategy: "llm" — seedCache() uses LLM-mode tags.
+    const result = await hook.intercept({ source }, noopRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
     expect(result.intentCard.behavior).toBe("Doubles its input");
     expect(result.intentCard.sourceHash).toBe(seeded.sourceHash);
     // WI-012-06: slicePlan is now populated by the real slicer.
@@ -238,13 +260,14 @@ describe("createIntentExtractionHook() — compound interaction", () => {
   });
 
   it("hook.intercept offline + cache miss → throws OfflineCacheMissError", async () => {
+    // WI-022: intentStrategy: "llm" — OfflineCacheMissError is LLM-path only.
     const hook = createIntentExtractionHook();
     await expect(
-      hook.intercept(
-        { source: "// SPDX-License-Identifier: MIT\nconst z = 42;" },
-        noopRegistry,
-        { cacheDir, offline: true },
-      ),
+      hook.intercept({ source: "// SPDX-License-Identifier: MIT\nconst z = 42;" }, noopRegistry, {
+        cacheDir,
+        offline: true,
+        intentStrategy: "llm",
+      }),
     ).rejects.toThrow(OfflineCacheMissError);
   });
 });
@@ -259,57 +282,59 @@ describe("createIntentExtractionHook() — compound interaction", () => {
 // ---------------------------------------------------------------------------
 
 describe("seedIntentCache() — public API round-trip", () => {
-  it(
-    "seeds intent cache via public API and reads back via universalize (offline)",
-    async () => {
-      // Source: a simple MIT-licensed function so the license gate passes.
-      const source =
-        "// SPDX-License-Identifier: MIT\nfunction seedRoundTrip(n: number) { return n * 3; }";
+  it("seeds intent cache via public API and reads back via universalize (offline)", async () => {
+    // Source: a simple MIT-licensed function so the license gate passes.
+    const source =
+      "// SPDX-License-Identifier: MIT\nfunction seedRoundTrip(n: number) { return n * 3; }";
 
-      // Build a SeedIntentSpec using public types only — no internal imports.
-      const spec: SeedIntentSpec = {
-        source,
-        cacheDir,
-        // model and promptVersion are omitted → default to DEFAULT_MODEL and INTENT_PROMPT_VERSION
-        // to produce the same key that extractIntent() would derive.
-      };
+    // Build a SeedIntentSpec using public types only — no internal imports.
+    const spec: SeedIntentSpec = {
+      source,
+      cacheDir,
+      // model and promptVersion are omitted → default to DEFAULT_MODEL and INTENT_PROMPT_VERSION
+      // to produce the same key that extractIntent() would derive.
+    };
 
-      // Build an IntentCard that matches the source hash the public API derives.
-      // We do NOT use internal sourceHash directly; instead we accept that
-      // seedIntentCache computes the correct sourceHash internally and we
-      // verify correctness by round-tripping through universalize().
-      const card: IntentCard = {
-        schemaVersion: 1,
-        behavior: "Triples its input",
-        inputs: [{ name: "n", typeHint: "number", description: "Input number" }],
-        outputs: [{ name: "result", typeHint: "number", description: "Triple of n" }],
-        preconditions: [],
-        postconditions: [],
-        notes: [],
-        modelVersion: DEFAULT_MODEL,
-        promptVersion: INTENT_PROMPT_VERSION,
-        // sourceHash is pre-computed using the internal helper via a static import
-        // already present in this test file (imported at the top as sourceHash).
-        // This matches what seedIntentCache() derives internally, ensuring the card
-        // round-trips correctly without us hard-coding the hash value.
-        sourceHash: sourceHash(source),
-        extractedAt: "2025-01-01T00:00:00.000Z",
-      };
+    // Build an IntentCard that matches the source hash the public API derives.
+    // We do NOT use internal sourceHash directly; instead we accept that
+    // seedIntentCache computes the correct sourceHash internally and we
+    // verify correctness by round-tripping through universalize().
+    const card: IntentCard = {
+      schemaVersion: 1,
+      behavior: "Triples its input",
+      inputs: [{ name: "n", typeHint: "number", description: "Input number" }],
+      outputs: [{ name: "result", typeHint: "number", description: "Triple of n" }],
+      preconditions: [],
+      postconditions: [],
+      notes: [],
+      modelVersion: DEFAULT_MODEL,
+      promptVersion: INTENT_PROMPT_VERSION,
+      // sourceHash is pre-computed using the internal helper via a static import
+      // already present in this test file (imported at the top as sourceHash).
+      // This matches what seedIntentCache() derives internally, ensuring the card
+      // round-trips correctly without us hard-coding the hash value.
+      sourceHash: sourceHash(source),
+      extractedAt: "2025-01-01T00:00:00.000Z",
+    };
 
-      // Call the public seedIntentCache API.
-      await seedIntentCache(spec, card);
+    // Call the public seedIntentCache API.
+    await seedIntentCache(spec, card);
 
-      // Now verify the entry is readable by calling universalize() with offline: true.
-      // This crosses: universalize → extractIntent → file-cache readIntent → key derivation.
-      const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
+    // Now verify the entry is readable by calling universalize() with offline: true.
+    // This crosses: universalize → extractIntent → file-cache readIntent → key derivation.
+    // WI-022: intentStrategy: "llm" — seedIntentCache() seeded with LLM-mode tags (DEFAULT_MODEL).
+    const result = await universalize({ source }, noopRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
 
-      // The round-tripped card should carry our seeded behavior text.
-      expect(result.intentCard.behavior).toBe("Triples its input");
-      // sourceHash in the returned card must match what was stored.
-      expect(result.intentCard.sourceHash).toBe(card.sourceHash);
-      expect(result.intentCard.schemaVersion).toBe(1);
-    },
-  );
+    // The round-tripped card should carry our seeded behavior text.
+    expect(result.intentCard.behavior).toBe("Triples its input");
+    // sourceHash in the returned card must match what was stored.
+    expect(result.intentCard.sourceHash).toBe(card.sourceHash);
+    expect(result.intentCard.schemaVersion).toBe(1);
+  });
 
   it("seedIntentCache works without ANTHROPIC_API_KEY (DEC-SHAVE-002 offline discipline)", async () => {
     // ANTHROPIC_API_KEY is already deleted by beforeEach.
@@ -337,7 +362,12 @@ describe("seedIntentCache() — public API round-trip", () => {
     await expect(seedIntentCache(spec, card)).resolves.toBeUndefined();
 
     // Verify the seeded entry is readable.
-    const result = await universalize({ source }, noopRegistry, { cacheDir, offline: true });
+    // WI-022: intentStrategy: "llm" — spec seeded with LLM-mode tags (DEFAULT_MODEL).
+    const result = await universalize({ source }, noopRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
     expect(result.intentCard.behavior).toBe("No API key test");
   });
 });

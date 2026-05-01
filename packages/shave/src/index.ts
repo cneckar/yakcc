@@ -111,16 +111,32 @@ export {
  * text) and `cacheDir`; `model` and `promptVersion` default to the package
  * constants so the seeded key matches what extractIntent would produce under
  * the same defaults.
+ *
+ * WI-022: `strategy` controls which tag pair is used as the default for
+ * `model`/`promptVersion`. Explicit `model`/`promptVersion` overrides still
+ * win. Backward-compatible: tests not passing `strategy` get LLM-tag defaults,
+ * preserving WI-018's three re-enabled `assemble-candidate` tests verbatim.
  */
 export interface SeedIntentSpec {
   /** The raw source text whose BLAKE3 hash is the first key component. */
   readonly source: string;
   /** Root cache directory — must match the cacheDir used in the test's ShaveOptions. */
   readonly cacheDir: string;
-  /** Anthropic model tag. Defaults to DEFAULT_MODEL when omitted. */
+  /** Anthropic model tag. Defaults based on `strategy` when omitted. */
   readonly model?: string | undefined;
-  /** Prompt version tag. Defaults to INTENT_PROMPT_VERSION when omitted. */
+  /** Prompt version tag. Defaults based on `strategy` when omitted. */
   readonly promptVersion?: string | undefined;
+  /**
+   * Strategy that controls the default tag pair when model/promptVersion are
+   * omitted. (WI-022, DEC-INTENT-STRATEGY-001)
+   *
+   * - undefined / "llm" (default for backward-compat): defaults to DEFAULT_MODEL
+   *   and INTENT_PROMPT_VERSION. WI-018's assemble-candidate tests seed LLM-mode
+   *   cards and do not pass strategy; they continue working unchanged.
+   * - "static": defaults to STATIC_MODEL_TAG and STATIC_PROMPT_VERSION, producing
+   *   a key that matches what extractIntent(..., { strategy: "static" }) would use.
+   */
+  readonly strategy?: "static" | "llm" | undefined;
 }
 
 /**
@@ -145,12 +161,12 @@ export async function seedIntentCache(spec: SeedIntentSpec, card: IntentCard): P
   // Delegate to the same key-derivation functions and writeIntent that
   // extractIntent() uses. No logic is duplicated here.
   //
-  // Static imports are used (matching the rest of this file's style). These
-  // internal modules (cache/key.js, cache/file-cache.js, intent/constants.js)
-  // do NOT import the Anthropic SDK, so DEC-SHAVE-002 offline discipline is
-  // preserved: calling seedIntentCache() never triggers the SDK code path.
-  const modelTag = spec.model ?? DEFAULT_MODEL;
-  const pv = spec.promptVersion ?? INTENT_PROMPT_VERSION;
+  // WI-022: strategy-aware defaults. When strategy === "static", use the static
+  // tag pair so the seeded key matches what extractIntent({ strategy: "static" })
+  // would derive. Default (undefined/"llm") uses LLM tags for backward-compat.
+  const isStatic = spec.strategy === "static";
+  const modelTag = spec.model ?? (isStatic ? STATIC_MODEL_TAG : DEFAULT_MODEL);
+  const pv = spec.promptVersion ?? (isStatic ? STATIC_PROMPT_VERSION : INTENT_PROMPT_VERSION);
 
   const srcHash = _sourceHash(spec.source);
   const cacheKey = _keyFromIntentInputs({
@@ -182,7 +198,13 @@ export {
 // Version constants — exported so callers can introspect the cache keying
 // policy and detect when their cached results were produced by a different
 // model or prompt version.
-export { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./intent/constants.js";
+export {
+  DEFAULT_MODEL,
+  INTENT_PROMPT_VERSION,
+  INTENT_SCHEMA_VERSION,
+  STATIC_MODEL_TAG,
+  STATIC_PROMPT_VERSION,
+} from "./intent/constants.js";
 
 // extractIntent is NOT exported — it remains an internal implementation detail.
 
@@ -247,7 +269,13 @@ import {
   sourceHash as _sourceHash,
 } from "./cache/key.js";
 import { LicenseRefusedError } from "./errors.js";
-import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "./intent/constants.js";
+import {
+  DEFAULT_MODEL,
+  INTENT_PROMPT_VERSION,
+  INTENT_SCHEMA_VERSION,
+  STATIC_MODEL_TAG,
+  STATIC_PROMPT_VERSION,
+} from "./intent/constants.js";
 import { extractIntent } from "./intent/extract.js";
 import type { IntentCard } from "./intent/types.js";
 import { detectLicense } from "./license/detector.js";
@@ -344,8 +372,13 @@ export async function universalize(
     throw new LicenseRefusedError(gateResult.reason, detection);
   }
 
-  // Step 2: extract intent card (unchanged from WI-010-03).
+  // Step 2: extract intent card.
+  // WI-022: plumb intentStrategy through to extractIntent. Default "static"
+  // per DEC-INTENT-STRATEGY-001. The model/promptVersion fields are only
+  // consumed by the "llm" path; for "static" they are ignored (the static
+  // path uses STATIC_MODEL_TAG/STATIC_PROMPT_VERSION internally).
   const intentCard = await extractIntent(candidate.source, {
+    strategy: options?.intentStrategy ?? "static",
     model: options?.model ?? DEFAULT_MODEL,
     promptVersion: INTENT_PROMPT_VERSION,
     cacheDir,
