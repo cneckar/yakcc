@@ -83,12 +83,25 @@ export interface ShaveDiagnostics {
  *
  * WI-012 replaces this with a real atom backed by a content-addressed
  * block in the registry. In WI-010-01 the atoms array is always empty.
+ *
+ * WI-014-03: merkleRoot is populated when the atom was persisted to the
+ * registry as a novel block triplet. Absent for pointer atoms (which
+ * already have an existing registry entry) and for atoms that were not
+ * persisted (no storeBlock on the registry view, or no intentCard on the
+ * entry).
  */
 export interface ShavedAtomStub {
   /** A generated placeholder identifier for this atom position. */
   readonly placeholderId: string;
   /** Byte range within the source file that this atom covers. */
   readonly sourceRange: { readonly start: number; readonly end: number };
+  /**
+   * The BlockMerkleRoot of the persisted block, if this atom was stored in
+   * the registry during the shave() call. Undefined for pointer atoms and
+   * for atoms skipped by the persistence path (no storeBlock support or no
+   * intentCard).
+   */
+  readonly merkleRoot?: BlockMerkleRoot | undefined;
 }
 
 /**
@@ -195,11 +208,22 @@ export interface CandidateBlock {
  *
  * findByCanonicalAstHash is optional: shave uses it for structural deduplication
  * when available but degrades gracefully to spec-hash-only lookup otherwise.
+ *
+ * storeBlock is optional (WI-014-03): when present, shave() persists NovelGlueEntry
+ * atoms that carry an intentCard. Callers that pass a full Registry automatically
+ * satisfy this interface. Callers with a read-only stub leave it undefined and
+ * persistence is silently skipped (graceful degradation, matching the
+ * findByCanonicalAstHash? pattern).
  */
 export interface ShaveRegistryView {
   selectBlocks(specHash: SpecHash): Promise<readonly BlockMerkleRoot[]>;
   getBlock(merkleRoot: BlockMerkleRoot): Promise<BlockTripletRow | undefined>;
   findByCanonicalAstHash?(canonicalAstHash: string): Promise<readonly BlockMerkleRoot[]>;
+  /**
+   * Optional: store a block triplet row. When present, shave() calls this for
+   * each novel atom it persists. When absent, persistence is silently skipped.
+   */
+  storeBlock?(row: BlockTripletRow): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

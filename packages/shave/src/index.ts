@@ -110,6 +110,7 @@ import { extractIntent } from "./intent/extract.js";
 import { detectLicense } from "./license/detector.js";
 import { licenseGate } from "./license/gate.js";
 import { locateProjectRoot } from "./locate-root.js";
+import { maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
 import type {
   CandidateBlock,
   IntentExtractionHook,
@@ -324,13 +325,42 @@ export async function shave(
   // Step 3: Run through universalize() — errors propagate unwrapped.
   const result = await universalize(candidate, registry, options);
 
-  // Step 4: Translate UniversalizeResult into ShaveResult.
+  // Step 4: Persist novel atoms and translate UniversalizeResult into ShaveResult.
+  //
+  // @decision DEC-ATOM-PERSIST-001
+  // title: shave() persists NovelGlueEntries with intentCard via maybePersistNovelGlueAtom
+  // status: decided
+  // rationale:
+  //   - Persistence is opt-in: maybePersistNovelGlueAtom checks for registry.storeBlock
+  //     before doing anything. Callers with a read-only ShaveRegistryView get silent
+  //     no-ops; callers with a full Registry get atoms stored automatically.
+  //   - Only NovelGlueEntries with an intentCard persist; PointerEntries reference
+  //     existing blocks and do not produce new rows.
+  //   - Entries without intentCard (deep leaves in multi-leaf trees) return undefined
+  //     from maybePersistNovelGlueAtom; their ShavedAtomStub has no merkleRoot.
+  //   - PointerEntries do not have an intentCard slot; their stub also has no merkleRoot
+  //     (the pointer's existing registry merkleRoot is carried on the PointerEntry
+  //     itself, not propagated to ShavedAtomStub in this slice).
+  //   - property-test corpus is empty at L0 bootstrap (deferred to WI-013-03).
+  //   - effect declaration is empty (atoms pure-by-default; effect inference future).
+
+  // Persist all novel-glue entries in parallel. Pointer entries are left as undefined.
+  const merkleRoots = await Promise.all(
+    result.slicePlan.map((entry) => {
+      if (entry.kind === "novel-glue") {
+        return maybePersistNovelGlueAtom(entry, registry);
+      }
+      return Promise.resolve(undefined);
+    }),
+  );
+
   // Each SlicePlanEntry maps to a ShavedAtomStub. The placeholderId is a
   // deterministic "shave-atom-" prefix + 8-char truncation of canonicalAstHash
   // (per DEC-SHAVE-PIPELINE-001 rationale above).
-  const atoms = result.slicePlan.map((entry) => ({
+  const atoms = result.slicePlan.map((entry, i) => ({
     placeholderId: `shave-atom-${entry.canonicalAstHash.slice(0, 8)}`,
     sourceRange: entry.sourceRange,
+    merkleRoot: merkleRoots[i],
   }));
 
   return {
