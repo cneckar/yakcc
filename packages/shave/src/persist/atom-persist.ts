@@ -51,6 +51,30 @@ export interface PersistOptions {
    * Use to disable individual sources (e.g. for testing).
    */
   readonly corpusOptions?: CorpusExtractionOptions | undefined;
+
+  // @decision DEC-REGISTRY-PARENT-BLOCK-004
+  // title: parentBlockRoot is the canonical lineage field on PersistOptions
+  // status: decided (WI-017)
+  // rationale:
+  //   The parent_block_root column on the blocks table (added in WI-014-04) is
+  //   the single authority for recursion-tree lineage. To avoid a sidecar table or
+  //   in-memory map, lineage is injected via PersistOptions.parentBlockRoot and
+  //   written directly into BlockTripletRow.parentBlockRoot on each persist call.
+  //   No re-derivation of the parent merkle root is performed here — callers supply
+  //   the literal BlockMerkleRoot returned by a prior persistNovelGlueAtom call.
+  //   This preserves content-address purity: the parent reference is row metadata,
+  //   not part of the child block's content address computation.
+  /**
+   * BlockMerkleRoot of the recursion-tree parent from which this atom was shaved.
+   *
+   * - `null` (or omitted) → this block is the root of its recursion tree.
+   * - non-null → the caller supplies the LITERAL merkle root returned by a prior
+   *   persistNovelGlueAtom call for the parent atom.
+   *
+   * The value is written directly to BlockTripletRow.parentBlockRoot. It is NOT
+   * part of the block's content address — it is registry row metadata only.
+   */
+  readonly parentBlockRoot?: BlockMerkleRoot | null | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +123,8 @@ export async function persistNovelGlueAtom(
   const triplet = buildTriplet(intentCard, entry.source, entry.canonicalAstHash, corpusResult);
 
   // Construct the BlockTripletRow for registry storage.
+  // parentBlockRoot is row metadata (lineage), not part of the content address —
+  // per DEC-REGISTRY-PARENT-BLOCK-004. It defaults to null for root atoms.
   const row: BlockTripletRow = {
     blockMerkleRoot: triplet.merkleRoot,
     specHash: triplet.specHash,
@@ -108,6 +134,7 @@ export async function persistNovelGlueAtom(
     level: "L0",
     createdAt: Date.now(),
     canonicalAstHash: entry.canonicalAstHash,
+    parentBlockRoot: options?.parentBlockRoot ?? null,
   };
 
   // Persist to registry. storeBlock is idempotent: storing the same

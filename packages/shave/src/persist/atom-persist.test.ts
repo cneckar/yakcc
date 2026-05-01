@@ -227,6 +227,82 @@ describe("maybePersistNovelGlueAtom()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: WI-017 parent_block_root lineage (DEC-REGISTRY-PARENT-BLOCK-004)
+// ---------------------------------------------------------------------------
+
+describe("WI-017 parentBlockRoot lineage", () => {
+  // Synthetic parent root — 64-char hex string, representing the merkle root of
+  // an outer (parent) atom that was persisted before the current (child) atom.
+  const PARENT_ROOT =
+    "1111111111111111111111111111111111111111111111111111111111111111" as BlockMerkleRoot;
+
+  it("parent_block_root is set when PersistOptions.parentBlockRoot is supplied; row read-back matches byte-identically", async () => {
+    // @decision DEC-REGISTRY-PARENT-BLOCK-004: parentBlockRoot enters via
+    // PersistOptions and is written directly to BlockTripletRow.parentBlockRoot.
+    // The value must be the literal BlockMerkleRoot supplied — no re-derivation.
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    const result = await persistNovelGlueAtom(entry, registry, {
+      parentBlockRoot: PARENT_ROOT,
+    });
+
+    // A merkle root is returned.
+    expect(typeof result).toBe("string");
+
+    // storeBlock was called exactly once.
+    expect(calls).toHaveLength(1);
+    const row = calls[0]!;
+
+    // The parentBlockRoot on the stored row must exactly equal the value supplied.
+    expect(row.parentBlockRoot).toBe(PARENT_ROOT);
+
+    // The returned merkle root equals the row's blockMerkleRoot (no divergence).
+    expect(row.blockMerkleRoot).toBe(result);
+  });
+
+  it("parent_block_root is null when no parentBlockRoot is supplied (preserve WI-014-04 default)", async () => {
+    // Callers that do not supply parentBlockRoot must produce a row with
+    // parentBlockRoot === null (not undefined, not a stale value).
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    await persistNovelGlueAtom(entry, registry);
+
+    expect(calls).toHaveLength(1);
+    const row = calls[0]!;
+
+    // parentBlockRoot must be null (explicit null, not the sentinel undefined).
+    expect(row.parentBlockRoot).toBeNull();
+  });
+
+  it("maybePersistNovelGlueAtom forwards options.parentBlockRoot unchanged to the stored row", async () => {
+    // Verify that the opt-in shave() path (maybePersistNovelGlueAtom) does not
+    // drop or transform the parentBlockRoot value before it reaches storeBlock.
+    const calls: BlockTripletRow[] = [];
+    const registryView = {
+      storeBlock: async (row: BlockTripletRow): Promise<void> => {
+        calls.push(row);
+      },
+    };
+    const entry = makeEntry();
+
+    const result = await maybePersistNovelGlueAtom(entry, registryView, {
+      parentBlockRoot: PARENT_ROOT,
+    });
+
+    expect(typeof result).toBe("string");
+    expect(calls).toHaveLength(1);
+
+    // The parent is forwarded byte-identically.
+    expect(calls[0]!.parentBlockRoot).toBe(PARENT_ROOT);
+
+    // Returned merkle root is consistent with the stored row.
+    expect(calls[0]!.blockMerkleRoot).toBe(result);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: WI-016 corpus integration
 // ---------------------------------------------------------------------------
 

@@ -264,6 +264,7 @@ import type {
 } from "./types.js";
 import { decompose } from "./universalize/recursion.js";
 import { slice } from "./universalize/slicer.js";
+import type { BlockMerkleRoot } from "./universalize/types.js";
 import type { NovelGlueEntry, SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
@@ -487,15 +488,59 @@ export async function shave(
   //   - property-test corpus is empty at L0 bootstrap (deferred to WI-013-03).
   //   - effect declaration is empty (atoms pure-by-default; effect inference future).
 
-  // Persist all novel-glue entries in parallel. Pointer entries are left as undefined.
-  const merkleRoots = await Promise.all(
-    result.slicePlan.map((entry) => {
-      if (entry.kind === "novel-glue") {
-        return maybePersistNovelGlueAtom(entry, registry);
+  // @decision DEC-REGISTRY-PARENT-BLOCK-004
+  // title: shave() walks SlicePlan in postorder to propagate parentBlockRoot lineage
+  // status: decided (WI-017)
+  // rationale:
+  //   The slicer emits entries in DFS (depth-first, children-before-parent) order.
+  //   By persisting sequentially rather than in parallel we guarantee that a
+  //   child's parent has already been persisted and its BlockMerkleRoot is known
+  //   before the child is written. The parent merkle root is the LITERAL value
+  //   returned by the prior maybePersistNovelGlueAtom call — no re-derivation is
+  //   performed (DEC-REGISTRY-PARENT-BLOCK-004: content-address purity).
+  //
+  //   NovelGlueEntry does not carry an explicit parent pointer (that would couple
+  //   slicer to persistence). Instead the parentBlockRoot field on PersistOptions
+  //   is populated here at the call-site. For a single-leaf plan (the common case)
+  //   the outer entry's parentBlockRoot is null — it is the root of the tree.
+  //   For a multi-entry plan the last entry is the root; all preceding entries
+  //   whose immediate structural predecessor is novel-glue forward its merkle root.
+  //
+  //   NOTE: The slicer currently emits flat plans where each NovelGlueEntry is
+  //   independent (no nesting information is carried). The "parent" here is the
+  //   immediately preceding novel-glue entry in the DFS-ordered plan when shaving
+  //   a nested function — i.e. the outer function is the parent of the inner.
+  //   For the single-leaf case the parent is always null.
+  //
+  //   Two-pass with registry update (the alternative) is excluded because
+  //   registry/storage.ts is outside this WI's scope, making tree-postorder
+  //   the only viable path (DEC-REGISTRY-PARENT-BLOCK-004).
+
+  // Persist novel-glue entries sequentially (postorder). The last novel-glue
+  // entry in the DFS slice plan is the outermost (root) function; earlier entries
+  // are its nested descendants. Each entry captures its predecessor's merkle root
+  // as its parentBlockRoot so the registry row carries the full lineage chain.
+  const merkleRoots: Array<BlockMerkleRoot | undefined> = [];
+  let lastNovelMerkleRoot: BlockMerkleRoot | undefined = undefined;
+  for (const entry of result.slicePlan) {
+    if (entry.kind === "novel-glue") {
+      // Determine parent: for the first novel-glue entry in the plan (the leaf),
+      // parentBlockRoot is null (it has no prior novel ancestor in this shave call).
+      // For subsequent novel-glue entries the preceding novel-glue's merkle root
+      // is the structural parent — it is the outer function that was just persisted.
+      const parentBlockRoot: BlockMerkleRoot | null = lastNovelMerkleRoot ?? null;
+      const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
+        ...options,
+        parentBlockRoot,
+      });
+      merkleRoots.push(merkleRoot);
+      if (merkleRoot !== undefined) {
+        lastNovelMerkleRoot = merkleRoot;
       }
-      return Promise.resolve(undefined);
-    }),
-  );
+    } else {
+      merkleRoots.push(undefined);
+    }
+  }
 
   // Each SlicePlanEntry maps to a ShavedAtomStub. The placeholderId is a
   // deterministic "shave-atom-" prefix + 8-char truncation of canonicalAstHash
