@@ -27,6 +27,9 @@ response is `passthrough`: all emission intents are forwarded to Claude Code
 unchanged. Registry-hit detection (substitute) and synthesis-required blocking
 (block) ship in v0.5 once the live registry is available.
 
+The live-intercept plan (turning the passthrough stub into an active registry
+lookup) is tracked as WI-026 in `~/.claude/plans/v1-vision-wave-2.md`.
+
 ## How callers consume this package
 
 ```ts

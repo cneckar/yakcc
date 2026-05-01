@@ -496,19 +496,28 @@ range, original license, and parent block in the recursion tree.
 
 The engine is AI-driven for its three model-bound steps:
 
-1. **Intent extraction** (Anthropic Haiku, `claude-haiku-4-5-20251001`)
-   — given a unit's source plus surrounding context, produce a
-   structured intent card (purpose, inputs, outputs, error semantics,
-   side effects, security posture). Cards are cached on disk keyed
-   by source SHA so re-shaving is local and deterministic across
-   runs.
+1. **Intent extraction.** Two strategies. **Static (default)** — ts-morph +
+   JSDoc parser; deterministic, offline, zero API cost; produces an
+   `IntentCard` from explicit param/return types and JSDoc tags
+   (`@requires`/`@ensures`/`@throws`). Cards are cached on disk keyed by
+   source SHA so re-shaving is local and deterministic across runs.
+   **LLM** (opt-in via `strategy: "llm"`) — Anthropic Haiku
+   (`claude-haiku-4-5-20251001`), used when richer semantic synthesis is
+   desired (e.g. property-test corpus generation under WI-016). Both
+   strategies produce identical-shape `IntentCard`s and write to disjoint
+   cache namespaces by construction.
 2. **Decomposition proposal** (Anthropic Sonnet) — given a candidate
    block, propose whether it factors into two or more sub-blocks.
    Recursion bottoms out at atoms (the Sub-function Granularity
    Principle, see core concepts above).
-3. **Property-test corpus synthesis** (Anthropic Sonnet) — generate
-   property-test cases against the proposed contract when upstream
-   tests cannot be adapted and documented usage examples are absent.
+3. **Property-test corpus generation.** Three extraction sources, in
+   priority order: (a) upstream tests where the atom is shaved from a
+   library that ships its own corpus; (b) documented usage when no
+   upstream tests exist (JSDoc `@example`, README); (c) AI-derived
+   against the `IntentCard` + signature as last resort (Anthropic
+   Haiku/Sonnet). Each generated property test is persisted into the
+   atom's `proof/manifest.json`. The manifest validator rejects atoms
+   whose `property_tests` array is empty or placeholder (WI-016).
 
 The engine is *not* a free pass past the substrate's gates. Every
 shaved block passes the strict-TS IR validator. Every shaved block

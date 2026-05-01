@@ -2,34 +2,41 @@
 
 The `yakcc` command-line interface.
 
-## What this package provides
+**Status: v0 substrate operational; v1 wave-1 federation work in progress.**
 
-The `yakcc` binary exposes five commands:
+## Commands
 
-| Command | Description |
+| Command | What it does today |
 |---|---|
-| `yakcc registry init [path]` | Initialize a new registry at the given path (default: `.yakcc/registry.db`). Creates the SQLite database and prepares the sqlite-vec extension. |
+| `yakcc registry init [path]` | Create a SQLite + sqlite-vec registry at the given path (default: `.yakcc/registry.db`). Safe to run more than once; skips migration if schema is current. |
+| `yakcc registry seed <dir>` | Walk a directory of block JSON files and register each block into the live registry. |
+| `yakcc shave <source-dir>` | Recursively decompose a permissively-licensed TS/JS source tree into registry atoms. Uses static intent extraction (ts-morph + JSDoc) by default; no API key required. |
+| `yakcc search <query>` | Search the registry for contracts matching the query string. Prints candidates with ids, behavior summaries, and similarity scores. |
 | `yakcc propose` | Submit a contract spec to the registry. Reads a JSON `ContractSpec` from stdin or a `--file` argument. Prints the assigned `ContractId` on success. |
-| `yakcc search <query>` | Search the registry for contracts matching the query string. Prints up to 10 candidates with their ids, behavior summaries, and similarity scores. |
-| `yakcc compile <contractId>` | Assemble a complete program satisfying the given contract. Writes the emitted source to stdout or a `--out` file. Prints the provenance manifest to stderr. |
-| `yakcc block author` | Interactively author a new basic block. Prompts for a source file and a contract id, validates the block against the strict-TS subset, and registers it. |
+| `yakcc compile <entry>` | Walk sub-contracts from the entry point, bind each to a registry implementation, and emit a runnable TypeScript artifact plus a provenance manifest. |
+| `yakcc hooks claude-code install` | Install the Yakcc Claude Code hook into the current Claude Code project settings. |
 
-## Invocation form
+## Quickstart
 
+```sh
+# 1. Create a registry in the current project
+yakcc registry init
+
+# 2. Shave an existing library into atoms and register them
+yakcc shave ./node_modules/some-lib/src
+
+# 3. Search the registry
+yakcc search "parse a JSON array of integers"
+
+# 4. Compile a top-level contract to a runnable TS file
+yakcc compile my-contract.json --out dist/program.ts
 ```
-yakcc <command> [options]
-```
 
-Exit codes:
+## Exit codes
+
 - `0` — success
 - `1` — usage error (unknown command, missing required argument)
 - `2` — runtime error (registry not found, compilation failed, type error)
-
-## v0 status
-
-v0 ships the command surface only. All five commands print a placeholder
-message and exit 0. WI-003 wires `registry init`, `propose`, and `search` to
-the live SQLite registry. WI-005 wires `compile` to the assembler.
 
 ## License
 
