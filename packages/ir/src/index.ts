@@ -24,3 +24,7 @@ export type {
   SubBlockRef,
 } from "./block-parser.js";
 export { parseBlockTriplet } from "./block-parser.js";
+
+// Project-mode strict-subset validator (WI-V2-01)
+export type { ProjectValidationResult } from "./strict-subset-project.js";
+export { validateStrictSubsetProject } from "./strict-subset-project.js";
