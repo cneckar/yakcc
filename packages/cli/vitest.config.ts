@@ -19,6 +19,9 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
+    // Exclude fixture test files — they exist to exercise the file-walker skip
+    // logic, not to be run as test suites by vitest.
+    exclude: ["src/__fixtures__/**"],
     // forks isolation: better-sqlite3 uses native bindings; isolation avoids
     // SQLite handle conflicts between test files.
     pool: "forks",
