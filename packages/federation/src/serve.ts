@@ -12,19 +12,15 @@
 //   No mutation endpoint exists — not even behind a flag (DEC-V1-WAVE-1-SCOPE-001).
 //   port: 0 binds an OS-assigned port (useful for tests). close() shuts down cleanly.
 //
-// @decision DEC-SERVE-SPECS-ENUMERATION-020: enumerateSpecs optional callback.
-// Status: decided (WI-020 Dispatch E)
-// Title: Spec enumeration via injected callback
+// @decision DEC-SERVE-SPECS-ENUMERATION-020: enumerateSpecs via Registry interface (WI-026 closure).
+// Status: superseded/closed (WI-026)
+// Title: Spec enumeration via Registry.enumerateSpecs()
 // Rationale:
-//   The Registry public interface (packages/registry/src/index.ts) exposes no method to
-//   enumerate all distinct spec hashes (only selectBlocks(specHash) and getBlock). Adding
-//   one to the Registry interface is out of scope for WI-020 (Dispatch E scope:
-//   federation/src/ only). To preserve the single-authority invariant and keep serve.ts
-//   testable, serveRegistry accepts an optional `enumerateSpecs()` callback in opts.
-//   Production callers supply this from their SQLite layer. Test callers track inserted
-//   spec hashes via a helper wrapper.
-//   Future Implementers: when a public enumeration primitive lands on Registry, replace
-//   the callback with a direct call and remove this callback from ServeOptions.
+//   WI-026 added Registry.enumerateSpecs() as a first-class method on the Registry interface.
+//   The former optional callback (ServeOptions.enumerateSpecs) was a workaround because the
+//   Registry interface had no enumerate-distinct-specs primitive. Post-WI-026, serveRegistry
+//   calls registry.enumerateSpecs() directly. The callback field is removed from ServeOptions.
+//   No dual-authority: the old callback path is gone (Sacred Practice #12).
 //
 // @decision DEC-NO-OWNERSHIP-011: No ownership fields anywhere.
 // Status: decided (MASTER_PLAN.md DEC-NO-OWNERSHIP-011)
@@ -57,16 +53,6 @@ export interface ServeOptions {
    * Pass "0.0.0.0" to accept connections on all interfaces.
    */
   readonly host?: string;
-  /**
-   * Callback that returns all distinct SpecHashes known to this registry.
-   * Required for GET /v1/specs to return real data.
-   *
-   * Per DEC-SERVE-SPECS-ENUMERATION-020: supply this from the SQLite layer in
-   * production. In tests, use a tracking wrapper (see serve.test.ts).
-   *
-   * If omitted, GET /v1/specs returns { specHashes: [] }.
-   */
-  readonly enumerateSpecs?: () => Promise<readonly SpecHash[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,17 +102,16 @@ function handleSchemaVersion(_req: IncomingMessage, res: ServerResponse): void {
  * GET /v1/specs
  *
  * Returns { specHashes: SpecHash[] } — all distinct spec hashes served.
- * Requires opts.enumerateSpecs; returns empty array if not provided.
+ * Calls registry.enumerateSpecs() directly (DEC-SERVE-SPECS-ENUMERATION-020, WI-026 closure).
  *
  * DEC-TRANSPORT-LIST-METHODS-020 (see types.ts): listSpecs maps to this endpoint.
  */
 async function handleListSpecs(
   _req: IncomingMessage,
   res: ServerResponse,
-  opts: ServeOptions,
+  local: Registry,
 ): Promise<void> {
-  const specHashes =
-    opts.enumerateSpecs !== undefined ? await opts.enumerateSpecs() : ([] as SpecHash[]);
+  const specHashes = await local.enumerateSpecs();
   sendJson(res, 200, { specHashes });
 }
 
@@ -189,12 +174,7 @@ async function handleGetBlock(
  * All non-GET methods return 405 with the §3 error envelope.
  * Unknown GET paths return 404 with { error: "not_found" }.
  */
-async function dispatch(
-  req: IncomingMessage,
-  res: ServerResponse,
-  local: Registry,
-  opts: ServeOptions,
-): Promise<void> {
+async function dispatch(req: IncomingMessage, res: ServerResponse, local: Registry): Promise<void> {
   // All non-GET methods return 405 (DEC-V1-WAVE-1-SCOPE-001: read-only).
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
@@ -213,7 +193,7 @@ async function dispatch(
 
   // Route: GET /v1/specs
   if (rawPath === "/v1/specs") {
-    await handleListSpecs(req, res, opts);
+    await handleListSpecs(req, res, local);
     return;
   }
 
@@ -278,11 +258,11 @@ export interface ServeHandle {
  * resolved URL is returned in ServeHandle.url.
  *
  * Per DEC-V1-WAVE-1-SCOPE-001: READ-ONLY. No mutation endpoint.
- * Per DEC-SERVE-SPECS-ENUMERATION-020: supply opts.enumerateSpecs for /v1/specs to
- * return real data (otherwise returns empty array).
+ * Per DEC-SERVE-SPECS-ENUMERATION-020 (WI-026 closure): GET /v1/specs calls
+ * registry.enumerateSpecs() directly — no callback needed in options.
  *
  * @param registry - The local Registry to serve blocks from.
- * @param options  - Bind address, port, and optional spec enumeration callback.
+ * @param options  - Bind address and port.
  * @returns A ServeHandle with the resolved URL and a close() function.
  */
 export async function serveRegistry(
@@ -291,10 +271,9 @@ export async function serveRegistry(
 ): Promise<ServeHandle> {
   const port = options?.port ?? 0;
   const host = options?.host ?? "127.0.0.1";
-  const opts: ServeOptions = options ?? {};
 
   const server = http.createServer((req, res) => {
-    dispatch(req, res, registry, opts).catch((err: unknown) => {
+    dispatch(req, res, registry).catch((err: unknown) => {
       // Last-resort error handler: respond 500 and log, so the server doesn't crash
       // on an unhandled async rejection from a request handler.
       if (!res.headersSent) {

@@ -359,6 +359,30 @@ export interface Registry {
     options?: FindCandidatesOptions,
   ): Promise<readonly CandidateMatch[]>;
 
+  /**
+   * Return all distinct spec hashes present in the registry, sorted ascending
+   * by spec_hash value.
+   *
+   * This is the server-side primitive for GET /v1/specs in the federation
+   * serve path (FEDERATION_PROTOCOL.md §3, DEC-TRANSPORT-LIST-METHODS-020).
+   *
+   * Implemented as a single `SELECT DISTINCT spec_hash FROM blocks ORDER BY
+   * spec_hash` query — O(n blocks) read, no mutations.
+   *
+   * Returns an empty array for an empty registry.
+   *
+   * @decision DEC-SERVE-SPECS-ENUMERATION-020 (closure note):
+   * WI-026 adds this method to replace the optional `enumerateSpecs` callback
+   * that serveRegistry previously accepted in ServeOptions. The callback was a
+   * workaround because Registry had no enumerate-distinct-specs primitive.
+   * Post-WI-026, serveRegistry consumes `registry.enumerateSpecs()` directly
+   * and the ServeOptions.enumerateSpecs field is removed.
+   *
+   * No ownership-shaped fields — DEC-NO-OWNERSHIP-011. The query touches
+   * `spec_hash` only; no JOIN against any owner-shaped column.
+   */
+  enumerateSpecs(): Promise<readonly SpecHash[]>;
+
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;
 }

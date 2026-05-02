@@ -540,6 +540,37 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // enumerateSpecs — return all distinct spec hashes, sorted ascending
+  // -------------------------------------------------------------------------
+
+  // @decision DEC-SERVE-SPECS-ENUMERATION-020 (closure)
+  // title: enumerateSpecs() — registry-native SELECT DISTINCT primitive
+  // status: closed by WI-026
+  // rationale: Pre-WI-026, serveRegistry accepted an optional `enumerateSpecs`
+  //   callback because no method existed on Registry. The callback was the
+  //   documented workaround (DEC-SERVE-SPECS-ENUMERATION-020). WI-026 adds
+  //   this method as the single authority for spec enumeration; serveRegistry
+  //   now calls `registry.enumerateSpecs()` directly.
+  //
+  //   No caching: the SELECT DISTINCT is cheap and caching would introduce a
+  //   stale-write window (forbidden shortcut per WI-026 eval contract).
+  //   No ownership columns: touches spec_hash only (DEC-NO-OWNERSHIP-011).
+  //   Read-only: no mutations; storeBlock remains the sole mutation entry point
+  //   (DEC-SCHEMA-MIGRATION-002).
+
+  async enumerateSpecs(): Promise<readonly SpecHash[]> {
+    this.assertOpen();
+
+    const rows = this.db
+      .prepare<[], { spec_hash: string }>(
+        "SELECT DISTINCT spec_hash FROM blocks ORDER BY spec_hash",
+      )
+      .all();
+
+    return rows.map((r) => r.spec_hash as SpecHash);
+  }
+
+  // -------------------------------------------------------------------------
   // close
   // -------------------------------------------------------------------------
 
