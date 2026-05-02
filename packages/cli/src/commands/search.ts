@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-SEARCH-001: search accepts either a path to a JSON SpecYak file
 // (search by spec) or free text (search by behavior string with other fields stubbed).
 // Results are printed as "<merkleRoot[:8]>  score=<float>  behavior=<truncated-80>" lines.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: The shave package exposes three public
 // entry points — shave() for one-shot file processing, universalize() for
 // continuous single-block processing, and IntentExtractionHook for hookable

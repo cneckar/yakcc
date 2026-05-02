@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-PROPOSE-001: propose reads a JSON SpecYak file, derives its
 // specHash, then calls registry.selectBlocks(specHash) for exact lookup. On hit:
 // prints the matched merkle root and exits 0. On miss: prints a manual-authoring

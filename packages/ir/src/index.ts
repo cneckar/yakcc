@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-IR-FACADE-V0: The v0 IR exposes typed interfaces and opaque
 // AST types with facade implementations that accept all input as valid.
 // Status: superseded — WI-T02 replaced the inline-CONTRACT path (annotations.ts,

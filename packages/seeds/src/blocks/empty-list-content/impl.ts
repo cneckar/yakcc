@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-EMPTYLIST-001: empty-list-content recognizes the ']' that closes an empty list.
 // Status: implemented (WI-006)
 // Rationale: Splitting empty vs nonempty list content into two blocks keeps each block's

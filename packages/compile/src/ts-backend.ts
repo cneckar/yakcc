@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-TS-BACKEND-001: The TS backend assembles a single-file module
 // by concatenating block sources in topological order (leaves first, entry last),
 // deduplicating type imports from @yakcc/contracts, stripping intra-corpus import

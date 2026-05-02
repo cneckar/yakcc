@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-HOOKS-INSTALL-001: hooks claude-code install writes a CLAUDE.md
 // slash-command stub to the target directory's .claude/ folder. In v0 this is a
 // facade: the slash command exists and is documented, but its handler returns the

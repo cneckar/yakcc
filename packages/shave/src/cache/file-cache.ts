@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: The intent cache uses a two-level
 // directory structure (<cacheDir>/<key[0..2]>/<key>.json) to avoid filesystem
 // performance degradation with large numbers of files in a single directory.

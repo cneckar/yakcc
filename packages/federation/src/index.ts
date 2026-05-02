@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-V1-FEDERATION-PROTOCOL-001: HTTP+JSON transport, content-addressed
 // block identity (BlockMerkleRoot + SpecHash), nominal peer trust (mirror URL only),
 // pull-only read-only sync direction.

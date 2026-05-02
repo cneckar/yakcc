@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-CHARCODE-001: char-code exposes char-code lookup as an explicit contract.
 // Status: implemented (WI-006)
 // Rationale: Multiple blocks rely on charCodeAt arithmetic. Making it an explicit block

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: extractIntent is the single internal
 // entry point for live intent extraction. It owns the cache read→miss→API→
 // validate→write sequence. The function is intentionally NOT exported from

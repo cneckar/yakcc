@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-SIGNEDINT-001: signed-integer extends integer with optional leading minus.
 // Status: implemented (WI-006)
 // Rationale: A common extension of unsigned integer parsing. Demonstrates contract refinement:

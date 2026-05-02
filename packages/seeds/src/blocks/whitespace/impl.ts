@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-WHITESPACE-001: whitespace skipping returns a new position, not stripped text.
 // Status: implemented (WI-006)
 // Rationale: Position-returning parsers compose without allocating substrings.

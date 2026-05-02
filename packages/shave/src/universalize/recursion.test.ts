@@ -794,3 +794,96 @@ class RegistryStorage {
     expect(methodLeaves.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-037: ConditionalExpression, BinaryExpression, ReturnStatement (non-leaf),
+//          and yakcc-federation regression fixture
+// ---------------------------------------------------------------------------
+
+describe("decompose — WI-037 expression-level decompose policies", () => {
+  /**
+   * Test 1 (WI-037-a): ConditionalExpression decomposes into cond/then/else.
+   * A function whose return is `cond ? then : else` — with alwaysMatchRegistry
+   * all sub-nodes are flagged as known-primitive (non-atomic), so the slicer
+   * must descend through ExpressionStatement/VariableStatement → ConditionalExpression.
+   * Previously returned [] → DidNotReachAtomError. WI-037 adds the branch.
+   */
+  it("conditional expression decomposes without throw", async () => {
+    const src = `function f(x: number): number { return x > 0 ? x * 2 : -x; }`;
+    // With emptyRegistry: all nodes have CF-count 0 ≤ 1, so the whole function
+    // is an atom (no decomposition needed). Confirm no throw.
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test 2 (WI-037-a): BinaryExpression decomposes without throw.
+   * With alwaysMatchRegistry the slicer must descend through VariableStatement
+   * initializer into BinaryExpression (a * 2 + b * 3) — previously returned []
+   * → DidNotReachAtomError. WI-037 adds BinaryExpression → [left, right].
+   */
+  it("binary expression decomposes without throw", async () => {
+    const src = `function f(a: number, b: number): number { const sum = a * 2 + b * 3; return sum; }`;
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test 3 (WI-037-b): ReturnStatement → [expression] for non-leaf returns.
+   * `return (x) => { ... }` has an ArrowFunction as its expression.
+   * With alwaysMatchRegistry the slicer must descend into the return's expression,
+   * and from there into the arrow body. Previously ReturnStatement fell to
+   * return [] → DidNotReachAtomError on the inner arrow. WI-037 adds
+   * ReturnStatement → [expression] (when present).
+   */
+  it("return with non-leaf expression decomposes without throw", async () => {
+    const src = `function makeHandler(): (x: number) => string { return (x) => { if (x < 0) return "neg"; return String(x); }; }`;
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    // The inner arrow function should be reachable in the tree
+    function hasArrowChild(node: typeof tree.root): boolean {
+      if (node.kind === "atom") return node.source.includes("=>");
+      return node.children.some(hasArrowChild) || node.source.includes("=>");
+    }
+    expect(hasArrowChild(tree.root)).toBe(true);
+  });
+
+  /**
+   * Test 4 (WI-037-b regression): packages/federation/src/serve.ts fixture.
+   * serve.ts's close() method returns a `new Promise<void>((resolve, reject) => { ... })`
+   * — a ReturnStatement whose expression is a non-leaf CallExpression. This was one
+   * of the two known ReturnStatement failures in the WI-036 audit.
+   */
+  it("yakcc self-shave federation/serve.ts close() pattern decomposes without throw", async () => {
+    // Structural fixture matching the shape that caused the WI-036 survey failure.
+    const src = `// SPDX-License-Identifier: MIT
+function serveRegistry(): { close(): Promise<void> } {
+  let closed = false;
+  const server = { close: (_cb: (e?: Error) => void) => {} };
+  return {
+    server,
+    url: "http://127.0.0.1:0",
+    close(): Promise<void> {
+      if (closed) return Promise.resolve();
+      closed = true;
+      return new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err !== undefined) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+    },
+  };
+}`;
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});

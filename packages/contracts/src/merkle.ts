@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-TRIPLET-IDENTITY-020: BlockMerkleRoot encoding (L0).
 // Status: decided (MASTER_PLAN.md, VERIFICATION.md DEC-VERIFY-002)
 // Rationale: Block identity migrates from ContractId = BLAKE3(canonicalize(spec))

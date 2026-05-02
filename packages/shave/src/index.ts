@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: Public API entry point for @yakcc/shave.
 // Three exported entry points: shave() (one-shot file), universalize()
 // (single-block continuous), createIntentExtractionHook() (hookable pipeline).

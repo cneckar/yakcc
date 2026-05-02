@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * @decision DEC-INTENT-STATIC-001
  * @title Primary-declaration picker: deterministic preference chain for static extraction

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-001 (see corpus/types.ts)
 // title: extractCorpus() implements a three-source priority chain for property-test corpus
 // status: decided (WI-016)

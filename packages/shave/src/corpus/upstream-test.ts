@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-001 (see corpus/types.ts)
 // title: Upstream-test adaptation builds a fast-check file from IntentCard.propertyTests hints
 // status: decided (WI-016)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: Source normalization ensures that
 // superficial differences (CRLF vs LF, trailing whitespace) do not produce
 // distinct cache keys. The rule is intentionally minimal: only line-ending

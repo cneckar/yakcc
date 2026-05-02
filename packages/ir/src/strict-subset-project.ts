@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-V2-IR-PROJECT-MODE-001: Project-mode validation uses a real ts-morph
 // Project loaded from tsconfig.json rather than the isolated in-memory project used by
 // validateStrictSubset. Status: implemented (WI-V2-01).

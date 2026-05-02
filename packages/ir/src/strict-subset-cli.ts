@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-IR-CLI-002: strict-subset CLI updated for directory-based triplet authoring (WI-T02).
 // Status: implemented (WI-T02)
 // Rationale: The old CLI validated individual .ts files against the strict-subset banlist.

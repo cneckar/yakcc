@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-INDEX-002: @yakcc/compile barrel re-exports all public types
 // and functions updated for the triplet substrate (WI-T04).
 // Status: implemented (WI-T04); supersedes DEC-COMPILE-INDEX-001 (ContractId-based,

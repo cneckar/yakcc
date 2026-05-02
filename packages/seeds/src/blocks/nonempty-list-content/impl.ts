@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-NONEMPTYLIST-001: nonempty-list-content parses interior with at least one element.
 // Status: implemented (WI-006)
 // Rationale: The import-type declarations below declare the composition graph. Relative "./"

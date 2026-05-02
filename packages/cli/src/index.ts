@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-INDEX-001: runCli() is the single public entry point for the yakcc
 // CLI. It dispatches on argv[0] (command) and argv[1] (subcommand for multi-word
 // commands like "registry init"). Each command handler is a real function calling into

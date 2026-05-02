@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-001
 // title: CorpusResult is the canonical output shape for property-test corpus extraction
 // status: decided (WI-016)

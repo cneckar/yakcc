@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Cache types for the shave intent-extraction cache.
 // WI-010-02 fills the implementation (file-cache.ts); these interfaces
 // define the shape that the cache layer must satisfy.

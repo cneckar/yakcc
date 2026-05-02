@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * @decision DEC-SLICER-NOVEL-GLUE-004
  * title: DFG slicer — slice() implementation for WI-012-05

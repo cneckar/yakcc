@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // ---------------------------------------------------------------------------
 // @decision DEC-VAR-001: 7-dimension framing reconciled to 5 canonical weights
 // Status: proposed

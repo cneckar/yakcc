@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: AnthropicLikeClient is a minimal interface
 // extracted from the SDK's messages.create shape. This indirection allows tests
 // to inject a synchronous mock without importing the SDK, and allows the lazy

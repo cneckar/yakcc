@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-EOFCHECK-001: eof-check is the trailing-input rejection gate.
 // Status: implemented (WI-006)
 // Rationale: A parser that accepts input must also reject trailing garbage. This block

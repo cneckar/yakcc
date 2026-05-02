@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: validateIntentCard is a loud, exact
 // validator — it rejects unknown top-level fields and sub-object fields rather
 // than silently ignoring them. This protects against schema drift: if the model

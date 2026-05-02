@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-DIGIT-001: digit block is the atomic unit of integer parsing.
 // Status: implemented (WI-006)
 // Rationale: Every integer parser reduces to recognizing individual digit characters.

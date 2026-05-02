@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-CANDIDATE-001
 // title: assembleCandidate is the compile-time entry point for the
 // continuous-shave pipeline (WI-014-05)

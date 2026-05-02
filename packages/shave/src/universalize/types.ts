@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-ATOM-TEST-003: Atom-test predicate types.
 // Title: AST atom-test predicate type surface for WI-012-03.
 // Status: proposed (MASTER_PLAN.md governance edit deferred).

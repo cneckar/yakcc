@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-POSSTEP-001: position advancement is an explicit operation, not implicit mutation.
 // Status: implemented (WI-006)
 // Rationale: Parser blocks work with immutable position values. positionStep returns

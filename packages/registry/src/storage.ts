@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-STORAGE-LIBRARY-001: better-sqlite3 + sqlite-vec extension.
 // Status: decided (WI-003)
 // Rationale: better-sqlite3 is synchronous, has the best Node.js performance

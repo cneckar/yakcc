@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-ATOM-PERSIST-001
 // title: buildTriplet computes the full block identity for a novel atom at L0
 // status: decided

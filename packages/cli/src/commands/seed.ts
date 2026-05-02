@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-SEED-001: seed opens the registry and delegates to seedRegistry()
 // from @yakcc/seeds. seedRegistry() is idempotent (INSERT OR IGNORE), so running seed
 // on an already-seeded registry is safe. Prints the stored count and a truncated list

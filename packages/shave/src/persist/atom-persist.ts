@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-ATOM-PERSIST-001
 // title: persistNovelGlueAtom persists novel atoms to the registry as BlockTripletRows
 // status: decided

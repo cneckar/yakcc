@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-FEDERATION-001: federation command — thin CLI wrapper around
 // @yakcc/federation public surface (mirrorRegistry, serveRegistry, pullBlock,
 // createHttpTransport) and @yakcc/registry (openRegistry).

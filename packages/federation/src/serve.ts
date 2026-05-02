@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SERVE-E-020: serveRegistry — read-only HTTP mirror server (Slice E).
 // Status: decided (WI-020 Dispatch E, FEDERATION_PROTOCOL.md §3)
 // Title: serve.ts — F1 read-only registry HTTP server (four Slice-E endpoints)

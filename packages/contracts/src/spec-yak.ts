@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-TRIPLET-IDENTITY-020: SpecHash is the existing ContractId derivation
 // applied to a canonicalized SpecYak. The spec hash is retained as the index used
 // by selectBlocks(specHash) → BlockMerkleRoot[], not the block's identity. The
