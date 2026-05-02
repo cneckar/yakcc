@@ -56,12 +56,17 @@ export interface AtomTestOptions {
  * "too-many-cf-boundaries"    — exceeded maxControlFlowBoundaries.
  * "contains-known-primitive"  — a sub-statement matched a registry entry.
  * "non-decomposable-non-atom" — reserved for WI-012-04; never emitted here.
+ * "loop-with-escaping-cf"     — the loop body contains continue/break/labeled-
+ *                               jump whose binding scope is outside the body;
+ *                               the loop is treated as the atom boundary.
+ *                               (DEC-SLICER-LOOP-CONTROL-FLOW-001)
  */
 export type AtomTestReason =
   | "atomic"
   | "too-many-cf-boundaries"
   | "contains-known-primitive"
-  | "non-decomposable-non-atom";
+  | "non-decomposable-non-atom"
+  | "loop-with-escaping-cf";
 
 /**
  * The result returned by isAtom().

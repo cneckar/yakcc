@@ -327,3 +327,178 @@ describe("decompose — canonicalAstHash stability", () => {
     expect(tree1.root.canonicalAstHash).toBe(tree2.root.canonicalAstHash);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-SLICER-LOOP-CONTROL-FLOW-001: loops with escaping continue/break
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests for the Strategy A fix for B-011.
+ *
+ * When a loop body contains a continue/break whose binding scope is outside
+ * the body block, decomposableChildrenOf() returns [] for the loop, and
+ * recurse() emits an AtomLeaf for the loop itself with
+ * atomTest.reason === "loop-with-escaping-cf".
+ *
+ * Production sequence: shave() → universalize() → decompose() → for-of/while
+ * node with escaping CF → AtomLeaf (loop as atom). Previously would have
+ * called canonicalAstHash() on the body block and received TS1313/1314
+ * (CanonicalAstParseError).
+ */
+describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTROL-FLOW-001)", () => {
+  /**
+   * Test a: `continue` inside for-of body → loop is AtomLeaf.
+   * The while(i < argv.length) body in argv-parser.ts uses `continue` and
+   * `break` — this test exercises the canonical shape of that pattern.
+   */
+  it("a: continue inside for-of body → loop node is atom-leaf with reason loop-with-escaping-cf", async () => {
+    const source = `function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) continue; s += x; } return s; }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    // Root: SourceFile. With default maxCF=1, the function body has multiple
+    // CF boundaries → SourceFile non-atomic → branch into FunctionDeclaration
+    // body statements. The for-of loop contains escaping continue →
+    // decomposableChildrenOf returns [] → loop becomes AtomLeaf.
+
+    // Walk tree to find the for-of atom leaf
+    function findAtomWithReason(
+      node: (typeof tree.root),
+      reason: string,
+    ): boolean {
+      if (node.kind === "atom") {
+        return node.atomTest.reason === reason;
+      }
+      return node.children.some((c) => findAtomWithReason(c, reason));
+    }
+
+    expect(findAtomWithReason(tree.root, "loop-with-escaping-cf")).toBe(true);
+    // Should not throw CanonicalAstParseError
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test b: `break` inside while body → loop is AtomLeaf.
+   */
+  it("b: break inside while body → loop node is atom-leaf with reason loop-with-escaping-cf", async () => {
+    const source = `function search(xs: number[], target: number): number { let i = 0; while (i < xs.length) { if (xs[i] === target) break; i++; } return i; }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    function findAtomWithReason(
+      node: (typeof tree.root),
+      reason: string,
+    ): boolean {
+      if (node.kind === "atom") {
+        return node.atomTest.reason === reason;
+      }
+      return node.children.some((c) => findAtomWithReason(c, reason));
+    }
+
+    expect(findAtomWithReason(tree.root, "loop-with-escaping-cf")).toBe(true);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test c: labeled break to outer loop — outer loop becomes AtomLeaf.
+   * The inner for-loop's body contains `break outer`, which targets the
+   * outer LabeledStatement. The outer loop's body has the inner loop whose
+   * body has an escaping break → outer loop is the atom.
+   */
+  it("c: labeled break to outer loop → outer for-loop is atom-leaf with reason loop-with-escaping-cf", async () => {
+    const source = `function f() { outer: for (let i = 0; i < 10; i++) { for (let j = 0; j < 10; j++) { if (j === 5) break outer; } } }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    function findAtomWithReason(
+      node: (typeof tree.root),
+      reason: string,
+    ): boolean {
+      if (node.kind === "atom") {
+        return node.atomTest.reason === reason;
+      }
+      return node.children.some((c) => findAtomWithReason(c, reason));
+    }
+
+    expect(findAtomWithReason(tree.root, "loop-with-escaping-cf")).toBe(true);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test d: `break` inside switch inside loop body does NOT escape.
+   * Switch's break binds to the switch itself, not the for-loop.
+   * The loop body is therefore decomposable; the tree descends normally.
+   */
+  it("d: break inside switch inside for-of body does NOT mark loop as loop-with-escaping-cf", async () => {
+    // 3 CF boundaries in the for-of body (for-of + switch + 2 case breaks)
+    // but break binds to switch, not for-of
+    const source = `function f(xs: number[]) { for (const x of xs) { switch (x) { case 1: break; default: break; } } }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    function findAtomWithReason(
+      node: (typeof tree.root),
+      reason: string,
+    ): boolean {
+      if (node.kind === "atom") {
+        return node.atomTest.reason === reason;
+      }
+      return node.children.some((c) => findAtomWithReason(c, reason));
+    }
+
+    // The loop body's break statements bind to the switch, not the for-of.
+    // The for-of loop should NOT produce a loop-with-escaping-cf atom.
+    expect(findAtomWithReason(tree.root, "loop-with-escaping-cf")).toBe(false);
+    // Tree should still complete without throwing
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test e: argv-parser.ts fixture decomposes without throwing.
+   * This is the exact fixture that surfaced B-011 live.
+   * The while loop in parseArgv uses continue and break.
+   */
+  it("e: argv-parser.ts fixture decomposes without throwing (B-011 regression)", async () => {
+    // Inline the essential argv-parser shape that triggered B-011:
+    // a while loop with both `continue` and `break` in the body.
+    const source = `
+export function parseArgv(argv: readonly string[]): Record<string, unknown> {
+  const result: Record<string, unknown> = { _: [] };
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === undefined) {
+      i++;
+      continue;
+    }
+    if (arg === "--") {
+      for (let j = i + 1; j < argv.length; j++) {
+        (result._ as string[]).push(argv[j] ?? "");
+      }
+      break;
+    }
+    if (arg.startsWith("--")) {
+      result[arg.slice(2)] = true;
+    } else {
+      (result._ as string[]).push(arg);
+    }
+    i++;
+  }
+  return result;
+}
+`.trim();
+
+    // Must not throw — previously threw CanonicalAstParseError (B-011)
+    const tree = await decompose(source, emptyRegistry);
+
+    function findAtomWithReason(
+      node: (typeof tree.root),
+      reason: string,
+    ): boolean {
+      if (node.kind === "atom") {
+        return node.atomTest.reason === reason;
+      }
+      return node.children.some((c) => findAtomWithReason(c, reason));
+    }
+
+    // The while loop with continue/break → loop-with-escaping-cf atom
+    expect(findAtomWithReason(tree.root, "loop-with-escaping-cf")).toBe(true);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});
