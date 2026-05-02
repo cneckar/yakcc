@@ -108,4 +108,11 @@ function main(): void {
   process.stdout.write(`strict-subset: ${dirs.length} triplet(s) validated OK\n`);
 }
 
-main();
+// Strategy A: guard dispatch on direct execution so this module is importable
+// without side effects. import.meta.url matches process.argv[1] only when Node
+// runs this file directly; when the module is imported by tests or other code
+// the dispatch is skipped entirely. Runtime behaviour is byte-identical when
+// the file is run directly.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
