@@ -150,6 +150,50 @@ export interface RuntimeExposureEntry {
 }
 
 // ---------------------------------------------------------------------------
+// WI-V2-BOOTSTRAP-01: BootstrapManifestEntry — export-manifest primitive
+// ---------------------------------------------------------------------------
+
+/**
+ * One entry per stored block, suitable for committed-artifact comparison.
+ * Excludes timestamps and other non-deterministic columns (createdAt, ROWID).
+ *
+ * Used by `yakcc bootstrap --verify` (WI-V2-BOOTSTRAP-03) for byte-identity
+ * gating: the caller serialises a `readonly BootstrapManifestEntry[]` (sorted
+ * ascending by blockMerkleRoot) to JSON, commits the result as
+ * `bootstrap/expected-roots.json`, and re-derives it on every CI run.
+ *
+ * @decision DEC-V2-BOOTSTRAP-MANIFEST-001
+ * @title BootstrapManifestEntry excludes non-deterministic columns
+ * @status accepted
+ * @rationale createdAt and ROWID vary per-environment and per-run. Including
+ *   them would make the committed artifact non-reproducible. The six fields
+ *   below are all content-addressed (derived from artifact bytes via BLAKE3) —
+ *   the same block stored on any machine at any time produces the same entry.
+ *   This is the load-bearing determinism contract for the bootstrap demo.
+ */
+export interface BootstrapManifestEntry {
+  /** Content address of the block triplet (BLAKE3 of spec||impl||proof). */
+  readonly blockMerkleRoot: BlockMerkleRoot;
+  /** Content address of the spec.yak (BLAKE3 of canonicalized spec bytes). */
+  readonly specHash: SpecHash;
+  /** String form of the canonical AST hash of impl.ts. */
+  readonly canonicalAstHash: string;
+  /** BlockMerkleRoot of the recursion-tree parent, or null for root blocks. */
+  readonly parentBlockRoot: BlockMerkleRoot | null;
+  /**
+   * Hex BLAKE3-256 of the impl.ts artifact bytes (the raw bytes stored in
+   * block_artifacts WHERE path = 'impl.ts'). Sentinel (BLAKE3 of empty
+   * string) when the artifact is absent — see exportManifest() fallback note.
+   */
+  readonly implSourceHash: string;
+  /**
+   * Hex BLAKE3-256 of the proof/manifest.json artifact bytes (stored in
+   * block_artifacts WHERE path = 'proof/manifest.json'). Sentinel when absent.
+   */
+  readonly manifestJsonHash: string;
+}
+
+// ---------------------------------------------------------------------------
 // WI-025: Intent query shape + vector-search types (findCandidatesByIntent)
 // ---------------------------------------------------------------------------
 
@@ -383,6 +427,29 @@ export interface Registry {
    * `spec_hash` only; no JOIN against any owner-shaped column.
    */
   enumerateSpecs(): Promise<readonly SpecHash[]>;
+
+  /**
+   * Export a deterministic manifest of every stored block, sorted ascending by
+   * `blockMerkleRoot` string value. The sort order is the load-bearing
+   * determinism contract: two calls on the same DB state — on any machine at
+   * any time — must produce byte-identical JSON when the result is serialized.
+   *
+   * Excludes `createdAt` and ROWID — both are non-deterministic across
+   * environments and irrelevant to content identity (DEC-V2-BOOTSTRAP-MANIFEST-001).
+   *
+   * `implSourceHash` is BLAKE3-256(hex) of the bytes stored in `block_artifacts`
+   * at path `impl.ts`. `manifestJsonHash` is BLAKE3-256(hex) of the bytes stored
+   * at path `proof/manifest.json`. When either artifact path is absent (pre-WI-022
+   * blocks, or blocks with no matching path), the sentinel value
+   * (BLAKE3 of empty Uint8Array, hex-encoded) is used so the schema is uniform.
+   *
+   * Primary consumer: `yakcc bootstrap --verify` (WI-V2-BOOTSTRAP-03), which
+   * re-derives this manifest and compares it byte-for-byte against the committed
+   * `bootstrap/expected-roots.json` artifact.
+   *
+   * Returns an empty array for an empty registry.
+   */
+  exportManifest(): Promise<readonly BootstrapManifestEntry[]>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;

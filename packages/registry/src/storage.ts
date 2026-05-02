@@ -30,6 +30,7 @@
 // index. No dual-table coexistence; no read-time fallback derivation of
 // block_merkle_root (the column must be stored). See schema.ts for DDL.
 
+import { blake3 } from "@noble/hashes/blake3.js";
 import {
   type BlockMerkleRoot,
   type CanonicalAstHash,
@@ -46,6 +47,7 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import type {
   BlockTripletRow,
+  BootstrapManifestEntry,
   CandidateMatch,
   FindCandidatesOptions,
   IntentQuery,
@@ -572,6 +574,103 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // exportManifest — deterministic manifest for bootstrap --verify
+  // -------------------------------------------------------------------------
+
+  // @decision DEC-V2-BOOTSTRAP-MANIFEST-001
+  // title: exportManifest() excludes non-deterministic columns
+  // status: accepted
+  // rationale: createdAt and ROWID vary per-environment and per-run. The six
+  //   fields in BootstrapManifestEntry are all content-addressed (derived from
+  //   artifact bytes via BLAKE3) so the same block stored on any machine at any
+  //   time produces the same entry. The array is sorted ascending by
+  //   blockMerkleRoot — the sort is the load-bearing determinism contract for
+  //   WI-V2-BOOTSTRAP-03's byte-identity gate.
+  //   Blocks missing impl.ts or proof/manifest.json artifacts (pre-WI-022)
+  //   receive the BLAKE3-of-empty-bytes sentinel so the schema is uniform.
+
+  async exportManifest(): Promise<readonly BootstrapManifestEntry[]> {
+    this.assertOpen();
+
+    // Single query over blocks, sorted ascending by block_merkle_root.
+    // The ORDER BY is the load-bearing determinism contract — do NOT change
+    // to insertion order or any other sort key.
+    interface ManifestBlockRow {
+      block_merkle_root: string;
+      spec_hash: string;
+      canonical_ast_hash: string;
+      parent_block_root: string | null;
+    }
+
+    const blockRows = this.db
+      .prepare<[], ManifestBlockRow>(
+        `SELECT
+           b.block_merkle_root,
+           b.spec_hash,
+           b.canonical_ast_hash,
+           b.parent_block_root
+         FROM blocks b
+         ORDER BY b.block_merkle_root ASC`,
+      )
+      .all();
+
+    if (blockRows.length === 0) return [];
+
+    // Precompute the sentinel: BLAKE3 of empty bytes (used when an artifact
+    // path is absent — pre-WI-022 blocks or blocks with no matching path).
+    const EMPTY_SENTINEL = bytesToHex(blake3(new Uint8Array(0)));
+
+    // Load artifact bytes for all blocks in one query to avoid N+1 queries.
+    // We only need impl.ts and proof/manifest.json paths.
+    const allRoots = blockRows.map((r) => r.block_merkle_root);
+    const placeholders = allRoots.map(() => "?").join(", ");
+    interface ArtifactHashRow {
+      block_merkle_root: string;
+      path: string;
+      bytes: Buffer;
+    }
+    const artifactRows = this.db
+      .prepare<string[], ArtifactHashRow>(
+        `SELECT block_merkle_root, path, bytes
+         FROM block_artifacts
+         WHERE block_merkle_root IN (${placeholders})
+           AND path IN ('impl.ts', 'proof/manifest.json')`,
+      )
+      .all(...allRoots);
+
+    // Build a lookup: root → { implSourceHash, manifestJsonHash }
+    const hashMap = new Map<string, { implSourceHash: string; manifestJsonHash: string }>();
+    for (const row of artifactRows) {
+      let entry = hashMap.get(row.block_merkle_root);
+      if (entry === undefined) {
+        entry = { implSourceHash: EMPTY_SENTINEL, manifestJsonHash: EMPTY_SENTINEL };
+        hashMap.set(row.block_merkle_root, entry);
+      }
+      const digest = bytesToHex(blake3(new Uint8Array(row.bytes)));
+      if (row.path === "impl.ts") {
+        entry.implSourceHash = digest;
+      } else if (row.path === "proof/manifest.json") {
+        entry.manifestJsonHash = digest;
+      }
+    }
+
+    return blockRows.map((r): BootstrapManifestEntry => {
+      const hashes = hashMap.get(r.block_merkle_root) ?? {
+        implSourceHash: EMPTY_SENTINEL,
+        manifestJsonHash: EMPTY_SENTINEL,
+      };
+      return {
+        blockMerkleRoot: r.block_merkle_root as BlockMerkleRoot,
+        specHash: r.spec_hash as SpecHash,
+        canonicalAstHash: r.canonical_ast_hash,
+        parentBlockRoot: (r.parent_block_root ?? null) as BlockMerkleRoot | null,
+        implSourceHash: hashes.implSourceHash,
+        manifestJsonHash: hashes.manifestJsonHash,
+      };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // close
   // -------------------------------------------------------------------------
 
@@ -654,6 +753,19 @@ function isStricterThan(
     }
   }
   return false;
+}
+
+/**
+ * Convert a Uint8Array to a lowercase hex string.
+ * Each file defines its own private copy — codebase pattern from merkle.ts:107.
+ * (DEC-V2-BOOTSTRAP-BYTESTOHEX-001)
+ */
+function bytesToHex(bytes: Uint8Array): string {
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i]?.toString(16).padStart(2, "0");
+  }
+  return hex;
 }
 
 // ---------------------------------------------------------------------------
