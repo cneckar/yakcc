@@ -15,6 +15,13 @@ tmp/
 DECISIONS.md
 DECISIONS.md.tmp.*
 
+# Bootstrap outputs — registry and report are ephemeral; expected-roots.json is committed.
+# (WI-V2-BOOTSTRAP-02: registry + report gitignored; expected-roots.json committed in WI-V2-BOOTSTRAP-03)
+bootstrap/yakcc.registry.sqlite
+bootstrap/yakcc.registry.sqlite-wal
+bootstrap/yakcc.registry.sqlite-shm
+bootstrap/report.json
+
 # Stray TS build artifacts that escape into src/ when cross-package imports
 # trigger out-of-tree compilation. If this pattern reappears, find the offending
 # import chain rather than relying on this catch-all.
