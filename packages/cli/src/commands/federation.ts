@@ -266,7 +266,27 @@ async function runFederationMirror(
  * Run `yakcc federation pull`.
  * Pulls a single block from the remote peer, integrity-checks it, and prints
  * a concise summary (blockMerkleRoot + specHash) to logger.log.
- * Does NOT persist to the registry — pull is a read-only diagnostic verb.
+ *
+ * When --registry is supplied, persists the pulled row to the named registry
+ * idempotently (DEC-STORAGE-IDEMPOTENT-001). The persist side-effect relies
+ * entirely on storeBlock's existing idempotency — the CLI does NOT pre-check
+ * whether the row is already present (Sacred Practice #12, DEC-SCHEMA-MIGRATION-002).
+ *
+ * When --registry is omitted, the pull is a read-only diagnostic verb (no
+ * registry is opened; the existing diagnostic-line surface is preserved).
+ *
+ * Failure-mode separation (three distinct error messages per eval contract):
+ *   - Registry open failure  → "error: failed to open registry at <path>: ..."
+ *   - Pull/transport failure → "error: pull failed: ..."
+ *   - Persist failure        → "error: failed to persist block to registry: ..."
+ *
+ * @decision DEC-CLI-PULL-PERSIST-001: persist-on-pull wiring (WI-030)
+ * Status: implemented (WI-030)
+ * Rationale: CLI is the only layer that gains persistence; pullBlock stays pure
+ * (DEC-V1-FEDERATION-PROTOCOL-001). Open before pull (fail-fast on bad path),
+ * close in finally (resource-cleanup invariant). Row is passed to storeBlock
+ * byte-identical (DEC-TRIPLET-IDENTITY-020, DEC-NO-OWNERSHIP-011). Idempotency
+ * is provided by DEC-STORAGE-IDEMPOTENT-001 — no pre-check at CLI layer.
  *
  * @param argv   - Args after "pull" has been consumed.
  * @param logger - Output sink.
@@ -308,22 +328,61 @@ async function runFederationPull(
     return 1;
   }
 
-  // Note: --registry is accepted (for future persistence) but not required for
-  // the current read-only diagnostic pull path. We keep the flag defined so the
-  // CLI surface is stable for future WI that adds persist-on-pull.
+  // --registry: empty string treated as missing, matching serve/mirror pattern
+  // (lines 127-130 and 228-231). When absent, pull is a read-only diagnostic verb.
+  const registryPath = parsed.values.registry;
+  const hasRegistry = registryPath !== undefined && registryPath !== "";
+  if (registryPath !== undefined && registryPath === "") {
+    logger.error("error: --registry <db-path> must not be an empty string for 'federation pull'");
+    return 1;
+  }
+
+  // Open registry BEFORE pull: fail-fast on bad path (DEC-CLI-PULL-PERSIST-001).
+  // Only opened when --registry is present.
+  let registry: Registry | null = null;
+  if (hasRegistry) {
+    try {
+      registry = await openRegistry(registryPath as string);
+    } catch (err) {
+      logger.error(`error: failed to open registry at ${registryPath as string}: ${String(err)}`);
+      return 1;
+    }
+  }
 
   // Resolve transport: injected (tests) or real HTTP (production).
   const transport = opts?.transport ?? createHttpTransport();
 
   try {
     const row = await pullBlock(remote as BlockMerkleRoot, root as BlockMerkleRoot, { transport });
+
+    // Diagnostic lines — preserved byte-identical from pre-WI-030 path.
     logger.log("pulled block:");
     logger.log(`  blockMerkleRoot: ${row.blockMerkleRoot}`);
     logger.log(`  specHash:        ${row.specHash}`);
+
+    // Persist when --registry was supplied.
+    // storeBlock is idempotent (DEC-STORAGE-IDEMPOTENT-001) — no pre-check here.
+    // Row is passed through unchanged (DEC-TRIPLET-IDENTITY-020, DEC-NO-OWNERSHIP-011).
+    if (registry !== null) {
+      try {
+        await registry.storeBlock(row);
+      } catch (err) {
+        logger.error(`error: failed to persist block to registry: ${String(err)}`);
+        return 1;
+      }
+      // Optional appended line (DEC-CLI-PULL-PERSIST-001 implementation choice).
+      logger.log(`  persisted: ${registryPath as string}`);
+    }
+
     return 0;
   } catch (err) {
     logger.error(`error: pull failed: ${String(err)}`);
     return 1;
+  } finally {
+    // Resource-cleanup invariant: close registry handle on all paths.
+    if (registry !== null) {
+      await registry.close();
+    }
   }
 }
 
