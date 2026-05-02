@@ -205,6 +205,22 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17))
 
+  packages/hooks-codex:
+    dependencies:
+      '@yakcc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@yakcc/registry':
+        specifier: workspace:*
+        version: link:../registry
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17))
+
   packages/hooks-cursor:
     dependencies:
       '@yakcc/contracts':
