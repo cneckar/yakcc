@@ -20,8 +20,9 @@
  *
  *   DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: artifact bytes fold into blockMerkleRoot via
  *   the wire protocol — the round-trip proves they survive serialization intact.
- *   DEC-SERVE-SPECS-ENUMERATION-020: enumerateSpecs callback supplied via tracking wrapper
- *   per the established pattern (Registry.selectBlocks requires a known specHash).
+ *   DEC-SERVE-SPECS-ENUMERATION-020 (closed by WI-026): Registry.enumerateSpecs() is now
+ *   a first-class native method. serveRegistry calls registry.enumerateSpecs() directly.
+ *   The former tracking-wrapper enumerateSpecs callback is removed (Sacred Practice #12).
  *
  * Scope: one new file — federation/src/round-trip.test.ts only (Slice F).
  * Forbidden: no new merkle helpers, no serve.ts edits, no shave source edits.
@@ -150,31 +151,27 @@ function makeRow(
 }
 
 // ---------------------------------------------------------------------------
-// TrackedRegistry — wraps Registry and tracks spec hashes for enumerateSpecs
+// TrackedRegistry — thin Registry wrapper for convenient block insertion in tests
 //
-// Per DEC-SERVE-SPECS-ENUMERATION-020: Registry has no enumerate-all-specs
-// method; tests supply enumerateSpecs via this tracking wrapper.
+// WI-026 closure: Registry.enumerateSpecs() is now a first-class method on the
+// Registry interface. serveRegistry calls registry.enumerateSpecs() directly.
+// The former specHashSet tracking and enumerateSpecs() method are removed
+// (Sacred Practice #12 — no parallel authorities).
 // ---------------------------------------------------------------------------
 
 interface TrackedRegistry {
   readonly registry: Registry;
   store(row: BlockTripletRow): Promise<void>;
-  enumerateSpecs(): Promise<readonly SpecHash[]>;
   close(): Promise<void>;
 }
 
 async function openTrackedRegistry(): Promise<TrackedRegistry> {
   const reg = await openRegistry(":memory:", { embeddings: ZERO_EMBEDDINGS });
-  const specHashSet = new Set<SpecHash>();
 
   return {
     registry: reg,
     async store(row: BlockTripletRow): Promise<void> {
       await reg.storeBlock(row);
-      specHashSet.add(row.specHash);
-    },
-    async enumerateSpecs(): Promise<readonly SpecHash[]> {
-      return [...specHashSet].sort();
     },
     close(): Promise<void> {
       return reg.close();
@@ -311,7 +308,6 @@ describe("federation round-trip — single-triplet (compound-interaction)", () =
       handle = await serveRegistry(trackedA.registry, {
         port: 0,
         host: "127.0.0.1",
-        enumerateSpecs: trackedA.enumerateSpecs.bind(trackedA),
       });
 
       // Step 3: mirror from the HTTP server into registryB.
@@ -375,7 +371,6 @@ describe("federation round-trip — multi-triplet (required compound-interaction
       handle = await serveRegistry(trackedA.registry, {
         port: 0,
         host: "127.0.0.1",
-        enumerateSpecs: trackedA.enumerateSpecs.bind(trackedA),
       });
 
       // Step 3: mirror from the HTTP server into registryB.

@@ -57,7 +57,6 @@ import { mirrorRegistry } from "@yakcc/federation";
 import type { MirrorReport } from "@yakcc/federation";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
-import type { SpecHash } from "@yakcc/contracts";
 import { CollectingLogger, runCli } from "@yakcc/cli";
 
 // ---------------------------------------------------------------------------
@@ -106,33 +105,6 @@ const ZERO_EMBEDDINGS = {
     return new Float32Array(384);
   },
 };
-
-// ---------------------------------------------------------------------------
-// enumerateSpecs helper — inline SQL against registryA's SQLite handle.
-//
-// @decision DEC-SERVE-SPECS-ENUMERATION-020: Registry has no public
-// enumerateSpecs() method (B-008 tracks that as a future primitive). The
-// documented escape hatch is an inline callback that queries the SQLite
-// handle directly. This is the v0.7-style pattern used in serve.test.ts and
-// round-trip.test.ts. The callback is wired into serveRegistry via opts.
-// ---------------------------------------------------------------------------
-
-function makeEnumerateSpecs(dbPath: string): () => Promise<readonly SpecHash[]> {
-  return async () => {
-    // Open a separate read-only connection for the enumeration query so we do
-    // not conflict with the Registry instance's write connection.
-    const db = new Database(dbPath, { readonly: true });
-    try {
-      const rows = db
-        .prepare<[], { spec_hash: string }>("SELECT DISTINCT spec_hash FROM blocks")
-        .all();
-      // Cast to SpecHash (branded string type from @yakcc/contracts).
-      return rows.map((r) => r.spec_hash as SpecHash);
-    } finally {
-      db.close();
-    }
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Transcript accumulator — written to evidence after all assertions pass.
@@ -370,12 +342,11 @@ describe("demo: serveRegistry(registryA) + mirrorRegistry(serveUrl, registryB) r
     registryB = await openRegistry(REGISTRY_B_PATH, { embeddings: ZERO_EMBEDDINGS });
 
     // Start serveRegistry on registryA with real localhost port (port: 0).
-    // Supply the inline enumerateSpecs callback per DEC-SERVE-SPECS-ENUMERATION-020.
-    const enumerateSpecs = makeEnumerateSpecs(REGISTRY_A_PATH);
+    // Registry.enumerateSpecs() is now a native method (B-008 closed); no
+    // external callback needed.
     const handle = await serveRegistry(registryA, {
       port: 0,
       host: "127.0.0.1",
-      enumerateSpecs,
     });
     serveUrlRecorded = handle.url;
 
@@ -621,11 +592,9 @@ describe("demo: mirrorRegistry on already-populated registryB is a no-op", () =>
     expect(serveUrlRecorded, "serveUrl must be recorded").toBeTruthy();
 
     // Restart the server for the second mirror call.
-    const enumerateSpecs = makeEnumerateSpecs(REGISTRY_A_PATH);
     const handle2 = await serveRegistry(registryA, {
       port: 0,
       host: "127.0.0.1",
-      enumerateSpecs,
     });
 
     try {
@@ -808,11 +777,9 @@ describe("demo: federation wire shape carries no ownership-shaped fields", () =>
     ).toBeGreaterThan(0);
 
     // Start a fresh server for this test.
-    const enumerateSpecs = makeEnumerateSpecs(REGISTRY_A_PATH);
     const handle = await serveRegistry(registryA, {
       port: 0,
       host: "127.0.0.1",
-      enumerateSpecs,
     });
 
     const ownershipPattern =

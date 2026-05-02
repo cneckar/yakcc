@@ -1089,3 +1089,134 @@ describe("artifacts persistence (WI-022)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// enumerateSpecs — DEC-SERVE-SPECS-ENUMERATION-020 (closed by WI-026)
+//
+// These tests verify the new Registry.enumerateSpecs() primitive that replaces
+// the old optional callback on ServeOptions. The implementation is a single
+// SELECT DISTINCT spec_hash FROM blocks ORDER BY spec_hash.
+//
+// Production sequence exercised by the compound-interaction test below:
+//   openRegistry → storeBlock(rowA) → storeBlock(rowB with same spec as rowA)
+//   → storeBlock(rowC with new spec) → enumerateSpecs()
+//   → assert sorted distinct [specA, specC]
+// ---------------------------------------------------------------------------
+
+describe("enumerateSpecs", () => {
+  it("returns empty array on an empty registry", async () => {
+    // No blocks stored — SELECT DISTINCT returns zero rows, not undefined/null.
+    const specs = await registry.enumerateSpecs();
+    expect(specs).toEqual([]);
+  });
+
+  it("returns a single spec hash after storing one block", async () => {
+    const spec = makeSpecYak("single-spec-fn");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const specs = await registry.enumerateSpecs();
+    expect(specs).toHaveLength(1);
+    expect(specs[0]).toBe(row.specHash);
+  });
+
+  it("returns distinct spec hashes in sorted ascending order for multiple specs", async () => {
+    // Store two blocks under specA (same spec, different impls) and one under specB.
+    // enumerateSpecs must return [specA, specB] with no duplicate for specA.
+    const specA = makeSpecYak("spec-alpha");
+    const specB = makeSpecYak("spec-beta");
+
+    const rowA1 = makeBlockRow(specA, "export function f(): number { return 1; }", "// a1");
+    const rowA2 = makeBlockRow(specA, "export function f(): number { return 2; }", "// a2");
+    const rowB = makeBlockRow(specB, "export function f(): string { return 'x'; }", "// b");
+
+    await registry.storeBlock(rowA1);
+    await registry.storeBlock(rowA2);
+    await registry.storeBlock(rowB);
+
+    const specs = await registry.enumerateSpecs();
+
+    // Exactly two distinct spec hashes — one for specA, one for specB.
+    expect(specs).toHaveLength(2);
+    expect(specs).toContain(rowA1.specHash);
+    expect(specs).toContain(rowB.specHash);
+
+    // Sorted ascending.
+    const sorted = [...specs].sort();
+    expect([...specs]).toEqual(sorted);
+  });
+
+  it("is idempotent across repeated calls with no intervening writes", async () => {
+    const spec = makeSpecYak("idempotent-spec");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const first = await registry.enumerateSpecs();
+    const second = await registry.enumerateSpecs();
+
+    // Both calls return the same byte-identical sorted array.
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(1);
+  });
+
+  it("reflects subsequent storeBlock writes — no stale caching", async () => {
+    const specA = makeSpecYak("reflect-spec-a");
+    const specB = makeSpecYak("reflect-spec-b");
+
+    const rowA = makeBlockRow(specA);
+    await registry.storeBlock(rowA);
+
+    const before = await registry.enumerateSpecs();
+    expect(before).toHaveLength(1);
+    expect(before[0]).toBe(rowA.specHash);
+
+    // Store a new block under a new spec.
+    const rowB = makeBlockRow(specB);
+    await registry.storeBlock(rowB);
+
+    const after = await registry.enumerateSpecs();
+    expect(after).toHaveLength(2);
+    expect(after).toContain(rowA.specHash);
+    expect(after).toContain(rowB.specHash);
+
+    // Confirm sorted ascending.
+    const sorted = [...after].sort();
+    expect([...after]).toEqual(sorted);
+  });
+
+  // Compound-interaction: real production sequence for spec enumeration.
+  //
+  // This test exercises the path that serveRegistry's /v1/specs handler takes
+  // after WI-026: storeBlock writes come in via the normal storage path, then
+  // enumerateSpecs() is called directly on the registry with no intermediary
+  // callback or caching layer. The spec hashes returned are the exact values
+  // the federation transport will serve to mirror clients.
+  it("compound: store 3 blocks under 2 specs, enumerate, assert sorted distinct pair", async () => {
+    const specA = makeSpecYak("compound-spec-a", "Parse integer from string");
+    const specB = makeSpecYak("compound-spec-b", "Format number as string");
+
+    // Two blocks under specA (different impl text → different merkle roots).
+    const rowA1 = makeBlockRow(specA, "export function f(x: string): number { return parseInt(x, 10); }", "// compound a1");
+    const rowA2 = makeBlockRow(specA, "export function f(x: string): number { return +x; }", "// compound a2");
+    // One block under specB.
+    const rowB = makeBlockRow(specB, "export function f(n: number): string { return String(n); }", "// compound b");
+
+    await registry.storeBlock(rowA1);
+    await registry.storeBlock(rowA2);
+    await registry.storeBlock(rowB);
+
+    const specs = await registry.enumerateSpecs();
+
+    // Exactly two distinct spec hashes despite three blocks.
+    expect(specs).toHaveLength(2);
+    expect(specs).toContain(rowA1.specHash);
+    expect(specs).toContain(rowB.specHash);
+
+    // rowA1 and rowA2 share the same specHash.
+    expect(rowA1.specHash).toBe(rowA2.specHash);
+
+    // Sorted ascending (same order as ORDER BY spec_hash in SQL).
+    const sorted = [...specs].sort();
+    expect([...specs]).toEqual(sorted);
+  });
+});

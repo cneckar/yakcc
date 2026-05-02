@@ -23,8 +23,9 @@
  * @decision DEC-SERVE-E-020 (see serve.ts): serveRegistry Slice E test suite.
  * Status: decided (WI-020 Dispatch E)
  *
- * @decision DEC-SERVE-SPECS-ENUMERATION-020 (see serve.ts): tests supply
- * enumerateSpecs via a tracking wrapper that records spec hashes of stored blocks.
+ * @decision DEC-SERVE-SPECS-ENUMERATION-020 (WI-026 closure): GET /v1/specs calls
+ * registry.enumerateSpecs() directly. The TrackedRegistry wrapper still wraps
+ * openRegistry but no longer supplies an enumerateSpecs callback to serveRegistry.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -121,32 +122,25 @@ function makeRow(spec: SpecYak, implVariant: string, artifactContent: string): B
 }
 
 // ---------------------------------------------------------------------------
-// TrackedRegistry — wraps Registry and tracks spec hashes for enumerateSpecs
+// TrackedRegistry — wraps Registry for convenient block insertion in tests
+// (WI-026: enumerateSpecs callback removed; serve.ts calls registry.enumerateSpecs() directly)
 // ---------------------------------------------------------------------------
 
 interface TrackedRegistry {
   registry: Registry;
-  enumerateSpecs: () => Promise<readonly SpecHash[]>;
   store(row: BlockTripletRow): Promise<void>;
   close(): Promise<void>;
 }
 
 async function openTrackedRegistry(): Promise<TrackedRegistry> {
   const reg = await openRegistry(":memory:", { embeddings: ZERO_EMBEDDINGS });
-  const specHashSet = new Set<SpecHash>();
 
   async function store(row: BlockTripletRow): Promise<void> {
     await reg.storeBlock(row);
-    specHashSet.add(row.specHash);
-  }
-
-  async function enumerateSpecs(): Promise<readonly SpecHash[]> {
-    return [...specHashSet].sort();
   }
 
   return {
     registry: reg,
-    enumerateSpecs,
     store,
     close: () => reg.close(),
   };
@@ -163,7 +157,6 @@ async function startServer(extraOpts?: Partial<ServeOptions>): Promise<void> {
   const opts: ServeOptions = {
     port: 0,
     host: "127.0.0.1",
-    enumerateSpecs: tracked.enumerateSpecs,
     ...extraOpts,
   };
   handle = await serveRegistry(tracked.registry, opts);

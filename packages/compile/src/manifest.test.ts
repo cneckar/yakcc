@@ -99,6 +99,9 @@ function makeRegistryMock(
     async findCandidatesByIntent(): Promise<readonly import("@yakcc/registry").CandidateMatch[]> {
       return [];
     },
+    async enumerateSpecs(): Promise<readonly import("@yakcc/contracts").SpecHash[]> {
+      return [];
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing
