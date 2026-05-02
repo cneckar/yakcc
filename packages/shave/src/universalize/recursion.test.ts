@@ -887,3 +887,131 @@ function serveRegistry(): { close(): Promise<void> } {
     expect(tree.leafCount).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-038: raised maxDepth + nodeIsAsync layered fallback regression tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests for WI-038 fixes:
+ *   (a) DEFAULT_MAX_DEPTH raised from 8 to 24 — deeply-nested Promise chains
+ *       no longer hit RecursionDepthExceededError on legitimate code.
+ *   (b) nodeIsAsync layered fallback — async-method-shorthand on ObjectLiteralExpression
+ *       is now correctly detected, fixing canonical-ast--await on pull.ts shape.
+ *
+ * Production sequence for both: shave() → universalize() → decompose() →
+ * RecursionDepthExceededError (a) or CanonicalAstParseError "await outside async" (b).
+ * Post-fix: decompose() completes, leafCount > 0.
+ *
+ * @decision DEC-SLICER-MAX-DEPTH-001 (see recursion.ts constants block)
+ */
+describe("decompose — WI-038 depth + nodeIsAsync fixes", () => {
+  /**
+   * Test 1 (WI-038-a): deep Promise chain decomposes within raised maxDepth.
+   * A 4-deep .then() chain previously exceeded maxDepth=8 when the slicer
+   * descended through all the ArrowFunction arguments. With DEFAULT_MAX_DEPTH=24
+   * the recursion has sufficient headroom.
+   */
+  it("deep Promise chain (4 .then levels) decomposes without throw (DEC-SLICER-MAX-DEPTH-001)", async () => {
+    const src = `async function f() {
+  return await Promise.resolve()
+    .then(() => Promise.resolve()
+      .then(() => Promise.resolve()
+        .then(() => Promise.resolve()
+          .then(() => 42))));
+}`;
+    // Must not throw RecursionDepthExceededError with DEFAULT_MAX_DEPTH=24.
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test 2 (WI-038-b): async method-shorthand on object literal recognized by nodeIsAsync.
+   * `{ async fetchAll(urls) { ... await fetch(u) ... } }` — the async modifier
+   * lives on the MethodDeclaration node inside an ObjectLiteralExpression.
+   * Previously isAsync() could throw for this shape, breaking nodeIsAsync and
+   * causing canonical-ast--await when the AwaitExpression was hashed standalone.
+   */
+  it("async method-shorthand on object literal recognized by nodeIsAsync (WI-038-b)", async () => {
+    const src = `// SPDX-License-Identifier: MIT
+const obj = {
+  async fetchAll(urls: string[]): Promise<Response[]> {
+    const results: Response[] = [];
+    for (const u of urls) {
+      results.push(await fetch(u));
+    }
+    return results;
+  },
+};`;
+    // Must not throw CanonicalAstParseError (TS1308 await outside async).
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test 3 (WI-038-b regression): packages/federation/src/pull.ts decomposes
+   * without throw. pull.ts was the sole canonical-ast--await failure in the
+   * WI-037 post-fix survey (96.6%). This is the direct regression guard.
+   *
+   * We inline the structural shape of pull.ts — the async resolveTransport
+   * helper with dynamic import and two exported async functions that call
+   * await inside try/catch — rather than reading the file at test time,
+   * to keep the test hermetic and to avoid import-resolution complexity.
+   */
+  it("yakcc federation/src/pull.ts shape decomposes without throw (WI-038 regression)", async () => {
+    const src = `// SPDX-License-Identifier: MIT
+import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+
+interface Transport {
+  fetchBlock(remote: string, root: BlockMerkleRoot): Promise<unknown>;
+  fetchSpec(remote: string, specHash: SpecHash): Promise<readonly BlockMerkleRoot[]>;
+}
+
+class TransportError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "TransportError";
+  }
+}
+
+async function resolveTransport(opts?: { transport?: Transport }): Promise<Transport> {
+  if (opts?.transport !== undefined) {
+    return opts.transport;
+  }
+  const { createHttpTransport } = await import("./http-transport.js");
+  return createHttpTransport();
+}
+
+export async function pullBlock(
+  remote: string,
+  root: BlockMerkleRoot,
+  opts?: { transport?: Transport },
+): Promise<unknown> {
+  const transport = await resolveTransport(opts);
+  const wire = await transport.fetchBlock(remote, root);
+  return wire;
+}
+
+export async function pullSpec(
+  remote: string,
+  specHash: SpecHash,
+  opts?: { transport?: Transport },
+): Promise<readonly BlockMerkleRoot[]> {
+  const transport = await resolveTransport(opts);
+  try {
+    return await transport.fetchSpec(remote, specHash);
+  } catch (err) {
+    if (err instanceof TransportError && err.code === "not_found") {
+      return [];
+    }
+    throw err;
+  }
+}`;
+    // Must not throw CanonicalAstParseError (canonical-ast--await).
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});
