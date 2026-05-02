@@ -502,3 +502,149 @@ export function parseArgv(argv: readonly string[]): Record<string, unknown> {
     expect(tree.leafCount).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-SLICER-FN-SCOPED-CF-001: non-leaf nodes containing escaping return/await/yield
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests for the WI-034 fix: safeCanonicalAstHash now detects non-leaf nodes
+ * whose descendants contain return/await/yield whose binding function scope
+ * lies outside the extracted fragment, and wraps in the appropriate synthetic
+ * function flavor so canonicalAstHash can parse them standalone.
+ *
+ * Production sequence: shave() → universalize() → decompose() → IfStatement /
+ * TryStatement / Block node whose source contains an escaping return/await/yield →
+ * safeCanonicalAstHash wraps in synthetic function → canonicalAstHash succeeds.
+ * Previously would have raised CanonicalAstParseError (TS1108/TS1308).
+ *
+ * Survey baseline (post-WI-033): 70/117 yakcc-self-shave success.
+ * Expected post-fix:             ~97% success.
+ */
+describe("decompose — non-leaf escaping return/await/yield (DEC-SLICER-FN-SCOPED-CF-001)", () => {
+  /**
+   * Test 1: IfStatement with return — the then-branch contains a `return`
+   * whose binding function is the enclosing `function f`, which lies outside
+   * the extracted IfStatement fragment. safeCanonicalAstHash must wrap in
+   * `function __w__() { ... }` to hash it without TS1108.
+   */
+  it("1: if-statement with return decomposes without throw", async () => {
+    const source = `function f(x: number): number { if (x < 0) { return -1; } return x; }`;
+    // Must not throw — previously: CanonicalAstParseError (TS1108 return outside function)
+    const tree = await decompose(source, emptyRegistry);
+
+    function findKind(node: typeof tree.root, kindName: string): boolean {
+      if ("source" in node) {
+        // Check if this node's source contains the if-statement shape
+        if (node.source.trimStart().startsWith("if")) return true;
+      }
+      if (node.kind === "branch") {
+        return node.children.some((c) => findKind(c, kindName));
+      }
+      return false;
+    }
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    // Tree completed without CanonicalAstParseError
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 2: TryStatement with return in catch — the catch block contains a
+   * `return` escaping to the enclosing async function. Wrap flavor: function.
+   */
+  it("2: try-catch with return in catch decomposes without throw", async () => {
+    const source = `async function f(): Promise<number> { try { return await Promise.resolve(1); } catch { return -1; } }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 3: Block with await inside async function (for-of body) decomposes
+   * without throw. The for-of body block contains `await x` whose binding
+   * async function is the enclosing `async function f`. Wrap flavor: async function.
+   */
+  it("3: block with await inside async function (for-of body) decomposes without throw", async () => {
+    const source = `async function f(xs: Promise<number>[]): Promise<number> { let s = 0; for (const x of xs) { s += await x; } return s; }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 4: Generator with yield inside if decomposes without throw.
+   * The IfStatement body contains `yield x` whose binding generator is the
+   * enclosing `function* gen`. Wrap flavor: function*.
+   */
+  it("4: generator with yield inside if decomposes without throw", async () => {
+    const source = `function* gen(xs: number[]) { for (const x of xs) { if (x > 0) yield x; } }`;
+    const tree = await decompose(source, emptyRegistry);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 5: yakcc self-shave fixture — packages/cli/src/commands/shave.ts.
+   * This is the actual file from the survey's failure list. It contains
+   * return statements inside IfStatement / try-catch blocks whose binding
+   * function (the exported `shave` async function) lies outside the extracted
+   * fragments. Previously raised CanonicalAstParseError (TS1108).
+   *
+   * The SPDX header prepend is the license gate bypass used by the survey.
+   */
+  it("5: yakcc packages/cli/src/commands/shave.ts decomposes without throw", async () => {
+    // Inline the essential shape of shave.ts that triggered the survey failure:
+    // an exported async function with return statements inside if/try blocks.
+    const source = `// SPDX-License-Identifier: MIT
+import { resolve } from "node:path";
+import { parseArgs } from "node:util";
+
+const SHAVE_PARSE_OPTIONS = {
+  registry: { type: "string" },
+  offline: { type: "boolean", default: false },
+  help: { type: "boolean", short: "h", default: false },
+} as const;
+
+export async function shave(argv: ReadonlyArray<string>, logger: { log: (s: string) => void; error: (s: string) => void }): Promise<number> {
+  const parsed = (() => {
+    try {
+      return parseArgs({ args: [...argv], allowPositionals: true, options: SHAVE_PARSE_OPTIONS });
+    } catch (err) {
+      logger.error(\`error: \${(err as Error).message}\`);
+      return null;
+    }
+  })();
+  if (parsed === null) return 1;
+
+  if (parsed.values.help) {
+    logger.log("Usage: yakcc shave <path> [--registry <p>] [--offline]");
+    return 0;
+  }
+
+  const sourcePath = parsed.positionals[0];
+  if (sourcePath === undefined) {
+    logger.error("error: missing source path.");
+    return 1;
+  }
+
+  try {
+    logger.log(\`Shaved \${resolve(sourcePath)}\`);
+    return 0;
+  } catch (err) {
+    const e = err as Error;
+    logger.error(\`error: shave failed: \${e.message}\`);
+    return 1;
+  }
+}
+`;
+    // Must not throw — previously raised CanonicalAstParseError (TS1108)
+    const tree = await decompose(source, emptyRegistry);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+});
