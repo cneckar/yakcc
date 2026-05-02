@@ -4,8 +4,9 @@
 // Status: implemented (WI-T04); supersedes DEC-COMPILE-INDEX-001 (ContractId-based,
 // WI-005). The ContractId re-export is removed; BlockMerkleRoot and SpecHash are
 // the new identity types. AssembleOptions.knownContractIds → knownMerkleRoots.
-// Rationale: The public API surface is: assemble(), tsBackend(), and the associated
-// types Artifact, ProvenanceManifest, ProvenanceEntry, VerificationStatus, Backend.
+// Rationale: The public API surface is: assemble(), tsBackend(), wasmBackend(), and
+// the associated types Artifact, ProvenanceManifest, ProvenanceEntry,
+// VerificationStatus, Backend, WasmBackend.
 // BlockMerkleRoot and SpecHash are re-exported for callers who need them without
 // importing @yakcc/contracts directly.
 
@@ -14,9 +15,11 @@ export type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 // Provenance manifest types
 export type { VerificationStatus, ProvenanceEntry, ProvenanceManifest } from "./manifest.js";
 
-// Backend types and factory
+// Backend types and factories
 export type { Backend } from "./ts-backend.js";
 export { tsBackend } from "./ts-backend.js";
+export type { WasmBackend } from "./wasm-backend.js";
+export { wasmBackend, compileToWasm } from "./wasm-backend.js";
 
 // Artifact type and assembly entry point
 export type { Artifact, AssembleOptions } from "./assemble.js";
