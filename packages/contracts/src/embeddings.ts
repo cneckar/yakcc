@@ -7,8 +7,8 @@
 // Lazy singleton load: the model is not loaded at import time; it loads on the
 // first embed() call and is reused for all subsequent calls.
 
-import type { ContractSpec } from "./index.js";
 import { canonicalizeText } from "./canonicalize.js";
+import type { ContractSpec } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Provider interface
@@ -42,29 +42,32 @@ const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 /** Expected output dimension for all-MiniLM-L6-v2. */
 const LOCAL_DIMENSION = 384;
 
-/**
- * Lazy singleton: holds the pipeline once loaded, null before first call.
- * Typed as unknown to avoid importing the full transformers.js type surface at
- * module level (which would trigger model loading).
- */
-let pipelinePromise: Promise<unknown> | null = null;
+// @decision DEC-EMBED-SINGLETON-CLOSURE-001: Pipeline singleton via closure, not module-level let.
+// Status: decided (WI-V2-02)
+// Rationale: A module-level `let pipelinePromise` violates the no-mutable-globals strict-subset
+// rule, which forbids top-level `let`/`var` declarations. Moving the mutable cell into a closure
+// (via an IIFE-style factory that returns a getter function) satisfies the rule: the `let` lives
+// inside a function scope, not at module scope. Runtime behaviour is byte-identical — the
+// pipeline is still loaded lazily on first embed() call and cached for all subsequent calls.
 
 /** Load (or return the cached) transformers.js feature-extraction pipeline. */
-async function getPipeline(): Promise<unknown> {
-  if (pipelinePromise === null) {
-    // Dynamic import keeps the model loader out of the module graph until needed.
-    // @decision DEC-EMBED-LAZY-001: Dynamic import for lazy pipeline init.
-    // Status: decided (WI-002)
-    // Rationale: Static import of @xenova/transformers triggers ONNX runtime
-    // initialization at module load time, adding hundreds of ms to every cold
-    // start even for callers that never embed. Dynamic import defers that cost
-    // until the first embed() call.
-    pipelinePromise = import("@xenova/transformers").then((mod) =>
-      mod.pipeline("feature-extraction", LOCAL_MODEL_ID),
-    );
-  }
-  return pipelinePromise;
-}
+const getPipeline: () => Promise<unknown> = (() => {
+  // @decision DEC-EMBED-LAZY-001: Dynamic import for lazy pipeline init.
+  // Status: decided (WI-002)
+  // Rationale: Static import of @xenova/transformers triggers ONNX runtime
+  // initialization at module load time, adding hundreds of ms to every cold
+  // start even for callers that never embed. Dynamic import defers that cost
+  // until the first embed() call.
+  let pipelinePromise: Promise<unknown> | null = null;
+  return (): Promise<unknown> => {
+    if (pipelinePromise === null) {
+      pipelinePromise = import("@xenova/transformers").then((mod) =>
+        mod.pipeline("feature-extraction", LOCAL_MODEL_ID),
+      );
+    }
+    return pipelinePromise;
+  };
+})();
 
 /**
  * The output shape from transformers.js feature-extraction pipeline.
@@ -110,15 +113,21 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
 // Module-level default provider singleton
 // ---------------------------------------------------------------------------
 
-/** Module-level lazy singleton for the default local provider. */
-let defaultProvider: EmbeddingProvider | null = null;
-
-function getDefaultProvider(): EmbeddingProvider {
-  if (defaultProvider === null) {
-    defaultProvider = createLocalEmbeddingProvider();
-  }
-  return defaultProvider;
-}
+// @decision DEC-EMBED-SINGLETON-CLOSURE-002: Default-provider singleton via closure, not module-level let.
+// Status: decided (WI-V2-02)
+// Rationale: Same motivation as DEC-EMBED-SINGLETON-CLOSURE-001 — module-level `let` violates
+// no-mutable-globals. The mutable cell is moved into a closure so the `let` lives inside a
+// function scope. Runtime behaviour is byte-identical: the provider is created once on the first
+// call to generateEmbedding() that omits an explicit provider, and reused for all subsequent calls.
+const getDefaultProvider: () => EmbeddingProvider = (() => {
+  let defaultProvider: EmbeddingProvider | null = null;
+  return (): EmbeddingProvider => {
+    if (defaultProvider === null) {
+      defaultProvider = createLocalEmbeddingProvider();
+    }
+    return defaultProvider;
+  };
+})();
 
 // ---------------------------------------------------------------------------
 // Convenience export
