@@ -11,7 +11,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AnthropicApiKeyMissingError,
@@ -94,10 +94,11 @@ describe("Test B: pipeline structural smoke test", () => {
   it("universalize() reaches intent-extraction step for MIT-licensed source (offline: AnthropicApiKeyMissingError)", async () => {
     // Read the demo target itself — self-referential but deliberate: the parser
     // is the subject of the v0.7 demo and its source is well-typed MIT content.
-    const srcPath = join(
-      new URL(".", import.meta.url).pathname,
-      "../src/argv-parser.ts",
-    );
+    // @decision DEC-WI026-FILEURLTOPATH-001 — use fileURLToPath instead of URL.pathname.
+    // On Windows URL.pathname returns "/C:/..." which path.join treats as drive-rooted,
+    // producing "C:\C:\..." (ENOENT). fileURLToPath collapses URL-relative resolution
+    // into a native OS path on every platform.
+    const srcPath = fileURLToPath(new URL("../src/argv-parser.ts", import.meta.url));
     const raw = await readFile(srcPath, "utf-8");
 
     // Strip SPDX comment lines so the source bytes are stable across formatting.
@@ -110,8 +111,16 @@ describe("Test B: pipeline structural smoke test", () => {
     // throw AnthropicApiKeyMissingError at the intent-extraction step — proving
     // offline-tolerant acceptance: the gate, the router, and the API-key check
     // all executed in the correct order.
+    //
+    // intentStrategy: "llm" is required: WI-023 changed the default to "static"
+    // (TypeScript Compiler API, no API key needed). With "static" the test would
+    // reach decompose() and throw CanonicalAstParseError instead — because the
+    // complex argv-parser function body contains continue/break statements that
+    // are invalid at file scope when extracted out of context by the slicer. The
+    // "llm" path throws AnthropicApiKeyMissingError at step 2 (before decompose),
+    // which is what this offline-tolerant acceptance test is designed to assert.
     await expect(
-      universalize({ source }, mockRegistry),
+      universalize({ source }, mockRegistry, { intentStrategy: "llm" }),
     ).rejects.toThrow(AnthropicApiKeyMissingError);
   });
 });
