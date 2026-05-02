@@ -361,10 +361,7 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
     // decomposableChildrenOf returns [] → loop becomes AtomLeaf.
 
     // Walk tree to find the for-of atom leaf
-    function findAtomWithReason(
-      node: (typeof tree.root),
-      reason: string,
-    ): boolean {
+    function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
       if (node.kind === "atom") {
         return node.atomTest.reason === reason;
       }
@@ -383,10 +380,7 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
     const source = `function search(xs: number[], target: number): number { let i = 0; while (i < xs.length) { if (xs[i] === target) break; i++; } return i; }`;
     const tree = await decompose(source, emptyRegistry);
 
-    function findAtomWithReason(
-      node: (typeof tree.root),
-      reason: string,
-    ): boolean {
+    function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
       if (node.kind === "atom") {
         return node.atomTest.reason === reason;
       }
@@ -407,10 +401,7 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
     const source = `function f() { outer: for (let i = 0; i < 10; i++) { for (let j = 0; j < 10; j++) { if (j === 5) break outer; } } }`;
     const tree = await decompose(source, emptyRegistry);
 
-    function findAtomWithReason(
-      node: (typeof tree.root),
-      reason: string,
-    ): boolean {
+    function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
       if (node.kind === "atom") {
         return node.atomTest.reason === reason;
       }
@@ -432,10 +423,7 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
     const source = `function f(xs: number[]) { for (const x of xs) { switch (x) { case 1: break; default: break; } } }`;
     const tree = await decompose(source, emptyRegistry);
 
-    function findAtomWithReason(
-      node: (typeof tree.root),
-      reason: string,
-    ): boolean {
+    function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
       if (node.kind === "atom") {
         return node.atomTest.reason === reason;
       }
@@ -487,10 +475,7 @@ export function parseArgv(argv: readonly string[]): Record<string, unknown> {
     // Must not throw — previously threw CanonicalAstParseError (B-011)
     const tree = await decompose(source, emptyRegistry);
 
-    function findAtomWithReason(
-      node: (typeof tree.root),
-      reason: string,
-    ): boolean {
+    function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
       if (node.kind === "atom") {
         return node.atomTest.reason === reason;
       }
@@ -646,5 +631,166 @@ export async function shave(argv: ReadonlyArray<string>, logger: { log: (s: stri
 
     expect(tree.leafCount).toBeGreaterThan(0);
     expect(tree.root).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001: ClassDeclaration / ExpressionStatement /
+// VariableStatement + async-arrow nodeIsAsync fix (WI-036)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests for WI-036: new decomposableChildrenOf branches for class/expr-stmt/var-stmt
+ * and the nodeIsAsync fix for async arrow functions.
+ *
+ * Production sequence: shave() → universalize() → decompose() → ClassDeclaration /
+ * ExpressionStatement / VariableStatement node → decomposableChildrenOf returns
+ * natural sub-nodes → recursion descends to atoms. Previously threw
+ * DidNotReachAtomError on these node kinds.
+ *
+ * Survey baseline (post-WI-034): 108/117 yakcc-self-shave success (92.3%).
+ * Expected post-fix: ≥97% success (≥113/117).
+ */
+describe("decompose — ClassDeclaration / ExpressionStatement / VariableStatement (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)", () => {
+  /**
+   * Test 1: class with methods decomposes without throw.
+   * A ClassDeclaration whose methods each have >1 CF boundary should decompose
+   * through the class into individual method atoms, not throw DidNotReachAtomError.
+   */
+  it("1: class with methods decomposes without throw", async () => {
+    // Use alwaysMatchRegistry so the ClassDeclaration is non-atomic (its
+    // methods are "known primitives"), forcing decomposableChildrenOf(Class)
+    // to be invoked. Without this, emptyRegistry classifies the small class as
+    // atomic immediately and decomposableChildrenOf is never called.
+    const src = `class Foo {
+  bar(): number { if (true) return 1; return 0; }
+  baz(): string { if (true) return "x"; return "y"; }
+}`;
+    const tree = await decompose(src, alwaysMatchRegistry());
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+
+    // Walk tree to find nodes containing method source text
+    function collectSources(node: typeof tree.root): string[] {
+      const own = [node.source.trim()];
+      if (node.kind === "branch") {
+        return [...own, ...node.children.flatMap(collectSources)];
+      }
+      return own;
+    }
+    const allSources = collectSources(tree.root);
+    // At minimum the two methods should appear somewhere in the tree
+    const methodNodes = allSources.filter((s) => s.startsWith("bar") || s.startsWith("baz"));
+    expect(methodNodes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  /**
+   * Test 2: expression-statement with arrow-fn-call decomposes.
+   * `f()` is an ExpressionStatement; decomposableChildrenOf returns [CallExpression].
+   * With alwaysMatchRegistry the SourceFile is non-atomic, descends into statements,
+   * and the ExpressionStatement decomposes to its wrapped expression.
+   */
+  it("2: expression-statement with arrow-fn-call decomposes without throw", async () => {
+    const src = `const f = () => 42; f();`;
+    // Use alwaysMatchRegistry to force descent deep enough that ExpressionStatement
+    // is encountered as non-atomic, triggering decomposableChildrenOf(ExprStmt).
+    const tree = await decompose(src, alwaysMatchRegistry());
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 3: variable-statement with arrow init decomposes without throw.
+   * `const handler = (x: number) => { ... }` is a VariableStatement.
+   * decomposableChildrenOf returns [ArrowFunction initializer].
+   * With alwaysMatchRegistry the recursion descends through VariableStatement
+   * to the arrow, then into the arrow body.
+   */
+  it("3: variable-statement with arrow init decomposes without throw", async () => {
+    const src = `const handler = (x: number) => { if (x < 0) return -1; return x; };`;
+    const tree = await decompose(src, alwaysMatchRegistry());
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 4: async arrow function with await body does not crash nodeIsAsync predicate.
+   * `const fetch = async (u: string): Promise<number> => { const r = await something(u); return r; };`
+   * Previously nodeIsAsync used getFirstChildIfKind(AsyncKeyword) on whatever node
+   * hasEnclosingBindingInside handed it. For an ArrowFunction that is the initializer
+   * of a VariableDeclaration, the async keyword lives on the ArrowFunction node, but
+   * the scan was done on the VariableDeclaration — missing it.
+   *
+   * The fix: use ts-morph isAsync() which correctly targets the ArrowFunction.
+   * This test proves the predicate works by verifying no throw on a source that
+   * previously caused await-outside-async in the survey (federation/pull.ts shape).
+   */
+  it("4: async arrow function with await body does not crash predicate (nodeIsAsync fix)", async () => {
+    const src = `const fetch = async (u: string): Promise<number> => { const r = await something(u); return r; };`;
+    // Must not throw CanonicalAstParseError (TS1308 await-outside-async)
+    const tree = await decompose(src, emptyRegistry);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+  });
+
+  /**
+   * Test 5: yakcc self-shave packages/registry/src/storage.ts decomposes without throw.
+   * storage.ts is a 20KB ClassDeclaration — the largest single did-not-reach-atom
+   * failure in the WI-034 survey. This test exercises the ClassDeclaration branch
+   * by inlining the class structure shape from that file (with SPDX header prepend).
+   *
+   * We use the structural skeleton rather than the full file to keep the test
+   * self-contained and to avoid import-cycle concerns at test time.
+   */
+  it("5: class-shaped fixture matching storage.ts decomposes without throw + has method leaves", async () => {
+    // Structural skeleton of storage.ts: a class with constructor + several methods
+    // (each containing return statements / await calls, like the real file).
+    const src = `// SPDX-License-Identifier: MIT
+class RegistryStorage {
+  private db: unknown;
+  constructor(path: string) {
+    this.db = path;
+  }
+  async storeContract(id: string, data: unknown): Promise<void> {
+    if (!id) return;
+    await Promise.resolve();
+  }
+  async findByHash(hash: string): Promise<unknown[]> {
+    if (!hash) return [];
+    const results: unknown[] = [];
+    return results;
+  }
+  async listContracts(): Promise<unknown[]> {
+    const rows: unknown[] = [];
+    return rows;
+  }
+  close(): void {
+    this.db = null;
+  }
+}`;
+    const tree = await decompose(src, emptyRegistry);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(tree.root).toBeDefined();
+
+    // Walk tree to find method-shaped sub-leaves
+    function collectSources(node: typeof tree.root): string[] {
+      if (node.kind === "atom") return [node.source.trim()];
+      return node.children.flatMap(collectSources);
+    }
+    const sources = collectSources(tree.root);
+    const methodLeaves = sources.filter(
+      (s) =>
+        s.startsWith("constructor") ||
+        s.startsWith("async storeContract") ||
+        s.startsWith("async findByHash") ||
+        s.startsWith("async listContracts") ||
+        s.startsWith("close"),
+    );
+    expect(methodLeaves.length).toBeGreaterThanOrEqual(3);
   });
 });

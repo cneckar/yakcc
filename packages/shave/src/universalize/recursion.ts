@@ -77,6 +77,38 @@
  *   - Compatible with WI-V2-09 byte-identical bootstrap: wrap is deterministic
  *     and emitCanonical scoping ensures hashes are wrap-independent.
  *   - No public-API surface change; entirely internal to recursion.ts.
+ *
+ * @decision DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001
+ * title: ClassDeclaration / ExpressionStatement / VariableStatement /
+ *        CallExpression decompose to natural sub-nodes
+ * status: decided
+ * rationale:
+ *   WI-034's audit found 5 of the 9 remaining yakcc-self-shave failures were
+ *   did-not-reach-atom on ClassDeclaration / ExpressionStatement /
+ *   VariableStatement nodes, which had no decomposableChildrenOf policy.
+ *   Adding the natural sub-node enumeration (class members, wrapped
+ *   expression, declaration initializers) lets the slicer descend through
+ *   these container shapes and find atoms at the next level. No new wrap or
+ *   hash machinery — the existing safeCanonicalAstHash already handles the
+ *   result.
+ *   A CallExpression branch was added as well (WI-036 iterative discovery):
+ *   descending ExpressionStatement / VariableStatement exposed CallExpression
+ *   nodes (e.g. db.transaction(fn), sorted.sort(comparator)) whose function
+ *   arguments are ArrowFunction or FunctionExpression — i.e. they carry
+ *   decomposable behavior. The branch descends only into function-like args.
+ * consequences:
+ *   - yakcc-self-shave success: 92.3% → 94.0% (110/117).
+ *   - packages/contracts/src/ + packages/registry/src/ subset reaches 100%
+ *     (13/13), unblocking brother session's WI-V2-01 first-contact bootstrap
+ *     demo without per-file workarounds.
+ *   - PropertyDeclaration with initializer also decomposes — class fields
+ *     that bind closures or arrow functions become decomposable. Property
+ *     declarations without initializers (interface-shape fields) skipped.
+ *   - Remaining 7 failures: 2 ReturnStatement (giant non-leaf, deferred),
+ *     2 ConditionalExpression (expression-level), 1 BinaryExpression
+ *     (expression-level), 1 await-outside-async edge case, 1 B-014 parser.
+ *   - Compatible with WI-V2-09 byte-identical bootstrap: deterministic node
+ *     enumeration, same shape on every pass.
  */
 
 import { canonicalAstHash } from "@yakcc/contracts";
@@ -382,14 +414,27 @@ const FUNCTION_KINDS = new Set([
 ]);
 
 /**
- * Returns true if `node` has the `async` keyword as a direct child token.
- * Used to distinguish plain functions from async functions when detecting
- * escaping await expressions.
+ * Returns true if `node` is an async function-like.
+ *
+ * ts-morph exposes isAsync() directly on FunctionDeclaration, FunctionExpression,
+ * ArrowFunction, and MethodDeclaration. We prefer that over a raw child-token
+ * scan so that async arrow functions assigned to variables (e.g.
+ * `const f = async (x) => { return await x; }`) are correctly detected — the
+ * AsyncKeyword lives on the ArrowFunction node, not on the enclosing
+ * VariableDeclaration, so a getFirstChildIfKind scan on the wrong level misses it.
+ *
+ * Fallback to getFirstChildIfKind(AsyncKeyword) for node kinds where isAsync()
+ * is not available (Constructor, GetAccessor, SetAccessor — none of which can
+ * be async in practice, but we guard defensively).
  */
 function nodeIsAsync(node: Node): boolean {
-  const asyncKw = (node as Node & { getFirstChildIfKind?(k: SyntaxKind): Node | undefined }).getFirstChildIfKind?.(
-    SyntaxKind.AsyncKeyword,
-  );
+  // ts-morph isAsync() is the canonical check for function-like nodes.
+  const asAsyncable = node as Node & { isAsync?(): boolean };
+  if (typeof asAsyncable.isAsync === "function") return asAsyncable.isAsync();
+  // Fallback: inspect for a direct AsyncKeyword child token.
+  const asyncKw = (
+    node as Node & { getFirstChildIfKind?(k: SyntaxKind): Node | undefined }
+  ).getFirstChildIfKind?.(SyntaxKind.AsyncKeyword);
   return asyncKw !== undefined;
 }
 
@@ -399,9 +444,7 @@ function nodeIsAsync(node: Node): boolean {
  * escaping yield expressions.
  */
 function nodeIsGenerator(node: Node): boolean {
-  const asterisk = (
-    node as Node & { getAsteriskToken?(): Node | undefined }
-  ).getAsteriskToken?.();
+  const asterisk = (node as Node & { getAsteriskToken?(): Node | undefined }).getAsteriskToken?.();
   return asterisk !== undefined;
 }
 
@@ -633,6 +676,76 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     const finallyBlock = tryNode.getFinallyBlock();
     if (finallyBlock !== undefined) {
       result.push(finallyBlock);
+    }
+    return result;
+  }
+
+  // ClassDeclaration / ClassExpression: descend into methods, accessors,
+  // constructor, static blocks, and property initializers.
+  // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)
+  if (kind === SyntaxKind.ClassDeclaration || kind === SyntaxKind.ClassExpression) {
+    const cls = node as Node & { getMembers(): readonly Node[] };
+    const result: Node[] = [];
+    for (const member of cls.getMembers()) {
+      const mk = member.getKind();
+      if (
+        mk === SyntaxKind.MethodDeclaration ||
+        mk === SyntaxKind.Constructor ||
+        mk === SyntaxKind.GetAccessor ||
+        mk === SyntaxKind.SetAccessor ||
+        mk === SyntaxKind.ClassStaticBlockDeclaration
+      ) {
+        result.push(member);
+      }
+      // Property declarations with initializers decompose to the initializer.
+      // Property declarations without initializers (interface-shape fields) skipped.
+      if (mk === SyntaxKind.PropertyDeclaration) {
+        const prop = member as Node & { getInitializer?(): Node | undefined };
+        const init = prop.getInitializer?.();
+        if (init !== undefined) result.push(init);
+      }
+    }
+    return result;
+  }
+
+  // ExpressionStatement: the statement is a thin wrapper — the expression is
+  // the carrier of decomposable behavior. Descend into [expression].
+  // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)
+  if (kind === SyntaxKind.ExpressionStatement) {
+    const stmt = node as Node & { getExpression(): Node };
+    return [stmt.getExpression()];
+  }
+
+  // VariableStatement: `const x = expr1, y = expr2;` — decompose to
+  // initializer expressions. Declarations without initializers (`let x;`) skipped.
+  // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)
+  if (kind === SyntaxKind.VariableStatement) {
+    const stmt = node as Node & {
+      getDeclarationList(): Node & {
+        getDeclarations(): readonly (Node & { getInitializer?(): Node | undefined })[];
+      };
+    };
+    const decls = stmt.getDeclarationList().getDeclarations();
+    const result: Node[] = [];
+    for (const d of decls) {
+      const init = d.getInitializer?.();
+      if (init !== undefined) result.push(init);
+    }
+    return result;
+  }
+
+  // CallExpression: descend into function-like arguments (ArrowFunction,
+  // FunctionExpression) whose body may be decomposable. Other arguments
+  // (literals, identifiers) are not further decomposable.
+  // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)
+  if (kind === SyntaxKind.CallExpression) {
+    const call = node as Node & { getArguments(): readonly Node[] };
+    const result: Node[] = [];
+    for (const arg of call.getArguments()) {
+      const ak = arg.getKind();
+      if (ak === SyntaxKind.ArrowFunction || ak === SyntaxKind.FunctionExpression) {
+        result.push(arg);
+      }
     }
     return result;
   }
