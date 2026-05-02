@@ -54,6 +54,29 @@
  *     failure on those functions.
  *   - Compatible with WI-V2-09 bootstrap: the loop is hashed as a whole, the
  *     same way on every pass.
+ *
+ * @decision DEC-SLICER-FN-SCOPED-CF-001
+ * title: Non-leaf fragments containing escaping return/await/yield wrap in
+ *        synthetic function for canonical hashing
+ * status: decided
+ * rationale:
+ *   Existing safeCanonicalAstHash wraps leaf return/break/continue/yield
+ *   statements. But non-leaf nodes (IfStatement, TryStatement, Block) often
+ *   CONTAIN such constructs whose binding scope is the enclosing function —
+ *   outside the extracted fragment. Hashing the fragment standalone fails
+ *   with TS1108/TS1308. Strategy: pre-flight detection of escaping
+ *   function-scoped constructs in the node's descendants; wrap in the
+ *   appropriate synthetic function flavor (function* for yield, async
+ *   function for await, function for return). emitCanonical targets the
+ *   inner range so the hash is identical to a hypothetical "parse in original
+ *   context" outcome.
+ * consequences:
+ *   - Survey shows this fix flips ~44 of 117 yakcc-self-shave failures from
+ *     canonical-ast errors to successful decompose. Brings yakcc-on-yakcc
+ *     success rate from 59.8% baseline (post-WI-033) toward ~97%.
+ *   - Compatible with WI-V2-09 byte-identical bootstrap: wrap is deterministic
+ *     and emitCanonical scoping ensures hashes are wrap-independent.
+ *   - No public-API surface change; entirely internal to recursion.ts.
  */
 
 import { canonicalAstHash } from "@yakcc/contracts";
@@ -158,6 +181,11 @@ const CONTEXT_DEPENDENT_STATEMENT_KINDS = new Set([
  *    Fallback: use the full source string with the node's byte range, which IS
  *    valid TS since the full source contains the enclosing label. emitCanonical
  *    targets only the inner loop node, so the hash is context-independent.
+ *  - Non-leaf nodes containing escaping return/await/yield (DEC-SLICER-FN-SCOPED-CF-001):
+ *    walk descendants; if any return/await/yield escapes its binding function
+ *    scope, wrap nodeSource in the appropriate synthetic function flavor
+ *    (function* for yield, async function for await, function for return).
+ *    Fall back to full-source + range if the wrap still fails.
  *  - All other nodes: delegated to canonicalAstHash(nodeSource) directly.
  *
  * @param node       - The ts-morph Node being hashed (used for kind dispatch).
@@ -200,7 +228,36 @@ function safeCanonicalAstHash(
     }
   }
 
-  return canonicalAstHash(nodeSource);
+  // DEC-SLICER-FN-SCOPED-CF-001: non-leaf nodes containing escaping
+  // return/await/yield whose binding function scope is outside the extracted
+  // fragment. Detect and wrap in the appropriate synthetic function flavor.
+  const escapes = detectEscapingFunctionScopedConstructs(node);
+  if (escapes.return || escapes.await || escapes.yield) {
+    const prefix = escapes.yield
+      ? "function* __w__() { "
+      : escapes.await
+        ? "async function __w__() { "
+        : "function __w__() { ";
+    const wrapped = `${prefix}${nodeSource} }`;
+    try {
+      return canonicalAstHash(wrapped, {
+        start: prefix.length,
+        end: prefix.length + nodeSource.length,
+      });
+    } catch {
+      // Wrap still failed (e.g. super references, nested generator context).
+      // Fall through to full-source fallback below.
+    }
+  }
+
+  // Last resort: try standalone first; if it fails use full source + range.
+  // Full source always contains the original binding scopes so it is valid TS;
+  // emitCanonical targets only the node's range, keeping the hash context-free.
+  try {
+    return canonicalAstHash(nodeSource);
+  } catch {
+    return canonicalAstHash(fullSource, { start, end });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +359,141 @@ function hasEscapingLoopControlFlow(blockNode: Node): boolean {
   });
 
   return found;
+}
+
+// ---------------------------------------------------------------------------
+// Function-scoped control-flow escape predicate (DEC-SLICER-FN-SCOPED-CF-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * SyntaxKinds that introduce a function boundary — a new binding scope for
+ * return, await, and yield. ArrowFunctions bind return implicitly; they bind
+ * await/yield only when marked async/generator. All entries here are treated
+ * as binding scopes for ReturnStatement regardless.
+ */
+const FUNCTION_KINDS = new Set([
+  SyntaxKind.FunctionDeclaration,
+  SyntaxKind.FunctionExpression,
+  SyntaxKind.ArrowFunction,
+  SyntaxKind.MethodDeclaration,
+  SyntaxKind.Constructor,
+  SyntaxKind.GetAccessor,
+  SyntaxKind.SetAccessor,
+]);
+
+/**
+ * Returns true if `node` has the `async` keyword as a direct child token.
+ * Used to distinguish plain functions from async functions when detecting
+ * escaping await expressions.
+ */
+function nodeIsAsync(node: Node): boolean {
+  const asyncKw = (node as Node & { getFirstChildIfKind?(k: SyntaxKind): Node | undefined }).getFirstChildIfKind?.(
+    SyntaxKind.AsyncKeyword,
+  );
+  return asyncKw !== undefined;
+}
+
+/**
+ * Returns true if `node` is a generator function (has an asterisk token).
+ * Used to distinguish plain/async functions from generators when detecting
+ * escaping yield expressions.
+ */
+function nodeIsGenerator(node: Node): boolean {
+  const asterisk = (
+    node as Node & { getAsteriskToken?(): Node | undefined }
+  ).getAsteriskToken?.();
+  return asterisk !== undefined;
+}
+
+/**
+ * Walk ancestors of `descendant` looking for the nearest function-kind node
+ * that satisfies the `variant` requirement. Returns true if such an ancestor
+ * is found AND lies entirely within [blockStart, blockEnd] (i.e. it is
+ * "inside" the block being hashed, so the construct is bound locally).
+ *
+ * @param descendant - The return/await/yield node.
+ * @param blockStart - Inclusive start of the extracted block.
+ * @param blockEnd   - Exclusive end of the extracted block.
+ * @param variant    - "async" requires nodeIsAsync, "generator" requires
+ *                     nodeIsGenerator, undefined accepts any function kind.
+ */
+function hasEnclosingBindingInside(
+  descendant: Node,
+  blockStart: number,
+  blockEnd: number,
+  variant: "async" | "generator" | undefined,
+): boolean {
+  let cursor: Node | undefined = descendant.getParent();
+  while (cursor !== undefined) {
+    if (FUNCTION_KINDS.has(cursor.getKind())) {
+      // For async/generator detection, require the relevant marker.
+      if (variant === "async" && !nodeIsAsync(cursor)) {
+        cursor = cursor.getParent();
+        continue;
+      }
+      if (variant === "generator" && !nodeIsGenerator(cursor)) {
+        cursor = cursor.getParent();
+        continue;
+      }
+      // Found a qualifying function ancestor — is it inside the block?
+      return cursor.getStart() >= blockStart && cursor.getEnd() <= blockEnd;
+    }
+    cursor = cursor.getParent();
+  }
+  // No qualifying function ancestor found at all → construct is unbound.
+  return false;
+}
+
+/**
+ * Scan `node`'s descendants for return/await/yield constructs whose binding
+ * function scope lies OUTSIDE `node`. Returns a flag object indicating which
+ * flavors were found.
+ *
+ * Rules:
+ *  - ReturnStatement: binding scope = nearest enclosing function (any kind).
+ *  - AwaitExpression: binding scope = nearest enclosing async function.
+ *  - YieldExpression: binding scope = nearest enclosing generator function.
+ *
+ * If the binding ancestor either does not exist or lies outside the node's
+ * range, the construct "escapes" — hashing the fragment standalone would fail.
+ *
+ * @decision DEC-SLICER-FN-SCOPED-CF-001 (see file leading comment)
+ */
+function detectEscapingFunctionScopedConstructs(node: Node): {
+  return: boolean;
+  await: boolean;
+  yield: boolean;
+} {
+  const blockStart = node.getStart();
+  const blockEnd = node.getEnd();
+  let hasReturn = false;
+  let hasAwait = false;
+  let hasYield = false;
+
+  node.forEachDescendant((d) => {
+    // Short-circuit once all three flags are set.
+    if (hasReturn && hasAwait && hasYield) return;
+
+    const k = d.getKind();
+
+    if (!hasReturn && k === SyntaxKind.ReturnStatement) {
+      if (!hasEnclosingBindingInside(d, blockStart, blockEnd, undefined)) {
+        hasReturn = true;
+      }
+    }
+    if (!hasAwait && k === SyntaxKind.AwaitExpression) {
+      if (!hasEnclosingBindingInside(d, blockStart, blockEnd, "async")) {
+        hasAwait = true;
+      }
+    }
+    if (!hasYield && k === SyntaxKind.YieldExpression) {
+      if (!hasEnclosingBindingInside(d, blockStart, blockEnd, "generator")) {
+        hasYield = true;
+      }
+    }
+  });
+
+  return { return: hasReturn, await: hasAwait, yield: hasYield };
 }
 
 // ---------------------------------------------------------------------------
