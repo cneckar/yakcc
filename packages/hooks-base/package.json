@@ -1,5 +1,5 @@
 {
-  "name": "@yakcc/hooks-claude-code",
+  "name": "@yakcc/hooks-base",
   "version": "0.0.1",
   "private": true,
   "license": "Unlicense",
@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
-    "@yakcc/hooks-base": "workspace:*",
     "@yakcc/registry": "workspace:*"
   },
   "devDependencies": {

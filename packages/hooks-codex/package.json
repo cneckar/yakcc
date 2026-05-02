@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
+    "@yakcc/hooks-base": "workspace:*",
     "@yakcc/registry": "workspace:*"
   },
   "devDependencies": {
