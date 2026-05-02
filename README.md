@@ -212,31 +212,43 @@ node -e "const m=JSON.parse(require('fs').readFileSync('examples/parse-int-list/
 # Expected: "blocks" array; non-root entries carry "recursionParent" field
 ```
 
-**Federation protocol design (WI-019)**
+**Federation protocol design (WI-019) and runtime (WI-020/021)**
 
 `FEDERATION_PROTOCOL.md` documents the wire protocol for inter-node block exchange.
-No runtime component yet — this is a design artifact ahead of the WI-021 demo:
+The F1 read-only mirror runtime (`@yakcc/federation`) landed in WI-020. The
+end-to-end v1 federation demo landed in WI-021 (`d9cb449`) with a full acceptance
+test suite at `examples/v1-federation-demo/test/acceptance.test.ts` proving
+cross-machine byte-identical compile.
 
 ```sh
-ls FEDERATION_PROTOCOL.md   # Expected: file exists
+pnpm --filter @yakcc/federation test
+# Expected: all tests pass
+```
+
+**Vector-search query API (WI-025/029)**
+
+`Registry.findCandidatesByIntent(intentCard, { k?, rerank? })` is live. Embeddings
+are generated and stored on every `storeBlock` call; `findCandidatesByIntent` runs a
+KNN query against them. The `yakcc query <intent>` CLI command exposes this surface:
+
+```sh
+yakcc query "parse a JSON array of integers" --top 5
+# Expected: ranked results with cosine scores and block ids
 ```
 
 ## What's NOT yet wired
 
 Honest list of capabilities that are planned but not yet shipped:
 
-- **Vector-search query API** (`findCandidatesByIntent`): planned (WI-025, v1 wave-2),
-  not yet implemented. The `search` command today uses exact spec-hash lookup.
 - **Live Claude Code hook intercept**: the `hooks-claude-code` package is a passthrough
   stub today. Real intercept that reroutes AI emission through the registry is planned
   as WI-026 (v1 wave-2).
 - **WASM compilation backend**: planned as WI-027 (AssemblyScript-style emit). The
   current backend emits TypeScript only. Native binary portability via wasm2c → clang
   is deferred until after the WASM backend ships.
-- **Federation publishing path (F2+)**: the F1 read-only mirror design is in
-  `FEDERATION_PROTOCOL.md`; F2+ (block submission, dispute adjudication) is deferred.
-- **v1 federation demo (WI-021)**: the federation adjudication logic (WI-020) landed,
-  but the end-to-end demo has not been run yet.
+- **Federation publishing path (F2+)**: the F1 read-only mirror (`@yakcc/federation`)
+  covers F1 only (content-addressed pull, no push/auth). F2+ (block submission,
+  dispute adjudication) is deferred. See `FEDERATION.md` for the F0..F4 axis.
 
 ## License
 
