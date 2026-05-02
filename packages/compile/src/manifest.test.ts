@@ -102,6 +102,9 @@ function makeRegistryMock(
     async enumerateSpecs(): Promise<readonly import("@yakcc/contracts").SpecHash[]> {
       return [];
     },
+    async exportManifest(): Promise<readonly import("@yakcc/registry").BootstrapManifestEntry[]> {
+      return [];
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing

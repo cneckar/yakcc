@@ -1220,3 +1220,151 @@ describe("enumerateSpecs", () => {
     expect([...specs]).toEqual(sorted);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-V2-BOOTSTRAP-01: exportManifest() — DEC-V2-BOOTSTRAP-MANIFEST-001
+//
+// exportManifest() is the primitive that WI-V2-BOOTSTRAP-03's `--verify` mode
+// will compare against a committed `bootstrap/expected-roots.json`.
+//
+// Production sequence exercised:
+//   openRegistry → storeBlock(rowWithImplAndManifest) → exportManifest()
+//   → assert BootstrapManifestEntry[] sorted ASC by blockMerkleRoot
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a BlockTripletRow that includes 'impl.ts' and 'proof/manifest.json'
+ * artifacts — the two paths that exportManifest() hashes for implSourceHash
+ * and manifestJsonHash respectively.
+ *
+ * The artifact map includes BOTH paths so the exportManifest query hits each
+ * of them in block_artifacts (WHERE path IN ('impl.ts', 'proof/manifest.json')).
+ */
+function makeBlockRowWithImplArtifacts(
+  spec: SpecYak,
+  implSource: string,
+  implArtifactBytes: Uint8Array,
+  manifestArtifactBytes: Uint8Array,
+): BlockTripletRow {
+  // Use property_tests kind for both — storeBlock does not call
+  // validateProofManifestL0, so the L0 "exactly one property_tests" gate
+  // is not enforced here. The key for exportManifest() is the artifact path.
+  const manifest: ProofManifest = {
+    artifacts: [
+      { kind: "property_tests", path: "impl.ts" },
+      { kind: "property_tests", path: "proof/manifest.json" },
+    ],
+  };
+  const artifacts = new Map<string, Uint8Array>([
+    ["impl.ts", implArtifactBytes],
+    ["proof/manifest.json", manifestArtifactBytes],
+  ]);
+  const root = blockMerkleRoot({ spec, implSource, manifest, artifacts });
+  const sh = deriveSpecHash(spec);
+  const canonicalBytes = canonicalize(spec as unknown as Parameters<typeof canonicalize>[0]);
+  return {
+    blockMerkleRoot: root,
+    specHash: sh,
+    specCanonicalBytes: canonicalBytes,
+    implSource,
+    proofManifestJson: JSON.stringify(manifest),
+    level: "L0",
+    createdAt: Date.now(),
+    canonicalAstHash: deriveCanonicalAstHash(implSource) as CanonicalAstHash,
+    artifacts,
+  };
+}
+
+describe("exportManifest (WI-V2-BOOTSTRAP-01)", () => {
+  it("returns empty array for empty registry", async () => {
+    // No blocks stored — exportManifest must return [] without throwing.
+    const entries = await registry.exportManifest();
+    expect(entries).toEqual([]);
+  });
+
+  it("returns entries sorted by blockMerkleRoot ASC even when inserted out of order", async () => {
+    // Construct three blocks whose merkle roots are NOT in insert order
+    // when sorted lexicographically. We vary the impl source to control the root.
+    // The sort is determined by BLAKE3 of the triplet content, which we can't
+    // directly control, but we can insert in a known order and then assert the
+    // returned array is the sorted version.
+    const specA = makeSpecYak("sort-test-a", "sort test a");
+    const specB = makeSpecYak("sort-test-b", "sort test b");
+    const specC = makeSpecYak("sort-test-c", "sort test c");
+    const rowA = makeBlockRow(specA, "export function a(): number { return 1; }", "// a");
+    const rowB = makeBlockRow(specB, "export function b(): number { return 2; }", "// b");
+    const rowC = makeBlockRow(specC, "export function c(): number { return 3; }", "// c");
+
+    // Insert in B, C, A order — if exportManifest uses ORDER BY block_merkle_root
+    // the result must be sorted regardless of insert order.
+    await registry.storeBlock(rowB);
+    await registry.storeBlock(rowC);
+    await registry.storeBlock(rowA);
+
+    const entries = await registry.exportManifest();
+    expect(entries).toHaveLength(3);
+
+    // Assert sorted ascending by blockMerkleRoot.
+    const roots = entries.map((e) => e.blockMerkleRoot);
+    const sortedRoots = [...roots].sort();
+    expect(roots).toEqual(sortedRoots);
+
+    // All three inserted roots must appear.
+    expect(roots).toContain(rowA.blockMerkleRoot);
+    expect(roots).toContain(rowB.blockMerkleRoot);
+    expect(roots).toContain(rowC.blockMerkleRoot);
+  });
+
+  it("is deterministic across calls — two calls produce identical JSON", async () => {
+    const specA = makeSpecYak("determ-a", "determinism a");
+    const specB = makeSpecYak("determ-b", "determinism b");
+    const specC = makeSpecYak("determ-c", "determinism c");
+    const rowA = makeBlockRow(specA, "export function da(): void {}", "// da");
+    const rowB = makeBlockRow(specB, "export function db(): void {}", "// db");
+    const rowC = makeBlockRow(specC, "export function dc(): void {}", "// dc");
+
+    await registry.storeBlock(rowA);
+    await registry.storeBlock(rowB);
+    await registry.storeBlock(rowC);
+
+    const first = await registry.exportManifest();
+    const second = await registry.exportManifest();
+
+    // Byte-identical JSON serialisation proves determinism.
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+  });
+
+  it("entries carry valid implSourceHash and manifestJsonHash matching direct BLAKE3 of artifact bytes", async () => {
+    // Build a block with known impl.ts and proof/manifest.json artifact bytes.
+    const enc = new TextEncoder();
+    const implBytes = enc.encode("export function hashTest(): string { return 'ok'; }");
+    const manifestBytes = enc.encode('{"artifacts":[{"kind":"source","path":"impl.ts"},{"kind":"property_tests","path":"proof/manifest.json"}]}');
+
+    const spec = makeSpecYak("hash-correctness", "hash correctness test");
+    const implSource = "export function hashTest(): string { return 'ok'; }";
+    const row = makeBlockRowWithImplArtifacts(spec, implSource, implBytes, manifestBytes);
+
+    await registry.storeBlock(row);
+
+    const entries = await registry.exportManifest();
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    expect(entry).toBeDefined();
+
+    // Compute expected hashes via @noble/hashes blake3 directly.
+    const { blake3 } = await import("@noble/hashes/blake3.js");
+    function toHex(bytes: Uint8Array): string {
+      let h = "";
+      for (let i = 0; i < bytes.length; i++) {
+        h += bytes[i]?.toString(16).padStart(2, "0");
+      }
+      return h;
+    }
+
+    const expectedImplHash = toHex(blake3(implBytes));
+    const expectedManifestHash = toHex(blake3(manifestBytes));
+
+    expect(entry!.implSourceHash).toBe(expectedImplHash);
+    expect(entry!.manifestJsonHash).toBe(expectedManifestHash);
+  });
+});
