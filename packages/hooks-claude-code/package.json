@@ -11,12 +11,16 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "typecheck": "tsc --noEmit -p .",
-    "test": "echo \"no tests yet\"",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "vitest run",
     "lint": "echo \"no lint yet\""
   },
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
     "@yakcc/registry": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^4.1.5"
   }
 }
