@@ -91,7 +91,7 @@ describe("Test A: license refusal", () => {
 // ---------------------------------------------------------------------------
 
 describe("Test B: pipeline structural smoke test", () => {
-  it("universalize() reaches intent-extraction step for MIT-licensed source (offline: AnthropicApiKeyMissingError)", async () => {
+  it("universalize() decomposes MIT-licensed source without CanonicalAstParseError (static intent path, B-011 regression)", async () => {
     // Read the demo target itself — self-referential but deliberate: the parser
     // is the subject of the v0.7 demo and its source is well-typed MIT content.
     // @decision DEC-WI026-FILEURLTOPATH-001 — use fileURLToPath instead of URL.pathname.
@@ -107,21 +107,32 @@ describe("Test B: pipeline structural smoke test", () => {
       .filter((line) => !line.startsWith("// SPDX-License-Identifier"))
       .join("\n");
 
-    // The pipeline should pass the license gate (MIT source accepted) and then
-    // throw AnthropicApiKeyMissingError at the intent-extraction step — proving
-    // offline-tolerant acceptance: the gate, the router, and the API-key check
-    // all executed in the correct order.
+    // WI-033 removes the WI-026 workaround that pinned intentStrategy: "llm".
+    // B-011 is fixed: the slicer now treats loops with escaping continue/break
+    // as atomic (DEC-SLICER-LOOP-CONTROL-FLOW-001), so the static path can
+    // decompose argv-parser.ts without hitting CanonicalAstParseError.
     //
-    // intentStrategy: "llm" is required: WI-023 changed the default to "static"
-    // (TypeScript Compiler API, no API key needed). With "static" the test would
-    // reach decompose() and throw CanonicalAstParseError instead — because the
-    // complex argv-parser function body contains continue/break statements that
-    // are invalid at file scope when extracted out of context by the slicer. The
-    // "llm" path throws AnthropicApiKeyMissingError at step 2 (before decompose),
-    // which is what this offline-tolerant acceptance test is designed to assert.
-    await expect(
-      universalize({ source }, mockRegistry, { intentStrategy: "llm" }),
-    ).rejects.toThrow(AnthropicApiKeyMissingError);
+    // With intentStrategy: "static" (the default), the pipeline:
+    //   1. Passes the license gate (MIT source accepted).
+    //   2. Extracts intent via TypeScript Compiler API — no API key needed.
+    //   3. Decomposes via decompose() — previously threw CanonicalAstParseError
+    //      on the while-loop body's continue/break; now succeeds.
+    //   4. Returns a UniversalizeResult with a slicePlan.
+    //
+    // The license gate fires before any LLM call, so this test proves the gate
+    // works AND that the static decompose path runs end-to-end.
+    const result = await universalize({ source }, mockRegistry, {
+      intentStrategy: "static",
+    });
+
+    // The result must have a non-empty slicePlan (atoms were extracted).
+    expect(result.slicePlan.length).toBeGreaterThan(0);
+    // No registry matches → all entries are novel-glue.
+    for (const entry of result.slicePlan) {
+      expect(entry.kind).toBe("novel-glue");
+    }
+    // matchedPrimitives is empty (mock registry has no entries).
+    expect(result.matchedPrimitives).toEqual([]);
   });
 });
 

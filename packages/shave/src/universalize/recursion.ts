@@ -23,6 +23,37 @@
  *   which sub-nodes does the recursion descend into when a node is non-atomic?
  *   Expression-level nodes that cannot be decomposed further return []; if
  *   isAtom() incorrectly classifies them as non-atomic, DidNotReachAtomError fires.
+ *
+ * @decision DEC-SLICER-LOOP-CONTROL-FLOW-001
+ * title: Loop with escaping continue/break is the atom; body is not decomposed
+ * status: decided
+ * rationale:
+ *   Loop bodies containing continue/break (or labeled jumps targeting an
+ *   enclosing loop) are not valid standalone TypeScript programs. Hashing
+ *   such a fragment via canonicalAstHash() raises TS1313/1314 syntax
+ *   diagnostics, which canonical-ast.ts correctly converts to
+ *   CanonicalAstParseError. The fragment also has no self-contained
+ *   behavioral contract — its semantics depend on the enclosing iteration
+ *   target. We therefore treat the smallest enclosing iteration as the atom
+ *   boundary: decomposableChildrenOf returns [] for a loop whose body has
+ *   escaping control flow, and recurse() emits an AtomLeaf for the loop
+ *   itself with atomTest.reason = "loop-with-escaping-cf".
+ * alternatives:
+ *   B (typed unsliceable sentinel): identical end-state; rejected as more
+ *     plumbing than the policy warrants — no consumer needs the sentinel.
+ *   C (rewrite continue->return at extraction time): rejected; changes
+ *     semantics, breaks WI-V2-09 byte-identical bootstrap, and requires
+ *     rewriting the call site of every shaved loop.
+ * consequences:
+ *   - Atom granularity coarsens for any function whose hot path is one big
+ *     loop with continue/break. Affected yakcc files include storage.ts,
+ *     assemble-candidate.ts, and recursion.ts itself; each becomes a single
+ *     atom rather than an atom-per-loop-body-statement. Estimated impact:
+ *     ~15-30% of yakcc functions decompose to one fewer level. Trade-off
+ *     accepted — strictly better than the current state of total decompose
+ *     failure on those functions.
+ *   - Compatible with WI-V2-09 bootstrap: the loop is hashed as a whole, the
+ *     same way on every pass.
  */
 
 import { canonicalAstHash } from "@yakcc/contracts";
@@ -87,6 +118,193 @@ export class RecursionDepthExceededError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// Context-safe hashing
+// ---------------------------------------------------------------------------
+
+/**
+ * Statement SyntaxKinds that are syntactically invalid at file scope when
+ * extracted as standalone source fragments. These statements are valid only
+ * inside a function body (ReturnStatement), an iteration statement
+ * (ContinueStatement), or an iteration/switch statement (BreakStatement).
+ * Passing their source text to canonicalAstHash() as-is raises TS1108/1313/1314.
+ *
+ * When we encounter one of these as an atom leaf, we wrap its source text in
+ * a synthetic function body before hashing. The wrapping is transparent to
+ * consumers because emitCanonical targets the inner statement node, not the
+ * wrapper — the hash is identical to what we'd get if we could hash the
+ * statement standalone.
+ *
+ * NOTE: ContinueStatement and BreakStatement should normally be handled by the
+ * loop pre-flight in recurse() and never reach this path. ReturnStatement,
+ * ThrowStatement, and YieldExpression (as a statement) are the common cases.
+ */
+const CONTEXT_DEPENDENT_STATEMENT_KINDS = new Set([
+  SyntaxKind.ReturnStatement,
+  SyntaxKind.ContinueStatement,
+  SyntaxKind.BreakStatement,
+  SyntaxKind.YieldExpression,
+]);
+
+/**
+ * Compute the canonical AST hash for a node, handling context-dependent
+ * statements that cannot be parsed standalone as valid TypeScript files.
+ *
+ * Cases handled:
+ *  - return/continue/break/yield as leaf statements: wrapped in a synthetic
+ *    function body `function __w__() { <stmt> }` with a sourceRange targeting
+ *    the inner statement, so the hash is identical to a standalone parse.
+ *  - Loop nodes whose fragment contains escaping labeled break/continue: the
+ *    fragment is not a valid standalone TS file (TS1364: break target unknown).
+ *    Fallback: use the full source string with the node's byte range, which IS
+ *    valid TS since the full source contains the enclosing label. emitCanonical
+ *    targets only the inner loop node, so the hash is context-independent.
+ *  - All other nodes: delegated to canonicalAstHash(nodeSource) directly.
+ *
+ * @param node       - The ts-morph Node being hashed (used for kind dispatch).
+ * @param nodeSource - The source text slice for the node (source[start..end]).
+ * @param fullSource - The complete source passed to decompose() — used as
+ *                     context fallback for loop fragments with escaping labels.
+ * @param start      - Byte offset of the node in fullSource.
+ * @param end        - Byte end of the node in fullSource.
+ */
+function safeCanonicalAstHash(
+  node: Node,
+  nodeSource: string,
+  fullSource: string,
+  start: number,
+  end: number,
+): ReturnType<typeof canonicalAstHash> {
+  const kind = node.getKind();
+
+  if (CONTEXT_DEPENDENT_STATEMENT_KINDS.has(kind)) {
+    // Wrap in a synthetic function so the statement is syntactically valid.
+    // Fixed prefix length ensures the inner statement starts at a known offset.
+    const PREFIX = "function __w__() { ";
+    const wrapped = `${PREFIX}${nodeSource} }`;
+    const innerStart = PREFIX.length;
+    const innerEnd = PREFIX.length + nodeSource.length;
+    return canonicalAstHash(wrapped, { start: innerStart, end: innerEnd });
+  }
+
+  if (LOOP_KINDS.has(kind)) {
+    // Loop nodes can contain labeled break/continue targeting an outer label.
+    // When hashed standalone those labels have no binding target → TS1364.
+    // Try the fragment first (the common case: loop has only unlabeled CF).
+    // If that fails, fall back to the full source with a sourceRange, which
+    // is always valid TS and lets emitCanonical target only the loop subtree.
+    try {
+      return canonicalAstHash(nodeSource);
+    } catch {
+      // Fragment has escaping label reference — use full source + range.
+      return canonicalAstHash(fullSource, { start, end });
+    }
+  }
+
+  return canonicalAstHash(nodeSource);
+}
+
+// ---------------------------------------------------------------------------
+// Loop control-flow escape predicate
+// ---------------------------------------------------------------------------
+
+/** SyntaxKinds that are loop iteration statements. */
+const LOOP_KINDS = new Set([
+  SyntaxKind.ForStatement,
+  SyntaxKind.WhileStatement,
+  SyntaxKind.DoStatement,
+  SyntaxKind.ForInStatement,
+  SyntaxKind.ForOfStatement,
+]);
+
+/** SyntaxKinds that are loop iteration statements OR switch (for unlabeled break). */
+const BREAK_BINDING_KINDS = new Set([
+  SyntaxKind.ForStatement,
+  SyntaxKind.WhileStatement,
+  SyntaxKind.DoStatement,
+  SyntaxKind.ForInStatement,
+  SyntaxKind.ForOfStatement,
+  SyntaxKind.SwitchStatement,
+]);
+
+/**
+ * Returns true if `blockNode` contains a `continue` or `break` (labeled or
+ * unlabeled) whose target binding scope is OUTSIDE `blockNode` — i.e., the
+ * statement would be an unbound jump if `blockNode`'s source were parsed
+ * standalone via canonicalAstHash().
+ *
+ * Walk rule:
+ *   unlabeled continue: binds to the nearest For/While/Do/ForIn/ForOf ancestor.
+ *   unlabeled break:    binds to the nearest For/While/Do/ForIn/ForOf/Switch ancestor.
+ *   labeled continue/break: binds to the nearest LabeledStatement ancestor
+ *                           whose label text matches.
+ *
+ * If the binding ancestor starts before blockNode.start OR ends after
+ * blockNode.end, the control flow escapes the block.
+ *
+ * @decision DEC-SLICER-LOOP-CONTROL-FLOW-001 (see file leading comment)
+ */
+function hasEscapingLoopControlFlow(blockNode: Node): boolean {
+  const blockStart = blockNode.getStart();
+  const blockEnd = blockNode.getEnd();
+
+  let found = false;
+
+  blockNode.forEachDescendant((descendant) => {
+    if (found) return;
+
+    const kind = descendant.getKind();
+
+    if (kind === SyntaxKind.ContinueStatement || kind === SyntaxKind.BreakStatement) {
+      const isContinue = kind === SyntaxKind.ContinueStatement;
+      const bindingKinds = isContinue ? LOOP_KINDS : BREAK_BINDING_KINDS;
+
+      // Extract label text if present (e.g. `break outer`)
+      const labelNode = (descendant as Node & { getLabel?(): Node | undefined }).getLabel?.();
+      const labelText = labelNode?.getText();
+
+      // Walk ancestors upward to find the binding scope
+      let cursor: Node | undefined = descendant.getParent();
+      while (cursor !== undefined) {
+        const cursorKind = cursor.getKind();
+
+        if (labelText !== undefined) {
+          // Labeled jump: look for matching LabeledStatement
+          if (cursorKind === SyntaxKind.LabeledStatement) {
+            const ls = cursor as Node & { getLabel(): Node };
+            if (ls.getLabel().getText() === labelText) {
+              // Found the binding scope — check if it's outside blockNode
+              const cStart = cursor.getStart();
+              const cEnd = cursor.getEnd();
+              if (cStart < blockStart || cEnd > blockEnd) {
+                found = true;
+              }
+              return; // stop walking ancestors for this jump
+            }
+          }
+        } else {
+          // Unlabeled jump: look for iteration or switch ancestor
+          if (bindingKinds.has(cursorKind)) {
+            const cStart = cursor.getStart();
+            const cEnd = cursor.getEnd();
+            if (cStart < blockStart || cEnd > blockEnd) {
+              found = true;
+            }
+            return; // stop walking ancestors for this jump
+          }
+        }
+
+        cursor = cursor.getParent();
+      }
+      // If no binding ancestor was found at all, the jump is unbound —
+      // it definitely escapes the block.
+      found = true;
+    }
+  });
+
+  return found;
+}
+
+// ---------------------------------------------------------------------------
 // decomposableChildrenOf
 // ---------------------------------------------------------------------------
 
@@ -100,8 +318,10 @@ export class RecursionDepthExceededError extends Error {
  *   MethodDeclaration / Constructor / GetAccessor / SetAccessor →
  *   if the body is a Block, its statements; else [] (expression body).
  * - IfStatement → [thenStatement, elseStatement?].
- * - ForStatement / WhileStatement / DoStatement → [statement (body)].
- * - ForInStatement / ForOfStatement → [statement (body)].
+ * - ForStatement / WhileStatement / DoStatement → [statement (body)],
+ *   unless the body Block has escaping continue/break; then [] (loop is atom).
+ * - ForInStatement / ForOfStatement → [statement (body)],
+ *   unless the body Block has escaping continue/break; then [] (loop is atom).
  * - SwitchStatement → all statements from all CaseClauses concatenated.
  * - TryStatement → [tryBlock, catchBlock?, finallyBlock?].
  * - ConditionalExpression (ternary) → [] (expression-level; should be atomic).
@@ -154,20 +374,41 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     return branches;
   }
 
-  // ForStatement, WhileStatement, DoStatement: the loop body
+  // ForStatement, WhileStatement, DoStatement: the loop body —
+  // but only when the body block has no escaping continue/break.
+  // If it does, return [] so recurse() emits an AtomLeaf for the loop.
+  // (DEC-SLICER-LOOP-CONTROL-FLOW-001)
   if (
     kind === SyntaxKind.ForStatement ||
     kind === SyntaxKind.WhileStatement ||
     kind === SyntaxKind.DoStatement
   ) {
     const loopNode = node as Node & { getStatement(): Node };
-    return [loopNode.getStatement()];
+    const body = loopNode.getStatement();
+    if (body.getKind() === SyntaxKind.Block && hasEscapingLoopControlFlow(body)) {
+      return []; // loop is the atom; do not descend into body
+    }
+    return [body];
   }
 
-  // ForInStatement, ForOfStatement: the loop body
+  // ForInStatement, ForOfStatement: the loop body —
+  // same escaping-CF check. (DEC-SLICER-LOOP-CONTROL-FLOW-001)
   if (kind === SyntaxKind.ForInStatement || kind === SyntaxKind.ForOfStatement) {
     const forInOf = node as Node & { getStatement(): Node };
-    return [forInOf.getStatement()];
+    const body = forInOf.getStatement();
+    if (body.getKind() === SyntaxKind.Block && hasEscapingLoopControlFlow(body)) {
+      return []; // loop is the atom; do not descend into body
+    }
+    return [body];
+  }
+
+  // LabeledStatement: forward to the labeled body statement.
+  // Without this, labeled loops (e.g. `outer: for (...)`) produce a
+  // LabeledStatement node that has no decomposable children, throwing
+  // DidNotReachAtomError even when the loop body is valid.
+  if (kind === SyntaxKind.LabeledStatement) {
+    const ls = node as Node & { getStatement(): Node };
+    return [ls.getStatement()];
   }
 
   // SwitchStatement: flatten all case clause statements
@@ -244,7 +485,7 @@ async function childMatchesRegistry(
     const childStart = child.getStart();
     const childEnd = child.getEnd();
     const childSource = source.slice(childStart, childEnd);
-    const childHash = canonicalAstHash(childSource);
+    const childHash = safeCanonicalAstHash(child, childSource, source, childStart, childEnd);
     const matches = await registry.findByCanonicalAstHash?.(childHash);
     if (matches !== undefined && matches.length > 0) {
       return true;
@@ -303,11 +544,36 @@ export async function decompose(
     const end = node.getEnd();
     const nodeSource = source.slice(start, end);
 
-    // Compute canonical hash for this node's source fragment.
-    // We pass the fragment's own source text (not the full file with a range)
-    // to avoid the "range-spans-multiple-nodes" error that canonicalAstHash
-    // can throw when a range doesn't align to a single AST node in the full file.
-    const hash = canonicalAstHash(nodeSource);
+    // Hash is computed lazily — only when we know the node will become a
+    // leaf or branch in the output tree. safeCanonicalAstHash wraps
+    // context-dependent statements (return/continue/break) in a synthetic
+    // function body so they can be parsed standalone without TS1108/1313/1314.
+    const computeHash = () => safeCanonicalAstHash(node, nodeSource, source, start, end);
+
+    // Pre-flight: a loop whose body has escaping continue/break IS the atom.
+    // Short-circuit before isAtom() classification to avoid attempting to hash
+    // the body block standalone (which would raise TS1313/1314 in canonical-ast.ts).
+    // (DEC-SLICER-LOOP-CONTROL-FLOW-001)
+    if (LOOP_KINDS.has(node.getKind())) {
+      const loopNode = node as Node & { getStatement(): Node };
+      const body = loopNode.getStatement();
+      if (body.getKind() === SyntaxKind.Block && hasEscapingLoopControlFlow(body)) {
+        leafCount += 1;
+        const cfCount = options?.maxControlFlowBoundaries ?? 1;
+        const leaf: AtomLeaf = {
+          kind: "atom",
+          sourceRange: { start, end },
+          source: nodeSource,
+          canonicalAstHash: computeHash(),
+          atomTest: {
+            isAtom: true,
+            reason: "loop-with-escaping-cf",
+            controlFlowBoundaryCount: cfCount,
+          },
+        };
+        return leaf;
+      }
+    }
 
     const atomResult: AtomTestResult = await isAtom(node, source, registry, options);
 
@@ -317,7 +583,7 @@ export async function decompose(
       // range equals the parent's range. In that case the guard skips the
       // registry query for the child and returns isAtom=true incorrectly.
       // We compensate by querying the registry for each decomposable child
-      // directly. If any child matches, we fall through to branch recursion.
+      // directly. If any child matches, we fall through to branch handling.
       const childMatched = await childMatchesRegistry(node, source, registry);
       if (!childMatched) {
         leafCount += 1;
@@ -325,7 +591,7 @@ export async function decompose(
           kind: "atom",
           sourceRange: { start, end },
           source: nodeSource,
-          canonicalAstHash: hash,
+          canonicalAstHash: computeHash(),
           atomTest: atomResult,
         };
         return leaf;
@@ -355,7 +621,7 @@ export async function decompose(
       kind: "branch",
       sourceRange: { start, end },
       source: nodeSource,
-      canonicalAstHash: hash,
+      canonicalAstHash: computeHash(),
       atomTest: atomResult,
       children: recursedChildren,
     };
