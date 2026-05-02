@@ -423,10 +423,33 @@ export async function universalize(
   // Step 4: slice the RecursionTree into a SlicePlan.
   const plan = await slice(tree, registry);
 
-  // Step 5: attach intentCard to root NovelGlueEntry for single-leaf trees.
-  // For multi-leaf trees, per-leaf intent extraction is deferred (see @decision
-  // DEC-UNIVERSALIZE-WIRING-001 above). The intentCard field on NovelGlueEntry
-  // is optional, so entries for non-root leaves are emitted as-is.
+  // Step 5: attach intentCard to every NovelGlueEntry in the slice plan.
+  //
+  // Single-leaf case: attach the already-extracted root intentCard directly.
+  // Multi-leaf case: call extractIntent per novel-glue entry.
+  //
+  // @decision DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001
+  // title: Per-leaf extractIntent call (strategy: "static") for multi-leaf trees
+  // status: accepted (WI-031)
+  // rationale:
+  //   Strategy (a) chosen: call extractIntent per novel-glue entry for multi-leaf
+  //   trees, using the same strategy/model/cacheDir options as the root call.
+  //   The static path (DEC-INTENT-STRATEGY-001 default) means per-leaf calls are
+  //   cheap (no API, no network), produce semantically faithful cards derived from
+  //   the actual leaf source (JSDoc + signature), and participate in the same
+  //   seedIntentCache / offline discipline as single-leaf plans.
+  //
+  //   Strategy (b) rejected: cloning the root card and overriding per-leaf fields
+  //   produces semantically-questionable cards (wrong behavior text, wrong inputs)
+  //   and introduces a parallel mechanism that violates the no-duplicate-logic
+  //   principle. It also bypasses the real extractIntent path, producing thinner
+  //   test coverage. Strategy (a) is strictly superior for semantic fidelity and
+  //   offline discipline.
+  //
+  //   Ordering/identity preservation: plan.entries order is load-bearing for
+  //   shave()'s lineage-threading postorder loop (index.ts:586-606). We iterate
+  //   the entries as-is and only attach intentCard to novel-glue entries; pointer
+  //   entries pass through unchanged. No reordering, no extra entries.
   let slicePlan: readonly SlicePlanEntry[];
   const firstEntry = plan.entries[0];
   if (tree.leafCount === 1 && plan.entries.length === 1 && firstEntry !== undefined) {
@@ -445,9 +468,36 @@ export async function universalize(
       slicePlan = plan.entries;
     }
   } else {
-    // Multi-leaf tree: pass entries through unchanged.
-    // Per-leaf intentCard attachment is future work (see @decision above).
-    slicePlan = plan.entries;
+    // Multi-leaf tree: call extractIntent per novel-glue entry to attach a
+    // semantically faithful intentCard to each leaf.
+    // PointerEntries pass through unchanged (no intentCard slot on the type).
+    //
+    // Errors from per-leaf extractIntent propagate unwrapped — same contract as
+    // the root extractIntent call above (OfflineCacheMissError, etc.).
+    const enrichedEntries: SlicePlanEntry[] = [];
+    for (const entry of plan.entries) {
+      if (entry.kind === "novel-glue") {
+        const leafCard = await extractIntent(entry.source, {
+          strategy: options?.intentStrategy ?? "static",
+          model: options?.model ?? DEFAULT_MODEL,
+          promptVersion: INTENT_PROMPT_VERSION,
+          cacheDir,
+          offline: options?.offline,
+        });
+        const withCard: NovelGlueEntry = {
+          kind: entry.kind,
+          sourceRange: entry.sourceRange,
+          source: entry.source,
+          canonicalAstHash: entry.canonicalAstHash,
+          intentCard: leafCard,
+        };
+        enrichedEntries.push(withCard);
+      } else {
+        // PointerEntry — no intentCard slot, pass through unchanged.
+        enrichedEntries.push(entry);
+      }
+    }
+    slicePlan = enrichedEntries;
   }
 
   return {
