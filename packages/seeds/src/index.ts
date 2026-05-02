@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-BARREL-001: index.ts re-exports the public surface of @yakcc/seeds.
 // Status: implemented (WI-006)
 // Rationale: Callers that need only the seed loader (e.g. the CLI, examples) import from

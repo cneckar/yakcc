@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * @decision DEC-AST-CANON-001: Canonical AST hashing uses ts-morph + canonical print + local-rename.
  * Status: proposed (MASTER_PLAN.md edits are out of scope for WI-012-01)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-STORAGE-009: SQLite + sqlite-vec for registry storage.
 // Status: decided (MASTER_PLAN.md DEC-STORAGE-009); implemented by WI-003.
 // Rationale: Single-file local store; vector index in the same DB; embeds

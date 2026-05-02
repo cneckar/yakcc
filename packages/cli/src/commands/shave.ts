@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-SHAVE-001: shave command wraps @yakcc/shave.shave() for CLI consumption.
 // Opens the registry via @yakcc/registry.openRegistry(), delegates all pipeline logic
 // to shaveImpl(), and prints a human-readable summary. Error paths follow the

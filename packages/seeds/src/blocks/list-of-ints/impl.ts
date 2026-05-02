@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-LISTOFINTS-001: list-of-ints composes bracket/whitespace/nonempty/empty blocks.
 // Status: implemented (WI-006)
 // Rationale: This is the top-level compositor block. The import-type declarations below

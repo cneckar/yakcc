@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // L0 property-test artifact for parse-int-list demo (WI-T06).
 // Test IDs from spec.yak: list-empty, list-single, list-multiple, list-spaces,
 // list-incomplete, list-non-digit, list-no-open, list-trailing.

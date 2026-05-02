@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-002
 // title: AI-derived corpus uses the same file-cache.ts surface with corpus-v1 schemaVersion
 // status: decided (WI-016)

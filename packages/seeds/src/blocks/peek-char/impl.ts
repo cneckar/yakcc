@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-PEEKCHAR-001: peek-without-advance is a fundamental parser combinator primitive.
 // Status: implemented (WI-006)
 // Rationale: Many parsing decisions are made by inspecting the next character without consuming it.

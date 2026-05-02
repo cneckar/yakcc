@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: Three named error classes cover the three
 // distinct failure modes of intent extraction. Named classes (rather than a
 // generic Error with a code field) let callers catch specific error types with

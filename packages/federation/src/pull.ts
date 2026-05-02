@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-PULL-020: pullBlock and pullSpec primitives for federation F1 mirror.
 // Status: decided (WI-020 Dispatch C, MASTER_PLAN.md)
 // Title: pull.ts — transport-agnostic block/spec fetch with mandatory integrity gate

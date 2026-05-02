@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-ASCIICHAR-001: ascii-char is the positional consumption primitive.
 // Status: implemented (WI-006)
 // Rationale: Many parsing blocks need to consume a character at a known offset without

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-OPTWS-001: optional-whitespace is an explicit alias for whitespace.
 // Status: implemented (WI-006)
 // Rationale: Naming clarity for composition sites that want to communicate intent.

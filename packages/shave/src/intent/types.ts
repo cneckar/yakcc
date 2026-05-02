@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: Intent extraction produces a structured
 // IntentCard that captures behavioral semantics in a model- and version-tagged
 // form. This enables cache invalidation when the model or prompt changes.

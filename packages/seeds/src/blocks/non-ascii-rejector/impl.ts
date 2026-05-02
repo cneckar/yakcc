@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-NONASCII-001: non-ascii-rejector is a full-input validation gate.
 // Status: implemented (WI-006)
 // Rationale: The seed corpus parsers only handle ASCII. Failing fast on non-ASCII at the

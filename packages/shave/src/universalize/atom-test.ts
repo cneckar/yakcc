@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * @decision DEC-ATOM-TEST-003
  * Title: AST atom-test predicate.

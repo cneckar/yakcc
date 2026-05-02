@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: Cache keys are BLAKE3 hashes of the
 // concatenated inputs, NUL-delimited to prevent collisions across field
 // boundaries. Two separate keys are produced: one for the source alone

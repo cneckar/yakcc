@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HOOK-FACADE-V0: The v0 hook is a passthrough facade. All
 // emission-intent calls return {kind:"passthrough"} so Claude Code behaves normally.
 // Status: provisional (WI-0.5 adds real registry-hit and synthesis-required paths)

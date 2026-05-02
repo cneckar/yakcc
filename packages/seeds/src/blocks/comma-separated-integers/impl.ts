@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-COMMASEP-001: comma-separated-integers parses the interior of a list after the first element.
 // Status: implemented (WI-006)
 // Rationale: The import-type declarations below declare the composition graph. Relative "./"

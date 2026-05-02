@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-EXAMPLE-MAIN-001: Demo entry point for parse-int-list.
 // Status: implemented (WI-009)
 // Rationale: Demonstrates the full v0 assembly pipeline end-to-end. Reads the

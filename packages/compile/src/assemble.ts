@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-ASSEMBLE-003: assemble() builds the SubBlockResolver by
 // calling registry.selectBlocks(specHash) for each sub-block import path extracted
 // from the entry block's implSource. The specHash is derived from the import path

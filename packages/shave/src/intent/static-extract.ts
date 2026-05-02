@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Static intent extraction — TypeScript Compiler API + JSDoc parser.
  *

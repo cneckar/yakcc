@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-WIRE-FORMAT-020: Wire serialization/deserialization for BlockTripletRow.
 // Status: decided (WI-020 Dispatch B, FEDERATION_PROTOCOL.md §4)
 // Title: Wire format — serialize/deserialize + integrity gate

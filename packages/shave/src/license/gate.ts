@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * @decision DEC-LICENSE-GATE-001
  * title: Signal-based license gate for the yakcc registry (WI-013-01)

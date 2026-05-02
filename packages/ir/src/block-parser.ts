@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-IR-BLOCK-002: parseBlockTriplet replaces parseBlock as the sole
 // block-authoring entry point in @yakcc/ir.
 // Status: implemented (WI-T02)

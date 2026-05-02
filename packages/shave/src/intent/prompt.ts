@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: The system prompt is a versioned constant,
 // not a template function, because the only dynamic input is the unit source
 // (sent as the user message). Keeping the prompt static lets us version it with

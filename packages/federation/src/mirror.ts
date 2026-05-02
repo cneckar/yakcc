@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-MIRROR-REPORT-020: mirrorRegistry orchestrates the Slice D mirror walk.
 // Status: decided (WI-020 Dispatch D, MASTER_PLAN.md)
 // Title: mirror.ts — spec-hierarchy mirror with idempotency and partial-failure resilience

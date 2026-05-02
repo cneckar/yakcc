@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-IDENTITY-005: Contract identity is the hash of the canonicalized
 // contract spec; verification evidence is separate, mutable metadata.
 // Status: decided (MASTER_PLAN.md)

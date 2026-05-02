@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-DIGITORTHROW-001: digit-or-throw wraps positional digit reading with context.
 // Status: implemented (WI-006)
 // Rationale: Callers that have already peeked and confirmed a digit want a single call that

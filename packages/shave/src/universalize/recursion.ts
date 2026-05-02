@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * @decision DEC-RECURSION-005
  * title: Decomposition recursion algorithm
@@ -107,6 +108,35 @@
  *   - Remaining 7 failures: 2 ReturnStatement (giant non-leaf, deferred),
  *     2 ConditionalExpression (expression-level), 1 BinaryExpression
  *     (expression-level), 1 await-outside-async edge case, 1 B-014 parser.
+ *   - Compatible with WI-V2-09 byte-identical bootstrap: deterministic node
+ *     enumeration, same shape on every pass.
+ *
+ * @decision DEC-SLICER-CHILDREN-EXPR-LEVEL-001
+ * title: ConditionalExpression / BinaryExpression / ReturnStatement decompose
+ *        to natural sub-expressions
+ * status: decided
+ * rationale:
+ *   WI-036 added decompose policies for container statements (Class, ExprStmt,
+ *   VarStmt). WI-037 extends to expression-level constructs (ternary, binary
+ *   ops) and return-with-expression that the slicer would otherwise hit
+ *   did-not-reach-atom on. The default `return []` branch was overly
+ *   conservative for these well-defined node shapes. Closes the slicer-policy
+ *   arc; remaining slicer failures (if any) require either canonical-ast
+ *   changes or per-file investigation.
+ *   - ConditionalExpression: ternary `cond ? then : else` — decompose to
+ *     [condition, whenTrue, whenFalse].
+ *   - BinaryExpression: `left op right` — decompose to [left, right].
+ *   - ReturnStatement with expression: `return <expr>` — decompose to [expr].
+ *     A bare `return;` (no expression) falls through to the leaf wrapper in
+ *     safeCanonicalAstHash. This handles the federation/serve.ts close() shape:
+ *     `return new Promise<void>((resolve, reject) => { ... })` — the slicer
+ *     descends into the arrow fn passed to Promise rather than treating the
+ *     entire return as an unsliceable atom.
+ * consequences:
+ *   - yakcc-self-shave success: 94% -> 99-100%.
+ *   - WI-V2-01 bootstrap can now run on substantially all yakcc source
+ *     without per-file workarounds, unlocking real two-pass equivalence
+ *     measurement.
  *   - Compatible with WI-V2-09 byte-identical bootstrap: deterministic node
  *     enumeration, same shape on every pass.
  */
@@ -745,6 +775,94 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
       const ak = arg.getKind();
       if (ak === SyntaxKind.ArrowFunction || ak === SyntaxKind.FunctionExpression) {
         result.push(arg);
+      }
+    }
+    return result;
+  }
+
+  // NewExpression: `new Constructor(fn)` — descend into function-like arguments
+  // (ArrowFunction, FunctionExpression). This handles `new Promise<void>(fn)`
+  // shapes where fn is the resolver callback — a non-leaf ArrowFunction that the
+  // slicer should be able to descend into. Other constructor args (literals,
+  // identifiers) are not further decomposable.
+  // (DEC-SLICER-CHILDREN-EXPR-LEVEL-001)
+  if (kind === SyntaxKind.NewExpression) {
+    const ne = node as Node & { getArguments(): readonly Node[] };
+    const result: Node[] = [];
+    for (const arg of ne.getArguments()) {
+      const ak = arg.getKind();
+      if (ak === SyntaxKind.ArrowFunction || ak === SyntaxKind.FunctionExpression) {
+        result.push(arg);
+      }
+    }
+    return result;
+  }
+
+  // ConditionalExpression: `cond ? then : else` — decompose to [condition, whenTrue, whenFalse].
+  // Addresses ternary-shaped did-not-reach-atom failures from WI-037 audit.
+  // (DEC-SLICER-CHILDREN-EXPR-LEVEL-001)
+  if (kind === SyntaxKind.ConditionalExpression) {
+    const ce = node as Node & {
+      getCondition(): Node;
+      getWhenTrue(): Node;
+      getWhenFalse(): Node;
+    };
+    return [ce.getCondition(), ce.getWhenTrue(), ce.getWhenFalse()];
+  }
+
+  // BinaryExpression: `left op right` — decompose to [left, right].
+  // Addresses binary-expression did-not-reach-atom failures from WI-037 audit.
+  // (DEC-SLICER-CHILDREN-EXPR-LEVEL-001)
+  if (kind === SyntaxKind.BinaryExpression) {
+    const be = node as Node & {
+      getLeft(): Node;
+      getRight(): Node;
+    };
+    return [be.getLeft(), be.getRight()];
+  }
+
+  // ReturnStatement: descend into the wrapped expression if present.
+  // A bare `return;` (no expression) falls through to the leaf wrapper in
+  // safeCanonicalAstHash. This handles `return new Promise<void>(fn)` shapes
+  // in federation/serve.ts close() — the slicer descends into the promise arg
+  // rather than treating the entire return as an unsliceable atom.
+  // (DEC-SLICER-CHILDREN-EXPR-LEVEL-001)
+  if (kind === SyntaxKind.ReturnStatement) {
+    const rs = node as Node & { getExpression?(): Node | undefined };
+    const expr = rs.getExpression?.();
+    return expr !== undefined ? [expr] : [];
+  }
+
+  // ObjectLiteralExpression: descend into members to find decomposable sub-nodes.
+  // Handles two shapes:
+  //  1. `return { server, url, close() { ... } }` — close() is a MethodDeclaration
+  //     with a decomposable body (federation/serve.ts).
+  //  2. `parseArgs({ options: { registry: { type: "string" }, ... } })` — nested
+  //     ObjectLiteralExpression inside a CallExpression arg; the inner objects
+  //     are plain data and should resolve as atoms.
+  //
+  // Policy: expose MethodDeclaration/GetAccessor/SetAccessor (always function-like)
+  // and ALL PropertyAssignment initializers (whether function-like or plain data).
+  // Plain-data initializers will be classified as atoms by isAtom() and terminate
+  // the recursion naturally; function-like initializers will be decomposed further.
+  // (DEC-SLICER-CHILDREN-EXPR-LEVEL-001)
+  if (kind === SyntaxKind.ObjectLiteralExpression) {
+    const obj = node as Node & { getProperties(): readonly Node[] };
+    const result: Node[] = [];
+    for (const prop of obj.getProperties()) {
+      const pk = prop.getKind();
+      if (
+        pk === SyntaxKind.MethodDeclaration ||
+        pk === SyntaxKind.GetAccessor ||
+        pk === SyntaxKind.SetAccessor
+      ) {
+        result.push(prop);
+      } else if (pk === SyntaxKind.PropertyAssignment) {
+        const pa = prop as Node & { getInitializer?(): Node | undefined };
+        const init = pa.getInitializer?.();
+        if (init !== undefined) {
+          result.push(init);
+        }
       }
     }
     return result;

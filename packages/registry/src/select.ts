@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SELECT-001: select() takes pre-loaded strictness edges as an
 // argument rather than querying the DB itself. Status: decided (WI-003)
 // Rationale: Keeps select() a pure function testable without a DB. The storage

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-TRIPLET-L0-ONLY-019: The proof/manifest.json schema accepts
 // smt_cert / lean_proof / coq_proof artifact kinds at the type level, but the
 // L0 manifest validator (validateProofManifestL0) rejects any artifact kind

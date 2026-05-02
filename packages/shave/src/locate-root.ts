@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Locate the project root by walking up the directory tree looking for
 // pnpm-workspace.yaml. This file is present in the root of every pnpm
 // monorepo, making it a reliable anchor for the project root regardless of

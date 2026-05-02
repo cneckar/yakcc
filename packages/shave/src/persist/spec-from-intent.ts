@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-ATOM-PERSIST-001
 // title: specFromIntent maps IntentCard fields to SpecYak at L0
 // status: decided

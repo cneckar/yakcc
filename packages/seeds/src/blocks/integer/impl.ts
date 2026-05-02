@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-INTEGER-001: integer composes digit; returns value + new position as a tuple.
 // Status: implemented (WI-006)
 // Rationale: Returning [value, newPosition] keeps the block pure while providing both the

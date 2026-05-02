@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HASH-WI002: Content-address uses BLAKE3 via @noble/hashes.
 // Status: decided (WI-002)
 // Rationale: BLAKE3 provides cryptographic collision resistance needed for a

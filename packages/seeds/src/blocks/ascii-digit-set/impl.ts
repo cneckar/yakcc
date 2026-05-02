@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-ASCIIDIGITSET-001: constant membership test avoids char comparison chains.
 // Status: implemented (WI-006)
 // Rationale: A Boolean predicate over the digit set is used by multiple blocks that need

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-MANIFEST-002: buildManifest derives verificationStatus from
 // registry.getProvenance(merkleRoot) — "passing" if at least one ProvenanceTestEntry
 // has passed === true, otherwise "unverified". Each ProvenanceEntry now records both

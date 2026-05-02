@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-LOADER-T05-001: seedRegistry enumerates block directories.
 // Status: implemented (WI-T05)
 // Rationale: WI-T05 migrates each block from a single .ts file with an embedded

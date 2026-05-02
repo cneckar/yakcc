@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-QUERY-001
 // title: yakcc query command — vector-search CLI surface
 // status: accepted

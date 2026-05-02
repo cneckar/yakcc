@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-COMPILE-001: compile command reads the entry as either a BlockMerkleRoot
 // (64-hex string), a path to a JSON SpecYak file, or a directory path. When a directory
 // is given, it resolves to <dir>/spec.yak and defaults --out to <dir>/dist. When a

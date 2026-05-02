@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HTTP-TRANSPORT-URL-020: Pure URL builders for federation endpoints.
 // Status: decided (WI-020 Dispatch C, FEDERATION_PROTOCOL.md §3)
 // Title: Transport URL builders — no fetch dependency, pure string construction

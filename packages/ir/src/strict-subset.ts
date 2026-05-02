@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-IR-STRICT-001: Strict-TS-subset validator uses ts-morph AST walks.
 // Status: implemented (WI-004)
 // Rationale: ts-morph gives full typed AST access without forking the parser. Each

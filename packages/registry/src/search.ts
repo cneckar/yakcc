@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEARCH-STRUCTURAL-001: Structural matching is a pure function
 // with no DB access. Status: decided (WI-003)
 // Rationale: Keeps the matching logic independently testable and reusable.

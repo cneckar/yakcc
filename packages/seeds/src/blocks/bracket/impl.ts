@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-BRACKET-001: bracket matches a single bracket char and returns next position.
 // Status: implemented (WI-006)
 // Rationale: Bracket matching is a hot path in list parsing. Returning the post-bracket position

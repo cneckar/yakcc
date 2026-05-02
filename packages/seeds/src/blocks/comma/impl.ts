@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-COMMA-001: comma follows the same positional combinator convention as bracket.
 // Status: implemented (WI-006)
 // Rationale: Consistent positional-return API across all terminal matchers means they

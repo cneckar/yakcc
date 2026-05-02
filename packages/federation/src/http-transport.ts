@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HTTP-TRANSPORT-020: HTTP+JSON transport implementation for federation.
 // Status: decided (WI-020 Dispatch C, FEDERATION_PROTOCOL.md §3)
 // Title: createHttpTransport — Node 22 global fetch, injected for tests

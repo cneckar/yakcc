@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Property tests for the list-of-ints block.
 // These tests exercise the contract declared in ../spec.yak against the
 // implementation in ../impl.ts.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-NO-OWNERSHIP-011: No author, signer, owner, email, account,
 // username, organization, session, or any person-shaped identifier anywhere
 // in these types. The wire shape is a direct projection of BlockTripletRow,

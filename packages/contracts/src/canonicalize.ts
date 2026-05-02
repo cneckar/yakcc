@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CANON-001: Canonical JSON encoder is hand-rolled, not JSON.stringify.
 // Status: decided (WI-002)
 // Rationale: JSON.stringify does not satisfy the canonicalization rules required for

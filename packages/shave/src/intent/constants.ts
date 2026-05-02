@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CONTINUOUS-SHAVE-022: Constants governing the intent extraction
 // pipeline: model identifier, prompt version, and schema version. Changing any
 // of these values forces a cache miss for all existing entries, which is the

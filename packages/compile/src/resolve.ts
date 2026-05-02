@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-RESOLVE-002: resolveComposition traverses the composition
 // graph depth-first using BlockMerkleRoot as the node identity (WI-T04).
 // Status: implemented (WI-T04); supersedes DEC-COMPILE-RESOLVE-001 (ContractId-based,

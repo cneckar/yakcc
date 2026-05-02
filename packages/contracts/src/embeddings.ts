@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-EMBED-010: Local embeddings via @xenova/transformers behind a
 // provider interface. Status: decided (MASTER_PLAN.md DEC-EMBED-010)
 // Rationale: Local-first matches v0's no-network stance. The provider interface

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-SEEDS-STRFROMPOS-001: substring extraction at a position is a reusable primitive.
 // Status: implemented (WI-006)
 // Rationale: Multiple blocks need to extract substrings starting at a position. Centralising

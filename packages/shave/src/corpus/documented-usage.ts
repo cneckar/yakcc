@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-001 (see corpus/types.ts)
 // title: Documented-usage synthesis derives fast-check properties from JSDoc examples + type signature
 // status: decided (WI-016)

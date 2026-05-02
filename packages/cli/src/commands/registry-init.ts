@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-REGISTRY-INIT-001: registry-init creates parent dirs with mkdirSync
 // and delegates to openRegistry() from @yakcc/registry. Idempotent: opening a DB that
 // already exists at the current schema_version is a no-op (schema migrations run only
