@@ -158,7 +158,25 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MAX_DEPTH = 8;
+/**
+ * @decision DEC-SLICER-MAX-DEPTH-001
+ * title: Raise default maxDepth from 8 to 24 for real-world code
+ * status: decided
+ * rationale:
+ *   v0.7's default maxDepth=8 was set when the slicer rarely descended past
+ *   3-4 levels (small atomic functions only). Post WI-036/037 the slicer
+ *   legitimately descends through Promise chains, IIFE wrappers, and deeply
+ *   nested object literals — real-world code easily reaches depth 10-15.
+ *   3 of 4 yakcc-self-shave failures at WI-037 close were depth-exceeded on
+ *   legit code, not infinite recursion. Raising to 24 gives meaningful
+ *   headroom while still catching pathological cases. Callers needing a
+ *   tighter ceiling can pass maxDepth explicitly via RecursionOptions.
+ * consequences:
+ *   - yakcc-self-shave: 96.6% -> 99.x% (3 files unblocked).
+ *   - No production impact: legitimately deep code now decomposes; nothing
+ *     that previously succeeded now fails.
+ */
+const DEFAULT_MAX_DEPTH = 24;
 
 // ---------------------------------------------------------------------------
 // Error classes
@@ -269,11 +287,32 @@ function safeCanonicalAstHash(
   if (CONTEXT_DEPENDENT_STATEMENT_KINDS.has(kind)) {
     // Wrap in a synthetic function so the statement is syntactically valid.
     // Fixed prefix length ensures the inner statement starts at a known offset.
-    const PREFIX = "function __w__() { ";
+    //
+    // Choose the right wrapper flavor based on whether the statement contains
+    // escaping await/yield constructs that require an async/generator context:
+    //   - YieldExpression → function* __w__()
+    //   - AwaitExpression (escaping) → async function __w__()
+    //   - plain return/continue/break → function __w__()
+    //
+    // Without this, `return await x;` inside `function __w__() { ... }` raises
+    // TS1308 (await outside async), which is the root cause of the pull.ts
+    // canonical-ast--await failure (WI-038 sub-task b).
+    const escapes = detectEscapingFunctionScopedConstructs(node);
+    const PREFIX = escapes.yield
+      ? "function* __w__() { "
+      : escapes.await
+        ? "async function __w__() { "
+        : "function __w__() { ";
     const wrapped = `${PREFIX}${nodeSource} }`;
     const innerStart = PREFIX.length;
     const innerEnd = PREFIX.length + nodeSource.length;
-    return canonicalAstHash(wrapped, { start: innerStart, end: innerEnd });
+    try {
+      return canonicalAstHash(wrapped, { start: innerStart, end: innerEnd });
+    } catch {
+      // Wrap still failed (e.g. super references or nested generator context).
+      // Fall back to full-source + range, which preserves all binding scopes.
+      return canonicalAstHash(fullSource, { start, end });
+    }
   }
 
   if (LOOP_KINDS.has(kind)) {
@@ -446,22 +485,50 @@ const FUNCTION_KINDS = new Set([
 /**
  * Returns true if `node` is an async function-like.
  *
- * ts-morph exposes isAsync() directly on FunctionDeclaration, FunctionExpression,
- * ArrowFunction, and MethodDeclaration. We prefer that over a raw child-token
- * scan so that async arrow functions assigned to variables (e.g.
- * `const f = async (x) => { return await x; }`) are correctly detected — the
- * AsyncKeyword lives on the ArrowFunction node, not on the enclosing
- * VariableDeclaration, so a getFirstChildIfKind scan on the wrong level misses it.
+ * Uses three layered checks to handle all ts-morph node shapes robustly:
  *
- * Fallback to getFirstChildIfKind(AsyncKeyword) for node kinds where isAsync()
- * is not available (Constructor, GetAccessor, SetAccessor — none of which can
- * be async in practice, but we guard defensively).
+ * 1. ts-morph isAsync() — the canonical check for FunctionDeclaration,
+ *    FunctionExpression, ArrowFunction, MethodDeclaration. Preferred because it
+ *    targets the correct node level: for `const f = async (x) => { await x; }`
+ *    the AsyncKeyword lives on the ArrowFunction, not the VariableDeclaration.
+ *    Wrapped in try/catch: some ts-morph node types have `isAsync` as a property
+ *    at the TypeScript type level but throw at runtime (e.g. certain
+ *    MethodDeclaration shorthand forms on ObjectLiteralExpression). The catch
+ *    prevents a crash and falls through to the modifier scan.
+ *
+ * 2. getModifiers() scan — checks the modifier list for AsyncKeyword. Handles
+ *    async method-shorthand on object literals (`{ async foo() { await x; } }`)
+ *    where isAsync() may not be implemented but the AsyncKeyword appears as a
+ *    modifier. Also covers edge cases where isAsync() throws.
+ *
+ * 3. getFirstChildIfKind(AsyncKeyword) — last resort for any remaining node
+ *    kind where the async keyword appears as a direct child token but neither
+ *    isAsync() nor getModifiers() found it.
+ *
+ * This layered approach fixes the `canonical-ast--await` failure on
+ * packages/federation/src/pull.ts (WI-038 sub-task b).
  */
 function nodeIsAsync(node: Node): boolean {
-  // ts-morph isAsync() is the canonical check for function-like nodes.
+  // Layer 1: ts-morph isAsync() — canonical API, wrapped in try/catch.
   const asAsyncable = node as Node & { isAsync?(): boolean };
-  if (typeof asAsyncable.isAsync === "function") return asAsyncable.isAsync();
-  // Fallback: inspect for a direct AsyncKeyword child token.
+  if (typeof asAsyncable.isAsync === "function") {
+    try {
+      if (asAsyncable.isAsync()) return true;
+    } catch {
+      // Some node kinds don't actually implement isAsync() at runtime;
+      // fall through to modifier scan.
+    }
+  }
+  // Layer 2: getModifiers() — handles async-method-shorthand on object literals
+  // and other cases where isAsync() is absent or throws.
+  const withModifiers = node as Node & { getModifiers?(): readonly Node[] };
+  const mods = withModifiers.getModifiers?.();
+  if (mods !== undefined) {
+    for (const m of mods) {
+      if (m.getKind() === SyntaxKind.AsyncKeyword) return true;
+    }
+  }
+  // Layer 3: explicit AsyncKeyword as first child token — last resort.
   const asyncKw = (
     node as Node & { getFirstChildIfKind?(k: SyntaxKind): Node | undefined }
   ).getFirstChildIfKind?.(SyntaxKind.AsyncKeyword);
