@@ -708,25 +708,63 @@ proof point that the substrate is real.
   ignores the source-tree files and assembles every package purely
   from registry rows.
 
-**Exit criteria.**
+**Why this is the strongest demo.**
 
-1. Running `yakcc shave` across every yakcc package leaves the
-   registry in a state where every published function in every yakcc
-   package has a content-address in the registry, with the recursion
-   bottoming out at atoms (per the v0.7 atom test).
-2. `yakcc compile` against each package id produces a runnable artifact.
-3. **Differential test.** `pnpm test` passes both on the from-source
-   build (today's pnpm + Turbo pipeline) and on the registry-assembled
-   build, with byte-identical test output on every case. Any divergence
-   is a v2 failure.
-4. The yakcc CLI binary built from the registry-assembled artifacts
-   behaves identically to the binary built from source on the v0
-   demoable artifact (`yakcc compile examples/parse-int-list`) and on
-   the v0.7 demoable artifact (`yakcc shave ./vendor/mri`). The
-   substrate compiles itself.
-5. The whole-repo provenance manifest names every atom in the build
-   graph by content-address, with parent-block links back to the
-   shave recursion tree.
+Self-hosting exercises every subsystem simultaneously: IR conformance (every
+yakcc atom passes the hard-ban rules), atom decomposition (the shave recursion
+correctly bottoms out), slicer correctness (DFG slice covers the real call
+graph), canonicalizer determinism (same source → same hash across runs and
+machines), compile assembly (the whole-program assembler produces a runnable
+artifact), property-test coverage (every atom carries a non-placeholder test),
+and foreign-block boundary (all external deps are correctly typed as opaque
+leaves). If yakcc shaves itself byte-identically across two passes, anything
+users shave is at least as trustworthy — the demo is both a completion criterion
+and an ongoing regression gate.
+
+**Current readiness baseline (per IR conformance audit 2026-05-01).**
+
+75 yakcc source files were audited for IR conformance (excluding `*.test.ts`,
+`*.d.ts`, `node_modules`, `dist`, `__fixtures__`, `__snapshots__`). Results:
+
+- **Hard rules (no-any, no-eval, no-runtime-reflection, no-with,
+  no-throw-non-Error): 0 violations** across all 75 files. Yakcc's source is
+  already clean on every binary-pass/fail IR property.
+- **Real soft violations: 4 total** (2 mutable-global singletons in
+  `packages/contracts/src/embeddings.ts` lines 49 and 113; 2 top-level-side-
+  effects in `packages/ir/src/strict-subset-cli.ts` line 111 and
+  `packages/cli/src/bin.ts` line 7). All four are pinpoint fixes.
+- **False positives: 233 `no-untyped-imports`** reported — artifact of running
+  the validator in isolated-file mode (no `tsconfig.json` paths, no
+  `node_modules`, no workspace-alias resolution). These are "I cannot see the
+  dependency type" errors, not genuine untyped code. A whole-project validator
+  mode (WI-V2-01) is required before the real count can be determined.
+- **Revised timeline: 3-6 months past v1 wave-2 close** (was 6-12 months).
+  Yakcc's source is more disciplined than earlier estimates assumed.
+
+Full audit findings: `~/.claude/plans/v2-ir-conformance-audit.md`.
+
+**Exit criteria (v2 acceptance).**
+
+1. **Two-pass bootstrap equivalence.** Compiled yakcc shaves the original yakcc
+   source; resulting `BlockMerkleRoot`s are byte-identical to first-pass blocks.
+   Fixed-point self-hosting surfaces every non-determinism in the canonicalizer
+   or hashing path — this is the most valuable regression test the project has.
+2. **Recomposed yakcc passes the original yakcc test suite.** `yakcc compile
+   <yakcc-entry>` produces a TS module that, when run, behaves equivalently to
+   the original yakcc on every test in the suite.
+3. **Foreign-block boundary holds.** Every yakcc dependency on `node:*`,
+   `ts-morph`, `sqlite-vec`, `@noble/hashes`, `@anthropic-ai/sdk`, `fast-check`,
+   etc. is recorded as a foreign-block triplet; provenance manifest records the
+   foreign-dep tree per non-foreign block.
+4. **Property-test coverage on every yakcc atom.** Every atom carries a
+   non-placeholder `property_tests` artifact (per WI-016 contracts).
+5. **Hard rules pass 100%** across all yakcc source: no `any`, no `eval`, no
+   runtime reflection, no `with`, no throw-non-Error. (Already true per
+   2026-05-01 audit.)
+6. **CI runs two-pass equivalence on every commit.** Regression-detection is
+   automated; a self-hosting bug never lands silently.
+7. **Documentation: `docs/V2_SELF_HOSTING_DEMO.md`** describes the bootstrap
+   procedure step-by-step, suitable for an external person to follow.
 
 **Non-goals.**
 
@@ -1130,9 +1168,22 @@ without that proof point would conflate two independent risks.
 
 ### Initiative: v2 self-hosting
 
-Status: planned, gated on v0.7 closure (WI-015 done) and v1 federation deferred.
+Status: **planned.** Gated on v0.7 closure (WI-015 demo, done) and v1 wave-1 closure (WI-021 federation demo). Detailed phase breakdown landed 2026-05-01 informed by the IR conformance audit (`~/.claude/plans/v2-ir-conformance-audit.md`); WIs are marked "deferred" until both gating demos run.
 
-Concrete work items will be enumerated when v0.7 lands. The v2 stage section above defines the exit criteria; the work-item decomposition is itself a planning artifact at the start of v2 rather than a v0 deliverable.
+| ID | Title | Description | Deps | Gate | State |
+|----|-------|-------------|------|------|-------|
+| WI-V2-01 | Whole-project IR validator mode | Add a "project mode" to `@yakcc/ir`'s `validateStrictSubset` API that loads a real `tsconfig.json` and resolves cross-file/cross-package/Node-builtin imports before running rules. Today the validator runs in isolated-file mode using a fresh in-memory ts-morph Project per call — fine for block-level seed-corpus validation, but yields ~98% false-positive `no-untyped-imports` violations when run against whole-package source (per audit 2026-05-01). New API: `validateStrictSubsetProject(tsconfigPath): ProjectValidationResult`. Pre-assigned decision: `DEC-V2-IR-PROJECT-MODE-001`. The validator is the prerequisite for every other v2 phase. | (none — pure additive) | review | deferred (v2 gate) |
+| WI-V2-02 | Fix the 4 real IR-conformance violations | Two singletons in `packages/contracts/src/embeddings.ts:49,113` (refactor `let` to function-scoped closure or Map cache); two CLI entry-point dispatches in `packages/ir/src/strict-subset-cli.ts:111` and `packages/cli/src/bin.ts:7` (either wrap in `if (import.meta.url === ...) main()` pattern, or relax the `no-top-level-side-effects` rule with a `// @cli-entry` exemption documented as `DEC-IR-CLI-ENTRY-EXEMPTION-001`). Both choices are reasonable; pick at WI dispatch. | (none) | review | deferred (v2 gate) |
+| WI-V2-03 | IR subset extensions for self-hosting (Phase B) | Audit-driven: extend `@yakcc/ir` to accept the constructs yakcc itself uses but the IR doesn't yet. Likely candidates: async/await (used throughout shave/registry/federation), classes (used by sqlite-registry wrapper, ts-morph project handles), conditional/mapped/deep-generic types (used in contracts/types.ts), `unknown` and narrowing patterns. Each extension requires: validator rule (or relaxation), compile-target lowering verification, property-test pattern, `@decision` if non-trivial trade-offs. Scope contingent on what WI-V2-01 reports — until whole-project validator runs, the real construct gap is unknown. | WI-V2-01 | approve | deferred (v2 gate) |
+| WI-V2-04 | Foreign-block boundary primitives (Phase C) | New triplet variant `kind: "foreign"` in `@yakcc/contracts`: blocks whose impl is `import { X } from 'foreign-pkg'`, treated as opaque leaves by the slicer. Foreign blocks have a spec (synthesizable from `.d.ts` or hand-authored) but no shaved impl and no further decomposition. Provenance manifest extends to track foreign-dep tree per non-foreign block. Deliver: schema change, slicer recognition, manifest emission, `yakcc shave --foreign-policy` CLI flag, foreign-block test fixtures (Node built-ins + sqlite-vec + ts-morph as canonical foreign deps). Pre-assigned decision: `DEC-V2-FOREIGN-BLOCK-SCHEMA-001`. | WI-V2-01 | approve | deferred (v2 gate) |
+| WI-V2-05 | Source refactor for shavability (Phase D) | Driven by what `yakcc shave` reports against yakcc's own source. Likely work: decompose oversized functions that exceed atom-test thresholds (WI-012 criteria); break circular module deps if any are found; lift singleton-init side-effects into explicit construction; ensure tests still pass through every refactor. Existing test corpus is the safety harness — no behavior changes allowed, only structural refactoring. | WI-V2-02, WI-V2-03 | approve | deferred (v2 gate) |
+| WI-V2-06 | Property-test coverage for yakcc atoms (Phase E) | Every yakcc-source atom must carry a non-placeholder `property_tests` artifact (per WI-016 contracts). Three sources, in priority: (a) existing tests (adapt yakcc's own test corpus into per-atom property tests where structurally possible); (b) JSDoc `@example` synthesis; (c) AI-derived against IntentCard + signature for atoms with no obvious property (the WI-016 path). Includes the dispatch-time decision: do we relax L0 property-test requirement to "explicit-examples-documented" for atoms whose property is hard to express (e.g. `formatErrorPath(node)`), or synthesize via LLM and accept the cost? Captured at WI dispatch as `DEC-V2-PROPTEST-FALLBACK-001`. | WI-V2-04, WI-V2-05 | approve | deferred (v2 gate) |
+| WI-V2-07 | First shave pass over yakcc source (Phase F) | Run `yakcc shave packages/<pkg>/src` for each package in dependency order: contracts → ir → registry → compile/shave → federation → cli → hooks-claude-code → variance. Iterate failures: `did-not-reach-atom` errors, license errors, schema errors. Each failure is either a Phase B/D gap or a real bug. Output: a populated registry containing every yakcc atom + foreign-dep references, plus a list of real bugs surfaced as backlog items. | WI-V2-06 | approve | deferred (v2 gate) |
+| WI-V2-08 | Compile self-equivalence (Phase G) | For each yakcc entry point (every CLI command, every package's public exports), run `yakcc compile <entry>` against the shaved registry from WI-V2-07. The recomposed yakcc must produce the same outputs as the original yakcc on every test in the existing test suite. **Not byte-identical source** (canonicalizer rewrites the AST) — **functionally equivalent behavior**. Acceptance: `pnpm test` passes against the recomposed yakcc compiled via `yakcc compile`. | WI-V2-07 | approve | deferred (v2 gate) |
+| WI-V2-09 | Two-pass bootstrap equivalence (Phase H) | The crown jewel. Take the recomposed yakcc from WI-V2-08, use IT to re-shave the original yakcc source. The resulting block tree must be byte-identical at the `BlockMerkleRoot` level to the WI-V2-07 first-pass blocks. Fixed-point self-hosting: yakcc-N produces yakcc-N+1 produces yakcc-N+1 (no further drift). Any divergence is a non-determinism bug somewhere in the canonicalizer or hashing path — the most valuable test the project can have. Pre-assigned decision: `DEC-V2-BOOTSTRAP-EQUIV-001`. | WI-V2-08 | approve | deferred (v2 gate) |
+| WI-V2-10 | v2 demo + CI (Phase I) | Document the self-hosting flow at `docs/V2_SELF_HOSTING_DEMO.md`: every command an external person runs, expected outputs, what to do when things diverge. Wire CI to run the WI-V2-09 two-pass equivalence check on every commit so a self-hosting regression never lands silently. This becomes the project's strongest external demo: "the compiler shaves itself, recomposes itself, and the result is byte-identical." | WI-V2-09 | approve | deferred (v2 gate) |
+
+v2 dependency waves: **W1** = `{WI-V2-01, WI-V2-02}` (parallel; whole-project validator + fix the 4 real violations). **W2** = `{WI-V2-03, WI-V2-04}` (IR extensions + foreign-block primitives, both gated on WI-V2-01). **W3** = `{WI-V2-05, WI-V2-06}` (source refactor + property-test coverage). **W4** = `{WI-V2-07}` (first shave). **W5** = `{WI-V2-08}` (compile self-equivalence). **W6** = `{WI-V2-09}` (two-pass bootstrap). **W7** = `{WI-V2-10}` (demo + CI). Critical path: WI-V2-01 → WI-V2-03 → WI-V2-05 → WI-V2-07 → WI-V2-08 → WI-V2-09 → WI-V2-10. **Total revised estimate: 3-6 months past v1 wave-2 close** (originally 6-12 months; revised down per IR conformance audit 2026-05-01 — yakcc's source is more disciplined than earlier estimates assumed).
 
 ---
 
@@ -1328,6 +1379,11 @@ are added at the top; older entries are not edited.
 | DEC-V1-FEDERATION-PROTOCOL-001 | The v1 wave-1 federation protocol is locked at four load-bearing choices, formalized in `FEDERATION_PROTOCOL.md`. (1) **Transport: HTTP+JSON over HTTPS** with an abstract `Transport` interface in `@yakcc/federation` so future libp2p/IPFS transports slot in without rewriting the merge logic; HTTP+JSON is chosen for minimal new infrastructure (any static-file HTTPS host can serve a registry), clean URL-as-content-address mapping (`/v1/block/<merkleRoot>` is the block, full stop, with HTTP caching working correctly by construction), and developer ergonomics (every yakcc developer has a working HTTP client/server today). (2) **Identity: content-addressed.** Blocks are identified by `BlockMerkleRoot`, specs by `SpecHash`, peers by mirror URL only — **v1 has no peer keypair, no peer name registry, no peer reputation.** Peer-keyed identity is a v2 surface introduced under F2 attestation publishing. (3) **Trust: nominal.** v1 trusts whatever bytes the operator-named URL serves; every fetched triplet is integrity-checked against its own `BlockMerkleRoot` and `SpecHash` (so transit corruption and active MITM are caught even though the peer itself is taken at its word). Signed manifests, peer keypairs, F2 attestation signatures, and per-caller trust filtering at selection time are all v2 surfaces; v1 wave-1 stores everything that arrives and defers selection-time trust filtering to a follow-on. (4) **Sync direction: pull-only, read-only.** B pulls from A; B never pushes. Publishing is F2 and is explicitly deferred per `DEC-V1-WAVE-1-SCOPE-001`. **Why this cut and not a richer one:** v1 wave-1's job is to prove the cross-machine round-trip invariant (WI-021 acceptance criterion (c): byte-identical `yakcc compile` output on both peers after a mirror), and adding signatures, trust lists, or publishing before that invariant is proven would entangle independent risk surfaces. The four choices above are the minimum that make cross-machine federation correctness verifiable. **How to apply:** the wire shape, endpoint set, failure semantics, public API surface, and acceptance for WI-020 are all derivable from these four choices plus the existing `@yakcc/contracts` / `@yakcc/registry` shapes; `FEDERATION_PROTOCOL.md` is the load-bearing companion document and is the contract WI-020 builds against. Any change to transport, identity model, trust posture, or sync direction after WI-020 lands requires a new DEC entry that explicitly supersedes this one. The no-ownership invariant (`DEC-NO-OWNERSHIP-011`) is preserved on the wire by construction: the wire shape is a direct JSON projection of `BlockTripletRow`, which has no ownership-shaped columns by schema design, so there is no field that could leak author identity across federation. The license gate (`DEC-LICENSE-WIRING-002`) remains structurally upstream — license enforcement is local to the publishing peer's `yakcc shave` invocation; downstream mirrors never see refused sources because no triplet is ever produced for them, and there is no federation-level license filter (one cannot exist that respects content-addressed integrity). |
 | DEC-WI021-EVAL-REVISION-001 | WI-021's Evaluation Contract was revised on 2026-05-01 after the reviewer flagged a structural blocker (`REVIEW_VERDICT: blocked_by_plan`): the original contract required WI-017 parent_block_root lineage to be exercised "non-trivially" (multi-atom decomposition with populated `parent_block_root` on every non-root atom), but `@yakcc/shave`'s offline-tolerant universalize path produces a SINGLE block under DEC-UNIVERSALIZE-WIRING-001 (`maybePersistNovelGlueAtom` returns `undefined` for multi-leaf plans without an attached intentCard, and the offline `seedIntentCache` pattern does not produce one). Multi-atom output therefore requires either (i) modifying `packages/shave` (forbidden in WI-021's example-only scope) or (ii) a live `ANTHROPIC_API_KEY` call (impractical for offline-tolerant CI). **Revision:** removed the multi-atom / non-trivial-WI-017 requirement; replaced with a "WI-017 lineage PRESERVATION" invariant that the byte-identical row-equality test already covers (every column including `parentBlockRoot` round-trips A→B); restated WI-021's load-bearing job as proving the NEW federation byte-identity invariant (cross-machine compile-output equality), since prior WIs' invariants were already substantiated when those WIs landed. **Why this cut over the alternatives:** Option B (insert a prerequisite WI to fix DEC-UNIVERSALIZE-WIRING-001 in `packages/shave`) defers v1 wave-1 closure by an unspecified amount and re-opens scope on a settled package; Option C (use a substrate that triggers multi-atom output via live LLM intent extraction) is impractical for CI-runnable demos. Option A (relax WI-021's WI-017 requirement, track multi-atom-exercise as backlog) accepts the reviewer's analysis, closes v1 wave-1 on the load-bearing federation byte-identity invariant, and tracks the deferred work as **B-010**. The v1 wave-1 closer demonstrates the NEW invariant; prior WIs' invariants are preserved by the round-trip's byte-equal assertion. **How to apply:** any future eval-contract revision that re-tightens WI-021's WI-017 requirement is gated on B-010 landing first. Reviewers must check that B-010 is closed before re-imposing multi-atom acceptance criteria on this or any successor demo. |
 | DEC-SERVE-SPECS-ENUMERATION-020 | `serveRegistry(registry, options?)` accepts an optional `enumerateSpecs?: () => Iterable<SpecHash>` callback that the `/v1/specs` endpoint walks to enumerate distinct spec hashes for cursor-paginated catalog responses. **Why a callback rather than a Registry method:** `@yakcc/registry`'s public surface today exposes `selectBlocks(specHash)` (one-spec → many-roots) and `getBlock(merkleRoot)` (one-root → row), but no `enumerateSpecs(): Iterable<SpecHash>` primitive. WI-020 v2 needed a way for `serveRegistry` to walk the spec set so `mirrorRegistry` clients can index by spec on the receiver, and the implementer's choice was: (a) add a callback hook to `serveRegistry` that the caller wires from their SQLite layer (one-line `SELECT DISTINCT spec_hash FROM block_triplets ORDER BY spec_hash`); or (b) extend `@yakcc/registry`'s public surface with a `Registry.enumerateSpecs()` method. Choice (a) shipped in WI-020 v2 because it kept the federation slice narrowly scoped to `packages/federation/**` and `packages/cli/**` — modifying `@yakcc/registry`'s public surface was explicitly forbidden by WI-020 v2's Scope Manifest, and a wider scope would have re-cut a slice that had already been re-provisioned once. **The callback is a workaround, not a destination:** production callers must supply it from their own SQLite handle or `/v1/specs` returns `[]` and federation receivers cannot index by spec. The proper fix is a `Registry.enumerateSpecs(): Iterable<SpecHash>` method (one-line SQL on the `block_triplets` table); once that lands, `serveRegistry` removes the callback option and walks the registry directly. **How to apply:** WI-021 (v1 demo) is allowed to wire the callback inline against registryA's SQLite layer because that is the documented v0.7-style escape hatch; any new federation-side caller must either (i) supply the callback, or (ii) wait for the `Registry.enumerateSpecs()` primitive. Tracked as backlog item B-008. |
+| DEC-V2-IR-PROJECT-MODE-001 | **Pre-assigned to WI-V2-01.** Whole-project IR validator mode: `validateStrictSubsetProject(tsconfigPath)` resolves imports via a real `tsconfig.json` before running IR rules. Decision choice at WI dispatch: whether to implement as (a) a new top-level API function that opens a full ts-morph Project with the tsconfig, or (b) a `mode: "project" \| "isolated"` option on the existing `validateStrictSubset`. Rationale for pre-assignment: the choice affects the public API surface of `@yakcc/ir` that v2 WIs W2-W7 build against; it must be made explicitly, not accidentally. |
+| DEC-IR-CLI-ENTRY-EXEMPTION-001 | **Pre-assigned to WI-V2-02.** CLI-entry-point exemption from `no-top-level-side-effects`. Two options at WI dispatch: (1) `if (import.meta.url === \`file://\${process.argv[1]}\`) main()` guard — still technically triggers the rule on the `if` clause; (2) relax the rule to allow a single `main()` call when a `// @cli-entry` annotation is present at the module top. Recommended option 2 per IR conformance audit 2026-05-01 — CLI binaries are a legitimate construct that must execute on import, and the rule as written is too strict for them. Any future PR that re-triggers this violation without the annotation must be rejected at reviewer. |
+| DEC-V2-PROPTEST-FALLBACK-001 | **Pre-assigned to WI-V2-06.** Property-test fallback policy for yakcc atoms that are hard to express as property tests (e.g. `formatErrorPath(node)`, deep AST traversal helpers). Decision at WI dispatch: (a) relax L0 requirement to "explicit-examples-documented" for structurally-hard atoms, or (b) synthesize via LLM (the WI-016 AI-derived path) and accept the LLM-dependency cost. Either choice must be explicit — silent placeholder `property_tests` artifacts are rejected per WI-016 exit criteria. |
+| DEC-V2-FOREIGN-BLOCK-SCHEMA-001 | **Pre-assigned to WI-V2-04.** Foreign-block triplet variant schema: `kind: "foreign"` blocks are opaque leaves whose impl is a bare `import { X } from 'foreign-pkg'`. Decision at WI dispatch: whether the foreign-block variant is a new `BlockTripletRow` discriminant (schema change) or a first-class new table row type (schema addition). The `kind` field must not break existing row consumers that only handle `kind: "standard"`. |
+| DEC-V2-BOOTSTRAP-EQUIV-001 | **Pre-assigned to WI-V2-09.** Two-pass bootstrap equivalence as v2 acceptance gate: compiled yakcc-N shaves original yakcc source; resulting `BlockMerkleRoot`s must be byte-identical to first-pass blocks produced by the from-source yakcc. Any divergence is a non-determinism bug, not a "close enough." Decision at WI dispatch: whether to gate the CI check on strict byte-equality of every `BlockMerkleRoot` in the shave registry, or on equality of the top-level `WholeProgramProvenanceManifest` root hash (which is derived from all `BlockMerkleRoot`s by construction and is a superset check). |
 
 ---
 

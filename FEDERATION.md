@@ -185,11 +185,21 @@ single-machine deployment is first-class at every substrate level.
 ├── attestation publishing                 # F2+ — local verifier signs and propagates
 └── ZK supply-chain proofs                 # F3 — cryptographic artifact map
 
-@yakcc/incentives                          # F4 — opt-in, chain-bound
-├── bounty submission                      # claim unmatched proposals
-├── proof-of-fuzz miner                    # find contract deviations
-├── stake-to-refine                        # claim faster/smaller/better; risk stake
-└── slashing/deprecation                   # adversarial-block response
+@yakcc/incentives                          # F4 — opt-in, protocol-only (no chain)
+├── F4 protocol surface                    # message formats, semantics
+├── canonical spec registry + promotion    # DEC-F4-THREAT-CANONICAL-SPEC-001
+├── submission anti-DoS (collateral / hashcash) # DEC-F4-THREAT-DOS-COLLATERAL-001
+├── dynamic-benchmark engine               # DEC-F4-THREAT-BENCHMARK-DYNAMIC-001
+├── VRF committee selection (abstract)     # DEC-F4-THREAT-VRF-COMMITTEE-001
+├── proof-converter shadow process         # DEC-F4-THREAT-CONVERTER-SHADOW-001
+├── ChainAdapter interface (abstract)      # DEC-F4-PROTOCOL-SPLIT-001
+└── hashcash reference adapter             # in-memory + PoW; no token
+
+# Downstream chain-bound projects (NOT in this repo) implement ChainAdapter:
+#   yakcc-incentives-eth     # Ethereum / EVM-chain adapter
+#   yakcc-incentives-sol     # Solana adapter
+#   yakcc-incentives-ln      # Lightning Network adapter
+#   ... (whatever the community produces)
 ```
 
 Three properties of this decomposition:
@@ -201,13 +211,20 @@ Three properties of this decomposition:
 2. **`@yakcc/federation` is chain-agnostic.** Nothing in this package
    imports a specific chain, a specific token, or a specific consensus
    layer. It speaks attestations and content-addressed mirroring. F1, F2,
-   F3 all live here. The only chain-bound package is `@yakcc/incentives`.
-3. **`@yakcc/incentives` is the only package that touches a chain.** This
-   isolation is deliberate. A user who wants F1/F2/F3 capability without
-   any economic exposure installs `@yakcc/federation` and not
-   `@yakcc/incentives`. The cornerstone (no ownership) is preserved
-   because incentives reward *compute and verification labor*, not
-   *authorship of blocks*.
+   F3 all live here. No package in this repo is chain-bound
+   (see DEC-F4-PROTOCOL-SPLIT-001).
+3. **`@yakcc/incentives` ships the F4 protocol surface and the hashcash
+   reference adapter — no chain dependency.** The protocol-vs-chain split
+   (DEC-F4-PROTOCOL-SPLIT-001) means yakcc-the-compiler never imports a
+   chain. Chain-bound stake/slash/payout settlement lives in downstream
+   adapter packages (e.g. `yakcc-incentives-eth`) that yakcc does NOT
+   publish or maintain. A user who wants F4 features without any chain
+   exposure installs `@yakcc/incentives` and uses the hashcash reference
+   adapter. A user who wants real on-chain economics installs a downstream
+   adapter alongside `@yakcc/incentives`. Either way, the cornerstone
+   (no ownership) is preserved because incentives reward *compute and
+   verification labor*, not *authorship of blocks*, and yakcc-the-compiler
+   never owns a chain.
 
 Each package has its own README with its contract, its public surface, and
 its non-goals. The dependency graph is a DAG: `@yakcc/incentives` depends
@@ -218,9 +235,12 @@ not know about chains.
 @decision: DEC-FED-002 — Package decomposition. `@yakcc/core` ships the full
 substrate (v0..v2). `@yakcc/federation` is the F1+ optional sidecar
 (attestation lookup, content mirroring, attestation publishing, ZK
-supply-chain proofs). `@yakcc/incentives` is the F4-only chain-bound
-sidecar. Dependencies flow `incentives → federation → core`; never the
-reverse.
+supply-chain proofs). `@yakcc/incentives` is the F4-only protocol sidecar
+(F4 protocol surface + ChainAdapter interface + hashcash reference adapter;
+no chain dependency in-repo; see DEC-F4-PROTOCOL-SPLIT-001). Dependencies
+flow `incentives → federation → core`; never the reverse. Chain-bound
+adapters (downstream, not in this repo) depend on `@yakcc/incentives` as
+a leaf — yakcc never depends on them.
 
 ---
 
@@ -498,6 +518,88 @@ slashing curve, or an informal social commitment formalized later? The
 answer shapes whether F4 needs a separate governance-bond registry or
 whether it reuses the verifier-citizen staking pool. Likely needs its own
 section in a future F4 governance design document.
+
+---
+
+## F4 protocol-vs-chain split (architectural decision)
+
+@decision DEC-F4-PROTOCOL-SPLIT-001
+@title Yakcc owns the F4 protocol surface; chain-bound payout settlement lives in a downstream project
+@status accepted
+@rationale Bundling chain implementation into yakcc would couple the compiler's
+  release timeline to chain audit, tokenomics design, and regulatory review;
+  would force yakcc to pick a single chain and bake it into the cornerstone;
+  and would violate the "no ownership" thesis by binding the compiler to
+  a token economy. Splitting at the abstract ChainAdapter interface preserves
+  cornerstone integrity, lets multiple chain implementations coexist, and
+  lets F4 features be testable today via the hashcash reference adapter
+  without any crypto exposure.
+
+### What yakcc owns (single repo, this codebase)
+
+- The F4 **protocol surface** — message formats and semantics: stake commitments,
+  refinement claims, slash events, attestation chains, canonical-spec
+  promotions, governance bonds.
+- **All deterministic verification and coordination logic**:
+  - Canonical spec registry + promotion machinery (`DEC-F4-THREAT-CANONICAL-SPEC-001`)
+  - Submission anti-DoS engine (collateral commitment OR hashcash) (`DEC-F4-THREAT-DOS-COLLATERAL-001`)
+  - Dynamic-benchmark engine + hidden-corpus split (`DEC-F4-THREAT-BENCHMARK-DYNAMIC-001`)
+  - VRF committee selection (against an abstract randomness source) (`DEC-F4-THREAT-VRF-COMMITTEE-001`)
+  - Proof-converter shadow process (`DEC-F4-THREAT-CONVERTER-SHADOW-001`)
+- The abstract `ChainAdapter` interface (next subsection).
+- A **hashcash reference adapter** that implements `ChainAdapter` against
+  in-memory accounting + Proof-of-Work submission gating. Lets F4 features
+  ship and be tested without ANY chain integration. Cornerstone-aligned:
+  no token, no on-chain identity, no economic exposure.
+
+### What downstream chain-projects own (separate repos, separate teams, separate timelines)
+
+- Token contract (chain-specific: ERC-20, SPL, Lightning HTLCs, etc.)
+- On-chain stake/slash settlement
+- Real verifiable randomness source (Chainlink VRF, on-chain BFT randomness, etc.)
+- Governance-bond enforcement
+- Bounty payout settlement
+- Chain transaction plumbing
+- Tokenomics design, regulatory review, security audit of the financial layer
+
+A downstream chain-project depends on `@yakcc/incentives` and implements the
+`ChainAdapter` interface. It is a leaf in the dependency graph — yakcc never
+depends on it.
+
+### The `ChainAdapter` interface (abstract)
+
+The exact TypeScript signature is part of WI-F4-2 (see `~/.claude/plans/v1-vision-wave-2.md`
+future-WI block when it lands), but the operations are:
+
+- `commitStake(holder, amount, blockId): Promise<StakeReceipt>` — record a stake commitment against a block
+- `slash(holder, amount, reason): Promise<SlashReceipt>` — destroy stake; the funds go to the protocol-defined beneficiary (PoF miner who found the violation, refinement-committee majority, etc.)
+- `payout(beneficiary, amount, reason): Promise<PayoutReceipt>` — transfer settled funds to a successful party
+- `getRandomness(seed: bytes32): Promise<bytes32>` — produce verifiable randomness for VRF committee selection
+- `recordAttestation(attestation: AttestationBundle): Promise<AttestationReceipt>` — persist a public attestation in whatever the chain's anchoring mechanism is
+- `queryHolder(holder): Promise<HolderState>` — read current stake/balance state
+
+The hashcash reference adapter implements these operations against in-memory
+state with Proof-of-Work submission gating in place of token cost. Reading is
+free; writing requires solving a PoW puzzle whose difficulty auto-tracks the
+network's expected fuzz cost (per `DEC-F4-THREAT-DOS-COLLATERAL-001`).
+
+A chain-bound adapter implements the same operations against an actual chain.
+Slashing on the chain adapter destroys real value; on the hashcash adapter,
+slashing destroys reputation tokens that have no off-protocol meaning.
+
+### Cornerstone integrity
+
+This split preserves the "no ownership" cornerstone in two senses:
+
+1. **No copyright/IP ownership** — unchanged by F4. Triplets remain content-addressed,
+   author-anonymous, permissive-licensed. The chain layer doesn't change this.
+2. **No chain ownership of yakcc** — yakcc-the-compiler never owns a chain. A chain-project
+   that adopts yakcc owns its chain; whether that chain "owns" yakcc culturally is a
+   downstream concern, not a yakcc one. The dependency graph
+   (`@yakcc/incentives` ← downstream-chain-adapter) makes the boundary explicit.
+
+This is consistent with FEDERATION.md's existing thesis (line 36-40): F4 is opt-in,
+F0 is first-class, the registry is a commons not a marketplace.
 
 ---
 
@@ -1059,7 +1161,7 @@ reference, not silent edits.
 | DEC-ID | Decision |
 |---|---|
 | DEC-FED-001 | Substrate (v-axis), trust/scale (F-axis), and verification (L-axis) are orthogonal. A user sits at any `(v, F, L)` coordinate. Federation features are imported, not inherited; the F0 single-machine deployment is first-class at every substrate level. |
-| DEC-FED-002 | Package decomposition. `@yakcc/core` ships the full substrate (v0..v2). `@yakcc/federation` is the F1+ optional sidecar (attestation lookup, content mirroring, attestation publishing, ZK supply-chain proofs). `@yakcc/incentives` is the F4-only chain-bound sidecar. Dependencies flow `incentives → federation → core`; never the reverse. |
+| DEC-FED-002 | Package decomposition. `@yakcc/core` ships the full substrate (v0..v2). `@yakcc/federation` is the F1+ optional sidecar (attestation lookup, content mirroring, attestation publishing, ZK supply-chain proofs). `@yakcc/incentives` is the F4-only protocol sidecar (F4 protocol surface + ChainAdapter interface + hashcash reference adapter; no chain dependency in-repo; see DEC-F4-PROTOCOL-SPLIT-001). Dependencies flow `incentives → federation → core`; never the reverse. Chain-bound adapters (downstream) depend on `@yakcc/incentives` as a leaf — yakcc never depends on them. |
 | DEC-FED-003 | DA layer for F3+ is selected empirically. IPFS pinning is the cheap default; cryptoeconomic DA (Celestia, EigenDA) is the upgrade path if pinning proves insufficient. The architecture supports both; specific selection deferred to F4 implementation. |
 | DEC-FED-004 | Slashing is deprecation of the failing block at the registry level, not seizure of submitter assets. The cornerstone forbids submitter identity; there is no asset to seize. A block losing selection because PoF found a counterexample is the economic consequence; the public-domain commitment is preserved. |
 | DEC-FED-005 | F4 economic primitives: Proof of Fuzz (rewards finding contract deviations; deprecates failing blocks), Bounties (reward synthesizers of unmatched proposals; batch-resolution windows mitigate front-running), Stake-to-Refine (refinement claims require stake; benchmarker-verified; failed/backdoored claims burn stake). The canonicalization engine collapses duplicates before resolution. L3 attestations earn ~10x L2 to populate the proof tier; TCB unsoundness bounties earn ~10x completeness bounties. |
@@ -1070,3 +1172,4 @@ reference, not silent edits.
 | DEC-F4-THREAT-BENCHMARK-DYNAMIC-001 | Refinement-claim benchmark suites are dynamic: generated by PoF fuzzer AFTER submission (no pre-tuning); split 20/80 public/hidden; AST canonicalizer penalizes cyclomatic-complexity patterns consistent with input overfitting. Hidden 80% evaluated by VRF-selected committee only. |
 | DEC-F4-THREAT-VRF-COMMITTEE-001 | Refinement-claim validation uses VRF-selected committees from staked verifier-citizens (F2+ staking extends to F4 validation labor). VRF input = refinement claim content-address + network epoch seed (neither submitter-controllable). Consensus slashing: a verifier whose vote diverges from committee majority loses stake proportional to divergence; Sybil attacks require >50% of total staked verifier weight. |
 | DEC-F4-THREAT-CONVERTER-SHADOW-001 | Proof-converter agents (for L3 attestation migration across verifier-engine upgrades) must: (1) be L3-verified blocks with a machine-checked correctness lemma under the old engine, (2) operate under a shadow-verification window (default: one F4 epoch) during which 1% of conversions are independently re-verified, (3) abort entirely on a single shadow-sample failure with governance bond slashed. No auto-conversion without a machine-checked correctness lemma. |
+| DEC-F4-PROTOCOL-SPLIT-001 | F4 protocol-vs-chain split. Yakcc owns the F4 protocol surface + all deterministic verification/coordination logic + the abstract `ChainAdapter` interface + a hashcash reference adapter. Chain-bound payout settlement (token contracts, on-chain stake/slash, real VRF, etc.) lives in downstream projects that implement `ChainAdapter`. Yakcc-the-compiler never owns a chain; the hashcash adapter lets F4 features ship and be tested without any crypto exposure. Multiple chain implementations can coexist without yakcc picking winners. |
