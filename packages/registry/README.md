@@ -36,10 +36,44 @@ Block identity is derived via `blockMerkleRoot()` over `(spec, impl, proofManife
 
 Selection among multiple matches uses strictness ordering followed by non-functional property scoring.
 
+## Vector search
+
+`findCandidatesByIntent(intentCard, options?)` is the semantic retrieval path. It
+derives a query text from the intent card (behavior string + `"name: typeHint"` for
+each input and output), generates an embedding via the same provider used at write
+time, and runs a KNN query against the `contract_embeddings` vec0 table.
+
+```ts
+// Find the 5 blocks closest to an intent card, reranked by structural score
+const results = await registry.findCandidatesByIntent(
+  { behavior: "parse integer list from JSON string", inputs: [], outputs: [] },
+  { k: 5, rerank: "structural" },
+);
+for (const r of results) {
+  console.log(r.cosineDistance, r.structuralScore, r.block.blockMerkleRoot);
+}
+```
+
+`FindCandidatesOptions`:
+- `k` — number of nearest neighbours (default: 10)
+- `rerank` — `"none"` (default, order by cosine distance ascending) or
+  `"structural"` (reorder by `(1 - cosineDistance) + structuralScore` descending)
+
+`CandidateMatch`:
+- `block: BlockTripletRow` — the full persisted block
+- `cosineDistance: number` — raw KNN distance (lower = more similar)
+- `structuralScore?: number` — present only when `rerank: "structural"` was requested
+
+`IntentQuery` (the input shape) is structurally compatible with `@yakcc/shave`'s
+`IntentCard` — any `IntentCard` value can be passed directly without conversion.
+See `DEC-VECTOR-RETRIEVAL-004` in `packages/registry/src/index.ts` for why the
+types are structurally-equivalent rather than imported.
+
 ## What is not yet wired
 
-- **No `findCandidatesByIntent(intent)` query API** — vector embeddings are stored but not queried at runtime. Similarity search over stored embeddings is planned as WI-025 (see `~/.claude/plans/v1-vision-wave-2.md`).
-- **No federation publishing path** — the F1 read-only mirror (`@yakcc/federation`, WI-020) is reviewer-blocked pending WI-022b alignment of `blockMerkleRoot()` with the contracts formula.
+- **Federation publishing path (F2+)**: the F1 read-only mirror (`@yakcc/federation`)
+  covers content-addressed pull only. F2+ (block submission, dispute adjudication)
+  is deferred. See `FEDERATION.md` for the F0..F4 axis.
 
 ## How callers consume this package
 
