@@ -19,6 +19,7 @@
 // messages, error() for stderr-level messages. All command signatures remain stable;
 // the logger is an optional final parameter defaulting to CONSOLE_LOGGER.
 
+import { bootstrap } from "./commands/bootstrap.js";
 import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
@@ -98,6 +99,10 @@ COMMANDS
   seed [--registry <p>]               Ingest the seed corpus into the registry
   shave <path> [--registry <p>]       Shave a TS source file into atoms via universalize
         [--offline]
+  bootstrap [--registry <p>]          Shave the whole project and write a deterministic manifest
+            [--report <p>]            (default registry: bootstrap/yakcc.registry.sqlite)
+            [--manifest <p>]          (default manifest: bootstrap/expected-roots.json)
+            [--root <dir>]            Project root to walk (default: cwd)
   hooks claude-code install           Install /yakcc slash command for Claude Code
                 [--target <dir>]      Target project directory (default: .)
   federation serve --registry <p>     Start a read-only HTTP registry server
@@ -178,6 +183,12 @@ export async function runCli(
     case "shave": {
       const shaveArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return shave(shaveArgv, logger);
+    }
+
+    case "bootstrap": {
+      // bootstrap has no positional; subcommand may be a flag like --registry.
+      const bootstrapArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return bootstrap(bootstrapArgv, logger);
     }
 
     case "federation": {
