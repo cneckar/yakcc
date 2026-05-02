@@ -1,0 +1,25 @@
+{
+  "name": "@v1-federation-demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p .",
+    "test": "vitest run --reporter=verbose"
+  },
+  "dependencies": {
+    "@yakcc/cli": "workspace:*",
+    "@yakcc/compile": "workspace:*",
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/federation": "workspace:*",
+    "@yakcc/registry": "workspace:*",
+    "@yakcc/seeds": "workspace:*",
+    "@yakcc/shave": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.9.0",
+    "vitest": "^4.1.5"
+  }
+}
