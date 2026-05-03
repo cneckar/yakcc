@@ -3,16 +3,29 @@
 // Opens the registry via @yakcc/registry.openRegistry(), delegates all pipeline logic
 // to shaveImpl(), and prints a human-readable summary. Error paths follow the
 // established pattern from seed.ts and compile.ts: catch, log to logger.error(), return 1.
-// Status: updated (WI-V2-04 L4: --foreign-policy flag added)
+// Status: updated (WI-V2-04 L5: foreign-policy gate output added)
 // Rationale: Keeps the CLI layer thin — argument parsing, registry open/close, and
 // output formatting live here; pipeline logic stays in @yakcc/shave. Matches the
 // `(argv, logger) → Promise<number>` contract shared by all yakcc commands.
+//
+// L5 additions:
+//   - 'reject' policy: shaveImpl() throws ForeignPolicyRejectError; caught here,
+//     formatted to stderr ("error: shave failed: foreign-policy reject: pkg#export,..."),
+//     returns exit code 1. (L5-I3)
+//   - 'tag' policy: shaveImpl() returns ShaveResultWithForeign.foreignDeps;
+//     when non-empty, emit "foreign deps: pkg#export[, ...]" to stdout. (L5-I4)
+//   - 'allow' policy: no change — shaveImpl() returns no foreignDeps. (L5-I5)
 
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
-import { FOREIGN_POLICY_DEFAULT, type ForeignPolicy, shave as shaveImpl } from "@yakcc/shave";
+import {
+  FOREIGN_POLICY_DEFAULT,
+  type ForeignPolicy,
+  ForeignPolicyRejectError,
+  shave as shaveImpl,
+} from "@yakcc/shave";
 import type { Logger } from "../index.js";
 
 /** Valid values for --foreign-policy. */
@@ -118,8 +131,24 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
     if (result.diagnostics.stubbed.length > 0) {
       logger.log(`  stubbed: ${result.diagnostics.stubbed.join(", ")}`);
     }
+    // L5-I4: emit "foreign deps:" summary line when policy is 'tag' and deps exist.
+    // result.foreignDeps is set by the shave() policy gate when policy === 'tag'.
+    // It is undefined for 'allow' (silent accept per L5-I5).
+    // It is never reached for 'reject' (ForeignPolicyRejectError is thrown instead).
+    if (result.foreignDeps !== undefined && result.foreignDeps.length > 0) {
+      const depTokens = result.foreignDeps.map((d) => `${d.pkg}#${d.export}`).join(", ");
+      logger.log(`foreign deps: ${depTokens}`);
+    }
     return 0;
   } catch (err) {
+    // L5-I3: ForeignPolicyRejectError carries a structured message that already
+    // includes "foreign-policy reject: pkg#export[, ...]". Catching it here lets
+    // the generic catch re-use the same logger.error path, so the stderr line
+    // naturally contains both the package name and the export name.
+    if (err instanceof ForeignPolicyRejectError) {
+      logger.error(`error: shave failed: ${err.message}`);
+      return 1;
+    }
     const e = err as Error;
     logger.error(`error: shave failed: ${e.message}`);
     return 1;

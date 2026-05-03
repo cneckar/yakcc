@@ -1,12 +1,15 @@
 /**
- * shave.test.ts — unit tests for `yakcc shave` command argument parsing and error paths.
+ * shave.test.ts — unit tests for `yakcc shave` command argument parsing, error paths,
+ * and L5 foreign-policy gate e2e behavior.
  *
  * Production sequence exercised:
  *   shave(argv, logger) → parseArgs → openRegistry → shaveImpl → ShaveResult output
  *
- * These tests cover argument parsing and error paths without requiring a live
- * shave pipeline (which needs ANTHROPIC_API_KEY and a real source file). The
- * full happy path is covered by @yakcc/shave's own test suite.
+ * Suites 1–6: argument parsing and error paths (no live pipeline needed).
+ * Suite 7 (L5 e2e): foreign-policy gate behavior against real on-disk fixture files.
+ *   - The shave pipeline runs with default strategy="static" (no ANTHROPIC_API_KEY needed).
+ *   - Fixture files live in packages/shave/src/__fixtures__/ per L5-I1.
+ *   - Real on-disk fixture files are required (NOT inline strings) per L5 real-path check.
  *
  * Tests:
  *   1. --help flag: returns 0 and logs usage text
@@ -18,6 +21,14 @@
  *   7. --foreign-policy bogus: returns 1 with clear error (L4)
  *   8. --foreign-policy tag: value parsed to ShaveOptions.foreignPolicy (L4)
  *   9. Default (flag omitted): resolves to FOREIGN_POLICY_DEFAULT constant 'tag' (L4)
+ *  L5.1. reject vs fixture A: exit 1 + stderr contains 'node:fs' and 'readFileSync'
+ *  L5.2. tag vs fixture A: exit 0 + stdout 'node:fs#readFileSync' line
+ *  L5.3. allow vs fixture A: exit 0 + no foreign-deps summary line
+ *  L5.4. Default (omitted) = tag vs fixture A
+ *  L5.5. tag vs fixture B: stdout lists 'sqlite-vec#load'
+ *  L5.6. tag vs fixture C: stdout lists 'ts-morph#Project'
+ *  L5.7. Negative fixture: no foreign-deps summary under any policy
+ *  L5.8. Combined fixture (two deps): both in source-declaration order
  *
  * CLI smoke test note (Required real-path check): all tests invoke the actual
  * shaveCommand entry point (shave()) with real argv arrays. No argv parser is mocked.
@@ -27,16 +38,55 @@
  * ANTHROPIC_API_KEY and a real TS file. Sacred Practice #5: mocks only for external
  * boundaries; the registry open failure is a natural error boundary exercised by
  * pointing at a nonexistent directory.
- * Status: updated (WI-V2-04 L4: --foreign-policy tests added)
+ * Status: updated (WI-V2-04 L5: foreign-policy gate e2e tests added)
+ *
+ * @decision DEC-CLI-SHAVE-TEST-L5-001
+ * title: L5 e2e tests run full shave pipeline with strategy="static" (no API key)
+ * status: decided (WI-V2-04 L5)
+ * rationale:
+ *   The shave pipeline's default intentStrategy is "static" (DEC-INTENT-STRATEGY-001),
+ *   which uses the TypeScript Compiler API and JSDoc parser — no ANTHROPIC_API_KEY
+ *   required. This lets L5 tests exercise the complete production sequence
+ *   (parse → license gate → extractIntent → decompose → slice → policy gate)
+ *   against real fixture files without external dependencies.
+ *
+ *   The fixture files are the canonical on-disk sources per L5-I1. Tests pass
+ *   the absolute fixture path directly to the CLI so the test validates the
+ *   real production sequence, not a mock or inline string.
+ *
+ *   Registry: a fresh SQLite registry is created in a temp dir for the L5 suite.
+ *   This matches the production path (openRegistry → shaveImpl → result).
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FOREIGN_POLICY_DEFAULT } from "@yakcc/shave";
 import { CollectingLogger } from "../index.js";
 import { shave } from "./shave.js";
+
+// ---------------------------------------------------------------------------
+// Fixture directory — real on-disk .ts files (L5-I1)
+// ---------------------------------------------------------------------------
+
+// Navigate from packages/cli/src/commands/ to packages/shave/src/__fixtures__/
+// HERE = packages/cli/src/commands/
+// Four levels up lands at the repo root (worktree root).
+// Then descend into packages/shave/src/__fixtures__/.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURE_DIR = join(
+  HERE,
+  "..",
+  "..",
+  "..",
+  "..",
+  "packages",
+  "shave",
+  "src",
+  "__fixtures__",
+);
 
 // ---------------------------------------------------------------------------
 // Suite lifecycle — temp directory for test fixtures
@@ -222,5 +272,202 @@ describe("--foreign-policy validation (WI-V2-04 L4)", () => {
     expect(logger.errLines.some((l) => l.includes("missing source path"))).toBe(true);
     // No foreign-policy error when the flag is omitted — the default is valid.
     expect(logger.errLines.every((l) => !l.includes("foreign-policy"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 7 (L5 e2e): foreign-policy gate behavior against real on-disk fixtures
+//
+// @decision DEC-CLI-SHAVE-TEST-L5-001 (see module header above)
+// Each test below runs the full shave pipeline (strategy="static") against a
+// real on-disk fixture .ts file.  A per-test SQLite registry is created in
+// suiteDir so test isolation is guaranteed.
+//
+// FIXTURE_DIR is computed at module load from __filename → packages/shave/src/__fixtures__/
+// (L5-I1).  Absolute paths are passed directly to the CLI; no relative paths.
+//
+// Required real-path checks (per workflow_contract):
+//   - Tests invoke the actual shave() CLI entry point (not inline strings).
+//   - Fixture C uses real ts-morph (Project is resolved via the installed package).
+//   - Registry is a fresh SQLite file per test.
+// ---------------------------------------------------------------------------
+
+describe("L5 foreign-policy gate e2e", () => {
+  /**
+   * L5.1 — reject vs fixture A (node:fs#readFileSync)
+   * Contract: exit code 1, stderr line contains both 'node:fs' and 'readFileSync'.
+   * (L5-I3: reject throws ForeignPolicyRejectError; CLI formats to stderr and exits 1)
+   */
+  it("L5.1: --foreign-policy reject against fixture A exits 1 and stderr names node:fs and readFileSync", async () => {
+    const registryPath = join(suiteDir, "l5-1-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-node-fs.ts");
+    const logger = new CollectingLogger();
+
+    const code = await shave(
+      [fixturePath, "--registry", registryPath, "--foreign-policy", "reject"],
+      logger,
+    );
+
+    expect(code).toBe(1);
+    // Stderr must contain both the package and the export name (L5-I3).
+    const stderrAll = logger.errLines.join("\n");
+    expect(stderrAll).toContain("node:fs");
+    expect(stderrAll).toContain("readFileSync");
+  });
+
+  /**
+   * L5.2 — tag vs fixture A (node:fs#readFileSync)
+   * Contract: exit code 0, stdout contains a line with 'node:fs#readFileSync'.
+   * (L5-I4: tag policy emits "foreign deps: pkg#export[, ...]" to stdout)
+   */
+  it("L5.2: --foreign-policy tag against fixture A exits 0 and stdout lists node:fs#readFileSync", async () => {
+    const registryPath = join(suiteDir, "l5-2-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-node-fs.ts");
+    const logger = new CollectingLogger();
+
+    const code = await shave(
+      [fixturePath, "--registry", registryPath, "--foreign-policy", "tag"],
+      logger,
+    );
+
+    expect(code).toBe(0);
+    // stdout must include the foreign deps summary token (L5-I4).
+    const stdoutAll = logger.logLines.join("\n");
+    expect(stdoutAll).toContain("node:fs#readFileSync");
+  });
+
+  /**
+   * L5.3 — allow vs fixture A (node:fs#readFileSync)
+   * Contract: exit code 0, NO "foreign deps:" summary line in any output.
+   * (L5-I5: allow policy silently accepts; no summary emitted)
+   */
+  it("L5.3: --foreign-policy allow against fixture A exits 0 with no foreign-deps summary", async () => {
+    const registryPath = join(suiteDir, "l5-3-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-node-fs.ts");
+    const logger = new CollectingLogger();
+
+    const code = await shave(
+      [fixturePath, "--registry", registryPath, "--foreign-policy", "allow"],
+      logger,
+    );
+
+    expect(code).toBe(0);
+    // Neither stdout nor stderr should contain a foreign-deps summary (L5-I5).
+    const allOutput = [...logger.logLines, ...logger.errLines].join("\n");
+    expect(allOutput).not.toContain("foreign deps:");
+  });
+
+  /**
+   * L5.4 — Default (flag omitted) against fixture A behaves identically to tag.
+   * Contract: exit code 0, stdout lists 'node:fs#readFileSync'.
+   * (I-X3: FOREIGN_POLICY_DEFAULT is 'tag'; omitting the flag must use that default)
+   */
+  it("L5.4: default (no --foreign-policy) against fixture A behaves like tag", async () => {
+    const registryPath = join(suiteDir, "l5-4-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-node-fs.ts");
+    const logger = new CollectingLogger();
+
+    // No --foreign-policy flag; FOREIGN_POLICY_DEFAULT ('tag') must be used.
+    const code = await shave([fixturePath, "--registry", registryPath], logger);
+
+    expect(code).toBe(0);
+    const stdoutAll = logger.logLines.join("\n");
+    expect(stdoutAll).toContain("node:fs#readFileSync");
+  });
+
+  /**
+   * L5.5 — tag vs fixture B (sqlite-vec#load aliased as loadVec)
+   * Contract: exit code 0, stdout lists 'sqlite-vec#load'.
+   * (L5-I4: the aliased export is classified by the original name, not the local alias)
+   */
+  it("L5.5: --foreign-policy tag against fixture B exits 0 and lists sqlite-vec#load", async () => {
+    const registryPath = join(suiteDir, "l5-5-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-sqlite-vec.ts");
+    const logger = new CollectingLogger();
+
+    const code = await shave(
+      [fixturePath, "--registry", registryPath, "--foreign-policy", "tag"],
+      logger,
+    );
+
+    expect(code).toBe(0);
+    const stdoutAll = logger.logLines.join("\n");
+    expect(stdoutAll).toContain("sqlite-vec#load");
+  });
+
+  /**
+   * L5.6 — tag vs fixture C (ts-morph#Project)
+   * Contract: exit code 0, stdout lists 'ts-morph#Project'.
+   * Real-path check: ts-morph is the actual installed package; no mocking.
+   */
+  it("L5.6: --foreign-policy tag against fixture C exits 0 and lists ts-morph#Project", async () => {
+    const registryPath = join(suiteDir, "l5-6-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-ts-morph.ts");
+    const logger = new CollectingLogger();
+
+    const code = await shave(
+      [fixturePath, "--registry", registryPath, "--foreign-policy", "tag"],
+      logger,
+    );
+
+    expect(code).toBe(0);
+    const stdoutAll = logger.logLines.join("\n");
+    expect(stdoutAll).toContain("ts-morph#Project");
+  });
+
+  /**
+   * L5.7 — Negative fixture under all three policies: no foreign-deps summary.
+   * The negative fixture has only `import type` (erased), relative imports, and
+   * workspace imports — none are foreign (L5-I1 / negative case).
+   * Contract: under allow, reject, and tag — no foreign-deps summary and no
+   * ForeignPolicyRejectError (exit 0 for all three policies).
+   */
+  it.each([
+    ["allow", "l5-7a-registry.sqlite"],
+    ["reject", "l5-7b-registry.sqlite"],
+    ["tag", "l5-7c-registry.sqlite"],
+  ] as const)(
+    "L5.7: --foreign-policy %s against negative fixture produces no foreign-deps entries",
+    async (policy, registryFile) => {
+      const registryPath = join(suiteDir, registryFile);
+      const fixturePath = join(FIXTURE_DIR, "foreign-negative.ts");
+      const logger = new CollectingLogger();
+
+      const code = await shave(
+        [fixturePath, "--registry", registryPath, "--foreign-policy", policy],
+        logger,
+      );
+
+      // No foreign deps → no rejection error and no summary line.
+      expect(code).toBe(0);
+      const allOutput = [...logger.logLines, ...logger.errLines].join("\n");
+      expect(allOutput).not.toContain("foreign deps:");
+    },
+  );
+
+  /**
+   * L5.8 — tag vs combined fixture (node:fs#readFileSync + ts-morph#Project)
+   * Contract: exit code 0, stdout lists both tokens in source-declaration order.
+   * (L5-I4: "foreign deps: node:fs#readFileSync, ts-morph#Project")
+   */
+  it("L5.8: --foreign-policy tag against combined fixture lists both deps in source order", async () => {
+    const registryPath = join(suiteDir, "l5-8-registry.sqlite");
+    const fixturePath = join(FIXTURE_DIR, "foreign-combined.ts");
+    const logger = new CollectingLogger();
+
+    const code = await shave(
+      [fixturePath, "--registry", registryPath, "--foreign-policy", "tag"],
+      logger,
+    );
+
+    expect(code).toBe(0);
+    const stdoutAll = logger.logLines.join("\n");
+    // Both tokens must be present (L5-I4).
+    expect(stdoutAll).toContain("node:fs#readFileSync");
+    expect(stdoutAll).toContain("ts-morph#Project");
+    // Source-declaration order: node:fs appears before ts-morph (L5-I4).
+    expect(stdoutAll.indexOf("node:fs#readFileSync")).toBeLessThan(
+      stdoutAll.indexOf("ts-morph#Project"),
+    );
   });
 });

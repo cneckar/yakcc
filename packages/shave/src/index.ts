@@ -194,6 +194,7 @@ export { validateIntentCard } from "./intent/validate-intent-card.js";
 // Error classes — exported as named classes so callers can use instanceof.
 export {
   AnthropicApiKeyMissingError,
+  ForeignPolicyRejectError,
   IntentCardSchemaError,
   LicenseRefusedError,
   OfflineCacheMissError,
@@ -292,6 +293,62 @@ export type {
 } from "./license/types.js";
 
 // ---------------------------------------------------------------------------
+// WI-V2-04 L5: foreign-policy gate public surface
+// ---------------------------------------------------------------------------
+
+/**
+ * A single foreign dependency reference surfaced by the shave() policy gate.
+ *
+ * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-L5: ForeignRef)
+ * title: ForeignRef — public (pkg, export) token for policy-gate output
+ * status: decided (WI-V2-04 L5)
+ * rationale:
+ *   shave() needs to surface foreign-dep information to callers (CLI, tests)
+ *   without modifying ShaveResult (types.ts is L4-owned and frozen for L5).
+ *   ForeignRef is a minimal structural type: the pkg specifier and the export
+ *   name as emitted by classifyForeign(). For namespace imports, export is "*".
+ *   The CLI renders these as "pkg#export" tokens in the summary line.
+ */
+export interface ForeignRef {
+  /** Module specifier as written in the source, e.g. 'node:fs', 'ts-morph'. */
+  readonly pkg: string;
+  /** Imported binding name, e.g. 'readFileSync', 'Project', '*', 'default'. */
+  readonly export: string;
+}
+
+/**
+ * Extends ShaveResult with an optional foreignDeps field populated by the
+ * policy gate when foreignPolicy === 'tag'. The field is absent for 'allow'
+ * (silently accepted) and never reached for 'reject' (which throws).
+ *
+ * Using a structural extension rather than modifying ShaveResult (types.ts)
+ * preserves L4 type stability while allowing L5 to surface foreign-dep info
+ * to callers without an opaque side channel.
+ *
+ * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-L5: ShaveResultWithForeign)
+ * title: ShaveResultWithForeign extends ShaveResult for tag-policy output
+ * status: decided (WI-V2-04 L5)
+ * rationale:
+ *   types.ts is frozen (L4-owned). ShaveResult cannot be modified in L5.
+ *   Extending via a subtype in index.ts (allowed scope) keeps the change
+ *   additive and non-breaking: callers that only care about the base fields
+ *   see no difference; callers that check foreignDeps (e.g. the CLI) cast
+ *   to ShaveResultWithForeign or narrow via optional-field access.
+ *
+ *   The single source of truth for foreignDeps is the ForeignLeafEntry records
+ *   in result.slicePlan after universalize() returns. No parallel tracking.
+ */
+export interface ShaveResultWithForeign extends ShaveResult {
+  /**
+   * Foreign dependency refs surfaced when foreignPolicy === 'tag'.
+   * Absent (undefined) when policy is 'allow' (silent accept).
+   * Never populated for 'reject' (which throws ForeignPolicyRejectError).
+   * Empty array when policy is 'tag' but no foreign deps were found.
+   */
+  readonly foreignDeps?: readonly ForeignRef[] | undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Internal imports
 // ---------------------------------------------------------------------------
 
@@ -302,7 +359,7 @@ import {
   keyFromIntentInputs as _keyFromIntentInputs,
   sourceHash as _sourceHash,
 } from "./cache/key.js";
-import { LicenseRefusedError } from "./errors.js";
+import { ForeignPolicyRejectError, LicenseRefusedError } from "./errors.js";
 import {
   DEFAULT_MODEL,
   INTENT_PROMPT_VERSION,
@@ -316,6 +373,7 @@ import { detectLicense } from "./license/detector.js";
 import { licenseGate } from "./license/gate.js";
 import { locateProjectRoot } from "./locate-root.js";
 import { maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
+import { FOREIGN_POLICY_DEFAULT } from "./types.js";
 import type {
   CandidateBlock,
   IntentExtractionHook,
@@ -328,7 +386,7 @@ import type {
 import { decompose } from "./universalize/recursion.js";
 import { slice } from "./universalize/slicer.js";
 import type { BlockMerkleRoot } from "./universalize/types.js";
-import type { NovelGlueEntry, SlicePlanEntry } from "./universalize/types.js";
+import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
 // universalize() — wired to extractIntent + decompose + slice (WI-012-06)
@@ -546,7 +604,7 @@ export async function shave(
   sourcePath: string,
   registry: ShaveRegistryView,
   options?: ShaveOptions,
-): Promise<ShaveResult> {
+): Promise<ShaveResultWithForeign> {
   // @decision DEC-SHAVE-PIPELINE-001
   // title: shave() reads file, wraps as CandidateBlock, delegates to universalize()
   // status: decided
@@ -586,6 +644,51 @@ export async function shave(
 
   // Step 3: Run through universalize() — errors propagate unwrapped.
   const result = await universalize(candidate, registry, options);
+
+  // Step 3b: Foreign-policy gate — enforced AFTER slice() returns, NOT inside slicer.ts.
+  //
+  // @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-L5: policy gate enforcement)
+  // title: foreignPolicy gate runs in shave() after universalize() returns (L5)
+  // status: decided (WI-V2-04 L5)
+  // rationale:
+  //   L5-I2: the gate must run at the shave entry point, not inside slicer.ts
+  //   (L3-owned) or universalize() internals. Placing it here lets universalize()
+  //   and slice() remain pure of policy concerns — they always emit ForeignLeafEntry
+  //   for detected foreign imports regardless of policy. The gate consumes the
+  //   already-produced slice plan and decides what to do with the foreign refs.
+  //
+  //   'reject' (L5-I3): throw ForeignPolicyRejectError with all (pkg, export) pairs
+  //   from the slice plan, in source-declaration order (DFS order from slice()).
+  //   The CLI catches ForeignPolicyRejectError and emits its message to stderr,
+  //   then returns exit code 1.
+  //
+  //   'tag' (L5-I4): collect foreign refs and include them in the returned
+  //   ShaveResultWithForeign.foreignDeps field. The CLI formats them as
+  //   "foreign deps: pkg#export[, ...]" on stdout and returns exit code 0.
+  //
+  //   'allow' (L5-I5): silently accept; foreignDeps is not set on the result.
+  //
+  //   Single-source-of-truth: FOREIGN_POLICY_DEFAULT in types.ts governs the
+  //   default; this gate reads options?.foreignPolicy ?? FOREIGN_POLICY_DEFAULT
+  //   so both agree on the same constant (I-X3 invariant).
+  const effectivePolicy = options?.foreignPolicy ?? FOREIGN_POLICY_DEFAULT;
+  const foreignLeaves = result.slicePlan.filter(
+    (e): e is ForeignLeafEntry => e.kind === "foreign-leaf",
+  );
+  const foreignRefs: readonly ForeignRef[] = foreignLeaves.map((e) => ({
+    pkg: e.pkg,
+    export: e.export,
+  }));
+
+  if (effectivePolicy === "reject" && foreignRefs.length > 0) {
+    // L5-I3: throw structured error with all foreign (pkg, export) pairs.
+    throw new ForeignPolicyRejectError(foreignRefs);
+  }
+
+  // For 'tag': foreignDeps is populated on the result (L5-I4).
+  // For 'allow': foreignDeps is left undefined (L5-I5 silent accept).
+  const foreignDeps: readonly ForeignRef[] | undefined =
+    effectivePolicy === "tag" ? foreignRefs : undefined;
 
   // Step 4: Persist novel atoms and translate UniversalizeResult into ShaveResult.
   //
@@ -688,6 +791,7 @@ export async function shave(
     atoms,
     intentCards: [result.intentCard],
     diagnostics: result.diagnostics,
+    foreignDeps,
   };
 }
 
