@@ -19,6 +19,18 @@
  *   return types are lowered via the general path. Inference policy is captured
  *   in @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-001 below.
  *
+ * bigint → i64 lowering (WI-V1W3-WASM-LOWER-04):
+ *   Functions with `bigint`-typed params or return type are lowered via the i64
+ *   domain. Detection: inferNumericDomain rule -1 checks TypeFlags.BigInt/BigIntLiteral
+ *   on the function signature; rule 7 scans the body for BigIntLiteral AST nodes.
+ *   New I64_BITOP_OPS table wires i64.and/or/xor/shl/shr_s/shr_u for bigint bitops.
+ *   BigInt(n) coercion emits i64.extend_i32_s (0xac) for i32→i64 widening.
+ *   Mixed bigint+number params are supported via per-param domain resolution in
+ *   _lowerNumericFunction; paramDomains is added to LoweringResult for callers
+ *   that build heterogeneous WASM type signatures.
+ *   Overflow semantics: WASM i64 wraps at 2^63; BigInt.asIntN(64, x) is the oracle.
+ *   @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (see inferNumericDomain and below)
+ *
  * Unknown node kinds:
  *   Per Sacred Practice #5 (fail loudly and early, never silently), any AST node
  *   kind not yet handled throws a `LoweringError` with kind "unsupported-node"
@@ -83,6 +95,7 @@
  */
 
 import {
+  type BigIntLiteral,
   type BinaryExpression,
   type Block,
   type CallExpression,
@@ -101,6 +114,7 @@ import {
   SyntaxKind,
   type TaggedTemplateExpression,
   type TemplateExpression,
+  TypeFlags,
   type VariableStatement,
 } from "ts-morph";
 
@@ -555,8 +569,11 @@ const F64_NUMBER_FUNCTIONS = new Set([
  * Classify the numeric domain of a function body by scanning the AST.
  *
  * Rules (highest priority first):
+ *   -1. bigint signature: any param or return type is `bigint` → i64 (WI-04)
+ *      Checked before rule 0 because bigint functions may also have boolean-adjacent
+ *      patterns, and bigint→i64 is the single-source-of-truth for bigint (option a).
  *   0. Boolean signature: if any param or return type is `boolean` → i32 (WI-03)
- *      This takes priority over all body-based rules because booleans ARE i32
+ *      This takes priority over body-based rules because booleans ARE i32
  *      in WASM (0/1), and the body will contain boolean literals (TrueKeyword/
  *      FalseKeyword) and logical operators (&&/||/!) rather than numeric hints.
  *   1. Any `/` (true division) binary operator → f64
@@ -565,7 +582,9 @@ const F64_NUMBER_FUNCTIONS = new Set([
  *   4. Any bitwise operator (& | ^ << >> >>> ~) → i32
  *   5. Any integer literal > 2^31-1 or < -2^31 (i64-range) → i64
  *   6. Math.floor/ceil/round/trunc usage → i32
- *   7. Ambiguous (no conclusive hint) → f64 with downgrade warning
+ *   7. BigIntLiteral in body (e.g. `123n`) → i64 (WI-04)
+ *      Body-level scan complement to rule -1 (signature scan).
+ *   8. Ambiguous (no conclusive hint) → f64 with downgrade warning
  *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-001 (see file header)
  * @decision DEC-V1-WAVE-3-WASM-LOWER-BOOL-DOMAIN-001
@@ -578,11 +597,54 @@ const F64_NUMBER_FUNCTIONS = new Set([
  *   Rule 0 inspects the function signature; if any param or return type text is
  *   "boolean", it short-circuits to i32. This is correct because all boolean WASM ops
  *   (i32.eqz, if/else/end, comparisons) operate on i32.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001
+ * @title Lower TS `bigint` to WASM i64 with documented overflow truncation
+ * @status accepted
+ * @rationale
+ *   JS BigInt is arbitrary-precision; WASM i64 is 64-bit two's-complement.
+ *   Option (a) chosen: emit i64 ops directly. `BigInt.asIntN(64, x)` is the parity
+ *   oracle for overflow boundary tests. Option (b) host-mediation deferred to v1-wave-4.
+ *   No host-contract amendment is required for option (a) because bigint values cross
+ *   the JS-WASM boundary as JS BigInt per the WASM JS API (i64 ↔ BigInt ABI).
+ *   Detection: rule -1 checks param/return TypeFlags for BigInt|BigIntLiteral;
+ *   rule 7 scans the body for BigIntLiteral SyntaxKind nodes. Both routes agree: a
+ *   function with a `bigint` param and a `123n` literal in the body infers i64 once.
  */
 function inferNumericDomain(fn: FunctionDeclaration): {
   domain: NumericDomain;
   warning: string | null;
 } {
+  // Rule -1: bigint signature → i64 domain
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (implementation site)
+  //
+  // Check param and return types via TypeChecker flags. TypeFlags.BigInt (64) covers
+  // `bigint` (the type keyword); TypeFlags.BigIntLiteral (2048) covers literal types
+  // like `123n`. BigIntLike = BigInt | BigIntLiteral covers both. We check via
+  // getType().getFlags() so the inference is typechecker-driven, not text-based.
+  // This handles: `(a: bigint)`, `(): bigint`, and `(a: 123n)` shapes uniformly.
+  const returnTypeNode = fn.getReturnTypeNode();
+  const returnTypeText = returnTypeNode?.getText() ?? "";
+  const params = fn.getParameters();
+
+  // Return type: bigint keyword or bigint literal type
+  const returnType = fn.getReturnType();
+  const returnTypeFlags = returnType.getFlags();
+  const returnIsBigInt =
+    (returnTypeFlags & TypeFlags.BigInt) !== 0 || (returnTypeFlags & TypeFlags.BigIntLiteral) !== 0;
+
+  // Any param with bigint type triggers i64
+  const anyParamBigInt = params.some((p) => {
+    const t = p.getType();
+    const f = t.getFlags();
+    return (f & TypeFlags.BigInt) !== 0 || (f & TypeFlags.BigIntLiteral) !== 0;
+  });
+
+  if (returnIsBigInt || anyParamBigInt) {
+    return { domain: "i64", warning: null };
+  }
+
   // Rule 0: pure-boolean signature → i32 domain
   // (WI-03 / DEC-V1-WAVE-3-WASM-LOWER-BOOL-DOMAIN-001)
   //
@@ -595,9 +657,6 @@ function inferNumericDomain(fn: FunctionDeclaration): {
   // (boolean return) naturally falls out as i32 from the comparison opcodes. Applying
   // rule 0 to mixed-signature functions (number params → boolean return) would wrongly
   // classify i64 or f64 arithmetic as i32 domain.
-  const returnTypeNode = fn.getReturnTypeNode();
-  const returnTypeText = returnTypeNode?.getText() ?? "";
-  const params = fn.getParameters();
   const allParamsBoolean =
     params.length === 0 ||
     params.every((p) => {
@@ -612,6 +671,7 @@ function inferNumericDomain(fn: FunctionDeclaration): {
   let hasBitop = false;
   let hasI64RangeLiteral = false;
   let hasIntegerFloorHint = false;
+  let hasBigIntLiteral = false;
 
   fn.forEachDescendant((node) => {
     const kind = node.getKind();
@@ -695,6 +755,15 @@ function inferNumericDomain(fn: FunctionDeclaration): {
         }
       }
     }
+
+    // Rule 7: BigIntLiteral in body → i64
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (body-scan complement to rule -1)
+    // A literal like `123n` in the function body triggers i64, complementing the
+    // signature-level check in rule -1. Both checks must agree: a function with a
+    // `bigint` param AND a `123n` literal infers i64 once (rule -1 short-circuits first).
+    if (kind === SyntaxKind.BigIntLiteral) {
+      hasBigIntLiteral = true;
+    }
   });
 
   // Priority resolution
@@ -704,7 +773,7 @@ function inferNumericDomain(fn: FunctionDeclaration): {
   if (hasBitop) {
     return { domain: "i32", warning: null };
   }
-  if (hasI64RangeLiteral) {
+  if (hasI64RangeLiteral || hasBigIntLiteral) {
     return { domain: "i64", warning: null };
   }
   if (hasIntegerFloorHint) {
@@ -791,6 +860,22 @@ const I64_CMP_OPS: Record<string, number[]> = {
   "<=": [0x57], // i64.le_s
   ">": [0x55], // i64.gt_s
   ">=": [0x59], // i64.ge_s
+};
+
+// i64 bitwise opcodes (WI-V1W3-WASM-LOWER-04)
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (bitop table site)
+// Bitwise ops on bigint values must use i64 opcodes, not i32. The binary-expression
+// dispatch selects this table when ctx.domain === 'i64' (see lowerExpression).
+// Note: i64 has no logical-shift-right-unsigned (>>>); `bigint` in JS does not have
+// unsigned right-shift either (>>> is a TypeError on BigInt), so the table omits it.
+const I64_BITOP_OPS: Record<string, number[]> = {
+  "&": [0x83], // i64.and
+  "|": [0x84], // i64.or
+  "^": [0x85], // i64.xor
+  "<<": [0x86], // i64.shl
+  ">>": [0x87], // i64.shr_s
+  ">>>": [0x88], // i64.shr_u (kept for completeness; not reachable via bigint syntax)
 };
 
 // f64 arithmetic opcodes
@@ -917,6 +1002,22 @@ function emitConst(ctx: LoweringContext, value: number): void {
 }
 
 /**
+ * Emit an i64.const from a JS bigint value (WI-V1W3-WASM-LOWER-04).
+ *
+ * Used when a BigIntLiteral (e.g. `123n`) is directly in the source.
+ * Reads the literal text (e.g. "123n"), strips the trailing "n", parses to BigInt,
+ * then encodes as i64.const (0x42) + SLEB128 via the existing sleb128_i64 helper.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001
+ * Overflow truncation: SLEB128 encoding is performed on the raw BigInt value.
+ * Values outside the i64 range [-2^63, 2^63-1] wrap silently (SLEB128 encodes
+ * the low 64 bits in two's-complement), matching BigInt.asIntN(64, x) semantics.
+ */
+function emitBigIntConst(ctx: LoweringContext, value: bigint): void {
+  ctx.opcodes.push(0x42, ...sleb128_i64(value)); // i64.const
+}
+
+/**
  * Lower a TypeScript expression node to WASM opcodes.
  *
  * Handles:
@@ -936,6 +1037,23 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
   if (kind === SyntaxKind.NumericLiteral) {
     const lit = expr as NumericLiteral;
     emitConst(ctx, Number(lit.getLiteralText()));
+    return;
+  }
+
+  // BigInt literal (WI-V1W3-WASM-LOWER-04)
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (BigIntLiteral lowering site)
+  // A BigInt literal like `123n` is in the AST as SyntaxKind.BigIntLiteral.
+  // getLiteralText() returns the raw text including the trailing `n` (e.g. "123n").
+  // We strip the `n` suffix and parse to BigInt for SLEB128 encoding via emitBigIntConst.
+  // Negative literals (e.g. `-123n`) are represented as PrefixUnaryExpression(-, 123n);
+  // the prefix handler handles negation via `i64.const 0; i64.sub`.
+  if (kind === SyntaxKind.BigIntLiteral) {
+    const lit = expr as BigIntLiteral;
+    const rawText = lit.getLiteralText(); // e.g. "123n"
+    const withoutN = rawText.endsWith("n") ? rawText.slice(0, -1) : rawText;
+    const bigVal = BigInt(withoutN);
+    emitBigIntConst(ctx, bigVal);
     return;
   }
 
@@ -1076,8 +1194,9 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
     const cmpOps =
       ctx.domain === "i32" ? I32_CMP_OPS : ctx.domain === "i64" ? I64_CMP_OPS : F64_CMP_OPS;
 
-    // Bitops (always i32)
-    const bitopOps = I32_BITOP_OPS;
+    // Bitops: i32 domain uses I32_BITOP_OPS; i64 domain (bigint) uses I64_BITOP_OPS
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (bitop dispatch site)
+    const bitopOps = ctx.domain === "i64" ? I64_BITOP_OPS : I32_BITOP_OPS;
 
     // f64 modulo: special handling
     // @decision DEC-V1-WAVE-3-WASM-LOWER-F64-MOD-001 (see above)
@@ -1129,7 +1248,7 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
       ctx.opcodes.push(...(cmpOps[opText] ?? []));
       return;
     }
-    if (ctx.domain === "i32" && opText in bitopOps) {
+    if ((ctx.domain === "i32" || ctx.domain === "i64") && opText in bitopOps) {
       ctx.opcodes.push(...(bitopOps[opText] ?? []));
       return;
     }
@@ -1234,6 +1353,36 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
         kind: "unsupported-node",
         message: `LoweringVisitor: unsupported Math method 'Math.${methodName}' in general numeric lowering`,
       });
+    }
+
+    // BigInt(n) coercion: convert a number to bigint (WI-V1W3-WASM-LOWER-04)
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-COERCE-001
+    // @title BigInt(n) coercion: i32 argument → i64 via i64.extend_i32_s (0xac)
+    // @status accepted
+    // @rationale
+    //   `BigInt(n)` where n is a JS `number` (i32-typed in WASM) must produce an
+    //   i64 value. WASM opcode i64.extend_i32_s (0xac) sign-extends a 32-bit i32
+    //   to 64 bits — the correct semantic for BigInt(n) when n is a signed integer.
+    //   For f64-typed n, the correct opcode would be i64.trunc_f64_s (0xb0), but
+    //   within the IR strict-subset all number params are i32-domain unless otherwise
+    //   inferred, so the f64 case is not expected in WI-04 substrates. If f64 is ever
+    //   needed, the implementer must add i64.trunc_f64_s here and update this decision.
+    //   Option (b) host-mediation for arbitrary-precision is deferred to v1-wave-4.
+    if (callText === "BigInt") {
+      if (args.length !== 1) {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message: `LoweringVisitor: BigInt() requires exactly 1 argument, got ${args.length}`,
+        });
+      }
+      // Lower the argument — it produces an i32 (or f64) on the stack
+      // We temporarily lower in i32 context by lowering the arg expression directly.
+      lowerExpression(ctx, args[0] as Expression);
+      // emit i64.extend_i32_s (sign-extend i32 → i64)
+      // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-COERCE-001: i32→i64 only
+      ctx.opcodes.push(0xac); // i64.extend_i32_s
+      return;
     }
 
     throw new LoweringError({
@@ -1444,6 +1593,16 @@ export interface LoweringResult {
    */
   readonly stringShape?: StringShapeMeta;
   /**
+   * Per-parameter numeric domains, in parameter declaration order.
+   * Present only for general numeric lowering (absent for wave-2 fast-paths).
+   *
+   * Required for mixed bigint+number functions (WI-04) where parameters have
+   * heterogeneous WASM types (e.g. `mixedBig(a: bigint, n: number)` produces
+   * `paramDomains = ["i64", "i32"]`). Callers building the WASM type signature
+   * must use this array rather than the single `numericDomain` when present.
+   */
+  readonly paramDomains?: ReadonlyArray<NumericDomain>;
+  /**
    * Downgrade warnings emitted during lowering (e.g. ambiguous domain).
    * Non-empty means the caller may want to add hints for better codegen.
    */
@@ -1534,12 +1693,31 @@ export class LoweringVisitor {
 
     const sf = project.createSourceFile("block.ts", source);
 
-    // Report hard parse errors loudly (syntax errors, not type errors).
-    const diagnostics = sf.getPreEmitDiagnostics().filter(
-      (d) => d.getCategory() === 1, // DiagnosticCategory.Error = 1
-    );
-    if (diagnostics.length > 0) {
-      const msgs = diagnostics
+    // Report hard SYNTAX errors loudly (parser-level errors only, not type errors).
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-INFERENCE-002
+    // @title _parseSource rejects syntax errors only; semantic type errors are permitted
+    // @status accepted
+    // @rationale
+    //   The lowering pass receives source from a ResolvedBlock that has already
+    //   passed upstream type-checking. Within the lowering stage, domain inference
+    //   keys off AST structure (BigIntLiteral nodes, TypeFlags on params/return),
+    //   not TypeScript's semantic type-consistency judgments. A function whose
+    //   TypeScript return type is `number` but whose body contains a BigIntLiteral
+    //   (e.g. `123n`) will have a semantic type error ("bigint not assignable to
+    //   number"), but the AST is fully parseable and domain inference must still
+    //   see the BigIntLiteral in the body and infer i64. Using getSyntaxDiagnostics()
+    //   (parser-only) rather than getPreEmitDiagnostics() (parser + type-checker)
+    //   ensures that BigIntLiteral-in-body forces i64 even when the TypeScript
+    //   signature says `number → number`. This matches the documented rule 7 in
+    //   inferNumericDomain: "BigIntLiteral in body → i64".
+    // Note: getSyntacticDiagnostics() is a Program method (accessed via
+    // project.getProgram()). It returns only parser-level (syntactic) errors,
+    // not type-checker (semantic) errors. This is distinct from
+    // getPreEmitDiagnostics() which returns all errors including semantic ones.
+    const syntaxDiagnostics = project.getProgram().getSyntacticDiagnostics(sf);
+    if (syntaxDiagnostics.length > 0) {
+      const msgs = syntaxDiagnostics
         .map((d) => d.getMessageText())
         .map((m) => (typeof m === "string" ? m : m.getMessageText()))
         .join("; ");
@@ -1643,7 +1821,14 @@ export class LoweringVisitor {
   /**
    * Lower a numeric function: infer domain, register params, lower body.
    *
+   * For mixed bigint+number functions (e.g. `mixedBig(a: bigint, n: number)`),
+   * each parameter is registered with its per-param domain derived from its
+   * TypeChecker type flags: bigint-typed params → i64; others → function domain.
+   * This is required because WASM local slots for params must match the actual
+   * WASM function type — a `number` param must be `i32` even in an i64-domain fn.
+   *
    * @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-001 (see file header)
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-BIGINT-001 (per-param domain for mixed fns)
    */
   private _lowerNumericFunction(fn: FunctionDeclaration): LoweringResult {
     const fnName = fn.getName() ?? "fn";
@@ -1659,11 +1844,29 @@ export class LoweringVisitor {
       blockDepth: 0,
     };
 
-    // Register parameters in the symbol table
+    // Register parameters in the symbol table and collect per-param domains.
+    //
+    // Per-param domain detection (WI-04): if a param is bigint-typed, register as
+    // i64 regardless of the function's overall domain. This handles mixed functions
+    // like `mixedBig(a: bigint, n: number)` where `a` must be i64 and `n` must be
+    // the function's number-domain (e.g. i32 — the default for `number` params in
+    // the absence of other indicators). Without this, `n` would be registered as i64
+    // and the i64.extend_i32_s coercion in BigInt(n) would find an i64 on the stack
+    // (wrong) instead of the expected i32.
+    //
+    // The paramDomains array is returned in LoweringResult so callers can build a
+    // WASM type section with heterogeneous param types.
     this._table.pushFrame({ isFunctionBoundary: true });
+    const paramDomains: NumericDomain[] = [];
     for (const param of fn.getParameters()) {
       const paramName = param.getName();
-      this._table.defineParam(paramName, domain);
+      const paramTypeFlags = param.getType().getFlags();
+      const paramIsBigInt =
+        (paramTypeFlags & TypeFlags.BigInt) !== 0 ||
+        (paramTypeFlags & TypeFlags.BigIntLiteral) !== 0;
+      const paramDomain: NumericDomain = paramIsBigInt ? "i64" : domain === "i64" ? "i32" : domain;
+      this._table.defineParam(paramName, paramDomain);
+      paramDomains.push(paramDomain);
     }
 
     // Lower the function body
@@ -1693,6 +1896,7 @@ export class LoweringVisitor {
       },
       wave2Shape: null,
       numericDomain: domain,
+      paramDomains,
       warnings,
     };
   }

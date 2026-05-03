@@ -315,8 +315,11 @@ describe("LoweringVisitor — unknown node kind fails loudly (Sacred Practice #5
     let caught: unknown;
 
     try {
-      // bigint return type — not a wave-2 shape; general lowering not yet implemented
-      visitor.lower("export function toBI(x: number): bigint { return BigInt(x); }");
+      // ThrowStatement is not yet lowered (no wave covers it as of WI-V1W3).
+      // When a future implementer lowers ThrowStatement, update this example
+      // to the next unimplemented SyntaxKind so the loud-failure invariant
+      // (Sacred Practice #5) remains continuously exercised.
+      visitor.lower("export function bad(x: number): number { throw new Error('nope'); }");
     } catch (e) {
       caught = e;
     }
