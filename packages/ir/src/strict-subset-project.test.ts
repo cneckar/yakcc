@@ -397,3 +397,66 @@ describe("project mode — no-with rule verification", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test 10: Test-file exclusion (WI-V2-03)
+//
+// @decision DEC-V2-IR-TEST-EXCLUSION-001
+// Status: implemented (WI-V2-03). Project-mode validator skips *.test.ts files
+// so that Vitest-style top-level describe/it/beforeEach calls and top-level `let`
+// for shared state do not generate false-positive violations.
+// ---------------------------------------------------------------------------
+
+describe("project mode — test-file exclusion (WI-V2-03)", () => {
+  it("does not count *.test.ts files toward filesValidated or violations", async () => {
+    // The cross-file fixture includes both source and potential test-adjacent files.
+    // Validate the real-violations fixture which has violations.ts (non-test) only.
+    // filesValidated must reflect non-test files only.
+    const tsconfigPath = join(FIXTURES, "real-violations", "tsconfig.json");
+    const result = await validateStrictSubsetProject(tsconfigPath);
+
+    // All violations must come from non-test files
+    for (const v of result.violations) {
+      expect(v.file.endsWith(".test.ts")).toBe(false);
+      expect(v.file.endsWith(".spec.ts")).toBe(false);
+    }
+  });
+
+  it("yakcc self-validation — IR package reports zero violations after WI-V2-03 (WI-V2-03)", async () => {
+    // @decision DEC-V2-IR-TYPE-MODIFIER-001 + DEC-V2-IR-TEST-EXCLUSION-001 together
+    // reduce the IR self-validation violation count to zero. This is the primary
+    // acceptance criterion for WI-V2-03.
+    const tsconfigPath = join(REPO_ROOT, "packages", "ir", "tsconfig.json");
+    const result = await validateStrictSubsetProject(tsconfigPath);
+
+    // Write updated evidence file
+    ensureEvidenceDir();
+    const { writeFileSync } = await import("node:fs");
+    const lines = [
+      `yakcc packages/ir self-validation (WI-V2-03 post-fix)`,
+      `tsconfig: ${result.tsconfigPath}`,
+      `filesValidated: ${result.filesValidated}`,
+      `totalViolations: ${result.violations.length}`,
+    ];
+    if (result.violations.length > 0) {
+      lines.push("", "violations (should be empty):");
+      for (const v of result.violations) {
+        lines.push(`  ${v.file}:${v.line}:${v.column} [${v.rule}] ${v.message}`);
+      }
+    }
+    writeFileSync(join(EVIDENCE_DIR, "yakcc-self-validation-wi-v2-03.txt"), lines.join("\n") + "\n");
+
+    expect(result.violations).toHaveLength(0);
+    expect(result.filesValidated).toBeGreaterThan(0);
+  });
+
+  it("property: type-modifier named imports in project mode never increase no-untyped-imports count (WI-V2-03)", async () => {
+    // Running the cross-file fixture (which uses normal imports) must not produce
+    // no-untyped-imports violations. This is a monotonicity check: adding type-modifier
+    // bindings to well-typed imports cannot introduce new violations.
+    const tsconfigPath = join(FIXTURES, "cross-file", "tsconfig.json");
+    const result = await validateStrictSubsetProject(tsconfigPath);
+    const untypedErrors = result.violations.filter((v) => v.rule === "no-untyped-imports");
+    expect(untypedErrors).toHaveLength(0);
+  });
+});

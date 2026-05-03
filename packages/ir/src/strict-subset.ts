@@ -457,6 +457,14 @@ function checkNoUntypedImports(sourceFile: SourceFile, filePath: string): Valida
       checkBinding(defaultImport);
     }
     for (const named of namedBindings) {
+      // @decision DEC-V2-IR-TYPE-MODIFIER-001: Skip named import specifiers with the
+      // `type` modifier (`import { type Foo, bar }`). A type-modifier binding has no
+      // runtime value; calling getType() on it returns `any` in value position even
+      // when the module is fully resolved, producing a false-positive violation.
+      // The safety property (no runtime `any`) is preserved because type-only imports
+      // are erased at compile time and cannot introduce untyped values.
+      // Status: implemented (WI-V2-03).
+      if (named.isTypeOnly()) continue;
       checkBinding(named.getNameNode());
     }
     if (namespaceImport !== undefined) {
