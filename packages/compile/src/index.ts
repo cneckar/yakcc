@@ -39,3 +39,18 @@ export { buildManifest } from "./manifest.js";
 // Candidate assembly entry point (WI-014-05)
 export type { AssembleCandidateOptions } from "./assemble-candidate.js";
 export { assembleCandidate, CandidateNotResolvableError } from "./assemble-candidate.js";
+
+// WASM host runtime — re-exported for downstream callers and WI-V1W2-WASM-04+.
+// Consumers reach the host boundary without importing from internals.
+// See WASM_HOST_CONTRACT.md for the authoritative boundary definition.
+export type { WasmHost } from "./wasm-host.js";
+export {
+  createWasmHost,
+  importsFor,
+  wrapHostCall,
+  WasmTrap,
+  WasmUnreachable,
+  WasmDivByZero,
+  WasmIntegerOverflow,
+  WasmPanic,
+} from "./wasm-host.js";
