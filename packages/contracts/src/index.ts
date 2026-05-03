@@ -233,6 +233,7 @@ export {
 export {
   type EmbeddingProvider,
   createLocalEmbeddingProvider,
+  createOfflineEmbeddingProvider,
   generateEmbedding,
 } from "./embeddings.js";
 export { type SpecHash, type SpecYak, type SpecYakParameter, validateSpecYak } from "./spec-yak.js";
