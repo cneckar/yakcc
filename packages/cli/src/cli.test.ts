@@ -200,9 +200,17 @@ describe("seed", () => {
     expect(logger.logLines.some((l) => l.includes("seeded 20 contracts"))).toBe(true);
   });
 
-  it("is idempotent — repeated seed exits 0 with consistent count", async () => {
+  it("is idempotent — repeated seed via runCli top-level exits 0 with consistent count (DEC-CI-OFFLINE-006)", async () => {
+    // This test exercises the new runCli(argv, logger, { embeddings }) three-arg
+    // form introduced by WI-CI-OFFLINE-03. It proves the CliOptions.embeddings
+    // seam works end-to-end: runCli receives the offline provider and threads it
+    // through to the seed command, which opens the registry without network I/O.
     const logger = new CollectingLogger();
-    const code = await seed(["--registry", registryPath], logger, { embeddings: offlineEmbeddings });
+    const code = await runCli(
+      ["seed", "--registry", registryPath],
+      logger,
+      { embeddings: offlineEmbeddings },
+    );
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.includes("seeded"))).toBe(true);
   });

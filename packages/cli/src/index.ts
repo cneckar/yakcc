@@ -18,7 +18,22 @@
 // code (Sacred Practice #5). The Logger interface is minimal: log() for stdout-level
 // messages, error() for stderr-level messages. All command signatures remain stable;
 // the logger is an optional final parameter defaulting to CONSOLE_LOGGER.
+//
+// @decision DEC-CI-OFFLINE-006: Top-level CliOptions.embeddings on runCli(argv, logger,
+// opts?) is the canonical injection seam for embedding providers from any runCli test
+// caller. Per-command *Options interfaces in commands/*.ts remain accepted as bounded
+// backward-compatibility seams but new tests SHOULD use the top-level runCli form.
+// The CliOptions.embeddings TYPE is sourced from RegistryOptions["embeddings"] so there
+// is exactly one canonical type definition for the embeddings option shape across the
+// whole CLI surface.
+// Status: implemented (WI-CI-OFFLINE-03)
+// Rationale: Sacred Practice #12 (single source of truth). WI-CI-OFFLINE-01 made
+// offline embedding injection work but only via per-command imports, bypassing runCli.
+// Lifting CliOptions.embeddings to runCli restores symmetry: production callers use
+// the two-arg form; embedding-injecting tests use the three-arg form. Type-aliasing
+// RegistryOptions["embeddings"] keeps @yakcc/registry as the one type-level authority.
 
+import type { RegistryOptions } from "@yakcc/registry";
 import { bootstrap } from "./commands/bootstrap.js";
 import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
@@ -32,6 +47,26 @@ import { shave } from "./commands/shave.js";
 
 // Re-export ContractId for callers who import from @yakcc/cli.
 export type { ContractId } from "@yakcc/contracts";
+
+// ---------------------------------------------------------------------------
+// CliOptions interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Top-level options for runCli.
+ *
+ * Tests inject createOfflineEmbeddingProvider() via opts.embeddings so no
+ * network I/O occurs. Production callers omit this parameter — the per-command
+ * defaults (getDefaultProvider() lazy singleton) take effect unchanged.
+ *
+ * Only the four arms that already accept embeddings are threaded: compile,
+ * search, seed, and federation. Other arms (registry init, propose, query,
+ * bootstrap, shave, hooks) are out of scope per DEC-CI-OFFLINE-006.
+ */
+export interface CliOptions {
+  /** Embedding provider forwarded to commands that open a registry. */
+  embeddings?: RegistryOptions["embeddings"];
+}
 
 // ---------------------------------------------------------------------------
 // Logger interface
@@ -133,11 +168,14 @@ EXIT CODES
  *
  * @param argv - Arguments after the binary name (i.e. process.argv.slice(2)).
  * @param logger - Output sink; defaults to CONSOLE_LOGGER (the real console).
+ * @param opts - Optional top-level CLI options (DEC-CI-OFFLINE-006). Tests
+ *   inject createOfflineEmbeddingProvider() here; production callers omit it.
  * @returns Promise<number> — 0 on success, non-zero on error.
  */
 export async function runCli(
   argv: ReadonlyArray<string>,
   logger: Logger = CONSOLE_LOGGER,
+  opts?: CliOptions,
 ): Promise<number> {
   const [command, subcommand, ...rest] = argv;
 
@@ -155,7 +193,7 @@ export async function runCli(
     case "compile": {
       // subcommand is the first positional for compile (the entry arg).
       const compileArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return compile(compileArgv, logger);
+      return compile(compileArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "propose": {
@@ -170,13 +208,13 @@ export async function runCli(
 
     case "search": {
       const searchArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return search(searchArgv, logger);
+      return search(searchArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "seed": {
       // seed has no positional; subcommand may be a flag like --registry.
       const seedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return seed(seedArgv, logger);
+      return seed(seedArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "bootstrap": {
@@ -193,7 +231,7 @@ export async function runCli(
     case "federation": {
       // Reassemble remaining args: subcommand (the federation verb) + rest.
       const fedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return runFederation(fedArgv, logger);
+      return runFederation(fedArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "hooks": {
