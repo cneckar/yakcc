@@ -1282,6 +1282,64 @@ Status: **planned.** Gated on v0.7 closure (WI-015 demo, done) and v1 wave-1 clo
 
 v2 dependency waves: **W1** = `{WI-V2-01, WI-V2-02}` (parallel; whole-project validator + fix the 4 real violations). **W2** = `{WI-V2-03, WI-V2-04}` (IR extensions + foreign-block primitives, both gated on WI-V2-01). **W3** = `{WI-V2-05, WI-V2-06}` (source refactor + property-test coverage). **W4** = `{WI-V2-07}` (first shave). **W5** = `{WI-V2-08}` (compile self-equivalence). **W6** = `{WI-V2-09}` (two-pass bootstrap). **W7** = `{WI-V2-10}` (demo + CI). Critical path: WI-V2-01 → WI-V2-03 → WI-V2-05 → WI-V2-07 → WI-V2-08 → WI-V2-09 → WI-V2-10. **Total revised estimate: 3-6 months past v1 wave-2 close** (originally 6-12 months; revised down per IR conformance audit 2026-05-01 — yakcc's source is more disciplined than earlier estimates assumed).
 
+### Initiative: WI-CI-OFFLINE-01 — offline-tolerant tests + general test CI
+
+Status: **active 2026-05-03.** Single-WI initiative seeded by issue #37 ("[Wrath] WI-CI-OFFLINE-01: Migrate tests to offline embedding provider + add general test CI workflow"). Branched off `main` at `c214cf1` (post-WI-V1W3-WASM-LOWER-01 land + post-`createOfflineEmbeddingProvider()` ship at `4d29b30`). Orthogonal to the v1-wave-3 lowering chain (Wrath sister track) and to the v2 self-hosting chain — touches CI infra and test files only, with a single bounded production-source extension on `RunFederationOptions` in `packages/cli/src/commands/federation.ts`. Runtime workflow id: `WI-CI-OFFLINE-01`. Runtime goal id: `g-wi-ci-offline-01`. Runtime work-item id: `wi-ci-offline-01`.
+
+**Two real problems on `main` at `c214cf1`, same root cause, fix primitive already shipped:**
+
+1. **`pnpm -r test` is broken in any network-blocked environment.** `packages/contracts/src/embeddings.test.ts` (the `EmbeddingProvider (local)` describe block at lines 157–209, 9 tests) and `packages/cli/src/commands/federation.test.ts` (8 tests calling `runFederation(["pull", ...])` which transitively opens the registry without an explicit provider) hit `Forbidden access to file: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/tokenizer.json"`. The `:memory:` registry call sites in `cli.test.ts:94`, `assemble-candidate.test.ts:90`, `assemble.test.ts:181`, `resolve.test.ts:130`, and `seed.test.ts:{85,97,111,112,126}` likewise rely on the network-bound default provider.
+2. **There is no general test CI workflow.** `.github/workflows/bootstrap.yml` only runs `yakcc bootstrap --verify` (already offline-tolerant via `BOOTSTRAP_EMBEDDING_OPTS`). `pnpm -r test` and `pnpm -r build` are never gated on PRs, so the silent failures in (1) cannot be caught.
+
+**Fix primitive already shipped.** `createOfflineEmbeddingProvider()` lives in `packages/contracts/src/embeddings.ts:118-185` (commit `4d29b30`): no-arg, returns `EmbeddingProvider` with `dimension: 384` and `modelId: "yakcc/offline-blake3-stub"`, deterministic by BLAKE3 + L2-normalized. Re-exported from `@yakcc/contracts/src/index.ts`. The migration is purely call-site: every `openRegistry(...)` / `seedRegistry(...)` site in the failing test files passes `{ embeddings: createOfflineEmbeddingProvider() }`.
+
+**Audit summary on `c214cf1` (test files needing migration, by type of call site):**
+
+- `packages/cli/src/cli.test.ts:94` — `openRegistry(":memory:")` then `seedRegistry(reg)` (1 site).
+- `packages/compile/src/assemble-candidate.test.ts:90` — `:memory:` then `storeBlock` (1 site).
+- `packages/compile/src/assemble.test.ts:181` — `:memory:` then `storeBlock` (1 site).
+- `packages/compile/src/resolve.test.ts:130` — `:memory:` then `storeBlock` (1 site).
+- `packages/seeds/src/seed.test.ts:85,97,111,112,126` — `:memory:` then `seedRegistry()` (5 sites).
+- `packages/contracts/src/embeddings.test.ts` — gate the `EmbeddingProvider (local)` describe block (lines 157–209, 9 tests) via `describe.skipIf(process.env.YAKCC_NETWORK_TESTS !== "1")`. The 6 `EmbeddingProvider (offline / BLAKE3 stub)` tests in the same file already use the offline factory and run unchanged. **Do NOT delete the local-provider tests** — gating preserves the local-path coverage for opt-in operator runs.
+- `packages/cli/src/commands/federation.test.ts` — needs the production-side `RunFederationOptions.embeddings?: EmbeddingProvider` extension in `federation.ts` to land first. The 8 failing tests run `runFederation(["pull", ...])`, which calls bare `openRegistry(dbPath)` inside `federation.ts:145, 237, 346`. The test files alone cannot fix this; the bounded production-side extension threads the optional provider through to those three call sites and the tests pass `embeddings: createOfflineEmbeddingProvider()` as a `runFederation` option.
+
+**The new CI workflow (Part B) — `.github/workflows/test.yml`:**
+
+```yaml
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: pnpm -r build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r test
+```
+
+The `pnpm/action-setup@v4` step carries **no `with: version:` field** — `package.json#packageManager: pnpm@9.15.0` is the single canonical authority for the pnpm version (DEC-CI-OFFLINE-004), mirroring the post-`a9300b2` shape of `bootstrap.yml`.
+
+| ID | Title | Description | Deps | Gate | State |
+|----|-------|-------------|------|------|-------|
+| WI-CI-OFFLINE-01 | Migrate tests to offline embedding provider + add general test CI workflow | Single WI: (Part A) migrate every test-side `openRegistry(...)` / `seedRegistry(...)` call site that currently relies on the default network-bound provider to use `createOfflineEmbeddingProvider()` from `@yakcc/contracts` (single canonical authority — Sacred Practice #12, DEC-CI-OFFLINE-001), gating the existing `EmbeddingProvider (local)` describe in `embeddings.test.ts` behind `describe.skipIf(process.env.YAKCC_NETWORK_TESTS !== "1")` rather than deleting it (DEC-CI-OFFLINE-002); (Part A bounded production-side change) extend `RunFederationOptions` in `packages/cli/src/commands/federation.ts` with `embeddings?: EmbeddingProvider \| undefined` and thread it to the three `openRegistry(dbPath)` sites at lines 145/237/346 so federation tests can pass an offline provider (DEC-CI-OFFLINE-003); (Part B) add `.github/workflows/test.yml` with NO `with: version:` field on `pnpm/action-setup@v4` (DEC-CI-OFFLINE-004). **Acceptance:** `pnpm -r test` exits 0 in network-blocked env with `YAKCC_NETWORK_TESTS` unset; embeddings test reports 6 offline pass + 9 local skip in offline mode and 15 pass in `YAKCC_NETWORK_TESTS=1` mode; federation/cli/compile/seeds offline tests pass; `node packages/cli/dist/bin.js bootstrap --verify` exits 0; `pnpm -r build` clean; the new workflow is parseable YAML matching the issue #37 template. **Evaluation Contract:** `tmp/eval-wi-ci-offline-01.json`. **Scope Manifest:** `tmp/scope-wi-ci-offline-01.json` (already pushed to runtime via `cc-policy workflow scope-sync` — `MASTER_PLAN.md` is in allowed_paths; v1-wave-3 sister surface plus `embeddings.ts`, `bootstrap.ts`, and `bootstrap.yml` are in forbidden_paths). **Pre-assigned decisions:** DEC-CI-OFFLINE-001 (single offline provider via `createOfflineEmbeddingProvider`), DEC-CI-OFFLINE-002 (`describe.skipIf` gate, do NOT delete), DEC-CI-OFFLINE-003 (bounded `RunFederationOptions.embeddings?` extension), DEC-CI-OFFLINE-004 (no `with: version:` on `pnpm/action-setup@v4`). Runtime: workflow_id `WI-CI-OFFLINE-01`, goal_id `g-wi-ci-offline-01`, work_item_id `wi-ci-offline-01`. | (none — fully unblocked off main at `c214cf1`; orthogonal to v1-wave-3 lowering chain and v2 self-hosting chain) | approve | active 2026-05-03 — planner persisted plan + eval contract; ready for guardian (provision) |
+
+Single-WI initiative; no dependency map needed. Critical path = 1 wave. When this lands, `pnpm -r test` becomes a real PR-time gate and the silent offline-test breakage class disappears from `main`.
+
 ---
 
 ## Open questions
@@ -1486,6 +1544,10 @@ are added at the top; older entries are not edited.
 | DEC-V1-WAVE-3-WASM-STRATEGY-001 | **v1-wave-3-wasm-lower (2026-05-02).** Hand-rolled emitter (no AssemblyScript / Porffor dep). | Consistent with `DEC-V1-WAVE-2-WASM-STRATEGY-001` (single source of truth — Sacred Practice #12). AssemblyScript and Porffor are large deps with their own opinionated subsets that don't necessarily match the IR strict-subset; vendoring them creates a parallel mechanism. Hand-rolled keeps full ownership of the lowering surface and matches the existing wave-2 emitter style. |
 | DEC-V1-WAVE-3-WASM-PHASING-001 | **v1-wave-3-wasm-lower (2026-05-02).** Bottom-up phasing — primitives → composites → control flow → calls → closures. | Top-down (function shape → fill body kinds) hides codegen risk inside the function body, deferring the hard parts. Bottom-up sequences the parity gates so each phase validates a self-contained type or control surface against ts-backend before the next layer adds new risk. Matches wave-2's WASM-01/02/03/04 layering. |
 | DEC-V1-WAVE-3-WASM-PARSE-001 | **v1-wave-3-wasm-lower (2026-05-02).** Lower from ts-morph AST parsed at codegen-time from `ResolvedBlock.source`; `@yakcc/compile` adds `ts-morph` dep. | `ResolvedBlock` carries only `source: string` (`packages/compile/src/resolve.ts:48-52`) — no precomputed AST. The wave-2 forbidden-list bars modifying `@yakcc/shave` (which has ts-morph), so `@yakcc/compile` adds the dep at its own `package.json`. ts-morph's typechecker is also what answers the i32/i64/f64 inference question in WI-V1W3-WASM-LOWER-02 — a separate parser would re-implement that infrastructure. |
+| DEC-CI-OFFLINE-001 | **WI-CI-OFFLINE-01 (2026-05-03).** Single canonical offline-embedding-provider authority for tests is `createOfflineEmbeddingProvider()` from `@yakcc/contracts`; `BOOTSTRAP_EMBEDDING_OPTS` in `packages/cli/src/commands/bootstrap.ts` is intentionally preserved unchanged. | Sacred Practice #12: one source of truth per state authority. `createOfflineEmbeddingProvider()` is the public, tested, deterministic-by-BLAKE3, L2-normalized factory shipped in `packages/contracts/src/embeddings.ts:118-185` (commit `4d29b30`). It is the only sanctioned offline provider for any test in the workspace; per-test inline ad-hoc zero-vector providers create parallel mechanisms and silently drift. `BOOTSTRAP_EMBEDDING_OPTS` is the inline zero-vector pattern used by `yakcc bootstrap --verify` — changing it to `createOfflineEmbeddingProvider()` would re-derive `bootstrap/expected-roots.json` (the BLAKE3-stub vectors are not byte-equal to zero-vectors), breaking the v2 bootstrap demo invariant established by WI-V2-BOOTSTRAP-03 (`8e42994`, DEC-V2-BOOTSTRAP-EMBEDDING-001). The two providers coexist in disjoint surfaces (test path vs bootstrap-verify path); they are not parallel mechanisms because they serve different state authorities. |
+| DEC-CI-OFFLINE-002 | **WI-CI-OFFLINE-01 (2026-05-03).** Local-provider tests in `packages/contracts/src/embeddings.test.ts` are GATED via `describe.skipIf(process.env.YAKCC_NETWORK_TESTS !== "1")`, NOT deleted. | Sacred Practice #5 (loud failure / preserve coverage) plus Sacred Practice #4 (nothing done until tested): the local-provider path (transformers.js + huggingface.co) IS production code that real users rely on; deleting its tests in pursuit of offline CI green-state would silently delete coverage for a load-bearing surface. The `describe.skipIf` gate keeps the 9 tests in the suite, runs them by default in `YAKCC_NETWORK_TESTS=1` operator-opt-in mode, and skips them by default in PR CI. Offline default + opt-in network mode is the correct posture: PR gates pass without network, but the operator can prove the local path still works whenever they want. |
+| DEC-CI-OFFLINE-003 | **WI-CI-OFFLINE-01 (2026-05-03).** `RunFederationOptions` in `packages/cli/src/commands/federation.ts` is extended with an optional `embeddings?: EmbeddingProvider \| undefined` field, threaded through to the three `openRegistry(dbPath)` call sites at `federation.ts:145, 237, 346`. This is the SOLE production-source change permitted by WI-CI-OFFLINE-01. | The 8 failing federation tests cannot be made offline-tolerant from the test-file side alone: `runFederation(["pull", ...])` opens the registry inside the production code path with no test seam. Adding an optional pass-through field is the minimum bounded production-side change that preserves all existing behavior (the field is optional; production callers omitting it continue to fall back to `getDefaultProvider()` lazy singleton unchanged) while exposing a test seam for offline runs. The change is additive on `RunFederationOptions`, not a new top-level field on `RegistryOptions` (which lives in the forbidden `packages/registry/src/storage.ts`); it does not introduce a parallel embedding-authority surface, only a thread-through plumbing path that makes the existing single authority injectable. |
+| DEC-CI-OFFLINE-004 | **WI-CI-OFFLINE-01 (2026-05-03).** `.github/workflows/test.yml`'s `pnpm/action-setup@v4` step carries NO `with: version:` field; `package.json#packageManager: pnpm@9.15.0` remains the single canonical pnpm-version authority for CI. | Sacred Practice #12: one source of truth per state authority. Commit `a9300b2` deliberately removed `with: version: 9` from `bootstrap.yml` precisely because `packageManager` is the canonical authority and a per-workflow `version:` pin creates a parallel mechanism that silently drifts (the two values can disagree in time as `packageManager` is bumped). The new `test.yml` mirrors the post-`a9300b2` shape exactly. Any future PR that re-introduces `with: version:` on a yakcc workflow is rejected at reviewer; the only legitimate way to set a different pnpm version in CI is to bump `package.json#packageManager`. |
 
 ---
 
