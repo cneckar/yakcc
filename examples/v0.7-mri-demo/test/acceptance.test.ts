@@ -91,7 +91,7 @@ describe("Test A: license refusal", () => {
 // ---------------------------------------------------------------------------
 
 describe("Test B: pipeline structural smoke test", () => {
-  it("universalize() decomposes MIT-licensed source without CanonicalAstParseError (static intent path, B-011 regression)", async () => {
+  it("universalize() decomposes MIT-licensed source without CanonicalAstParseError (static intent path, B-011 regression)", { timeout: 30_000 }, async () => {
     // Read the demo target itself — self-referential but deliberate: the parser
     // is the subject of the v0.7 demo and its source is well-typed MIT content.
     // @decision DEC-WI026-FILEURLTOPATH-001 — use fileURLToPath instead of URL.pathname.

@@ -20,20 +20,91 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ---------------------------------------------------------------------
+      # Fast-skip cache.
+      #
+      # The bootstrap manifest is a deterministic function of:
+      #   - all .ts source under packages/*/src and examples/*/src (shave inputs)
+      #   - the committed bootstrap/expected-roots.json (verify target)
+      #   - the lockfile (transitive shave-pipeline deps)
+      #
+      # If we've previously verified the byte-equality of the manifest for
+      # this exact input hash, re-running the 30-60 minute shave produces a
+      # bit-identical result by construction. Cache a marker file keyed on
+      # the input hash; skip the verify step on cache hit.
+      #
+      # Cache miss = first time we've seen this source state OR the previous
+      # run failed (markers are only written after a successful verify).
+      # ---------------------------------------------------------------------
+      - name: Compute source hash
+        id: source-hash
+        run: |
+          # Hash every .ts file under packages/*/src and examples/*/src plus
+          # the verify target and lockfile. The bootstrap walker already
+          # filters test/fixture/dist files at runtime, so over-hashing here
+          # (e.g. including *.test.ts) only ever causes a benign cache miss
+          # — never a false hit. Under-hashing would be unsafe.
+          HASH=$(
+            { find packages/*/src examples/*/src -name '*.ts' -type f -print0 \
+                  | sort -z \
+                  | xargs -0 sha256sum
+              sha256sum bootstrap/expected-roots.json pnpm-lock.yaml
+            } | sha256sum | awk '{print $1}'
+          )
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "Computed input hash: $HASH"
+
+      - name: Restore verified-marker cache
+        id: verified-cache
+        uses: actions/cache@v4
+        with:
+          path: bootstrap/.verified-marker
+          key: bootstrap-verified-${{ steps.source-hash.outputs.hash }}
+
+      - name: Skip — already verified for this source state
+        if: steps.verified-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "Cache hit — bootstrap was previously verified for this exact"
+          echo "source state. The manifest is a deterministic function of the"
+          echo "inputs that produced this cache entry; re-shaving would produce"
+          echo "a bit-identical result by construction."
+          echo
+          cat bootstrap/.verified-marker
+
+      # ---------------------------------------------------------------------
+      # Slow path — runs only on cache miss.
+      # ---------------------------------------------------------------------
       - name: Set up pnpm
+        if: steps.verified-cache.outputs.cache-hit != 'true'
         uses: pnpm/action-setup@v4
 
       - name: Set up Node.js
+        if: steps.verified-cache.outputs.cache-hit != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install dependencies
+        if: steps.verified-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Build all packages
+        if: steps.verified-cache.outputs.cache-hit != 'true'
         run: pnpm -r build
 
       - name: Verify content-addressed manifest
+        if: steps.verified-cache.outputs.cache-hit != 'true'
         run: node packages/cli/dist/bin.js bootstrap --verify
+
+      - name: Write verified-marker
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p bootstrap
+          {
+            echo "input-hash: ${{ steps.source-hash.outputs.hash }}"
+            echo "verified-at: $(date -u +%FT%TZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "ref: ${{ github.ref }}"
+          } > bootstrap/.verified-marker
+          cat bootstrap/.verified-marker
