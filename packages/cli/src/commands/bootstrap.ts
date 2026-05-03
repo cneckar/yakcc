@@ -42,6 +42,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
 import { shave as shaveImpl } from "@yakcc/shave";
@@ -248,10 +249,14 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     mkdirSync(dirname(outputPath), { recursive: true });
   }
 
-  // Open registry.
+  // Open registry. Bootstrap is contractually offline (DEC-V2-BOOT-NO-AI-CORPUS-001),
+  // so the deterministic BLAKE3 embedding provider is used instead of the default
+  // transformers.js provider which would download a model from HuggingFace on first
+  // storeBlock call. The exported manifest excludes embeddings entirely
+  // (DEC-V2-BOOTSTRAP-MANIFEST-001), so vector quality is irrelevant here.
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: createOfflineEmbeddingProvider() });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${(err as Error).message}`);
     return 1;

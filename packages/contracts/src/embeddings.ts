@@ -7,6 +7,7 @@
 // Lazy singleton load: the model is not loaded at import time; it loads on the
 // first embed() call and is reused for all subsequent calls.
 
+import { blake3 } from "@noble/hashes/blake3.js";
 import { canonicalizeText } from "./canonicalize.js";
 import type { ContractSpec } from "./index.js";
 
@@ -105,6 +106,76 @@ export function createLocalEmbeddingProvider(): EmbeddingProvider {
         normalize: true,
       });
       return new Float32Array(output.data);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Offline provider (deterministic, network-free)
+// ---------------------------------------------------------------------------
+
+/** Model identifier used by the offline deterministic provider. */
+const OFFLINE_MODEL_ID = "yakcc/offline-blake3-stub";
+/** Dimension matches the local provider so the registry schema (DEC-EMBED-010) is unchanged. */
+const OFFLINE_DIMENSION = 384;
+/** 32 bytes per BLAKE3 output × 12 chained hashes = 384 dims. */
+const OFFLINE_HASH_BLOCKS = 12;
+
+// @decision DEC-EMBED-OFFLINE-PROVIDER-001
+// @title Offline embedding provider for bootstrap and other no-network paths
+// @status accepted
+// @rationale `yakcc bootstrap` (DEC-V2-BOOT-NO-AI-CORPUS-001) is contractually
+//   network-free, but the registry's storeBlock pipeline always generates an
+//   embedding before insert. The local transformers.js provider downloads the
+//   tokenizer from HuggingFace on first call, breaking offline-by-design paths.
+//   This deterministic BLAKE3-derived provider satisfies the EmbeddingProvider
+//   contract with zero network I/O. Vectors are L2-normalized so cosine
+//   distance still behaves; semantic quality is intentionally absent — these
+//   embeddings exist only because the schema requires a vector column, not
+//   because bootstrap performs intent search. Same input → same vector,
+//   byte-for-byte (BLAKE3 is deterministic).
+
+/**
+ * Create an offline EmbeddingProvider that produces deterministic vectors
+ * via BLAKE3 hashing. No network I/O, no model downloads.
+ *
+ * Use this provider for bootstrap, CI, sandboxed test runs, and any other
+ * code path that must remain network-free. The vectors are not semantically
+ * meaningful (similar texts do not produce nearby vectors); they exist only
+ * to satisfy the registry's vector-column schema. For semantic search, use
+ * `createLocalEmbeddingProvider()` instead.
+ *
+ * Determinism: identical text inputs produce byte-identical Float32Array
+ * outputs across machines, runs, and platforms.
+ */
+export function createOfflineEmbeddingProvider(): EmbeddingProvider {
+  return {
+    dimension: OFFLINE_DIMENSION,
+    modelId: OFFLINE_MODEL_ID,
+
+    async embed(text: string): Promise<Float32Array> {
+      const encoder = new TextEncoder();
+      const vec = new Float32Array(OFFLINE_DIMENSION);
+      for (let block = 0; block < OFFLINE_HASH_BLOCKS; block++) {
+        const hash = blake3(encoder.encode(`${text}|${block}`));
+        for (let i = 0; i < 32; i++) {
+          const byte = hash[i] ?? 0;
+          vec[block * 32 + i] = (byte - 128) / 128;
+        }
+      }
+      let norm = 0;
+      for (let i = 0; i < OFFLINE_DIMENSION; i++) {
+        const v = vec[i] ?? 0;
+        norm += v * v;
+      }
+      norm = Math.sqrt(norm);
+      if (norm > 0) {
+        for (let i = 0; i < OFFLINE_DIMENSION; i++) {
+          const v = vec[i] ?? 0;
+          vec[i] = v / norm;
+        }
+      }
+      return vec;
     },
   };
 }

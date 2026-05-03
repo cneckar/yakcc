@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { createLocalEmbeddingProvider, generateEmbedding } from "./embeddings.js";
+import {
+  createLocalEmbeddingProvider,
+  createOfflineEmbeddingProvider,
+  generateEmbedding,
+} from "./embeddings.js";
 import type { ContractSpec } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -147,5 +151,60 @@ describe("EmbeddingProvider (local)", () => {
       expect(callCount).toBe(1);
       expect(result).toEqual(new Float32Array([1.0, 2.0, 3.0]));
     });
+  });
+});
+
+describe("EmbeddingProvider (offline / BLAKE3 stub)", () => {
+  it("dimension is 384 and modelId identifies the offline provider", () => {
+    const provider = createOfflineEmbeddingProvider();
+    expect(provider.dimension).toBe(384);
+    expect(provider.modelId).toBe("yakcc/offline-blake3-stub");
+  });
+
+  it("embed returns a Float32Array of length 384", async () => {
+    const provider = createOfflineEmbeddingProvider();
+    const vec = await provider.embed("hello world");
+    expect(vec).toBeInstanceOf(Float32Array);
+    expect(vec.length).toBe(384);
+  });
+
+  it("two embed() calls on the same input return byte-equal Float32Arrays", async () => {
+    const provider = createOfflineEmbeddingProvider();
+    const v1 = await provider.embed("Parse a JSON array of integers.");
+    const v2 = await provider.embed("Parse a JSON array of integers.");
+    expect(v1).toEqual(v2);
+  });
+
+  it("different inputs produce different vectors", async () => {
+    const provider = createOfflineEmbeddingProvider();
+    const v1 = await provider.embed("alpha");
+    const v2 = await provider.embed("beta");
+    let identical = true;
+    for (let i = 0; i < v1.length; i++) {
+      if (v1[i] !== v2[i]) {
+        identical = false;
+        break;
+      }
+    }
+    expect(identical).toBe(false);
+  });
+
+  it("output vectors are L2-normalized (unit length)", async () => {
+    const provider = createOfflineEmbeddingProvider();
+    const vec = await provider.embed("normalize me");
+    let norm = 0;
+    for (let i = 0; i < vec.length; i++) {
+      const v = vec[i] ?? 0;
+      norm += v * v;
+    }
+    expect(Math.sqrt(norm)).toBeCloseTo(1.0, 5);
+  });
+
+  it("performs zero network I/O (synchronous-fast on first call)", async () => {
+    const provider = createOfflineEmbeddingProvider();
+    const start = Date.now();
+    await provider.embed("first call");
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(500);
   });
 });
