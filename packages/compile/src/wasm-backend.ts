@@ -72,6 +72,7 @@
 
 import type { ResolutionResult } from "./resolve.js";
 import { LoweringVisitor } from "./wasm-lowering/visitor.js";
+import type { StringShapeMeta } from "./wasm-lowering/visitor.js";
 import type { NumericDomain, WasmFunction } from "./wasm-lowering/wasm-function.js";
 import { valtypeByte } from "./wasm-lowering/wasm-function.js";
 
@@ -730,6 +731,257 @@ function emitTypeLoweredModule(
 }
 
 // ---------------------------------------------------------------------------
+// String module emitter (WI-V1W3-WASM-LOWER-05)
+// ---------------------------------------------------------------------------
+
+/** Base offset for string literal data segment (leaves heap room below). */
+const DATA_SEG_BASE = 1024;
+
+/** Encode i32.const n as WASM opcode bytes: [0x41, ...sleb128]. */
+function i32ConstOps(n: number): number[] {
+  const out: number[] = [];
+  let more = true;
+  let v = n | 0;
+  while (more) {
+    let b = v & 0x7f;
+    v >>= 7;
+    if ((v === 0 && (b & 0x40) === 0) || (v === -1 && (b & 0x40) !== 0)) more = false;
+    else b |= 0x80;
+    out.push(b);
+  }
+  return [0x41, ...out];
+}
+
+/**
+ * Build the extended import section for string modules (memory + 9 host imports).
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ */
+function buildStringImportSection(): Uint8Array {
+  const mod = encodeName("yakcc_host");
+  const mem = concat(
+    mod,
+    encodeName("memory"),
+    new Uint8Array([0x02]),
+    new Uint8Array([0x01, 0x01, 0x01]),
+  );
+  const logImp = concat(mod, encodeName("host_log"), new Uint8Array([0x00]), uleb128(0));
+  const allocImp = concat(mod, encodeName("host_alloc"), new Uint8Array([0x00]), uleb128(1));
+  const freeImp = concat(mod, encodeName("host_free"), new Uint8Array([0x00]), uleb128(2));
+  const panicImp = concat(mod, encodeName("host_panic"), new Uint8Array([0x00]), uleb128(3));
+  // Type indices match the type section: T4=(i32 i32)->(i32), T5=(4xi32)->(i32), T6=(5xi32)->()
+  const strLenImp = concat(
+    mod,
+    encodeName("host_string_length"),
+    new Uint8Array([0x00]),
+    uleb128(4),
+  );
+  const strIdxImp = concat(
+    mod,
+    encodeName("host_string_indexof"),
+    new Uint8Array([0x00]),
+    uleb128(5),
+  );
+  const strSlcImp = concat(
+    mod,
+    encodeName("host_string_slice"),
+    new Uint8Array([0x00]),
+    uleb128(6),
+  );
+  const strCatImp = concat(
+    mod,
+    encodeName("host_string_concat"),
+    new Uint8Array([0x00]),
+    uleb128(6),
+  );
+  const strEqImp = concat(mod, encodeName("host_string_eq"), new Uint8Array([0x00]), uleb128(5));
+  return section(
+    2,
+    concat(
+      uleb128(10),
+      mem,
+      logImp,
+      allocImp,
+      freeImp,
+      panicImp,
+      strLenImp,
+      strIdxImp,
+      strSlcImp,
+      strCatImp,
+      strEqImp,
+    ),
+  );
+}
+
+/**
+ * Emit WASM body opcodes for the given string shape.
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-OUT-PTR-001
+ */
+function buildStringBody(shape: StringShapeMeta): number[] {
+  const lg = (i: number): number[] => [0x20, i];
+  const callFn = (idx: number): number[] => [0x10, ...Array.from(uleb128(idx))];
+  const ret = [0x0f];
+  switch (shape.shape) {
+    case "str-length":
+      return [...lg(0), ...lg(1), ...callFn(4), ...ret];
+    case "str-indexof":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...callFn(5), ...ret];
+    case "str-eq":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...callFn(8), ...ret];
+    case "str-neq":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...callFn(8), 0x45, ...ret];
+    case "str-slice2":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...lg(4), ...callFn(6)];
+    case "str-slice1": {
+      // s.slice(start) == s.slice(start, INT_MAX) in JS semantics
+      return [...lg(0), ...lg(1), ...lg(2), ...i32ConstOps(0x7fffffff), ...lg(3), ...callFn(6)];
+    }
+    case "str-concat":
+    case "str-template-concat":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...lg(4), ...callFn(7)];
+    case "str-template-parts": {
+      // `prefix${param}suffix`: concat(prefix, param) -> tmp; concat(tmp, suffix) -> out
+      // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
+      const prefix = shape.literals[0] ?? "";
+      const suffix = shape.literals[1] ?? "";
+      const pbl = new TextEncoder().encode(prefix).length;
+      const sbl = new TextEncoder().encode(suffix).length;
+      const prefixPtr = DATA_SEG_BASE;
+      const suffixPtr = DATA_SEG_BASE + pbl;
+      const tmp = 3; // local slot for tmpOutPtr
+      return [
+        ...i32ConstOps(8),
+        ...callFn(1),
+        0x21,
+        tmp, // tmp = alloc(8)
+        ...i32ConstOps(prefixPtr),
+        ...i32ConstOps(pbl), // prefix ptr, len
+        ...lg(0),
+        ...lg(1),
+        ...lg(tmp),
+        ...callFn(7), // concat(prefix, param) -> tmp
+        ...lg(tmp),
+        0x28,
+        0x02,
+        0x00, // i32.load tmp+0 = new_ptr
+        ...lg(tmp),
+        0x28,
+        0x02,
+        0x04, // i32.load tmp+4 = new_len
+        ...i32ConstOps(suffixPtr),
+        ...i32ConstOps(sbl), // suffix ptr, len
+        ...lg(2),
+        ...callFn(7), // concat(intermediate, suffix) -> out
+      ];
+    }
+  }
+}
+
+/**
+ * Emit a full WASM module for a string-operation substrate.
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
+ */
+function emitStringModule(shape: StringShapeMeta, fnName: string): Uint8Array<ArrayBuffer> {
+  // 8 types covering all string module signatures
+  const T0 = new Uint8Array([0x60, 2, I32, I32, 0]);
+  const T1 = new Uint8Array([0x60, 1, I32, 1, I32]);
+  const T2 = new Uint8Array([0x60, 1, I32, 0]);
+  const T3 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T4 = new Uint8Array([0x60, 2, I32, I32, 1, I32]);
+  const T5 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 1, I32]);
+  const T6 = new Uint8Array([0x60, 5, I32, I32, I32, I32, I32, 0]);
+  const T7 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T8 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 0]); // (i32 i32 i32 i32)->()
+  const typeSection = section(1, concat(uleb128(9), T0, T1, T2, T3, T4, T5, T6, T7, T8));
+
+  let substrateFuncTypeIdx: number;
+  switch (shape.shape) {
+    case "str-length":
+      substrateFuncTypeIdx = 4;
+      break;
+    case "str-indexof":
+      substrateFuncTypeIdx = 5;
+      break;
+    case "str-eq":
+      substrateFuncTypeIdx = 5;
+      break;
+    case "str-neq":
+      substrateFuncTypeIdx = 5;
+      break;
+    case "str-slice2":
+      substrateFuncTypeIdx = 6;
+      break;
+    case "str-slice1":
+      substrateFuncTypeIdx = 8;
+      break; // (i32 i32 i32 i32)->()
+    case "str-concat":
+      substrateFuncTypeIdx = 6;
+      break;
+    case "str-template-concat":
+      substrateFuncTypeIdx = 6;
+      break;
+    case "str-template-parts":
+      substrateFuncTypeIdx = 7;
+      break;
+  }
+
+  const importSection = buildStringImportSection();
+  const funcSection = section(3, concat(uleb128(1), uleb128(substrateFuncTypeIdx)));
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]),
+    uleb128(9),
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  const bodyOps = buildStringBody(shape);
+  const localDecls =
+    shape.shape === "str-template-parts"
+      ? new Uint8Array([0x01, 0x01, I32])
+      : new Uint8Array([0x00]);
+  const bodyBytes = concat(localDecls, new Uint8Array(bodyOps), new Uint8Array([0x0b]));
+  const codeSection = section(10, concat(uleb128(1), uleb128(bodyBytes.length), bodyBytes));
+
+  if (shape.shape === "str-template-parts") {
+    const prefix = shape.literals[0] ?? "";
+    const suffix = shape.literals[1] ?? "";
+    const allBytes = concat(new TextEncoder().encode(prefix), new TextEncoder().encode(suffix));
+    // Active data segment at DATA_SEG_BASE (1024): i32.const 1024 [0x41,0x80,0x08,0x0b]
+    const dataSeg = concat(
+      new Uint8Array([0x00]),
+      new Uint8Array([0x41, 0x80, 0x08, 0x0b]),
+      uleb128(allBytes.length),
+      allBytes,
+    );
+    const dataSection = section(11, concat(uleb128(1), dataSeg));
+    return concat(
+      WASM_MAGIC,
+      WASM_VERSION,
+      typeSection,
+      importSection,
+      funcSection,
+      tableSection,
+      exportSection,
+      codeSection,
+      dataSection,
+    );
+  }
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -756,14 +1008,17 @@ export async function compileToWasm(
   if (entryBlock !== undefined) {
     const visitor = new LoweringVisitor();
     const result = visitor.lower(entryBlock.source);
+    // WI-V1W3-WASM-LOWER-05: string shapes go to emitStringModule.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+    if (result.stringShape !== undefined) {
+      return emitStringModule(result.stringShape, result.fnName);
+    }
     // "add" shape uses the legacy 3-function substrate module so that the
     // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
-    // __wasm_export_panic_demo) remains green — those exports live only in
-    // the legacy module and are not produced by the type-lowering path.
+    // __wasm_export_panic_demo) remains green.
     if (result.wave2Shape === "add") return emitSubstrateModule();
     // General numeric lowering (wave2Shape === null): pass the inferred domain
     // so emitTypeLoweredModule can build the correct type entry (type 5 for i64/f64).
-    // Wave-2 non-add substrates pass wave2Shape as SubstrateKind; domain is undefined.
     return emitTypeLoweredModule(
       result.wave2Shape as SubstrateKind | null,
       result.fnName,

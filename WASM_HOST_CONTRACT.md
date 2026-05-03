@@ -1,4 +1,4 @@
-# WASM_HOST_CONTRACT.md — v1 Wave-2 WASM Host Interface Contract
+# WASM_HOST_CONTRACT.md — v1 Wave-3 WASM Host Interface Contract
 
 > The interface specification for the in-process host runtime that mediates
 > every yakcc-compiled WebAssembly module's interaction with the outside world.
@@ -102,7 +102,15 @@ Runtime version negotiation is a wave-3 surface (see §11).
 
 A module emitted by `compileToWasm` imports exactly the following symbols from
 the `yakcc_host` module namespace. The host's `importObject` MUST supply all
-five; supplying additional symbols under `yakcc_host` is permitted and ignored.
+ten; supplying additional symbols under `yakcc_host` is permitted and ignored.
+
+Wave-2 imports (§3.1–3.5): `memory`, `host_log`, `host_alloc`, `host_free`,
+`host_panic` — present in every module.
+
+Wave-3 string imports (§3.6–3.10): `host_string_length`, `host_string_indexof`,
+`host_string_slice`, `host_string_concat`, `host_string_eq` — added by
+WI-V1W3-WASM-LOWER-05. Present in string-substrate modules (those whose compiled
+function has at least one `string` parameter or a `string` return type).
 
 ### 3.1 `memory` (memory import)
 
@@ -238,6 +246,153 @@ instruction (which traps). The host call itself MUST throw — returning from
 
 **host_panic MUST throw.** The return from `host_panic` is unreachable. Any
 host that returns normally from `host_panic` is non-conforming.
+
+### 3.6 `host_string_length` (UTF-16 code-unit count)
+
+```
+import: yakcc_host / host_string_length
+type:   (ptr: i32, len_bytes: i32) -> (i32)
+```
+
+The WASM module calls `host_string_length(ptr, len_bytes)` to obtain the
+JavaScript `string.length` value (UTF-16 code-unit count) for the UTF-8 string
+stored at `[ptr, ptr + len_bytes)` in linear memory.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + len_bytes <= 65536`
+- The bytes at `[ptr, ptr + len_bytes)` are valid UTF-8
+
+**Host behavior:**
+1. Read `len_bytes` bytes from the memory backing buffer starting at `ptr`.
+2. Decode as UTF-8 (replacement policy: ill-formed sequences → U+FFFD).
+3. Return `str.length` (UTF-16 code-unit count, not Unicode code-point count).
+
+**Rationale:** JavaScript `.length` returns UTF-16 code units, so surrogate pairs
+count as 2. To match TypeScript source semantics exactly, the host returns the JS
+`.length` value, not the byte count or code-point count (see `DEC-V1-WAVE-3-WASM-LOWER-STR-001`).
+
+**Return value range:** `[0, 65536)` — bounded by the linear-memory size.
+
+### 3.7 `host_string_indexof` (first-occurrence index)
+
+```
+import: yakcc_host / host_string_indexof
+type:   (h_ptr: i32, h_len: i32, n_ptr: i32, n_len: i32) -> (i32)
+```
+
+The WASM module calls `host_string_indexof(h_ptr, h_len, n_ptr, n_len)` to find
+the first occurrence of the needle string `[n_ptr, n_ptr+n_len)` within the
+haystack string `[h_ptr, h_ptr+h_len)`.
+
+**Preconditions (caller/module must ensure):**
+- `h_ptr + h_len <= 65536`
+- `n_ptr + n_len <= 65536`
+- Both byte ranges contain valid UTF-8
+
+**Host behavior:**
+1. Decode both byte ranges as UTF-8 strings (replacement policy for ill-formed sequences).
+2. Return `haystack.indexOf(needle)` — the UTF-16 code-unit index of the first
+   occurrence, or `-1` if not found.
+
+**Return value:** Signed i32. `-1` is `0xFFFFFFFF` in two's-complement, which
+is what the WASM module reads via `i32.load` after the call.
+
+**Rationale:** Char-index (UTF-16 code-unit offset) semantics match JavaScript
+and are consistent with `host_string_slice` arguments (see
+`DEC-V1-WAVE-3-WASM-LOWER-STR-INDEXOF-001`).
+
+### 3.8 `host_string_slice` (substring extraction)
+
+```
+import: yakcc_host / host_string_slice
+type:   (ptr: i32, len_bytes: i32, start: i32, end: i32, out_ptr: i32) -> ()
+```
+
+The WASM module calls `host_string_slice(ptr, len_bytes, start, end, out_ptr)`
+to extract the substring `s.slice(start, end)` and write the result at `out_ptr`.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + len_bytes <= 65536`
+- `out_ptr + 8 <= 65536` (out_ptr must have 8 bytes: two i32 fields)
+- The bytes at `[ptr, ptr + len_bytes)` are valid UTF-8
+
+**Host behavior:**
+1. Decode the UTF-8 bytes into a JS string `s`.
+2. Compute `result = s.slice(start, end)` (JS semantics: out-of-range indices are
+   clamped; negative indices count from the end).
+3. Call `host_alloc(result_byte_length)` to obtain `new_ptr`.
+4. Write the UTF-8 encoding of `result` into `[new_ptr, new_ptr + result_byte_length)`.
+5. Write `new_ptr` as little-endian i32 at `[out_ptr, out_ptr+4)`.
+6. Write `result_byte_length` as little-endian i32 at `[out_ptr+4, out_ptr+8)`.
+
+**Rationale:** WASM MVP functions return at most one value. String results need
+`(ptr, len)` — two i32 values. The `out_ptr` pattern is the standard C/WASM
+out-parameter idiom and requires no engine extensions (see
+`DEC-V1-WAVE-3-WASM-LOWER-STR-OUT-PTR-001`).
+
+**Two-argument form (`str-slice2`):** called with explicit `start` and `end`.  
+**One-argument form (`str-slice1`):** `end` is supplied as `Number.MAX_SAFE_INTEGER`
+(indicating "to end of string").
+
+### 3.9 `host_string_concat` (string concatenation)
+
+```
+import: yakcc_host / host_string_concat
+type:   (p1: i32, l1: i32, p2: i32, l2: i32, out_ptr: i32) -> ()
+```
+
+The WASM module calls `host_string_concat(p1, l1, p2, l2, out_ptr)` to
+concatenate two UTF-8 strings and write the result at `out_ptr`.
+
+**Preconditions (caller/module must ensure):**
+- `p1 + l1 <= 65536`, `p2 + l2 <= 65536`
+- `out_ptr + 8 <= 65536`
+- Both byte ranges contain valid UTF-8
+
+**Host behavior:**
+1. Decode both UTF-8 byte ranges into JS strings `s1` and `s2`.
+2. Compute `result = s1 + s2`.
+3. Call `host_alloc(result_byte_length)` to obtain `new_ptr`.
+4. Write the UTF-8 encoding of `result` into `[new_ptr, new_ptr + result_byte_length)`.
+5. Write `new_ptr` as little-endian i32 at `[out_ptr, out_ptr+4)`.
+6. Write `result_byte_length` as little-endian i32 at `[out_ptr+4, out_ptr+8)`.
+
+**Out_ptr format:** same as `host_string_slice` (§3.8) — 8 bytes, little-endian i32
+pair `(new_ptr, new_len_bytes)`.
+
+**Template literals:** A template literal with string parts uses this import
+iteratively. For `` `${prefix}${s}${suffix}` `` the module calls `host_string_concat`
+twice: once to prepend the prefix (with the prefix data segment pointer from the
+WASM data section) and once to append the suffix. See `str-template-parts` in
+`emitStringModule` (`wasm-backend.ts`).
+
+### 3.10 `host_string_eq` (equality test)
+
+```
+import: yakcc_host / host_string_eq
+type:   (p1: i32, l1: i32, p2: i32, l2: i32) -> (i32)
+```
+
+The WASM module calls `host_string_eq(p1, l1, p2, l2)` to test whether the two
+UTF-8 strings at `[p1, p1+l1)` and `[p2, p2+l2)` are equal under JavaScript
+`===` semantics.
+
+**Preconditions (caller/module must ensure):**
+- `p1 + l1 <= 65536`, `p2 + l2 <= 65536`
+- Both byte ranges contain valid UTF-8
+
+**Host behavior:**
+1. Decode both UTF-8 byte ranges into JS strings `s1` and `s2`.
+2. Return `s1 === s2 ? 1 : 0` as i32.
+
+**Usage in `str-neq`:** The `!==` operator reuses `host_string_eq` and negates
+the result with `i32.eqz` (opcode `0x45`). No separate `host_string_neq` import
+is needed.
+
+**Rationale:** Host-mediated equality avoids emitting an inline byte-compare loop
+at every `===` site, keeps the emitted module size small, and handles surrogate
+pairs correctly without a UTF-16 decode loop in WASM (see
+`DEC-V1-WAVE-3-WASM-LOWER-STR-EQ-001`).
 
 ---
 
@@ -493,8 +648,8 @@ Any host implementation claiming conformance with this document MUST pass the
 The conformance fixture covers (minimum required tests, numbered per the
 fixture file):
 
-1. `createHost()` exposes the documented `importObject` shape with all 5 keys
-   under `yakcc_host`.
+1. `createHost()` exposes the documented `importObject` shape with all 10 keys
+   under `yakcc_host` (5 wave-2 imports + 5 wave-3 string imports).
 2. `__wasm_export_add(2, 3) === 5` via `instantiateAndRun`.
 3. `__wasm_export_string_len` round-trips a UTF-8 string through `host_alloc`
    and length-passback.
@@ -507,11 +662,28 @@ fixture file):
 8. Acceptance: ts-backend parity for the `add` substrate — ≥ 5 input pairs
    produce identical results from WASM + reference implementation.
 
+### Additional conformance tests (wave-3 string imports, WI-V1W3-WASM-LOWER-05)
+
+The string substrate tests in `packages/compile/test/wasm-lowering/strings.test.ts`
+extend the conformance surface. A host claiming wave-3 conformance MUST additionally
+pass all six string substrate suites (str-1 through str-6) covering:
+
+9. `host_string_length`: UTF-16 code-unit count matches JS `s.length` for ≥15 inputs.
+10. `host_string_indexof`: char-index matches JS `s.indexOf(needle)` for ≥15 pairs.
+11. `host_string_slice`: two-argument and one-argument slice match JS `s.slice()` semantics.
+12. `host_string_concat`: concatenated result byte-for-byte matches JS `s1 + s2`.
+13. `host_string_eq` / `host_string_neq`: equality results match JS `===` / `!==`.
+14. Template-literal with prefix+suffix matches JS template result for ≥15 inputs.
+
 ### Conformance claim
 
-A host implementation that passes all 8 tests above may claim:
+A host implementation that passes all 8 wave-2 tests above may claim:
 
 > "Conformant with WASM_HOST_CONTRACT.md v1 wave-2"
+
+A host implementation that additionally passes wave-3 tests 9–14 may claim:
+
+> "Conformant with WASM_HOST_CONTRACT.md v1 wave-3 (WI-V1W3-WASM-LOWER-05)"
 
 ---
 
@@ -614,7 +786,41 @@ work item.
 
 ---
 
-## 13. Decision log
+## 13. Acceptance for WI-V1W3-WASM-LOWER-05
+
+This section records the acceptance criteria that close the WI-V1W3-WASM-LOWER-05
+work item (Strings — UTF-8 linear-memory + length, indexOf, slice, concat).
+
+### Required
+
+1. `WASM_HOST_CONTRACT.md` amended with version bump (Wave-2 → Wave-3) and
+   §3.6–3.10 documenting the five new string host imports — this document.
+2. `packages/compile/src/wasm-host.ts` extended with five new host functions:
+   `hostStringLength`, `hostStringIndexof`, `hostStringSlice`, `hostStringConcat`,
+   `hostStringEq` — all registered under `yakcc_host` in `importObject`.
+3. `packages/compile/src/wasm-lowering/visitor.ts` extended with:
+   - `StringShapeMeta` interface (9 shapes: `str-length`, `str-indexof`, `str-slice2`,
+     `str-slice1`, `str-concat`, `str-template-concat`, `str-template-parts`, `str-eq`,
+     `str-neq`).
+   - `detectStringShape(fn)` function that recognises string-substrate functions.
+   - `_lowerStringFunction` method returning a `LoweringResult` with `stringShape`.
+   - String shape detection runs BEFORE wave-2 fast-paths in `_lowerFunction`.
+4. `packages/compile/src/wasm-backend.ts` extended with:
+   - `emitStringModule(shape, fnName)` that builds a full WASM binary with:
+     - 9-type type section (T0–T8 covering all string-import and substrate signatures).
+     - Import section: `memory` + `host_alloc` + 5 string imports with correct type indices.
+     - Function, export, code sections for the substrate function.
+     - Optional data section (for `str-template-parts` with string literals at `DATA_SEG_BASE = 1024`).
+   - `compileToWasm` checks `result.stringShape !== undefined` before the wave-2 path.
+5. `packages/compile/test/wasm-lowering/strings.test.ts` with 6 describe blocks
+   (str-1 through str-6), ≥15 property-based cases each, all passing.
+6. `pnpm --filter @yakcc/compile test` passes (all 163 tests).
+7. `pnpm -r test` passes across all packages.
+8. `pnpm -r build` clean across all packages.
+
+---
+
+## 14. Decision log
 
 ### DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001
 
