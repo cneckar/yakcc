@@ -44,12 +44,7 @@
 import { describe, expect, it } from "vitest";
 import { type BlockMerkleRoot, blockMerkleRoot, specHash } from "@yakcc/contracts";
 import type { SpecYak } from "@yakcc/contracts";
-import {
-  tsBackend,
-  wasmBackend,
-  instantiateAndRun,
-  WasmTrap,
-} from "@yakcc/compile";
+import { tsBackend, wasmBackend, instantiateAndRun, WasmTrap } from "@yakcc/compile";
 import type { ResolutionResult, ResolvedBlock } from "@yakcc/compile";
 
 // ---------------------------------------------------------------------------
@@ -121,7 +116,11 @@ function makeResolution(
 const ADD_IMPL_SOURCE = `export function add(a: number, b: number): number { return a + b; }`;
 
 function makeAddResolution(): ResolutionResult {
-  const id = makeMerkleRoot("add", "Return the integer sum of two i32-range operands", ADD_IMPL_SOURCE);
+  const id = makeMerkleRoot(
+    "add",
+    "Return the integer sum of two i32-range operands",
+    ADD_IMPL_SOURCE,
+  );
   return makeResolution([{ id, source: ADD_IMPL_SOURCE }]);
 }
 
@@ -138,18 +137,18 @@ function makeAddResolution(): ResolutionResult {
 // ---------------------------------------------------------------------------
 
 const NUMERIC_CORPUS: ReadonlyArray<[number, number]> = [
-  [0, 0],              // zero + zero
-  [1, 0],              // identity element
-  [0, 1],              // identity, reversed
-  [2, 3],              // small positive
-  [-1, -1],            // both negative
-  [-5, 3],             // mixed sign
-  [100, 200],          // medium positive
-  [100, -100],         // cancellation
-  [2147483647, 0],     // i32 max (no overflow)
-  [-2147483648, 0],    // i32 min (no overflow)
-  [42, 58],            // sums to round number
-  [-42, 42],           // cancellation, explicit
+  [0, 0], // zero + zero
+  [1, 0], // identity element
+  [0, 1], // identity, reversed
+  [2, 3], // small positive
+  [-1, -1], // both negative
+  [-5, 3], // mixed sign
+  [100, 200], // medium positive
+  [100, -100], // cancellation
+  [2147483647, 0], // i32 max (no overflow)
+  [-2147483648, 0], // i32 min (no overflow)
+  [42, 58], // sums to round number
+  [-42, 42], // cancellation, explicit
 ];
 
 // ---------------------------------------------------------------------------
@@ -195,7 +194,10 @@ describe("WI-V1W2-WASM-04 parity — numeric substrate: add(a, b)", () => {
     // wrapping semantics (per wasm-host.test.ts DEC-V1-WAVE-2-WASM-TEST-002 Test 8).
     for (const [a, b] of NUMERIC_CORPUS) {
       const tsResult = add(a, b) | 0;
-      const { result: wasmResult } = await instantiateAndRun(wasmBytes, "__wasm_export_add", [a, b]);
+      const { result: wasmResult } = await instantiateAndRun(wasmBytes, "__wasm_export_add", [
+        a,
+        b,
+      ]);
       expect(wasmResult, `add(${a}, ${b}): WASM result must equal TS reference | 0`).toBe(tsResult);
     }
   });
@@ -244,4 +246,141 @@ describe("WI-V1W2-WASM-04 parity — mixed substrate: pending WI-V1W2-WASM-02", 
   it.todo(
     "parity: mixed-substrate (record-of-numbers) — ≥10 corpus cases (blocked: WI-V1W2-WASM-02 record/struct lowering not yet implemented)",
   );
+});
+
+// ---------------------------------------------------------------------------
+// WI-V1W3-WASM-LOWER-02 demo extension
+//
+// Three property-based parity cases: one per numeric domain (i32, i64, f64).
+// Each case runs ≥15 fast-check inputs through the wave-3 general lowering path
+// and asserts value parity against the TypeScript reference execution.
+//
+// Implementation:
+//   The tests construct a ResolutionResult with a function whose source triggers
+//   general lowering (NOT the wave-2 "add" fast-path). compileToWasm() routes
+//   non-add-shaped functions through the general lowering path, which uses
+//   inferNumericDomain() + LoweringVisitor to build the WasmFunction IR, then
+//   emitTypeLoweredModule() to assemble the binary.
+//
+//   i32 domain: function uses bitwise `| 0` to force i32 inference (rule 4).
+//   i64 domain: function uses literal 3000000000 > 2^31-1 to force i64 (rule 5).
+//   f64 domain: function uses `/` to force f64 inference (rule 1).
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-001 (see visitor.ts file header)
+// ---------------------------------------------------------------------------
+
+import fc from "fast-check";
+
+// Helper: build a minimal ResolutionResult for a single-block substrate source.
+function makeSingleBlockResolution(fnSource: string): ResolutionResult {
+  const fnName = fnSource.match(/export\s+function\s+(\w+)/)?.[1] ?? "fn";
+  const id = makeMerkleRoot(fnName, `${fnName} substrate`, fnSource);
+  return makeResolution([{ id, source: fnSource }]);
+}
+
+describe("WI-V1W3-WASM-LOWER-02 demo extension — numeric domain parity", () => {
+  // -------------------------------------------------------------------------
+  // Case 1: i32 domain — bitwise compound expression
+  // Force i32 inference via `| 0` bitop (inferNumericDomain rule 4).
+  // Parity: WASM i32 result must equal TypeScript (a | 0) & b for ≥15 inputs.
+  // -------------------------------------------------------------------------
+  it("i32 property: (a | 0) & b — ≥15 fast-check inputs, parity vs ts-backend", async () => {
+    const src = "export function andBit(a: number, b: number): number { return (a | 0) & b; }";
+    const resolution = makeSingleBlockResolution(src);
+    const wasmBytes = await wasmBackend().emit(resolution);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: -2147483648, max: 2147483647 }),
+        fc.integer({ min: -2147483648, max: 2147483647 }),
+        async (a, b) => {
+          const tsRef = (a | 0) & b;
+          const { result: wasmResult } = await instantiateAndRun(
+            wasmBytes,
+            "__wasm_export_andBit",
+            [a, b],
+          );
+          expect(wasmResult).toBe(tsRef);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 2: i64 domain — wide-range addition near i64 max
+  // Force i64 inference via literal 3000000000 > 2^31-1 (inferNumericDomain rule 5).
+  // Parity: WASM i64 result as BigInt must equal TypeScript BigInt addition.
+  //
+  // Note: instantiateAndRun returns number; for i64 we use BigInt conversion.
+  // -------------------------------------------------------------------------
+  it("i64 property: a + 3000000000 + b — ≥15 fast-check BigInt inputs, parity vs ts-backend", async () => {
+    const src =
+      "export function wideAdd(a: number, b: number): number { return a + 3000000000 + b; }";
+    const resolution = makeSingleBlockResolution(src);
+    const wasmBytes = await wasmBackend().emit(resolution);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.bigInt({ min: -1000000n, max: 1000000n }),
+        fc.bigInt({ min: -1000000n, max: 1000000n }),
+        async (a, b) => {
+          const tsRef = a + 3000000000n + b;
+          // i64 WASM functions return BigInt at the JS boundary
+          const { result: wasmResult } = await instantiateAndRun(
+            wasmBytes,
+            "__wasm_export_wideAdd",
+            [a, b] as unknown as number[],
+          );
+          expect(BigInt(wasmResult)).toBe(tsRef);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 3: f64 domain — true division
+  // Force f64 inference via `/` operator (inferNumericDomain rule 1).
+  // Parity: WASM f64 result must be bit-identical to TypeScript division.
+  //
+  // f64 tolerance: results are expected bit-identical (IEEE 754 double on both
+  // sides). Epsilon check here is a defensive safeguard only.
+  // -------------------------------------------------------------------------
+  it("f64 property: a / b — ≥15 fast-check float inputs, parity vs ts-backend", async () => {
+    const src = "export function divF(a: number, b: number): number { return a / b; }";
+    const resolution = makeSingleBlockResolution(src);
+    const wasmBytes = await wasmBackend().emit(resolution);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.float({
+          noNaN: true,
+          noDefaultInfinity: true,
+          min: Math.fround(-1e6),
+          max: Math.fround(1e6),
+        }),
+        fc.float({
+          noNaN: true,
+          noDefaultInfinity: true,
+          min: Math.fround(0.001),
+          max: Math.fround(1e6),
+        }),
+        async (a, b) => {
+          const tsRef = a / b;
+          const { result: wasmResult } = await instantiateAndRun(wasmBytes, "__wasm_export_divF", [
+            a,
+            b,
+          ]);
+          // f64 results are bit-identical between WASM and JS (both IEEE 754 double)
+          const relDiff = Math.abs(Number(wasmResult) - tsRef) / Math.max(Math.abs(tsRef), 1e-300);
+          expect(relDiff).toBeLessThan(1e-9);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
 });

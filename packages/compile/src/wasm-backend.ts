@@ -72,7 +72,7 @@
 
 import type { ResolutionResult } from "./resolve.js";
 import { LoweringVisitor } from "./wasm-lowering/visitor.js";
-import type { WasmFunction } from "./wasm-lowering/wasm-function.js";
+import type { NumericDomain, WasmFunction } from "./wasm-lowering/wasm-function.js";
 import { valtypeByte } from "./wasm-lowering/wasm-function.js";
 
 // ---------------------------------------------------------------------------
@@ -131,6 +131,8 @@ function encodeName(s: string): Uint8Array {
 // ---------------------------------------------------------------------------
 
 const I32 = 0x7f;
+const I64 = 0x7e; // i64 valtype — used for WI-V1W3-WASM-LOWER-02 general lowering
+const F64 = 0x7c; // f64 valtype — used for WI-V1W3-WASM-LOWER-02 general lowering
 const FUNCTYPE = 0x60;
 const FUNCREF = 0x70;
 
@@ -628,10 +630,29 @@ function serializeWasmFunction(fn: WasmFunction): Uint8Array {
 // now only reachable via the fast-paths inside the visitor.
 // ---------------------------------------------------------------------------
 
+/**
+ * Emit a yakcc_host-conformant WASM module for a type-lowered substrate function.
+ *
+ * @param kind      - Wave-2 substrate kind (null for general numeric lowering)
+ * @param fnName    - Exported function name (used as __wasm_export_<fnName>)
+ * @param wasmFn    - WasmFunction IR from LoweringVisitor
+ * @param domain    - Numeric domain for general lowering (undefined → i32 for wave-2)
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001
+ * @title General numeric lowering extends type section with domain-specific type
+ * @status accepted
+ * @rationale
+ *   Wave-2 substrates all use i32 types. WI-02 adds i64 and f64 domain functions
+ *   that need a different WASM type entry (type 5). When `domain` is provided
+ *   (general lowering), a type 5 entry `(domain domain) → domain` is appended and
+ *   the substrate function references it. Wave-2 substrates continue to use types
+ *   1 and 4 as before, preserving full backward compatibility.
+ */
 function emitTypeLoweredModule(
-  kind: SubstrateKind,
+  kind: SubstrateKind | null,
   fnName: string,
   wasmFn: WasmFunction,
+  domain?: NumericDomain,
 ): Uint8Array<ArrayBuffer> {
   // -----------------------------------------------------------------------
   // Type section
@@ -642,7 +663,23 @@ function emitTypeLoweredModule(
   const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32) → ()
   const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]); // (i32 i32) → (i32)
 
-  const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+  // For general numeric lowering (domain provided), append type 5: (D D) → D
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001 (see above)
+  let typeSection: Uint8Array;
+  let substrateFuncTypeIdx: number;
+
+  if (domain !== undefined) {
+    // General lowering: build a domain-specific type 5 entry
+    const vt = domain === "i64" ? I64 : domain === "f64" ? F64 : I32;
+    const type5 = new Uint8Array([FUNCTYPE, 2, vt, vt, 1, vt]); // (D D) → D
+    typeSection = section(1, concat(uleb128(6), type0, type1, type2, type3, type4, type5));
+    substrateFuncTypeIdx = 5; // general numeric substrate uses type 5
+  } else {
+    // Wave-2 substrates: use original 5-type section
+    typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+    // sum_record uses type 1 (i32)→(i32) — one param; all others use type 4
+    substrateFuncTypeIdx = kind === "sum_record" ? 1 : 4;
+  }
 
   // -----------------------------------------------------------------------
   // Import section (shared across all substrate modules)
@@ -651,10 +688,7 @@ function emitTypeLoweredModule(
 
   // -----------------------------------------------------------------------
   // Function section: 1 defined function
-  //   sum_record uses type 1 (i32)→(i32)  — one param
-  //   all others use type 4 (i32 i32)→(i32) — two params
   // -----------------------------------------------------------------------
-  const substrateFuncTypeIdx = kind === "sum_record" ? 1 : 4;
   const funcSection = section(3, concat(uleb128(1), uleb128(substrateFuncTypeIdx)));
 
   // -----------------------------------------------------------------------
@@ -727,7 +761,15 @@ export async function compileToWasm(
     // __wasm_export_panic_demo) remains green — those exports live only in
     // the legacy module and are not produced by the type-lowering path.
     if (result.wave2Shape === "add") return emitSubstrateModule();
-    return emitTypeLoweredModule(result.wave2Shape as SubstrateKind, result.fnName, result.wasmFn);
+    // General numeric lowering (wave2Shape === null): pass the inferred domain
+    // so emitTypeLoweredModule can build the correct type entry (type 5 for i64/f64).
+    // Wave-2 non-add substrates pass wave2Shape as SubstrateKind; domain is undefined.
+    return emitTypeLoweredModule(
+      result.wave2Shape as SubstrateKind | null,
+      result.fnName,
+      result.wasmFn,
+      result.wave2Shape === null ? result.numericDomain : undefined,
+    );
   }
   // Empty resolution fallback: emit the substrate module.
   return emitSubstrateModule();
