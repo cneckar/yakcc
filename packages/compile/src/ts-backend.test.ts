@@ -26,6 +26,7 @@
 
 import {
   type BlockMerkleRoot,
+  type LocalTriplet,
   type SpecYak,
   blockMerkleRoot,
   specHash,
@@ -82,7 +83,7 @@ function makeMerkleRoot(name: string, behavior: string, implSource: string): Blo
   return blockMerkleRoot({
     spec,
     implSource,
-    manifest: manifest as Parameters<typeof blockMerkleRoot>[0]["manifest"],
+    manifest: manifest as LocalTriplet["manifest"],
     artifacts: artifactsMap,
   });
 }

@@ -42,6 +42,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   type BlockMerkleRoot,
+  type LocalTriplet,
   type SpecHash,
   type SpecYak,
   blockMerkleRoot,
@@ -117,7 +118,7 @@ function makeBlockRow(
   const root = blockMerkleRoot({
     spec,
     implSource,
-    manifest: manifest as Parameters<typeof blockMerkleRoot>[0]["manifest"],
+    manifest: manifest as LocalTriplet["manifest"],
     artifacts: artifactsMap,
   });
 

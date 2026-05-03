@@ -51,6 +51,7 @@ import * as os from "node:os";
 import { join } from "node:path";
 import {
   type BlockMerkleRoot,
+  type LocalTriplet,
   type SpecHash,
   type SpecYak,
   blockMerkleRoot,
@@ -160,7 +161,7 @@ async function storeBlock(
   const root = blockMerkleRoot({
     spec,
     implSource,
-    manifest: manifest as Parameters<typeof blockMerkleRoot>[0]["manifest"],
+    manifest: manifest as LocalTriplet["manifest"],
     artifacts: artifactsMap,
   });
 

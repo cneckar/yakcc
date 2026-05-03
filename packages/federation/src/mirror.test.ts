@@ -513,7 +513,7 @@ describe("mirrorRegistry — schema-version mismatch", () => {
     expect(caughtError).toBeInstanceOf(SchemaVersionMismatchError);
     const err = caughtError as SchemaVersionMismatchError;
     expect(err.remoteSchemaVersion).toBe(999);
-    expect(err.localSchemaVersion).toBe(5); // local SCHEMA_VERSION
+    expect(err.localSchemaVersion).toBe(6); // local SCHEMA_VERSION (bumped to 6 in WI-V2-04 L2)
   });
 });
 

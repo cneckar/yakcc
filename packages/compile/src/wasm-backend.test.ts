@@ -21,7 +21,7 @@
  * Status: decided (WI-V1W2-WASM-01)
  */
 
-import { type BlockMerkleRoot, blockMerkleRoot, specHash } from "@yakcc/contracts";
+import { type BlockMerkleRoot, type LocalTriplet, blockMerkleRoot, specHash } from "@yakcc/contracts";
 import type { SpecYak } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
@@ -67,7 +67,7 @@ function makeMerkleRoot(name: string, behavior: string, implSource: string): Blo
   return blockMerkleRoot({
     spec,
     implSource,
-    manifest: manifest as Parameters<typeof blockMerkleRoot>[0]["manifest"],
+    manifest: manifest as LocalTriplet["manifest"],
     artifacts: artifactsMap,
   });
 }

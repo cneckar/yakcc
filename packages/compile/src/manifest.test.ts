@@ -3,6 +3,10 @@
  *   1. recursionParent is surfaced when the registry row has a non-null parentBlockRoot.
  *   2. recursionParent is absent (field not present) for root blocks.
  *   3. verificationStatus is derived correctly from provenance test history.
+ *   4. referencedForeign:[] for a non-foreign block with no foreign deps. (L4)
+ *   5. referencedForeign lists correct "pkg#export" entries for blocks with foreign
+ *      deps, in registry declaration_index ASC order. (L4)
+ *   6. Foreign blocks themselves carry referencedForeign:[] in their manifest entry. (L4)
  *
  * Production sequence exercised:
  *   buildManifest(resolution, registry) → ProvenanceManifest
@@ -14,7 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
-import type { BlockTripletRow, Provenance, Registry } from "@yakcc/registry";
+import type { BlockTripletRow, ForeignRefRow, Provenance, Registry } from "@yakcc/registry";
 import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
 import { buildManifest } from "./manifest.js";
 
@@ -58,16 +62,32 @@ function makeResolution(
 }
 
 /**
- * Build a minimal Registry mock. Accepts a map of root → { parentBlockRoot, hasPassing }.
- * getProvenance returns a testHistory entry with passed=hasPassing when provided.
- * getBlock returns a minimal BlockTripletRow with the given parentBlockRoot.
+ * Extended row metadata used by the registry mock.
+ *
+ * `parentBlockRoot` and `hasPassing` are the original fields.
+ * `kind`           — "local" (default) or "foreign" for the block row.
+ * `foreignPkg`     — non-null only when kind="foreign".
+ * `foreignExport`  — non-null only when kind="foreign".
+ * `foreignRefs`    — list of ForeignRefRow entries to return from getForeignRefs().
  */
-function makeRegistryMock(
-  rows: Map<
-    BlockMerkleRoot,
-    { parentBlockRoot: BlockMerkleRoot | null; hasPassing: boolean }
-  >,
-): Registry {
+interface MockRowMeta {
+  parentBlockRoot: BlockMerkleRoot | null;
+  hasPassing: boolean;
+  kind?: "local" | "foreign";
+  foreignPkg?: string | null;
+  foreignExport?: string | null;
+  foreignRefs?: ForeignRefRow[];
+}
+
+/**
+ * Build a minimal Registry mock. Accepts a map of root → MockRowMeta.
+ *
+ * - getProvenance: returns testHistory with passed=hasPassing when provided.
+ * - getBlock: returns a minimal BlockTripletRow respecting kind/foreignPkg/foreignExport.
+ * - getForeignRefs: returns the foreignRefs list for the requested parent root,
+ *   or [] when not present. (Required by Registry interface as of L2/L4.)
+ */
+function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
   return {
     async storeBlock(_row: BlockTripletRow): Promise<void> {
       throw new Error("not implemented in mock");
@@ -88,6 +108,9 @@ function makeRegistryMock(
         createdAt: 0,
         canonicalAstHash: ("0".repeat(64)) as import("@yakcc/contracts").CanonicalAstHash,
         parentBlockRoot: rowMeta.parentBlockRoot,
+        kind: rowMeta.kind ?? "local",
+        foreignPkg: rowMeta.foreignPkg ?? null,
+        foreignExport: rowMeta.foreignExport ?? null,
         artifacts: new Map(),
       };
     },
@@ -111,6 +134,10 @@ function makeRegistryMock(
         ? [{ runAt: "2024-01-01T00:00:00.000Z", passed: true, caseCount: 1 }]
         : [];
       return { testHistory, runtimeExposure: [] };
+    },
+    async getForeignRefs(merkleRoot: BlockMerkleRoot): Promise<readonly ForeignRefRow[]> {
+      const rowMeta = rows.get(merkleRoot);
+      return rowMeta?.foreignRefs ?? [];
     },
     async close(): Promise<void> {},
   };
@@ -354,5 +381,131 @@ describe("buildManifest: compound production-sequence", () => {
     // specHash and subBlocks are carried through.
     expect(manifest.entries[0]?.specHash).toBe(fakeSpec("a"));
     expect(manifest.entries[1]?.subBlocks).toContain(leafRoot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: referencedForeign field (L4)
+// ---------------------------------------------------------------------------
+
+describe("buildManifest: referencedForeign field", () => {
+  it("emits referencedForeign:[] for a non-foreign block with no foreign deps", async () => {
+    // A plain local block with no entries in block_foreign_refs.
+    const rootA = fakeRoot("a");
+    const resolution = makeResolution([
+      { root: rootA, specHash: fakeSpec("1"), subBlocks: [] },
+    ]);
+
+    // No foreignRefs for rootA → getForeignRefs returns [].
+    const rows: Map<BlockMerkleRoot, MockRowMeta> = new Map([
+      [rootA, { parentBlockRoot: null, hasPassing: false, kind: "local", foreignRefs: [] }],
+    ]);
+
+    const manifest = await buildManifest(resolution, makeRegistryMock(rows));
+
+    expect(manifest.entries).toHaveLength(1);
+    const entry = manifest.entries[0];
+    expect(entry).toBeDefined();
+    // Required field, must be an empty array (not undefined, not absent).
+    expect(entry?.referencedForeign).toEqual([]);
+    expect(Object.prototype.hasOwnProperty.call(entry, "referencedForeign")).toBe(true);
+  });
+
+  it("emits the correct referencedForeign list for a block with one or more foreign deps, in registry-declared order", async () => {
+    // A local block that references two foreign blocks.
+    const localRoot = fakeRoot("b");
+    const foreignRoot1 = fakeRoot("c"); // pkg="node:fs", export="readFileSync"
+    const foreignRoot2 = fakeRoot("d"); // pkg="ts-morph", export="Project"
+
+    const resolution = makeResolution([
+      { root: localRoot, specHash: fakeSpec("2"), subBlocks: [] },
+    ]);
+
+    // ForeignRefRow shape: localBlockRoot, foreignBlockRoot, declarationIndex.
+    // Declared in order: index=0 → foreignRoot1, index=1 → foreignRoot2.
+    const rows: Map<BlockMerkleRoot, MockRowMeta> = new Map([
+      [
+        localRoot,
+        {
+          parentBlockRoot: null,
+          hasPassing: false,
+          kind: "local",
+          foreignRefs: [
+            {
+              parentBlockRoot: localRoot,
+              foreignBlockRoot: foreignRoot1,
+              declarationIndex: 0,
+            },
+            {
+              parentBlockRoot: localRoot,
+              foreignBlockRoot: foreignRoot2,
+              declarationIndex: 1,
+            },
+          ],
+        },
+      ],
+      [
+        foreignRoot1,
+        {
+          parentBlockRoot: null,
+          hasPassing: false,
+          kind: "foreign",
+          foreignPkg: "node:fs",
+          foreignExport: "readFileSync",
+          foreignRefs: [],
+        },
+      ],
+      [
+        foreignRoot2,
+        {
+          parentBlockRoot: null,
+          hasPassing: false,
+          kind: "foreign",
+          foreignPkg: "ts-morph",
+          foreignExport: "Project",
+          foreignRefs: [],
+        },
+      ],
+    ]);
+
+    const manifest = await buildManifest(resolution, makeRegistryMock(rows));
+
+    expect(manifest.entries).toHaveLength(1);
+    const entry = manifest.entries[0];
+    expect(entry).toBeDefined();
+    // Must list both foreign deps in registry declaration_index ASC order.
+    expect(entry?.referencedForeign).toEqual(["node:fs#readFileSync", "ts-morph#Project"]);
+  });
+
+  it("foreign blocks themselves carry referencedForeign:[] in their manifest entry (foreign blocks are opaque leaves)", async () => {
+    // A foreign block — it must always carry referencedForeign:[] because
+    // foreign blocks are opaque leaves and do not nest.
+    const foreignRoot = fakeRoot("e");
+    const resolution = makeResolution([
+      { root: foreignRoot, specHash: fakeSpec("3"), subBlocks: [] },
+    ]);
+
+    const rows: Map<BlockMerkleRoot, MockRowMeta> = new Map([
+      [
+        foreignRoot,
+        {
+          parentBlockRoot: null,
+          hasPassing: false,
+          kind: "foreign",
+          foreignPkg: "node:path",
+          foreignExport: "join",
+          foreignRefs: [],
+        },
+      ],
+    ]);
+
+    const manifest = await buildManifest(resolution, makeRegistryMock(rows));
+
+    expect(manifest.entries).toHaveLength(1);
+    const entry = manifest.entries[0];
+    expect(entry).toBeDefined();
+    // Foreign blocks are leaves — they never reference other foreign blocks.
+    expect(entry?.referencedForeign).toEqual([]);
+    expect(Object.prototype.hasOwnProperty.call(entry, "referencedForeign")).toBe(true);
   });
 });
