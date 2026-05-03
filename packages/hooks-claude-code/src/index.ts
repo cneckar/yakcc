@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HOOK-FACADE-V0: The v0 hook was a passthrough facade.
 // Status: SUPERSEDED by DEC-HOOK-CLAUDE-CODE-PROD-001 (WI-V1W2-HOOKS-01).
 // Kept as a git-history anchor; the implementation below replaces it.

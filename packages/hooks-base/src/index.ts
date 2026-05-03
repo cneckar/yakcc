@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HOOK-BASE-001
 // title: Extract @yakcc/hooks-base: shared types and logic for IDE hook packages
 // status: decided (WI-V1W2-HOOKS-BASE)

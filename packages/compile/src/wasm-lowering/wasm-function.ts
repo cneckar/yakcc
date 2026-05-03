@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * wasm-function.ts — Intermediate representation for a single compiled WASM function.
  *

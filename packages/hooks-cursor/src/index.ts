@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HOOK-CURSOR-001
 // title: Scaffold @yakcc/hooks-cursor: CursorHook interface + registry-backed emission handler
 // status: decided (WI-V1W2-HOOKS-02); shared logic extracted to DEC-HOOK-BASE-001

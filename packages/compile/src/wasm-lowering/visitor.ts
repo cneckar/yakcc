@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * visitor.ts — Recursive-descent LoweringVisitor for the TS→WASM lowering pass.
  *
