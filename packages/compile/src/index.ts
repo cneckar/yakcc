@@ -22,8 +22,9 @@ export type { WasmBackend } from "./wasm-backend.js";
 export { wasmBackend, compileToWasm } from "./wasm-backend.js";
 
 // WASM host runtime (WI-V1W2-WASM-03 — DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001)
-export type { WasmTrapKind, YakccHost, CreateHostOptions } from "./wasm-host.js";
-export { WasmTrap, createHost, instantiateAndRun } from "./wasm-host.js";
+// v2 syscall surface (WI-WASM-HOST-CONTRACT-V2 — DEC-V2-WASM-HOST-CONTRACT-WASI-001)
+export type { WasmTrapKind, WasiErrnoValue, YakccHost, CreateHostOptions } from "./wasm-host.js";
+export { WasmTrap, WasiErrno, createHost, instantiateAndRun } from "./wasm-host.js";
 
 // Artifact type and assembly entry point
 export type { Artifact, AssembleOptions } from "./assemble.js";

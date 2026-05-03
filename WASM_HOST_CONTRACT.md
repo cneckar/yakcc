@@ -820,7 +820,306 @@ work item (Strings — UTF-8 linear-memory + length, indexOf, slice, concat).
 
 ---
 
-## 14. Decision log
+## 14. v2 WASI-shaped Syscall Surface
+
+<!-- @decision DEC-V2-WASM-HOST-CONTRACT-WASI-001
+     @title v2 syscall surface is WASI-preview1-shaped
+     @status accepted
+     @rationale
+       Imports use `host_*` namespace — yakcc owns the namespace, not
+       `wasi_snapshot_preview1`. The host runtime maps `host_*` to the
+       underlying WASI/Node implementation. Yakcc-emitted modules MUST use
+       `host_*` imports. Errno values follow WASI's errno enum verbatim.
+       Ptr-and-length pairs in linear memory are consistent with wave-2/3
+       string convention.
+-->
+
+### 14.1 Overview
+
+The v2 syscall surface adds 14 host imports covering filesystem (8), process
+(3), time (2), and randomness (1) operations. These imports extend the existing
+`yakcc_host` import namespace alongside v1 imports (`host_log`, `host_alloc`,
+`host_free`, `host_panic`) and wave-3 string imports.
+
+**Design rule:** `host_*` is the import namespace; `wasi_snapshot_preview1` is
+not used. The host runtime maps `host_*` to the underlying WASI/Node
+implementation at runtime. This gives yakcc ownership of the syscall surface
+without being tied to a specific WASI snapshot.
+
+**Errno convention:** All errno values follow the WASI preview1 errno enum
+verbatim. Common values:
+
+| Value | Name      | Meaning                              |
+|-------|-----------|--------------------------------------|
+| 0     | SUCCESS   | No error                             |
+| 8     | BADF      | Bad file descriptor                  |
+| 9     | BADMSG    | Bad message                          |
+| 13    | ACCES     | Permission denied                    |
+| 17    | EXIST     | File exists                          |
+| 20    | INVAL     | Invalid argument                     |
+| 27    | ISDIR     | Is a directory                       |
+| 28    | MFILE     | Too many open files                  |
+| 44    | NOENT     | No such file or directory            |
+| 46    | NOSYS     | Function not supported               |
+| 63    | NFILE     | File table overflow                  |
+| 70    | PERM      | Permission denied (operation level)  |
+| 76    | ROFS      | Read-only file system                |
+
+**Memory layout:** pointer-and-length pairs identify byte ranges in linear
+memory (same convention as wave-2/3 strings). Fixed-size output structs use
+little-endian encoding written via `DataView.setUint32` / `setFloat64`.
+
+**Ptr validity:** the caller (WASM module) MUST ensure `ptr + len <= 65536`.
+The host does not validate bounds; violation produces undefined behavior.
+
+**Loud failure at instantiation:** if the host runtime cannot provide a syscall
+import (e.g., running outside Node.js without `node:fs`), `createHost()` MUST
+throw synchronously before yielding a `YakccHost`. Silent deferral to first-call
+failure is non-conforming.
+
+### 14.2 v1/v2 Coexistence
+
+v1 imports (`host_log`, `host_alloc`, `host_free`, `host_panic`) and wave-3
+string imports remain unchanged. v2 imports are additive: a module compiled
+with only v1/wave-3 substrates will not reference v2 imports; they are still
+present in the import object and do not interfere. A module that uses v2 syscall
+imports receives them from the same `yakcc_host` namespace.
+
+**Revised total key count:** 1 (memory) + 4 (v1) + 5 (wave-3) + 14 (v2) = 24.
+
+### 14.3 Filesystem imports (8)
+
+#### `host_fs_open`
+
+```
+import: yakcc_host / host_fs_open
+type:   (path_ptr: i32, path_len: i32, flags: i32, mode_out_fd_ptr: i32) -> (errno: i32)
+```
+
+Open a file at the UTF-8 path `[path_ptr, path_ptr+path_len)`.
+
+- `flags`: bitfield — bit 0 = O_RDONLY (0), bit 1 = O_WRONLY (1), bit 2 = O_RDWR
+  (2). bit 9 = O_CREAT (512), bit 10 = O_TRUNC (1024), bit 11 = O_APPEND (2048).
+- `mode_out_fd_ptr`: i32 pointer where the opened file descriptor (positive i32)
+  is written on SUCCESS as a little-endian i32.
+- Returns 0 (SUCCESS) on success; WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::path_open` (simplified — yakcc uses
+a flat `flags` i32 rather than WASI's split `oflags`/`fs_flags` pair; the host
+maps internally).
+
+#### `host_fs_close`
+
+```
+import: yakcc_host / host_fs_close
+type:   (fd: i32) -> (errno: i32)
+```
+
+Close the file descriptor `fd`. Returns 0 on success, WASI `BADF` (8) if `fd`
+is not a valid open descriptor.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_close`.
+
+#### `host_fs_read`
+
+```
+import: yakcc_host / host_fs_read
+type:   (fd: i32, buf_ptr: i32, buf_len: i32, bytes_read_out_ptr: i32) -> (errno: i32)
+```
+
+Read up to `buf_len` bytes from `fd` into linear memory at `[buf_ptr,
+buf_ptr+buf_len)`. Writes the actual byte count (i32 LE) at `bytes_read_out_ptr`.
+Returns 0 on success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_read` (single iovec equivalent).
+
+#### `host_fs_write`
+
+```
+import: yakcc_host / host_fs_write
+type:   (fd: i32, buf_ptr: i32, buf_len: i32, bytes_written_out_ptr: i32) -> (errno: i32)
+```
+
+Write `buf_len` bytes from linear memory `[buf_ptr, buf_ptr+buf_len)` to `fd`.
+Writes the actual byte count (i32 LE) at `bytes_written_out_ptr`. Returns 0 on
+success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_write` (single iovec equivalent).
+
+#### `host_fs_stat`
+
+```
+import: yakcc_host / host_fs_stat
+type:   (path_ptr: i32, path_len: i32, stat_out_ptr: i32) -> (errno: i32)
+```
+
+Stat the file at path `[path_ptr, path_ptr+path_len)`. Writes a 16-byte struct
+at `stat_out_ptr`:
+
+| Offset | Size | Field      | Encoding       |
+|--------|------|------------|----------------|
+| 0      | 8    | `mtime_ns` | i64 LE (ns)    |
+| 8      | 4    | `size`     | i32 LE (bytes) |
+| 12     | 4    | `filetype` | i32 LE (WASI)  |
+
+`filetype` values: 0 = unknown, 1 = block_device, 2 = char_device, 3 = dir,
+4 = regular_file, 5 = socket_dgram, 6 = socket_stream, 7 = symbolic_link.
+
+**WASI mapping:** `wasi_snapshot_preview1::path_filestat_get`.
+
+#### `host_fs_readdir`
+
+```
+import: yakcc_host / host_fs_readdir
+type:   (fd: i32, buf_ptr: i32, buf_len: i32, entries_out_ptr: i32) -> (errno: i32)
+```
+
+Read directory entries from `fd` into linear memory at `[buf_ptr,
+buf_ptr+buf_len)` in packed format. Writes the number of entries (i32 LE) at
+`entries_out_ptr`. Each entry is a null-terminated UTF-8 name with a preceding
+i32 LE length. Returns 0 on success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_readdir` (simplified format).
+
+#### `host_fs_mkdir`
+
+```
+import: yakcc_host / host_fs_mkdir
+type:   (path_ptr: i32, path_len: i32, mode: i32) -> (errno: i32)
+```
+
+Create a directory at path `[path_ptr, path_ptr+path_len)`. `mode` is the
+POSIX creation mode (e.g. `0o755`). Returns 0 on success, WASI errno on
+failure (`EXIST` if already exists, `NOENT` if parent missing).
+
+**WASI mapping:** `wasi_snapshot_preview1::path_create_directory`.
+
+#### `host_fs_unlink`
+
+```
+import: yakcc_host / host_fs_unlink
+type:   (path_ptr: i32, path_len: i32) -> (errno: i32)
+```
+
+Unlink (delete) the file at path `[path_ptr, path_ptr+path_len)`. Returns 0 on
+success, `NOENT` (44) if not found, `ISDIR` (27) if path is a directory.
+
+**WASI mapping:** `wasi_snapshot_preview1::path_unlink_file`.
+
+### 14.4 Process imports (3)
+
+#### `host_proc_argv`
+
+```
+import: yakcc_host / host_proc_argv
+type:   (buf_ptr: i32, buf_len: i32, bytes_written_out_ptr: i32) -> (errno: i32)
+```
+
+Write the process argv into linear memory at `[buf_ptr, buf_ptr+buf_len)` as
+a sequence of null-terminated UTF-8 strings. Writes the total byte count (i32
+LE) at `bytes_written_out_ptr`. Returns 0 on success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::args_get`.
+
+#### `host_proc_env_get`
+
+```
+import: yakcc_host / host_proc_env_get
+type:   (name_ptr: i32, name_len: i32, buf_ptr: i32, buf_len: i32, bytes_written_out_ptr: i32) -> (errno: i32)
+```
+
+Look up the environment variable named by `[name_ptr, name_ptr+name_len)`. If
+found, write the UTF-8 value into `[buf_ptr, buf_ptr+buf_len)` and write the
+byte count (i32 LE) at `bytes_written_out_ptr`. Returns 0 on success, `NOENT`
+(44) if the variable is not set, `INVAL` (20) if `buf_len` is too small.
+
+**WASI mapping:** `wasi_snapshot_preview1::environ_get` (single-variable form;
+yakcc simplifies WASI's bulk-copy model to a per-variable lookup).
+
+#### `host_proc_exit`
+
+```
+import: yakcc_host / host_proc_exit
+type:   (code: i32) -> [[noreturn]]
+```
+
+Terminate the process with exit code `code`. Does not return. In the reference
+Node.js implementation this calls `process.exit(code)` (or invokes a registered
+exit hook during testing). The WASM module MUST NOT execute any instruction
+after this import call.
+
+**WASI mapping:** `wasi_snapshot_preview1::proc_exit`.
+
+### 14.5 Time imports (2)
+
+#### `host_time_now_unix_ms`
+
+```
+import: yakcc_host / host_time_now_unix_ms
+type:   (out_ptr: i32) -> (errno: i32)
+```
+
+Write the current wall-clock time as milliseconds since the Unix epoch (i64 LE)
+at `out_ptr`. The value matches `Date.now()` within 1 millisecond. Returns 0
+on success.
+
+**WASI mapping:** `wasi_snapshot_preview1::clock_time_get` with
+`CLOCK_REALTIME`, result scaled from nanoseconds to milliseconds.
+
+#### `host_time_monotonic_ns`
+
+```
+import: yakcc_host / host_time_monotonic_ns
+type:   (out_ptr: i32) -> (errno: i32)
+```
+
+Write the current monotonic clock value in nanoseconds (i64 LE) at `out_ptr`.
+The value is derived from `performance.now()` scaled to nanoseconds and is
+strictly monotonically increasing across successive calls within a host
+instance. Returns 0 on success.
+
+**WASI mapping:** `wasi_snapshot_preview1::clock_time_get` with
+`CLOCK_MONOTONIC`.
+
+### 14.6 Randomness import (1)
+
+#### `host_random_bytes`
+
+```
+import: yakcc_host / host_random_bytes
+type:   (buf_ptr: i32, buf_len: i32) -> (errno: i32)
+```
+
+Fill linear memory `[buf_ptr, buf_ptr+buf_len)` with `buf_len` cryptographically
+random bytes. Uses `node:crypto`'s `randomFillSync`. Returns 0 on success.
+
+**WASI mapping:** `wasi_snapshot_preview1::random_get`.
+
+### 14.7 v2 Conformance
+
+A host claiming v2 conformance MUST pass all tests in
+`packages/compile/src/wasm-host-v2.test.ts`:
+
+- ≥4 fs happy-path tests (open+read+close round-trip; write+read round-trip;
+  mkdir+unlink; stat returns plausible mtime/size).
+- ≥2 fs negative-path tests (open non-existent → ENOENT; read closed fd → EBADF).
+- ≥3 process tests (argv length matches; env_get returns expected env var; exit
+  invokes a registered hook recording the code without process-killing).
+- ≥2 time tests (now_unix_ms within 1s of `Date.now()`; monotonic_ns is
+  increasing across two calls).
+- ≥1 randomness test (random_bytes(N) yields non-zero entropy; two calls return
+  different byte sequences).
+- ≥1 importObject shape test (all 24 keys: 1 memory + 4 v1 + 5 wave-3 + 14 v2).
+- ≥1 integration/parity test: a tiny WASM module that imports `host_fs_read` and
+  `host_fs_write` round-trips a temp file through `host_fs_*`.
+
+A host claiming v2 conformance may add to its claim:
+
+> "Conformant with WASM_HOST_CONTRACT.md v2 syscall surface (WI-WASM-HOST-CONTRACT-V2)"
+
+---
+
+## 15. Decision log
 
 ### DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001
 

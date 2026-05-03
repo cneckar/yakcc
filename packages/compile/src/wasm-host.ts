@@ -1,12 +1,13 @@
 /**
  * wasm-host.ts — In-process host runtime for yakcc-compiled WebAssembly modules.
  *
- * This module implements the host side of the WASM_HOST_CONTRACT.md v1 wave-2
- * specification. It provides:
+ * This module implements the host side of the WASM_HOST_CONTRACT.md v1 wave-2,
+ * wave-3 string, and v2 WASI-shaped syscall specifications. It provides:
  *   - createHost(): YakccHost   — construct a conformant import object + memory
  *   - instantiateAndRun(...)    — convenience wrapper: compile + run a single fn
  *   - WasmTrap                  — typed error for all trap conditions
  *   - WasmTrapKind              — discriminated union of the 7 trap classes
+ *   - WasiErrno                 — WASI preview1 errno enum for v2 syscall imports
  *
  * The reference host uses a bump allocator (sub-decision 2) starting at offset 16,
  * with host_free as a no-op (the module may assume freed memory is not reclaimed).
@@ -37,7 +38,23 @@
  *     Wave-3 removes this restriction under a new DEC.
  *
  * Conformance: passes all 8 tests in wasm-host.test.ts per WASM_HOST_CONTRACT.md §9.
+ * v2 syscall conformance: passes all tests in wasm-host-v2.test.ts per WASM_HOST_CONTRACT.md §14.7.
  */
+
+import * as nodeCrypto from "node:crypto";
+import * as nodeFs from "node:fs";
+import * as nodeProcess from "node:process";
+
+// Validate that required Node.js modules are available at import time.
+// Loud failure at instantiation per WASM_HOST_CONTRACT.md §14.1 — not deferred to first call.
+// We reference the imports here to force the binding check (they are always available in Node,
+// but this guards against unexpected host environments that mock or strip modules).
+if (typeof nodeFs.openSync !== "function" || typeof nodeCrypto.randomFillSync !== "function") {
+  throw new Error(
+    "wasm-host: Node.js modules node:fs and node:crypto are required for v2 syscall imports. " +
+      "Running outside Node.js is not supported.",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -82,6 +99,38 @@ export class WasmTrap extends Error {
 }
 
 /**
+ * WASI preview1 errno values — used by all v2 syscall host imports.
+ *
+ * @decision DEC-V2-WASM-HOST-CONTRACT-WASI-001
+ * @title v2 syscall surface is WASI-preview1-shaped
+ * @status accepted
+ * @rationale
+ *   Imports use `host_*` namespace — yakcc owns the namespace, not
+ *   `wasi_snapshot_preview1`. The host runtime maps `host_*` to the
+ *   underlying WASI/Node.js implementation. Yakcc-emitted modules MUST use
+ *   `host_*` imports. Errno values follow WASI's errno enum verbatim.
+ *   Ptr-and-length pairs in linear memory are consistent with wave-2/3
+ *   string convention (caller ensures ptr+len <= 65536).
+ */
+export const WasiErrno = {
+  SUCCESS: 0,
+  BADF: 8,
+  BADMSG: 9,
+  ACCES: 13,
+  EXIST: 17,
+  INVAL: 20,
+  ISDIR: 27,
+  MFILE: 28,
+  NOENT: 44,
+  NOSYS: 46,
+  NFILE: 63,
+  PERM: 70,
+  ROFS: 76,
+} as const;
+
+export type WasiErrnoValue = (typeof WasiErrno)[keyof typeof WasiErrno];
+
+/**
  * Options for createHost().
  */
 export interface CreateHostOptions {
@@ -91,16 +140,23 @@ export interface CreateHostOptions {
    * (host_log is best-effort per WASM_HOST_CONTRACT.md §3.2).
    */
   onLog?: (msg: string) => void;
+  /**
+   * If provided, called instead of process.exit() when host_proc_exit is
+   * invoked by the WASM module. Allows tests to intercept exit without
+   * killing the process. The callback receives the exit code.
+   */
+  onExit?: (code: number) => void;
 }
 
 /**
  * The live host object returned by createHost().
  *
  * importObject: pass to WebAssembly.instantiate({importObject}) —
- *   shape: { yakcc_host: { memory, host_log, host_alloc, host_free, host_panic } }
+ *   shape: { yakcc_host: { memory, host_log, host_alloc, host_free, host_panic,
+ *            host_string_*, host_fs_*, host_proc_*, host_time_*, host_random_bytes } }
  * memory: the shared WebAssembly.Memory (1 page, fixed)
  * logs: all messages delivered via host_log, in call order
- * close(): release the host (currently a no-op; provided for lifecycle symmetry)
+ * close(): release the host (closes any open file descriptors from v2 syscalls)
  */
 export interface YakccHost {
   readonly importObject: WebAssembly.Imports;
@@ -170,6 +226,46 @@ function readUtf8(memory: WebAssembly.Memory, ptr: number, len: number): string 
   const view = new Uint8Array(memory.buffer, ptr, len);
   // TextDecoder with fatal:false replaces ill-formed sequences (WASM_HOST_CONTRACT.md §3.2)
   return new TextDecoder("utf-8", { fatal: false }).decode(view);
+}
+
+// ---------------------------------------------------------------------------
+// Internal: map Node.js syscall errors → WASI errno values
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate a caught Node.js syscall error (which carries an errno string code
+ * like "ENOENT", "EBADF", etc.) into the corresponding WASI preview1 errno
+ * integer. Unknown codes map to WasiErrno.NOSYS (46) so callers always get a
+ * valid integer return rather than a JS exception escaping the host boundary.
+ */
+function mapNodeErrnoToWasi(e: unknown): number {
+  if (e !== null && typeof e === "object" && "code" in e) {
+    switch ((e as { code: string }).code) {
+      case "ENOENT":
+        return WasiErrno.NOENT;
+      case "EACCES":
+        return WasiErrno.ACCES;
+      case "EPERM":
+        return WasiErrno.PERM;
+      case "EEXIST":
+        return WasiErrno.EXIST;
+      case "EISDIR":
+        return WasiErrno.ISDIR;
+      case "EBADF":
+        return WasiErrno.BADF;
+      case "EINVAL":
+        return WasiErrno.INVAL;
+      case "EMFILE":
+        return WasiErrno.MFILE;
+      case "ENFILE":
+        return WasiErrno.NFILE;
+      case "EROFS":
+        return WasiErrno.ROFS;
+      default:
+        return WasiErrno.NOSYS;
+    }
+  }
+  return WasiErrno.NOSYS;
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +478,374 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // WI-WASM-HOST-CONTRACT-V2: WASI-shaped syscall imports (WASM_HOST_CONTRACT.md §14)
+  //
+  // @decision DEC-V2-WASM-HOST-CONTRACT-WASI-001
+  // @title v2 syscall surface is WASI-preview1-shaped
+  // @status accepted
+  // @rationale
+  //   Imports use `host_*` namespace — yakcc owns the namespace, not
+  //   `wasi_snapshot_preview1`. Node stdlib (node:fs, node:crypto, node:process,
+  //   node:perf_hooks) provides the synchronous backing implementations.
+  //   Synchronous APIs are used throughout to match the WASM synchronous
+  //   import-call boundary (WASM imports run synchronously from the module).
+  //   Errno values follow the WASI preview1 errno enum (WasiErrno const map).
+  //   All non-WasmTrap host errors are caught and returned as WASI errno codes
+  //   rather than propagated as JS exceptions (which would appear as traps).
+  // -------------------------------------------------------------------------
+
+  // Open file-descriptor table: tracks fds opened by host_fs_open so that
+  // host_fs_close / host_fs_read / host_fs_write can validate fd ownership.
+  // Node's openSync returns numeric fds; we use those directly.
+  const openFds = new Set<number>();
+
+  // ---- Filesystem ----------------------------------------------------------
+
+  /**
+   * host_fs_open(path_ptr, path_len, flags, mode_out_fd_ptr) -> errno
+   * Opens a file. flags: O_RDONLY=0, O_WRONLY=1, O_RDWR=2,
+   *   O_CREAT=512, O_TRUNC=1024, O_APPEND=2048.
+   * Writes the opened fd (i32 LE) at mode_out_fd_ptr on SUCCESS.
+   * WASI mapping: path_open (simplified flat flags → Node flags).
+   */
+  function hostFsOpen(
+    pathPtr: number,
+    pathLen: number,
+    flags: number,
+    modeOutFdPtr: number,
+  ): number {
+    try {
+      const path = readUtf8(memory, pathPtr, pathLen);
+      // Map combined flags integer to Node.js open flags string.
+      const isWrite = (flags & 1) !== 0;
+      const isRdWr = (flags & 2) !== 0;
+      const isCreat = (flags & 512) !== 0;
+      const isTrunc = (flags & 1024) !== 0;
+      const isAppend = (flags & 2048) !== 0;
+      let nodeFlags: string;
+      if (isRdWr) {
+        // O_RDWR flag combinations per WASM_HOST_CONTRACT.md §14.3:
+        // O_TRUNC takes precedence: "w+" creates-or-truncates and opens rw from start.
+        // O_CREAT without O_TRUNC: "a+" creates if missing, no truncate (append-write, read from start).
+        // Neither: "r+" — file must already exist.
+        if (isTrunc) {
+          nodeFlags = "w+"; // O_RDWR|O_TRUNC — create-or-truncate, rw from position 0
+        } else if (isCreat) {
+          nodeFlags = "a+"; // O_RDWR|O_CREAT — create if missing, no truncate
+        } else {
+          nodeFlags = "r+"; // O_RDWR alone — file must exist
+        }
+      } else if (isWrite) {
+        if (isAppend) nodeFlags = "a";
+        else if (isTrunc) nodeFlags = "w";
+        else nodeFlags = isCreat ? "w" : "r+";
+      } else {
+        nodeFlags = "r";
+      }
+      const fd = nodeFs.openSync(path, nodeFlags);
+      openFds.add(fd);
+      new DataView(memory.buffer).setInt32(modeOutFdPtr, fd, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_close(fd) -> errno
+   * Closes a host-opened file descriptor.
+   * WASI mapping: fd_close.
+   */
+  function hostFsClose(fd: number): number {
+    if (!openFds.has(fd)) return WasiErrno.BADF;
+    try {
+      nodeFs.closeSync(fd);
+      openFds.delete(fd);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      openFds.delete(fd);
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_read(fd, buf_ptr, buf_len, bytes_read_out_ptr) -> errno
+   * Reads up to buf_len bytes from fd into linear memory at [buf_ptr, buf_ptr+buf_len).
+   * Writes actual byte count (i32 LE) at bytes_read_out_ptr.
+   * WASI mapping: fd_read (single iovec).
+   */
+  function hostFsRead(fd: number, bufPtr: number, bufLen: number, bytesReadOutPtr: number): number {
+    if (!openFds.has(fd)) return WasiErrno.BADF;
+    try {
+      const buf = Buffer.alloc(bufLen);
+      const bytesRead = nodeFs.readSync(fd, buf, 0, bufLen, null);
+      new Uint8Array(memory.buffer).set(new Uint8Array(buf.buffer, 0, bytesRead), bufPtr);
+      new DataView(memory.buffer).setInt32(bytesReadOutPtr, bytesRead, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_write(fd, buf_ptr, buf_len, bytes_written_out_ptr) -> errno
+   * Writes buf_len bytes from linear memory [buf_ptr, buf_ptr+buf_len) to fd.
+   * Writes actual byte count (i32 LE) at bytes_written_out_ptr.
+   * WASI mapping: fd_write (single iovec).
+   */
+  function hostFsWrite(
+    fd: number,
+    bufPtr: number,
+    bufLen: number,
+    bytesWrittenOutPtr: number,
+  ): number {
+    if (!openFds.has(fd)) return WasiErrno.BADF;
+    try {
+      const data = Buffer.from(memory.buffer, bufPtr, bufLen);
+      const written = nodeFs.writeSync(fd, data);
+      new DataView(memory.buffer).setInt32(bytesWrittenOutPtr, written, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_stat(path_ptr, path_len, stat_out_ptr) -> errno
+   * Stats a file. Writes 16-byte struct at stat_out_ptr:
+   *   [0..8)  mtime_ns: i64 LE
+   *   [8..12) size:     i32 LE
+   *   [12..16) filetype: i32 LE (WASI filetype enum)
+   * WASI mapping: path_filestat_get.
+   */
+  function hostFsStat(pathPtr: number, pathLen: number, statOutPtr: number): number {
+    try {
+      const path = readUtf8(memory, pathPtr, pathLen);
+      const st = nodeFs.statSync(path);
+      const dv = new DataView(memory.buffer);
+      // mtime_ns: convert ms float to BigInt nanoseconds, write as two i32 LE halves
+      const mtimeNs = BigInt(Math.floor(st.mtimeMs)) * 1_000_000n;
+      const lo = Number(mtimeNs & 0xffffffffn);
+      const hi = Number((mtimeNs >> 32n) & 0xffffffffn);
+      dv.setUint32(statOutPtr, lo, true);
+      dv.setUint32(statOutPtr + 4, hi, true);
+      dv.setInt32(statOutPtr + 8, Number(st.size), true);
+      // WASI filetype: 3=dir, 4=regular_file, 0=unknown
+      const filetype = st.isDirectory() ? 3 : st.isFile() ? 4 : 0;
+      dv.setInt32(statOutPtr + 12, filetype, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_readdir(fd, buf_ptr, buf_len, entries_out_ptr) -> errno
+   * Reads directory entries from fd (must be open dir). Writes packed entries
+   * into [buf_ptr, buf_ptr+buf_len). Each entry: i32 LE name_len, then UTF-8 bytes.
+   * Writes entry count (i32 LE) at entries_out_ptr.
+   * WASI mapping: fd_readdir (simplified).
+   */
+  function hostFsReaddir(
+    fd: number,
+    bufPtr: number,
+    bufLen: number,
+    entriesOutPtr: number,
+  ): number {
+    if (!openFds.has(fd)) return WasiErrno.BADF;
+    try {
+      // Get the path associated with this fd from /proc/self/fd (Linux) or fallback
+      let dirPath: string;
+      try {
+        dirPath = nodeFs.readlinkSync(`/proc/self/fd/${fd}`);
+      } catch {
+        return WasiErrno.BADF;
+      }
+      const entries = nodeFs.readdirSync(dirPath);
+      const enc = new TextEncoder();
+      const dv = new DataView(memory.buffer);
+      const mem = new Uint8Array(memory.buffer);
+      let offset = bufPtr;
+      let count = 0;
+      for (const name of entries) {
+        const encoded = enc.encode(name);
+        const needed = 4 + encoded.length;
+        if (offset + needed > bufPtr + bufLen) break;
+        dv.setInt32(offset, encoded.length, true);
+        offset += 4;
+        mem.set(encoded, offset);
+        offset += encoded.length;
+        count++;
+      }
+      dv.setInt32(entriesOutPtr, count, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_mkdir(path_ptr, path_len, mode) -> errno
+   * Creates a directory. Returns EXIST if already exists, NOENT if parent missing.
+   * WASI mapping: path_create_directory.
+   */
+  function hostFsMkdir(pathPtr: number, pathLen: number, mode: number): number {
+    try {
+      const path = readUtf8(memory, pathPtr, pathLen);
+      nodeFs.mkdirSync(path, { mode });
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_fs_unlink(path_ptr, path_len) -> errno
+   * Unlinks a file. Returns NOENT if not found, ISDIR if path is a directory.
+   * WASI mapping: path_unlink_file.
+   */
+  function hostFsUnlink(pathPtr: number, pathLen: number): number {
+    try {
+      const path = readUtf8(memory, pathPtr, pathLen);
+      nodeFs.unlinkSync(path);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  // ---- Process -------------------------------------------------------------
+
+  /**
+   * host_proc_argv(buf_ptr, buf_len, bytes_written_out_ptr) -> errno
+   * Writes process.argv as null-terminated UTF-8 strings.
+   * WASI mapping: args_get.
+   */
+  function hostProcArgv(bufPtr: number, bufLen: number, bytesWrittenOutPtr: number): number {
+    try {
+      const enc = new TextEncoder();
+      const mem = new Uint8Array(memory.buffer);
+      const dv = new DataView(memory.buffer);
+      let offset = bufPtr;
+      let total = 0;
+      for (const arg of nodeProcess.argv) {
+        const encoded = enc.encode(arg);
+        const needed = encoded.length + 1; // +1 for null terminator
+        if (offset + needed > bufPtr + bufLen) break;
+        mem.set(encoded, offset);
+        offset += encoded.length;
+        mem[offset] = 0; // null terminator
+        offset += 1;
+        total += needed;
+      }
+      dv.setInt32(bytesWrittenOutPtr, total, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_proc_env_get(name_ptr, name_len, buf_ptr, buf_len, bytes_written_out_ptr) -> errno
+   * Looks up a single environment variable by name.
+   * Returns NOENT if not set, INVAL if buf_len is too small.
+   * WASI mapping: environ_get (single-variable form).
+   */
+  function hostProcEnvGet(
+    namePtr: number,
+    nameLen: number,
+    bufPtr: number,
+    bufLen: number,
+    bytesWrittenOutPtr: number,
+  ): number {
+    try {
+      const name = readUtf8(memory, namePtr, nameLen);
+      const value = nodeProcess.env[name];
+      if (value === undefined) return WasiErrno.NOENT;
+      const encoded = new TextEncoder().encode(value);
+      if (encoded.length > bufLen) return WasiErrno.INVAL;
+      new Uint8Array(memory.buffer).set(encoded, bufPtr);
+      new DataView(memory.buffer).setInt32(bytesWrittenOutPtr, encoded.length, true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_proc_exit(code) -> [[noreturn]]
+   * Terminates the process. If opts.onExit is provided (e.g., in tests),
+   * calls that instead of process.exit() to allow interception.
+   * WASI mapping: proc_exit.
+   */
+  function hostProcExit(code: number): void {
+    if (opts?.onExit !== undefined) {
+      opts.onExit(code);
+      // After onExit returns (only in test mode), throw to unwind WASM call stack.
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_proc_exit(${code}) intercepted`,
+      });
+    }
+    nodeProcess.exit(code);
+  }
+
+  // ---- Time ----------------------------------------------------------------
+
+  /**
+   * host_time_now_unix_ms(out_ptr) -> errno
+   * Writes Date.now() as i64 LE (milliseconds since Unix epoch) at out_ptr.
+   * WASI mapping: clock_time_get(CLOCK_REALTIME), scaled to ms.
+   */
+  function hostTimeNowUnixMs(outPtr: number): number {
+    try {
+      const nowMs = BigInt(Date.now());
+      const dv = new DataView(memory.buffer);
+      dv.setUint32(outPtr, Number(nowMs & 0xffffffffn), true);
+      dv.setUint32(outPtr + 4, Number((nowMs >> 32n) & 0xffffffffn), true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  /**
+   * host_time_monotonic_ns(out_ptr) -> errno
+   * Writes monotonic clock value as i64 LE (nanoseconds) at out_ptr.
+   * Uses performance.now() scaled to ns (strictly monotonic within a host instance).
+   * WASI mapping: clock_time_get(CLOCK_MONOTONIC).
+   */
+  function hostTimeMonotonicNs(outPtr: number): number {
+    try {
+      // performance.now() returns float ms; scale to integer ns
+      const ns = BigInt(Math.floor(performance.now() * 1_000_000));
+      const dv = new DataView(memory.buffer);
+      dv.setUint32(outPtr, Number(ns & 0xffffffffn), true);
+      dv.setUint32(outPtr + 4, Number((ns >> 32n) & 0xffffffffn), true);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
+  // ---- Randomness ----------------------------------------------------------
+
+  /**
+   * host_random_bytes(buf_ptr, buf_len) -> errno
+   * Fills linear memory [buf_ptr, buf_ptr+buf_len) with cryptographically random bytes.
+   * WASI mapping: random_get.
+   */
+  function hostRandomBytes(bufPtr: number, bufLen: number): number {
+    try {
+      const view = new Uint8Array(memory.buffer, bufPtr, bufLen);
+      nodeCrypto.randomFillSync(view);
+      return WasiErrno.SUCCESS;
+    } catch (e) {
+      return mapNodeErrnoToWasi(e);
+    }
+  }
+
   const importObject: WebAssembly.Imports = {
     yakcc_host: {
       memory,
@@ -395,6 +859,21 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
       host_string_slice: hostStringSlice,
       host_string_concat: hostStringConcat,
       host_string_eq: hostStringEq,
+      // WI-WASM-HOST-CONTRACT-V2: WASI-shaped syscall imports (WASM_HOST_CONTRACT.md §14)
+      host_fs_open: hostFsOpen,
+      host_fs_close: hostFsClose,
+      host_fs_read: hostFsRead,
+      host_fs_write: hostFsWrite,
+      host_fs_stat: hostFsStat,
+      host_fs_readdir: hostFsReaddir,
+      host_fs_mkdir: hostFsMkdir,
+      host_fs_unlink: hostFsUnlink,
+      host_proc_argv: hostProcArgv,
+      host_proc_env_get: hostProcEnvGet,
+      host_proc_exit: hostProcExit,
+      host_time_now_unix_ms: hostTimeNowUnixMs,
+      host_time_monotonic_ns: hostTimeMonotonicNs,
+      host_random_bytes: hostRandomBytes,
     },
   };
 
@@ -405,7 +884,15 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
       return logBuffer;
     },
     close(): void {
-      // No-op in v1; provided for lifecycle symmetry with future resource-owning hosts.
+      // Close any file descriptors opened via host_fs_open that remain open.
+      for (const fd of openFds) {
+        try {
+          nodeFs.closeSync(fd);
+        } catch {
+          // Swallow — best effort cleanup on host close.
+        }
+      }
+      openFds.clear();
     },
   };
 }
