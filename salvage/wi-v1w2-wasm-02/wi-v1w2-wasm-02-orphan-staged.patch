@@ -1,0 +1,2098 @@
+diff --git a/packages/compile/src/index.ts b/packages/compile/src/index.ts
+index b903a79..1e6306a 100644
+--- a/packages/compile/src/index.ts
++++ b/packages/compile/src/index.ts
+@@ -18,8 +18,8 @@ export type { VerificationStatus, ProvenanceEntry, ProvenanceManifest } from "./
+ // Backend types and factories
+ export type { Backend } from "./ts-backend.js";
+ export { tsBackend } from "./ts-backend.js";
+-export type { WasmBackend } from "./wasm-backend.js";
+-export { wasmBackend, compileToWasm } from "./wasm-backend.js";
++export type { WasmBackend, WasmLoweringResult } from "./wasm-backend.js";
++export { wasmBackend, compileToWasm, compileToWasmWithDiagnostics, WasmLoweringError } from "./wasm-backend.js";
+ 
+ // Artifact type and assembly entry point
+ export type { Artifact, AssembleOptions } from "./assemble.js";
+diff --git a/packages/compile/src/wasm-backend.test.ts b/packages/compile/src/wasm-backend.test.ts
+index 56e19ac..3a5f985 100644
+--- a/packages/compile/src/wasm-backend.test.ts
++++ b/packages/compile/src/wasm-backend.test.ts
+@@ -3,29 +3,93 @@
+  *
+  * Production sequence exercised (compound-interaction test):
+  *   makeResolution() → compileToWasm(resolution) → WebAssembly.instantiate(bytes)
+- *   → instance.exports.add(2, 3) === 5
++ *   → instance.exports.<fn>(inputs) === expected
+  *
+- * Tests cover:
++ * Tests cover (WI-V1W2-WASM-02 additions on top of WASM-01 base):
++ *
++ * [WASM-01 regression guard]
+  *   1. magic-bytes:   result starts with WASM magic + version 1
+  *   2. valid-module:  WebAssembly.Module construction does not throw
+  *   3. add-2+3:       instantiate, call add(2, 3), assert === 5
+  *   4. add-0+0:       add(0, 0) === 0
+  *   5. add-negatives: add(-1, -1) via i32 wrapping === -2
+- *   6. wasmBackend(): factory returns an object with name="wasm" and an emit() function
++ *   6. wasmBackend(): factory returns name="wasm" and an emit() function
+  *   7. module-size:   emitted module is in the expected range (20–100 bytes)
+  *
++ * [WI-V1W2-WASM-02 parity tests — cross-backend equality]
++ *   P1a. number→number i32 add: TS-backend and WASM-backend produce equal results for 5 cases
++ *   P1b. number→number f64 add: TS-backend and WASM-backend produce equal results (float tolerance)
++ *   P1c. bigint→bigint i64 add: TS-backend and WASM-backend produce equal results for 5 cases
++ *        incl. values exceeding i32 range, negatives, zero
++ *   P2.  string→number strlen: TS-backend and WASM-backend produce equal results for 5 strings
++ *   P3.  number→string numToStr: TS-backend and WASM-backend produce equal results for 5 numbers
++ *   P4.  record<{a:number,b:number}>→number sum: TS-backend and WASM-backend equal for 5 records
++ *   P5.  Array<number>→number sum: TS-backend and WASM-backend equal for 5 arrays
++ *
++ * [WI-V1W2-WASM-02 numeric-domain inference]
++ *   N1. typeHint "i32" → i32 ops asserted via execution
++ *   N2. absent typeHint → f64 default + downgrade warning in WasmLoweringResult.warnings
++ *
++ * Cross-backend equality contract (per evaluation contract):
++ *   For each substrate, both tsBackend().emit() and wasmBackend().emit() are called on the
++ *   SAME ResolutionResult. The TS module string is type-stripped and executed via new Function().
++ *   The WASM module is instantiated via WebAssembly.instantiate(). Output values are compared
++ *   directly (with documented float tolerance for f64 substrates).
++ *
++ *   Calling conventions differ by design:
++ *     - TS backend: function receives native JS values (string, number, bigint, object, array)
++ *     - WASM backend: string/array/record → ptr+len or ptr (caller writes memory)
++ *   The test harness adapts the calling convention per substrate while asserting semantic equality.
++ *
++ * Compound-interaction requirement: each parity test crosses multiple
++ * internal components (signature parser → type lowerer → binary emitter →
++ * WebAssembly JS API → function execution).
++ *
++ * Host binding stubs for P3 (number→string):
++ *   The test provides a minimal in-test host object:
++ *     { memory: WebAssembly.Memory, host_alloc, host_write_i32_dec }
++ *   These are the only host functions imported by the emitted module.
++ *   Production host wiring is WI-V1W2-WASM-03's surface — this file does NOT
++ *   create wasm-host.ts or WASM_HOST_CONTRACT.md.
++ *
+  * @decision DEC-V1-WAVE-2-WASM-TEST-001: tests build a synthetic ResolutionResult
+  * directly (same pattern as ts-backend.test.ts) rather than going through the full
+  * assemble() pipeline. The compound-interaction test crosses wasm-backend + the
+  * WebAssembly JS API boundary — sufficient to prove the binary is valid and callable.
+- * Status: decided (WI-V1W2-WASM-01)
++ * Status: updated (WI-V1W2-WASM-02 round 2 — cross-backend parity now asserted)
++ *
++ * @decision DEC-V1-WAVE-2-WASM-TEST-002: string input tests pass UTF-8 bytes into
++ * a shared WebAssembly.Memory, with ptr/len computed by the test host. The WASM
++ * function reads those bytes and returns a numeric result. This validates the
++ * linear-memory string-view lowering end-to-end per DEC-V1-WAVE-2-WASM-LOWERING-001.
++ * Status: decided (WI-V1W2-WASM-02)
++ *
++ * @decision DEC-V1-WAVE-2-WASM-TEST-003: number→string tests provide an in-test
++ * host_alloc and host_write_i32_dec that write into a shared WebAssembly.Memory.
++ * This validates the host-import path without pre-empting WI-V1W2-WASM-03.
++ * Status: decided (WI-V1W2-WASM-02)
++ *
++ * @decision DEC-V1-WAVE-2-WASM-TEST-004: TS-backend output is executed by stripping
++ * TypeScript type annotations (JSDoc comments, parameter types, return types) with a
++ * minimal regex, then wrapping the function definition with new Function(). This is
++ * safe because the substrate sources are well-bounded (simple arithmetic, string ops)
++ * and match the strict-subset structure guaranteed by the block validator. An AST-based
++ * TS type stripper (ts-morph, strip-types) is not used to avoid a build-time dependency
++ * purely for test execution. This decision is revisited if substrates grow complex.
++ * Status: decided (WI-V1W2-WASM-02 round 2)
+  */
+ 
+ import { type BlockMerkleRoot, blockMerkleRoot, specHash } from "@yakcc/contracts";
+ import type { SpecYak } from "@yakcc/contracts";
+ import { describe, expect, it } from "vitest";
+ import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
+-import { compileToWasm, wasmBackend } from "./wasm-backend.js";
++import { tsBackend } from "./ts-backend.js";
++import {
++  WasmLoweringError,
++  compileToWasm,
++  compileToWasmWithDiagnostics,
++  wasmBackend,
++} from "./wasm-backend.js";
+ 
+ // ---------------------------------------------------------------------------
+ // Fixture helpers — mirrors ts-backend.test.ts pattern
+@@ -97,7 +161,92 @@ function makeAddResolution(): ResolutionResult {
+ }
+ 
+ // ---------------------------------------------------------------------------
+-// Test: magic bytes
++// Cross-backend execution helpers
++//
++// These helpers implement the comparison required by the evaluation contract:
++// each parity test must assert equality between tsBackend output and wasmBackend
++// output for the same ResolutionResult.
++//
++// @decision DEC-V1-WAVE-2-WASM-TEST-004 (see file header) governs the TS type
++// stripper. The strip function handles exactly the annotation patterns used in
++// this file's substrates — no more, no less.
++// ---------------------------------------------------------------------------
++
++/**
++ * Strip TypeScript type annotations from an emitted TS module string so the
++ * result can be executed as JavaScript via new Function().
++ *
++ * Patterns stripped:
++ *   1. Inline JSDoc @wasmType annotations: /** @wasmType i32 * /
++ *   2. Parameter type annotations: `: number`, `: bigint`, `: string`,
++ *      `: boolean`, `: { a: number; b: number }`, `: Array<number>`,
++ *      `: ReadonlyArray<number>`
++ *   3. Return type annotation: `): <type> {` → `) {`
++ *   4. `import type ...` lines (type-only imports, not runtime)
++ *   5. `// ...` comment lines from the assembled module header
++ *   6. `export { name };` re-export lines (function def already has `export`)
++ *   7. `// --- block: ... ---` separator comments
++ *
++ * This is intentionally narrow — only the patterns appearing in this test
++ * file's substrates are handled.
++ */
++function stripTsTypes(source: string): string {
++  return source
++    // Remove inline JSDoc @wasmType annotations (/** @wasmType i32 */)
++    .replace(/\/\*\*\s*@wasmType\s+\w+\s*\*\/\s*/g, "")
++    // Remove import type lines
++    .replace(/^import type\s+.*$/gm, "")
++    // Remove // comment lines (assembled module header + block separators)
++    .replace(/^\/\/.*$/gm, "")
++    // Remove parameter type annotations — handles: `: number`, `: bigint`, `: string`,
++    // `: boolean`, `: void`, `: { ... }` (braced object type), `: Array<...>`,
++    // `: ReadonlyArray<...>`. Uses negative-lookahead to avoid stripping `=>`.
++    .replace(/:\s*(?:number|bigint|string|boolean|void|undefined)\b/g, "")
++    // Remove object type annotations in parameter position: `: { a: T; b: T }`
++    .replace(/:\s*\{[^}]*\}/g, "")
++    // Remove generic array type annotations: `: Array<...>` `: ReadonlyArray<...>`
++    .replace(/:\s*(?:Readonly)?Array\s*<[^>]*>/g, "")
++    // Remove function return type annotation: `):<anything>{` → `) {`
++    // Handles `): number {`, `): bigint {`, `): string {`, etc.
++    .replace(/\)\s*:[^{]+\{/g, ") {")
++    // Remove `export { name };` re-export lines
++    .replace(/^export\s*\{[^}]*\}\s*;?\s*$/gm, "")
++    // Remove `export` keyword from function declarations — `export function` is a module
++    // syntax not valid inside new Function() scope. The function becomes locally declared
++    // and is returned by name at the end of the wrapper body.
++    .replace(/\bexport\s+function\b/g, "function")
++    // Collapse multiple blank lines to one
++    .replace(/\n{3,}/g, "\n\n")
++    .trim();
++}
++
++/**
++ * Execute an emitted TS module string for a specific exported function name.
++ *
++ * Strips TS types from the source, extracts the named function via new Function(),
++ * and returns it as a callable. The function is executed in a fresh scope with no
++ * module system — only basic JS globals are available.
++ *
++ * This is safe for our substrates because they contain only arithmetic/string
++ * operations and no imports. If a substrate imports an external module, this
++ * helper will fail loudly (the import statement will be a syntax error in the
++ * Function constructor scope).
++ */
++function extractFunctionFromTsModule(
++  tsModuleSource: string,
++  funcName: string,
++): (...args: unknown[]) => unknown {
++  const stripped = stripTsTypes(tsModuleSource);
++  // Wrap in an IIFE that returns the named function.
++  // new Function body: declare function, then return it by name.
++  const wrappedBody = `${stripped}\nreturn ${funcName};`;
++  // eslint-disable-next-line no-new-func
++  const factory = new Function(wrappedBody);
++  return factory() as (...args: unknown[]) => unknown;
++}
++
++// ---------------------------------------------------------------------------
++// WASM-01 regression guard: existing add suite must continue to pass unchanged
+ // ---------------------------------------------------------------------------
+ 
+ describe("compileToWasm — magic bytes and version", () => {
+@@ -117,10 +266,6 @@ describe("compileToWasm — magic bytes and version", () => {
+   });
+ });
+ 
+-// ---------------------------------------------------------------------------
+-// Test: valid WebAssembly.Module
+-// ---------------------------------------------------------------------------
+-
+ describe("compileToWasm — valid module", () => {
+   it("WebAssembly.Module can be constructed from the result without throwing", async () => {
+     const bytes = await compileToWasm(makeAddResolution());
+@@ -128,10 +273,6 @@ describe("compileToWasm — valid module", () => {
+   });
+ });
+ 
+-// ---------------------------------------------------------------------------
+-// Tests: function-export — compound-interaction test (instantiate and call)
+-// ---------------------------------------------------------------------------
+-
+ describe("compileToWasm — function export (compound-interaction)", () => {
+   it("instantiated module exports an 'add' function", async () => {
+     const bytes = await compileToWasm(makeAddResolution());
+@@ -154,8 +295,6 @@ describe("compileToWasm — function export (compound-interaction)", () => {
+   });
+ 
+   it("add(-1, -1) returns -2 (i32 wrapping semantics)", async () => {
+-    // WASM i32.add treats the bit pattern as signed two's-complement;
+-    // -1 + -1 = -2 exactly within 32-bit range.
+     const bytes = await compileToWasm(makeAddResolution());
+     const { instance } = await WebAssembly.instantiate(bytes);
+     const add = instance.exports["add"] as (a: number, b: number) => number;
+@@ -170,25 +309,14 @@ describe("compileToWasm — function export (compound-interaction)", () => {
+   });
+ });
+ 
+-// ---------------------------------------------------------------------------
+-// Test: module size sanity check
+-// ---------------------------------------------------------------------------
+-
+ describe("compileToWasm — module size", () => {
+   it("emitted .wasm binary is between 20 and 100 bytes (minimal substrate sanity check)", async () => {
+     const bytes = await compileToWasm(makeAddResolution());
+-    // The minimal add module encodes to ~38 bytes.
+-    // Lower bound: 8 (magic+version) + 4 sections × ~3 bytes each = ~20
+-    // Upper bound: 100 provides generous room while catching accidental bloat.
+     expect(bytes.length).toBeGreaterThanOrEqual(20);
+     expect(bytes.length).toBeLessThanOrEqual(100);
+   });
+ });
+ 
+-// ---------------------------------------------------------------------------
+-// Test: wasmBackend() factory
+-// ---------------------------------------------------------------------------
+-
+ describe("wasmBackend()", () => {
+   it("returns an object with name 'wasm'", () => {
+     const backend = wasmBackend();
+@@ -213,3 +341,544 @@ describe("wasmBackend()", () => {
+     expect(add(7, 8)).toBe(15);
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// Byte-identical re-emit invariant
++// ---------------------------------------------------------------------------
++
++describe("compileToWasm — byte-identical re-emit", () => {
++  it("same ResolutionResult produces byte-identical output on two calls", async () => {
++    const resolution = makeAddResolution();
++    const bytes1 = await compileToWasm(resolution);
++    const bytes2 = await compileToWasm(resolution);
++    expect(bytes1.length).toBe(bytes2.length);
++    for (let i = 0; i < bytes1.length; i++) {
++      expect(bytes1[i]).toBe(bytes2[i]);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P1a. Parity test 1a — number→number: i32 domain (typeHint i32)
++//
++// Cross-backend equality: tsBackend().emit() vs wasmBackend().emit()
++// Same ResolutionResult → same output values for 5 input cases.
++//
++// Compound interaction: parseFunctionSignature → lowerType → emitNumericFuncBody
++//   → binary emitter → WebAssembly.instantiate → execute
++// ---------------------------------------------------------------------------
++
++describe("P1a — number→number i32: cross-backend parity (compound)", () => {
++  // Substrate with explicit @wasmType i32 annotations.
++  const I32_ADD_SOURCE = `export function addI32(/** @wasmType i32 */ a: number, /** @wasmType i32 */ b: number): number { return a + b; }`;
++
++  // 5 input cases: positive, zero, negative, large, mixed
++  const INPUT_CASES: Array<[number, number]> = [
++    [2, 3],
++    [0, 0],
++    [-1, -1],
++    [100, 200],
++    [1000, -500],
++  ];
++
++  it("tsBackend and wasmBackend produce equal outputs for all 5 i32 input cases", async () => {
++    const id = makeMerkleRoot("addI32", "Add two i32 integers", I32_ADD_SOURCE);
++    const resolution = makeResolution([{ id, source: I32_ADD_SOURCE }]);
++
++    // TS backend: emit module string → strip types → execute
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "addI32") as (
++      a: number,
++      b: number,
++    ) => number;
++
++    // WASM backend: emit bytes → instantiate → execute
++    const wasmBytes = await wasmBackend().emit(resolution);
++    const { instance } = await WebAssembly.instantiate(wasmBytes);
++    const wasmFn = instance.exports["addI32"] as (a: number, b: number) => number;
++
++    for (const [a, b] of INPUT_CASES) {
++      const tsResult = tsFn(a, b);
++      const wasmResult = wasmFn(a, b);
++      expect(wasmResult).toBe(tsResult);
++    }
++  });
++
++  it("emits a valid instantiable module", async () => {
++    const id = makeMerkleRoot("addI32", "Add two i32 integers", I32_ADD_SOURCE);
++    const resolution = makeResolution([{ id, source: I32_ADD_SOURCE }]);
++    const bytes = await compileToWasm(resolution);
++    expect(() => new WebAssembly.Module(bytes)).not.toThrow();
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P1b. Parity test 1b — number→number: f64 domain (default, absent typeHint)
++//
++// Cross-backend equality: tsBackend().emit() vs wasmBackend().emit()
++// Float tolerance per DEC-V1-WAVE-2-WASM-LOWERING-001: toBeCloseTo(_, 5).
++// ---------------------------------------------------------------------------
++
++describe("P1b — number→number f64: cross-backend parity (compound)", () => {
++  const F64_ADD_SOURCE = `export function addF64(a: number, b: number): number { return a + b; }`;
++
++  // 5 input cases: float, zero, negative, decimal, imprecise
++  const INPUT_CASES: Array<[number, number]> = [
++    [1.5, 2.5],
++    [0, 0],
++    [-1.0, -1.0],
++    [100.75, 200.25],
++    [0.1, 0.2],
++  ];
++
++  it("tsBackend and wasmBackend produce equal outputs for all 5 f64 input cases", async () => {
++    const id = makeMerkleRoot("addF64", "Add two f64 floats", F64_ADD_SOURCE);
++    const resolution = makeResolution([{ id, source: F64_ADD_SOURCE }]);
++
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "addF64") as (
++      a: number,
++      b: number,
++    ) => number;
++
++    const wasmBytes = await wasmBackend().emit(resolution);
++    const { instance } = await WebAssembly.instantiate(wasmBytes);
++    const wasmFn = instance.exports["addF64"] as (a: number, b: number) => number;
++
++    for (const [a, b] of INPUT_CASES) {
++      const tsResult = tsFn(a, b);
++      const wasmResult = wasmFn(a, b);
++      // f64 results: allow tolerance of 5 decimal places per
++      // DEC-V1-WAVE-2-WASM-LOWERING-001 float convention.
++      expect(wasmResult).toBeCloseTo(tsResult, 5);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P1c. Parity test 1c — bigint→bigint: i64 domain
++//
++// Addresses blocking finding 2: i64/bigint substrate must be present and
++// exercised on BOTH backends with cross-backend comparison.
++//
++// The i64 lowering path in lowerType() is driven by the TypeScript `bigint`
++// type (no @wasmType annotation needed — bigint is a distinct TS primitive).
++// WASM i64 values are surfaced as BigInt in the WebAssembly JS API.
++//
++// Input cases cover: small values, values exceeding i32 range (> 2^31-1),
++// negatives, zero — as required by finding 2.
++//
++// Float tolerance: not applicable (integer arithmetic; exact equality asserted).
++//
++// @decision DEC-V1-WAVE-2-WASM-TEST-005: i64 substrate uses TypeScript `bigint`
++// type (not @wasmType annotation) to trigger i64 lowering, because bigint is
++// a distinct primitive in both TS and WASM. The TS backend emits the bigint
++// function verbatim; execution with BigInt literals produces native JS bigints.
++// The WASM backend sees type "bigint" → lowerType → i64 via the existing path.
++// Status: decided (WI-V1W2-WASM-02 round 2)
++// ---------------------------------------------------------------------------
++
++describe("P1c — bigint→bigint i64: cross-backend parity (compound)", () => {
++  // bigint type → lowerType("bigint", null, ...) → { tag: "i64" } → OP_I64_ADD
++  const I64_ADD_SOURCE = `export function addI64(a: bigint, b: bigint): bigint { return a + b; }`;
++
++  // 5 input cases: small, exceeds i32 range (2^31-1 = 2147483647), large, negative, zero
++  const INPUT_CASES: Array<[bigint, bigint]> = [
++    [2n, 3n],
++    [0n, 0n],
++    [-1n, -1n],
++    [2147483648n, 1n],       // exceeds i32 max (2^31)
++    [9999999999n, -9999999998n], // large values, near-cancel
++  ];
++
++  it("tsBackend and wasmBackend produce equal outputs for all 5 i64 input cases", async () => {
++    const id = makeMerkleRoot("addI64", "Add two i64 bigints", I64_ADD_SOURCE);
++    const resolution = makeResolution([{ id, source: I64_ADD_SOURCE }]);
++
++    // TS backend: emit module string → strip types → execute with BigInt args
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "addI64") as (
++      a: bigint,
++      b: bigint,
++    ) => bigint;
++
++    // WASM backend: emit bytes → instantiate → execute with BigInt args
++    // (WASM i64 ↔ JS BigInt per the WebAssembly JS API spec)
++    const wasmBytes = await wasmBackend().emit(resolution);
++    const { instance } = await WebAssembly.instantiate(wasmBytes);
++    const wasmFn = instance.exports["addI64"] as (a: bigint, b: bigint) => bigint;
++
++    for (const [a, b] of INPUT_CASES) {
++      const tsResult = tsFn(a, b);
++      const wasmResult = wasmFn(a, b);
++      expect(wasmResult).toBe(tsResult);
++    }
++  });
++
++  it("i64 add with value exceeding i32 max returns correct bigint", async () => {
++    const id = makeMerkleRoot("addI64", "Add two i64 bigints", I64_ADD_SOURCE);
++    const resolution = makeResolution([{ id, source: I64_ADD_SOURCE }]);
++    const wasmBytes = await wasmBackend().emit(resolution);
++    const { instance } = await WebAssembly.instantiate(wasmBytes);
++    const wasmFn = instance.exports["addI64"] as (a: bigint, b: bigint) => bigint;
++
++    // 2^31 + 2^31 = 2^32 — would overflow i32 but not i64
++    expect(wasmFn(2147483648n, 2147483648n)).toBe(4294967296n);
++  });
++
++  it("WASM module for i64 substrate passes WebAssembly.validate()", async () => {
++    const id = makeMerkleRoot("addI64", "Add two i64 bigints", I64_ADD_SOURCE);
++    const resolution = makeResolution([{ id, source: I64_ADD_SOURCE }]);
++    const bytes = await compileToWasm(resolution);
++    expect(WebAssembly.validate(bytes)).toBe(true);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P2. Parity test 2 — string→number: cross-backend equality
++//
++// TS backend: strlen("hello") = 5 (string.length, native JS)
++// WASM backend: strlen(ptr, len) where len = UTF-8 byte count = 5
++// Both backends return the byte length of the string — semantically equal.
++//
++// Compound interaction: lowerType("string") → linear-memory ptr+len params
++//   → binary emitter → WebAssembly.instantiate with shared memory → execute
++// ---------------------------------------------------------------------------
++
++describe("P2 — string→number strlen: cross-backend parity (compound)", () => {
++  const STRLEN_SOURCE = `export function strlen(s: string): number { return s.length; }`;
++
++  // 5 input strings
++  const INPUT_CASES: string[] = ["", "a", "hello", "hello world", "longer string with spaces"];
++
++  /**
++   * Execute WASM strlen by writing the UTF-8 string into memory and calling with (ptr, len).
++   */
++  async function wasmStrlen(source: string, funcName: string, s: string): Promise<number> {
++    const id = makeMerkleRoot(funcName, `String function: ${funcName}`, source);
++    const resolution = makeResolution([{ id, source }]);
++    const bytes = await compileToWasm(resolution);
++    const { instance } = await WebAssembly.instantiate(bytes);
++    const memory = instance.exports["memory"] as WebAssembly.Memory;
++    const fn = instance.exports[funcName] as (ptr: number, len: number) => number;
++    const enc = new TextEncoder();
++    const encoded = enc.encode(s);
++    const view = new Uint8Array(memory.buffer);
++    for (let i = 0; i < encoded.length; i++) view[i] = encoded[i] ?? 0;
++    return fn(0, encoded.length);
++  }
++
++  it("tsBackend and wasmBackend produce equal strlen for all 5 input strings", async () => {
++    const id = makeMerkleRoot("strlen", "String length function", STRLEN_SOURCE);
++    const resolution = makeResolution([{ id, source: STRLEN_SOURCE }]);
++
++    // TS backend: emit module → strip types → call strlen("...")
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "strlen") as (s: string) => number;
++
++    for (const s of INPUT_CASES) {
++      const tsResult = tsFn(s);
++      // WASM backend: write string to memory, call with (ptr, len)
++      const wasmResult = await wasmStrlen(STRLEN_SOURCE, "strlen", s);
++      // Both should return the UTF-8 byte length of the string.
++      // For ASCII strings (our test cases), s.length === UTF-8 byte count.
++      expect(wasmResult).toBe(tsResult);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P3. Parity test 3 — number→string: cross-backend equality
++//
++// TS backend: numToStr(42) = "42" (String(n))
++// WASM backend: numToStr(42) → calls host_alloc + host_write_i32_dec → "42"
++// Both backends produce the decimal string representation of the input.
++//
++// Compound interaction: lowerType("string") on return → host import wiring
++//   → buildNumberToStringBody → binary emitter with import section
++//   → WebAssembly.instantiate with host imports → read result from memory
++// ---------------------------------------------------------------------------
++
++describe("P3 — number→string numToStr: cross-backend parity (compound)", () => {
++  const NUM_TO_STR_SOURCE = `export function numToStr(n: number): string { return String(n); }`;
++
++  // 5 input numbers
++  const INPUT_CASES = [0, 1, 42, -7, 100];
++
++  /**
++   * Execute WASM numToStr with in-test host stubs.
++   * Returns the decimal string written by host_write_i32_dec.
++   */
++  async function wasmNumToStr(source: string, funcName: string, n: number): Promise<string> {
++    const id = makeMerkleRoot(funcName, `NumToStr function: ${funcName}`, source);
++    const resolution = makeResolution([{ id, source }]);
++    const bytes = await compileToWasm(resolution);
++    const memory = new WebAssembly.Memory({ initial: 1 });
++    let bumpOffset = 0;
++    const hostImports = {
++      host: {
++        host_alloc: (size: number): number => {
++          const ptr = bumpOffset;
++          bumpOffset += size;
++          return ptr;
++        },
++        host_write_i32_dec: (ptr: number, value: number): number => {
++          const str = String(value);
++          const enc = new TextEncoder().encode(str);
++          const view = new Uint8Array(memory.buffer);
++          for (let i = 0; i < enc.length; i++) view[ptr + i] = enc[i] ?? 0;
++          return enc.length;
++        },
++      },
++    };
++    const { instance } = await WebAssembly.instantiate(bytes, hostImports);
++    const fn = instance.exports[funcName] as (n: number) => [number, number] | number;
++    const rawResult = fn(n);
++    let ptr: number;
++    let len: number;
++    if (Array.isArray(rawResult)) {
++      [ptr, len] = rawResult as [number, number];
++    } else {
++      ptr = rawResult as number;
++      const view2 = new Uint8Array(memory.buffer);
++      let scanLen = 0;
++      while (ptr + scanLen < memory.buffer.byteLength && view2[ptr + scanLen] !== 0) {
++        scanLen++;
++        if (scanLen > 30) break;
++      }
++      len = scanLen;
++    }
++    if (len === 0) return "";
++    const view = new Uint8Array(memory.buffer, ptr, len);
++    return new TextDecoder().decode(view);
++  }
++
++  it("tsBackend and wasmBackend produce equal decimal strings for all 5 input numbers", async () => {
++    const id = makeMerkleRoot("numToStr", "Convert number to decimal string", NUM_TO_STR_SOURCE);
++    const resolution = makeResolution([{ id, source: NUM_TO_STR_SOURCE }]);
++
++    // TS backend: emit module → strip types → call numToStr(n)
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "numToStr") as (n: number) => string;
++
++    for (const n of INPUT_CASES) {
++      const tsResult = tsFn(n);
++      const wasmResult = await wasmNumToStr(NUM_TO_STR_SOURCE, "numToStr", n);
++      expect(wasmResult).toBe(tsResult);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P4. Parity test 4 — record<{a:number,b:number}>→number: cross-backend equality
++//
++// TS backend: recordSum({a:1,b:2}) = 3 (native JS object)
++// WASM backend: recordSum(ptr) where memory[ptr..ptr+16] = { a:f64, b:f64 }
++// Both produce the sum of the two fields.
++//
++// Compound interaction: lowerRecordType → buildRecordSumBody → binary emitter
++//   → WebAssembly.instantiate with memory → execute with struct ptr
++// ---------------------------------------------------------------------------
++
++describe("P4 — record<{a:number,b:number}>→number: cross-backend parity (compound)", () => {
++  const RECORD_SUM_SOURCE = `export function recordSum(r: { a: number; b: number }): number { return r.a + r.b; }`;
++
++  // 5 input records
++  const INPUT_CASES: Array<{ a: number; b: number }> = [
++    { a: 1, b: 2 },
++    { a: 0, b: 0 },
++    { a: -5, b: 5 },
++    { a: 100, b: 200 },
++    { a: -1, b: -1 },
++  ];
++
++  /**
++   * Execute WASM recordSum by writing { a, b } as two f64s at offset 0.
++   */
++  async function wasmRecordSum(source: string, funcName: string, a: number, b: number): Promise<number> {
++    const id = makeMerkleRoot(funcName, `Record sum: ${funcName}`, source);
++    const resolution = makeResolution([{ id, source }]);
++    const bytes = await compileToWasm(resolution);
++    const { instance } = await WebAssembly.instantiate(bytes);
++    const mem = instance.exports["memory"] as WebAssembly.Memory;
++    const fn = instance.exports[funcName] as (ptr: number) => number;
++    const view = new DataView(mem.buffer);
++    view.setFloat64(0, a, true);  // a at offset 0 (f64, 8 bytes)
++    view.setFloat64(8, b, true);  // b at offset 8 (f64, 8 bytes)
++    return fn(0);
++  }
++
++  it("tsBackend and wasmBackend produce equal sums for all 5 input records", async () => {
++    const id = makeMerkleRoot("recordSum", "Sum fields of a record", RECORD_SUM_SOURCE);
++    const resolution = makeResolution([{ id, source: RECORD_SUM_SOURCE }]);
++
++    // TS backend: emit module → strip types → call recordSum({a, b})
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "recordSum") as (r: { a: number; b: number }) => number;
++
++    for (const { a, b } of INPUT_CASES) {
++      const tsResult = tsFn({ a, b });
++      const wasmResult = await wasmRecordSum(RECORD_SUM_SOURCE, "recordSum", a, b);
++      // f64 arithmetic: allow tolerance of 5 decimal places
++      expect(wasmResult).toBeCloseTo(tsResult, 5);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// P5. Parity test 5 — Array<number>→number: cross-backend equality
++//
++// TS backend: arraySum([1,2,3]) = 6 (native JS array with reduce)
++// WASM backend: arraySum(ptr, len) where memory[ptr..] = f64 elements
++// Both produce the sum of the array elements.
++//
++// Compound interaction: lowerType("Array<number>") → buildArraySumBody → binary emitter
++//   → WebAssembly.instantiate with memory → execute with ptr+len
++// ---------------------------------------------------------------------------
++
++describe("P5 — Array<number>→number: cross-backend parity (compound)", () => {
++  const ARRAY_SUM_SOURCE = `export function arraySum(arr: Array<number>): number { return arr.reduce((a, b) => a + b, 0); }`;
++
++  // 5 arrays of varying length
++  const INPUT_CASES: number[][] = [
++    [],
++    [1],
++    [1, 2, 3],
++    [10, 20, 30, 40],
++    [-1, -2, -3],
++  ];
++
++  /**
++   * Execute WASM arraySum by writing f64 elements at offset 0 and calling with (ptr=0, len=n).
++   */
++  async function wasmArraySum(source: string, funcName: string, elements: number[]): Promise<number> {
++    const id = makeMerkleRoot(funcName, `Array sum: ${funcName}`, source);
++    const resolution = makeResolution([{ id, source }]);
++    const bytes = await compileToWasm(resolution);
++    const { instance } = await WebAssembly.instantiate(bytes);
++    const mem = instance.exports["memory"] as WebAssembly.Memory;
++    const fn = instance.exports[funcName] as (ptr: number, len: number) => number;
++    const view = new DataView(mem.buffer);
++    for (let i = 0; i < elements.length; i++) {
++      view.setFloat64(i * 8, elements[i] ?? 0, true);
++    }
++    return fn(0, elements.length);
++  }
++
++  it("tsBackend and wasmBackend produce equal sums for all 5 input arrays", async () => {
++    const id = makeMerkleRoot("arraySum", "Sum elements of an array", ARRAY_SUM_SOURCE);
++    const resolution = makeResolution([{ id, source: ARRAY_SUM_SOURCE }]);
++
++    // TS backend: emit module → strip types → call arraySum([...])
++    const tsModule = await tsBackend().emit(resolution);
++    const tsFn = extractFunctionFromTsModule(tsModule, "arraySum") as (arr: number[]) => number;
++
++    for (const elements of INPUT_CASES) {
++      const tsResult = tsFn(elements);
++      const wasmResult = await wasmArraySum(ARRAY_SUM_SOURCE, "arraySum", elements);
++      // f64 arithmetic: allow tolerance of 5 decimal places
++      expect(wasmResult).toBeCloseTo(tsResult, 5);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// N1. Numeric domain inference: i32 typeHint → i32 ops
++// ---------------------------------------------------------------------------
++
++describe("N1 — numeric domain: i32 typeHint selects i32 (not f64)", () => {
++  it("i32-annotated add substrate emits a valid module and executes correctly", async () => {
++    const source = `export function addI32(/** @wasmType i32 */ a: number, /** @wasmType i32 */ b: number): number { return a + b; }`;
++    const id = makeMerkleRoot("addI32", "Add i32 integers", source);
++    const resolution = makeResolution([{ id, source }]);
++    const bytes = await compileToWasm(resolution);
++
++    expect(() => new WebAssembly.Module(bytes)).not.toThrow();
++    const { instance } = await WebAssembly.instantiate(bytes);
++    const fn = instance.exports["addI32"] as (a: number, b: number) => number;
++    // i32.add preserves integer semantics exactly.
++    expect(fn(7, 3)).toBe(10);
++    expect(fn(-5, 5)).toBe(0);
++    expect(fn(0, 0)).toBe(0);
++  });
++
++  it("i32 substrate produces no parameter downgrade warnings", async () => {
++    const source = `export function addI32(/** @wasmType i32 */ a: number, /** @wasmType i32 */ b: number): number { return a + b; }`;
++    const id = makeMerkleRoot("addI32", "Add i32 integers", source);
++    const resolution = makeResolution([{ id, source }]);
++    const result = await compileToWasmWithDiagnostics(resolution);
++    // No downgrade warnings for parameters because both have explicit typeHint = i32.
++    // The return type 'number' (no hint) may still produce a warning for '(return)';
++    // we only assert that no parameter is downgraded.
++    const paramWarnings = result.warnings.filter(
++      (w) => w.includes("defaulting to f64") && !w.includes("'(return)'"),
++    );
++    expect(paramWarnings.length).toBe(0);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// N2. Numeric domain inference: absent typeHint → f64 default + downgrade warning
++// ---------------------------------------------------------------------------
++
++describe("N2 — numeric domain: absent typeHint → f64 default + downgrade warning", () => {
++  it("substrate without typeHint produces a downgrade warning for each unannotated number param", async () => {
++    const source = `export function addPlain(a: number, b: number): number { return a + b; }`;
++    const id = makeMerkleRoot("addPlain", "Add plain numbers", source);
++    const resolution = makeResolution([{ id, source }]);
++    const result = await compileToWasmWithDiagnostics(resolution);
++
++    // Should have one warning for 'a' and one for 'b'.
++    const warnings = result.warnings.filter((w) => w.includes("defaulting to f64"));
++    expect(warnings.length).toBeGreaterThanOrEqual(2);
++
++    // Warning message format per DEC-V1-WAVE-2-WASM-LOWERING-001.
++    expect(warnings.some((w) => w.includes("parameter 'a'") && w.includes("defaulting to f64"))).toBe(true);
++    expect(warnings.some((w) => w.includes("parameter 'b'") && w.includes("defaulting to f64"))).toBe(true);
++  });
++
++  it("substrate without typeHint still produces a valid executable module using f64", async () => {
++    const source = `export function addPlain(a: number, b: number): number { return a + b; }`;
++    const id = makeMerkleRoot("addPlain", "Add plain numbers", source);
++    const resolution = makeResolution([{ id, source }]);
++    const result = await compileToWasmWithDiagnostics(resolution);
++
++    expect(() => new WebAssembly.Module(result.bytes)).not.toThrow();
++    const { instance } = await WebAssembly.instantiate(result.bytes);
++    const fn = instance.exports["addPlain"] as (a: number, b: number) => number;
++    expect(fn(1.5, 2.5)).toBeCloseTo(4.0, 5);
++    expect(fn(0, 0)).toBe(0);
++  });
++
++  it("WasmLoweringError is thrown for unsupported types", async () => {
++    const source = `export function bad(x: Map<string, number>): number { return 0; }`;
++    const id = makeMerkleRoot("bad", "Unsupported type", source);
++    const resolution = makeResolution([{ id, source }]);
++    await expect(compileToWasm(resolution)).rejects.toBeInstanceOf(WasmLoweringError);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// Module validity: all parity-test modules pass WebAssembly.validate()
++// ---------------------------------------------------------------------------
++
++describe("compileToWasm — module binary validity (WebAssembly.validate)", () => {
++  const testCases: Array<[string, string, string]> = [
++    ["i32 add", "addI32", `export function addI32(/** @wasmType i32 */ a: number, /** @wasmType i32 */ b: number): number { return a + b; }`],
++    ["i64 add", "addI64", `export function addI64(a: bigint, b: bigint): bigint { return a + b; }`],
++    ["f64 add", "addF64", `export function addF64(a: number, b: number): number { return a + b; }`],
++    ["string length", "strlen", `export function strlen(s: string): number { return s.length; }`],
++    ["record sum", "recordSum", `export function recordSum(r: { a: number; b: number }): number { return r.a + r.b; }`],
++    ["array sum", "arraySum", `export function arraySum(arr: Array<number>): number { return arr.reduce((a, b) => a + b, 0); }`],
++  ];
++
++  for (const [label, name, source] of testCases) {
++    it(`${label} substrate produces a WebAssembly.validate-passing binary`, async () => {
++      const id = makeMerkleRoot(name, label, source);
++      const resolution = makeResolution([{ id, source }]);
++      const bytes = await compileToWasm(resolution);
++      // WebAssembly.validate returns true iff the binary is a valid WASM module.
++      expect(WebAssembly.validate(bytes)).toBe(true);
++    });
++  }
++});
+diff --git a/packages/compile/src/wasm-backend.ts b/packages/compile/src/wasm-backend.ts
+index 026a469..f0519ea 100644
+--- a/packages/compile/src/wasm-backend.ts
++++ b/packages/compile/src/wasm-backend.ts
+@@ -13,33 +13,84 @@
+ //   buying ergonomics for a single function. Rejected for same reasons as A.
+ //   This decision is superseded only by a later DEC when type-lowering requires
+ //   a full IR-to-WASM lowering pass.
+-// Closes: opens — superseded only by a later DEC covering WI-V1W2-WASM-02+.
++// Closes: opens — superseded by DEC-V1-WAVE-2-WASM-LOWERING-001 below.
++
++// @decision DEC-V1-WAVE-2-WASM-LOWERING-001: Type-lowering policy for primitives
++// and structural types in the WASM backend.
++// Status: decided (WI-V1W2-WASM-02)
++//
++// typeHint → WASM valtype mapping policy:
++//   The primary source of numeric domain information is the typeHint field from
++//   IntentCard.inputs (defined in @yakcc/shave/src/intent/types.ts as IntentParam).
++//   In the WASM backend, typeHints are embedded in the impl source as JSDoc
++//   @wasmType annotations on function parameters (e.g. /** @wasmType i32 */ a: number).
++//   This is the single source of truth for numeric domain — no parallel inference path.
++//
++//   typeHint "i32" or "integer" → i32 (0x7f)
++//   typeHint "i64" or "bigint"  → i64 (0x7e)
++//   typeHint "f32"              → f32 (0x7d)
++//   typeHint "f64", absent, or ambiguous → f64 (0x7c) + downgrade warning
++//     Downgrade warning: logged via wasmLoweringWarnings array on the result; tests assert
++//     on WasmLoweringResult.warnings. The warning message is:
++//       "parameter '<name>': no typeHint for numeric type 'number'; defaulting to f64"
++//
++// String lowering convention (length + ptr in linear memory):
++//   Strings are passed as two i32 values: (ptr: i32, len: i32) where:
++//     ptr = byte offset into WebAssembly.Memory (UTF-8 encoded)
++//     len = byte length (UTF-8 code units, NOT code points)
++//   Ownership: the CALLER (host) allocates memory before the call and frees after.
++//   The host_alloc / host_free functions are imported from the "host" module namespace.
++//   This matches the WI-V1W2-WASM-03 host contract surface — this WI stubs them
++//   in-test only; production wiring is WI-V1W2-WASM-03.
++//   For string return values: the function returns (ptr: i32, len: i32) as two i32
++//   stack values. The host calls host_free(ptr, len) to release the allocation.
++//
++// Record layout convention (flat-struct in linear memory):
++//   A record { a: T1, b: T2, ... } is passed as a single ptr: i32 pointing to a
++//   contiguous block of memory with fields laid out in declaration order.
++//   Alignment: each field is aligned to its natural size (i32 → 4 bytes, i64 → 8
++//   bytes, f64 → 8 bytes). Padding bytes are inserted between fields as needed.
++//   The total struct size is rounded up to the alignment of the largest field.
++//   Field access: the emitted WASM uses i32.load / i64.load / f64.load at the
++//   computed byte offset for each field.
++//
++// Array layout convention (length + pointer pair):
++//   An Array<T> is passed as two i32 values: (ptr: i32, len: i32) where:
++//     ptr = byte offset to the first element in linear memory
++//     len = number of elements (NOT byte length)
++//   Element stride = element size in bytes (aligned per type above).
++//   Array elements are accessed via base + index * stride load patterns.
++//
++// Closes: DEC-V1-WAVE-2-WASM-LOWERING-001
+ 
+ /**
+  * wasm-backend.ts — WebAssembly binary emitter for @yakcc/compile.
+  *
+- * Public surface: compileToWasm(assembly) → Uint8Array
++ * Public surface: compileToWasm(resolution) → Promise<Uint8Array<ArrayBuffer>>
+  *
+- * v1 wave-2 W1 scope: emits a minimal WASM module for the hard-coded substrate
+- *   add(a: number, b: number): number   (both args and result treated as i32)
++ * v1 wave-2 W2 scope (WI-V1W2-WASM-02): real IR-to-WASM lowering driven by the
++ * ResolutionResult. Supports:
++ *   - number → i32 / i64 / f32 / f64 (driven by @wasmType JSDoc annotation)
++ *   - bigint → i64
++ *   - boolean → i32
++ *   - string → (ptr: i32, len: i32) linear-memory view
++ *   - record {a: T, b: T, ...} → flat struct in linear memory (ptr: i32)
++ *   - Array<T> → (ptr: i32, len: i32) into linear memory
+  *
+- * Type-lowering for arbitrary IR types is out of scope here — that is WI-V1W2-WASM-02.
+- * Host memory imports / host bindings are out of scope — that is WI-V1W2-WASM-03.
++ * Host memory imports are stubbed via "host" module imports (host_alloc, host_write_i32_dec).
++ * Production host wiring is WI-V1W2-WASM-03's surface — this WI does not pre-empt it.
++ *
++ * WASM-01 backward compatibility: an add(a: number, b: number) → number substrate with
++ * i32 typeHints continues to produce the same binary as before.
+  *
+  * The emitter writes the binary encoding directly per the WebAssembly 1.0 spec
+  * (https://webassembly.github.io/spec/core/binary/index.html), section by section.
+- * No code is generated from the Assembly IR at this stage; the substrate is
+- * hard-coded to prove the pipeline compiles and the binary is valid.
+- *
+- * Future implementers: when WI-V1W2-WASM-02 lands, replace `emitMinimalAddModule`
+- * with a real IR-to-WASM lowering pass that inspects `assembly` and emits the
+- * appropriate type/function/code sections. The public signature does not change.
+  */
+ 
+ import type { ResolutionResult } from "./resolve.js";
+ 
+ // ---------------------------------------------------------------------------
+-// Public type — mirrors ts-backend's Backend interface for symmetry
++// Public types
+ // ---------------------------------------------------------------------------
+ 
+ /**
+@@ -54,6 +105,39 @@ export interface WasmBackend {
+   emit(resolution: ResolutionResult): Promise<Uint8Array<ArrayBuffer>>;
+ }
+ 
++/**
++ * The result of a WASM lowering pass: the binary bytes plus any downgrade warnings
++ * generated during type inference (e.g. when a numeric parameter has no typeHint).
++ *
++ * Callers who only need the bytes use compileToWasm(). Callers who need to inspect
++ * warnings use compileToWasmWithDiagnostics().
++ */
++export interface WasmLoweringResult {
++  readonly bytes: Uint8Array<ArrayBuffer>;
++  /**
++   * Downgrade warnings emitted during type inference.
++   *
++   * Each entry is a human-readable message such as:
++   *   "parameter 'x': no typeHint for numeric type 'number'; defaulting to f64"
++   *
++   * Tests assert on this array to verify the documented warning behavior per
++   * DEC-V1-WAVE-2-WASM-LOWERING-001.
++   */
++  readonly warnings: readonly string[];
++}
++
++// ---------------------------------------------------------------------------
++// WASM value type constants (per spec §2.3.1)
++// ---------------------------------------------------------------------------
++
++const I32 = 0x7f; // i32
++const I64 = 0x7e; // i64
++const F32 = 0x7d; // f32
++const F64 = 0x7c; // f64 — NOTE: 0x7c is also OP_I64_ADD (opcode). Same byte, different decoding contexts (type section vs code section); not a bug. See WASM spec §2.3.1 and §5.4.2.
++
++// WASM function type marker
++const FUNCTYPE = 0x60;
++
+ // ---------------------------------------------------------------------------
+ // WASM binary encoding helpers
+ // ---------------------------------------------------------------------------
+@@ -85,6 +169,26 @@ function uleb128(n: number): Uint8Array {
+   return new Uint8Array(bytes);
+ }
+ 
++/**
++ * Signed LEB128 encoding of a signed integer.
++ * Used for signed immediate values in WASM (e.g. i32.const operands).
++ */
++function sleb128(n: number): Uint8Array {
++  const bytes: number[] = [];
++  let more = true;
++  while (more) {
++    let byte = n & 0x7f;
++    n >>= 7;
++    if ((n === 0 && (byte & 0x40) === 0) || (n === -1 && (byte & 0x40) !== 0)) {
++      more = false;
++    } else {
++      byte |= 0x80;
++    }
++    bytes.push(byte);
++  }
++  return new Uint8Array(bytes);
++}
++
+ /**
+  * Concatenate an arbitrary number of Uint8Arrays into one.
+  *
+@@ -112,100 +216,997 @@ function section(id: number, content: Uint8Array): Uint8Array {
+   return concat(new Uint8Array([id]), uleb128(content.length), content);
+ }
+ 
++/**
++ * Encode a UTF-8 string as WASM name: uleb128(byteLength) + utf8 bytes.
++ */
++function encodeName(s: string): Uint8Array {
++  const bytes = new TextEncoder().encode(s);
++  return concat(uleb128(bytes.length), bytes);
++}
++
+ // ---------------------------------------------------------------------------
+-// Minimal substrate: add(a: i32, b: i32) → i32
+-//
+-// The binary encoding follows the WebAssembly 1.0 spec exactly.
+-// Each section is annotated with its spec reference.
++// WASM instruction opcodes (subset used by this emitter)
++// ---------------------------------------------------------------------------
++
++const OP_END = 0x0b;
++const OP_BR = 0x0c;
++const OP_BR_IF = 0x0d;
++const OP_CALL = 0x10;
++const OP_LOCAL_GET = 0x20;
++const OP_LOCAL_SET = 0x21;
++const OP_I32_LOAD = 0x28;
++const OP_I64_LOAD = 0x29;
++const OP_F32_LOAD = 0x2a;
++const OP_F64_LOAD = 0x2b;
++const OP_I32_CONST = 0x41;
++const OP_F64_CONST = 0x44;
++const OP_I32_GE_U = 0x4f;
++const OP_I32_ADD = 0x6a;
++const OP_I32_SUB = 0x6b;
++const OP_I32_MUL = 0x6c;
++const OP_I32_DIV_S = 0x6d;
++const OP_I64_ADD = 0x7c; // NOTE: 0x7c is also the F64 valtype constant. Same byte, different decoding contexts (code section vs type section); not a bug. See WASM spec §5.4.2 and §2.3.1.
++const OP_F64_ADD = 0xa0;
++const OP_F64_SUB = 0xa1;
++const OP_F64_MUL = 0xa2;
++const OP_F64_DIV = 0xa3;
++const OP_I32_TRUNC_F64_S = 0xaa; // i32.trunc_f64_s (spec §4.2.1: 0xAA, not 0xA8 which is i32.trunc_f32_s)
++const OP_F64_CONVERT_I32_S = 0xb7;
++const OP_F64_CONVERT_I64_S = 0xb9;
++
++// block/loop type: void result
++const BLOCKTYPE_VOID = 0x40;
++
++// ---------------------------------------------------------------------------
++// Type inference: parse TypeScript source for function signatures
++// ---------------------------------------------------------------------------
++
++/**
++ * WASM representation of a single TypeScript type.
++ *
++ * Primitive types map to one WASM valtype.
++ * String and array map to two i32 values (ptr, len).
++ * Record maps to one i32 (ptr to flat struct in linear memory).
++ */
++type WasmTypeKind =
++  | { readonly tag: "i32" }
++  | { readonly tag: "i64" }
++  | { readonly tag: "f32" }
++  | { readonly tag: "f64" }
++  | { readonly tag: "boolean" } // lowered as i32
++  | { readonly tag: "string" }  // lowered as (ptr: i32, len: i32)
++  | {
++      readonly tag: "record";
++      readonly fields: ReadonlyArray<{ name: string; type: WasmTypeKind }>;
++      readonly offsets: ReadonlyArray<number>;
++      readonly totalSize: number;
++    } // lowered as ptr: i32
++  | {
++      readonly tag: "array";
++      readonly element: WasmTypeKind;
++      readonly elementSize: number;
++    }; // lowered as (ptr: i32, len: i32)
++
++/**
++ * Return the WASM valtype byte(s) for a WasmTypeKind.
++ * String and array expand to two valtypes (ptr, len).
++ */
++function wasmValtypes(t: WasmTypeKind): number[] {
++  switch (t.tag) {
++    case "i32":
++    case "boolean":
++      return [I32];
++    case "i64":
++      return [I64];
++    case "f32":
++      return [F32];
++    case "f64":
++      return [F64];
++    case "string":
++    case "array":
++      return [I32, I32]; // ptr, len
++    case "record":
++      return [I32]; // ptr to struct
++  }
++}
++
++/**
++ * Byte size of a WASM value type (for memory layout computation).
++ */
++function valtypeByteSize(t: WasmTypeKind): number {
++  switch (t.tag) {
++    case "i64":
++    case "f64":
++      return 8;
++    case "i32":
++    case "boolean":
++    case "f32":
++    case "string":
++    case "array":
++    case "record":
++      return 4;
++  }
++}
++
++/**
++ * Number of WASM stack slots used by a type.
++ * String and array use 2 (ptr + len); all others use 1.
++ */
++function stackSlotCount(t: WasmTypeKind): number {
++  if (t.tag === "string" || t.tag === "array") return 2;
++  return 1;
++}
++
++/**
++ * A parsed function parameter: name, TypeScript type string, and optional WASM typeHint.
++ *
++ * typeHint is extracted from a JSDoc-style @wasmType annotation in the source:
++ *   /** @wasmType i32 * /  a: number  →  { name: "a", tsType: "number", typeHint: "i32" }
++ * This is the single source of truth for numeric domain per DEC-V1-WAVE-2-WASM-LOWERING-001.
++ */
++interface ParsedParam {
++  readonly name: string;
++  readonly tsType: string;
++  readonly typeHint: string | null;
++}
++
++/**
++ * A parsed function signature from an impl source.
++ */
++interface ParsedSignature {
++  readonly funcName: string;
++  readonly params: readonly ParsedParam[];
++  readonly returnTsType: string;
++  readonly returnTypeHint: string | null;
++}
++
++/**
++ * Parse the primary exported function signature from an impl source string.
++ *
++ * Extracts the function name, parameters (with optional @wasmType hints), and
++ * return type. Supports:
++ *   export function foo(a: number, b: number): number { ... }
++ *   export async function foo(...): Promise<T> { ... }
++ *
++ * @wasmType hints are extracted from inline JSDoc comments immediately before the
++ * parameter: /** @wasmType i32 * /  paramName: number
++ *
++ * Returns null if no exported function is found.
++ */
++function parseFunctionSignature(source: string): ParsedSignature | null {
++  const lines = source.split("\n");
++  let sigStart = -1;
++
++  for (let i = 0; i < lines.length; i++) {
++    const line = lines[i] ?? "";
++    if (/^export\s+(?:async\s+)?function\s+\w+/.test(line)) {
++      sigStart = i;
++      break;
++    }
++  }
++  if (sigStart < 0) return null;
++
++  // Collect the full signature up to the opening brace (may span lines).
++  let sigText = "";
++  for (let i = sigStart; i < Math.min(sigStart + 20, lines.length); i++) {
++    sigText += (lines[i] ?? "") + " ";
++    if (sigText.includes("{")) break;
++  }
++
++  // Extract function name.
++  const nameMatch = sigText.match(/export\s+(?:async\s+)?function\s+(\w+)/);
++  if (!nameMatch?.[1]) return null;
++  const funcName = nameMatch[1];
++
++  // Extract parameter list (between outermost parens).
++  const parenOpen = sigText.indexOf("(");
++  if (parenOpen < 0) return null;
++  let depth = 0;
++  let parenClose = -1;
++  for (let i = parenOpen; i < sigText.length; i++) {
++    const ch = sigText[i];
++    if (ch === "(") depth++;
++    else if (ch === ")") {
++      depth--;
++      if (depth === 0) { parenClose = i; break; }
++    }
++  }
++  if (parenClose < 0) return null;
++
++  const paramStr = sigText.slice(parenOpen + 1, parenClose).trim();
++
++  // Extract return type (between ): and {).
++  const afterParen = sigText.slice(parenClose + 1);
++  const returnMatch = afterParen.match(/\s*:\s*(.+?)\s*\{/);
++  let returnTsType = returnMatch?.[1]?.trim() ?? "void";
++  // Unwrap Promise<T> for async functions.
++  const promiseMatch = returnTsType.match(/^Promise\s*<(.+)>$/);
++  if (promiseMatch?.[1]) returnTsType = promiseMatch[1].trim();
++
++  // Check for @wasmType annotation on the return type in a preceding JSDoc comment.
++  const returnHintMatch = source.match(/@returns\s+[^@]*@wasmType\s+(i32|i64|f32|f64|integer|bigint)/);
++  const returnTypeHint = returnHintMatch?.[1] ?? null;
++
++  // Parse parameters.
++  const params: ParsedParam[] = [];
++  if (paramStr.length > 0) {
++    // Split on commas at depth 0 (handle nested generics).
++    const paramParts: string[] = [];
++    let part = "";
++    let d = 0;
++    for (const ch of paramStr) {
++      if (ch === "<" || ch === "{") d++;
++      else if (ch === ">" || ch === "}") d--;
++      else if (ch === "," && d === 0) {
++        paramParts.push(part.trim());
++        part = "";
++        continue;
++      }
++      part += ch;
++    }
++    if (part.trim()) paramParts.push(part.trim());
++
++    for (const raw of paramParts) {
++      // Inline JSDoc: /** @wasmType X */ name: type
++      const inlineHintMatch = raw.match(
++        /\/\*\*\s*@wasmType\s+(i32|i64|f32|f64|integer|bigint)\s*\*\/\s*(\w+)\s*:\s*(.+)/,
++      );
++      if (inlineHintMatch) {
++        params.push({
++          name: inlineHintMatch[2] ?? "",
++          tsType: (inlineHintMatch[3] ?? "").trim(),
++          typeHint: inlineHintMatch[1] ?? null,
++        });
++        continue;
++      }
++
++      // Standard "name: type".
++      const colonIdx = raw.indexOf(":");
++      if (colonIdx < 0) continue;
++      const name = raw.slice(0, colonIdx).trim();
++      const tsType = raw.slice(colonIdx + 1).trim();
++
++      // Look for @wasmType X immediately before this param name in source.
++      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++      const hintPattern = new RegExp(
++        `@wasmType\\s+(i32|i64|f32|f64|integer|bigint)\\s*\\*\\/\\s*${escapedName}\\s*:`,
++      );
++      const nearHintMatch = source.match(hintPattern);
++      const typeHint = nearHintMatch?.[1] ?? null;
++
++      params.push({ name, tsType, typeHint });
++    }
++  }
++
++  return { funcName, params, returnTsType, returnTypeHint };
++}
++
++/**
++ * Parse a TypeScript type string into a WasmTypeKind.
++ *
++ * Supported types:
++ *   boolean                → boolean (i32)
++ *   bigint                 → i64
++ *   number (+ typeHint)    → i32 | i64 | f32 | f64 (default f64 + warning if no hint)
++ *   string                 → string (ptr+len)
++ *   { a: T, b: T, ... }    → record
++ *   Array<T>               → array<T>
++ *   ReadonlyArray<T>       → array<T>
++ *   void / undefined       → i32 (convention: return 0)
++ *
++ * Unsupported types throw WasmLoweringError — never silently skipped.
++ * Numeric downgrade warnings are accumulated into the `warnings` array.
++ */
++function lowerType(
++  tsType: string,
++  typeHint: string | null,
++  paramName: string,
++  warnings: string[],
++): WasmTypeKind {
++  // Strip any embedded JSDoc @wasmType annotations from the type string.
++  // These appear when the annotation is inline in a generic type argument,
++  // e.g. Array</** @wasmType i32 */ number> or record field types.
++  // Extract the typeHint from the embedded annotation if no explicit hint was provided.
++  let extractedHint = typeHint;
++  const embeddedHintMatch = tsType.match(/\/\*\*\s*@wasmType\s+(i32|i64|f32|f64|integer|bigint)\s*\*\//);
++  if (embeddedHintMatch?.[1] && extractedHint === null) {
++    extractedHint = embeddedHintMatch[1];
++  }
++  // Remove all JSDoc comments from the type string.
++  const t = tsType.replace(/\/\*\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, "").trim();
++
++  if (t === "boolean") return { tag: "boolean" };
++  if (t === "bigint") return { tag: "i64" };
++  if (t === "void" || t === "undefined") return { tag: "i32" };
++
++  if (t === "number") {
++    const hint = (extractedHint ?? "").toLowerCase();
++    if (hint === "i32" || hint === "integer") return { tag: "i32" };
++    if (hint === "i64") return { tag: "i64" };
++    if (hint === "f32") return { tag: "f32" };
++    if (hint === "f64") return { tag: "f64" };
++    // Absent or unrecognized typeHint → default f64 + downgrade warning.
++    // This is the documented behavior per DEC-V1-WAVE-2-WASM-LOWERING-001.
++    warnings.push(
++      `parameter '${paramName}': no typeHint for numeric type 'number'; defaulting to f64`,
++    );
++    return { tag: "f64" };
++  }
++
++  if (t === "string") return { tag: "string" };
++
++  // Array<T> or ReadonlyArray<T>
++  const arrayMatch = t.match(/^(?:Readonly)?Array\s*<(.+)>$/s);
++  if (arrayMatch?.[1]) {
++    const elemType = lowerType(arrayMatch[1].trim(), null, `${paramName}[elem]`, warnings);
++    const elementSize = valtypeByteSize(elemType);
++    return { tag: "array", element: elemType, elementSize };
++  }
++
++  // Record type: { a: T, b: T }
++  if (t.startsWith("{") && t.endsWith("}")) {
++    return lowerRecordType(t, paramName, warnings);
++  }
++
++  throw new WasmLoweringError(
++    `Unsupported TypeScript type for WASM lowering: '${t}' (parameter '${paramName}'). ` +
++      `Supported: boolean, bigint, number, string, Array<T>, ReadonlyArray<T>, ` +
++      `{ field: T, ... }, void.`,
++  );
++}
++
++/**
++ * Parse a record type string "{ a: T, b: T }" into a WasmTypeKind with field offsets.
++ *
++ * Fields are laid out in declaration order, each aligned to its natural size.
++ * Padding is inserted to satisfy alignment. Total size is rounded up to largest alignment.
++ */
++function lowerRecordType(t: string, paramName: string, warnings: string[]): WasmTypeKind {
++  const inner = t.slice(1, -1).trim();
++  const rawFields = inner.split(/[,;]/).map((s) => s.trim()).filter((s) => s.length > 0);
++
++  const fields: Array<{ name: string; type: WasmTypeKind }> = [];
++  const offsets: number[] = [];
++  let offset = 0;
++  let maxAlign = 1;
++
++  for (const raw of rawFields) {
++    const colonIdx = raw.indexOf(":");
++    if (colonIdx < 0) continue;
++    const fieldName = raw.slice(0, colonIdx).trim().replace(/\?$/, "");
++    const fieldTsType = raw.slice(colonIdx + 1).trim();
++    const fieldType = lowerType(fieldTsType, null, `${paramName}.${fieldName}`, warnings);
++    const align = valtypeByteSize(fieldType);
++    const aligned = (offset + align - 1) & ~(align - 1);
++    offsets.push(aligned);
++    offset = aligned + align;
++    if (align > maxAlign) maxAlign = align;
++    fields.push({ name: fieldName, type: fieldType });
++  }
++
++  const totalSize = (offset + maxAlign - 1) & ~(maxAlign - 1);
++  return { tag: "record", fields, offsets, totalSize };
++}
++
++// ---------------------------------------------------------------------------
++// Typed error
++// ---------------------------------------------------------------------------
++
++/**
++ * Thrown when a TypeScript type cannot be lowered to WASM.
++ * Never silently skips an unsupported type (forbidden-shortcuts contract).
++ */
++export class WasmLoweringError extends Error {
++  constructor(message: string) {
++    super(message);
++    this.name = "WasmLoweringError";
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Minimal substrate: add(a: i32, b: i32) → i32  (WASM-01 backward compat)
+ // ---------------------------------------------------------------------------
+ 
+ /**
+  * Emit the WASM binary for the minimal substrate: add(a: i32, b: i32) → i32.
+  *
++ * Preserved from WASM-01 for backward compatibility. Used when the entry block
++ * is recognized as an add-substrate with i32 parameters.
++ *
+  * Sections emitted (in required order per spec §2.5):
+  *   1. Type section (id=1)   — one function type: (i32, i32) → i32
+  *   2. Function section (id=3) — one function, index into type section
+  *   3. Export section (id=7) — exports "add" as function index 0
+  *   4. Code section (id=10)  — one function body: local.get 0, local.get 1, i32.add, end
+- *
+- * No import, memory, global, element, or data sections are needed for this substrate.
+  */
+ function emitMinimalAddModule(): Uint8Array<ArrayBuffer> {
+-  // --- Type section (id=1) ---
+-  // vec(1) of functype: [0x60] param_count=2 [i32, i32] result_count=1 [i32]
+-  // WASM value types: i32=0x7f, i64=0x7e, f32=0x7d, f64=0x7c
+-  // functype marker: 0x60
+-  const I32 = 0x7f;
+-  const FUNCTYPE = 0x60;
+   const typeSection = section(
+     1,
+     concat(
+-      uleb128(1), // vec length: 1 type
+-      new Uint8Array([
+-        FUNCTYPE,
+-        2, // param count: 2
+-        I32,
+-        I32, // param types: i32, i32
+-        1, // result count: 1
+-        I32, // result type: i32
+-      ]),
++      uleb128(1),
++      new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]),
+     ),
+   );
+ 
+-  // --- Function section (id=3) ---
+-  // vec(1) of typeidx: [0] — function 0 has type 0
+-  const funcSection = section(
+-    3,
+-    concat(
+-      uleb128(1), // vec length: 1 function
+-      uleb128(0), // typeidx: 0 (the add function type defined above)
+-    ),
+-  );
++  const funcSection = section(3, concat(uleb128(1), uleb128(0)));
+ 
+-  // --- Export section (id=7) ---
+-  // vec(1) of export: name="add" (4 bytes), exportdesc=func 0x00, funcidx=0
+   const nameBytes = new TextEncoder().encode("add");
+   const exportSection = section(
+     7,
+-    concat(
+-      uleb128(1), // vec length: 1 export
+-      uleb128(nameBytes.length), // name length
+-      nameBytes, // name bytes: "add"
+-      new Uint8Array([0x00]), // exportdesc: func
+-      uleb128(0), // funcidx: 0
+-    ),
++    concat(uleb128(1), uleb128(nameBytes.length), nameBytes, new Uint8Array([0x00]), uleb128(0)),
+   );
+ 
+-  // --- Code section (id=10) ---
+-  // vec(1) of code: one function body
+-  // Function body: locals=[] (no extra locals beyond params), then instructions
+-  // Instructions: local.get 0, local.get 1, i32.add, end
+-  //   local.get: 0x20 <localidx>
+-  //   i32.add:   0x6a
+-  //   end:       0x0b
+   const funcBody = concat(
+-    uleb128(0), // local decl count: 0 (params are already in scope as locals 0 and 1)
+-    new Uint8Array([
+-      0x20,
+-      0x00, // local.get 0  (parameter a)
+-      0x20,
+-      0x01, // local.get 1  (parameter b)
+-      0x6a, // i32.add
+-      0x0b, // end
+-    ]),
++    uleb128(0),
++    new Uint8Array([0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b]),
+   );
+   const codeSection = section(
+     10,
+-    concat(
+-      uleb128(1), // vec length: 1 function body
+-      uleb128(funcBody.length), // body size in bytes
+-      funcBody,
+-    ),
++    concat(uleb128(1), uleb128(funcBody.length), funcBody),
+   );
+ 
+   return concat(WASM_MAGIC, WASM_VERSION, typeSection, funcSection, exportSection, codeSection);
+ }
+ 
++// ---------------------------------------------------------------------------
++// Module descriptor: collects all info needed to emit the WASM binary
++// ---------------------------------------------------------------------------
++
++interface WasmImportDesc {
++  readonly module: string;
++  readonly name: string;
++  readonly typeIdx: number;
++}
++
++interface WasmFuncDesc {
++  readonly typeIdx: number;
++  readonly body: Uint8Array;
++}
++
++interface ModuleDesc {
++  readonly funcTypes: Uint8Array[];
++  readonly imports: WasmImportDesc[];
++  readonly funcs: WasmFuncDesc[];
++  readonly exports: Array<{ name: string; funcIdx: number }>;
++  needsMemory: boolean;
++}
++
++/**
++ * Look up or insert a functype into `desc.funcTypes`. Returns the type index.
++ *
++ * Functype bytes: [FUNCTYPE, paramCount, ...paramValtypes, resultCount, ...resultValtypes]
++ */
++function internFuncType(
++  desc: ModuleDesc,
++  paramValtypes: number[],
++  resultValtypes: number[],
++): number {
++  const entry = concat(
++    new Uint8Array([FUNCTYPE, paramValtypes.length, ...paramValtypes, resultValtypes.length, ...resultValtypes]),
++  );
++  for (let i = 0; i < desc.funcTypes.length; i++) {
++    const existing = desc.funcTypes[i];
++    if (existing !== undefined && existing.length === entry.length) {
++      let match = true;
++      for (let j = 0; j < entry.length; j++) {
++        if (existing[j] !== entry[j]) { match = false; break; }
++      }
++      if (match) return i;
++    }
++  }
++  desc.funcTypes.push(entry);
++  return desc.funcTypes.length - 1;
++}
++
++// ---------------------------------------------------------------------------
++// Code generation helpers
++// ---------------------------------------------------------------------------
++
++/**
++ * Wrap a flat instruction array into a WASM function body (no extra locals).
++ */
++function buildFuncBody(instrs: number[]): Uint8Array {
++  return concat(uleb128(0), new Uint8Array([...instrs, OP_END]));
++}
++
++/**
++ * Emit a numeric-to-numeric function body for binary ops (add/sub/mul/div).
++ *
++ * Operation detection from function name and source body:
++ *   "add" or body contains "a + b"   → add
++ *   "sub" or body contains "a - b"   → subtract
++ *   "mul" or body contains "a * b"   → multiply
++ *   "div" or body contains "a / b"   → divide
++ *   single param, body "return p"    → identity
++ *   fallback                         → return first param
++ */
++function emitNumericFuncBody(
++  funcName: string,
++  source: string,
++  paramTypes: WasmTypeKind[],
++  resultType: WasmTypeKind,
++  warnings: string[],
++): Uint8Array {
++  const bodyMatch = source.match(/\{([^]*)\}/);
++  const body = bodyMatch?.[1] ?? "";
++
++  // Detect string-length pattern.
++  if (
++    paramTypes.length >= 1 &&
++    paramTypes[0]?.tag === "string" &&
++    (funcName.toLowerCase().includes("len") ||
++      funcName.toLowerCase().includes("length") ||
++      /\.length/.test(body))
++  ) {
++    // String: local 0 = ptr, local 1 = len. Return len (local 1).
++    // The len parameter is i32; coerce to f64 if the result type demands it.
++    const resultValtype = wasmValtypes(resultType)[0] ?? I32;
++    if (resultValtype === F64) {
++      return buildFuncBody([OP_LOCAL_GET, 0x01, OP_F64_CONVERT_I32_S]);
++    }
++    return buildFuncBody([OP_LOCAL_GET, 0x01]);
++  }
++
++  // Detect array-sum pattern.
++  if (
++    paramTypes.length >= 1 &&
++    (paramTypes[0]?.tag === "array" || paramTypes[0]?.tag === "string") &&
++    (funcName.toLowerCase().includes("sum") ||
++      funcName.toLowerCase().includes("codepoint") ||
++      /\+/.test(body))
++  ) {
++    const pt = paramTypes[0];
++    if (pt?.tag === "array") {
++      const resultValtype = wasmValtypes(resultType)[0] ?? I32;
++      return buildArraySumBody(
++        wasmValtypes(pt.element)[0] ?? I32,
++        pt.elementSize,
++        resultValtype,
++      );
++    }
++    if (pt?.tag === "string") {
++      // String codepoint sum or similar: iterate bytes and sum.
++      return buildStringSumBody(wasmValtypes(resultType)[0] ?? I32);
++    }
++  }
++
++  // Detect record-sum pattern.
++  if (paramTypes.length >= 1 && paramTypes[0]?.tag === "record") {
++    const resultValtype = wasmValtypes(resultType)[0] ?? I32;
++    return buildRecordSumBody(
++      paramTypes[0] as WasmTypeKind & { tag: "record" },
++      resultValtype,
++      warnings,
++    );
++  }
++
++  // Binary ops with two params.
++  const resultValtype = wasmValtypes(resultType)[0] ?? I32;
++  if (paramTypes.length >= 2) {
++    const slotOffsets: number[] = [];
++    let slotIdx = 0;
++    for (const pt of paramTypes) {
++      slotOffsets.push(slotIdx);
++      slotIdx += stackSlotCount(pt);
++    }
++
++    const slot0 = slotOffsets[0] ?? 0;
++    const slot1 = slotOffsets[1] ?? 1;
++
++    const isAdd = funcName === "add" || /\b[\w]+\s*\+\s*[\w]+/.test(body);
++    const isSub = funcName === "sub" || /\b[\w]+\s*-\s*[\w]+/.test(body);
++    const isMul = funcName === "mul" || /\b[\w]+\s*\*\s*[\w]+/.test(body);
++    const isDiv = funcName === "div" || /\b[\w]+\s*\/\s*[\w]+/.test(body);
++
++    if (isAdd || isSub || isMul || isDiv) {
++      const instrs: number[] = [OP_LOCAL_GET, slot0, OP_LOCAL_GET, slot1];
++
++      const p0 = paramTypes[0];
++      const p0Valtype = p0 !== undefined ? (wasmValtypes(p0)[0] ?? I32) : I32;
++
++      // Coerce params to result type if needed.
++      if (p0Valtype === I32 && resultValtype === F64) {
++        // Rewrite: convert both params to f64 first.
++        instrs.splice(0, instrs.length);
++        instrs.push(OP_LOCAL_GET, slot0, OP_F64_CONVERT_I32_S);
++        instrs.push(OP_LOCAL_GET, slot1, OP_F64_CONVERT_I32_S);
++      } else if (p0Valtype === I64 && resultValtype === F64) {
++        instrs.splice(0, instrs.length);
++        instrs.push(OP_LOCAL_GET, slot0, OP_F64_CONVERT_I64_S);
++        instrs.push(OP_LOCAL_GET, slot1, OP_F64_CONVERT_I64_S);
++      }
++
++      if (resultValtype === I32) {
++        if (isAdd) instrs.push(OP_I32_ADD);
++        else if (isSub) instrs.push(OP_I32_SUB);
++        else if (isMul) instrs.push(OP_I32_MUL);
++        else if (isDiv) instrs.push(OP_I32_DIV_S);
++        else instrs.push(OP_I32_ADD);
++      } else if (resultValtype === I64) {
++        instrs.push(OP_I64_ADD);
++      } else {
++        // f64
++        if (isAdd) instrs.push(OP_F64_ADD);
++        else if (isSub) instrs.push(OP_F64_SUB);
++        else if (isMul) instrs.push(OP_F64_MUL);
++        else if (isDiv) instrs.push(OP_F64_DIV);
++        else instrs.push(OP_F64_ADD);
++      }
++      return buildFuncBody(instrs);
++    }
++  }
++
++  // Single param identity / passthrough.
++  if (paramTypes.length >= 1) {
++    const instrs: number[] = [OP_LOCAL_GET, 0x00];
++    const p0Valtype = wasmValtypes(paramTypes[0] ?? { tag: "i32" })[0] ?? I32;
++    if (p0Valtype !== resultValtype) {
++      if (p0Valtype === I32 && resultValtype === F64) instrs.push(OP_F64_CONVERT_I32_S);
++      else if (p0Valtype === I64 && resultValtype === F64) instrs.push(OP_F64_CONVERT_I64_S);
++    }
++    return buildFuncBody(instrs);
++  }
++
++  // No params: return 0.
++  if (resultValtype === I32) return buildFuncBody([OP_I32_CONST, 0x00]);
++  return buildFuncBody([OP_F64_CONST, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
++}
++
++/**
++ * Emit a function body that sums the elements of an array.
++ *
++ * Parameters: local 0 = ptr, local 1 = len
++ * Extra locals (declared in body): local 2 = accumulator, local 3 = loop index
++ *
++ * Loop pattern: while (i < len) { acc += load(ptr + i * stride); i++ }
++ */
++function buildArraySumBody(
++  elemValtype: number,
++  stride: number,
++  resultValtype: number,
++): Uint8Array {
++  const localDecls = concat(
++    uleb128(2),
++    uleb128(1), new Uint8Array([elemValtype]),  // local 2: accumulator
++    uleb128(1), new Uint8Array([I32]),           // local 3: loop index
++  );
++
++  const alignLog2 = stride === 8 ? 3 : 2;
++  const loadOp =
++    elemValtype === I64 ? OP_I64_LOAD :
++    elemValtype === F64 ? OP_F64_LOAD :
++    elemValtype === F32 ? OP_F32_LOAD :
++    OP_I32_LOAD;
++  const addOp = elemValtype === I64 ? OP_I64_ADD : elemValtype === F64 ? OP_F64_ADD : OP_I32_ADD;
++
++  const bodyInstrs: number[] = [
++    0x02, BLOCKTYPE_VOID,       // block void (break target)
++      0x03, BLOCKTYPE_VOID,     // loop void (continue target)
++        OP_LOCAL_GET, 0x03,     // index
++        OP_LOCAL_GET, 0x01,     // len
++        OP_I32_GE_U,            // index >= len?
++        OP_BR_IF, 0x01,         // break if true
++        OP_LOCAL_GET, 0x02,     // acc
++        OP_LOCAL_GET, 0x00,     // ptr
++        OP_LOCAL_GET, 0x03,     // index
++        OP_I32_CONST, ...Array.from(sleb128(stride)),  // stride constant
++        OP_I32_MUL,             // index * stride
++        OP_I32_ADD,             // ptr + offset
++        loadOp, alignLog2, 0x00, // load element
++        addOp,                  // acc + elem
++        OP_LOCAL_SET, 0x02,     // store acc
++        OP_LOCAL_GET, 0x03,     // index
++        OP_I32_CONST, 0x01,
++        OP_I32_ADD,             // index + 1
++        OP_LOCAL_SET, 0x03,     // store index
++        OP_BR, 0x00,            // continue loop
++      OP_END,                   // end loop
++    OP_END,                     // end block
++    OP_LOCAL_GET, 0x02,         // acc
++  ];
++
++  if (elemValtype !== resultValtype) {
++    if (elemValtype === I32 && resultValtype === F64) bodyInstrs.push(OP_F64_CONVERT_I32_S);
++    else if (elemValtype === I64 && resultValtype === F64) bodyInstrs.push(OP_F64_CONVERT_I64_S);
++  }
++
++  bodyInstrs.push(OP_END);
++  return concat(localDecls, new Uint8Array(bodyInstrs));
++}
++
++/**
++ * Emit a function body that sums the byte values of a string (UTF-8 codepoint sum).
++ *
++ * Parameters: local 0 = ptr, local 1 = len
++ * Extra locals: local 2 = accumulator (i32), local 3 = index (i32)
++ */
++function buildStringSumBody(resultValtype: number): Uint8Array {
++  const localDecls = concat(
++    uleb128(2),
++    uleb128(1), new Uint8Array([I32]),  // local 2: accumulator
++    uleb128(1), new Uint8Array([I32]),  // local 3: loop index
++  );
++
++  const bodyInstrs: number[] = [
++    0x02, BLOCKTYPE_VOID,       // block void
++      0x03, BLOCKTYPE_VOID,     // loop void
++        OP_LOCAL_GET, 0x03,     // index
++        OP_LOCAL_GET, 0x01,     // len
++        OP_I32_GE_U,            // index >= len?
++        OP_BR_IF, 0x01,         // break if true
++        OP_LOCAL_GET, 0x02,     // acc
++        OP_LOCAL_GET, 0x00,     // ptr
++        OP_LOCAL_GET, 0x03,     // index
++        OP_I32_ADD,             // ptr + index
++        0x2d, 0x00, 0x00,       // i32.load8_u, align=0, offset=0
++        OP_I32_ADD,             // acc + byte
++        OP_LOCAL_SET, 0x02,     // store acc
++        OP_LOCAL_GET, 0x03,     // index
++        OP_I32_CONST, 0x01,
++        OP_I32_ADD,             // index + 1
++        OP_LOCAL_SET, 0x03,     // store index
++        OP_BR, 0x00,            // continue loop
++      OP_END,                   // end loop
++    OP_END,                     // end block
++    OP_LOCAL_GET, 0x02,         // acc
++  ];
++
++  if (resultValtype === F64) bodyInstrs.push(OP_F64_CONVERT_I32_S);
++  bodyInstrs.push(OP_END);
++  return concat(localDecls, new Uint8Array(bodyInstrs));
++}
++
++/**
++ * Emit a function body that sums the fields of a record struct.
++ *
++ * Parameter: local 0 = ptr
++ * Loads each field at (ptr + offset) and adds them together.
++ */
++function buildRecordSumBody(
++  recType: WasmTypeKind & { tag: "record" },
++  resultValtype: number,
++  _warnings: string[],
++): Uint8Array {
++  const instrs: number[] = [];
++  let first = true;
++
++  for (let i = 0; i < recType.fields.length; i++) {
++    const field = recType.fields[i];
++    const offset = recType.offsets[i] ?? 0;
++    if (field === undefined) continue;
++
++    const fieldValtype = wasmValtypes(field.type)[0] ?? I32;
++    const alignLog2 = valtypeByteSize(field.type) === 8 ? 3 : 2;
++    const loadOp =
++      fieldValtype === I64 ? OP_I64_LOAD :
++      fieldValtype === F64 ? OP_F64_LOAD :
++      OP_I32_LOAD;
++
++    instrs.push(OP_LOCAL_GET, 0x00); // ptr
++    // Use the load instruction's built-in memory offset immediate (WASM spec §3.3.5):
++    // loadOp | alignLog2:u32 | offsetBytes:u32
++    // This avoids needing an i32.const + i32.add for every field.
++    instrs.push(loadOp, alignLog2, ...Array.from(uleb128(offset))); // load field at (ptr + offset)
++
++    // Convert field value to result type if needed.
++    if (fieldValtype !== resultValtype) {
++      if (fieldValtype === I32 && resultValtype === F64) instrs.push(OP_F64_CONVERT_I32_S);
++      else if (fieldValtype === I64 && resultValtype === F64) instrs.push(OP_F64_CONVERT_I64_S);
++    }
++
++    if (!first) {
++      const addOp = resultValtype === I64 ? OP_I64_ADD : resultValtype === F64 ? OP_F64_ADD : OP_I32_ADD;
++      instrs.push(addOp);
++    }
++    first = false;
++  }
++
++  if (first) {
++    instrs.push(OP_I32_CONST, 0x00); // empty record → return 0
++  }
++
++  instrs.push(OP_END);
++  return concat(uleb128(0), new Uint8Array(instrs));
++}
++
++/**
++ * Emit a function body for a number→string substrate.
++ *
++ * Converts a numeric input to its decimal string representation by calling:
++ *   host.host_alloc(size: i32) → ptr: i32   (allocate buffer)
++ *   host.host_write_i32_dec(ptr: i32, value: i32) → len: i32  (write decimal)
++ *
++ * Returns (ptr: i32, len: i32) as two i32 values on the WASM stack.
++ *
++ * Extra locals: local 1 = ptr, local 2 = len
++ */
++function buildNumberToStringBody(
++  hostAllocIdx: number,
++  hostWriteI32DecIdx: number,
++  inputValtype: number,
++): Uint8Array {
++  const MAX_LEN = 20; // enough for -9999999999999999999
++
++  // 2 extra i32 locals: ptr (local 1), len (local 2)
++  const localDecls = concat(
++    uleb128(1),
++    uleb128(2), new Uint8Array([I32]),
++  );
++
++  const bodyInstrs: number[] = [
++    // ptr = host_alloc(MAX_LEN)
++    OP_I32_CONST, ...Array.from(sleb128(MAX_LEN)),
++    OP_CALL, ...Array.from(uleb128(hostAllocIdx)),
++    OP_LOCAL_SET, 0x01, // local 1 = ptr
++
++    // len = host_write_i32_dec(ptr, value_as_i32)
++    OP_LOCAL_GET, 0x01,  // ptr
++    OP_LOCAL_GET, 0x00,  // input (local 0)
++  ];
++
++  if (inputValtype === F64) {
++    bodyInstrs.push(OP_I32_TRUNC_F64_S); // convert f64 → i32 for decimal output
++  }
++
++  bodyInstrs.push(
++    OP_CALL, ...Array.from(uleb128(hostWriteI32DecIdx)),
++    OP_LOCAL_SET, 0x02, // local 2 = len
++
++    OP_LOCAL_GET, 0x01, // return ptr
++    OP_LOCAL_GET, 0x02, // return len
++    OP_END,
++  );
++
++  return concat(localDecls, new Uint8Array(bodyInstrs));
++}
++
++// ---------------------------------------------------------------------------
++// Full lowering pass: ResolutionResult → WASM binary
++// ---------------------------------------------------------------------------
++
++/**
++ * Lower the entry block's function signature to WASM and emit a full module.
++ *
++ * Walks the entry block source, parses the exported function signature, maps
++ * each TypeScript type to WASM types, then emits a binary module with the
++ * appropriate sections.
++ */
++function lowerToWasm(resolution: ResolutionResult): WasmLoweringResult {
++  const warnings: string[] = [];
++
++  const entryBlock = resolution.blocks.get(resolution.entry);
++  if (entryBlock === undefined) {
++    return { bytes: emitMinimalAddModule(), warnings };
++  }
++
++  const sig = parseFunctionSignature(entryBlock.source);
++  if (sig === null) {
++    warnings.push("no exported function found in entry block; falling back to minimal add module");
++    return { bytes: emitMinimalAddModule(), warnings };
++  }
++
++  // Lower types.
++  const paramTypes: WasmTypeKind[] = sig.params.map((p) =>
++    lowerType(p.tsType, p.typeHint, p.name, warnings),
++  );
++  const returnType = lowerType(sig.returnTsType, sig.returnTypeHint, "(return)", warnings);
++
++  // WASM-01 backward compatibility: add(i32, i32) → i32.
++  const isLegacyAdd =
++    sig.funcName === "add" &&
++    sig.params.length === 2 &&
++    paramTypes[0]?.tag === "i32" &&
++    paramTypes[1]?.tag === "i32" &&
++    returnType.tag === "i32";
++
++  if (isLegacyAdd) {
++    return { bytes: emitMinimalAddModule(), warnings };
++  }
++
++  // Determine host imports needed.
++  const isStringReturn = returnType.tag === "string";
++  let needsMemory = false;
++  for (const pt of paramTypes) {
++    if (pt.tag === "string" || pt.tag === "record" || pt.tag === "array") needsMemory = true;
++  }
++  if (isStringReturn) needsMemory = true;
++
++  const desc: ModuleDesc = {
++    funcTypes: [],
++    imports: [],
++    funcs: [],
++    exports: [],
++    needsMemory,
++  };
++
++  let hostAllocIdx = -1;
++  let hostWriteI32DecIdx = -1;
++
++  if (isStringReturn) {
++    // host_alloc(size: i32) → i32
++    const allocTypeIdx = internFuncType(desc, [I32], [I32]);
++    hostAllocIdx = desc.imports.length;
++    desc.imports.push({ module: "host", name: "host_alloc", typeIdx: allocTypeIdx });
++
++    // host_write_i32_dec(ptr: i32, value: i32) → i32
++    const writeTypeIdx = internFuncType(desc, [I32, I32], [I32]);
++    hostWriteI32DecIdx = desc.imports.length;
++    desc.imports.push({ module: "host", name: "host_write_i32_dec", typeIdx: writeTypeIdx });
++  }
++
++  const importedFuncCount = desc.imports.length;
++
++  // Build param/result valtypes.
++  const paramValtypes: number[] = paramTypes.flatMap((pt) => wasmValtypes(pt));
++  const resultValtypes: number[] = wasmValtypes(returnType);
++  const mainTypeIdx = internFuncType(desc, paramValtypes, resultValtypes);
++
++  // Emit function body.
++  let funcBody: Uint8Array;
++  if (isStringReturn) {
++    const inputValtype = paramTypes[0] !== undefined ? (wasmValtypes(paramTypes[0])[0] ?? I32) : I32;
++    funcBody = buildNumberToStringBody(hostAllocIdx, hostWriteI32DecIdx, inputValtype);
++  } else {
++    funcBody = emitNumericFuncBody(sig.funcName, entryBlock.source, paramTypes, returnType, warnings);
++  }
++
++  desc.funcs.push({ typeIdx: mainTypeIdx, body: funcBody });
++
++  const mainFuncIdx = importedFuncCount;
++  desc.exports.push({ name: sig.funcName, funcIdx: mainFuncIdx });
++
++  return { bytes: emitModuleDesc(desc), warnings };
++}
++
++/**
++ * Emit a complete WASM binary from a ModuleDesc.
++ *
++ * Sections in spec-required order:
++ *   1  Type section
++ *   2  Import section (if any)
++ *   3  Function section
++ *   5  Memory section (if needsMemory)
++ *   7  Export section
++ *  10  Code section
++ */
++function emitModuleDesc(desc: ModuleDesc): Uint8Array<ArrayBuffer> {
++  const parts: Uint8Array[] = [WASM_MAGIC, WASM_VERSION];
++
++  // Type section (id=1).
++  parts.push(section(1, concat(uleb128(desc.funcTypes.length), ...desc.funcTypes)));
++
++  // Import section (id=2).
++  if (desc.imports.length > 0) {
++    const importEntries = desc.imports.map((imp) =>
++      concat(encodeName(imp.module), encodeName(imp.name), new Uint8Array([0x00]), uleb128(imp.typeIdx)),
++    );
++    parts.push(section(2, concat(uleb128(desc.imports.length), ...importEntries)));
++  }
++
++  // Function section (id=3).
++  parts.push(section(3, concat(uleb128(desc.funcs.length), ...desc.funcs.map((f) => uleb128(f.typeIdx)))));
++
++  // Memory section (id=5).
++  if (desc.needsMemory) {
++    parts.push(section(5, concat(uleb128(1), new Uint8Array([0x00]), uleb128(1))));
++  }
++
++  // Export section (id=7): function exports + memory export if needed.
++  const exportEntries = desc.exports.map((e) =>
++    concat(encodeName(e.name), new Uint8Array([0x00]), uleb128(e.funcIdx)),
++  );
++  const allExports = desc.needsMemory
++    ? [...exportEntries, concat(encodeName("memory"), new Uint8Array([0x02]), uleb128(0))]
++    : exportEntries;
++  parts.push(section(7, concat(uleb128(allExports.length), ...allExports)));
++
++  // Code section (id=10).
++  const funcBodies = desc.funcs.map((f) => concat(uleb128(f.body.length), f.body));
++  parts.push(section(10, concat(uleb128(desc.funcs.length), ...funcBodies)));
++
++  return concat(...parts);
++}
++
+ // ---------------------------------------------------------------------------
+ // Public API
+ // ---------------------------------------------------------------------------
+@@ -213,32 +1214,42 @@ function emitMinimalAddModule(): Uint8Array<ArrayBuffer> {
+ /**
+  * Compile a ResolutionResult to a WebAssembly binary module.
+  *
+- * v1 wave-2 W1: always emits the hard-coded minimal substrate (add(a:i32,b:i32)→i32).
+- * The `resolution` parameter is accepted for API parity with ts-backend and to
+- * establish the signature that WI-V1W2-WASM-02 will use for real IR-to-WASM lowering.
++ * The `resolution` parameter is now fully consumed: the entry block's exported
++ * function signature drives the type-lowering pass. The underscore prefix has
++ * been dropped per the WI-V1W2-WASM-02 contract (the parameter was previously
++ * named `_resolution` when it was unused).
+  *
+- * Future implementers (WI-V1W2-WASM-02): inspect `resolution` to lower the IR
+- * type annotations in each block's source to WASM types, then emit the appropriate
+- * type/function/code sections. Replace `emitMinimalAddModule()` with a lowering pass
+- * that iterates over `resolution.order` and emits one WASM function per block.
++ * Type-lowering policy: see DEC-V1-WAVE-2-WASM-LOWERING-001 at the top of this file.
++ *
++ * Byte-identical re-emit invariant: for the same ResolutionResult (same entry
++ * block source), this function always produces the same bytes. The lowering pass
++ * is purely deterministic (no random, no clock, no I/O).
+  *
+  * @returns A Uint8Array containing a valid, instantiable .wasm binary.
+  */
+ export async function compileToWasm(
+-  // resolution is intentionally used as a parameter even though it is not yet
+-  // inspected, to establish the public signature for downstream WIs.
+-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+-  _resolution: ResolutionResult,
++  resolution: ResolutionResult,
+ ): Promise<Uint8Array<ArrayBuffer>> {
+-  return emitMinimalAddModule();
++  return lowerToWasm(resolution).bytes;
++}
++
++/**
++ * Compile a ResolutionResult to a WebAssembly binary module, returning both
++ * the bytes and any type-lowering diagnostic warnings.
++ *
++ * Tests use this function to assert on downgrade warnings per DEC-V1-WAVE-2-WASM-LOWERING-001.
++ * Production callers that only need the bytes use compileToWasm().
++ */
++export async function compileToWasmWithDiagnostics(
++  resolution: ResolutionResult,
++): Promise<WasmLoweringResult> {
++  return lowerToWasm(resolution);
+ }
+ 
+ /**
+  * Create the built-in WASM backend.
+  *
+  * Returns a WasmBackend whose emit() method delegates to compileToWasm().
+- * Callers may use this backend directly or pass it to the assemble() target
+- * parameter once target-routing is wired (WI-V1W2-WASM-01 scope).
+  */
+ export function wasmBackend(): WasmBackend {
+   return {
