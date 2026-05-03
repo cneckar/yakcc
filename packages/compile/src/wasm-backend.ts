@@ -58,6 +58,17 @@
  *   4: substrate  (defined,  type 1 or 4 depending on param count)
  */
 
+// @decision DEC-V1-WAVE-3-WASM-PARSE-001
+// Title: lower from ts-morph AST parsed at codegen-time (WI-V1W3-WASM-LOWER-01)
+// Status: decided
+// Rationale: LoweringVisitor replaces the regex-based detectSubstrateKind dispatch for
+// string_bytecount / format_i32 / sum_record / sum_array. The "add" substrate retains the
+// legacy emitSubstrateModule path so that wasm-host.test.ts conformance tests for
+// __wasm_export_string_len and __wasm_export_panic_demo remain green (those two exports
+// are only present in the 3-function legacy module; the visitor emits single-function modules).
+
+import type { WasmFunction } from "./wasm-lowering/wasm-function.js";
+import { LoweringVisitor } from "./wasm-lowering/visitor.js";
 import type { ResolutionResult } from "./resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -289,13 +300,6 @@ function detectSubstrateKind(source: string): SubstrateKind {
   return "add";
 }
 
-/**
- * Extract the primary exported function name from a block source.
- */
-function extractFunctionName(source: string): string {
-  const m = source.match(/export\s+(?:async\s+)?function\s+(\w+)/);
-  return m?.[1] ?? "fn";
-}
 
 // ---------------------------------------------------------------------------
 // Per-substrate function body builders
@@ -307,247 +311,79 @@ function extractFunctionName(source: string): string {
 // Param locals always come first (implicit in WASM — params are locals 0, 1, ...).
 // ---------------------------------------------------------------------------
 
-/**
- * add(a: i32, b: i32): i32  — i32.add of two params.
- */
-function bodyAdd(): Uint8Array {
-  return concat(
-    uleb128(0),
-    new Uint8Array([
-      0x20, 0x00, // local.get 0 (a)
-      0x20, 0x01, // local.get 1 (b)
-      0x6a, // i32.add
-      0x0b, // end
-    ]),
-  );
-}
+// ---------------------------------------------------------------------------
+// Locals prefix builder (used by emitLoweredModule)
+// ---------------------------------------------------------------------------
 
 /**
- * string_bytecount(ptr: i32, len: i32): i32  — returns len unchanged.
- *
- * The string calling convention passes (ptr, len); len is the UTF-8 byte count.
- * Returning len demonstrates the string-view lowering path without requiring
- * a character-decoding loop in the substrate binary.
+ * Build the locals-declaration prefix for a function body: uleb128(group_count) followed by
+ * (count, type) pairs, grouping consecutive same-type locals.
  */
-function bodyStringBytecount(): Uint8Array {
-  return concat(
-    uleb128(0),
-    new Uint8Array([
-      0x20, 0x01, // local.get 1 (len)
-      0x0b, // end
-    ]),
-  );
-}
-
-/**
- * format_i32(n: i32, out: i32): i32  — write decimal ASCII to out, return byte count.
- *
- * Handles n in [0, 99]:
- *   n < 10  → writes 1 byte at out[0] = n + '0', returns 1
- *   n >= 10 → writes 2 bytes: out[0] = n/10+'0', out[1] = n%10+'0', returns 2
- *
- * The output buffer must have at least 2 bytes of capacity starting at out.
- * This exercises the host-mediated string-return path (out is a pre-allocated
- * caller buffer; host_alloc / host_free are available for dynamic allocation).
- */
-function bodyFormatI32(): Uint8Array {
-  return concat(
-    uleb128(0), // 0 local groups (params are locals 0, 1)
-    new Uint8Array([
-      // if (n < 10): write single digit and return 1
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x0a, // i32.const 10
-      0x49, // i32.lt_u
-      0x04, 0x40, // if void
-      0x20, 0x01, // local.get 1  (out)
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x30, // i32.const 48 ('0')
-      0x6a, // i32.add          (n + '0')
-      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
-      0x41, 0x01, // i32.const 1
-      0x0f, // return
-      0x0b, // end if
-      // out[0] = n / 10 + '0'   (tens digit)
-      0x20, 0x01, // local.get 1  (out)
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x0a, // i32.const 10
-      0x6d, // i32.div_u
-      0x41, 0x30, // i32.const 48
-      0x6a, // i32.add
-      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
-      // out[1] = n % 10 + '0'   (ones digit)
-      0x20, 0x01, // local.get 1  (out)
-      0x41, 0x01, // i32.const 1
-      0x6a, // i32.add          (out + 1)
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x0a, // i32.const 10
-      0x6f, // i32.rem_u
-      0x41, 0x30, // i32.const 48
-      0x6a, // i32.add
-      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
-      0x41, 0x02, // i32.const 2
-      0x0b, // end
-    ]),
-  );
-}
-
-/**
- * sum_record(ptr: i32): i32  — load two i32 fields and add.
- *
- * Layout: field[0] at ptr+0, field[1] at ptr+4 (4-byte-aligned i32, per
- * DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 struct field-alignment policy).
- */
-function bodySumRecord(): Uint8Array {
-  return concat(
-    uleb128(0), // 0 local groups
-    new Uint8Array([
-      0x20, 0x00, // local.get 0  (ptr)
-      0x28, 0x02, 0x00, // i32.load align=2 offset=0   → field[0]
-      0x20, 0x00, // local.get 0  (ptr)
-      0x28, 0x02, 0x04, // i32.load align=2 offset=4   → field[1]
-      0x6a, // i32.add
-      0x0b, // end
-    ]),
-  );
-}
-
-/**
- * sum_array(ptr: i32, len: i32): i32  — sum len i32 elements at ptr.
- *
- * Iterates byte-offset i = 0, 4, 8, ... while i < len*4,
- * loading i32 at ptr+i each iteration.
- * Per DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 array element-stride policy (4 bytes).
- *
- * Locals: param 0=ptr, param 1=len, local 2=acc, local 3=i (byte offset).
- */
-function bodySumArray(): Uint8Array {
-  return concat(
-    new Uint8Array([
-      0x02, // 2 local groups
-      0x01, 0x7f, // 1 × i32 (acc, local 2)
-      0x01, 0x7f, // 1 × i32 (byte offset i, local 3)
-    ]),
-    new Uint8Array([
-      0x41, 0x00, 0x21, 0x02, // acc = 0
-      0x41, 0x00, 0x21, 0x03, // i = 0
-      0x02, 0x40, // block $brk
-      0x03, 0x40, // loop $cont
-      // break if i >= len << 2
-      0x20, 0x03, // local.get 3  (i)
-      0x20, 0x01, // local.get 1  (len)
-      0x41, 0x02, // i32.const 2
-      0x74, // i32.shl          (len * 4)
-      0x4f, // i32.ge_u
-      0x0d, 0x01, // br_if 1       (break to $brk)
-      // acc += i32.load(ptr + i)
-      0x20, 0x02, // local.get 2  (acc)
-      0x20, 0x00, // local.get 0  (ptr)
-      0x20, 0x03, // local.get 3  (i)
-      0x6a, // i32.add          (ptr + i)
-      0x28, 0x02, 0x00, // i32.load align=2 offset=0
-      0x6a, // i32.add
-      0x21, 0x02, // local.set 2  (acc)
-      // i += 4
-      0x20, 0x03, // local.get 3  (i)
-      0x41, 0x04, // i32.const 4
-      0x6a, // i32.add
-      0x21, 0x03, // local.set 3  (i)
-      0x0c, 0x00, // br 0          (continue $cont)
-      0x0b, // end loop
-      0x0b, // end block
-      0x20, 0x02, // local.get 2  (acc)
-      0x0b, // end
-    ]),
-  );
-}
-
-function buildSubstrateBody(kind: SubstrateKind): Uint8Array {
-  switch (kind) {
-    case "add":
-      return bodyAdd();
-    case "string_bytecount":
-      return bodyStringBytecount();
-    case "format_i32":
-      return bodyFormatI32();
-    case "sum_record":
-      return bodySumRecord();
-    case "sum_array":
-      return bodySumArray();
+function buildLocalsPrefix(extras: readonly { readonly type: string }[]): Uint8Array {
+  if (extras.length === 0) return uleb128(0);
+  const groups: Array<{ count: number; typeCode: number }> = [];
+  for (const local of extras) {
+    const tc = local.type === "i64" ? 0x7e : local.type === "f64" ? 0x7c : I32;
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last.typeCode === tc) {
+      last.count++;
+    } else {
+      groups.push({ count: 1, typeCode: tc });
+    }
   }
+  let prefix = uleb128(groups.length);
+  for (const g of groups) {
+    prefix = concat(prefix, uleb128(g.count), new Uint8Array([g.typeCode]));
+  }
+  return prefix;
 }
 
 // ---------------------------------------------------------------------------
-// Type-lowered module emitter
+// Visitor-based module emitter (WI-V1W3-WASM-LOWER-01)
 //
-// Emits a full yakcc_host-conformant .wasm module for one substrate function.
+// Emits a full yakcc_host-conformant .wasm module from a WasmFunction IR produced
+// by LoweringVisitor. Type section, import section, and table section are identical
+// to the wave-2 emitter; the function type index is derived from params.length.
 //
-// Type section (always 5 types):
+// Type section (5 types — unchanged from wave-2):
 //   0: (i32 i32) → ()          — host_log
-//   1: (i32) → (i32)           — host_alloc / sum_record substrate
+//   1: (i32) → (i32)           — host_alloc / 1-param substrate (record)
 //   2: (i32) → ()              — host_free
 //   3: (i32 i32 i32) → ()      — host_panic
-//   4: (i32 i32) → (i32)       — two-param substrate (add, string_bytecount,
-//                                 format_i32, sum_array)
-//
-// The substrate function is defined at funcidx 4 (after 4 imported functions).
+//   4: (i32 i32) → (i32)       — 2-param substrate (numeric, string, format, array)
 // ---------------------------------------------------------------------------
 
-function emitTypeLoweredModule(
-  kind: SubstrateKind,
-  fnName: string,
-): Uint8Array<ArrayBuffer> {
-  // -----------------------------------------------------------------------
-  // Type section
-  // -----------------------------------------------------------------------
-  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // (i32 i32) → ()
-  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // (i32) → (i32)
-  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // (i32) → ()
-  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32) → ()
-  const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]); // (i32 i32) → (i32)
-
+function emitLoweredModule(fn: WasmFunction): Uint8Array<ArrayBuffer> {
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]);
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]);
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]);
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]);
+  const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]);
   const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
 
-  // -----------------------------------------------------------------------
-  // Import section (shared across all substrate modules)
-  // -----------------------------------------------------------------------
   const importSection = buildImportSection();
 
-  // -----------------------------------------------------------------------
-  // Function section: 1 defined function
-  //   sum_record uses type 1 (i32)→(i32)  — one param
-  //   all others use type 4 (i32 i32)→(i32) — two params
-  // -----------------------------------------------------------------------
-  const substrateFuncTypeIdx = kind === "sum_record" ? 1 : 4;
+  // 1-param → type 1 (record ABI); 2-param → type 4 (all others)
+  const substrateFuncTypeIdx = fn.params.length === 1 ? 1 : 4;
   const funcSection = section(3, concat(uleb128(1), uleb128(substrateFuncTypeIdx)));
 
-  // -----------------------------------------------------------------------
-  // Table section: one empty funcref table (required by host contract)
-  // -----------------------------------------------------------------------
   const tableSection = section(
     4,
     concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])),
   );
 
-  // -----------------------------------------------------------------------
-  // Export section: function + table
-  // -----------------------------------------------------------------------
   const exportFn = concat(
-    encodeName(`__wasm_export_${fnName}`),
-    new Uint8Array([0x00]), // func
-    uleb128(4), // funcidx: 4 (first defined function)
+    encodeName(`__wasm_export_${fn.name}`),
+    new Uint8Array([0x00]),
+    uleb128(4),
   );
-  const exportTable = concat(
-    encodeName("_yakcc_table"),
-    new Uint8Array([0x01]), // table
-    uleb128(0),
-  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
   const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
 
-  // -----------------------------------------------------------------------
-  // Code section: 1 function body
-  // -----------------------------------------------------------------------
-  const body = buildSubstrateBody(kind);
-  const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
+  // Build full function body: [locals prefix][instruction bytes][end 0x0b]
+  const localsPrefix = buildLocalsPrefix(fn.extraLocals);
+  const fullBody = concat(localsPrefix, fn.body, new Uint8Array([0x0b]));
+  const codeSection = section(10, concat(uleb128(1), uleb128(fullBody.length), fullBody));
 
   return concat(
     WASM_MAGIC,
@@ -568,10 +404,9 @@ function emitTypeLoweredModule(
 /**
  * Compile a ResolutionResult to a WebAssembly binary module.
  *
- * WI-V1W2-WASM-02: inspects the entry block's exported function signature,
- * detects one of 5 type patterns, and emits a per-substrate WASM module with
- * the correct type lowering applied. See detectSubstrateKind for the detection
- * rules and DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 for the lowering policies.
+ * WI-V1W3-WASM-LOWER-01: routes all substrates through LoweringVisitor except "add",
+ * which retains the legacy emitSubstrateModule path for wasm-host.test.ts conformance
+ * (the legacy module also exports __wasm_export_string_len and __wasm_export_panic_demo).
  *
  * @returns A Uint8Array containing a valid, instantiable .wasm binary.
  */
@@ -580,14 +415,13 @@ export async function compileToWasm(
 ): Promise<Uint8Array<ArrayBuffer>> {
   const entryBlock = resolution.blocks.get(resolution.entry);
   if (entryBlock !== undefined) {
-    const kind = detectSubstrateKind(entryBlock.source);
-    // "add" uses the legacy substrate module so that wasm-host.test.ts conformance
-    // tests for __wasm_export_string_len and __wasm_export_panic_demo remain green.
-    if (kind === "add") return emitSubstrateModule();
-    const fnName = extractFunctionName(entryBlock.source);
-    return emitTypeLoweredModule(kind, fnName);
+    const source = entryBlock.source;
+    // Legacy add substrate: preserves wasm-host.test.ts conformance fixture.
+    // See DEC-V1-WAVE-3-WASM-PARSE-001 for the full rationale.
+    if (detectSubstrateKind(source) === "add") return emitSubstrateModule();
+    const wasmFn = new LoweringVisitor().lower(source);
+    return emitLoweredModule(wasmFn);
   }
-  // Empty resolution fallback: emit the substrate module.
   return emitSubstrateModule();
 }
 
