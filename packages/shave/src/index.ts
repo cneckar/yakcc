@@ -319,6 +319,7 @@ import type {
   ShaveOptions,
   ShaveRegistryView,
   ShaveResult,
+  ShavedAtomStub,
   UniversalizeResult,
 } from "./types.js";
 import { decompose } from "./universalize/recursion.js";
@@ -656,14 +657,28 @@ export async function shave(
     }
   }
 
-  // Each SlicePlanEntry maps to a ShavedAtomStub. The placeholderId is a
-  // deterministic "shave-atom-" prefix + 8-char truncation of canonicalAstHash
-  // (per DEC-SHAVE-PIPELINE-001 rationale above).
-  const atoms = result.slicePlan.map((entry, i) => ({
-    placeholderId: `shave-atom-${entry.canonicalAstHash.slice(0, 8)}`,
-    sourceRange: entry.sourceRange,
-    merkleRoot: merkleRoots[i],
-  }));
+  // Each SlicePlanEntry that carries an AST hash maps to a ShavedAtomStub.
+  // ForeignLeafEntry is intentionally excluded: it is an opaque leaf that
+  // has no canonicalAstHash or host-module sourceRange (the import declaration
+  // is a foreign dependency, not a shaved atom). The merkleRoots array was
+  // built with one slot per entry (including foreign-leaf slots, which received
+  // `undefined`), so we use flatMap with the index to skip foreign entries while
+  // keeping the merkleRoots[i] alignment intact.
+  // (per DEC-SHAVE-PIPELINE-001 rationale above and DEC-V2-FOREIGN-BLOCK-SCHEMA-001)
+  const atoms = result.slicePlan.flatMap((entry, i): ShavedAtomStub[] => {
+    if (entry.kind === "foreign-leaf") {
+      // Foreign atoms are opaque leaves; they have no AST hash to dedupe by
+      // and no source range in the host module's body.
+      return [];
+    }
+    return [
+      {
+        placeholderId: `shave-atom-${entry.canonicalAstHash.slice(0, 8)}`,
+        sourceRange: entry.sourceRange,
+        merkleRoot: merkleRoots[i],
+      },
+    ];
+  });
 
   return {
     sourcePath,
