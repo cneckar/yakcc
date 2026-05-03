@@ -9,6 +9,7 @@ The store for Yakcc contracts and their implementations.
   - `getBlock(blockMerkleRoot)` — retrieve a stored block by its content-address, including artifact bytes.
   - `structuralMatch(spec)` — structured contract matching. Filters candidates by input/output type signature, error conditions, and non-functional properties. Returns the best `Match` or `null` if no conforming implementation exists.
   - `select(matches)` — picks the best match from a candidate set, preferring stricter contracts then better non-functional properties.
+  - `exportManifest()` — returns the registry's full block content as a `readonly BootstrapManifestEntry[]`, sorted by `blockMerkleRoot` ASCII ASC. Each entry carries `blockMerkleRoot`, `specHash`, `canonicalAstHash`, `parentBlockRoot`, `implSourceHash`, and `manifestJsonHash`. Deterministic: two calls on the same state produce byte-identical output. Used by `yakcc bootstrap --verify` to compare against the committed `bootstrap/expected-roots.json`.
   - `close()` — releases all resources held by the registry.
 - **`openRegistry(path)`** — opens (or creates) a registry at the given filesystem path backed by SQLite + sqlite-vec. Schema migrations run automatically on open.
 - **`Match`** — a contract paired with a similarity score in [0, 1].

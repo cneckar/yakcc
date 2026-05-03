@@ -1,6 +1,6 @@
 # Yakcc
 
-**Status: v1 wave-1 substantially landed (property-test corpus, parent-block lineage, federation protocol, registry artifact-bytes persistence, deterministic intent extraction). v1 wave-2 (live Claude Code intercept + WASM backend) planned, not started.**
+**Status: v1 fully closed. v1 wave-2 closed (live IDE hooks + WASM backend shipped). v2 bootstrap in progress (`yakcc bootstrap` one-shot mode landed; `--verify` mode in-flight).**
 
 Yakcc is a local-only TypeScript substrate for assembling programs from content-addressed
 basic blocks. A block is a triplet directory (`spec.yak` + `impl.ts` + `proof/`) stored
@@ -41,15 +41,19 @@ again. The double-c is a nod to the long lineage of terse compiler names.
 
 ```
 packages/
-  contracts/         @yakcc/contracts   — branded types: SpecYak, ContractId, BlockMerkleRoot, SpecHash
-  registry/          @yakcc/registry    — SQLite-backed registry, openRegistry()
-  ir/                @yakcc/ir          — strict-TS-subset IR and block types
-  compile/           @yakcc/compile     — TS backend, assembler, provenance manifest
-  seeds/             @yakcc/seeds       — hand-authored ~20-block seed corpus
-  hooks-claude-code/ @yakcc/hooks-claude-code — Claude Code hook integration facade
-  cli/               @yakcc/cli         — yakcc CLI (registry init, seed, shave, search, propose, compile, hooks claude-code install)
-  shave/             @yakcc/shave       — universalizer pipeline: intent extraction (static or LLM), atom decomposition, slicer, atom-persist
-  variance/          @yakcc/variance    — variance scoring + contract design rules (intersection/majority-vote/union per WI-011)
+  contracts/         @yakcc/contracts        — branded types: SpecYak, ContractId, BlockMerkleRoot, SpecHash
+  registry/          @yakcc/registry         — SQLite-backed registry, openRegistry(), exportManifest()
+  ir/                @yakcc/ir               — strict-TS-subset IR, validateStrictSubset(), validateStrictSubsetProject()
+  compile/           @yakcc/compile          — TS + WASM backends, assembler, provenance manifest
+  seeds/             @yakcc/seeds            — hand-authored ~20-block seed corpus
+  hooks-base/        @yakcc/hooks-base       — shared hook types: EmissionContext, HookResponse, executeRegistryQuery()
+  hooks-claude-code/ @yakcc/hooks-claude-code — Claude Code hook: registry-hit / synthesis-required / passthrough
+  hooks-cursor/      @yakcc/hooks-cursor     — Cursor hook (same contract as hooks-claude-code)
+  hooks-codex/       @yakcc/hooks-codex      — Codex CLI hook (same contract as hooks-claude-code)
+  federation/        @yakcc/federation       — F1 read-only block mirror: serveRegistry(), mirrorRegistry(), pullBlock()
+  cli/               @yakcc/cli              — yakcc CLI (registry init, seed, shave, search, query, propose, compile, bootstrap, federation, hooks install)
+  shave/             @yakcc/shave            — universalizer pipeline: intent extraction (static or LLM), atom decomposition, slicer, atom-persist
+  variance/          @yakcc/variance         — variance scoring + contract design rules (intersection/majority-vote/union per WI-011)
 
 examples/
   parse-int-list/    target demo: assemble a JSON-integer-list parser from ~10 sub-blocks
@@ -240,15 +244,10 @@ yakcc query "parse a JSON array of integers" --top 5
 
 Honest list of capabilities that are planned but not yet shipped:
 
-- **Live Claude Code hook intercept**: the `hooks-claude-code` package is a passthrough
-  stub today. Real intercept that reroutes AI emission through the registry is planned
-  as WI-026 (v1 wave-2).
-- **WASM compilation backend**: planned as WI-027 (AssemblyScript-style emit). The
-  current backend emits TypeScript only. Native binary portability via wasm2c → clang
-  is deferred until after the WASM backend ships.
-- **Federation publishing path (F2+)**: the F1 read-only mirror (`@yakcc/federation`)
-  covers F1 only (content-addressed pull, no push/auth). F2+ (block submission,
-  dispute adjudication) is deferred. See `FEDERATION.md` for the F0..F4 axis.
+- **`yakcc bootstrap --verify`**: one-shot bootstrap mode (`yakcc bootstrap`) is live and produces a deterministic `bootstrap/expected-roots.json`. The `--verify` flag (byte-compare against committed manifest, structured diff on mismatch) is in-flight as WI-V2-BOOTSTRAP-03.
+- **v2 self-hosting (Phases B–I)**: IR subset extensions, foreign-block primitives, source refactor for shavability, property-test coverage, first shave pass, compile self-equivalence, two-pass bootstrap equivalence, and v2 CI demo are all gated on the v2 bootstrap chain closing. See `MASTER_PLAN.md` for the full v2 wave map.
+- **WASM string/mixed substrates**: the WASM backend (`compileToWasm`) handles numeric (i32/i64/f64) substrates today. String-handling and record/array lowering (type-lowering pass WI-V1W2-WASM-02) are deferred to a follow-on wave.
+- **Federation publishing path (F2+)**: the F1 read-only mirror (`@yakcc/federation`) covers content-addressed pull only. F2+ (block submission, dispute adjudication) is deferred. See `FEDERATION.md` for the F0..F4 axis.
 
 ## License
 
