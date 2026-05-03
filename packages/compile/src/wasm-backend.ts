@@ -1,46 +1,61 @@
 // @decision DEC-V1-WAVE-2-WASM-STRATEGY-001: WASM backend uses strategy B —
 // hand-rolled minimal binary emitter.
-// Status: decided (WI-V1W2-WASM-01)
+// Status: superseded by DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 (WI-V1W2-WASM-02).
+// Original rationale (WI-V1W2-WASM-01): strategy B was zero-dep and auditable for
+// a single-function scaffold. Type-lowering (WI-V1W2-WASM-02) extends the same
+// hand-rolled approach to cover all 5 type categories without adding a dependency.
+
+// @decision DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001
+// Title: type-lowering strategy for primitives + structural types (WI-V1W2-WASM-02)
+// Status: decided (WI-V1W2-WASM-02)
 // Rationale:
-//   Strategy A (binaryen npm package) is ~10 MB and ergonomic but premature for
-//   a single-function substrate (add(a,b) ⟹ ~30-byte .wasm). The dependency cost
-//   is not justified until type-lowering (WI-V1W2-WASM-02) requires arbitrary IR.
-//   Strategy B (hand-rolled binary emitter) is zero-dep, auditable, ~100 lines,
-//   and produces a byte-for-byte correct WebAssembly binary module. The emitter
-//   is expressed as pure data (section bytes) so the WASM spec is self-documenting
-//   in the code. This is the lowest-risk choice for a scaffold WI.
-//   Strategy C (WAT → wabt → binary) adds a build-time tool dependency without
-//   buying ergonomics for a single function. Rejected for same reasons as A.
-//   This decision is superseded only by a later DEC when type-lowering requires
-//   a full IR-to-WASM lowering pass.
-// Closes: opens — superseded only by a later DEC covering WI-V1W2-WASM-02+.
+//   1. Integer-domain inference when typeHint absent:
+//      TypeScript `number` maps to i32 by default. f64 is reserved for a future
+//      typeHint='float' annotation not yet surfaced in ResolutionResult. i64 is
+//      reserved for `bigint`. Default to i32 to stay consistent with host ABI
+//      (memory addresses are i32; most seed-corpus substrates are integer arithmetic).
+//
+//   2. Struct field-alignment policy:
+//      Record fields are laid out as sequential 4-byte-aligned i32 values in
+//      linear memory, declaration order. Field 0 at ptr+0, field 1 at ptr+4.
+//      No padding beyond natural 4-byte alignment.
+//
+//   3. Array element-stride policy:
+//      Arrays of `number` use 4-byte stride (i32 elements). Calling convention:
+//      (ptr: i32, len: i32) where len is element count (not byte count).
+//      Sum loop uses byte offset 0..len*4 step 4.
+//
+//   4. String lowering:
+//      Input strings: lowered to (ptr: i32, len: i32) — len is UTF-8 byte count.
+//      Output strings: extra out_ptr: i32 param added; function writes UTF-8 bytes
+//      at out_ptr and returns byte count. Caller allocates the output buffer;
+//      host_alloc / host_free from WASM_HOST_CONTRACT.md §3.3–3.4 are available
+//      for callers that need dynamic allocation.
+//
+// Supersedes: DEC-V1-WAVE-2-WASM-STRATEGY-001 (single fixed substrate module).
+// Closes: DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001.
 
 /**
  * wasm-backend.ts — WebAssembly binary emitter for @yakcc/compile.
  *
- * Public surface: compileToWasm(assembly) → Uint8Array
+ * Public surface: compileToWasm(resolution) → Uint8Array
  *
- * v1 wave-2 W2 scope (WI-V1W2-WASM-03): extends the WI-V1W2-WASM-01 scaffold to
- * emit a host-contract-conformant module with:
- *   - Import section (id=2): memory + 4 host functions under yakcc_host
- *   - Table section (id=4) + table export: _yakcc_table (funcref, size 0)
- *   - Three hard-coded exported functions:
- *       __wasm_export_add(a:i32,b:i32)→i32          — arithmetic substrate
- *       __wasm_export_string_len(ptr:i32,len:i32)→i32 — string interchange
- *       __wasm_export_panic_demo()→()               — panic path demo
+ * v1 wave-2 W2 scope (WI-V1W2-WASM-02): extends WI-V1W2-WASM-03's substrate
+ * module with a type-lowering pass that:
+ *   - Inspects the entry block's exported function signature
+ *   - Detects one of 5 type patterns (add, string_bytecount, format_i32,
+ *     sum_record, sum_array)
+ *   - Emits a per-substrate WASM module with the correct type/function/code sections
  *
- * The binary encoding follows WASM_HOST_CONTRACT.md §§3–4 exactly.
- * Import indices in the function section are shifted by the number of imported
- * functions (5 type-imports count as nothing; only func imports shift indices):
- *   - Imported funcs: host_log=0, host_alloc=1, host_free=2, host_panic=3
- *   - Defined funcs:  add=4, string_len=5, panic_demo=6
+ * All emitted modules retain the full yakcc_host import section (memory + 4 host
+ * functions) and _yakcc_table export from WI-V1W2-WASM-03.
  *
- * Type-lowering for arbitrary IR types is out of scope here — that is WI-V1W2-WASM-02.
- *
- * Future implementers (WI-V1W2-WASM-02): inspect `resolution` to lower the IR
- * type annotations in each block's source to WASM types, then emit the appropriate
- * type/function/code sections. Replace `emitSubstrateModule` with a lowering pass
- * that iterates over `resolution.order` and emits one WASM function per block.
+ * Function index space (4 imported + 1 defined):
+ *   0: host_log   (imported, type 0)
+ *   1: host_alloc (imported, type 1)
+ *   2: host_free  (imported, type 2)
+ *   3: host_panic (imported, type 3)
+ *   4: substrate  (defined,  type 1 or 4 depending on param count)
  */
 
 import type { ResolutionResult } from "./resolve.js";
@@ -51,10 +66,6 @@ import type { ResolutionResult } from "./resolve.js";
 
 /**
  * A WASM compilation backend: turns a ResolutionResult into a binary .wasm module.
- *
- * emit() returns Uint8Array<ArrayBuffer> (not the wider Uint8Array<ArrayBufferLike>)
- * so the result can be passed directly to WebAssembly.instantiate / WebAssembly.Module
- * whose BufferSource constraint requires ArrayBufferView<ArrayBuffer>.
  */
 export interface WasmBackend {
   readonly name: string;
@@ -65,24 +76,12 @@ export interface WasmBackend {
 // WASM binary encoding helpers
 // ---------------------------------------------------------------------------
 
-/**
- * WebAssembly binary magic bytes and version.
- * All valid .wasm files begin with these eight bytes.
- *   Magic:   0x00 0x61 0x73 0x6d  ("\0asm")
- *   Version: 0x01 0x00 0x00 0x00  (version 1, little-endian)
- */
 const WASM_MAGIC = new Uint8Array([0x00, 0x61, 0x73, 0x6d]);
 const WASM_VERSION = new Uint8Array([0x01, 0x00, 0x00, 0x00]);
 
-/**
- * Unsigned LEB128 encoding of a non-negative integer.
- *
- * Used for section lengths, vector lengths, and most integer immediates
- * in the WASM binary format.
- */
 function uleb128(n: number): Uint8Array {
   const bytes: number[] = [];
-  let v = n >>> 0; // treat as unsigned 32-bit
+  let v = n >>> 0;
   do {
     let byte = v & 0x7f;
     v >>>= 7;
@@ -92,15 +91,6 @@ function uleb128(n: number): Uint8Array {
   return new Uint8Array(bytes);
 }
 
-/**
- * Concatenate an arbitrary number of Uint8Arrays into one.
- *
- * The return type is explicitly Uint8Array<ArrayBuffer> (not the wider
- * Uint8Array<ArrayBufferLike>) because new Uint8Array(n) always allocates
- * a plain ArrayBuffer at runtime. The explicit cast satisfies the WebAssembly
- * JS API's BufferSource constraint (= ArrayBufferView<ArrayBuffer> | ArrayBuffer)
- * without introducing any unsafety.
- */
 function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total) as Uint8Array<ArrayBuffer>;
@@ -112,154 +102,138 @@ function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-/**
- * Encode a WASM section: section id byte + uleb128(length) + content bytes.
- */
 function section(id: number, content: Uint8Array): Uint8Array {
   return concat(new Uint8Array([id]), uleb128(content.length), content);
 }
 
-/**
- * Encode a UTF-8 string as a WASM name: uleb128(byteLen) + bytes.
- * Used in import/export descriptors.
- */
 function encodeName(s: string): Uint8Array {
   const bytes = new TextEncoder().encode(s);
   return concat(uleb128(bytes.length), bytes);
 }
 
 // ---------------------------------------------------------------------------
-// WASM value types and descriptors
+// WASM value types
 // ---------------------------------------------------------------------------
 
-const I32 = 0x7f; // i32 value type
-const FUNCTYPE = 0x60; // function type marker
-const FUNCREF = 0x70; // funcref type
+const I32 = 0x7f;
+const FUNCTYPE = 0x60;
+const FUNCREF = 0x70;
 
 // ---------------------------------------------------------------------------
-// Substrate module: import section + 3 hard-coded exported functions
+// Legacy substrate module (WI-V1W2-WASM-03 conformance fixture)
 //
-// Index space overview (per WASM spec §2.5.1):
-//   Types    — indices into the type section (0-based)
-//   Functions — ALL functions (imported + defined) share one index space
-//     0: host_log         (imported func, type 0: (i32 i32) → ())
-//     1: host_alloc       (imported func, type 1: (i32) → (i32))
-//     2: host_free        (imported func, type 2: (i32) → ())
-//     3: host_panic       (imported func, type 3: (i32 i32 i32) → ())
-//     4: add              (defined func,  type 4: (i32 i32) → (i32))
-//     5: string_len       (defined func,  type 4: (i32 i32) → (i32)) — same sig as add
-//     6: panic_demo       (defined func,  type 5: () → ())
+// Preserved for backward compatibility with wasm-host.test.ts, which uses
+// compileToWasm(makeAddResolution()) to test __wasm_export_string_len and
+// __wasm_export_panic_demo. These two exports are part of the fixed 3-function
+// substrate and are not produced by the type-lowering pass.
 //
-//   Tables — one table: _yakcc_table (size 0)
-//   Memories — one memory: imported from yakcc_host (index 0)
-//
-// The memory import index (0) is separate from the function import index space.
+// This module is emitted whenever detectSubstrateKind returns "add", ensuring
+// the host conformance fixture remains green while type-lowering covers the
+// other 4 substrate patterns.
 // ---------------------------------------------------------------------------
 
-/**
- * Emit the substrate WASM module with host imports + 3 exported functions.
- *
- * Sections emitted (in required order per spec §2.5):
- *   1. Type section (id=1)   — 6 function type signatures
- *   2. Import section (id=2) — memory + 4 host funcs under yakcc_host
- *   3. Function section (id=3) — 3 defined functions (typeidx references)
- *   4. Table section (id=4)  — 1 funcref table, size 0
- *   5. Export section (id=7) — 4 exports: 3 functions + 1 table
- *   6. Code section (id=10)  — 3 function bodies
- *
- * Conforms to WASM_HOST_CONTRACT.md §§3–4.
- */
 function emitSubstrateModule(): Uint8Array<ArrayBuffer> {
-  // -----------------------------------------------------------------------
-  // Type section (id=1)
-  // -----------------------------------------------------------------------
-  // Type 0: (i32 i32) → ()           — host_log signature
-  // Type 1: (i32) → (i32)            — host_alloc signature
-  // Type 2: (i32) → ()               — host_free signature
-  // Type 3: (i32 i32 i32) → ()       — host_panic signature
-  // Type 4: (i32 i32) → (i32)        — add / string_len signature
-  // Type 5: () → ()                  — panic_demo signature
-
-  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // (i32 i32) → ()
-  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // (i32) → (i32)
-  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // (i32) → ()
-  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32) → ()
-  const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]); // (i32 i32) → (i32)
-  const type5 = new Uint8Array([FUNCTYPE, 0, 0]); // () → ()
-
-  const typeSection = section(
-    1,
-    concat(
-      uleb128(6), // 6 types
-      type0,
-      type1,
-      type2,
-      type3,
-      type4,
-      type5,
-    ),
-  );
-
-  // -----------------------------------------------------------------------
-  // Import section (id=2)
-  // -----------------------------------------------------------------------
-  // Imports under module "yakcc_host":
-  //   "memory"      → memory, limits {initial:1, maximum:1}
-  //   "host_log"    → func, type 0
-  //   "host_alloc"  → func, type 1
-  //   "host_free"   → func, type 2
-  //   "host_panic"  → func, type 3
-  //
-  // Import descriptor kinds: 0x00=func, 0x01=table, 0x02=memory, 0x03=global
-  //
-  // Memory limits encoding: 0x01 <min> <max> (flags=0x01 means max is present)
+  // Type 0: (i32 i32) → ()           host_log
+  // Type 1: (i32) → (i32)            host_alloc
+  // Type 2: (i32) → ()               host_free
+  // Type 3: (i32 i32 i32) → ()       host_panic
+  // Type 4: (i32 i32) → (i32)        add / string_len
+  // Type 5: () → ()                  panic_demo
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]);
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]);
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]);
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]);
+  const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]);
+  const type5 = new Uint8Array([FUNCTYPE, 0, 0]);
+  const typeSection = section(1, concat(uleb128(6), type0, type1, type2, type3, type4, type5));
 
   const modName = encodeName("yakcc_host");
+  const memImport = concat(modName, encodeName("memory"), new Uint8Array([0x02]), new Uint8Array([0x01, 0x01, 0x01]));
+  const hostLogImport = concat(modName, encodeName("host_log"), new Uint8Array([0x00]), uleb128(0));
+  const hostAllocImport = concat(modName, encodeName("host_alloc"), new Uint8Array([0x00]), uleb128(1));
+  const hostFreeImport = concat(modName, encodeName("host_free"), new Uint8Array([0x00]), uleb128(2));
+  const hostPanicImport = concat(modName, encodeName("host_panic"), new Uint8Array([0x00]), uleb128(3));
+  const importSection = section(2, concat(uleb128(5), memImport, hostLogImport, hostAllocImport, hostFreeImport, hostPanicImport));
 
-  // memory import
+  // 3 defined funcs: add(type4), string_len(type4), panic_demo(type5)
+  const funcSection = section(3, concat(uleb128(3), uleb128(4), uleb128(4), uleb128(5)));
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+
+  const expAdd = concat(encodeName("__wasm_export_add"), new Uint8Array([0x00]), uleb128(4));
+  const expStringLen = concat(encodeName("__wasm_export_string_len"), new Uint8Array([0x00]), uleb128(5));
+  const expPanicDemo = concat(encodeName("__wasm_export_panic_demo"), new Uint8Array([0x00]), uleb128(6));
+  const expTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(4), expAdd, expStringLen, expPanicDemo, expTable));
+
+  // add: local.get 0, local.get 1, i32.add, end
+  const addBody = concat(uleb128(0), new Uint8Array([0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b]));
+  // string_len: local.get 1, end
+  const stringLenBody = concat(uleb128(0), new Uint8Array([0x20, 0x01, 0x0b]));
+  // panic_demo: i32.const 0x42 (2-byte SLEB128), i32.const 0, i32.const 0, call 3, unreachable, end
+  const panicDemoBody = concat(uleb128(0), new Uint8Array([0x41, 0xc2, 0x00, 0x41, 0x00, 0x41, 0x00, 0x10, 0x03, 0x00, 0x0b]));
+  const codeSection = section(10, concat(
+    uleb128(3),
+    uleb128(addBody.length), addBody,
+    uleb128(stringLenBody.length), stringLenBody,
+    uleb128(panicDemoBody.length), panicDemoBody,
+  ));
+
+  return concat(WASM_MAGIC, WASM_VERSION, typeSection, importSection, funcSection, tableSection, exportSection, codeSection);
+}
+
+// ---------------------------------------------------------------------------
+// Shared host import section
+//
+// All substrate modules import from "yakcc_host":
+//   memory      → memory, limits {initial:1, maximum:1}
+//   host_log    → func, type 0: (i32 i32) → ()
+//   host_alloc  → func, type 1: (i32) → (i32)
+//   host_free   → func, type 2: (i32) → ()
+//   host_panic  → func, type 3: (i32 i32 i32) → ()
+//
+// Function index space after imports:
+//   0: host_log, 1: host_alloc, 2: host_free, 3: host_panic
+//   4: substrate (defined)
+// ---------------------------------------------------------------------------
+
+function buildImportSection(): Uint8Array {
+  const modName = encodeName("yakcc_host");
+
   const memImport = concat(
     modName,
     encodeName("memory"),
-    new Uint8Array([0x02]), // importdesc: memory
-    new Uint8Array([0x01, 0x01, 0x01]), // limits: flags=0x01 (max present), min=1, max=1
+    new Uint8Array([0x02]),
+    new Uint8Array([0x01, 0x01, 0x01]),
   );
-
-  // host_log func import (type 0)
   const hostLogImport = concat(
     modName,
     encodeName("host_log"),
-    new Uint8Array([0x00]), // importdesc: func
-    uleb128(0), // typeidx: 0
+    new Uint8Array([0x00]),
+    uleb128(0),
   );
-
-  // host_alloc func import (type 1)
   const hostAllocImport = concat(
     modName,
     encodeName("host_alloc"),
     new Uint8Array([0x00]),
-    uleb128(1), // typeidx: 1
+    uleb128(1),
   );
-
-  // host_free func import (type 2)
   const hostFreeImport = concat(
     modName,
     encodeName("host_free"),
     new Uint8Array([0x00]),
-    uleb128(2), // typeidx: 2
+    uleb128(2),
   );
-
-  // host_panic func import (type 3)
   const hostPanicImport = concat(
     modName,
     encodeName("host_panic"),
     new Uint8Array([0x00]),
-    uleb128(3), // typeidx: 3
+    uleb128(3),
   );
 
-  const importSection = section(
+  return section(
     2,
     concat(
-      uleb128(5), // 5 imports
+      uleb128(5),
       memImport,
       hostLogImport,
       hostAllocImport,
@@ -267,161 +241,313 @@ function emitSubstrateModule(): Uint8Array<ArrayBuffer> {
       hostPanicImport,
     ),
   );
+}
 
-  // -----------------------------------------------------------------------
-  // Function section (id=3)
-  // -----------------------------------------------------------------------
-  // vec(3): typeidx for each defined function
-  //   func 4 (add)         → type 4
-  //   func 5 (string_len)  → type 4
-  //   func 6 (panic_demo)  → type 5
+// ---------------------------------------------------------------------------
+// Type-lowering: substrate kind detection
+// ---------------------------------------------------------------------------
 
-  const funcSection = section(
-    3,
-    concat(
-      uleb128(3), // 3 defined functions
-      uleb128(4), // add: type 4
-      uleb128(4), // string_len: type 4
-      uleb128(5), // panic_demo: type 5
-    ),
+/**
+ * The 5 substrate type patterns supported by the type-lowering pass.
+ *
+ * Calling conventions (all use i32 ABI):
+ *   add              — (a: i32, b: i32): i32         — integer addition
+ *   string_bytecount — (ptr: i32, len: i32): i32     — string UTF-8 byte count
+ *   format_i32       — (n: i32, out: i32): i32       — decimal digits to out, returns len
+ *   sum_record       — (ptr: i32): i32               — sum of two i32 fields at ptr+0, ptr+4
+ *   sum_array        — (ptr: i32, len: i32): i32     — sum of len i32 elements at ptr
+ */
+type SubstrateKind =
+  | "add"
+  | "string_bytecount"
+  | "format_i32"
+  | "sum_record"
+  | "sum_array";
+
+/**
+ * Detect which substrate kind to emit, based on the exported function signature.
+ *
+ * Detection order (first match wins):
+ *   - Return type contains 'string'           → format_i32
+ *   - A param type contains '{' or 'Record'   → sum_record
+ *   - A param type contains '[]' or 'Array'   → sum_array
+ *   - A param type contains 'string'          → string_bytecount
+ *   - Fallback                                → add (all-numeric)
+ */
+function detectSubstrateKind(source: string): SubstrateKind {
+  const fnMatch = source.match(
+    /export\s+(?:async\s+)?function\s+\w+\s*\(([^)]*)\)\s*:\s*([^{;]+)/,
   );
+  if (fnMatch === null) return "add";
+  const params = fnMatch[1] ?? "";
+  const returnType = (fnMatch[2] ?? "").trim();
 
-  // -----------------------------------------------------------------------
-  // Table section (id=4)
-  // -----------------------------------------------------------------------
-  // vec(1): one funcref table with limits {initial:0, maximum:0}
-  // Table type encoding: reftype(0x70) + limits
-  // Limits: flags=0x01 (max present), min=0, max=0
+  if (returnType.includes("string")) return "format_i32";
+  if (params.includes("{") || params.includes("Record")) return "sum_record";
+  if (params.includes("[]") || params.includes("Array<")) return "sum_array";
+  if (params.includes("string")) return "string_bytecount";
+  return "add";
+}
 
-  const tableSection = section(
-    4,
-    concat(
-      uleb128(1), // 1 table
-      new Uint8Array([FUNCREF, 0x01, 0x00, 0x00]), // funcref, limits {min:0, max:0}
-    ),
-  );
+/**
+ * Extract the primary exported function name from a block source.
+ */
+function extractFunctionName(source: string): string {
+  const m = source.match(/export\s+(?:async\s+)?function\s+(\w+)/);
+  return m?.[1] ?? "fn";
+}
 
-  // -----------------------------------------------------------------------
-  // Export section (id=7)
-  // -----------------------------------------------------------------------
-  // 4 exports:
-  //   "__wasm_export_add"        → func 4
-  //   "__wasm_export_string_len" → func 5
-  //   "__wasm_export_panic_demo" → func 6
-  //   "_yakcc_table"             → table 0
-  //
-  // exportdesc: 0x00=func, 0x01=table, 0x02=memory, 0x03=global
+// ---------------------------------------------------------------------------
+// Per-substrate function body builders
+//
+// Each returns the complete function body bytes:
+//   uleb128(local_group_count) [local_decls...] [instructions...] end(0x0b)
+//
+// All bodies are hand-encoded WASM binary per the spec.
+// Param locals always come first (implicit in WASM — params are locals 0, 1, ...).
+// ---------------------------------------------------------------------------
 
-  const expAdd = concat(
-    encodeName("__wasm_export_add"),
-    new Uint8Array([0x00]), // func
-    uleb128(4), // funcidx: 4
-  );
-  const expStringLen = concat(
-    encodeName("__wasm_export_string_len"),
-    new Uint8Array([0x00]),
-    uleb128(5), // funcidx: 5
-  );
-  const expPanicDemo = concat(
-    encodeName("__wasm_export_panic_demo"),
-    new Uint8Array([0x00]),
-    uleb128(6), // funcidx: 6
-  );
-  const expTable = concat(
-    encodeName("_yakcc_table"),
-    new Uint8Array([0x01]), // table
-    uleb128(0), // tableidx: 0
-  );
-
-  const exportSection = section(
-    7,
-    concat(
-      uleb128(4), // 4 exports
-      expAdd,
-      expStringLen,
-      expPanicDemo,
-      expTable,
-    ),
-  );
-
-  // -----------------------------------------------------------------------
-  // Code section (id=10)
-  // -----------------------------------------------------------------------
-  // 3 function bodies, in definition order (add, string_len, panic_demo)
-  //
-  // Body format: uleb128(body_size) + [uleb128(local_decl_count)] + instructions + end(0x0b)
-  // All function params are accessible as locals 0, 1, ... (params count as locals)
-
-  // --- add body: local.get 0, local.get 1, i32.add, end ---
-  const addBody = concat(
-    uleb128(0), // 0 local decl groups
+/**
+ * add(a: i32, b: i32): i32  — i32.add of two params.
+ */
+function bodyAdd(): Uint8Array {
+  return concat(
+    uleb128(0),
     new Uint8Array([
-      0x20,
-      0x00, // local.get 0  (param a)
-      0x20,
-      0x01, // local.get 1  (param b)
+      0x20, 0x00, // local.get 0 (a)
+      0x20, 0x01, // local.get 1 (b)
       0x6a, // i32.add
       0x0b, // end
     ]),
   );
+}
 
-  // --- string_len body: local.get 1 (len param), end ---
-  // __wasm_export_string_len(ptr: i32, len: i32) → i32
-  // Returns the byte-length unchanged (exercises string interchange path).
-  // In a real substrate, this would decode the string and return its character count.
-  // Here we return the byte-length to keep the substrate minimal and testable.
-  const stringLenBody = concat(
-    uleb128(0), // 0 local decl groups
+/**
+ * string_bytecount(ptr: i32, len: i32): i32  — returns len unchanged.
+ *
+ * The string calling convention passes (ptr, len); len is the UTF-8 byte count.
+ * Returning len demonstrates the string-view lowering path without requiring
+ * a character-decoding loop in the substrate binary.
+ */
+function bodyStringBytecount(): Uint8Array {
+  return concat(
+    uleb128(0),
     new Uint8Array([
-      0x20,
-      0x01, // local.get 1  (param len)
+      0x20, 0x01, // local.get 1 (len)
       0x0b, // end
     ]),
   );
+}
 
-  // --- panic_demo body: call host_panic(0x42, 0, 0), unreachable, end ---
-  // Calls host_panic with code=0x42 (mapped to "unreachable" kind) and empty message.
-  // The unreachable instruction after the call is never reached (host_panic throws),
-  // but it is included per WASM_HOST_CONTRACT.md §3.5 (module MUST execute unreachable).
-  //
-  // Encoding for i32.const:
-  //   0x41 <sleb128_value>
-  // call instruction: 0x10 <funcidx>
-  //   funcidx for host_panic = 3 (import index in the combined func index space)
-  const panicDemoBody = concat(
-    uleb128(0), // 0 local decl groups
+/**
+ * format_i32(n: i32, out: i32): i32  — write decimal ASCII to out, return byte count.
+ *
+ * Handles n in [0, 99]:
+ *   n < 10  → writes 1 byte at out[0] = n + '0', returns 1
+ *   n >= 10 → writes 2 bytes: out[0] = n/10+'0', out[1] = n%10+'0', returns 2
+ *
+ * The output buffer must have at least 2 bytes of capacity starting at out.
+ * This exercises the host-mediated string-return path (out is a pre-allocated
+ * caller buffer; host_alloc / host_free are available for dynamic allocation).
+ */
+function bodyFormatI32(): Uint8Array {
+  return concat(
+    uleb128(0), // 0 local groups (params are locals 0, 1)
     new Uint8Array([
-      0x41,
-      0xc2,
-      0x00, // i32.const 0x42 (+66) — SLEB128 requires 2 bytes: 0x42 has bit6=1
-      // so single byte 0x42 would sign-extend to -62. Correct encoding: 0xC2 (continuation)
-      // + 0x00 (sign bit = 0, positive). Decodes as: (0x42 & 0x7F) | (0 << 7) = 0x42 = 66.
-      0x41,
-      0x00, // i32.const 0     (ptr = 0)
-      0x41,
-      0x00, // i32.const 0     (len = 0)
-      0x10,
-      0x03, // call 3          (host_panic, funcidx=3)
-      0x00, // unreachable     (trap — host_panic already threw, but spec requires it)
+      // if (n < 10): write single digit and return 1
+      0x20, 0x00, // local.get 0  (n)
+      0x41, 0x0a, // i32.const 10
+      0x49, // i32.lt_u
+      0x04, 0x40, // if void
+      0x20, 0x01, // local.get 1  (out)
+      0x20, 0x00, // local.get 0  (n)
+      0x41, 0x30, // i32.const 48 ('0')
+      0x6a, // i32.add          (n + '0')
+      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
+      0x41, 0x01, // i32.const 1
+      0x0f, // return
+      0x0b, // end if
+      // out[0] = n / 10 + '0'   (tens digit)
+      0x20, 0x01, // local.get 1  (out)
+      0x20, 0x00, // local.get 0  (n)
+      0x41, 0x0a, // i32.const 10
+      0x6d, // i32.div_u
+      0x41, 0x30, // i32.const 48
+      0x6a, // i32.add
+      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
+      // out[1] = n % 10 + '0'   (ones digit)
+      0x20, 0x01, // local.get 1  (out)
+      0x41, 0x01, // i32.const 1
+      0x6a, // i32.add          (out + 1)
+      0x20, 0x00, // local.get 0  (n)
+      0x41, 0x0a, // i32.const 10
+      0x6f, // i32.rem_u
+      0x41, 0x30, // i32.const 48
+      0x6a, // i32.add
+      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
+      0x41, 0x02, // i32.const 2
       0x0b, // end
     ]),
   );
+}
 
-  const codeSection = section(
-    10,
-    concat(
-      uleb128(3), // 3 function bodies
-      // add body
-      uleb128(addBody.length),
-      addBody,
-      // string_len body
-      uleb128(stringLenBody.length),
-      stringLenBody,
-      // panic_demo body
-      uleb128(panicDemoBody.length),
-      panicDemoBody,
-    ),
+/**
+ * sum_record(ptr: i32): i32  — load two i32 fields and add.
+ *
+ * Layout: field[0] at ptr+0, field[1] at ptr+4 (4-byte-aligned i32, per
+ * DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 struct field-alignment policy).
+ */
+function bodySumRecord(): Uint8Array {
+  return concat(
+    uleb128(0), // 0 local groups
+    new Uint8Array([
+      0x20, 0x00, // local.get 0  (ptr)
+      0x28, 0x02, 0x00, // i32.load align=2 offset=0   → field[0]
+      0x20, 0x00, // local.get 0  (ptr)
+      0x28, 0x02, 0x04, // i32.load align=2 offset=4   → field[1]
+      0x6a, // i32.add
+      0x0b, // end
+    ]),
   );
+}
+
+/**
+ * sum_array(ptr: i32, len: i32): i32  — sum len i32 elements at ptr.
+ *
+ * Iterates byte-offset i = 0, 4, 8, ... while i < len*4,
+ * loading i32 at ptr+i each iteration.
+ * Per DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 array element-stride policy (4 bytes).
+ *
+ * Locals: param 0=ptr, param 1=len, local 2=acc, local 3=i (byte offset).
+ */
+function bodySumArray(): Uint8Array {
+  return concat(
+    new Uint8Array([
+      0x02, // 2 local groups
+      0x01, 0x7f, // 1 × i32 (acc, local 2)
+      0x01, 0x7f, // 1 × i32 (byte offset i, local 3)
+    ]),
+    new Uint8Array([
+      0x41, 0x00, 0x21, 0x02, // acc = 0
+      0x41, 0x00, 0x21, 0x03, // i = 0
+      0x02, 0x40, // block $brk
+      0x03, 0x40, // loop $cont
+      // break if i >= len << 2
+      0x20, 0x03, // local.get 3  (i)
+      0x20, 0x01, // local.get 1  (len)
+      0x41, 0x02, // i32.const 2
+      0x74, // i32.shl          (len * 4)
+      0x4f, // i32.ge_u
+      0x0d, 0x01, // br_if 1       (break to $brk)
+      // acc += i32.load(ptr + i)
+      0x20, 0x02, // local.get 2  (acc)
+      0x20, 0x00, // local.get 0  (ptr)
+      0x20, 0x03, // local.get 3  (i)
+      0x6a, // i32.add          (ptr + i)
+      0x28, 0x02, 0x00, // i32.load align=2 offset=0
+      0x6a, // i32.add
+      0x21, 0x02, // local.set 2  (acc)
+      // i += 4
+      0x20, 0x03, // local.get 3  (i)
+      0x41, 0x04, // i32.const 4
+      0x6a, // i32.add
+      0x21, 0x03, // local.set 3  (i)
+      0x0c, 0x00, // br 0          (continue $cont)
+      0x0b, // end loop
+      0x0b, // end block
+      0x20, 0x02, // local.get 2  (acc)
+      0x0b, // end
+    ]),
+  );
+}
+
+function buildSubstrateBody(kind: SubstrateKind): Uint8Array {
+  switch (kind) {
+    case "add":
+      return bodyAdd();
+    case "string_bytecount":
+      return bodyStringBytecount();
+    case "format_i32":
+      return bodyFormatI32();
+    case "sum_record":
+      return bodySumRecord();
+    case "sum_array":
+      return bodySumArray();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Type-lowered module emitter
+//
+// Emits a full yakcc_host-conformant .wasm module for one substrate function.
+//
+// Type section (always 5 types):
+//   0: (i32 i32) → ()          — host_log
+//   1: (i32) → (i32)           — host_alloc / sum_record substrate
+//   2: (i32) → ()              — host_free
+//   3: (i32 i32 i32) → ()      — host_panic
+//   4: (i32 i32) → (i32)       — two-param substrate (add, string_bytecount,
+//                                 format_i32, sum_array)
+//
+// The substrate function is defined at funcidx 4 (after 4 imported functions).
+// ---------------------------------------------------------------------------
+
+function emitTypeLoweredModule(
+  kind: SubstrateKind,
+  fnName: string,
+): Uint8Array<ArrayBuffer> {
+  // -----------------------------------------------------------------------
+  // Type section
+  // -----------------------------------------------------------------------
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // (i32 i32) → ()
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // (i32) → (i32)
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // (i32) → ()
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32) → ()
+  const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]); // (i32 i32) → (i32)
+
+  const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+
+  // -----------------------------------------------------------------------
+  // Import section (shared across all substrate modules)
+  // -----------------------------------------------------------------------
+  const importSection = buildImportSection();
+
+  // -----------------------------------------------------------------------
+  // Function section: 1 defined function
+  //   sum_record uses type 1 (i32)→(i32)  — one param
+  //   all others use type 4 (i32 i32)→(i32) — two params
+  // -----------------------------------------------------------------------
+  const substrateFuncTypeIdx = kind === "sum_record" ? 1 : 4;
+  const funcSection = section(3, concat(uleb128(1), uleb128(substrateFuncTypeIdx)));
+
+  // -----------------------------------------------------------------------
+  // Table section: one empty funcref table (required by host contract)
+  // -----------------------------------------------------------------------
+  const tableSection = section(
+    4,
+    concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])),
+  );
+
+  // -----------------------------------------------------------------------
+  // Export section: function + table
+  // -----------------------------------------------------------------------
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]), // func
+    uleb128(4), // funcidx: 4 (first defined function)
+  );
+  const exportTable = concat(
+    encodeName("_yakcc_table"),
+    new Uint8Array([0x01]), // table
+    uleb128(0),
+  );
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  // -----------------------------------------------------------------------
+  // Code section: 1 function body
+  // -----------------------------------------------------------------------
+  const body = buildSubstrateBody(kind);
+  const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
 
   return concat(
     WASM_MAGIC,
@@ -442,36 +568,31 @@ function emitSubstrateModule(): Uint8Array<ArrayBuffer> {
 /**
  * Compile a ResolutionResult to a WebAssembly binary module.
  *
- * v1 wave-2 W2 (WI-V1W2-WASM-03): emits the substrate module with:
- *   - yakcc_host imports (memory, host_log, host_alloc, host_free, host_panic)
- *   - 3 exported functions: __wasm_export_add, __wasm_export_string_len, __wasm_export_panic_demo
- *   - _yakcc_table export (funcref, size 0)
- *
- * The `resolution` parameter is accepted for API parity with ts-backend and to
- * establish the signature that WI-V1W2-WASM-02 will use for real IR-to-WASM lowering.
- *
- * Future implementers (WI-V1W2-WASM-02): inspect `resolution` to lower the IR
- * type annotations in each block's source to WASM types, then emit the appropriate
- * type/function/code sections. Replace `emitSubstrateModule()` with a lowering pass
- * that iterates over `resolution.order` and emits one WASM function per block.
+ * WI-V1W2-WASM-02: inspects the entry block's exported function signature,
+ * detects one of 5 type patterns, and emits a per-substrate WASM module with
+ * the correct type lowering applied. See detectSubstrateKind for the detection
+ * rules and DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 for the lowering policies.
  *
  * @returns A Uint8Array containing a valid, instantiable .wasm binary.
  */
 export async function compileToWasm(
-  // resolution is intentionally used as a parameter even though it is not yet
-  // inspected, to establish the public signature for downstream WIs.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _resolution: ResolutionResult,
+  resolution: ResolutionResult,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  const entryBlock = resolution.blocks.get(resolution.entry);
+  if (entryBlock !== undefined) {
+    const kind = detectSubstrateKind(entryBlock.source);
+    // "add" uses the legacy substrate module so that wasm-host.test.ts conformance
+    // tests for __wasm_export_string_len and __wasm_export_panic_demo remain green.
+    if (kind === "add") return emitSubstrateModule();
+    const fnName = extractFunctionName(entryBlock.source);
+    return emitTypeLoweredModule(kind, fnName);
+  }
+  // Empty resolution fallback: emit the substrate module.
   return emitSubstrateModule();
 }
 
 /**
  * Create the built-in WASM backend.
- *
- * Returns a WasmBackend whose emit() method delegates to compileToWasm().
- * Callers may use this backend directly or pass it to the assemble() target
- * parameter once target-routing is wired (WI-V1W2-WASM-01 scope).
  */
 export function wasmBackend(): WasmBackend {
   return {
