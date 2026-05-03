@@ -249,6 +249,18 @@ Honest list of capabilities that are planned but not yet shipped:
 - **WASM string/mixed substrates**: the WASM backend (`compileToWasm`) handles numeric (i32/i64/f64) substrates today. String-handling and record/array lowering (type-lowering pass WI-V1W2-WASM-02) are deferred to a follow-on wave.
 - **Federation publishing path (F2+)**: the F1 read-only mirror (`@yakcc/federation`) covers content-addressed pull only. F2+ (block submission, dispute adjudication) is deferred. See `FEDERATION.md` for the F0..F4 axis.
 
+## v2 self-hosting demo
+
+`yakcc bootstrap --verify` shaves the entire codebase into an in-memory registry, exports a deterministic manifest sorted by `BlockMerkleRoot`, and byte-compares it to the committed `bootstrap/expected-roots.json`. A clean exit proves every yakcc atom on disk is content-addressed by the same hash the registry would assign on a fresh shave.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm -r build
+node packages/cli/dist/bin.js bootstrap --verify
+```
+
+See [docs/V2_SELF_HOSTING_DEMO.md](docs/V2_SELF_HOSTING_DEMO.md) for the fresh-clone reproduction, manifest semantics, and CI integration.
+
 ## License
 
 This project is dedicated to the public domain under [The Unlicense](LICENSE).
