@@ -88,6 +88,7 @@ import {
   type CallExpression,
   type Expression,
   type FunctionDeclaration,
+  type IfStatement,
   type NumericLiteral,
   type PrefixUnaryExpression,
   Project,
@@ -464,6 +465,10 @@ const F64_NUMBER_FUNCTIONS = new Set([
  * Classify the numeric domain of a function body by scanning the AST.
  *
  * Rules (highest priority first):
+ *   0. Boolean signature: if any param or return type is `boolean` → i32 (WI-03)
+ *      This takes priority over all body-based rules because booleans ARE i32
+ *      in WASM (0/1), and the body will contain boolean literals (TrueKeyword/
+ *      FalseKeyword) and logical operators (&&/||/!) rather than numeric hints.
  *   1. Any `/` (true division) binary operator → f64
  *   2. Any numeric literal with a decimal point → f64
  *   3. Any call to Math.{sqrt,sin,cos,log,...} or Number.isFinite/isNaN → f64
@@ -473,11 +478,46 @@ const F64_NUMBER_FUNCTIONS = new Set([
  *   7. Ambiguous (no conclusive hint) → f64 with downgrade warning
  *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-001 (see file header)
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-BOOL-DOMAIN-001
+ * @title boolean type maps to i32 domain (0/1); rule 0 ensures boolean fns never default to f64
+ * @status accepted
+ * @rationale
+ *   WASM has no boolean type. TS `boolean` is i32 with values 0/1. Without rule 0,
+ *   a function `(a: boolean): boolean` with body `return !a` has no numeric-domain
+ *   hints (no bitops, no large literals, no division) and would default to f64 — wrong.
+ *   Rule 0 inspects the function signature; if any param or return type text is
+ *   "boolean", it short-circuits to i32. This is correct because all boolean WASM ops
+ *   (i32.eqz, if/else/end, comparisons) operate on i32.
  */
 function inferNumericDomain(fn: FunctionDeclaration): {
   domain: NumericDomain;
   warning: string | null;
 } {
+  // Rule 0: pure-boolean signature → i32 domain
+  // (WI-03 / DEC-V1-WAVE-3-WASM-LOWER-BOOL-DOMAIN-001)
+  //
+  // If ALL params are `boolean` typed (or there are no params) AND the return type
+  // is `boolean`, the function has no numeric body hints and would incorrectly default
+  // to f64. Short-circuit to i32 since booleans ARE i32 (0/1) in WASM.
+  //
+  // We do NOT apply this rule when any param is `number` typed — in that case the body
+  // heuristics correctly infer i32/i64/f64 from arithmetic, and the comparison result
+  // (boolean return) naturally falls out as i32 from the comparison opcodes. Applying
+  // rule 0 to mixed-signature functions (number params → boolean return) would wrongly
+  // classify i64 or f64 arithmetic as i32 domain.
+  const returnTypeNode = fn.getReturnTypeNode();
+  const returnTypeText = returnTypeNode?.getText() ?? "";
+  const params = fn.getParameters();
+  const allParamsBoolean =
+    params.length === 0 ||
+    params.every((p) => {
+      const t = p.getTypeNode()?.getText() ?? "";
+      return t === "boolean";
+    });
+  if (returnTypeText === "boolean" && allParamsBoolean) {
+    return { domain: "i32", warning: null };
+  }
+
   let hasF64Indicator = false;
   let hasBitop = false;
   let hasI64RangeLiteral = false;
@@ -750,12 +790,21 @@ function f64Bytes(value: number): number[] {
  * Context for the general numeric lowering pass.
  *
  * Holds the opcode accumulator, symbol table, and inferred domain.
+ *
+ * `blockDepth` tracks how many WASM structured blocks (if/else) are open at
+ * the current lowering point. When blockDepth > 0, a ReturnStatement must emit
+ * an explicit `return` (0x0f) to exit the function from within the block.
+ * When blockDepth === 0, the value on the stack at function end is the implicit
+ * return — emitting 0x0f is correct but optional. We always emit 0x0f for
+ * simplicity (DEC-V1-WAVE-3-WASM-LOWER-RETURN-EXPLICIT-001).
  */
 interface LoweringContext {
   readonly domain: NumericDomain;
   readonly table: SymbolTable;
   opcodes: number[];
   locals: LocalDecl[];
+  /** Number of open WASM structured blocks (if/else/loop) at this point. */
+  blockDepth: number;
 }
 
 /**
@@ -800,6 +849,17 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
     return;
   }
 
+  // Boolean literals: true → i32.const 1, false → i32.const 0
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-BOOL-DOMAIN-001 (see inferNumericDomain)
+  if (kind === SyntaxKind.TrueKeyword) {
+    ctx.opcodes.push(0x41, 0x01); // i32.const 1
+    return;
+  }
+  if (kind === SyntaxKind.FalseKeyword) {
+    ctx.opcodes.push(0x41, 0x00); // i32.const 0
+    return;
+  }
+
   // Parenthesized expression: strip the parens, recurse
   if (kind === SyntaxKind.ParenthesizedExpression) {
     const inner = expr.asKindOrThrow(SyntaxKind.ParenthesizedExpression).getExpression();
@@ -834,6 +894,87 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
     const op = binExpr.getOperatorToken();
     const opKind = op.getKind();
     const opText = op.getText();
+
+    // Short-circuit logical operators: && and ||
+    // Must be handled BEFORE emitting operands — the whole point is that the RHS
+    // is only evaluated when the LHS result requires it (short-circuit semantics).
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-AND-OR-SHORT-CIRCUIT-001
+    // @title && and || emit WASM if/else/end blocks, NOT i32.and/i32.or
+    // @status accepted
+    // @rationale
+    //   JavaScript && and || are short-circuit operators. The RHS is only evaluated
+    //   when the LHS result does not determine the final outcome (truthy LHS for &&,
+    //   falsy LHS for ||). If the RHS has observable side effects (local mutation,
+    //   host calls), emitting i32.and/i32.or is incorrect — those ops always evaluate
+    //   both sides. WASM if/else/end provides the only correct structural encoding.
+    //   Short-circuit correctness is verified by bool-2 in booleans.test.ts, which
+    //   uses a local counter mutated in the RHS and asserts JS-matching counter values.
+    //
+    //   a && b:
+    //     local.eval(a)            — eval LHS, leaves i32 on stack
+    //     if (result i32)          — branch on LHS truth
+    //       local.eval(b)          — LHS truthy: eval RHS (result of &&)
+    //     else
+    //       i32.const 0            — LHS falsy: short-circuit result is 0
+    //     end
+    //
+    //   a || b:
+    //     local.eval(a)            — eval LHS, leaves i32 on stack
+    //     if (result i32)          — branch on LHS truth
+    //       i32.const 1            — LHS truthy: short-circuit result is 1
+    //     else
+    //       local.eval(b)          — LHS falsy: eval RHS (result of ||)
+    //     end
+    if (opKind === SyntaxKind.AmpersandAmpersandToken) {
+      lowerExpression(ctx, binExpr.getLeft());
+      // if (result i32) — block type 0x7f = i32
+      ctx.opcodes.push(0x04, 0x7f); // if with i32 result
+      lowerExpression(ctx, binExpr.getRight());
+      ctx.opcodes.push(0x05); // else
+      ctx.opcodes.push(0x41, 0x00); // i32.const 0
+      ctx.opcodes.push(0x0b); // end
+      return;
+    }
+    if (opKind === SyntaxKind.BarBarToken) {
+      lowerExpression(ctx, binExpr.getLeft());
+      // if (result i32)
+      ctx.opcodes.push(0x04, 0x7f); // if with i32 result
+      ctx.opcodes.push(0x41, 0x01); // i32.const 1
+      ctx.opcodes.push(0x05); // else
+      lowerExpression(ctx, binExpr.getRight());
+      ctx.opcodes.push(0x0b); // end
+      return;
+    }
+
+    // Assignment expression with side effects: (x = expr)
+    // Used in bool-2 side-effect substrate: (counter = (counter + 1) | 0)
+    // This produces a value (the assigned value) on the stack.
+    if (opKind === SyntaxKind.EqualsToken) {
+      const lhs = binExpr.getLeft();
+      const rhs = binExpr.getRight();
+      // Emit RHS value
+      lowerExpression(ctx, rhs);
+      // LHS must be an identifier referencing a local
+      if (lhs.getKind() !== SyntaxKind.Identifier) {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message: `LoweringVisitor: assignment LHS must be a simple identifier, got SyntaxKind '${SyntaxKind[lhs.getKind()]}'`,
+        });
+      }
+      const name = lhs.asKindOrThrow(SyntaxKind.Identifier).getText();
+      const slot = ctx.table.lookup(name);
+      if (slot === undefined || slot.kind === "captured") {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message: `LoweringVisitor: assignment target '${name}' not found as a local slot`,
+        });
+      }
+      // local.tee: assigns AND leaves the value on the stack (needed for expressions like
+      // `(counter = x) > 0` where the assigned value is used in a subsequent comparison)
+      ctx.opcodes.push(0x22, slot.index); // local.tee
+      return;
+    }
 
     lowerExpression(ctx, binExpr.getLeft());
     lowerExpression(ctx, binExpr.getRight());
@@ -903,23 +1044,25 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
       return;
     }
 
-    // Assignment expression: local.set
-    if (opKind === SyntaxKind.EqualsToken) {
-      // The left and right are already emitted in wrong order — we shouldn't
-      // have emitted left; assignment expressions are complex (they need the
-      // lhs name, not its value). Fall through to unsupported.
-    }
-
     throw new LoweringError({
       kind: "unsupported-node",
       message: `LoweringVisitor: unsupported binary operator '${opText}' (SyntaxKind '${SyntaxKind[opKind]}') for domain ${ctx.domain} in general numeric lowering`,
     });
   }
 
-  // Prefix unary expression: -x, ~x
+  // Prefix unary expression: !x, -x, ~x
   if (kind === SyntaxKind.PrefixUnaryExpression) {
     const unary = expr as PrefixUnaryExpression;
     const opToken = unary.getOperatorToken();
+
+    // Logical NOT: !x → i32.eqz (0x45)
+    // i32.eqz returns 1 if operand is 0, else 0 — exactly the boolean NOT semantics.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-BOOL-DOMAIN-001: ! lowers to i32.eqz
+    if (opToken === SyntaxKind.ExclamationToken) {
+      lowerExpression(ctx, unary.getOperand());
+      ctx.opcodes.push(0x45); // i32.eqz
+      return;
+    }
 
     if (opToken === SyntaxKind.MinusToken) {
       // -x = 0 - x  (negate)
@@ -1034,16 +1177,30 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
     const expr = ret.getExpression();
     if (expr !== undefined) {
       lowerExpression(ctx, expr);
-      // For single-return functions, the return value stays on the stack.
-      // If there are subsequent statements, we'd need a return opcode (0x0f).
-      // For simple numeric functions (the scope of this WI), fall-through works.
-      // @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-RETURN-001: omit explicit
-      // return opcode for the final return statement — the value on the stack
-      // at function end is the implicit return value per the WASM spec §3.3.6.
-      // The emitter appends 0x0b (end), which is the function exit. This is
-      // correct for simple single-return functions. Multi-return and early-return
-      // patterns require 0x0f opcodes — deferred to WI-03 (control flow).
     }
+    // Emit explicit return opcode (0x0f) only when NOT inside a structured block.
+    //
+    // When inside a WASM if/else block (ctx.blockDepth > 0), the typed block
+    // expects the branch to leave its value on the stack — NOT exit the function
+    // with 0x0f. The if/end block then propagates the value to the caller.
+    // The outer ReturnStatement (at blockDepth === 0) emits 0x0f.
+    //
+    // When at blockDepth === 0 (top-level function body), always emit 0x0f.
+    // WI-02 relied on implicit fall-through (value at stack at 0x0b end), but
+    // WI-03 always emits 0x0f at top-level for explicit clarity.
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-RETURN-EXPLICIT-001
+    // @title Return emits 0x0f at blockDepth==0; at blockDepth>0 leaves value on stack
+    // @status accepted
+    // @rationale
+    //   WASM typed if blocks (Pattern A from DEC-V1-WAVE-3-WASM-LOWER-IF-ELSE-RETURN-001)
+    //   require branches to LEAVE a value on the stack, not return from the function.
+    //   blockDepth tracks nesting: 0 = top-level (emit 0x0f), >0 = inside a block
+    //   (value flows through the block boundary, outer return emits 0x0f).
+    if (ctx.blockDepth === 0) {
+      ctx.opcodes.push(0x0f); // return — exits the function
+    }
+    // At blockDepth > 0: value is on the stack for the enclosing block to consume.
     return;
   }
 
@@ -1055,6 +1212,9 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
       const varName = decl.getName();
       if (initializer !== undefined) {
         lowerExpression(ctx, initializer);
+      } else {
+        // No initializer: push zero constant for the domain
+        emitConst(ctx, 0);
       }
       // Allocate a local slot for this variable
       const slot = ctx.table.defineLocal(varName, ctx.domain);
@@ -1064,9 +1224,106 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
     return;
   }
 
+  // IfStatement: if (cond) { thenBlock } else { elseBlock }
+  //
+  // Lowering strategy (Pattern A — typed if block with result):
+  //   Emit the condition, then an if block with the current domain's result type.
+  //   Each branch leaves its value on the stack (ReturnStatements inside blocks
+  //   do NOT emit 0x0f — they let the value flow out through the block boundary).
+  //   After the if/end, the value is on the stack.
+  //
+  //   For branch-as-statement patterns (if/else at function body top level where
+  //   each branch is a ReturnStatement), this produces:
+  //
+  //     [condition]
+  //     if (result domainType)       ← typed block
+  //       [then value on stack]
+  //     else
+  //       [else value on stack]
+  //     end                          ← value on stack
+  //     (outer return emits 0x0f)
+  //
+  // Context: blockDepth is incremented so ReturnStatements inside the block know
+  // they must leave the value on the stack rather than emitting 0x0f.
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-IF-ELSE-RETURN-001
+  // @title if/else lowers to WASM if/else/end typed-result block (Pattern A)
+  // @status accepted
+  // @rationale
+  //   Pattern A (typed block + no 0x0f in branches) is simpler than Pattern B
+  //   (void block + 0x0f + unreachable). The validator requires either that the
+  //   if block declares a result type and both branches produce it, OR that a
+  //   void block's branches each use explicit return. Pattern A avoids the
+  //   `unreachable` opcode after `end` and is the standard WASM idiom for
+  //   expressions-as-values. The `blockDepth` counter tracks nesting so that
+  //   ReturnStatements at depth>0 suppress 0x0f and let the value flow upward.
+  if (kind === SyntaxKind.IfStatement) {
+    const ifStmt = stmt as IfStatement;
+    const condition = ifStmt.getExpression();
+    const thenStmt = ifStmt.getThenStatement();
+    const elseStmt = ifStmt.getElseStatement();
+
+    // Emit condition (must leave i32 on stack)
+    lowerExpression(ctx, condition);
+
+    // Typed if block: result type = current domain's valtype byte
+    // i32→0x7f, i64→0x7e, f64→0x7c
+    const domainValtypes: Record<string, number> = { i32: 0x7f, i64: 0x7e, f64: 0x7c };
+    const blockResultType = domainValtypes[ctx.domain] ?? 0x7f;
+    ctx.opcodes.push(0x04, blockResultType);
+
+    // Increment block depth so nested ReturnStatements suppress 0x0f
+    ctx.blockDepth++;
+
+    // Emit then branch
+    ctx.table.pushFrame({ isFunctionBoundary: false });
+    if (thenStmt.getKind() === SyntaxKind.Block) {
+      const thenBlock = thenStmt as Block;
+      for (const s of thenBlock.getStatements()) {
+        lowerStatement(ctx, s);
+      }
+    } else {
+      lowerStatement(ctx, thenStmt as Statement);
+    }
+    ctx.table.popFrame();
+
+    if (elseStmt !== undefined) {
+      ctx.opcodes.push(0x05); // else
+      ctx.table.pushFrame({ isFunctionBoundary: false });
+      if (elseStmt.getKind() === SyntaxKind.Block) {
+        const elseBlock = elseStmt as Block;
+        for (const s of elseBlock.getStatements()) {
+          lowerStatement(ctx, s);
+        }
+      } else {
+        lowerStatement(ctx, elseStmt as Statement);
+      }
+      ctx.table.popFrame();
+    }
+
+    ctx.blockDepth--;
+    ctx.opcodes.push(0x0b); // end — value from if block is now on stack
+    return;
+  }
+
+  // ExpressionStatement: an expression used for its side effects (no value needed).
+  // Example: `(counter = (counter + 1) | 0)` as a statement — the assigned value
+  // is placed on the stack by the assignment expression, then discarded via drop.
+  if (kind === SyntaxKind.ExpressionStatement) {
+    const exprStmt = stmt.asKindOrThrow(SyntaxKind.ExpressionStatement);
+    const innerExpr = exprStmt.getExpression();
+    lowerExpression(ctx, innerExpr);
+    // Assignment expressions (local.tee) leave the value on the stack.
+    // If this is a standalone expression statement, drop the value.
+    // Exception: void expressions (like standalone calls that return void) —
+    // but in the IR strict-subset, all expressions here are side-effect forms.
+    ctx.opcodes.push(0x1a); // drop
+    return;
+  }
+
   throw new LoweringError({
     kind: "unsupported-node",
-    message: `LoweringVisitor: unsupported statement SyntaxKind '${SyntaxKind[kind]}' in general numeric lowering — add coverage in WI-V1W3-WASM-LOWER-03 (control flow)`,
+    message: `LoweringVisitor: unsupported statement SyntaxKind '${SyntaxKind[kind]}' in general numeric lowering — add coverage in WI-V1W3-WASM-LOWER-08 (full control flow)`,
   });
 }
 
@@ -1112,12 +1369,22 @@ export interface LoweringResult {
  *   - Simple variable declarations (const/let)
  *   - Single-return functions
  *
+ * WI-V1W3-WASM-LOWER-03 adds:
+ *   - Boolean type: `boolean` params/return type → i32 domain (0/1)
+ *   - Boolean literals: `true` → i32.const 1, `false` → i32.const 0
+ *   - Logical NOT: `!` → i32.eqz (0x45)
+ *   - Logical AND: `&&` → if/else/end block (short-circuit, observable)
+ *   - Logical OR:  `||` → if/else/end block (short-circuit, observable)
+ *   - If/else statements → if/else/end block with typed result
+ *   - See @decision DEC-V1-WAVE-3-WASM-LOWER-EQ-001 for == vs === policy
+ *
  * Any other exported function triggers a LoweringError with kind
  * "unsupported-node" naming the first unhandled SyntaxKind, per Sacred
  * Practice #5 (fail loudly and early, never silently).
  *
  * @decision DEC-V1-WAVE-3-WASM-PARSE-001 (see file header)
  * @decision DEC-V1-WAVE-3-WASM-LOWER-NUMERIC-001 (see file header)
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-EQ-001 (== and === emit identical opcodes for primitives)
  */
 export class LoweringVisitor {
   private readonly _table: SymbolTable;
@@ -1266,6 +1533,7 @@ export class LoweringVisitor {
       table: this._table,
       opcodes: [],
       locals: [],
+      blockDepth: 0,
     };
 
     // Register parameters in the symbol table
