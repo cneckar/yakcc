@@ -35,6 +35,18 @@
 // Supersedes: DEC-V1-WAVE-2-WASM-STRATEGY-001 (single fixed substrate module).
 // Closes: DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001.
 
+// @decision DEC-V1-WAVE-3-WASM-PARSE-001
+// Title: Lower from ts-morph AST parsed at codegen-time from ResolvedBlock.source
+// Status: accepted (WI-V1W3-WASM-LOWER-01)
+// Rationale:
+//   WI-V1W3-WASM-LOWER-01 replaces the detectSubstrateKind string-regex dispatch
+//   with a LoweringVisitor that parses source via ts-morph and returns a WasmFunction
+//   IR. The existing 5-substrate hand-rolled emitters are preserved as fast-paths
+//   inside the visitor so all wave-2 parity tests remain green. The dispatch entry
+//   point is now lowerSource() (below) — detectSubstrateKind is retained only as an
+//   internal detail of the visitor's wave-2 fast-path detection logic.
+//   See MASTER_PLAN.md DEC-V1-WAVE-3-WASM-PARSE-001 for full rationale.
+
 /**
  * wasm-backend.ts — WebAssembly binary emitter for @yakcc/compile.
  *
@@ -59,6 +71,9 @@
  */
 
 import type { ResolutionResult } from "./resolve.js";
+import { LoweringVisitor } from "./wasm-lowering/visitor.js";
+import type { WasmFunction } from "./wasm-lowering/wasm-function.js";
+import { valtypeByte } from "./wasm-lowering/wasm-function.js";
 
 // ---------------------------------------------------------------------------
 // Public type — mirrors ts-backend's Backend interface for symmetry
@@ -148,37 +163,89 @@ function emitSubstrateModule(): Uint8Array<ArrayBuffer> {
   const typeSection = section(1, concat(uleb128(6), type0, type1, type2, type3, type4, type5));
 
   const modName = encodeName("yakcc_host");
-  const memImport = concat(modName, encodeName("memory"), new Uint8Array([0x02]), new Uint8Array([0x01, 0x01, 0x01]));
+  const memImport = concat(
+    modName,
+    encodeName("memory"),
+    new Uint8Array([0x02]),
+    new Uint8Array([0x01, 0x01, 0x01]),
+  );
   const hostLogImport = concat(modName, encodeName("host_log"), new Uint8Array([0x00]), uleb128(0));
-  const hostAllocImport = concat(modName, encodeName("host_alloc"), new Uint8Array([0x00]), uleb128(1));
-  const hostFreeImport = concat(modName, encodeName("host_free"), new Uint8Array([0x00]), uleb128(2));
-  const hostPanicImport = concat(modName, encodeName("host_panic"), new Uint8Array([0x00]), uleb128(3));
-  const importSection = section(2, concat(uleb128(5), memImport, hostLogImport, hostAllocImport, hostFreeImport, hostPanicImport));
+  const hostAllocImport = concat(
+    modName,
+    encodeName("host_alloc"),
+    new Uint8Array([0x00]),
+    uleb128(1),
+  );
+  const hostFreeImport = concat(
+    modName,
+    encodeName("host_free"),
+    new Uint8Array([0x00]),
+    uleb128(2),
+  );
+  const hostPanicImport = concat(
+    modName,
+    encodeName("host_panic"),
+    new Uint8Array([0x00]),
+    uleb128(3),
+  );
+  const importSection = section(
+    2,
+    concat(uleb128(5), memImport, hostLogImport, hostAllocImport, hostFreeImport, hostPanicImport),
+  );
 
   // 3 defined funcs: add(type4), string_len(type4), panic_demo(type5)
   const funcSection = section(3, concat(uleb128(3), uleb128(4), uleb128(4), uleb128(5)));
   const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
 
   const expAdd = concat(encodeName("__wasm_export_add"), new Uint8Array([0x00]), uleb128(4));
-  const expStringLen = concat(encodeName("__wasm_export_string_len"), new Uint8Array([0x00]), uleb128(5));
-  const expPanicDemo = concat(encodeName("__wasm_export_panic_demo"), new Uint8Array([0x00]), uleb128(6));
+  const expStringLen = concat(
+    encodeName("__wasm_export_string_len"),
+    new Uint8Array([0x00]),
+    uleb128(5),
+  );
+  const expPanicDemo = concat(
+    encodeName("__wasm_export_panic_demo"),
+    new Uint8Array([0x00]),
+    uleb128(6),
+  );
   const expTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
-  const exportSection = section(7, concat(uleb128(4), expAdd, expStringLen, expPanicDemo, expTable));
+  const exportSection = section(
+    7,
+    concat(uleb128(4), expAdd, expStringLen, expPanicDemo, expTable),
+  );
 
   // add: local.get 0, local.get 1, i32.add, end
   const addBody = concat(uleb128(0), new Uint8Array([0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b]));
   // string_len: local.get 1, end
   const stringLenBody = concat(uleb128(0), new Uint8Array([0x20, 0x01, 0x0b]));
   // panic_demo: i32.const 0x42 (2-byte SLEB128), i32.const 0, i32.const 0, call 3, unreachable, end
-  const panicDemoBody = concat(uleb128(0), new Uint8Array([0x41, 0xc2, 0x00, 0x41, 0x00, 0x41, 0x00, 0x10, 0x03, 0x00, 0x0b]));
-  const codeSection = section(10, concat(
-    uleb128(3),
-    uleb128(addBody.length), addBody,
-    uleb128(stringLenBody.length), stringLenBody,
-    uleb128(panicDemoBody.length), panicDemoBody,
-  ));
+  const panicDemoBody = concat(
+    uleb128(0),
+    new Uint8Array([0x41, 0xc2, 0x00, 0x41, 0x00, 0x41, 0x00, 0x10, 0x03, 0x00, 0x0b]),
+  );
+  const codeSection = section(
+    10,
+    concat(
+      uleb128(3),
+      uleb128(addBody.length),
+      addBody,
+      uleb128(stringLenBody.length),
+      stringLenBody,
+      uleb128(panicDemoBody.length),
+      panicDemoBody,
+    ),
+  );
 
-  return concat(WASM_MAGIC, WASM_VERSION, typeSection, importSection, funcSection, tableSection, exportSection, codeSection);
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -205,12 +272,7 @@ function buildImportSection(): Uint8Array {
     new Uint8Array([0x02]),
     new Uint8Array([0x01, 0x01, 0x01]),
   );
-  const hostLogImport = concat(
-    modName,
-    encodeName("host_log"),
-    new Uint8Array([0x00]),
-    uleb128(0),
-  );
+  const hostLogImport = concat(modName, encodeName("host_log"), new Uint8Array([0x00]), uleb128(0));
   const hostAllocImport = concat(
     modName,
     encodeName("host_alloc"),
@@ -232,14 +294,7 @@ function buildImportSection(): Uint8Array {
 
   return section(
     2,
-    concat(
-      uleb128(5),
-      memImport,
-      hostLogImport,
-      hostAllocImport,
-      hostFreeImport,
-      hostPanicImport,
-    ),
+    concat(uleb128(5), memImport, hostLogImport, hostAllocImport, hostFreeImport, hostPanicImport),
   );
 }
 
@@ -257,12 +312,7 @@ function buildImportSection(): Uint8Array {
  *   sum_record       — (ptr: i32): i32               — sum of two i32 fields at ptr+0, ptr+4
  *   sum_array        — (ptr: i32, len: i32): i32     — sum of len i32 elements at ptr
  */
-type SubstrateKind =
-  | "add"
-  | "string_bytecount"
-  | "format_i32"
-  | "sum_record"
-  | "sum_array";
+type SubstrateKind = "add" | "string_bytecount" | "format_i32" | "sum_record" | "sum_array";
 
 /**
  * Detect which substrate kind to emit, based on the exported function signature.
@@ -275,9 +325,7 @@ type SubstrateKind =
  *   - Fallback                                → add (all-numeric)
  */
 function detectSubstrateKind(source: string): SubstrateKind {
-  const fnMatch = source.match(
-    /export\s+(?:async\s+)?function\s+\w+\s*\(([^)]*)\)\s*:\s*([^{;]+)/,
-  );
+  const fnMatch = source.match(/export\s+(?:async\s+)?function\s+\w+\s*\(([^)]*)\)\s*:\s*([^{;]+)/);
   if (fnMatch === null) return "add";
   const params = fnMatch[1] ?? "";
   const returnType = (fnMatch[2] ?? "").trim();
@@ -314,8 +362,10 @@ function bodyAdd(): Uint8Array {
   return concat(
     uleb128(0),
     new Uint8Array([
-      0x20, 0x00, // local.get 0 (a)
-      0x20, 0x01, // local.get 1 (b)
+      0x20,
+      0x00, // local.get 0 (a)
+      0x20,
+      0x01, // local.get 1 (b)
       0x6a, // i32.add
       0x0b, // end
     ]),
@@ -333,7 +383,8 @@ function bodyStringBytecount(): Uint8Array {
   return concat(
     uleb128(0),
     new Uint8Array([
-      0x20, 0x01, // local.get 1 (len)
+      0x20,
+      0x01, // local.get 1 (len)
       0x0b, // end
     ]),
   );
@@ -355,37 +406,60 @@ function bodyFormatI32(): Uint8Array {
     uleb128(0), // 0 local groups (params are locals 0, 1)
     new Uint8Array([
       // if (n < 10): write single digit and return 1
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x0a, // i32.const 10
+      0x20,
+      0x00, // local.get 0  (n)
+      0x41,
+      0x0a, // i32.const 10
       0x49, // i32.lt_u
-      0x04, 0x40, // if void
-      0x20, 0x01, // local.get 1  (out)
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x30, // i32.const 48 ('0')
+      0x04,
+      0x40, // if void
+      0x20,
+      0x01, // local.get 1  (out)
+      0x20,
+      0x00, // local.get 0  (n)
+      0x41,
+      0x30, // i32.const 48 ('0')
       0x6a, // i32.add          (n + '0')
-      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
-      0x41, 0x01, // i32.const 1
+      0x3a,
+      0x00,
+      0x00, // i32.store8 align=0 offset=0
+      0x41,
+      0x01, // i32.const 1
       0x0f, // return
       0x0b, // end if
       // out[0] = n / 10 + '0'   (tens digit)
-      0x20, 0x01, // local.get 1  (out)
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x0a, // i32.const 10
+      0x20,
+      0x01, // local.get 1  (out)
+      0x20,
+      0x00, // local.get 0  (n)
+      0x41,
+      0x0a, // i32.const 10
       0x6d, // i32.div_u
-      0x41, 0x30, // i32.const 48
+      0x41,
+      0x30, // i32.const 48
       0x6a, // i32.add
-      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
+      0x3a,
+      0x00,
+      0x00, // i32.store8 align=0 offset=0
       // out[1] = n % 10 + '0'   (ones digit)
-      0x20, 0x01, // local.get 1  (out)
-      0x41, 0x01, // i32.const 1
+      0x20,
+      0x01, // local.get 1  (out)
+      0x41,
+      0x01, // i32.const 1
       0x6a, // i32.add          (out + 1)
-      0x20, 0x00, // local.get 0  (n)
-      0x41, 0x0a, // i32.const 10
+      0x20,
+      0x00, // local.get 0  (n)
+      0x41,
+      0x0a, // i32.const 10
       0x6f, // i32.rem_u
-      0x41, 0x30, // i32.const 48
+      0x41,
+      0x30, // i32.const 48
       0x6a, // i32.add
-      0x3a, 0x00, 0x00, // i32.store8 align=0 offset=0
-      0x41, 0x02, // i32.const 2
+      0x3a,
+      0x00,
+      0x00, // i32.store8 align=0 offset=0
+      0x41,
+      0x02, // i32.const 2
       0x0b, // end
     ]),
   );
@@ -401,10 +475,16 @@ function bodySumRecord(): Uint8Array {
   return concat(
     uleb128(0), // 0 local groups
     new Uint8Array([
-      0x20, 0x00, // local.get 0  (ptr)
-      0x28, 0x02, 0x00, // i32.load align=2 offset=0   → field[0]
-      0x20, 0x00, // local.get 0  (ptr)
-      0x28, 0x02, 0x04, // i32.load align=2 offset=4   → field[1]
+      0x20,
+      0x00, // local.get 0  (ptr)
+      0x28,
+      0x02,
+      0x00, // i32.load align=2 offset=0   → field[0]
+      0x20,
+      0x00, // local.get 0  (ptr)
+      0x28,
+      0x02,
+      0x04, // i32.load align=2 offset=4   → field[1]
       0x6a, // i32.add
       0x0b, // end
     ]),
@@ -424,38 +504,63 @@ function bodySumArray(): Uint8Array {
   return concat(
     new Uint8Array([
       0x02, // 2 local groups
-      0x01, 0x7f, // 1 × i32 (acc, local 2)
-      0x01, 0x7f, // 1 × i32 (byte offset i, local 3)
+      0x01,
+      0x7f, // 1 × i32 (acc, local 2)
+      0x01,
+      0x7f, // 1 × i32 (byte offset i, local 3)
     ]),
     new Uint8Array([
-      0x41, 0x00, 0x21, 0x02, // acc = 0
-      0x41, 0x00, 0x21, 0x03, // i = 0
-      0x02, 0x40, // block $brk
-      0x03, 0x40, // loop $cont
+      0x41,
+      0x00,
+      0x21,
+      0x02, // acc = 0
+      0x41,
+      0x00,
+      0x21,
+      0x03, // i = 0
+      0x02,
+      0x40, // block $brk
+      0x03,
+      0x40, // loop $cont
       // break if i >= len << 2
-      0x20, 0x03, // local.get 3  (i)
-      0x20, 0x01, // local.get 1  (len)
-      0x41, 0x02, // i32.const 2
+      0x20,
+      0x03, // local.get 3  (i)
+      0x20,
+      0x01, // local.get 1  (len)
+      0x41,
+      0x02, // i32.const 2
       0x74, // i32.shl          (len * 4)
       0x4f, // i32.ge_u
-      0x0d, 0x01, // br_if 1       (break to $brk)
+      0x0d,
+      0x01, // br_if 1       (break to $brk)
       // acc += i32.load(ptr + i)
-      0x20, 0x02, // local.get 2  (acc)
-      0x20, 0x00, // local.get 0  (ptr)
-      0x20, 0x03, // local.get 3  (i)
+      0x20,
+      0x02, // local.get 2  (acc)
+      0x20,
+      0x00, // local.get 0  (ptr)
+      0x20,
+      0x03, // local.get 3  (i)
       0x6a, // i32.add          (ptr + i)
-      0x28, 0x02, 0x00, // i32.load align=2 offset=0
+      0x28,
+      0x02,
+      0x00, // i32.load align=2 offset=0
       0x6a, // i32.add
-      0x21, 0x02, // local.set 2  (acc)
+      0x21,
+      0x02, // local.set 2  (acc)
       // i += 4
-      0x20, 0x03, // local.get 3  (i)
-      0x41, 0x04, // i32.const 4
+      0x20,
+      0x03, // local.get 3  (i)
+      0x41,
+      0x04, // i32.const 4
       0x6a, // i32.add
-      0x21, 0x03, // local.set 3  (i)
-      0x0c, 0x00, // br 0          (continue $cont)
+      0x21,
+      0x03, // local.set 3  (i)
+      0x0c,
+      0x00, // br 0          (continue $cont)
       0x0b, // end loop
       0x0b, // end block
-      0x20, 0x02, // local.get 2  (acc)
+      0x20,
+      0x02, // local.get 2  (acc)
       0x0b, // end
     ]),
   );
@@ -477,6 +582,30 @@ function buildSubstrateBody(kind: SubstrateKind): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
+// WasmFunction → body bytes serialiser
+//
+// Converts the WasmFunction IR produced by LoweringVisitor into the raw bytes
+// expected by emitTypeLoweredModule (same format as buildSubstrateBody):
+//   uleb128(localGroupCount)
+//   [ uleb128(group.count), valtype(group.type) ] ...
+//   [ ...body bytes ]
+//   0x0b  (end)
+//
+// @decision DEC-V1-WAVE-3-WASM-PARSE-001 (see file header)
+// ---------------------------------------------------------------------------
+
+function serializeWasmFunction(fn: WasmFunction): Uint8Array {
+  const localParts: Uint8Array[] = [uleb128(fn.locals.length)];
+  for (const decl of fn.locals) {
+    localParts.push(uleb128(decl.count), new Uint8Array([valtypeByte(decl.type)]));
+  }
+  const localsBytes = concat(...localParts);
+  const bodyBytes = new Uint8Array(fn.body);
+  const endByte = new Uint8Array([0x0b]);
+  return concat(localsBytes, bodyBytes, endByte);
+}
+
+// ---------------------------------------------------------------------------
 // Type-lowered module emitter
 //
 // Emits a full yakcc_host-conformant .wasm module for one substrate function.
@@ -490,11 +619,19 @@ function buildSubstrateBody(kind: SubstrateKind): Uint8Array {
 //                                 format_i32, sum_array)
 //
 // The substrate function is defined at funcidx 4 (after 4 imported functions).
+//
+// @decision DEC-V1-WAVE-3-WASM-PARSE-001
+// WI-V1W3-WASM-LOWER-01: accepts both a SubstrateKind (for the WASM type index
+// selection) and a WasmFunction (for the serialised body). The body is serialised
+// via serializeWasmFunction() rather than the old buildSubstrateBody() so that
+// the LoweringVisitor's IR drives all codegen — the hand-rolled body builders are
+// now only reachable via the fast-paths inside the visitor.
 // ---------------------------------------------------------------------------
 
 function emitTypeLoweredModule(
   kind: SubstrateKind,
   fnName: string,
+  wasmFn: WasmFunction,
 ): Uint8Array<ArrayBuffer> {
   // -----------------------------------------------------------------------
   // Type section
@@ -523,10 +660,7 @@ function emitTypeLoweredModule(
   // -----------------------------------------------------------------------
   // Table section: one empty funcref table (required by host contract)
   // -----------------------------------------------------------------------
-  const tableSection = section(
-    4,
-    concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])),
-  );
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
 
   // -----------------------------------------------------------------------
   // Export section: function + table
@@ -546,7 +680,7 @@ function emitTypeLoweredModule(
   // -----------------------------------------------------------------------
   // Code section: 1 function body
   // -----------------------------------------------------------------------
-  const body = buildSubstrateBody(kind);
+  const body = serializeWasmFunction(wasmFn);
   const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
 
   return concat(
@@ -568,10 +702,16 @@ function emitTypeLoweredModule(
 /**
  * Compile a ResolutionResult to a WebAssembly binary module.
  *
- * WI-V1W2-WASM-02: inspects the entry block's exported function signature,
- * detects one of 5 type patterns, and emits a per-substrate WASM module with
- * the correct type lowering applied. See detectSubstrateKind for the detection
- * rules and DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 for the lowering policies.
+ * WI-V1W3-WASM-LOWER-01: dispatch now flows through LoweringVisitor (ts-morph
+ * AST-based). The visitor returns a WasmFunction IR; emitTypeLoweredModule
+ * serialises it. The wave-2 "add" substrate still emits the legacy 3-function
+ * substrate module so that wasm-host.test.ts conformance tests (which rely on
+ * __wasm_export_string_len and __wasm_export_panic_demo) remain green.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-PARSE-001
+ * The visitor is the single dispatch entrypoint. detectSubstrateKind is no
+ * longer called from this function — it is an internal detail of the visitor's
+ * wave-2 fast-path logic. See MASTER_PLAN.md DEC-V1-WAVE-3-WASM-PARSE-001.
  *
  * @returns A Uint8Array containing a valid, instantiable .wasm binary.
  */
@@ -580,12 +720,14 @@ export async function compileToWasm(
 ): Promise<Uint8Array<ArrayBuffer>> {
   const entryBlock = resolution.blocks.get(resolution.entry);
   if (entryBlock !== undefined) {
-    const kind = detectSubstrateKind(entryBlock.source);
-    // "add" uses the legacy substrate module so that wasm-host.test.ts conformance
-    // tests for __wasm_export_string_len and __wasm_export_panic_demo remain green.
-    if (kind === "add") return emitSubstrateModule();
-    const fnName = extractFunctionName(entryBlock.source);
-    return emitTypeLoweredModule(kind, fnName);
+    const visitor = new LoweringVisitor();
+    const result = visitor.lower(entryBlock.source);
+    // "add" shape uses the legacy 3-function substrate module so that the
+    // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
+    // __wasm_export_panic_demo) remains green — those exports live only in
+    // the legacy module and are not produced by the type-lowering path.
+    if (result.wave2Shape === "add") return emitSubstrateModule();
+    return emitTypeLoweredModule(result.wave2Shape as SubstrateKind, result.fnName, result.wasmFn);
   }
   // Empty resolution fallback: emit the substrate module.
   return emitSubstrateModule();
