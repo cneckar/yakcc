@@ -56,22 +56,28 @@ export type BlockMerkleRoot = string & { readonly __brand: "BlockMerkleRoot" };
 // ---------------------------------------------------------------------------
 
 /**
- * The data the blockMerkleRoot() function needs to derive a block's identity.
- *
- * T01 is pure-function only; reading files from disk is T02's job. Callers
- * materialize the artifact bytes from whatever source they prefer (filesystem,
- * in-memory fixture, database blob) and pass the results here.
- *
- * The artifacts Map keys match the paths declared in manifest.artifacts[*].path.
- * For each artifact declared in the manifest, a corresponding entry must be
- * present in the Map. Missing entries cause blockMerkleRoot() to throw.
- *
- * Design note: Map<string, Uint8Array> is the simplest shape that does not
- * lock T02..T06 into a specific I/O strategy. T02 will populate this from
- * filesystem reads; T03 will populate it from database blobs; tests populate
- * it from inline literals. The function itself has no I/O dependencies.
+ * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-A: kind discriminator on Triplet)
+ * Status: decided (PLAN_WI_V2_04.md §2.1, L1 contracts layer)
+ * @rationale Foreign atoms are opaque leaves keyed by (pkg, export, dtsHash) per
+ *            DEC-IDENTITY-005. The `kind` discriminator participates in BlockMerkleRoot
+ *            so foreign and local atoms with otherwise-identical fields produce
+ *            different roots. Approach (b) was chosen: discriminated union on the
+ *            triplet type rather than a separate table, satisfying Sacred Practice #12
+ *            (one canonical type for "block by merkle root"). The `kind` field defaults
+ *            to `'local'` so existing callsites compile without change (L1-I2).
+ * @scope L1 only — schema migration lands in L2.
  */
-export interface BlockTriplet {
+
+/**
+ * Fields shared or specific to a local (yakcc-shaved) block triplet.
+ *
+ * A LocalTriplet is the original "local impl" form: spec.yak + impl.ts + proof/.
+ * The `kind: 'local'` discriminator defaults to `'local'` so existing callsites
+ * that omit `kind` continue to compile without modification (L1-I2).
+ */
+export interface LocalTriplet {
+  /** Discriminator. Defaults to `'local'` for backwards compat (L1-I2). */
+  readonly kind?: "local";
   /** The parsed spec.yak content. */
   readonly spec: SpecYak;
   /** The impl.ts source text as UTF-8. At L0: raw file bytes, no normalization. */
@@ -84,6 +90,49 @@ export interface BlockTriplet {
    */
   readonly artifacts: Map<string, Uint8Array>;
 }
+
+/**
+ * Fields for a foreign (npm-package or Node built-in) block triplet.
+ *
+ * Foreign blocks are opaque leaves. Their identity is keyed exclusively on
+ * (kind, pkg, export, dtsHash?) per DEC-IDENTITY-005 and DEC-V2-FOREIGN-BLOCK-SCHEMA-001.
+ * The `implSource` / `spec` / `manifest` / `artifacts` fields of a LocalTriplet
+ * are intentionally absent — foreign blocks carry no shaved implementation.
+ */
+export interface ForeignTripletFields {
+  /** Discriminator — must be `'foreign'` for this variant. */
+  readonly kind: "foreign";
+  /** The npm package name or Node built-in specifier, e.g. `"node:fs"`, `"ts-morph"`. */
+  readonly pkg: string;
+  /** The exported symbol name consumed at the use site, e.g. `"readFileSync"`. */
+  readonly export: string;
+  /**
+   * Optional BLAKE3 hash of the declaration text from the package's `.d.ts` file.
+   * When present, two foreign blocks with identical (pkg, export) but different
+   * `.d.ts` shapes receive different BlockMerkleRoots (type drift is identity-significant).
+   * When absent, identity is keyed on (pkg, export) only.
+   */
+  readonly dtsHash?: string;
+}
+
+/**
+ * The data the blockMerkleRoot() function needs to derive a block's identity.
+ *
+ * `BlockTriplet` is a discriminated union of LocalTriplet | ForeignTripletFields.
+ * The `kind` field is the discriminator:
+ *   - `kind: 'local'` (or absent) → local yakcc-shaved block
+ *   - `kind: 'foreign'`           → foreign npm/Node block (opaque leaf)
+ *
+ * T01 is pure-function only; reading files from disk is T02's job. Callers
+ * materialize the artifact bytes from whatever source they prefer (filesystem,
+ * in-memory fixture, database blob) and pass the results here.
+ *
+ * Design note: Map<string, Uint8Array> is the simplest shape that does not
+ * lock T02..T06 into a specific I/O strategy. T02 will populate this from
+ * filesystem reads; T03 will populate it from database blobs; tests populate
+ * it from inline literals. The function itself has no I/O dependencies.
+ */
+export type BlockTriplet = LocalTriplet | ForeignTripletFields;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -140,7 +189,9 @@ export function specHash(spec: SpecYak): SpecHash {
 /**
  * Derive the BlockMerkleRoot for a block triplet.
  *
- * L0 encoding (DEC-TRIPLET-IDENTITY-020):
+ * Dispatches on `triplet.kind`:
+ *
+ * **Local (kind: 'local' or omitted) — L0 encoding (DEC-TRIPLET-IDENTITY-020):**
  *
  *   spec_hash      = BLAKE3(canonicalize(spec.yak))           [32 raw bytes]
  *   impl_hash      = BLAKE3(UTF-8 bytes of implSource)        [32 raw bytes]
@@ -154,8 +205,31 @@ export function specHash(spec: SpecYak): SpecHash {
  *
  * Throws if any artifact declared in manifest.artifacts is missing from the
  * artifacts Map.
+ *
+ * **Foreign (kind: 'foreign') — package-keyed identity (DEC-V2-FOREIGN-BLOCK-SCHEMA-001):**
+ *
+ *   foreign_identity_bytes = canonicalize({ kind, pkg, export, dtsHash? })
+ *   block_merkle_root = BLAKE3(foreign_identity_bytes)
+ *
+ * The hash inputs are (kind, pkg, export, dtsHash?) only — NOT the impl source.
+ * This is the "package-keyed identity" property: two foreign references to the same
+ * (pkg, export, dtsHash?) always produce the same BlockMerkleRoot regardless of the
+ * source file that references them. The `kind` discriminator participates in the hash
+ * so a foreign triplet with otherwise-identical fields to a local triplet produces a
+ * different root.
  */
 export function blockMerkleRoot(triplet: BlockTriplet): BlockMerkleRoot {
+  if (triplet.kind === "foreign") {
+    return blockMerkleRootForeign(triplet);
+  }
+  return blockMerkleRootLocal(triplet);
+}
+
+/**
+ * Derive BlockMerkleRoot for a local (yakcc-shaved) triplet.
+ * See blockMerkleRoot() for full encoding spec.
+ */
+function blockMerkleRootLocal(triplet: LocalTriplet): BlockMerkleRoot {
   // spec_hash: BLAKE3(canonicalize(spec.yak))
   const specBytes = canonicalize(triplet.spec as unknown as ContractSpec);
   const specHashBytes = blake3(specBytes); // 32 raw bytes
@@ -191,4 +265,57 @@ export function blockMerkleRoot(triplet: BlockTriplet): BlockMerkleRoot {
   const rootBytes = blake3(rootInput);
 
   return bytesToHex(rootBytes) as BlockMerkleRoot;
+}
+
+/**
+ * Derive BlockMerkleRoot for a foreign (opaque leaf) triplet.
+ *
+ * Identity is keyed on (kind, pkg, export, dtsHash?) only — per DEC-IDENTITY-005
+ * and DEC-V2-FOREIGN-BLOCK-SCHEMA-001. The canonical JSON is sorted by key,
+ * so the discriminator `kind` always precedes `pkg` alphabetically, ensuring
+ * the discriminator participates in the hash input.
+ *
+ * The `dtsHash` field is omitted from the canonical form when undefined so
+ * that absent and absent produce the same root (omitted ≠ null per DEC-CANON-001).
+ */
+function blockMerkleRootForeign(triplet: ForeignTripletFields): BlockMerkleRoot {
+  // Build a plain object with only the identity-significant fields.
+  // dtsHash is omitted when undefined so canonicalize() skips it (undefined → omitted).
+  const identityObj: Record<string, string> = {
+    kind: triplet.kind,
+    pkg: triplet.pkg,
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    export: triplet.export,
+    ...(triplet.dtsHash !== undefined ? { dtsHash: triplet.dtsHash } : {}),
+  };
+
+  // canonicalize() sorts keys lexicographically; for this object the order is:
+  // dtsHash (when present), export, kind, pkg — deterministic across runtimes.
+  const identityBytes = canonicalize(identityObj as unknown as ContractSpec);
+  const rootBytes = blake3(identityBytes);
+  return bytesToHex(rootBytes) as BlockMerkleRoot;
+}
+
+// ---------------------------------------------------------------------------
+// Type guards
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrow a BlockTriplet to LocalTriplet.
+ *
+ * Returns true when `kind` is `'local'` or absent (backwards-compat default).
+ * The absent case covers all existing callsites that were created before the
+ * `kind` discriminator was introduced (L1-I2).
+ */
+export function isLocalTriplet(t: BlockTriplet): t is LocalTriplet {
+  return t.kind !== "foreign";
+}
+
+/**
+ * Narrow a BlockTriplet to ForeignTripletFields.
+ *
+ * Returns true only when `kind === 'foreign'`.
+ */
+export function isForeignTriplet(t: BlockTriplet): t is ForeignTripletFields {
+  return t.kind === "foreign";
 }
