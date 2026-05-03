@@ -24,8 +24,8 @@ import type { ContractSpec } from "./index.js";
 import { validateSpecYak } from "./spec-yak.js";
 import type { SpecYak } from "./spec-yak.js";
 import { validateProofManifestL0 } from "./proof-manifest.js";
-import { blockMerkleRoot, specHash } from "./merkle.js";
-import type { BlockTriplet } from "./merkle.js";
+import { blockMerkleRoot, specHash, isLocalTriplet, isForeignTriplet } from "./merkle.js";
+import type { BlockTriplet, ForeignTripletFields } from "./merkle.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -624,6 +624,7 @@ describe("blockMerkleRoot — sensitivity (Test d)", () => {
   it("a change in spec.yak produces a different root", () => {
     fc.assert(
       fc.property(blockTripletArb, fc.string({ minLength: 1, maxLength: 32 }), (triplet, suffix) => {
+        if (!isLocalTriplet(triplet)) return;
         const modified: BlockTriplet = {
           ...triplet,
           spec: { ...triplet.spec, name: `${triplet.spec.name}${suffix}` },
@@ -637,6 +638,7 @@ describe("blockMerkleRoot — sensitivity (Test d)", () => {
   it("a change in impl.ts produces a different root", () => {
     fc.assert(
       fc.property(blockTripletArb, fc.string({ minLength: 1, maxLength: 32 }), (triplet, suffix) => {
+        if (!isLocalTriplet(triplet)) return;
         const modified: BlockTriplet = {
           ...triplet,
           implSource: `${triplet.implSource}${suffix}`,
@@ -653,8 +655,12 @@ describe("blockMerkleRoot — sensitivity (Test d)", () => {
         blockTripletArb,
         fc.uint8Array({ minLength: 1, maxLength: 8 }),
         (triplet, extraBytes) => {
+          // This property is specific to local triplets (which carry manifest + artifacts).
+          // Foreign triplets have no artifacts, so skip them — their identity is tested
+          // in the foreign-triplet suite below.
+          if (!isLocalTriplet(triplet)) return;
           // Append bytes to the first artifact.
-          const [firstPath] = triplet.manifest.artifacts.map((a) => a.path);
+          const [firstPath] = triplet.manifest.artifacts.map((a: { path: string }) => a.path);
           if (firstPath === undefined) return; // guard (always present by arb)
           const original = triplet.artifacts.get(firstPath);
           if (original === undefined) return;
@@ -836,5 +842,229 @@ describe("end-to-end: validate → blockMerkleRoot (production sequence)", () =>
     // Same spec → same SpecHash; different impl → different BlockMerkleRoot.
     expect(specHash(spec)).toBe(specHash(spec)); // SpecHash is stable
     expect(root1).not.toBe(root2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Foreign triplet tests (L1 Evaluation Contract requirements 1–4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal valid foreign triplet for use in tests below.
+ */
+function minimalForeignTriplet(overrides: Partial<ForeignTripletFields> = {}): ForeignTripletFields {
+  return {
+    kind: "foreign",
+    pkg: "node:fs",
+    export: "readFileSync",
+    ...overrides,
+  };
+}
+
+// Requirement 1: kind:'foreign' triplet round-trips through canonicalize() and
+// produces a stable BlockMerkleRoot across repeated calls with identical inputs.
+describe("foreign triplet — determinism (Requirement 1)", () => {
+  it("same foreign triplet produces identical BlockMerkleRoot on repeated calls", () => {
+    const triplet = minimalForeignTriplet();
+    const root1 = blockMerkleRoot(triplet);
+    const root2 = blockMerkleRoot(triplet);
+    expect(root1).toBe(root2);
+    expect(root1).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("foreign triplet stability holds across multiple foreign packages (property test)", () => {
+    const packages = ["node:fs", "node:path", "ts-morph", "sqlite-vec", "lodash"];
+    const exports_ = ["readFileSync", "join", "Project", "load", "cloneDeep"];
+    for (const pkg of packages) {
+      for (const exp of exports_) {
+        const t = minimalForeignTriplet({ pkg, export: exp });
+        expect(blockMerkleRoot(t)).toBe(blockMerkleRoot(t));
+      }
+    }
+  });
+
+  it("optional dtsHash participates in identity when present, stable when same", () => {
+    const withHash = minimalForeignTriplet({ dtsHash: "abc123" });
+    expect(blockMerkleRoot(withHash)).toBe(blockMerkleRoot(withHash));
+    expect(blockMerkleRoot(withHash)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+// Requirement 2: kind:'foreign' differs in BlockMerkleRoot from a kind:'local' triplet
+// with otherwise-identical-looking fields (discriminator participates in the hash).
+describe("foreign triplet — discriminator participates in hash (Requirement 2)", () => {
+  it("foreign and local triplets using the same spec produce different BlockMerkleRoots", () => {
+    // Construct a local triplet using the minimalSpecYak() helper from above.
+    const spec = minimalSpecYak();
+    const artifactBytes = new TextEncoder().encode("// tests\n");
+    const localTriplet: BlockTriplet = {
+      kind: "local",
+      spec,
+      implSource: "export function f() {}",
+      manifest: { artifacts: [{ kind: "property_tests", path: "t.ts" }] },
+      artifacts: new Map([["t.ts", artifactBytes]]),
+    };
+
+    // A foreign triplet whose pkg/export happen to match the spec name to stress-test
+    // that the discriminator is the differentiating factor, not coincidental content.
+    const foreignTriplet: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "node:fs",
+      export: "readFileSync",
+    };
+
+    const localRoot = blockMerkleRoot(localTriplet);
+    const foreignRoot = blockMerkleRoot(foreignTriplet);
+    expect(localRoot).not.toBe(foreignRoot);
+  });
+
+  it("two foreign triplets that differ only in kind vs. a synthetic same-content local produce different roots", () => {
+    // Build a foreign triplet and verify it differs from any local triplet.
+    // The discriminator 'foreign' vs. absent/'local' must change the root.
+    const foreign: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "ts-morph",
+      export: "Project",
+    };
+
+    // A local triplet has a completely different encoding path (spec/impl/proof),
+    // so it will always differ. This test documents that intent explicitly.
+    const spec = minimalSpecYak({ name: "ts-morph-Project" });
+    const artifactBytes = new TextEncoder().encode("// tests\n");
+    const local: BlockTriplet = {
+      spec,
+      implSource: "export function f() {}",
+      manifest: { artifacts: [{ kind: "property_tests", path: "t.ts" }] },
+      artifacts: new Map([["t.ts", artifactBytes]]),
+    };
+
+    expect(blockMerkleRoot(foreign)).not.toBe(blockMerkleRoot(local));
+  });
+});
+
+// Requirement 3: Type guards narrow correctly; union is exhaustive.
+describe("foreign/local type guards (Requirement 3)", () => {
+  it("isForeignTriplet narrows ForeignTripletFields to true", () => {
+    const t: BlockTriplet = minimalForeignTriplet();
+    expect(isForeignTriplet(t)).toBe(true);
+    if (isForeignTriplet(t)) {
+      // TypeScript narrowing: these fields must be accessible without error.
+      expect(t.pkg).toBe("node:fs");
+      expect(t.export).toBe("readFileSync");
+      expect(t.kind).toBe("foreign");
+    }
+  });
+
+  it("isLocalTriplet narrows LocalTriplet to true when kind is absent", () => {
+    const spec = minimalSpecYak();
+    const artifactBytes = new TextEncoder().encode("// tests\n");
+    const t: BlockTriplet = {
+      spec,
+      implSource: "export function f() {}",
+      manifest: { artifacts: [{ kind: "property_tests", path: "t.ts" }] },
+      artifacts: new Map([["t.ts", artifactBytes]]),
+    };
+    expect(isLocalTriplet(t)).toBe(true);
+    expect(isForeignTriplet(t)).toBe(false);
+  });
+
+  it("isLocalTriplet narrows LocalTriplet to true when kind is explicitly 'local'", () => {
+    const spec = minimalSpecYak();
+    const artifactBytes = new TextEncoder().encode("// tests\n");
+    const t: BlockTriplet = {
+      kind: "local",
+      spec,
+      implSource: "export function f() {}",
+      manifest: { artifacts: [{ kind: "property_tests", path: "t.ts" }] },
+      artifacts: new Map([["t.ts", artifactBytes]]),
+    };
+    expect(isLocalTriplet(t)).toBe(true);
+    expect(isForeignTriplet(t)).toBe(false);
+  });
+
+  it("isForeignTriplet returns false for local triplet", () => {
+    const spec = minimalSpecYak();
+    const artifactBytes = new TextEncoder().encode("// tests\n");
+    const t: BlockTriplet = {
+      spec,
+      implSource: "export function f() {}",
+      manifest: { artifacts: [{ kind: "property_tests", path: "t.ts" }] },
+      artifacts: new Map([["t.ts", artifactBytes]]),
+    };
+    expect(isForeignTriplet(t)).toBe(false);
+  });
+
+  it("union exhaustiveness: every BlockTriplet is either local or foreign (never both)", () => {
+    const foreign: BlockTriplet = minimalForeignTriplet();
+    const local: BlockTriplet = {
+      spec: minimalSpecYak(),
+      implSource: "export function f() {}",
+      manifest: { artifacts: [{ kind: "property_tests", path: "t.ts" }] },
+      artifacts: new Map([["t.ts", new TextEncoder().encode("// tests\n")]]),
+    };
+
+    // Exhaustive: exactly one guard is true for each triplet.
+    expect(isLocalTriplet(foreign)).toBe(false);
+    expect(isForeignTriplet(foreign)).toBe(true);
+    expect(isLocalTriplet(local)).toBe(true);
+    expect(isForeignTriplet(local)).toBe(false);
+
+    // Compile-time exhaustiveness check via never — handled in production code.
+    // Here we verify runtime exhaustion: the two guards partition the union.
+    for (const t of [foreign, local]) {
+      const isOneOrOther = isLocalTriplet(t) !== isForeignTriplet(t);
+      expect(isOneOrOther).toBe(true);
+    }
+  });
+});
+
+// Requirement 4: blockMerkleRoot() on a foreign triplet keyed by (pkg, export, dtsHash?)
+// — equal-but-impl-source-differs produces the SAME root (package-keyed identity).
+// — differing (pkg, export, dtsHash?) produces different roots.
+describe("foreign triplet — package-keyed identity (Requirement 4)", () => {
+  it("equal (pkg, export) without dtsHash produces the same root regardless of caller context", () => {
+    // Two independently constructed foreign triplets with identical (pkg, export)
+    // must produce the same root — foreign identity is package-keyed, not call-site-keyed.
+    const t1: ForeignTripletFields = { kind: "foreign", pkg: "sqlite-vec", export: "load" };
+    const t2: ForeignTripletFields = { kind: "foreign", pkg: "sqlite-vec", export: "load" };
+    expect(blockMerkleRoot(t1)).toBe(blockMerkleRoot(t2));
+  });
+
+  it("equal (pkg, export, dtsHash) produces the same root", () => {
+    const t1: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "deadbeef" };
+    const t2: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "deadbeef" };
+    expect(blockMerkleRoot(t1)).toBe(blockMerkleRoot(t2));
+  });
+
+  it("different pkg produces different root", () => {
+    const t1: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "readFileSync" };
+    const t2: ForeignTripletFields = { kind: "foreign", pkg: "node:path", export: "readFileSync" };
+    expect(blockMerkleRoot(t1)).not.toBe(blockMerkleRoot(t2));
+  });
+
+  it("different export produces different root", () => {
+    const t1: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "readFileSync" };
+    const t2: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "writeFileSync" };
+    expect(blockMerkleRoot(t1)).not.toBe(blockMerkleRoot(t2));
+  });
+
+  it("same (pkg, export) with different dtsHash produces different root", () => {
+    const t1: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "hash-v1" };
+    const t2: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "hash-v2" };
+    expect(blockMerkleRoot(t1)).not.toBe(blockMerkleRoot(t2));
+  });
+
+  it("absent dtsHash and present dtsHash produce different roots", () => {
+    const t1: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project" };
+    const t2: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "somehash" };
+    expect(blockMerkleRoot(t1)).not.toBe(blockMerkleRoot(t2));
+  });
+
+  it("foreign identity is impl-source-agnostic: same (pkg, export) always matches regardless of calling context", () => {
+    // Simulate two shave runs that encounter the same foreign dep in different source files.
+    // The foreign triplet carries no impl source — the root is always the same.
+    const fromFileA: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "readFileSync" };
+    const fromFileB: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "readFileSync" };
+    expect(blockMerkleRoot(fromFileA)).toBe(blockMerkleRoot(fromFileB));
   });
 });
