@@ -42,7 +42,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { Registry } from "@yakcc/registry";
+import type { BootstrapManifestEntry, Registry, RegistryOptions } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
 import { shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
@@ -55,6 +55,7 @@ const BOOTSTRAP_PARSE_OPTIONS = {
   registry: { type: "string" as const },
   report: { type: "string" as const },
   manifest: { type: "string" as const },
+  verify: { type: "boolean" as const, default: false },
   help: { type: "boolean" as const, short: "h", default: false },
 } as const;
 
@@ -141,6 +142,31 @@ function findRepoRoot(startDir: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Bootstrap-mode embedding provider — deterministic zeros, no network access
+//
+// @decision DEC-V2-BOOTSTRAP-EMBEDDING-001
+// @title Bootstrap uses a zero-vector EmbeddingProvider to avoid network deps
+// @status accepted
+// @rationale exportManifest() does not read the embeddings table — the manifest
+//   only contains content-addressed fields (blockMerkleRoot, specHash, etc).
+//   Using the real local embedding provider (Xenova/all-MiniLM-L6-v2) would
+//   require a huggingface.co download that is unavailable in sandboxed CI and
+//   offline environments, and would add non-determinism risk if the model
+//   version ever changes. A deterministic zero vector is correct for bootstrap:
+//   it satisfies the registry's embedding column constraint, cannot affect the
+//   content-address invariant, and makes bootstrap fully reproducible everywhere.
+// ---------------------------------------------------------------------------
+
+const BOOTSTRAP_EMBEDDING_OPTS: Pick<RegistryOptions, "embeddings"> = {
+  embeddings: {
+    dimension: 384,
+    modelId: "bootstrap/null-zero",
+    // biome-ignore lint/suspicious/useAwait: interface requires async
+    embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Per-file outcome types
 // ---------------------------------------------------------------------------
 
@@ -159,6 +185,182 @@ interface FileOutcomeFailure {
 }
 
 type FileOutcome = FileOutcomeSuccess | FileOutcomeFailure;
+
+// ---------------------------------------------------------------------------
+// VerifyDiff — structured diff result for --verify mode
+// ---------------------------------------------------------------------------
+
+interface VerifyDiff {
+  readonly addedRoots: ReadonlyArray<{ merkleRoot: string; sourcePath: string | null }>;
+  readonly removedRoots: ReadonlyArray<{ merkleRoot: string }>;
+}
+
+// ---------------------------------------------------------------------------
+// collectSourceFiles() — shared file-walk used by both modes
+// ---------------------------------------------------------------------------
+
+function collectSourceFiles(repoRoot: string): string[] {
+  const rawFiles: string[] = [];
+  for (const topDir of ["packages", "examples"]) {
+    const topAbs = join(repoRoot, topDir);
+    if (!existsSync(topAbs)) continue;
+
+    const pkgDirs = readdirSync(topAbs, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => join(topAbs, e.name, "src"));
+
+    for (const srcDir of pkgDirs) {
+      walkTs(srcDir, rawFiles);
+    }
+  }
+  return rawFiles.filter((f) => !shouldSkip(f)).sort();
+}
+
+// ---------------------------------------------------------------------------
+// runVerify() — --verify mode implementation
+//
+// @decision DEC-V2-BOOTSTRAP-VERIFY-001
+// @title verify mode uses :memory: registry and byte-identity gate
+// @status accepted
+// @rationale The verify check's load-bearing invariant is byte-identical JSON
+//   serialization. Using :memory: isolates the run from any previous on-disk
+//   state. The comparison is string-level (not object-level) so whitespace and
+//   key ordering differences surface as failures — the same discipline that
+//   makes content-addressing non-negotiable.
+// ---------------------------------------------------------------------------
+
+async function runVerify(
+  committedManifestPath: string,
+  repoRoot: string,
+  logger: Logger,
+): Promise<number> {
+  // Read committed manifest.
+  if (!existsSync(committedManifestPath)) {
+    logger.error(
+      `error: committed manifest not found at ${committedManifestPath}. Run 'yakcc bootstrap' first to generate it.`,
+    );
+    return 1;
+  }
+  const committedText = readFileSync(committedManifestPath, "utf-8");
+
+  // Collect source files (same walk as normal mode).
+  const sourceFiles = collectSourceFiles(repoRoot);
+  if (sourceFiles.length === 0) {
+    logger.error(
+      `error: no source files found under ${repoRoot}. Expected packages/*/src/**/*.ts or examples/*/src/**/*.ts.`,
+    );
+    return 1;
+  }
+
+  // Open a fresh :memory: registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
+  let registry: Registry;
+  try {
+    registry = await openRegistry(":memory:", BOOTSTRAP_EMBEDDING_OPTS);
+  } catch (err) {
+    logger.error(`error: failed to open in-memory registry: ${(err as Error).message}`);
+    return 1;
+  }
+
+  const shaveRegistry = {
+    selectBlocks: (specHash: Parameters<typeof registry.selectBlocks>[0]) =>
+      registry.selectBlocks(specHash),
+    getBlock: async (merkleRoot: Parameters<typeof registry.getBlock>[0]) => {
+      const row = await registry.getBlock(merkleRoot);
+      return row ?? undefined;
+    },
+    findByCanonicalAstHash: registry.findByCanonicalAstHash?.bind(registry),
+    storeBlock: registry.storeBlock?.bind(registry),
+  };
+
+  // Shave all files, tracking which source path produced each merkle root.
+  const rootToSource = new Map<string, string>();
+
+  for (const absPath of sourceFiles) {
+    const relPath = relative(repoRoot, absPath);
+    try {
+      const result = await shaveImpl(absPath, shaveRegistry, {
+        offline: true,
+        intentStrategy: "static",
+      });
+      for (const atom of result.atoms) {
+        if (atom.merkleRoot !== undefined) {
+          rootToSource.set(atom.merkleRoot, relPath);
+        }
+      }
+    } catch {
+      // Shave errors are recorded in the diff (the missing roots will surface
+      // as "removed" entries relative to the committed manifest). Do not abort.
+    }
+  }
+
+  // Export the deterministic manifest from :memory: registry.
+  let freshManifest: readonly BootstrapManifestEntry[];
+  try {
+    freshManifest = await registry.exportManifest();
+  } catch (err) {
+    logger.error(`error: failed to export fresh manifest: ${(err as Error).message}`);
+    await registry.close();
+    return 1;
+  }
+  await registry.close();
+
+  // Serialize fresh manifest the same way as the committed artifact.
+  const freshText = `${JSON.stringify(freshManifest, null, 2)}\n`;
+
+  // Byte-identity gate.
+  if (freshText === committedText) {
+    const entryCount = freshManifest.length;
+    logger.log(`bootstrap --verify: OK (${entryCount} entries, byte-identical)`);
+    return 0;
+  }
+
+  // Compute structured diff.
+  const committedManifest = JSON.parse(committedText) as BootstrapManifestEntry[];
+  const committedRoots = new Set(committedManifest.map((e) => e.blockMerkleRoot));
+  const freshRoots = new Set(freshManifest.map((e) => e.blockMerkleRoot));
+
+  const diff: VerifyDiff = {
+    addedRoots: [...freshRoots]
+      .filter((r) => !committedRoots.has(r))
+      .map((r) => ({ merkleRoot: r, sourcePath: rootToSource.get(r) ?? null })),
+    removedRoots: [...committedRoots]
+      .filter((r) => !freshRoots.has(r))
+      .map((r) => ({ merkleRoot: r })),
+  };
+
+  logger.error(`bootstrap --verify: FAILED`);
+  logger.error(
+    `  committed: ${committedManifestPath} (${committedManifest.length} entries)`,
+  );
+  logger.error(`  fresh:     ${freshManifest.length} entries`);
+
+  if (diff.removedRoots.length > 0) {
+    logger.error(`\nRemoved merkle roots (${diff.removedRoots.length} — in committed, not in fresh):`);
+    for (const { merkleRoot } of diff.removedRoots) {
+      logger.error(`  - ${merkleRoot}`);
+    }
+  }
+
+  if (diff.addedRoots.length > 0) {
+    // Group by source path for readability.
+    const bySource = new Map<string, string[]>();
+    for (const { merkleRoot, sourcePath } of diff.addedRoots) {
+      const key = sourcePath ?? "(unknown source)";
+      const list = bySource.get(key) ?? [];
+      list.push(merkleRoot);
+      bySource.set(key, list);
+    }
+    logger.error(`\nAdded merkle roots (${diff.addedRoots.length} — in fresh, not in committed):`);
+    for (const [sourcePath, roots] of bySource) {
+      logger.error(`  ${sourcePath}:`);
+      for (const root of roots) {
+        logger.error(`    + ${root}`);
+      }
+    }
+  }
+
+  return 1;
+}
 
 // ---------------------------------------------------------------------------
 // bootstrap() — public command handler
@@ -197,44 +399,38 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   if (parsed.values.help) {
     logger.log(
       [
-        "Usage: yakcc bootstrap [--registry <path>] [--manifest <path>] [--report <path>]",
+        "Usage: yakcc bootstrap [--registry <path>] [--manifest <path>] [--report <path>] [--verify]",
         "",
         "  Walk packages/*/src/**/*.ts and examples/*/src/**/*.ts, shave each file",
         "  offline, and dump the deterministic block manifest.",
         "",
         "  --registry <path>   Registry SQLite path (default: bootstrap/yakcc.registry.sqlite)",
-        "  --manifest <path>   Output manifest path (default: bootstrap/expected-roots.json)",
+        "  --manifest <path>   Manifest path: output in normal mode, committed reference in --verify",
+        "                      (default: bootstrap/expected-roots.json)",
         "  --report   <path>   Per-file outcome report (default: bootstrap/report.json)",
+        "  --verify            Shave into :memory: registry and byte-compare against committed manifest.",
+        "                      Exit 0 on byte-identical match; exit 1 with structured diff on mismatch.",
         "  -h, --help          Print this help and exit",
       ].join("\n"),
     );
     return 0;
   }
 
-  const registryPath = resolve(parsed.values.registry ?? DEFAULT_REGISTRY_PATH);
   const manifestPath = resolve(parsed.values.manifest ?? DEFAULT_MANIFEST_PATH);
-  const reportPath = resolve(parsed.values.report ?? DEFAULT_REPORT_PATH);
 
   // Resolve the repo root.
   const repoRoot = findRepoRoot(process.cwd());
 
-  // Collect source files from packages/*/src/ and examples/*/src/.
-  const rawFiles: string[] = [];
-  for (const topDir of ["packages", "examples"]) {
-    const topAbs = join(repoRoot, topDir);
-    if (!existsSync(topAbs)) continue;
-
-    const pkgDirs = readdirSync(topAbs, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => join(topAbs, e.name, "src"));
-
-    for (const srcDir of pkgDirs) {
-      walkTs(srcDir, rawFiles);
-    }
+  // --verify mode: delegate to runVerify() which uses :memory: and byte-compares.
+  if (parsed.values.verify) {
+    return runVerify(manifestPath, repoRoot, logger);
   }
 
-  // Filter out test/generated files and sort lexicographically (DEC-V2-BOOT-FILE-ORDER-001).
-  const sourceFiles = rawFiles.filter((f) => !shouldSkip(f)).sort();
+  const registryPath = resolve(parsed.values.registry ?? DEFAULT_REGISTRY_PATH);
+  const reportPath = resolve(parsed.values.report ?? DEFAULT_REPORT_PATH);
+
+  // Collect source files (lexicographic, DEC-V2-BOOT-FILE-ORDER-001).
+  const sourceFiles = collectSourceFiles(repoRoot);
 
   if (sourceFiles.length === 0) {
     logger.error(
@@ -248,10 +444,10 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     mkdirSync(dirname(outputPath), { recursive: true });
   }
 
-  // Open registry.
+  // Open registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, BOOTSTRAP_EMBEDDING_OPTS);
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${(err as Error).message}`);
     return 1;
