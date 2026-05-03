@@ -35,6 +35,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -321,6 +322,7 @@ export function dbl(a: number): number { return a * 2; }
 // ---------------------------------------------------------------------------
 // Suite 5: determinism — two runs produce byte-identical manifests
 // ---------------------------------------------------------------------------
+// (Suite 6 and 7 below cover --verify mode)
 
 describe("bootstrap is deterministic across runs", () => {
   it("two runs on the same fixture produce byte-identical manifests", async () => {
@@ -383,4 +385,115 @@ describe("bootstrap is deterministic across runs", () => {
       process.chdir(origCwd);
     }
   }, 120_000);
+});
+
+// ---------------------------------------------------------------------------
+// Suite 6: --verify exits 0 when fresh manifest matches committed manifest
+// ---------------------------------------------------------------------------
+
+describe("bootstrap --verify exits 0 on byte-identical manifest", () => {
+  it("generates a committed manifest, then --verify exits 0 (byte-identity gate)", async () => {
+    // This test exercises the core verify invariant: two independent bootstrap runs
+    // over the same source tree produce byte-identical manifests.
+    // We do NOT assert that code1 === 0 because the environment may block tokenizer
+    // downloads (pre-existing sandbox restriction); the manifest is written regardless.
+    // The determinism contract holds whether 0 or N files succeed.
+    const projDir = makeFixtureProject(suiteDir, "proj-verify-ok", [
+      {
+        relativePath: "packages/foo/src/a.ts",
+        content: VALID_TS_SOURCE,
+      },
+    ]);
+
+    const registryPath = join(suiteDir, "vok-r.sqlite");
+    const committedManifestPath = resolve(join(suiteDir, "vok-committed.json"));
+    const reportPath = join(suiteDir, "vok-rep.json");
+
+    const origCwd = process.cwd();
+    process.chdir(projDir);
+    try {
+      // Step 1: normal bootstrap run to produce the "committed" manifest.
+      // May exit 1 if shave fails (e.g., offline tokenizer restriction); the
+      // manifest is still written and is the ground-truth for this verify run.
+      const logger1 = new CollectingLogger();
+      await bootstrap(
+        ["--registry", registryPath, "--manifest", committedManifestPath, "--report", reportPath],
+        logger1,
+      );
+      expect(existsSync(committedManifestPath)).toBe(true);
+
+      // Step 2: --verify against the committed manifest.
+      // Both runs use the same offline pipeline over the same source files, so they
+      // produce byte-identical manifests — exit 0 regardless of file-level success.
+      const logger2 = new CollectingLogger();
+      const code2 = await bootstrap(
+        ["--verify", "--manifest", committedManifestPath],
+        logger2,
+      );
+      expect(code2).toBe(0);
+      const out = logger2.logLines.join("\n");
+      expect(out).toContain("OK");
+    } finally {
+      process.chdir(origCwd);
+    }
+  }, 180_000);
+});
+
+// ---------------------------------------------------------------------------
+// Suite 7: --verify exits 1 with structured diff on mismatch
+// ---------------------------------------------------------------------------
+
+describe("bootstrap --verify exits 1 with structured diff on mismatch", () => {
+  it("exits 1 and names removed/added roots when committed manifest is stale", async () => {
+    const projDir = makeFixtureProject(suiteDir, "proj-verify-fail", [
+      {
+        relativePath: "packages/foo/src/a.ts",
+        content: VALID_TS_SOURCE,
+      },
+    ]);
+
+    // Hard-code a stale "committed" manifest with a fake root that won't
+    // match the fresh shave.  The fresh shave will produce real roots, so
+    // the stale root becomes a "removed" entry and the fresh roots become
+    // "added" entries.
+    const staleRoot = "0".repeat(64);
+    const staleManifest = [
+      {
+        blockMerkleRoot: staleRoot,
+        specHash: "a".repeat(64),
+        canonicalAstHash: "b".repeat(64),
+        parentBlockRoot: null,
+        implSourceHash: "c".repeat(64),
+        manifestJsonHash: "d".repeat(64),
+      },
+    ];
+    const staleManifestPath = resolve(join(suiteDir, "stale-committed.json"));
+    writeFileSync(staleManifestPath, `${JSON.stringify(staleManifest, null, 2)}\n`, "utf-8");
+
+    const origCwd = process.cwd();
+    process.chdir(projDir);
+    let code: number;
+    try {
+      const logger = new CollectingLogger();
+      code = await bootstrap(["--verify", "--manifest", staleManifestPath], logger);
+      expect(code).toBe(1);
+
+      const errors = logger.errLines.join("\n");
+      // Must name the failure and the stale root as "removed".
+      expect(errors).toContain("FAILED");
+      expect(errors).toContain(staleRoot);
+    } finally {
+      process.chdir(origCwd);
+    }
+  }, 90_000);
+
+  it("exits 1 when committed manifest file is missing", async () => {
+    const logger = new CollectingLogger();
+    const code = await bootstrap(
+      ["--verify", "--manifest", join(suiteDir, "nonexistent-committed.json")],
+      logger,
+    );
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("committed manifest not found");
+  }, 10_000);
 });

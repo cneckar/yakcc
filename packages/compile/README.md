@@ -6,10 +6,11 @@ The backend interface and whole-program assembler for Yakcc.
 
 - **`Backend`** — the interface a code-emission backend must implement. A
   `Backend` receives a sequence of `Implementation` records (one per basic
-  block) and emits a single source artifact. The TypeScript backend (`TsBackend`)
-  is the production backend and the only target in v0/v1.
-- **`tsBackend()`** — factory for the TypeScript emission backend. Live in
-  `src/ts-backend.ts`. `yakcc compile <entry> --target ts` uses this backend.
+  block) and emits a single source artifact.
+- **`tsBackend()`** — factory for the TypeScript emission backend. `yakcc compile <entry> --target ts` uses this backend.
+- **`wasmBackend()`** — factory for the WASM binary emission backend (shipped WI-V1W2-WASM-01 through WI-V1W2-WASM-04). Emits a `Uint8Array` WAT-compiled binary for numeric substrates (i32/i64/f64). `compileToWasm(assembly)` is the convenience entry point.
+- **`WasmTrap` / `WasmTrapKind`** — discriminated union of 7 trap kinds (unreachable, div-by-zero, integer-overflow, out-of-bounds, stack-overflow, bad-alignment, panic) mirroring `ResolutionErrorKind` symmetry. Thrown by the host runtime on WASM trap conditions.
+- **`YakccHost` / `createHost()` / `instantiateAndRun()`** — the in-process WASM host runtime. `createHost()` returns a `YakccHost` implementing bump-allocator memory management and the 4 required host imports (`host_log`, `host_alloc`, `host_free`, `host_panic`). `instantiateAndRun(wasmBytes, host, fnName, args)` instantiates a WASM module against the host and invokes the named export. The host contract is documented in `WASM_HOST_CONTRACT.md` at repo root.
 - **`assemble(registry, entryContractId, backend)`** — the whole-program
   assembler. Starting from `entryContractId`, it traverses the registry,
   collects all referenced blocks in dependency order (cycle detection included),
@@ -65,10 +66,8 @@ change the selected blocks, which changes the artifact and manifest.
 
 ## What is not yet wired
 
-- **No WASM backend** — planned as WI-027 in `~/.claude/plans/v1-vision-wave-2.md`.
-  The TypeScript backend covers all current use cases.
-- **No native binary backend** — deferred; WASM serves the portability goal
-  without adding a native compilation dependency.
+- **WASM string/mixed substrates** — the WASM backend covers numeric (i32/i64/f64) substrates. String-handling (linear-memory string view + `host_alloc`/`host_free`) and record/array type-lowering are deferred to a follow-on wave (WI-V1W2-WASM-02). The parity demo marks these substrates as `todo` rather than skipping silently.
+- **No native binary backend** — deferred; WASM serves the portability goal without adding a native compilation dependency.
 
 ## License
 

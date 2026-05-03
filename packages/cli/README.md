@@ -2,7 +2,7 @@
 
 The `yakcc` command-line interface.
 
-**Status: v0 substrate operational; v1 wave-1 federation work in progress.**
+**Status: v1 fully closed. v1 wave-2 closed (live IDE hooks + WASM backend). v2 bootstrap in progress.**
 
 ## Commands
 
@@ -18,7 +18,10 @@ The `yakcc` command-line interface.
 | `yakcc federation serve --registry <db> [--port n] [--host h]` | Start a read-only HTTP registry server that exposes the F1 federation wire protocol (WI-020). Blocks until SIGINT/SIGTERM. |
 | `yakcc federation mirror --remote <url> --registry <db>` | Mirror all blocks from a remote registry peer into the local registry. Prints a `MirrorReport` as JSON on completion. Exits 0 even when some blocks fail (recoverable); exits 1 on `SchemaVersionMismatchError`. |
 | `yakcc federation pull --remote <url> --root <merkleRoot> [--registry <db>]` | Pull a single block by its `BlockMerkleRoot` from a remote peer. Without `--registry`: diagnostic-only (prints root + specHash, no persistence). With `--registry <db>`: pulls and persists the block idempotently via `storeBlock` (WI-030). |
+| `yakcc bootstrap [--registry p] [--manifest p] [--report p]` | Walk all `packages/*/src` and `examples/*/src` TypeScript files, shave each into a `:memory:` registry, and write `bootstrap/expected-roots.json` (sorted deterministic manifest). Add `--verify` to byte-compare against the committed manifest; exits 1 with a structured diff on mismatch. |
 | `yakcc hooks claude-code install` | Install the Yakcc Claude Code hook into the current Claude Code project settings. |
+| `yakcc hooks cursor install` | Install the Yakcc Cursor hook marker file. |
+| `yakcc hooks codex install` | Install the Yakcc Codex CLI hook marker file. |
 
 ## Quickstart
 

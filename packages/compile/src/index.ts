@@ -21,6 +21,10 @@ export { tsBackend } from "./ts-backend.js";
 export type { WasmBackend } from "./wasm-backend.js";
 export { wasmBackend, compileToWasm } from "./wasm-backend.js";
 
+// WASM host runtime (WI-V1W2-WASM-03 — DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001)
+export type { WasmTrapKind, YakccHost, CreateHostOptions } from "./wasm-host.js";
+export { WasmTrap, createHost, instantiateAndRun } from "./wasm-host.js";
+
 // Artifact type and assembly entry point
 export type { Artifact, AssembleOptions } from "./assemble.js";
 export { assemble } from "./assemble.js";
