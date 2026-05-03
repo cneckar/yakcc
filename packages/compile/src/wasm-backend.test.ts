@@ -26,6 +26,7 @@ import type { SpecYak } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
 import { compileToWasm, wasmBackend } from "./wasm-backend.js";
+import { createHost } from "./wasm-host.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers — mirrors ts-backend.test.ts pattern
@@ -133,23 +134,37 @@ describe("compileToWasm — valid module", () => {
 // ---------------------------------------------------------------------------
 
 describe("compileToWasm — function export (compound-interaction)", () => {
-  it("instantiated module exports an 'add' function", async () => {
+  // WI-V1W2-WASM-03: module now requires yakcc_host import object (memory + 4 host fns).
+  // Export is "__wasm_export_add" (renamed per host contract §4).
+  it("instantiated module exports a '__wasm_export_add' function", async () => {
     const bytes = await compileToWasm(makeAddResolution());
-    const { instance } = await WebAssembly.instantiate(bytes);
-    expect(typeof instance.exports["add"]).toBe("function");
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      bytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    expect(typeof instance.exports["__wasm_export_add"]).toBe("function");
   });
 
   it("add(2, 3) returns 5", async () => {
     const bytes = await compileToWasm(makeAddResolution());
-    const { instance } = await WebAssembly.instantiate(bytes);
-    const add = instance.exports["add"] as (a: number, b: number) => number;
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      bytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
     expect(add(2, 3)).toBe(5);
   });
 
   it("add(0, 0) returns 0", async () => {
     const bytes = await compileToWasm(makeAddResolution());
-    const { instance } = await WebAssembly.instantiate(bytes);
-    const add = instance.exports["add"] as (a: number, b: number) => number;
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      bytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
     expect(add(0, 0)).toBe(0);
   });
 
@@ -157,15 +172,23 @@ describe("compileToWasm — function export (compound-interaction)", () => {
     // WASM i32.add treats the bit pattern as signed two's-complement;
     // -1 + -1 = -2 exactly within 32-bit range.
     const bytes = await compileToWasm(makeAddResolution());
-    const { instance } = await WebAssembly.instantiate(bytes);
-    const add = instance.exports["add"] as (a: number, b: number) => number;
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      bytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
     expect(add(-1, -1)).toBe(-2);
   });
 
   it("add(100, 200) returns 300", async () => {
     const bytes = await compileToWasm(makeAddResolution());
-    const { instance } = await WebAssembly.instantiate(bytes);
-    const add = instance.exports["add"] as (a: number, b: number) => number;
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      bytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
     expect(add(100, 200)).toBe(300);
   });
 });
@@ -175,13 +198,14 @@ describe("compileToWasm — function export (compound-interaction)", () => {
 // ---------------------------------------------------------------------------
 
 describe("compileToWasm — module size", () => {
-  it("emitted .wasm binary is between 20 and 100 bytes (minimal substrate sanity check)", async () => {
+  it("emitted .wasm binary is between 200 and 400 bytes (WI-V1W2-WASM-03 substrate sanity check)", async () => {
     const bytes = await compileToWasm(makeAddResolution());
-    // The minimal add module encodes to ~38 bytes.
-    // Lower bound: 8 (magic+version) + 4 sections × ~3 bytes each = ~20
-    // Upper bound: 100 provides generous room while catching accidental bloat.
-    expect(bytes.length).toBeGreaterThanOrEqual(20);
-    expect(bytes.length).toBeLessThanOrEqual(100);
+    // WI-V1W2-WASM-03 extended the module from ~38 bytes (WI-01 scaffold, no imports)
+    // to ~291 bytes (import section for yakcc_host + 3 exported functions with full names).
+    // Lower bound: 200 — must have magic+version + all 6 sections.
+    // Upper bound: 400 — generous headroom; catches accidental section duplication.
+    expect(bytes.length).toBeGreaterThanOrEqual(200);
+    expect(bytes.length).toBeLessThanOrEqual(400);
   });
 });
 
@@ -205,11 +229,15 @@ describe("wasmBackend()", () => {
     expect(bytes[3]).toBe(0x6d);
   });
 
-  it("backend.emit() produces an instantiable module (add(7, 8) === 15)", async () => {
+  it("backend.emit() produces an instantiable module (__wasm_export_add(7, 8) === 15)", async () => {
     const backend = wasmBackend();
     const bytes = await backend.emit(makeAddResolution());
-    const { instance } = await WebAssembly.instantiate(bytes);
-    const add = instance.exports["add"] as (a: number, b: number) => number;
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      bytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
     expect(add(7, 8)).toBe(15);
   });
 });
