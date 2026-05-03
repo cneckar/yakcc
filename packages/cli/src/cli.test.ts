@@ -49,12 +49,20 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
 import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import ts from "typescript";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { compile } from "./commands/compile.js";
+import { search } from "./commands/search.js";
+import { seed } from "./commands/seed.js";
 import { CollectingLogger, runCli } from "./index.js";
+
+// Shared offline embedding provider — prevents any test from falling back to
+// createLocalEmbeddingProvider() (network-dependent, fails in sandbox).
+const offlineEmbeddings = createOfflineEmbeddingProvider();
 
 // ---------------------------------------------------------------------------
 // Suite lifecycle — shared temp directories, seeded once
@@ -83,15 +91,16 @@ beforeAll(async () => {
   }
 
   // Seed it once — all subsequent command tests reuse this seeded state.
+  // Inject the offline embedding provider so the seed command never hits huggingface.co.
   const seedLogger = new CollectingLogger();
-  const seedCode = await runCli(["seed", "--registry", registryPath], seedLogger);
+  const seedCode = await seed(["--registry", registryPath], seedLogger, { embeddings: offlineEmbeddings });
   if (seedCode !== 0) {
     throw new Error(`seed failed: ${seedLogger.errLines.join("\n")}`);
   }
 
   // Discover the list-of-ints BlockMerkleRoot from the seed corpus via a :memory: registry.
   // We open a separate handle here only for discovery; the CLI tests use registryPath.
-  const reg = await openRegistry(":memory:");
+  const reg = await openRegistry(":memory:", { embeddings: offlineEmbeddings });
   const seedResult = await seedRegistry(reg);
   let found: BlockMerkleRoot | null = null;
   let foundSpec: SpecYak | null = null;
@@ -186,14 +195,14 @@ describe("seed", () => {
   it("ingested all 20 corpus blocks during beforeAll setup", async () => {
     // Re-run seed to verify idempotency and output format.
     const logger = new CollectingLogger();
-    const code = await runCli(["seed", "--registry", registryPath], logger);
+    const code = await seed(["--registry", registryPath], logger, { embeddings: offlineEmbeddings });
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.includes("seeded 20 contracts"))).toBe(true);
   });
 
   it("is idempotent — repeated seed exits 0 with consistent count", async () => {
     const logger = new CollectingLogger();
-    const code = await runCli(["seed", "--registry", registryPath], logger);
+    const code = await seed(["--registry", registryPath], logger, { embeddings: offlineEmbeddings });
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.includes("seeded"))).toBe(true);
   });
@@ -279,7 +288,7 @@ describe("search", () => {
     writeFileSync(searchSpecPath, JSON.stringify(listOfIntsSpec), "utf-8");
 
     const logger = new CollectingLogger();
-    const code = await runCli(["search", searchSpecPath, "--registry", registryPath], logger);
+    const code = await search([searchSpecPath, "--registry", registryPath], logger, { embeddings: offlineEmbeddings });
     expect(code).toBe(0);
     const resultLines = logger.logLines.filter((l) => l.includes("score="));
     expect(resultLines.length).toBeGreaterThanOrEqual(1);
@@ -294,14 +303,14 @@ describe("search", () => {
 
   it("exits 0 with no results for an unmatchable query", async () => {
     const logger = new CollectingLogger();
-    const code = await runCli(
+    const code = await search(
       [
-        "search",
         "zzz extremely unlikely gibberish xyzzy quantum flux capacitor",
         "--registry",
         registryPath,
       ],
       logger,
+      { embeddings: offlineEmbeddings },
     );
     expect(code).toBe(0);
   });
@@ -331,9 +340,10 @@ describe("compile", () => {
     // A syntactically valid but absent BlockMerkleRoot (64 hex chars).
     const fakeRoot = "a".repeat(64);
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["compile", fakeRoot, "--registry", emptyRegPath, "--out", join(suiteDir, "unused-out2")],
+    const code = await compile(
+      [fakeRoot, "--registry", emptyRegPath, "--out", join(suiteDir, "unused-out2")],
       logger,
+      { embeddings: offlineEmbeddings },
     );
     expect(code).toBe(1);
     expect(logger.errLines.some((l) => l.includes("error"))).toBe(true);
@@ -342,9 +352,10 @@ describe("compile", () => {
   it("compiles list-of-ints: exits 0, writes module.ts and manifest.json", async () => {
     const outDir = join(suiteDir, "compile-list-of-ints");
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir],
+    const code = await compile(
+      [listOfIntsRoot, "--registry", registryPath, "--out", outDir],
       logger,
+      { embeddings: offlineEmbeddings },
     );
     expect(code).toBe(0);
     expect(existsSync(join(outDir, "module.ts"))).toBe(true);
@@ -354,9 +365,10 @@ describe("compile", () => {
   it("manifest.json has at least 7 entries (transitive closure of list-of-ints)", async () => {
     const outDir = join(suiteDir, "compile-manifest-check");
     const logger = new CollectingLogger();
-    await runCli(
-      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir],
+    await compile(
+      [listOfIntsRoot, "--registry", registryPath, "--out", outDir],
       logger,
+      { embeddings: offlineEmbeddings },
     );
     const manifest = JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf-8")) as {
       entries: unknown[];
@@ -367,9 +379,10 @@ describe("compile", () => {
   it("end-to-end: assembled module exports listOfInts and parses [1,2,3] → [1,2,3]", async () => {
     const outDir = join(suiteDir, "compile-e2e");
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir],
+    const code = await compile(
+      [listOfIntsRoot, "--registry", registryPath, "--out", outDir],
       logger,
+      { embeddings: offlineEmbeddings },
     );
     expect(code).toBe(0);
 
@@ -526,16 +539,18 @@ describe("compile manifest determinism", () => {
     const outDir2 = join(suiteDir, "manifest-det-run2");
 
     const logger1 = new CollectingLogger();
-    const code1 = await runCli(
-      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir1],
+    const code1 = await compile(
+      [listOfIntsRoot, "--registry", registryPath, "--out", outDir1],
       logger1,
+      { embeddings: offlineEmbeddings },
     );
     expect(code1).toBe(0);
 
     const logger2 = new CollectingLogger();
-    const code2 = await runCli(
-      ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDir2],
+    const code2 = await compile(
+      [listOfIntsRoot, "--registry", registryPath, "--out", outDir2],
       logger2,
+      { embeddings: offlineEmbeddings },
     );
     expect(code2).toBe(0);
 
@@ -557,9 +572,10 @@ describe("compile manifest determinism", () => {
 
       const outDirDirect = join(suiteDir, "manifest-direct");
       const loggerDirect = new CollectingLogger();
-      const codeDirect = await runCli(
-        ["compile", listOfIntsRoot, "--registry", registryPath, "--out", outDirDirect],
+      const codeDirect = await compile(
+        [listOfIntsRoot, "--registry", registryPath, "--out", outDirDirect],
         loggerDirect,
+        { embeddings: offlineEmbeddings },
       );
       expect(codeDirect).toBe(0);
 
@@ -567,9 +583,10 @@ describe("compile manifest determinism", () => {
       // Supply an explicit --out to compare manifests.
       const outDirDir = join(suiteDir, "manifest-dir-form");
       const loggerDir = new CollectingLogger();
-      const codeDir = await runCli(
-        ["compile", exampleDir, "--registry", registryPath, "--out", outDirDir],
+      const codeDir = await compile(
+        [exampleDir, "--registry", registryPath, "--out", outDirDir],
         loggerDir,
+        { embeddings: offlineEmbeddings },
       );
       expect(codeDir).toBe(0);
 

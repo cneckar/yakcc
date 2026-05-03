@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
 import { validateStrictSubset } from "@yakcc/ir";
 import { openRegistry } from "@yakcc/registry";
 import { afterEach, describe, expect, it } from "vitest";
@@ -82,7 +83,7 @@ const BLOCK_DIRS = [
 
 describe("seedRegistry", () => {
   it("stores all 20 blocks and returns their merkleRoots", async () => {
-    const registry = await openRegistry(":memory:");
+    const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
     let result: SeedResult;
     try {
       result = await seedRegistry(registry);
@@ -94,7 +95,7 @@ describe("seedRegistry", () => {
   });
 
   it("is idempotent — calling seedRegistry twice does not throw or double-count", async () => {
-    const registry = await openRegistry(":memory:");
+    const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
     try {
       const r1 = await seedRegistry(registry);
       const r2 = await seedRegistry(registry);
@@ -108,8 +109,8 @@ describe("seedRegistry", () => {
 
   it("seedRegistry() re-runs deterministically — same BlockMerkleRoot for every block", async () => {
     // Run seedRegistry twice on separate in-memory DBs; merkleRoots must match.
-    const registry1 = await openRegistry(":memory:");
-    const registry2 = await openRegistry(":memory:");
+    const registry1 = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
+    const registry2 = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
     try {
       const r1 = await seedRegistry(registry1);
       const r2 = await seedRegistry(registry2);
@@ -123,7 +124,7 @@ describe("seedRegistry", () => {
   }, 30_000);
 
   it("registry.selectBlocks finds each block by its specHash after seeding", async () => {
-    const registry = await openRegistry(":memory:");
+    const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
     try {
       const { merkleRoots } = await seedRegistry(registry);
       const { parseBlockTriplet } = await import("@yakcc/ir");
@@ -612,7 +613,7 @@ describe("end-to-end: seed → selectBlocks → getBlock → parse → compose",
   });
 
   it("seeds registry, looks up list-of-ints by specHash, retrieves block, and parses '[1,2,3]'", async () => {
-    const registry = await openRegistry(":memory:");
+    const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
     registryInstance = registry;
 
     // Step 1: Seed the registry
@@ -646,7 +647,7 @@ describe("end-to-end: seed → selectBlocks → getBlock → parse → compose",
   });
 
   it("verifies all blocks parse successfully via parseBlockTriplet after migration", async () => {
-    const registry = await openRegistry(":memory:");
+    const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
     registryInstance = registry;
 
     const { parseBlockTriplet } = await import("@yakcc/ir");

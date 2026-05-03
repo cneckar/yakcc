@@ -19,10 +19,15 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Artifact, assemble } from "@yakcc/compile";
 import { type BlockMerkleRoot, type SpecYak, specHash } from "@yakcc/contracts";
-import { type Registry, openRegistry } from "@yakcc/registry";
+import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
+
+/** Internal options for compile — not exposed in CLI args. */
+export interface CompileOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
 
 /** A 64-hex string that may be a BlockMerkleRoot. */
 function isHex64(s: string): boolean {
@@ -40,7 +45,7 @@ function isHex64(s: string): boolean {
  * @param logger - Output sink; defaults to console via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function compile(argv: readonly string[], logger: Logger): Promise<number> {
+export async function compile(argv: readonly string[], logger: Logger, opts?: CompileOptions): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {
@@ -90,7 +95,7 @@ export async function compile(argv: readonly string[], logger: Logger): Promise<
   // Open the registry.
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;

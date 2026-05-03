@@ -13,10 +13,15 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import type { SpecYak } from "@yakcc/contracts";
-import { openRegistry, structuralMatch } from "@yakcc/registry";
+import { type RegistryOptions, openRegistry, structuralMatch } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
+
+/** Internal options for search — not exposed in CLI args. */
+export interface SearchOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
 
 /** Stub non-functional properties used for free-text search queries. */
 const FREE_TEXT_SPEC_DEFAULTS: Partial<SpecYak> = {
@@ -49,7 +54,7 @@ function truncate(s: string, max: number): string {
  * @param logger - Output sink; defaults to console via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function search(argv: readonly string[], logger: Logger): Promise<number> {
+export async function search(argv: readonly string[], logger: Logger, opts?: SearchOptions): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {
@@ -105,7 +110,7 @@ export async function search(argv: readonly string[], logger: Logger): Promise<n
   }
 
   // Open the registry, seed it, then scan all corpus blocks for structural matches.
-  const registry = await openRegistry(registryPath).catch((err: unknown) => {
+  const registry = await openRegistry(registryPath, { embeddings: opts?.embeddings }).catch((err: unknown) => {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return null;
   });

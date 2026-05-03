@@ -55,6 +55,7 @@ import {
   type SpecYak,
   blockMerkleRoot,
   canonicalAstHash,
+  createOfflineEmbeddingProvider,
   specHash,
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
@@ -87,7 +88,7 @@ beforeEach(async () => {
   await mkdir(cacheDir, { recursive: true });
   // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
   delete process.env.ANTHROPIC_API_KEY;
-  registry = await openRegistry(":memory:");
+  registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
 });
 
 afterEach(async () => {

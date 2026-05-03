@@ -9,13 +9,19 @@
 // No author/ownership fields touched — DEC-NO-OWNERSHIP-011.
 
 import { parseArgs } from "node:util";
-import { type Registry, openRegistry } from "@yakcc/registry";
+import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
 
 /** Maximum number of merkle roots to print in the summary line. */
 const MAX_ROOTS_SHOWN = 3;
+
+/** Internal options for seed — not exposed in CLI args. */
+export interface SeedOptions {
+  /** Embedding provider forwarded to openRegistry. Tests inject createOfflineEmbeddingProvider(). */
+  embeddings?: RegistryOptions["embeddings"];
+}
 
 /**
  * Handler for `yakcc seed [--registry <p>]`.
@@ -25,9 +31,10 @@ const MAX_ROOTS_SHOWN = 3;
  *
  * @param argv - Remaining argv after `seed` has been consumed.
  * @param logger - Output sink; defaults to console via the caller.
+ * @param opts  - Internal options (embeddings for test injection).
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function seed(argv: readonly string[], logger: Logger): Promise<number> {
+export async function seed(argv: readonly string[], logger: Logger, opts?: SeedOptions): Promise<number> {
   const { values } = parseArgs({
     args: [...argv],
     options: {
@@ -41,7 +48,7 @@ export async function seed(argv: readonly string[], logger: Logger): Promise<num
 
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
