@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * symbol-table.ts — Lexical-scoped symbol table for the WASM lowering pass.
  *

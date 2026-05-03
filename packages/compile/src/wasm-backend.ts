@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-V1-WAVE-2-WASM-STRATEGY-001: WASM backend uses strategy B —
 // hand-rolled minimal binary emitter.
 // Status: superseded by DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 (WI-V1W2-WASM-02).

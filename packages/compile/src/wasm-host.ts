@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * wasm-host.ts — In-process host runtime for yakcc-compiled WebAssembly modules.
  *
