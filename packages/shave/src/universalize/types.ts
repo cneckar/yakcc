@@ -146,7 +146,7 @@ export interface RecursionOptions extends AtomTestOptions {
 }
 
 // ---------------------------------------------------------------------------
-// DFG slicer types (WI-012-05)
+// DFG slicer types (WI-012-05, WI-V2-04-L3)
 // ---------------------------------------------------------------------------
 
 // @decision DEC-SLICER-NOVEL-GLUE-004: DFG slicer type surface.
@@ -158,6 +158,30 @@ export interface RecursionOptions extends AtomTestOptions {
 // that must be synthesized). SlicePlan carries both the entries and convenience
 // statistics for reviewer dashboards. The intentCard field on NovelGlueEntry is
 // optional because only AtomLeaf nodes carry one (branch nodes may not).
+
+// @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001
+// Title: ForeignLeafEntry — L3 foreign-import classification variant in SlicePlanEntry.
+// Status: decided
+// Rationale: Static import declarations from packages outside the workspace
+// (node: builtins and npm packages not under @yakcc/) represent foreign
+// dependencies — code the slicer should NOT attempt to synthesize as
+// NovelGlueEntry. ForeignLeafEntry is added to the SlicePlanEntry discriminated
+// union so downstream consumers (L4 provenance manifest, L5 --foreign-policy
+// flag) can inspect foreign refs without treating them as unknown novel glue.
+//
+// Authority invariant L3-I1: this is the single canonical location for
+// ForeignLeafEntry. Consumers must import from this module.
+//
+// Fields:
+//   pkg       — module specifier (e.g. 'node:fs', 'sqlite-vec', 'ts-morph')
+//   export    — imported binding name (e.g. 'readFileSync', 'load', 'Project')
+//   alias     — local alias if the import used `as <alias>` (e.g. 'loadVec')
+//   dtsHash   — optional SHA-256 of the resolved .d.ts text; populated when
+//               the declaration file is accessible at classify time.
+//   sourceLoc — optional source location of the import declaration.
+//
+// Out of scope for L3: provenance manifest wiring (L4), CLI flag (L4),
+// fixture files (L5), dynamic import() classification (deferred per L3-I2).
 
 import type { IntentCard } from "../intent/types.js";
 
@@ -191,8 +215,41 @@ export interface NovelGlueEntry {
   readonly intentCard?: IntentCard;
 }
 
-/** A discriminated union of the two slicer output kinds. */
-export type SlicePlanEntry = PointerEntry | NovelGlueEntry;
+/**
+ * An AtomLeaf node that was classified as a foreign import — a static import
+ * declaration referencing a package outside the workspace. These atoms are NOT
+ * novel glue and must not be synthesized. L4 wires them into the provenance
+ * manifest; L4 also adds --foreign-policy CLI support.
+ *
+ * Authority invariant L3-I1: ForeignLeafEntry is the canonical type for foreign
+ * import classification. It is exported exclusively from this module.
+ *
+ * @see DEC-V2-FOREIGN-BLOCK-SCHEMA-001
+ */
+export interface ForeignLeafEntry {
+  readonly kind: "foreign-leaf";
+  /** Module specifier as written in the source, e.g. 'node:fs', 'sqlite-vec'. */
+  readonly pkg: string;
+  /** Imported binding name, e.g. 'readFileSync', 'Project', 'default'. */
+  readonly export: string;
+  /**
+   * Local alias when the binding was renamed with `as <alias>`.
+   * Undefined when the local name equals the exported name.
+   */
+  readonly alias?: string | undefined;
+  /**
+   * SHA-256 hex of the resolved .d.ts text, when resolvable at classify time.
+   * Undefined when the declaration file is not accessible (e.g. in-memory FS).
+   */
+  readonly dtsHash?: string | undefined;
+  /** Source location of the import declaration (file-relative). */
+  readonly sourceLoc?:
+    | { readonly file: string; readonly line: number; readonly column: number }
+    | undefined;
+}
+
+/** A discriminated union of all slicer output kinds. */
+export type SlicePlanEntry = PointerEntry | NovelGlueEntry | ForeignLeafEntry;
 
 /**
  * The complete slice plan produced by slice(). Contains the classified entries
