@@ -50,6 +50,7 @@ import type {
   BootstrapManifestEntry,
   CandidateMatch,
   FindCandidatesOptions,
+  ForeignRefRow,
   IntentQuery,
   Provenance,
   Registry,
@@ -81,6 +82,26 @@ interface BlockRow {
   canonical_ast_hash: string;
   /** NULL for root blocks; non-NULL for atoms shaved from a parent block. */
   parent_block_root: string | null;
+  /**
+   * Discriminator column added in migration 6 (DEC-V2-FOREIGN-BLOCK-SCHEMA-001).
+   * 'local' for all pre-v6 rows (DEFAULT covers them); 'foreign' for foreign atoms.
+   */
+  kind: string;
+  /**
+   * npm package name or Node built-in specifier. Non-NULL iff kind='foreign'.
+   * NULL for local blocks and for all pre-v6 rows.
+   */
+  foreign_pkg: string | null;
+  /**
+   * Exported symbol name at the use site. Non-NULL iff kind='foreign'.
+   * NULL for local blocks and for all pre-v6 rows.
+   */
+  foreign_export: string | null;
+  /**
+   * Optional BLAKE3 hash of the .d.ts declaration text. NULL when not snapshotted.
+   * Only meaningful when kind='foreign'.
+   */
+  foreign_dts_hash: string | null;
 }
 
 interface TestHistoryRow {
@@ -142,17 +163,51 @@ class SqliteRegistry implements Registry {
     // gate will close in WI-020; ensures every persisted row's stored merkle root
     // matches its bytes — foundational for federation round-trip correctness.
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // L2-I3 invariant guard: kind='foreign' requires foreign_pkg and
+    // foreign_export to be non-null. Enforced here at the single insert path
+    // (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2-I3).
+    // This is an application-level guard because SQLite's ADD COLUMN cannot
+    // add cross-column CHECK constraints after the fact.
+    // -----------------------------------------------------------------------
+    if (row.kind === "foreign") {
+      if (row.foreignPkg == null || row.foreignExport == null) {
+        const err = new Error(
+          "storeBlock invariant violation (L2-I3): kind='foreign' requires foreignPkg and foreignExport to be non-null",
+        );
+        (err as Error & { reason: string }).reason = "foreign_invariant_failed";
+        throw err;
+      }
+    }
+
     if (validateOnStore) {
-      const spec = JSON.parse(Buffer.from(row.specCanonicalBytes).toString("utf-8")) as SpecYak;
-      const manifest = JSON.parse(row.proofManifestJson) as ProofManifest;
-      // row.artifacts is ReadonlyMap; blockMerkleRoot() accepts Map — cast is safe.
-      const artifacts = row.artifacts as Map<string, Uint8Array>;
-      const recomputed = computeBlockMerkleRoot({
-        spec: spec as unknown as Parameters<typeof computeBlockMerkleRoot>[0]["spec"],
-        implSource: row.implSource,
-        manifest,
-        artifacts,
-      });
+      let recomputed: string;
+      if (row.kind === "foreign") {
+        // Foreign blocks: identity is keyed on (kind, pkg, export, dtsHash?).
+        // Pass the ForeignTripletFields shape directly to blockMerkleRoot().
+        // L2-I3 guard above guarantees foreignPkg/foreignExport are non-null
+        // for kind='foreign' before we reach this point.
+        const pkg = row.foreignPkg ?? "";
+        const foreignExport = row.foreignExport ?? "";
+        recomputed = computeBlockMerkleRoot({
+          kind: "foreign",
+          pkg,
+          export: foreignExport,
+          ...(row.foreignDtsHash != null ? { dtsHash: row.foreignDtsHash } : {}),
+        });
+      } else {
+        // Local blocks: identity is keyed on (spec, implSource, manifest, artifacts).
+        const spec = JSON.parse(Buffer.from(row.specCanonicalBytes).toString("utf-8")) as SpecYak;
+        const manifest = JSON.parse(row.proofManifestJson) as ProofManifest;
+        // row.artifacts is ReadonlyMap; blockMerkleRoot() accepts Map — cast is safe.
+        const artifacts = row.artifacts as Map<string, Uint8Array>;
+        recomputed = computeBlockMerkleRoot({
+          spec: spec as unknown as SpecYak,
+          implSource: row.implSource,
+          manifest,
+          artifacts,
+        });
+      }
       if (recomputed !== row.blockMerkleRoot) {
         const err = new Error(
           `storeBlock integrity check failed: stored blockMerkleRoot ${row.blockMerkleRoot} does not match recomputed value ${recomputed}`,
@@ -190,9 +245,23 @@ class SqliteRegistry implements Registry {
     const implAstHash = row.canonicalAstHash;
 
     const insertBlock = this.db.prepare<
-      [string, string, Buffer, string, string, string, number, string, string | null]
+      [
+        string,
+        string,
+        Buffer,
+        string,
+        string,
+        string,
+        number,
+        string,
+        string | null,
+        string,
+        string | null,
+        string | null,
+        string | null,
+      ]
     >(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -228,6 +297,12 @@ class SqliteRegistry implements Registry {
         now,
         implAstHash,
         row.parentBlockRoot ?? null,
+        // Migration-6 columns (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / L2-I3).
+        // kind defaults to 'local' for rows that omit the field (backward compat).
+        row.kind ?? "local",
+        row.foreignPkg ?? null,
+        row.foreignExport ?? null,
+        row.foreignDtsHash ?? null,
       );
       // Only write the embedding if the spec_hash doesn't already have one.
       // Check by attempting DELETE (no-op if absent) then INSERT.
@@ -359,6 +434,30 @@ class SqliteRegistry implements Registry {
       .all(merkleRoot);
 
     return hydrateBlock(row, artifactRows);
+  }
+
+  // -------------------------------------------------------------------------
+  // getForeignRefs — return block_foreign_refs rows for a parent block
+  // (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2)
+  // -------------------------------------------------------------------------
+
+  async getForeignRefs(merkleRoot: BlockMerkleRoot): Promise<readonly ForeignRefRow[]> {
+    this.assertOpen();
+
+    const rows = this.db
+      .prepare<
+        [string],
+        { parent_block_root: string; foreign_block_root: string; declaration_index: number }
+      >(
+        "SELECT parent_block_root, foreign_block_root, declaration_index FROM block_foreign_refs WHERE parent_block_root = ? ORDER BY declaration_index ASC",
+      )
+      .all(merkleRoot);
+
+    return rows.map((r) => ({
+      parentBlockRoot: r.parent_block_root as BlockMerkleRoot,
+      foreignBlockRoot: r.foreign_block_root as BlockMerkleRoot,
+      declarationIndex: r.declaration_index,
+    }));
   }
 
   // -------------------------------------------------------------------------
@@ -724,6 +823,12 @@ function hydrateBlock(row: BlockRow, artifactRows: readonly BlockArtifactRow[]):
     canonicalAstHash: row.canonical_ast_hash as CanonicalAstHash,
     parentBlockRoot: (row.parent_block_root ?? null) as BlockMerkleRoot | null,
     artifacts,
+    // Migration-6 fields (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2).
+    // Pre-v6 rows return kind='local' via the DEFAULT; foreign fields are null.
+    kind: (row.kind ?? "local") as "local" | "foreign",
+    foreignPkg: row.foreign_pkg ?? null,
+    foreignExport: row.foreign_export ?? null,
+    foreignDtsHash: row.foreign_dts_hash ?? null,
   };
 }
 
