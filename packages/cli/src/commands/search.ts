@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import type { SpecYak } from "@yakcc/contracts";
-import { openRegistry, structuralMatch } from "@yakcc/registry";
+import { type RegistryOptions, openRegistry, structuralMatch } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
@@ -39,6 +39,11 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
+/** Internal options for search. Tests inject embeddings to avoid network I/O. */
+export interface SearchOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
+
 /**
  * Handler for `yakcc search <query> [--registry <p>] [--top <k>]`.
  *
@@ -47,9 +52,10 @@ function truncate(s: string, max: number): string {
  *
  * @param argv - Remaining argv after `search` has been consumed (includes the positional).
  * @param logger - Output sink; defaults to console via the caller.
+ * @param opts - Internal options (embeddings for test injection).
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function search(argv: readonly string[], logger: Logger): Promise<number> {
+export async function search(argv: readonly string[], logger: Logger, opts?: SearchOptions): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {
@@ -105,7 +111,7 @@ export async function search(argv: readonly string[], logger: Logger): Promise<n
   }
 
   // Open the registry, seed it, then scan all corpus blocks for structural matches.
-  const registry = await openRegistry(registryPath).catch((err: unknown) => {
+  const registry = await openRegistry(registryPath, { embeddings: opts?.embeddings }).catch((err: unknown) => {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return null;
   });

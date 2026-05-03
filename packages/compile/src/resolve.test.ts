@@ -22,6 +22,7 @@ import {
   type SpecYak,
   blockMerkleRoot,
   canonicalAstHash,
+  createOfflineEmbeddingProvider,
   specHash,
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
@@ -127,7 +128,7 @@ const nullResolver: SubBlockResolver = async () => null;
 let registry: Registry;
 
 beforeEach(async () => {
-  registry = await openRegistry(":memory:");
+  registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
 });
 
 afterEach(async () => {

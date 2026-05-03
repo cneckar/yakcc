@@ -29,6 +29,7 @@ import { registryInit } from "./commands/registry-init.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
 import { shave } from "./commands/shave.js";
+import type { RegistryOptions } from "@yakcc/registry";
 
 // Re-export ContractId for callers who import from @yakcc/cli.
 export type { ContractId } from "@yakcc/contracts";
@@ -125,6 +126,15 @@ EXIT CODES
 // ---------------------------------------------------------------------------
 
 /**
+ * Internal options for runCli. Tests inject these to avoid external I/O.
+ */
+export interface CliOptions {
+  /** Embedding provider forwarded to commands that open a registry. Tests inject
+   * createOfflineEmbeddingProvider() so no network I/O occurs. */
+  embeddings?: RegistryOptions["embeddings"];
+}
+
+/**
  * Run the yakcc CLI with the given argument vector.
  *
  * Dispatches on the first positional token (command) and, for multi-word
@@ -133,11 +143,13 @@ EXIT CODES
  *
  * @param argv - Arguments after the binary name (i.e. process.argv.slice(2)).
  * @param logger - Output sink; defaults to CONSOLE_LOGGER (the real console).
+ * @param opts - Internal options (embeddings for test injection).
  * @returns Promise<number> — 0 on success, non-zero on error.
  */
 export async function runCli(
   argv: ReadonlyArray<string>,
   logger: Logger = CONSOLE_LOGGER,
+  opts?: CliOptions,
 ): Promise<number> {
   const [command, subcommand, ...rest] = argv;
 
@@ -155,7 +167,7 @@ export async function runCli(
     case "compile": {
       // subcommand is the first positional for compile (the entry arg).
       const compileArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return compile(compileArgv, logger);
+      return compile(compileArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "propose": {
@@ -170,13 +182,13 @@ export async function runCli(
 
     case "search": {
       const searchArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return search(searchArgv, logger);
+      return search(searchArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "seed": {
       // seed has no positional; subcommand may be a flag like --registry.
       const seedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return seed(seedArgv, logger);
+      return seed(seedArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "bootstrap": {
@@ -193,7 +205,7 @@ export async function runCli(
     case "federation": {
       // Reassemble remaining args: subcommand (the federation verb) + rest.
       const fedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return runFederation(fedArgv, logger);
+      return runFederation(fedArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "hooks": {
