@@ -3,7 +3,7 @@
 // Opens the registry via @yakcc/registry.openRegistry(), delegates all pipeline logic
 // to shaveImpl(), and prints a human-readable summary. Error paths follow the
 // established pattern from seed.ts and compile.ts: catch, log to logger.error(), return 1.
-// Status: implemented (WI-014-02)
+// Status: updated (WI-V2-04 L4: --foreign-policy flag added)
 // Rationale: Keeps the CLI layer thin — argument parsing, registry open/close, and
 // output formatting live here; pipeline logic stays in @yakcc/shave. Matches the
 // `(argv, logger) → Promise<number>` contract shared by all yakcc commands.
@@ -12,18 +12,22 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
-import { shave as shaveImpl } from "@yakcc/shave";
+import { FOREIGN_POLICY_DEFAULT, type ForeignPolicy, shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
+
+/** Valid values for --foreign-policy. */
+const VALID_FOREIGN_POLICIES: readonly ForeignPolicy[] = ["allow", "reject", "tag"];
 
 /** Argument options descriptor for parseArgs — typed inline to avoid implicit any. */
 const SHAVE_PARSE_OPTIONS = {
   registry: { type: "string" },
   offline: { type: "boolean", default: false },
   help: { type: "boolean", short: "h", default: false },
+  "foreign-policy": { type: "string" },
 } as const;
 
 /**
- * Handler for `yakcc shave <path> [--registry <p>] [--offline]`.
+ * Handler for `yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <policy>]`.
  *
  * Shaves a TypeScript source file: reads it, runs through the universalizer
  * (license gate → intent extraction → decompose → slice), and prints a summary
@@ -52,10 +56,22 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
 
   if (parsed.values.help) {
     logger.log(
-      "Usage: yakcc shave <path> [--registry <p>] [--offline]\n" +
-        "  Shave a source file into universalize result (atoms + intent + license).",
+      `Usage: yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <allow|reject|tag>]\n  Shave a source file into universalize result (atoms + intent + license).\n  --foreign-policy: how to handle foreign-block deps (default: ${FOREIGN_POLICY_DEFAULT})`,
     );
     return 0;
+  }
+
+  // Validate --foreign-policy value when provided.
+  const rawForeignPolicy = parsed.values["foreign-policy"];
+  let foreignPolicy: ForeignPolicy = FOREIGN_POLICY_DEFAULT;
+  if (rawForeignPolicy !== undefined) {
+    if (!(VALID_FOREIGN_POLICIES as readonly string[]).includes(rawForeignPolicy)) {
+      logger.error(
+        `error: --foreign-policy must be one of: ${VALID_FOREIGN_POLICIES.join(", ")}; got: ${rawForeignPolicy}`,
+      );
+      return 1;
+    }
+    foreignPolicy = rawForeignPolicy as ForeignPolicy;
   }
 
   const sourcePath = parsed.positionals[0];
@@ -87,7 +103,7 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
   };
 
   try {
-    const result = await shaveImpl(resolve(sourcePath), shaveRegistry, { offline });
+    const result = await shaveImpl(resolve(sourcePath), shaveRegistry, { offline, foreignPolicy });
     logger.log(`Shaved ${result.sourcePath}:`);
     logger.log(`  atoms: ${result.atoms.length}`);
     logger.log(`  intentCards: ${result.intentCards.length}`);

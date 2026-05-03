@@ -20,6 +20,7 @@
 
 export type {
   CandidateBlock,
+  ForeignPolicy,
   IntentExtractionHook,
   ShaveDiagnostics,
   ShaveOptions,
@@ -29,6 +30,8 @@ export type {
   UniversalizeResult,
   UniversalizeSlicePlanEntry,
 } from "./types.js";
+
+export { FOREIGN_POLICY_DEFAULT } from "./types.js";
 
 export type { IntentCard, IntentParam } from "./intent/types.js";
 

@@ -16,6 +16,35 @@ import type { LicenseDetection } from "./license/types.js";
 import type { SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
+// Foreign policy
+// ---------------------------------------------------------------------------
+
+/**
+ * How the shave pipeline handles foreign-block dependencies encountered during
+ * slicing. Passed as ShaveOptions.foreignPolicy.
+ *
+ *   'allow'  — foreign deps are silently accepted; nothing extra is emitted.
+ *   'reject' — the shave pipeline throws/fails when a foreign dep is found.
+ *   'tag'    — foreign deps are accepted but tagged in the slice plan output
+ *              so callers and CLI output can surface them.
+ */
+export type ForeignPolicy = "allow" | "reject" | "tag";
+
+/**
+ * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-C: default policy)
+ * title: FOREIGN_POLICY_DEFAULT = 'tag'
+ * status: closed (WI-V2-04 L4)
+ * rationale: 'tag' is the visible-by-default option. Code-is-Truth means foreign
+ * deps should appear in summary output unless explicitly opted out. 'allow' would
+ * silently accept foreign deps; 'reject' would block legitimate workflows. 'tag'
+ * surfaces foreign deps without blocking, making the default safe and informative.
+ * This constant is the single source of truth for the default (I-X3 invariant):
+ * all other references (CLI --foreign-policy, ShaveOptions) import this constant.
+ * @scope WI-V2-04 L4
+ */
+export const FOREIGN_POLICY_DEFAULT: ForeignPolicy = "tag";
+
+// ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
 
@@ -64,6 +93,19 @@ export interface ShaveOptions {
         readonly maxControlFlowBoundaries?: number;
       }
     | undefined;
+  /**
+   * Controls how the pipeline reacts when a foreign-block dependency is
+   * encountered during slicing.
+   *
+   *   'allow'  — foreign deps are silently accepted.
+   *   'reject' — the pipeline throws when a foreign dep is found.
+   *   'tag'    — foreign deps are accepted but tagged in slice plan output.
+   *
+   * Defaults to FOREIGN_POLICY_DEFAULT ('tag').
+   * Authority invariant I-X3: all references to the default value import
+   * FOREIGN_POLICY_DEFAULT from this module; no inline 'tag' literals elsewhere.
+   */
+  readonly foreignPolicy?: ForeignPolicy | undefined;
 }
 
 // ---------------------------------------------------------------------------
