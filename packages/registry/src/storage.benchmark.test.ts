@@ -22,6 +22,14 @@
  * The latency budget and regression bound are preserved from WI-003.
  * Status: decided (WI-T03)
  *
+ * @decision DEC-CI-OFFLINE-005: This benchmark suite is gated behind
+ * process.env.YAKCC_BENCHMARKS === "1" via describe.skipIf so the default
+ * `pnpm -r test` (and the .github/workflows/test.yml PR gate landed in
+ * WI-CI-OFFLINE-01) does not block on the 1000-block corpus setup, which
+ * exceeds the default 180s vitest hookTimeout on CI runners. Operator opt-in:
+ * `YAKCC_BENCHMARKS=1 pnpm --filter @yakcc/registry test` runs the benchmark
+ * and asserts the p99-under-100ms invariant. Status: decided (WI-CI-OFFLINE-02).
+ *
  * Production sequence exercised end-to-end:
  *   openRegistry → storeBlock(1000 blocks) → [warm-up] selectBlocks(specHash)
  *   → 100× timed selectBlocks(specHash) → p99 assertion
@@ -253,7 +261,7 @@ afterAll(async () => {
 // Benchmark test
 // ---------------------------------------------------------------------------
 
-describe("benchmark: 1000-block corpus — selectBlocks p99 < 100ms", () => {
+describe.skipIf(process.env.YAKCC_BENCHMARKS !== "1")("benchmark: 1000-block corpus — selectBlocks p99 < 100ms", () => {
   it(
     "p99 latency of selectBlocks(specHash) over 100 queries is under 100ms",
     async () => {
