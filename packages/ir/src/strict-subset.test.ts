@@ -318,6 +318,39 @@ describe("no-untyped-imports", () => {
       `import type { ContractSpec } from "@yakcc/contracts";\nexport function f(): void {}`,
     );
   });
+
+  // @decision DEC-V2-IR-TYPE-MODIFIER-001
+  it("allows type-modifier named import from unresolvable module (WI-V2-03)", () => {
+    // `import { type Foo }` is a type-only binding — erased at compile time, cannot
+    // introduce a runtime `any` value. The rule must skip it even when the module
+    // is unresolvable (which causes getType() to return `any` in value position).
+    assertPasses(`import { type Foo } from "some-unresolvable-module";\nexport const x = 1;`);
+  });
+
+  it("only flags value bindings in a mixed type-modifier import (WI-V2-03)", () => {
+    // `type Foo` is skipped; `bar` is a value binding that resolves to `any` → flagged.
+    const result = validateStrictSubset(
+      `import { type Foo, bar } from "untyped-module";\nexport const x = 1;`,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const untypedErrors = result.errors.filter((e) => e.rule === "no-untyped-imports");
+      // Only 1 violation: `bar`, not `type Foo`
+      expect(untypedErrors.length).toBe(1);
+    }
+  });
+
+  it("property: type-modifier import never increases violation count vs all-type import", () => {
+    // A fully type-modifier import should behave identically to `import type { ... }`.
+    const typeModifier = `import { type Foo } from "some-mod";\nexport const x = 1;`;
+    const importType = `import type { Foo } from "some-mod";\nexport const x = 1;`;
+    const r1 = validateStrictSubset(typeModifier);
+    const r2 = validateStrictSubset(importType);
+    // Both must report the same count of no-untyped-imports violations (zero for both).
+    const count = (r: typeof r1) =>
+      r.ok ? 0 : r.errors.filter((e) => e.rule === "no-untyped-imports").length;
+    expect(count(r1)).toBe(count(r2));
+  });
 });
 
 // ---------------------------------------------------------------------------

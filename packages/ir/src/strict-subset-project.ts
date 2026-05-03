@@ -79,6 +79,24 @@ export async function validateStrictSubsetProject(
     if (sf.isInNodeModules()) continue;
 
     const filePath = sf.getFilePath();
+
+    // @decision DEC-V2-IR-TEST-EXCLUSION-001: Exclude test files from project-mode
+    // validation. Test files (*.test.ts, *.spec.ts) use Vitest's describe/it/beforeEach
+    // top-level calls, which legitimately violate no-top-level-side-effects, and use
+    // top-level `let` for shared state, violating no-mutable-globals. These are
+    // expected patterns for test frameworks and not gaps in IR subset support.
+    // The IR package's own tsconfig excludes test files; this filter makes project-mode
+    // validation consistent regardless of whether a package's tsconfig explicitly
+    // excludes tests. Status: implemented (WI-V2-03).
+    if (
+      filePath.endsWith(".test.ts") ||
+      filePath.endsWith(".test.js") ||
+      filePath.endsWith(".spec.ts") ||
+      filePath.endsWith(".spec.js")
+    ) {
+      continue;
+    }
+
     violations.push(...runAllRules(sf, filePath));
     filesValidated += 1;
   }
