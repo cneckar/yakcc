@@ -250,6 +250,18 @@ Honest list of capabilities that are planned but not yet shipped:
   covers F1 only (content-addressed pull, no push/auth). F2+ (block submission,
   dispute adjudication) is deferred. See `FEDERATION.md` for the F0..F4 axis.
 
+## v2 self-hosting demo
+
+`yakcc bootstrap --verify` shaves the entire codebase into an in-memory registry, exports a deterministic manifest sorted by `BlockMerkleRoot`, and byte-compares it to the committed `bootstrap/expected-roots.json`. A clean exit proves every yakcc atom on disk is content-addressed by the same hash the registry would assign on a fresh shave.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm -r build
+node packages/cli/dist/bin.js bootstrap --verify
+```
+
+See [docs/V2_SELF_HOSTING_DEMO.md](docs/V2_SELF_HOSTING_DEMO.md) for the fresh-clone reproduction, manifest semantics, and CI integration.
+
 ## License
 
 This project is dedicated to the public domain under [The Unlicense](LICENSE).
