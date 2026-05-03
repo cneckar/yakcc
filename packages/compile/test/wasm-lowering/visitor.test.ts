@@ -280,16 +280,14 @@ describe("SymbolTable — local slot lookup", () => {
 // ---------------------------------------------------------------------------
 
 describe("LoweringVisitor — unknown node kind fails loudly (Sacred Practice #5)", () => {
-  it("throws LoweringError with kind 'unsupported-node' for a void-return function containing an if-statement (control flow not yet lowered)", () => {
-    // Control flow (if/else, while, for) is deferred to WI-V1W3-WASM-LOWER-03.
-    // A void-return function bypasses the wave-2 "add" fast-path (which only matches
-    // returnType === "number"), so general lowering is attempted. The IfStatement
-    // SyntaxKind is not handled by lowerStatement() — it must fail loudly.
+  it("throws LoweringError with kind 'unsupported-node' for a function containing a while-loop (control flow deferred to WI-08)", () => {
+    // WI-03 added if/else support. Loop constructs (while, for) are deferred to
+    // WI-V1W3-WASM-LOWER-08. A function with a WhileStatement must fail loudly.
     const visitor = new LoweringVisitor();
 
     expect(() =>
       visitor.lower(
-        "export function guard(x: number): void { if (x > 100) { return; } }",
+        "export function sumTo(n: number): number { let acc: number = 0 | 0; let i: number = 0 | 0; while ((i | 0) < n) { acc = (acc + i) | 0; i = (i + 1) | 0; } return acc; }",
       ),
     ).toThrow(LoweringError);
   });
