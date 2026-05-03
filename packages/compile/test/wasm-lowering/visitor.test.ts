@@ -33,14 +33,18 @@ import { LoweringError, LoweringVisitor } from "../../src/wasm-lowering/visitor.
 describe("LoweringVisitor — parse and walk", () => {
   it("parses a trivial function and returns a LoweringResult with non-empty body", () => {
     const visitor = new LoweringVisitor();
+    // A zero-param function returning 1 does not match any wave-2 shape
+    // (wave-2 "add" requires two-param `return a + b`), so general numeric
+    // lowering handles it: returnType "number", no indicators → f64 default.
     const result = visitor.lower("export function f(): number { return 1; }");
 
-    // The visitor recognises this as a wave-2 "add" shape (no string/record/array params)
     expect(result.fnName).toBe("f");
     expect(result.wasmFn).toBeDefined();
     expect(result.wasmFn.body.length).toBeGreaterThan(0);
-    // wave2Shape is non-null: one of the 5 fast-paths was taken
-    expect(result.wave2Shape).not.toBeNull();
+    // WI-02 routes this through general lowering (wave2Shape is null)
+    expect(result.wave2Shape).toBeNull();
+    // General lowering infers f64 (no bitop/float indicators → ambiguous → f64)
+    expect(result.numericDomain).toBe("f64");
   });
 
   it("returns fnName matching the exported function name", () => {
@@ -276,14 +280,17 @@ describe("SymbolTable — local slot lookup", () => {
 // ---------------------------------------------------------------------------
 
 describe("LoweringVisitor — unknown node kind fails loudly (Sacred Practice #5)", () => {
-  it("throws LoweringError with kind 'unsupported-node' for a function that does not match any wave-2 shape", () => {
-    // A function with a void return type — does not match any of the 5 wave-2
-    // shapes (which all return number or string), so general lowering is attempted
-    // and fails loudly with "unsupported-node".
+  it("throws LoweringError with kind 'unsupported-node' for a void-return function containing an if-statement (control flow not yet lowered)", () => {
+    // Control flow (if/else, while, for) is deferred to WI-V1W3-WASM-LOWER-03.
+    // A void-return function bypasses the wave-2 "add" fast-path (which only matches
+    // returnType === "number"), so general lowering is attempted. The IfStatement
+    // SyntaxKind is not handled by lowerStatement() — it must fail loudly.
     const visitor = new LoweringVisitor();
 
     expect(() =>
-      visitor.lower("export function sideEffect(x: number): void { let _y = x; }"),
+      visitor.lower(
+        "export function guard(x: number): void { if (x > 100) { return; } }",
+      ),
     ).toThrow(LoweringError);
   });
 
@@ -292,8 +299,11 @@ describe("LoweringVisitor — unknown node kind fails loudly (Sacred Practice #5
     let caught: unknown;
 
     try {
-      // boolean return type — not a wave-2 shape, general lowering not yet implemented
-      visitor.lower("export function isPos(x: number): boolean { return x > 0; }");
+      // A boolean-return function with a for-loop — not a wave-2 shape, and
+      // control flow (ForStatement) is deferred to WI-03.
+      visitor.lower(
+        "export function hasPositive(x: number): boolean { for (let i = 0; i < x; i++) { if (i > 0) return true; } return false; }",
+      );
     } catch (e) {
       caught = e;
     }
