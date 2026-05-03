@@ -17,9 +17,10 @@
   },
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
-    "@yakcc/registry": "workspace:*",
     "@yakcc/ir": "workspace:*",
-    "@yakcc/shave": "workspace:*"
+    "@yakcc/registry": "workspace:*",
+    "@yakcc/shave": "workspace:*",
+    "ts-morph": "^24.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

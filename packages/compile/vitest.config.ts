@@ -36,7 +36,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
     // forks isolation: better-sqlite3 uses native bindings; isolation avoids
     // SQLite handle conflicts between test files.
     pool: "forks",
