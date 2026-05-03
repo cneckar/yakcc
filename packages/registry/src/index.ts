@@ -89,6 +89,41 @@ export interface BlockTripletRow {
    * No ownership-shaped keys or values — DEC-NO-OWNERSHIP-011.
    */
   readonly artifacts: ReadonlyMap<string, Uint8Array>;
+
+  // ---------------------------------------------------------------------------
+  // Migration-6 fields (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Block kind discriminator. 'local' for yakcc-shaved blocks (the default for
+   * all pre-v6 rows); 'foreign' for foreign npm/Node opaque leaf blocks.
+   *
+   * Optional for backwards compatibility: existing callsites that omit `kind`
+   * are treated as 'local' by the storage layer (L2-I3 invariant guard).
+   * Hydrated rows always carry an explicit value ('local' or 'foreign').
+   */
+  readonly kind?: "local" | "foreign";
+
+  /**
+   * npm package name or Node built-in specifier (e.g. `"node:fs"`, `"ts-morph"`).
+   * Non-null only when kind='foreign'. Null / absent for local blocks.
+   * L2-I3: if kind='foreign', foreignPkg MUST be non-null (enforced at storeBlock).
+   */
+  readonly foreignPkg?: string | null;
+
+  /**
+   * Exported symbol name consumed at the use site (e.g. `"readFileSync"`).
+   * Non-null only when kind='foreign'. Null / absent for local blocks.
+   * L2-I3: if kind='foreign', foreignExport MUST be non-null (enforced at storeBlock).
+   */
+  readonly foreignExport?: string | null;
+
+  /**
+   * Optional BLAKE3 hash of the .d.ts declaration text at storage time.
+   * Present when the foreign block was snapshotted with type-drift identity.
+   * Null / absent when not snapshotted or for local blocks.
+   */
+  readonly foreignDtsHash?: string | null;
 }
 
 /**
@@ -191,6 +226,29 @@ export interface BootstrapManifestEntry {
    * block_artifacts WHERE path = 'proof/manifest.json'). Sentinel when absent.
    */
   readonly manifestJsonHash: string;
+}
+
+// ---------------------------------------------------------------------------
+// WI-V2-04 L2: ForeignRefRow — one entry from block_foreign_refs
+// (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row from the `block_foreign_refs` table.
+ *
+ * Tracks the foreign-dependency tree of a non-foreign block: each row records
+ * one foreign atom referenced at a specific declaration_index in the parent
+ * block's impl/spec. Returned in declaration_index ASC order by getForeignRefs().
+ *
+ * No ownership-shaped fields — DEC-NO-OWNERSHIP-011.
+ */
+export interface ForeignRefRow {
+  /** The non-foreign block that depends on the foreign atom. */
+  readonly parentBlockRoot: BlockMerkleRoot;
+  /** The foreign block (kind='foreign') referenced at declarationIndex. */
+  readonly foreignBlockRoot: BlockMerkleRoot;
+  /** 0-based position of this foreign reference in the parent block's impl/spec. */
+  readonly declarationIndex: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +508,24 @@ export interface Registry {
    * Returns an empty array for an empty registry.
    */
   exportManifest(): Promise<readonly BootstrapManifestEntry[]>;
+
+  /**
+   * Return all foreign-dependency refs for a given parent block, ordered by
+   * `declaration_index ASC`. Returns an empty array when the block has no
+   * recorded foreign refs (e.g. all pre-v6 local blocks).
+   *
+   * This is the L2 schema primitive for the provenance manifest's foreign-dep
+   * tree. Population of rows (inserting block_foreign_refs during shave) is
+   * deferred to L4 (CLI policy layer); this reader exists so the schema is
+   * exercised and proven correct in L2 tests before the writer lands.
+   *
+   * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-A) — getForeignRefs is the
+   *   single reader authority for block_foreign_refs. No other path reads this
+   *   table directly; callers go through this method.
+   *
+   * @param merkleRoot - The parent block's BlockMerkleRoot.
+   */
+  getForeignRefs(merkleRoot: BlockMerkleRoot): Promise<readonly ForeignRefRow[]>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // @decision DEC-STORAGE-009: SQLite + sqlite-vec for registry storage.
 // Status: decided (MASTER_PLAN.md DEC-STORAGE-009)
 // Rationale: Single-file local store; vector index (vec0 virtual table) in the
@@ -22,11 +23,30 @@
 // (Sacred Practice #12, Evaluation Contract forbidden shortcuts).
 
 /**
+ * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-A: column-on-blocks form)
+ * @status decided (WI-V2-04 L2)
+ * @rationale Foreign blocks live as discriminated rows on the existing blocks
+ *            table per Sacred Practice #12 (single source of truth) — NO
+ *            parallel foreign_blocks table (I-X6). Foreign-specific fields are
+ *            nullable columns; the kind discriminator + storage-layer guard
+ *            enforce the invariant: kind='foreign' => foreign_pkg IS NOT NULL
+ *            AND foreign_export IS NOT NULL (L2-I3). The DEFAULT 'local' covers
+ *            all pre-v6 rows without a backfill UPDATE (forbidden shortcut).
+ *            The block_foreign_refs table tracks per-block foreign-dependency
+ *            trees for the provenance manifest (L2 schema primitive; population
+ *            deferred to L4 CLI policy layer). SCHEMA_VERSION bumped 5 → 6.
+ * @scope WI-V2-04 L2; foreign-row insertion paths land in L4 (CLI policy).
+ */
+
+/**
  * Current schema version. Increment by 1 whenever a migration is added.
  * The `schema_version` table stores the applied version; `applyMigrations`
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
+ *
+ * L2-I2 invariant: this constant must equal the highest MIGRATION_N_DDL number
+ * (currently 6 after the v5 → v6 migration for foreign-block primitives).
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -377,6 +397,86 @@ const MIGRATION_5_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 5 → 6: add kind discriminator + foreign columns + block_foreign_refs
+// (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 sub-A / WI-V2-04 L2)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-A: column-on-blocks form)
+// Status: decided (WI-V2-04 L2)
+// Rationale: See top-of-file annotation. Foreign blocks are discriminated rows
+// on the existing blocks table. The four ADD COLUMN statements below are
+// idempotent via try/catch (duplicate-column-name swallowed, as in migration 3/4).
+// block_foreign_refs is a new table — CREATE TABLE IF NOT EXISTS is naturally
+// idempotent. All FK references use blocks.block_merkle_root (L2-I1: no other
+// package issues ALTER TABLE against blocks; this is the single authority).
+
+/**
+ * SQL statements for migration 6.
+ *
+ * 1. `kind TEXT NOT NULL DEFAULT 'local'` — discriminator column on blocks.
+ *    DEFAULT 'local' ensures every pre-v6 row is correctly labelled without a
+ *    backfill UPDATE. kind='foreign' requires foreign_pkg/foreign_export IS NOT
+ *    NULL (enforced at the storage-layer guard in storage.ts, not in SQL, because
+ *    SQLite CHECK with cross-column NOT NULL requires a constraint that is awkward
+ *    to add after the fact; the application-level guard is the authority per L2-I3).
+ *
+ * 2. `foreign_pkg TEXT` — nullable; npm package or Node built-in specifier.
+ *    Non-NULL only when kind='foreign'.
+ *
+ * 3. `foreign_export TEXT` — nullable; exported symbol name at the use site.
+ *    Non-NULL only when kind='foreign'.
+ *
+ * 4. `foreign_dts_hash TEXT` — nullable; optional BLAKE3 of the .d.ts declaration
+ *    text. Absent for blocks that did not snapshot their d.ts at storage time.
+ *
+ * 5. `block_foreign_refs` table — tracks the foreign-dependency tree of each
+ *    non-foreign block. One row per foreign atom referenced at declaration_index N
+ *    in a parent block's impl/spec. Keyed by (parent_block_root, declaration_index).
+ *    FKs reference blocks.block_merkle_root so orphaned refs are rejected.
+ *
+ * Idempotency:
+ *   - The four ADD COLUMN statements use try/catch (not IF NOT EXISTS — SQLite
+ *     lacks that for ALTER TABLE). Matches migration 3/4 pattern.
+ *   - CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS are naturally idempotent.
+ *   - A crash between any statement and the version bump (in applyMigrations) is safe:
+ *     re-entry absorbs duplicate-column errors, re-runs the CREATE TABLE/INDEX as
+ *     no-ops, and bumps the version.
+ *
+ * No ownership-shaped columns — DEC-NO-OWNERSHIP-011.
+ */
+const MIGRATION_6_DDL: readonly string[] = [
+  // Column 1: kind discriminator — 'local' (default) or 'foreign'.
+  "ALTER TABLE blocks ADD COLUMN kind TEXT NOT NULL DEFAULT 'local'",
+
+  // Column 2: npm package name / Node built-in specifier (foreign blocks only).
+  "ALTER TABLE blocks ADD COLUMN foreign_pkg TEXT",
+
+  // Column 3: exported symbol name at the use site (foreign blocks only).
+  "ALTER TABLE blocks ADD COLUMN foreign_export TEXT",
+
+  // Column 4: optional BLAKE3 of the .d.ts declaration text (foreign blocks only).
+  "ALTER TABLE blocks ADD COLUMN foreign_dts_hash TEXT",
+
+  // Table 5: per-block foreign-dependency manifest.
+  // parent_block_root: FK → blocks.block_merkle_root (the non-foreign owner block).
+  // foreign_block_root: FK → blocks.block_merkle_root (the foreign atom it references).
+  // declaration_index: 0-based position of this foreign ref in the block's impl/spec.
+  // Composite PK (parent_block_root, declaration_index) enforces at-most-one foreign
+  // ref per position per block and provides the uniqueness contract for idempotent inserts.
+  // No ownership columns — DEC-NO-OWNERSHIP-011.
+  `CREATE TABLE IF NOT EXISTS block_foreign_refs (
+    parent_block_root  TEXT    NOT NULL REFERENCES blocks(block_merkle_root),
+    foreign_block_root TEXT    NOT NULL REFERENCES blocks(block_merkle_root),
+    declaration_index  INTEGER NOT NULL,
+    PRIMARY KEY (parent_block_root, declaration_index)
+  )`,
+
+  // Non-unique index on parent_block_root for getForeignRefs(merkleRoot) lookups
+  // (ORDER BY declaration_index for deterministic hydration order).
+  "CREATE INDEX IF NOT EXISTS idx_block_foreign_refs_parent ON block_foreign_refs(parent_block_root)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -409,6 +509,7 @@ export interface MigrationsDb {
  *   2 → 3: add canonical_ast_hash column + non-unique index (DEC-REGISTRY-AST-HASH-002).
  *   3 → 4: add parent_block_root column + non-unique index (DEC-REGISTRY-PARENT-BLOCK-004).
  *   4 → 5: add block_artifacts table + index (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
+ *   5 → 6: add kind/foreign_* columns + block_foreign_refs table (DEC-V2-FOREIGN-BLOCK-SCHEMA-001).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -550,5 +651,33 @@ export function applyMigrations(db: MigrationsDb): void {
     db.exec(MIGRATION_5_DDL[1] as string); // CREATE INDEX IF NOT EXISTS idx_block_artifacts_*
     db.prepare("UPDATE schema_version SET version = ?").run(5);
   }
-  // Future migrations: add `if (currentVersion < 6) { ... }` blocks here.
+  // Migration 5 → 6: add foreign-block columns + block_foreign_refs table
+  // (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 sub-A / WI-V2-04 L2).
+  //
+  // Column additions use ADD COLUMN — idempotency handled by try/catch on
+  // "duplicate column name" errors, matching the MIGRATION_3/MIGRATION_4 pattern.
+  // CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS are naturally
+  // idempotent; no try/catch needed for those statements.
+  //
+  // No backfill: DEFAULT 'local' covers all pre-v6 rows for `kind` (correct
+  // sentinel — every existing row is a local block). foreign_pkg, foreign_export,
+  // foreign_dts_hash are all NULL for pre-v6 rows (also correct — they have no
+  // foreign identity fields). No UPDATE SET is performed (forbidden shortcut per
+  // I-X6 / Evaluation Contract).
+  if (currentVersion < 6) {
+    for (const sql of MIGRATION_6_DDL) {
+      try {
+        db.exec(sql);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Absorb duplicate-column-name errors (partial migration recovery).
+        // All other errors are re-thrown.
+        if (!/duplicate column name:/i.test(msg)) {
+          throw err;
+        }
+        // Column already exists — continue normally.
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(6);
+  }
 }

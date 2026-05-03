@@ -159,15 +159,16 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5.
+    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→6.
     // Migration 4 bumps schema_version to 4 (parent_block_root; NULL default is correct).
     // Migration 5 bumps schema_version to 5 (block_artifacts table).
+    // Migration 6 bumps schema_version to 6 (foreign-block columns + block_foreign_refs).
     // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
-    expect(row?.version).toBe(5);
+    expect(row?.version).toBe(6);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -232,8 +233,8 @@ describe("schema migrations", () => {
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // Second application is a no-op; version stays at 5 (migrations 4 and 5 already ran).
-    expect(row?.version).toBe(5);
+    // Second application is a no-op; version stays at 6 (all migrations already ran).
+    expect(row?.version).toBe(6);
 
     db.close();
   });
@@ -289,12 +290,13 @@ describe("schema migrations", () => {
     expect(tableNames).not.toContain("implementations");
     expect(tableNames).toContain("blocks");
 
-    // Version is 5: migration 4 bumped to 4 (parent_block_root NULL default is correct);
-    // migration 5 bumped to 5 (block_artifacts table created).
+    // Version is 6: migration 4 bumped to 4 (parent_block_root NULL default is correct);
+    // migration 5 bumped to 5 (block_artifacts table created);
+    // migration 6 bumped to 6 (kind/foreign_* columns + block_foreign_refs table).
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(5);
+    expect(vRow?.version).toBe(6);
 
     db.close();
   });
@@ -710,15 +712,16 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     expect(fetched!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg.close();
 
-    // Verify schema_version is now 5: openRegistry ran the canonical_ast_hash backfill
-    // (bumped to 3) then applyMigrations ran migration 4 DDL (bumped to 4) and
-    // migration 5 DDL (bumped to 5, block_artifacts table).
+    // Verify schema_version is now 6: openRegistry ran the canonical_ast_hash backfill
+    // (bumped to 3) then applyMigrations ran migration 4 DDL (bumped to 4),
+    // migration 5 DDL (bumped to 5, block_artifacts table), and
+    // migration 6 DDL (bumped to 6, kind/foreign_* columns + block_foreign_refs).
     // The preMigrationVersion capture in openRegistry ensures the backfill still
     // ran even though later migrations would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const versionAfterBackfill = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
-    expect(versionAfterBackfill).toBe(5);
+    expect(versionAfterBackfill).toBe(6);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -812,11 +815,12 @@ describe("migration 3 → 4: parent_block_root column", () => {
     expect(fetched!.artifacts.size).toBe(0);
     await reg.close();
 
-    // schema_version is now 5 (migration 4 added parent_block_root; migration 5 added block_artifacts).
+    // schema_version is now 6 (migration 4 added parent_block_root; migration 5 added
+    // block_artifacts; migration 6 added kind/foreign_* columns + block_foreign_refs).
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const ver = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
-    expect(ver).toBe(5);
+    expect(ver).toBe(6);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
@@ -1058,7 +1062,7 @@ describe("artifacts persistence (WI-022)", () => {
     const implSource = "export function legacy(): void {}";
     const manifest = { artifacts: [] as Array<{ kind: string; path: string }> };
     const artifacts = new Map<string, Uint8Array>();
-    const root = bRoot({ spec, implSource, manifest: manifest as Parameters<typeof bRoot>[0]["manifest"], artifacts });
+    const root = bRoot({ spec, implSource, manifest: manifest as ProofManifest, artifacts });
     const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
 
     // Use validateOnStore: false to bypass integrity check (pre-WI-022 simulation).
@@ -1367,4 +1371,531 @@ describe("exportManifest (WI-V2-BOOTSTRAP-01)", () => {
     expect(entry!.implSourceHash).toBe(expectedImplHash);
     expect(entry!.manifestJsonHash).toBe(expectedManifestHash);
   });
+});
+
+// ---------------------------------------------------------------------------
+// WI-V2-04 L2: Foreign-block schema v5 → v6 migration tests
+// (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2)
+//
+// All tests below exercise the v5 → v6 migration path and the storage-layer
+// primitives introduced in round 1 (kind/foreign_* columns, invariant guard,
+// block_foreign_refs table, getForeignRefs reader).
+//
+// Required-path test list (evaluation contract):
+//   L2-T1: Migration v5 → v6 applies cleanly on a real v5 fixture DB.
+//   L2-T2: Re-running migration on an already-v6 DB is a no-op (idempotent).
+//   L2-T3: Inserting kind='foreign' with NULL foreign_pkg is rejected by invariant guard.
+//   L2-T4: Inserting kind='foreign' with well-formed foreign_pkg/foreign_export succeeds.
+//   L2-T5: block_foreign_refs FK enforcement (valid ref accepted; orphan ref rejected).
+//   L2-T6: getForeignRefs returns rows in declaration_index ASC; [] for no-ref blocks.
+//   L2-T7: Pre-migration rows hydrate with kind='local' (backwards compat).
+// ---------------------------------------------------------------------------
+
+describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => {
+  /**
+   * L2-T1: Migration v5 → v6 applies cleanly on a real v5 fixture DB.
+   *
+   * Production sequence:
+   *   1. Open a fresh better-sqlite3 in-memory DB.
+   *   2. Apply all migrations UP TO v5 (applyMigrations up to and including
+   *      MIGRATION_5_DDL) by building the DB state manually with the same
+   *      SQL as the real migration driver, then fixing version at 5.
+   *   3. Insert a few representative rows so we can verify row-count preservation
+   *      and that existing block_artifacts rows are intact after v5 → v6.
+   *   4. Run the v5 → v6 migration (applyMigrations on the same DB).
+   *   5. Assert: row count preserved; existing rows have kind='local'; existing
+   *      block_artifacts rows intact; schema_version = 6.
+   *
+   * This test satisfies the "real DB, no mocks" requirement from the dispatch.
+   * The DB instance is a genuine better-sqlite3 Database — not a mock.
+   */
+  it("L2-T1: migration v5→v6 applies on real v5 fixture DB; rows preserved; kind='local'; artifacts intact", async () => {
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+
+    // Build a v5-shaped DB directly (mirrors what applyMigrations does for
+    // migrations 0–5 but freezes schema_version at 5 so the v6 migration
+    // hasn't run yet). We use a real in-memory DB — no mocks.
+    const db = new Database(":memory:");
+    sqliteVec.load(db);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+
+    // Minimal v5 bootstrap: schema_version + blocks + block_artifacts tables.
+    db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    db.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (0)");
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS contract_embeddings USING vec0(
+      spec_hash TEXT PRIMARY KEY, embedding FLOAT[384]
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS blocks (
+      block_merkle_root    TEXT    PRIMARY KEY,
+      spec_hash            TEXT    NOT NULL,
+      spec_canonical_bytes BLOB    NOT NULL,
+      impl_source          TEXT    NOT NULL,
+      proof_manifest_json  TEXT    NOT NULL,
+      level                TEXT    NOT NULL CHECK(level IN ('L0','L1','L2','L3')),
+      created_at           INTEGER NOT NULL,
+      canonical_ast_hash   TEXT    NOT NULL DEFAULT '',
+      parent_block_root    TEXT    NULL
+    )`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_spec_hash ON blocks(spec_hash)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_parent_block_root ON blocks(parent_block_root)");
+    db.exec(`CREATE TABLE IF NOT EXISTS test_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      block_merkle_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      suite_id TEXT NOT NULL, passed INTEGER NOT NULL CHECK(passed IN (0,1)), at INTEGER NOT NULL
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS runtime_exposure (
+      block_merkle_root TEXT PRIMARY KEY REFERENCES blocks(block_merkle_root),
+      requests_seen INTEGER NOT NULL DEFAULT 0, last_seen INTEGER
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS strictness_edges (
+      stricter_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      looser_root TEXT NOT NULL REFERENCES blocks(block_merkle_root),
+      created_at INTEGER NOT NULL, PRIMARY KEY (stricter_root, looser_root)
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS block_artifacts (
+      block_merkle_root TEXT    NOT NULL REFERENCES blocks(block_merkle_root),
+      path              TEXT    NOT NULL,
+      bytes             BLOB    NOT NULL,
+      declaration_index INTEGER NOT NULL,
+      PRIMARY KEY (block_merkle_root, path)
+    )`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_block_artifacts_block_merkle_root ON block_artifacts(block_merkle_root)");
+    // Freeze at v5.
+    db.prepare("UPDATE schema_version SET version = ?").run(5);
+
+    // Insert two representative v5 rows.
+    const specA = makeSpecYak("l2-v5-block-a");
+    const rowA = makeBlockRow(specA);
+    const specB = makeSpecYak("l2-v5-block-b");
+    const rowB = makeBlockRow(specB, "export function b(): void {}");
+
+    for (const row of [rowA, rowB]) {
+      db.prepare(
+        "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+      ).run(row.blockMerkleRoot, row.specHash, Buffer.from(row.specCanonicalBytes), row.implSource, row.proofManifestJson, row.level, row.createdAt, row.canonicalAstHash);
+      // Insert one block_artifacts row per block (simulates WI-022 v5 state).
+      db.prepare(
+        "INSERT INTO block_artifacts(block_merkle_root, path, bytes, declaration_index) VALUES (?, ?, ?, ?)",
+      ).run(row.blockMerkleRoot, "property_tests.ts", Buffer.from("// tests"), 0);
+    }
+
+    // Verify pre-migration state: version=5, no kind column, 2 blocks, 2 artifact rows.
+    const vPre = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(vPre).toBe(5);
+    const colsPre = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(colsPre).not.toContain("kind");
+
+    const blockCountPre = (db.prepare("SELECT COUNT(*) AS cnt FROM blocks").get() as { cnt: number }).cnt;
+    expect(blockCountPre).toBe(2);
+    const artCountPre = (db.prepare("SELECT COUNT(*) AS cnt FROM block_artifacts").get() as { cnt: number }).cnt;
+    expect(artCountPre).toBe(2);
+
+    // Apply the migration — applyMigrations on a v5 DB runs only the v5 → v6 step.
+    const { applyMigrations } = await import("./schema.js");
+    applyMigrations(db);
+
+    // Post-migration assertions.
+    const vPost = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(vPost).toBe(6);
+
+    // kind column now present.
+    const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(colsPost).toContain("kind");
+    expect(colsPost).toContain("foreign_pkg");
+    expect(colsPost).toContain("foreign_export");
+    expect(colsPost).toContain("foreign_dts_hash");
+
+    // block_foreign_refs table present.
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((t) => t.name);
+    expect(tables).toContain("block_foreign_refs");
+
+    // Row count preserved (no rows dropped).
+    const blockCountPost = (db.prepare("SELECT COUNT(*) AS cnt FROM blocks").get() as { cnt: number }).cnt;
+    expect(blockCountPost).toBe(2);
+
+    // Existing rows have kind='local' (DEFAULT 'local' applied at migration time).
+    const kinds = (db.prepare("SELECT kind FROM blocks ORDER BY block_merkle_root").all() as Array<{ kind: string }>).map((r) => r.kind);
+    expect(kinds).toEqual(["local", "local"]);
+
+    // Existing block_artifacts rows from v5 are intact (WI-022 rows preserved).
+    const artCountPost = (db.prepare("SELECT COUNT(*) AS cnt FROM block_artifacts").get() as { cnt: number }).cnt;
+    expect(artCountPost).toBe(2);
+
+    db.close();
+  });
+
+  /**
+   * L2-T2: Re-running migration on an already-v6 DB is a no-op.
+   *
+   * Ensures applyMigrations is idempotent on a fully-migrated v6 DB. No errors;
+   * schema_version stays at 6. Matches the MIGRATION_3/4 idempotency pattern.
+   */
+  it("L2-T2: re-running applyMigrations on a v6 DB is a no-op (idempotent)", async () => {
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const { applyMigrations, SCHEMA_VERSION } = await import("./schema.js");
+
+    const db = new Database(":memory:");
+    sqliteVec.load(db);
+
+    // First run — migrates from 0 to 6.
+    applyMigrations(db);
+    const vAfterFirst = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(vAfterFirst).toBe(6);
+    expect(SCHEMA_VERSION).toBe(6);
+
+    // Second run — must be a complete no-op; no throws; version stays at 6.
+    expect(() => applyMigrations(db)).not.toThrow();
+    const vAfterSecond = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    expect(vAfterSecond).toBe(6);
+
+    // Verify column count is stable (no duplicate columns created).
+    const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map((c) => c.name);
+    // kind column appears exactly once.
+    expect(cols.filter((c) => c === "kind")).toHaveLength(1);
+    // foreign_pkg appears exactly once.
+    expect(cols.filter((c) => c === "foreign_pkg")).toHaveLength(1);
+
+    db.close();
+  });
+
+  /**
+   * L2-T3: Inserting a foreign row with NULL foreign_pkg is rejected.
+   *
+   * The L2-I3 invariant guard in storeBlock() must throw when
+   * kind='foreign' and foreignPkg is null/undefined. This is the single
+   * enforcement path (storage-layer guard, not SQL CHECK constraint).
+   */
+  it("L2-T3: storeBlock rejects kind='foreign' row with null foreignPkg (L2-I3 guard)", async () => {
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+
+    // Build a foreign-shaped row where foreignPkg is null (invariant violation).
+    const spec = makeSpecYak("l2-foreign-null-pkg");
+    const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
+    // For a foreign block, the merkle root is computed from (kind, pkg, export).
+    // We must compute a valid root to avoid the integrity check running first.
+    // Supply a placeholder that would produce a valid foreign root computation.
+    const foreignPkg = "ts-morph"; // non-null for root computation
+    const foreignExport = "Project";
+    const root = bRoot({ kind: "foreign", pkg: foreignPkg, export: foreignExport });
+
+    const rowWithNullPkg: BlockTripletRow = {
+      blockMerkleRoot: root,
+      specHash: sh(spec),
+      specCanonicalBytes,
+      implSource: "",
+      proofManifestJson: "{}",
+      level: "L0",
+      createdAt: Date.now(),
+      canonicalAstHash: cah("") as ReturnType<typeof cah>,
+      artifacts: new Map(),
+      kind: "foreign",
+      foreignPkg: null, // ← invariant violation: must be non-null for kind='foreign'
+      foreignExport,
+    };
+
+    await expect(registry.storeBlock(rowWithNullPkg)).rejects.toThrow(
+      /L2-I3|foreign_invariant_failed|foreign.*requires/i,
+    );
+  });
+
+  /**
+   * L2-T4: Inserting a well-formed foreign row succeeds.
+   *
+   * Verifies that a foreign block with non-null foreignPkg and foreignExport
+   * stores successfully and hydrates back with kind='foreign'.
+   */
+  it("L2-T4: storeBlock accepts kind='foreign' row with non-null foreignPkg and foreignExport", async () => {
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+
+    const spec = makeSpecYak("l2-foreign-valid-row");
+    const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
+    const foreignPkg = "ts-morph";
+    const foreignExport = "Project";
+
+    // Compute the correct foreign merkle root.
+    const root = bRoot({ kind: "foreign", pkg: foreignPkg, export: foreignExport });
+
+    const foreignRow: BlockTripletRow = {
+      blockMerkleRoot: root,
+      specHash: sh(spec),
+      specCanonicalBytes,
+      implSource: "",
+      proofManifestJson: "{}",
+      level: "L0",
+      createdAt: Date.now(),
+      canonicalAstHash: cah("") as ReturnType<typeof cah>,
+      artifacts: new Map(),
+      kind: "foreign",
+      foreignPkg,
+      foreignExport,
+      foreignDtsHash: null,
+    };
+
+    // Must not throw.
+    await expect(registry.storeBlock(foreignRow)).resolves.toBeUndefined();
+
+    // Hydrated row must have kind='foreign' and correct foreign fields.
+    const fetched = await registry.getBlock(root);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.kind).toBe("foreign");
+    expect(fetched!.foreignPkg).toBe(foreignPkg);
+    expect(fetched!.foreignExport).toBe(foreignExport);
+    expect(fetched!.foreignDtsHash).toBeNull();
+  });
+
+  /**
+   * L2-T5: block_foreign_refs FK enforcement.
+   *
+   * Inserts a parent block, then:
+   *   a) Inserts a valid block_foreign_refs row referencing the parent root → success.
+   *   b) Inserts a block_foreign_refs row referencing a non-existent root → FOREIGN KEY
+   *      violation (better-sqlite3 surfaces this as SqliteError with message containing
+   *      "FOREIGN KEY constraint failed").
+   *
+   * Both operations use raw SQL to exercise the table constraint directly, bypassing
+   * the storage-layer API (which does not yet have a writeForeignRef() method in L2).
+   */
+  it("L2-T5: block_foreign_refs accepts valid FK refs; rejects refs to non-existent roots", async () => {
+    // We need direct DB access to insert into block_foreign_refs.
+    // Open a fresh file-backed DB so we can test FK constraints with
+    // foreign_keys = ON (which openRegistry enables).
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-fk-test-"));
+    const dbPath = join(tmpDir, "fk.sqlite");
+
+    const { openRegistry: openReg } = await import("./storage.js");
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+
+    // Store a parent block (local) — this creates the FK target for block_foreign_refs.
+    const parentSpec = makeSpecYak("l2-fk-parent");
+    const parentRow = makeBlockRow(parentSpec);
+    await reg.storeBlock(parentRow);
+
+    // Store a foreign block — this is the FK target in foreign_block_root.
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+    const foreignSpec = makeSpecYak("l2-fk-foreign");
+    const foreignSpecBytes = canon(foreignSpec as unknown as Parameters<typeof canon>[0]);
+    const foreignPkg = "node:fs";
+    const foreignExport = "readFileSync";
+    const foreignRoot = bRoot({ kind: "foreign", pkg: foreignPkg, export: foreignExport });
+    const foreignRow: BlockTripletRow = {
+      blockMerkleRoot: foreignRoot,
+      specHash: sh(foreignSpec),
+      specCanonicalBytes: foreignSpecBytes,
+      implSource: "",
+      proofManifestJson: "{}",
+      level: "L0",
+      createdAt: Date.now(),
+      canonicalAstHash: cah("") as ReturnType<typeof cah>,
+      artifacts: new Map(),
+      kind: "foreign",
+      foreignPkg,
+      foreignExport,
+    };
+    await reg.storeBlock(foreignRow);
+    await reg.close();
+
+    // Now open a direct DB handle (foreign_keys = ON is the openRegistry default).
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.pragma("foreign_keys = ON");
+
+    // Case A: valid insert — both parent and foreign roots exist in blocks.
+    expect(() => {
+      db.prepare(
+        "INSERT INTO block_foreign_refs(parent_block_root, foreign_block_root, declaration_index) VALUES (?, ?, ?)",
+      ).run(parentRow.blockMerkleRoot, foreignRoot, 0);
+    }).not.toThrow();
+
+    // Verify the row was inserted.
+    const inserted = db.prepare("SELECT * FROM block_foreign_refs WHERE parent_block_root = ?").all(parentRow.blockMerkleRoot) as Array<{ declaration_index: number }>;
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]?.declaration_index).toBe(0);
+
+    // Case B: invalid insert — foreign_block_root references a non-existent block.
+    const ghostRoot = "a".repeat(64);
+    expect(() => {
+      db.prepare(
+        "INSERT INTO block_foreign_refs(parent_block_root, foreign_block_root, declaration_index) VALUES (?, ?, ?)",
+      ).run(parentRow.blockMerkleRoot, ghostRoot, 1);
+    }).toThrow(/FOREIGN KEY constraint failed/);
+
+    db.close();
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * L2-T6: getForeignRefs returns rows in declaration_index ASC; [] for no-ref blocks.
+   *
+   * Inserts 3 block_foreign_refs rows for a parent block in non-sequential
+   * declaration_index order (2, 0, 1), calls getForeignRefs(), and asserts
+   * the returned rows are sorted 0, 1, 2.
+   *
+   * Also verifies that getForeignRefs on a block with no refs returns [].
+   */
+  it("L2-T6: getForeignRefs returns rows in declaration_index ASC; [] for blocks with no refs", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-getforeign-test-"));
+    const dbPath = join(tmpDir, "getforeign.sqlite");
+
+    const { openRegistry: openReg } = await import("./storage.js");
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+
+    // Store a parent block (local).
+    const parentSpec = makeSpecYak("l2-getforeign-parent");
+    const parentRow = makeBlockRow(parentSpec);
+    await reg.storeBlock(parentRow);
+
+    // Store 3 foreign blocks with distinct (pkg, export) pairs.
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+
+    type ForeignMeta = { pkg: string; export: string };
+    const foreignMetas: ForeignMeta[] = [
+      { pkg: "node:fs", export: "readFileSync" },
+      { pkg: "node:path", export: "join" },
+      { pkg: "ts-morph", export: "Project" },
+    ];
+    const foreignRoots: string[] = [];
+
+    for (const meta of foreignMetas) {
+      const fSpec = makeSpecYak(`l2-getforeign-foreign-${meta.export}`);
+      const fRoot = bRoot({ kind: "foreign", pkg: meta.pkg, export: meta.export });
+      foreignRoots.push(fRoot);
+      await reg.storeBlock({
+        blockMerkleRoot: fRoot,
+        specHash: sh(fSpec),
+        specCanonicalBytes: canon(fSpec as unknown as Parameters<typeof canon>[0]),
+        implSource: "",
+        proofManifestJson: "{}",
+        level: "L0",
+        createdAt: Date.now(),
+        canonicalAstHash: cah("") as ReturnType<typeof cah>,
+        artifacts: new Map(),
+        kind: "foreign",
+        foreignPkg: meta.pkg,
+        foreignExport: meta.export,
+      });
+    }
+
+    await reg.close();
+
+    // Open a direct handle to insert block_foreign_refs in non-sequential order.
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.pragma("foreign_keys = ON");
+
+    // Insert in declaration_index order: 2, 0, 1 (deliberately out of order).
+    const insertRef = db.prepare(
+      "INSERT INTO block_foreign_refs(parent_block_root, foreign_block_root, declaration_index) VALUES (?, ?, ?)",
+    );
+    insertRef.run(parentRow.blockMerkleRoot, foreignRoots[2], 2);
+    insertRef.run(parentRow.blockMerkleRoot, foreignRoots[0], 0);
+    insertRef.run(parentRow.blockMerkleRoot, foreignRoots[1], 1);
+    db.close();
+
+    // Reopen via registry API and call getForeignRefs.
+    const reg2 = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+
+    // getForeignRefs must return rows ordered by declaration_index ASC.
+    const refs = await reg2.getForeignRefs(parentRow.blockMerkleRoot);
+    expect(refs).toHaveLength(3);
+    expect(refs[0]?.declarationIndex).toBe(0);
+    expect(refs[1]?.declarationIndex).toBe(1);
+    expect(refs[2]?.declarationIndex).toBe(2);
+
+    // Verify FK integrity: each returned foreignBlockRoot matches the inserted root
+    // at that declaration_index.
+    expect(refs[0]?.foreignBlockRoot).toBe(foreignRoots[0]);
+    expect(refs[1]?.foreignBlockRoot).toBe(foreignRoots[1]);
+    expect(refs[2]?.foreignBlockRoot).toBe(foreignRoots[2]);
+
+    // A block with no foreign refs returns [].
+    const noRefBlock = makeBlockRow(makeSpecYak("l2-no-refs-block"));
+    await reg2.storeBlock(noRefBlock);
+    const emptyRefs = await reg2.getForeignRefs(noRefBlock.blockMerkleRoot);
+    expect(emptyRefs).toEqual([]);
+
+    await reg2.close();
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 30_000);
+
+  /**
+   * L2-T7: Backwards compatibility — pre-migration rows hydrate with kind='local'.
+   *
+   * Inserts a row using raw SQL with only the legacy column set (no kind column;
+   * the DEFAULT 'local' covers it). Reads it back via getBlock / BlockTripletRow
+   * and asserts that kind === 'local'.
+   *
+   * This proves that the DEFAULT 'local' contract holds at the storage hydration
+   * layer — no pre-v6 row will be incorrectly marked 'foreign'.
+   */
+  it("L2-T7: pre-v6 rows (legacy column set) hydrate with kind='local' (backwards compat)", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-backcompat-test-"));
+    const dbPath = join(tmpDir, "backcompat.sqlite");
+
+    const { openRegistry: openReg } = await import("./storage.js");
+    // Open registry (applies migrations 0→6).
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+    await reg.close();
+
+    // Insert a block via raw SQL, omitting the kind/foreign_* columns to simulate
+    // a row written by a v5 (pre-migration-6) writer that had no knowledge of the
+    // kind column. The DEFAULT 'local' in the column definition must backfill this.
+    const Database = (await import("better-sqlite3")).default;
+    const sqliteVec = await import("sqlite-vec");
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+
+    const spec = makeSpecYak("l2-backcompat-block");
+    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
+      await import("@yakcc/contracts");
+    const implSource = "export function backcompat(): void {}";
+    const manifest = { artifacts: [] as Array<{ kind: string; path: string }> };
+    const artifacts = new Map<string, Uint8Array>();
+    const root = bRoot({ spec, implSource, manifest: manifest as import("@yakcc/contracts").ProofManifest, artifacts });
+    const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
+
+    // Raw SQL insert without kind/foreign_* columns — they default to 'local'/NULL.
+    db.prepare(
+      "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+    ).run(root, sh(spec), Buffer.from(specCanonicalBytes), implSource, JSON.stringify(manifest), "L0", Date.now(), cah(implSource));
+    db.close();
+
+    // Reopen via registry API; getBlock must return kind='local' for the raw-inserted row.
+    const reg2 = await openReg(dbPath, { embeddings: mockEmbeddingProvider() });
+    const fetched = await reg2.getBlock(root);
+    await reg2.close();
+
+    expect(fetched).not.toBeNull();
+    // kind must be 'local' — the DEFAULT ensures pre-v6 rows are correctly labelled.
+    expect(fetched!.kind).toBe("local");
+    // foreign fields must be null — no foreign identity for a local block.
+    expect(fetched!.foreignPkg).toBeNull();
+    expect(fetched!.foreignExport).toBeNull();
+    expect(fetched!.foreignDtsHash).toBeNull();
+
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  }, 30_000);
 });
