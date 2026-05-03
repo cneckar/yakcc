@@ -327,19 +327,153 @@ describe("WI-V1W2-WASM-04 parity — string substrate: str-length (WI-V1W3-WASM-
 });
 
 // ---------------------------------------------------------------------------
-// SUBSTRATE 3: Mixed (record-of-numbers, struct lowering + host bindings)
+// SUBSTRATE 3: Mixed (record-of-numbers, flat-struct linear-memory layout)
 //
-// Pending WI-V1W2-WASM-02 — record/struct type-lowering.
+// Activated by WI-V1W3-WASM-LOWER-06 — record type-lowering now lands.
 //
-// A mixed substrate exercises flat-struct lowering in linear memory with field
-// offsets. The WASM backend has no general IR-to-struct-layout pass until
-// WI-V1W2-WASM-02 lands; marking as pending per Sacred Practice #12.
+// The WASM backend lowers TypeScript record substrates via detectRecordShape()
+// + emitRecordModule(). The calling convention is (ptr: i32, _size: i32) for
+// record arguments (fields in linear memory at 8-byte aligned slots).
+//
+// Substrate: sumRecord3 — a record with 3 numeric fields; returns field sum.
+//   export function sumRecord3(r: { a: number; b: number; c: number }, _size: number): number {
+//     return (r.a + r.b + r.c) | 0;
+//   }
+//
+// Three fields are used to avoid the wave-2 sum_record fast-path, which only
+// matches `return r.field + r.field` (exactly 2 field accesses, no `| 0`).
+// With 3 fields + `| 0`, the general record lowering path is exercised.
+//
+// Field layout (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001):
+//   slot 0 (byte offset 0):  field r.a (i32)
+//   slot 1 (byte offset 8):  field r.b (i32)
+//   slot 2 (byte offset 16): field r.c (i32)
+//   struct size: 3 * 8 = 24 bytes
+//
+// TS backend reference: (r.a + r.b + r.c) | 0 evaluated directly in JS.
+// WASM: caller allocates struct in linear memory, writes fields at offsets,
+//   calls __wasm_export_sumRecord3(ptr, structSize) → i32.
+//
+// Corpus: 10 explicit cases + ≥10 fast-check property cases.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-PARITY-MIXED-001
+// @title Activate mixed substrate parity once WI-06 record lowering lands
+// @status accepted
+// @rationale
+//   The prior it.todo block was blocked on WI-V1W2-WASM-02 (record lowering).
+//   WI-V1W3-WASM-LOWER-06 implements the record lowering path via emitRecordModule()
+//   and detectRecordShape(). This test exercises the full pipeline end-to-end:
+//   makeSingleBlockResolution → wasmBackend().emit → WebAssembly.instantiate
+//   → write struct to memory → call __wasm_export_sumRecord3 → assert parity.
+//   Three fields + `| 0` ensures the general record path fires, not the wave-2
+//   sum_record fast-path (which matches only `return r.field + r.field` without `| 0`).
 // ---------------------------------------------------------------------------
 
-describe("WI-V1W2-WASM-04 parity — mixed substrate: pending WI-V1W2-WASM-02", () => {
-  it.todo(
-    "parity: mixed-substrate (record-of-numbers) — ≥10 corpus cases (blocked: WI-V1W2-WASM-02 record/struct lowering not yet implemented)",
-  );
+const SUM_RECORD3_SOURCE =
+  "export function sumRecord3(r: { a: number; b: number; c: number }, _size: number): number { return (r.a + r.b + r.c) | 0; }";
+
+const MIXED_CORPUS: ReadonlyArray<[number, number, number]> = [
+  [0, 0, 0],
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+  [5, 7, 3],
+  [-3, 3, 1],
+  [100, 200, 50],
+  [-100, -200, 300],
+  [1000, -1000, 500],
+  [42, 58, -100],
+];
+
+describe("WI-V1W2-WASM-04 parity — mixed substrate: record-of-numbers (WI-V1W3-WASM-LOWER-06)", () => {
+  it("wasm-backend emits a valid .wasm binary for the sumRecord3 substrate", async () => {
+    const resolution = makeSingleBlockResolution(SUM_RECORD3_SOURCE);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    expect(wasmBytes, "wasm-backend must return Uint8Array").toBeInstanceOf(Uint8Array);
+    expect(wasmBytes[0]).toBe(0x00);
+    expect(wasmBytes[1]).toBe(0x61);
+    expect(wasmBytes[2]).toBe(0x73);
+    expect(wasmBytes[3]).toBe(0x6d);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+  });
+
+  it(`parity: ${MIXED_CORPUS.length} explicit corpus cases produce value-equivalent results`, async () => {
+    const resolution = makeSingleBlockResolution(SUM_RECORD3_SOURCE);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const STRUCT_SLOTS = 3;
+    const STRUCT_SIZE = STRUCT_SLOTS * 8;
+    const STRUCT_PTR = 64; // safe non-conflicting test address
+
+    for (const [a, b, c] of MIXED_CORPUS) {
+      const tsRef = (a + b + c) | 0;
+
+      const host = createHost();
+      const { instance } = (await WebAssembly.instantiate(
+        wasmBytes,
+        host.importObject,
+      )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+      const mem = host.memory;
+      const dv = new DataView(mem.buffer);
+      // Write r.a at slot 0 (offset 0), r.b at slot 1 (offset 8), r.c at slot 2 (offset 16)
+      dv.setInt32(STRUCT_PTR + 0, a, true);
+      dv.setInt32(STRUCT_PTR + 4, 0, true);
+      dv.setInt32(STRUCT_PTR + 8, b, true);
+      dv.setInt32(STRUCT_PTR + 12, 0, true);
+      dv.setInt32(STRUCT_PTR + 16, c, true);
+      dv.setInt32(STRUCT_PTR + 20, 0, true);
+
+      const fn = (instance.exports as Record<string, unknown>)
+        .__wasm_export_sumRecord3 as (ptr: number, size: number) => number;
+      const wasmResult = fn(STRUCT_PTR, STRUCT_SIZE);
+
+      expect(
+        wasmResult,
+        `sumRecord3({a:${a}, b:${b}, c:${c}}): WASM result (${wasmResult}) must equal TS reference (${tsRef})`,
+      ).toBe(tsRef);
+    }
+  });
+
+  it("parity: ≥10 fast-check property cases produce value-equivalent results", async () => {
+    const resolution = makeSingleBlockResolution(SUM_RECORD3_SOURCE);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const STRUCT_SLOTS = 3;
+    const STRUCT_SIZE = STRUCT_SLOTS * 8;
+    const STRUCT_PTR = 64;
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: -100000, max: 100000 }),
+        fc.integer({ min: -100000, max: 100000 }),
+        fc.integer({ min: -100000, max: 100000 }),
+        async (a, b, c) => {
+          const tsRef = (a + b + c) | 0;
+
+          const host = createHost();
+          const { instance } = (await WebAssembly.instantiate(
+            wasmBytes,
+            host.importObject,
+          )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+          const mem = host.memory;
+          const dv = new DataView(mem.buffer);
+          dv.setInt32(STRUCT_PTR + 0, a, true);
+          dv.setInt32(STRUCT_PTR + 4, 0, true);
+          dv.setInt32(STRUCT_PTR + 8, b, true);
+          dv.setInt32(STRUCT_PTR + 12, 0, true);
+          dv.setInt32(STRUCT_PTR + 16, c, true);
+          dv.setInt32(STRUCT_PTR + 20, 0, true);
+
+          const fn = (instance.exports as Record<string, unknown>)
+            .__wasm_export_sumRecord3 as (ptr: number, size: number) => number;
+          const wasmResult = fn(STRUCT_PTR, STRUCT_SIZE);
+          expect(wasmResult, `sumRecord3({a:${a}, b:${b}, c:${c}})`).toBe(tsRef);
+        },
+      ),
+      { numRuns: 15 },
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

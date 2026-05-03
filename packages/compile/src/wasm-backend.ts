@@ -72,7 +72,7 @@
 
 import type { ResolutionResult } from "./resolve.js";
 import { LoweringVisitor } from "./wasm-lowering/visitor.js";
-import type { StringShapeMeta } from "./wasm-lowering/visitor.js";
+import type { RecordShapeMeta, StringShapeMeta } from "./wasm-lowering/visitor.js";
 import type { NumericDomain, WasmFunction } from "./wasm-lowering/wasm-function.js";
 import { valtypeByte } from "./wasm-lowering/wasm-function.js";
 
@@ -982,6 +982,109 @@ function emitStringModule(shape: StringShapeMeta, fnName: string): Uint8Array<Ar
 }
 
 // ---------------------------------------------------------------------------
+// Record module emitter (WI-V1W3-WASM-LOWER-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit a full yakcc_host-conformant WASM module for a record-operation function.
+ *
+ * Record functions take N i32 parameters (struct ptr(s) + _size params) and
+ * return an i32 or f64 result. All pointer arguments are i32 (linear memory
+ * addresses). No new host imports are needed for field access — the base 4
+ * imports (log, alloc, free, panic) are sufficient.
+ *
+ * Type section entries (always at least 5, matching buildImportSection()):
+ *   0: (i32 i32) → ()          — host_log
+ *   1: (i32) → (i32)           — host_alloc
+ *   2: (i32) → ()              — host_free
+ *   3: (i32 i32 i32) → ()      — host_panic
+ *   4: substrate signature     — (wasmParamCount × i32) → returnValtype
+ *
+ * The string host imports (indices 5–9) are NOT included — record functions
+ * that contain string field access call host_string_length (funcidx 4 in the
+ * string module), but plain record modules don't contain string method calls.
+ * If a future WI adds string-method calls on record string fields, a combined
+ * record+string import section will be needed.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-RECORD-EQ-001
+ *
+ * @param shape      - RecordShapeMeta from LoweringVisitor
+ * @param fnName     - Exported function name (used as __wasm_export_<fnName>)
+ * @param wasmFn     - WasmFunction IR already built by _lowerRecordFunction
+ * @param returnDomain - Inferred domain for the return type
+ */
+function emitRecordModule(
+  shape: RecordShapeMeta,
+  fnName: string,
+  wasmFn: WasmFunction,
+  returnDomain: NumericDomain,
+): Uint8Array<ArrayBuffer> {
+  // -----------------------------------------------------------------------
+  // Type section
+  // -----------------------------------------------------------------------
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // (i32 i32) → ()      host_log
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // (i32) → (i32)       host_alloc
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // (i32) → ()              host_free
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32)→() host_panic
+
+  // Type 4: substrate function — (wasmParamCount × i32) → returnValtype
+  const rvt = returnDomain === "f64" ? F64 : returnDomain === "i64" ? I64 : I32;
+  const paramBytes = new Uint8Array(shape.wasmParamCount).fill(I32);
+  const type4 = concat(
+    new Uint8Array([FUNCTYPE]),
+    uleb128(shape.wasmParamCount),
+    paramBytes,
+    uleb128(1),
+    new Uint8Array([rvt]),
+  );
+  const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+
+  // -----------------------------------------------------------------------
+  // Import section (standard 4 host imports — no string imports needed)
+  // -----------------------------------------------------------------------
+  const importSection = buildImportSection();
+
+  // -----------------------------------------------------------------------
+  // Function section: 1 defined function, type index 4
+  // -----------------------------------------------------------------------
+  const funcSection = section(3, concat(uleb128(1), uleb128(4)));
+
+  // -----------------------------------------------------------------------
+  // Table section: empty funcref table (required by host contract)
+  // -----------------------------------------------------------------------
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+
+  // -----------------------------------------------------------------------
+  // Export section: substrate function + table
+  // -----------------------------------------------------------------------
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]), // func
+    uleb128(4), // funcidx 4 (first defined function, after 4 imports)
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  // -----------------------------------------------------------------------
+  // Code section: 1 function body (serialized from WasmFunction IR)
+  // -----------------------------------------------------------------------
+  const body = serializeWasmFunction(wasmFn);
+  const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
+
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1012,6 +1115,12 @@ export async function compileToWasm(
     // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
     if (result.stringShape !== undefined) {
       return emitStringModule(result.stringShape, result.fnName);
+    }
+    // WI-V1W3-WASM-LOWER-06: record shapes go to emitRecordModule.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001
+    if (result.recordShape !== undefined) {
+      const returnDomain = result.numericDomain ?? "i32";
+      return emitRecordModule(result.recordShape, result.fnName, result.wasmFn, returnDomain);
     }
     // "add" shape uses the legacy 3-function substrate module so that the
     // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
