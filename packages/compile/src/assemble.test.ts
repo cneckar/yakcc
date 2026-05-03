@@ -46,6 +46,7 @@ import {
   type SpecYak,
   blockMerkleRoot,
   canonicalAstHash,
+  createOfflineEmbeddingProvider,
   specHash,
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
@@ -178,7 +179,7 @@ let assembleOpts: AssembleOptions;
 let tempDir: string;
 
 beforeAll(async () => {
-  registry = await openRegistry(":memory:");
+  registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
 
   const { row: doubleRow, merkleRoot: dr } = makeBlockRow(
     "double",

@@ -32,7 +32,7 @@ import {
   serveRegistry,
 } from "@yakcc/federation";
 import type { ServeHandle, Transport } from "@yakcc/federation";
-import type { Registry } from "@yakcc/registry";
+import type { Registry, RegistryOptions } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 
@@ -58,6 +58,12 @@ export interface FederationOptions {
    * Default: false (production — blocks until signal).
    */
   noBlock?: boolean;
+  /**
+   * Embedding provider forwarded to openRegistry.
+   * Default: createLocalEmbeddingProvider() (network-dependent).
+   * Tests inject createOfflineEmbeddingProvider() to avoid HuggingFace I/O.
+   */
+  embeddings?: RegistryOptions["embeddings"];
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +148,7 @@ export async function runFederationServe(
 
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return { code: 1, handle: null };
@@ -234,7 +240,7 @@ async function runFederationMirror(
 
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
@@ -343,7 +349,7 @@ async function runFederationPull(
   let registry: Registry | null = null;
   if (hasRegistry) {
     try {
-      registry = await openRegistry(registryPath as string);
+      registry = await openRegistry(registryPath as string, { embeddings: opts?.embeddings });
     } catch (err) {
       logger.error(`error: failed to open registry at ${registryPath as string}: ${String(err)}`);
       return 1;
