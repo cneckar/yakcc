@@ -263,6 +263,125 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // WI-V1W3-WASM-LOWER-05: String interchange host imports
+  //
+  // WASM_HOST_CONTRACT.md wave-3 amendment (sections 3.6-3.10).
+  // All string data: (ptr: i32, len_bytes: i32) UTF-8 pairs in linear memory.
+  // Host does not retain pointers after call returns.
+  // Invalid UTF-8 replaced with U+FFFD (same policy as host_log).
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+  // @title host_string_length returns JS string.length (UTF-16 code units)
+  // @status accepted
+  // @rationale
+  //   JavaScript .length is UTF-16 code unit count. TextDecoder gives a JS
+  //   string; jsString.length is surrogate-aware, matching TS .length exactly.
+  // -------------------------------------------------------------------------
+
+  /** host_string_length(ptr: i32, len_bytes: i32) -> i32 char_count */
+  function hostStringLength(ptr: number, lenBytes: number): number {
+    try {
+      if (lenBytes === 0) return 0;
+      return readUtf8(memory, ptr, lenBytes).length;
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_length: ${String(e)}`,
+      });
+    }
+  }
+
+  /** host_string_indexof(hp: i32, hl: i32, np: i32, nl: i32) -> i32 char_index_or_-1 */
+  function hostStringIndexof(hp: number, hl: number, np: number, nl: number): number {
+    try {
+      const haystack = readUtf8(memory, hp, hl);
+      const needle = readUtf8(memory, np, nl);
+      return haystack.indexOf(needle);
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_indexof: ${String(e)}`,
+      });
+    }
+  }
+
+  /**
+   * host_string_slice(ptr: i32, len: i32, start: i32, end: i32, out_ptr: i32) -> void
+   * Writes (new_ptr: i32 LE, new_len: i32 LE) at out_ptr and out_ptr+4.
+   */
+  function hostStringSlice(
+    ptr: number,
+    len: number,
+    start: number,
+    end: number,
+    outPtr: number,
+  ): void {
+    try {
+      const s = readUtf8(memory, ptr, len);
+      const sliced = s.slice(start, end);
+      const encoded = new TextEncoder().encode(sliced);
+      const newLen = encoded.length;
+      const newPtr = hostAlloc(newLen > 0 ? newLen : 1);
+      if (newLen > 0) {
+        new Uint8Array(memory.buffer).set(encoded, newPtr);
+      }
+      const dv = new DataView(memory.buffer);
+      dv.setInt32(outPtr, newPtr, true);
+      dv.setInt32(outPtr + 4, newLen, true);
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_slice: ${String(e)}`,
+      });
+    }
+  }
+
+  /**
+   * host_string_concat(p1: i32, l1: i32, p2: i32, l2: i32, out_ptr: i32) -> void
+   * Writes (new_ptr: i32 LE, new_len: i32 LE) at out_ptr and out_ptr+4.
+   */
+  function hostStringConcat(p1: number, l1: number, p2: number, l2: number, outPtr: number): void {
+    try {
+      const s1 = readUtf8(memory, p1, l1);
+      const s2 = readUtf8(memory, p2, l2);
+      const combined = s1 + s2;
+      const encoded = new TextEncoder().encode(combined);
+      const newLen = encoded.length;
+      const newPtr = hostAlloc(newLen > 0 ? newLen : 1);
+      if (newLen > 0) {
+        new Uint8Array(memory.buffer).set(encoded, newPtr);
+      }
+      const dv = new DataView(memory.buffer);
+      dv.setInt32(outPtr, newPtr, true);
+      dv.setInt32(outPtr + 4, newLen, true);
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_concat: ${String(e)}`,
+      });
+    }
+  }
+
+  /** host_string_eq(p1: i32, l1: i32, p2: i32, l2: i32) -> i32 (1=equal, 0=not) */
+  function hostStringEq(p1: number, l1: number, p2: number, l2: number): number {
+    try {
+      const s1 = readUtf8(memory, p1, l1);
+      const s2 = readUtf8(memory, p2, l2);
+      return s1 === s2 ? 1 : 0;
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_eq: ${String(e)}`,
+      });
+    }
+  }
+
   const importObject: WebAssembly.Imports = {
     yakcc_host: {
       memory,
@@ -270,6 +389,12 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
       host_alloc: hostAlloc,
       host_free: hostFree,
       host_panic: hostPanic,
+      // WI-V1W3-WASM-LOWER-05: string interchange imports (WASM_HOST_CONTRACT.md wave-3 amendment)
+      host_string_length: hostStringLength,
+      host_string_indexof: hostStringIndexof,
+      host_string_slice: hostStringSlice,
+      host_string_concat: hostStringConcat,
+      host_string_eq: hostStringEq,
     },
   };
 

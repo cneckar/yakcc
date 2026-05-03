@@ -41,11 +41,16 @@
  *   WASM's i32.add semantics (two's-complement, no overflow detection).
  */
 
-import { describe, expect, it } from "vitest";
-import { type BlockMerkleRoot, type LocalTriplet, blockMerkleRoot, specHash } from "@yakcc/contracts";
-import type { SpecYak } from "@yakcc/contracts";
-import { tsBackend, wasmBackend, instantiateAndRun, WasmTrap } from "@yakcc/compile";
+import { WasmTrap, createHost, instantiateAndRun, tsBackend, wasmBackend } from "@yakcc/compile";
 import type { ResolutionResult, ResolvedBlock } from "@yakcc/compile";
+import {
+  type BlockMerkleRoot,
+  type LocalTriplet,
+  blockMerkleRoot,
+  specHash,
+} from "@yakcc/contracts";
+import type { SpecYak } from "@yakcc/contracts";
+import { describe, expect, it } from "vitest";
 
 // ---------------------------------------------------------------------------
 // TypeScript-backend reference function (DEC-V1W2-WASM-DEMO-TSREF-001)
@@ -113,7 +118,7 @@ function makeResolution(
 }
 
 // The add substrate source — must match src/add.ts (reference function above).
-const ADD_IMPL_SOURCE = `export function add(a: number, b: number): number { return a + b; }`;
+const ADD_IMPL_SOURCE = "export function add(a: number, b: number): number { return a + b; }";
 
 function makeAddResolution(): ResolutionResult {
   const id = makeMerkleRoot(
@@ -214,22 +219,111 @@ describe("WI-V1W2-WASM-04 parity — numeric substrate: add(a, b)", () => {
 // ---------------------------------------------------------------------------
 // SUBSTRATE 2: String-handling (linear-memory string view + host_alloc/free)
 //
-// Pending WI-V1W2-WASM-02 — general type-lowering for string substrates.
+// Activated by WI-V1W3-WASM-LOWER-05 — string type-lowering now lands.
 //
-// The WASM backend currently exports __wasm_export_string_len(ptr, len) → len
-// (a fixed-substrate function, not derived from the ResolutionResult's implSource).
-// A real string-handling parity test requires WI-V1W2-WASM-02 to lower a
-// TypeScript `(s: string) => number` substrate to the WASM string-interchange
-// calling convention (ptr+len in linear memory via host_alloc). Until that
-// type-lowering lands, the two backends operate on different calling conventions
-// and value-level parity cannot be asserted without manual bridging code that
-// would mask — not expose — the gap.
+// The WASM backend now lowers TypeScript string substrates via detectStringShape()
+// + emitStringModule(). The calling convention is (ptr: i32, len_bytes: i32) for
+// string arguments (UTF-8 in linear memory). The parity test uses the str-length
+// shape: `export function strLen(s: string): number { return s.length; }`.
+//
+// TS backend reference: JavaScript string.length (UTF-16 code-unit count).
+// WASM backend: ptr+len pair passed to __wasm_export_strLen, which calls
+//   host_string_length and returns the i32 result.
+//
+// Corpus: 10 cases covering ASCII, multi-byte UTF-8, empty, and surrogate pairs.
+//
+// Production sequence (matching strings.test.ts str-1 pattern):
+//   makeStringResolution(strLenSource)
+//   → wasmBackend().emit(resolution)               [Uint8Array]
+//   → WebAssembly.instantiate(bytes, importObject)  [with createHost()]
+//   → write string to memory via host_alloc + Uint8Array.set
+//   → call __wasm_export_strLen(ptr, byteLen) → i32
+//   → assert result === s.length
 // ---------------------------------------------------------------------------
 
-describe("WI-V1W2-WASM-04 parity — string substrate: pending WI-V1W2-WASM-02", () => {
-  it.todo(
-    "parity: string-handling substrate — ≥10 corpus cases (blocked: WI-V1W2-WASM-02 type-lowering for string not yet implemented)",
-  );
+// The str-length substrate source — the WASM backend lowering target.
+const STR_LEN_IMPL_SOURCE = "export function strLen(s: string): number { return s.length; }";
+
+function makeStringResolution(): ResolutionResult {
+  const id = makeMerkleRoot("strLen", "strLen substrate", STR_LEN_IMPL_SOURCE);
+  return makeResolution([{ id, source: STR_LEN_IMPL_SOURCE }]);
+}
+
+// Corpus: 10 cases spanning ASCII, multi-byte characters, empty, and emoji.
+//   JS string.length returns UTF-16 code-unit count; emoji with surrogate pairs count as 2.
+const STRING_CORPUS: ReadonlyArray<string> = [
+  "", // empty string — length 0
+  "a", // single ASCII char — length 1
+  "hello", // short ASCII — length 5
+  "hello world", // ASCII with space — length 11
+  "café", // 4 JS chars (é = 1 code unit) — length 4
+  "日本語", // 3 CJK chars (each = 1 JS code unit) — length 3
+  "abc123", // alphanumeric — length 6
+  "  leading", // leading spaces — length 9
+  "trailing  ", // trailing spaces — length 10
+  "😀", // emoji = 2 UTF-16 code units (surrogate pair) — length 2
+];
+
+describe("WI-V1W2-WASM-04 parity — string substrate: str-length (WI-V1W3-WASM-LOWER-05)", () => {
+  it("wasm-backend emits a valid .wasm binary for the str-length substrate", async () => {
+    const resolution = makeStringResolution();
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    expect(wasmBytes, "wasm-backend must return Uint8Array").toBeInstanceOf(Uint8Array);
+    expect(wasmBytes[0]).toBe(0x00);
+    expect(wasmBytes[1]).toBe(0x61);
+    expect(wasmBytes[2]).toBe(0x73);
+    expect(wasmBytes[3]).toBe(0x6d);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+  });
+
+  it("ts-backend emits non-empty TypeScript containing the 'strLen' function signature", async () => {
+    const resolution = makeStringResolution();
+    const tsSource = await tsBackend().emit(resolution);
+
+    expect(tsSource.length, "ts-backend output must be non-empty").toBeGreaterThan(0);
+    expect(tsSource, "ts-backend output must contain 'function strLen'").toContain(
+      "function strLen",
+    );
+  });
+
+  it(`parity: all ${STRING_CORPUS.length} corpus cases produce value-equivalent results`, async () => {
+    const resolution = makeStringResolution();
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    // Instantiate with full host (including string imports)
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      wasmBytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const allocate = yakccHost.host_alloc as (size: number) => number;
+
+    const fn = (instance.exports as Record<string, unknown>).__wasm_export_strLen as (
+      ptr: number,
+      len: number,
+    ) => number;
+
+    const enc = new TextEncoder();
+    for (const s of STRING_CORPUS) {
+      // TS reference: JavaScript string.length (UTF-16 code-unit count)
+      const tsResult = s.length;
+
+      // WASM: write UTF-8 bytes into linear memory, call with (ptr, byteLen)
+      const encoded = enc.encode(s);
+      const byteLen = encoded.length;
+      const ptr = allocate(byteLen > 0 ? byteLen : 1);
+      const view = new Uint8Array(host.memory.buffer);
+      view.set(encoded, ptr);
+      const wasmResult = fn(ptr, byteLen);
+
+      expect(
+        wasmResult,
+        `strLen("${s}"): WASM result (${wasmResult}) must equal TS reference (${tsResult})`,
+      ).toBe(tsResult);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

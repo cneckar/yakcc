@@ -89,13 +89,18 @@ import {
   type Expression,
   type FunctionDeclaration,
   type IfStatement,
+  type NoSubstitutionTemplateLiteral,
   type NumericLiteral,
   type PrefixUnaryExpression,
   Project,
+  type PropertyAccessExpression,
   type ReturnStatement,
   type SourceFile,
   type Statement,
+  type StringLiteral,
   SyntaxKind,
+  type TaggedTemplateExpression,
+  type TemplateExpression,
   type VariableStatement,
 } from "ts-morph";
 
@@ -129,6 +134,91 @@ export class LoweringError extends Error {
     this.name = "LoweringError";
     this.kind = opts.kind;
   }
+}
+
+// ---------------------------------------------------------------------------
+// String-function shape detection (WI-V1W3-WASM-LOWER-05)
+//
+// detectStringShape classifies string-param/return functions before the wave-2
+// fast-path check runs, preventing misrouting to string_bytecount/format_i32.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+// @decision DEC-V1-WAVE-3-WASM-LOWER-STR-INDEXOF-001
+// @decision DEC-V1-WAVE-3-WASM-LOWER-STR-OUT-PTR-001
+// @decision DEC-V1-WAVE-3-WASM-LOWER-STR-EQ-001
+// @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
+// ---------------------------------------------------------------------------
+
+/**
+ * Metadata for a string-lowering shape.
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
+ */
+export interface StringShapeMeta {
+  readonly shape:
+    | "str-length"
+    | "str-indexof"
+    | "str-slice2"
+    | "str-slice1"
+    | "str-concat"
+    | "str-template-concat"
+    | "str-template-parts"
+    | "str-eq"
+    | "str-neq";
+  /** Literal values from template spans. Non-empty only for str-template-parts. */
+  readonly literals: readonly string[];
+  /** TS-source parameter count (not counting injected out_ptr). */
+  readonly tsParamCount: number;
+}
+
+/**
+ * Detect whether fn is a string-operation and classify its shape.
+ * Returns null for non-string functions.
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ */
+function detectStringShape(fn: FunctionDeclaration): StringShapeMeta | null {
+  const source = fn.getText();
+  const sigMatch = source.match(/function\s+\w+\s*\(([^)]*)\)\s*:\s*([^{;]+)/);
+  if (sigMatch === null) return null;
+  const params = sigMatch[1] ?? "";
+  const returnType = (sigMatch[2] ?? "").trim();
+  const hasStringParam = params.includes("string");
+  const hasStringReturn = returnType === "string";
+  const hasBoolReturn = returnType === "boolean";
+  if (!hasStringParam && !hasStringReturn) return null;
+  const tsParams = fn.getParameters();
+  const tsParamCount = tsParams.length;
+  const body = source.replace(/^[\s\S]*?function\s+\w+\s*\([^)]*\)\s*:\s*[^{]+/, "").trim();
+  if (/^\{\s*return\s+\w+\.length\s*;\s*\}$/.test(body))
+    return { shape: "str-length", literals: [], tsParamCount };
+  if (/^\{\s*return\s+\w+\.indexOf\(\w+\)\s*;\s*\}$/.test(body))
+    return { shape: "str-indexof", literals: [], tsParamCount };
+  if (hasBoolReturn && /^\{\s*return\s+\w+\s*===\s*\w+\s*;\s*\}$/.test(body))
+    return { shape: "str-eq", literals: [], tsParamCount };
+  if (hasBoolReturn && /^\{\s*return\s+\w+\s*!==\s*\w+\s*;\s*\}$/.test(body))
+    return { shape: "str-neq", literals: [], tsParamCount };
+  if (/^\{\s*return\s+\w+\.slice\(\w+,\s*\w+\)\s*;\s*\}$/.test(body))
+    return { shape: "str-slice2", literals: [], tsParamCount };
+  if (/^\{\s*return\s+\w+\.slice\(\w+\)\s*;\s*\}$/.test(body))
+    return { shape: "str-slice1", literals: [], tsParamCount };
+  if (hasStringReturn) {
+    const cm = body.match(/^\{\s*return\s+(\w+)\s*\+\s*(\w+)\s*;\s*\}$/);
+    if (cm !== null) {
+      const pnames = tsParams.map((p) => p.getName());
+      if (pnames.includes(cm[1] ?? "") && pnames.includes(cm[2] ?? ""))
+        return { shape: "str-concat", literals: [], tsParamCount };
+    }
+    const tc = body.match(/^\{\s*return\s+`\$\{(\w+)\}\$\{(\w+)\}`\s*;\s*\}$/);
+    if (tc !== null) return { shape: "str-template-concat", literals: [], tsParamCount };
+    const tp = body.match(/^\{\s*return\s+`([^`]*)\$\{(\w+)\}([^`]*)`\s*;\s*\}$/);
+    if (tp !== null) {
+      const prefix = tp[1] ?? "";
+      const suffix = tp[3] ?? "";
+      if (prefix.length > 0 || suffix.length > 0)
+        return { shape: "str-template-parts", literals: [prefix, suffix], tsParamCount };
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1348,6 +1438,12 @@ export interface LoweringResult {
    */
   readonly numericDomain?: NumericDomain;
   /**
+   * String shape metadata. Present when detectStringShape() classified the fn.
+   * wasm-backend uses this to select emitStringModule().
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+   */
+  readonly stringShape?: StringShapeMeta;
+  /**
    * Downgrade warnings emitted during lowering (e.g. ambiguous domain).
    * Non-empty means the caller may want to add hints for better codegen.
    */
@@ -1481,17 +1577,44 @@ export class LoweringVisitor {
 
   private _lowerFunction(fn: FunctionDeclaration): LoweringResult {
     const fnName = fn.getName() ?? "fn";
+    // WI-V1W3-WASM-LOWER-05: string shapes checked before wave-2.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+    const strShape = detectStringShape(fn);
+    if (strShape !== null) return this._lowerStringFunction(fn, strShape);
     const shape = detectWave2Shape(fn);
-
     if (shape !== null) {
-      // Wave-2 fast-path: recognised substrate shape.
       const wasmFn = this._wave2FastPath(shape, fn);
       return { fnName, wasmFn, wave2Shape: shape, warnings: [] };
     }
-
-    // General numeric lowering (WI-V1W3-WASM-LOWER-02):
-    // Attempt to lower as a pure numeric function.
     return this._lowerNumericFunction(fn);
+  }
+
+  // -------------------------------------------------------------------------
+  // String lowering (WI-V1W3-WASM-LOWER-05)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Lower a string-operation function.
+   * Returns empty WasmFunction placeholder; real body built by emitStringModule().
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+   */
+  private _lowerStringFunction(
+    fn: FunctionDeclaration,
+    stringShape: StringShapeMeta,
+  ): LoweringResult {
+    const fnName = fn.getName() ?? "fn";
+    this._table.pushFrame({ isFunctionBoundary: true });
+    for (const p of fn.getParameters()) {
+      this._table.defineParam(p.getName(), "i32");
+    }
+    this._table.popFrame();
+    return {
+      fnName,
+      wasmFn: { locals: [], body: [] },
+      wave2Shape: null,
+      stringShape,
+      warnings: [],
+    };
   }
 
   // -------------------------------------------------------------------------
