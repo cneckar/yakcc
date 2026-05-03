@@ -83,6 +83,22 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17))
 
+  examples/v1-wave-2-wasm-demo:
+    dependencies:
+      '@yakcc/compile':
+        specifier: workspace:*
+        version: link:../../packages/compile
+      '@yakcc/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17))
+
   packages/cli:
     dependencies:
       '@yakcc/compile':
