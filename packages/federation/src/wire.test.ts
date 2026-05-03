@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { blockMerkleRoot, canonicalize, specHash, validateProofManifestL0 } from "@yakcc/contracts";
-import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
+import type { BlockMerkleRoot, CanonicalAstHash, LocalTriplet, SpecHash, SpecYak } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import { IntegrityError } from "./types.js";
 import { deserializeWireBlockTriplet, serializeWireBlockTriplet } from "./wire.js";
@@ -90,7 +90,7 @@ function makeRow(overrides: Partial<BlockTripletRow> = {}): BlockTripletRow {
   const spec = (overridesAny["spec"] as SpecYak | undefined) ?? TEST_SPEC;
   const implSource = overrides.implSource ?? TEST_IMPL_SOURCE;
   // `manifest` is not a field of BlockTripletRow; it drives proofManifestJson and the hash.
-  const manifest = (overridesAny["manifest"] as Parameters<typeof blockMerkleRoot>[0]["manifest"] | undefined) ?? VALID_PROOF_MANIFEST;
+  const manifest = (overridesAny["manifest"] as LocalTriplet["manifest"] | undefined) ?? VALID_PROOF_MANIFEST;
   // BlockTripletRow.artifacts is ReadonlyMap; blockMerkleRoot accepts Map — cast is safe.
   const artifacts = (overrides.artifacts as Map<string, Uint8Array> | undefined) ?? TEST_ARTIFACTS;
 
@@ -424,7 +424,7 @@ describe("deserializeWireBlockTriplet — manifest_invalid", () => {
     const badRoot = blockMerkleRoot({
       spec,
       implSource,
-      manifest: badManifest as unknown as Parameters<typeof blockMerkleRoot>[0]["manifest"],
+      manifest: badManifest as unknown as LocalTriplet["manifest"],
       artifacts: badArtifacts,
     });
     const specBytes = canonicalize(spec as unknown as Parameters<typeof canonicalize>[0]);

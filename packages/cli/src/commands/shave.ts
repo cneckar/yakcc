@@ -3,27 +3,44 @@
 // Opens the registry via @yakcc/registry.openRegistry(), delegates all pipeline logic
 // to shaveImpl(), and prints a human-readable summary. Error paths follow the
 // established pattern from seed.ts and compile.ts: catch, log to logger.error(), return 1.
-// Status: implemented (WI-014-02)
+// Status: updated (WI-V2-04 L5: foreign-policy gate output added)
 // Rationale: Keeps the CLI layer thin — argument parsing, registry open/close, and
 // output formatting live here; pipeline logic stays in @yakcc/shave. Matches the
 // `(argv, logger) → Promise<number>` contract shared by all yakcc commands.
+//
+// L5 additions:
+//   - 'reject' policy: shaveImpl() throws ForeignPolicyRejectError; caught here,
+//     formatted to stderr ("error: shave failed: foreign-policy reject: pkg#export,..."),
+//     returns exit code 1. (L5-I3)
+//   - 'tag' policy: shaveImpl() returns ShaveResultWithForeign.foreignDeps;
+//     when non-empty, emit "foreign deps: pkg#export[, ...]" to stdout. (L5-I4)
+//   - 'allow' policy: no change — shaveImpl() returns no foreignDeps. (L5-I5)
 
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
-import { shave as shaveImpl } from "@yakcc/shave";
+import {
+  FOREIGN_POLICY_DEFAULT,
+  type ForeignPolicy,
+  ForeignPolicyRejectError,
+  shave as shaveImpl,
+} from "@yakcc/shave";
 import type { Logger } from "../index.js";
+
+/** Valid values for --foreign-policy. */
+const VALID_FOREIGN_POLICIES: readonly ForeignPolicy[] = ["allow", "reject", "tag"];
 
 /** Argument options descriptor for parseArgs — typed inline to avoid implicit any. */
 const SHAVE_PARSE_OPTIONS = {
   registry: { type: "string" },
   offline: { type: "boolean", default: false },
   help: { type: "boolean", short: "h", default: false },
+  "foreign-policy": { type: "string" },
 } as const;
 
 /**
- * Handler for `yakcc shave <path> [--registry <p>] [--offline]`.
+ * Handler for `yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <policy>]`.
  *
  * Shaves a TypeScript source file: reads it, runs through the universalizer
  * (license gate → intent extraction → decompose → slice), and prints a summary
@@ -52,10 +69,22 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
 
   if (parsed.values.help) {
     logger.log(
-      "Usage: yakcc shave <path> [--registry <p>] [--offline]\n" +
-        "  Shave a source file into universalize result (atoms + intent + license).",
+      `Usage: yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <allow|reject|tag>]\n  Shave a source file into universalize result (atoms + intent + license).\n  --foreign-policy: how to handle foreign-block deps (default: ${FOREIGN_POLICY_DEFAULT})`,
     );
     return 0;
+  }
+
+  // Validate --foreign-policy value when provided.
+  const rawForeignPolicy = parsed.values["foreign-policy"];
+  let foreignPolicy: ForeignPolicy = FOREIGN_POLICY_DEFAULT;
+  if (rawForeignPolicy !== undefined) {
+    if (!(VALID_FOREIGN_POLICIES as readonly string[]).includes(rawForeignPolicy)) {
+      logger.error(
+        `error: --foreign-policy must be one of: ${VALID_FOREIGN_POLICIES.join(", ")}; got: ${rawForeignPolicy}`,
+      );
+      return 1;
+    }
+    foreignPolicy = rawForeignPolicy as ForeignPolicy;
   }
 
   const sourcePath = parsed.positionals[0];
@@ -87,7 +116,7 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
   };
 
   try {
-    const result = await shaveImpl(resolve(sourcePath), shaveRegistry, { offline });
+    const result = await shaveImpl(resolve(sourcePath), shaveRegistry, { offline, foreignPolicy });
     logger.log(`Shaved ${result.sourcePath}:`);
     logger.log(`  atoms: ${result.atoms.length}`);
     logger.log(`  intentCards: ${result.intentCards.length}`);
@@ -102,8 +131,24 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
     if (result.diagnostics.stubbed.length > 0) {
       logger.log(`  stubbed: ${result.diagnostics.stubbed.join(", ")}`);
     }
+    // L5-I4: emit "foreign deps:" summary line when policy is 'tag' and deps exist.
+    // result.foreignDeps is set by the shave() policy gate when policy === 'tag'.
+    // It is undefined for 'allow' (silent accept per L5-I5).
+    // It is never reached for 'reject' (ForeignPolicyRejectError is thrown instead).
+    if (result.foreignDeps !== undefined && result.foreignDeps.length > 0) {
+      const depTokens = result.foreignDeps.map((d) => `${d.pkg}#${d.export}`).join(", ");
+      logger.log(`foreign deps: ${depTokens}`);
+    }
     return 0;
   } catch (err) {
+    // L5-I3: ForeignPolicyRejectError carries a structured message that already
+    // includes "foreign-policy reject: pkg#export[, ...]". Catching it here lets
+    // the generic catch re-use the same logger.error path, so the stderr line
+    // naturally contains both the package name and the export name.
+    if (err instanceof ForeignPolicyRejectError) {
+      logger.error(`error: shave failed: ${err.message}`);
+      return 1;
+    }
     const e = err as Error;
     logger.error(`error: shave failed: ${e.message}`);
     return 1;

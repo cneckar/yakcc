@@ -75,3 +75,34 @@ export class LicenseRefusedError extends Error {
     this.detection = detection;
   }
 }
+
+/**
+ * Thrown by shave() when foreignPolicy === 'reject' and the slice plan
+ * contains one or more ForeignLeafEntry records.
+ *
+ * @decision DEC-V2-FOREIGN-BLOCK-SCHEMA-001 (sub-L5: policy gate)
+ * title: ForeignPolicyRejectError — structured reject-policy failure
+ * status: decided (WI-V2-04 L5)
+ * rationale:
+ *   Named error class (rather than generic Error) lets the CLI catch it with
+ *   `instanceof` and format the error message without string-parsing. The
+ *   `foreignRefs` array carries every offending (pkg, export) pair in
+ *   source-declaration order so the CLI can emit all offenders in one message.
+ *
+ *   L5-I3: the structured error must contain pkg+export of each foreign ref.
+ *   The message format is: "foreign-policy reject: <pkg>#<export>[, ...]"
+ *   so the CLI stderr line contains both the package name and the export name.
+ *
+ *   Not thrown for 'allow' or 'tag' — only for 'reject'.
+ */
+export class ForeignPolicyRejectError extends Error {
+  /** All foreign (pkg, export) pairs from the slice plan, in source order. */
+  readonly foreignRefs: readonly { readonly pkg: string; readonly export: string }[];
+
+  constructor(foreignRefs: readonly { readonly pkg: string; readonly export: string }[]) {
+    const refList = foreignRefs.map((r) => `${r.pkg}#${r.export}`).join(", ");
+    super(`foreign-policy reject: ${refList}`);
+    this.name = "ForeignPolicyRejectError";
+    this.foreignRefs = foreignRefs;
+  }
+}

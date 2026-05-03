@@ -10,6 +10,16 @@
 // in an assembly by its BlockMerkleRoot + SpecHash, records its impl source for
 // inspection, and captures the verification state at assembly time. No author/
 // signature/ownership fields are present (DEC-NO-OWNERSHIP-011).
+//
+// @decision DEC-COMPILE-MANIFEST-003 (WI-V2-04 L4): ProvenanceEntry.referencedForeign
+// Status: decided (WI-V2-04 L4)
+// Rationale: Each non-foreign block in the manifest records the foreign-dependency tree
+// declared in block_foreign_refs via getForeignRefs(). Foreign blocks are opaque leaves
+// and carry referencedForeign:[] (they do not nest). The field is required (not optional)
+// so consumers can rely on structural completeness without null-checks. The format is
+// "pkg#export" per the ForeignRefRow.foreignBlockRoot → BlockTripletRow lookup chain.
+// Authority invariant L4-I1: ProvenanceEntry shape is owned by this file only.
+// No other package re-declares ProvenanceEntry.
 
 import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
@@ -45,6 +55,18 @@ export interface ProvenanceEntry {
    * all current rows leave this field absent.
    */
   readonly recursionParent?: BlockMerkleRoot;
+  /**
+   * Foreign-dependency tree for this block. Each entry is "pkg#export" identifying
+   * one foreign atom referenced by this block's impl/spec, in registry declaration_index
+   * ASC order. Required field (never optional): [] for blocks with no foreign deps,
+   * and for foreign blocks themselves (which are opaque leaves that do not nest).
+   *
+   * Authority invariant L4-I3: this field is required (not optional). [] is the
+   * empty case. Legacy manifests written before L4 default to [] at read time.
+   *
+   * @decision DEC-COMPILE-MANIFEST-003
+   */
+  readonly referencedForeign: ReadonlyArray<string>;
 }
 
 /**
@@ -93,17 +115,35 @@ export async function buildManifest(
     const hasPassing = provenance.testHistory.some((entry) => entry.passed);
     const verificationStatus: VerificationStatus = hasPassing ? "passing" : "unverified";
 
-    // Fetch the full block row to read parent_block_root. The registry may return
-    // null if the block has been evicted (should not happen in normal operation, but
-    // we guard defensively). parentBlockRoot is omitted when null (field absent on
+    // Fetch the full block row to read parent_block_root and kind. The registry may
+    // return null if the block has been evicted (should not happen in normal operation,
+    // but we guard defensively). parentBlockRoot is omitted when null (field absent on
     // ProvenanceEntry) — only set when the registry row carries a non-null value.
     const blockRow = await registry.getBlock(merkleRoot);
+
+    // Populate referencedForeign: foreign blocks are opaque leaves (referencedForeign:[]).
+    // Non-foreign blocks look up block_foreign_refs via getForeignRefs() and format each
+    // row as "pkg#export" by fetching the foreign block row for its foreignPkg/foreignExport.
+    // Required field (L4-I3): [] is the empty case; never undefined.
+    const referencedForeign: string[] = [];
+    const isForeign = blockRow?.kind === "foreign";
+    if (!isForeign) {
+      const foreignRefs = await registry.getForeignRefs(merkleRoot);
+      for (const ref of foreignRefs) {
+        const foreignRow = await registry.getBlock(ref.foreignBlockRoot);
+        if (foreignRow?.foreignPkg != null && foreignRow.foreignExport != null) {
+          referencedForeign.push(`${foreignRow.foreignPkg}#${foreignRow.foreignExport}`);
+        }
+      }
+    }
+
     const entry: ProvenanceEntry = {
       blockMerkleRoot: merkleRoot,
       specHash: block.specHash,
       source: block.source,
       subBlocks: block.subBlocks,
       verificationStatus,
+      referencedForeign,
       ...(blockRow?.parentBlockRoot != null ? { recursionParent: blockRow.parentBlockRoot } : {}),
     };
     entries.push(entry);

@@ -243,7 +243,16 @@ export {
   type ArtifactKind,
   validateProofManifestL0,
 } from "./proof-manifest.js";
-export { type BlockTriplet, type BlockMerkleRoot, blockMerkleRoot, specHash } from "./merkle.js";
+export {
+  type BlockTriplet,
+  type LocalTriplet,
+  type ForeignTripletFields,
+  type BlockMerkleRoot,
+  blockMerkleRoot,
+  specHash,
+  isLocalTriplet,
+  isForeignTriplet,
+} from "./merkle.js";
 export {
   canonicalAstHash,
   CanonicalAstParseError,
