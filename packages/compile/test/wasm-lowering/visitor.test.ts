@@ -280,14 +280,16 @@ describe("SymbolTable — local slot lookup", () => {
 // ---------------------------------------------------------------------------
 
 describe("LoweringVisitor — unknown node kind fails loudly (Sacred Practice #5)", () => {
-  it("throws LoweringError with kind 'unsupported-node' for a function containing a while-loop (control flow deferred to WI-08)", () => {
-    // WI-03 added if/else support. Loop constructs (while, for) are deferred to
-    // WI-V1W3-WASM-LOWER-08. A function with a WhileStatement must fail loudly.
+  it("throws LoweringError with kind 'unsupported-node' for a function containing a do/while-loop (not yet implemented)", () => {
+    // WI-08 added while/for/switch/try/catch/if/else/throw/for-of support.
+    // do/while loops (DoStatement) are NOT yet implemented — they must fail loudly.
+    // When a future WI implements DoStatement, update this test to the next
+    // unimplemented control-flow construct.
     const visitor = new LoweringVisitor();
 
     expect(() =>
       visitor.lower(
-        "export function sumTo(n: number): number { let acc: number = 0 | 0; let i: number = 0 | 0; while ((i | 0) < n) { acc = (acc + i) | 0; i = (i + 1) | 0; } return acc; }",
+        "export function sumTo(n: number): number { let acc: number = 0 | 0; let i: number = 0 | 0; do { acc = (acc + i) | 0; i = (i + 1) | 0; } while ((i | 0) < n); return acc; }",
       ),
     ).toThrow(LoweringError);
   });
@@ -315,11 +317,13 @@ describe("LoweringVisitor — unknown node kind fails loudly (Sacred Practice #5
     let caught: unknown;
 
     try {
-      // ThrowStatement is not yet lowered (no wave covers it as of WI-V1W3).
-      // When a future implementer lowers ThrowStatement, update this example
+      // DoStatement (do/while) is not yet lowered as of WI-V1W3-WASM-LOWER-08.
+      // When a future implementer lowers DoStatement, update this example
       // to the next unimplemented SyntaxKind so the loud-failure invariant
       // (Sacred Practice #5) remains continuously exercised.
-      visitor.lower("export function bad(x: number): number { throw new Error('nope'); }");
+      visitor.lower(
+        "export function bad(x: number): number { let i: number = 0 | 0; do { i = (i + 1) | 0; } while ((i | 0) < x); return i; }",
+      );
     } catch (e) {
       caught = e;
     }
