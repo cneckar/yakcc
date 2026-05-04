@@ -35,8 +35,8 @@
  */
 
 import * as nodeFs from "node:fs";
-import * as nodePath from "node:path";
 import * as nodeOs from "node:os";
+import * as nodePath from "node:path";
 import * as nodeProcess from "node:process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WasiErrno, createHost } from "./wasm-host.js";
@@ -47,16 +47,13 @@ import { WasiErrno, createHost } from "./wasm-host.js";
 
 /** Cast the yakcc_host namespace to a typed record for calling imports directly. */
 function getHost(host: ReturnType<typeof createHost>): Record<string, unknown> {
-  return host.importObject["yakcc_host"] as Record<string, unknown>;
+  return host.importObject.yakcc_host as Record<string, unknown>;
 }
 
 /** Write a UTF-8 string into linear memory and return (ptr, len). Uses bump alloc. */
-function writeString(
-  host: ReturnType<typeof createHost>,
-  s: string,
-): { ptr: number; len: number } {
+function writeString(host: ReturnType<typeof createHost>, s: string): { ptr: number; len: number } {
   const enc = new TextEncoder().encode(s);
-  const hostAlloc = getHost(host)["host_alloc"] as (n: number) => number;
+  const hostAlloc = getHost(host).host_alloc as (n: number) => number;
   const ptr = hostAlloc(enc.length);
   new Uint8Array(host.memory.buffer).set(enc, ptr);
   return { ptr, len: enc.length };
@@ -77,13 +74,13 @@ function readI64LE(host: ReturnType<typeof createHost>, offset: number): bigint 
 
 /** Allocate an i32 output slot in linear memory via bump alloc. Returns the pointer. */
 function allocSlot(host: ReturnType<typeof createHost>): number {
-  const hostAlloc = getHost(host)["host_alloc"] as (n: number) => number;
+  const hostAlloc = getHost(host).host_alloc as (n: number) => number;
   return hostAlloc(4);
 }
 
 /** Allocate an i64 (8-byte) output slot in linear memory via bump alloc. */
 function allocSlot64(host: ReturnType<typeof createHost>): number {
-  const hostAlloc = getHost(host)["host_alloc"] as (n: number) => number;
+  const hostAlloc = getHost(host).host_alloc as (n: number) => number;
   return hostAlloc(8);
 }
 
@@ -111,44 +108,50 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("createHost() — v2 importObject shape", () => {
-  it("exposes all 24 required yakcc_host keys (1 memory + 4 v1 + 5 wave-3 + 14 v2)", () => {
+  it("exposes all 26 required yakcc_host keys (1 memory + 4 v1 + 7 wave-3 + 14 v2)" +
+    " — WI-V1W3-WASM-LOWER-08 followup adds 2 codepoint imports (closes #82)", () => {
     const host = createHost();
     const yh = getHost(host);
 
     // 1 memory import
-    expect(yh["memory"]).toBeInstanceOf(WebAssembly.Memory);
+    expect(yh.memory).toBeInstanceOf(WebAssembly.Memory);
 
     // 4 v1 imports
-    expect(typeof yh["host_log"]).toBe("function");
-    expect(typeof yh["host_alloc"]).toBe("function");
-    expect(typeof yh["host_free"]).toBe("function");
-    expect(typeof yh["host_panic"]).toBe("function");
+    expect(typeof yh.host_log).toBe("function");
+    expect(typeof yh.host_alloc).toBe("function");
+    expect(typeof yh.host_free).toBe("function");
+    expect(typeof yh.host_panic).toBe("function");
 
-    // 5 wave-3 string imports
-    expect(typeof yh["host_string_length"]).toBe("function");
-    expect(typeof yh["host_string_indexof"]).toBe("function");
-    expect(typeof yh["host_string_slice"]).toBe("function");
-    expect(typeof yh["host_string_concat"]).toBe("function");
-    expect(typeof yh["host_string_eq"]).toBe("function");
+    // 5 wave-3 string imports (WI-V1W3-WASM-LOWER-05)
+    expect(typeof yh.host_string_length).toBe("function");
+    expect(typeof yh.host_string_indexof).toBe("function");
+    expect(typeof yh.host_string_slice).toBe("function");
+    expect(typeof yh.host_string_concat).toBe("function");
+    expect(typeof yh.host_string_eq).toBe("function");
+
+    // 2 wave-3.1 codepoint iteration imports (WI-V1W3-WASM-LOWER-08 followup, closes #82)
+    // DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+    expect(typeof yh.host_string_codepoint_at).toBe("function");
+    expect(typeof yh.host_string_codepoint_next_offset).toBe("function");
 
     // 14 v2 syscall imports
-    expect(typeof yh["host_fs_open"]).toBe("function");
-    expect(typeof yh["host_fs_close"]).toBe("function");
-    expect(typeof yh["host_fs_read"]).toBe("function");
-    expect(typeof yh["host_fs_write"]).toBe("function");
-    expect(typeof yh["host_fs_stat"]).toBe("function");
-    expect(typeof yh["host_fs_readdir"]).toBe("function");
-    expect(typeof yh["host_fs_mkdir"]).toBe("function");
-    expect(typeof yh["host_fs_unlink"]).toBe("function");
-    expect(typeof yh["host_proc_argv"]).toBe("function");
-    expect(typeof yh["host_proc_env_get"]).toBe("function");
-    expect(typeof yh["host_proc_exit"]).toBe("function");
-    expect(typeof yh["host_time_now_unix_ms"]).toBe("function");
-    expect(typeof yh["host_time_monotonic_ns"]).toBe("function");
-    expect(typeof yh["host_random_bytes"]).toBe("function");
+    expect(typeof yh.host_fs_open).toBe("function");
+    expect(typeof yh.host_fs_close).toBe("function");
+    expect(typeof yh.host_fs_read).toBe("function");
+    expect(typeof yh.host_fs_write).toBe("function");
+    expect(typeof yh.host_fs_stat).toBe("function");
+    expect(typeof yh.host_fs_readdir).toBe("function");
+    expect(typeof yh.host_fs_mkdir).toBe("function");
+    expect(typeof yh.host_fs_unlink).toBe("function");
+    expect(typeof yh.host_proc_argv).toBe("function");
+    expect(typeof yh.host_proc_env_get).toBe("function");
+    expect(typeof yh.host_proc_exit).toBe("function");
+    expect(typeof yh.host_time_now_unix_ms).toBe("function");
+    expect(typeof yh.host_time_monotonic_ns).toBe("function");
+    expect(typeof yh.host_random_bytes).toBe("function");
 
-    // Total key count: 24
-    expect(Object.keys(yh).length).toBe(24);
+    // Total key count: 26 (was 24; +2 for codepoint imports per #82)
+    expect(Object.keys(yh).length).toBe(26);
 
     host.close();
   });
@@ -162,14 +165,14 @@ describe("host_fs_* — happy paths", () => {
   it("2. open+read+close round-trip reads back written file content", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsOpen = yh["host_fs_open"] as (
+    const hostFsOpen = yh.host_fs_open as (
       pp: number,
       pl: number,
       flags: number,
       outFd: number,
     ) => number;
-    const hostFsClose = yh["host_fs_close"] as (fd: number) => number;
-    const hostFsRead = yh["host_fs_read"] as (
+    const hostFsClose = yh.host_fs_close as (fd: number) => number;
+    const hostFsRead = yh.host_fs_read as (
       fd: number,
       bp: number,
       bl: number,
@@ -191,7 +194,7 @@ describe("host_fs_* — happy paths", () => {
     expect(fd).toBeGreaterThan(0);
 
     // Read into linear memory buffer
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
     const bufPtr = hostAlloc(64);
     const bytesReadOutPtr = allocSlot(host);
     const readErrno = hostFsRead(fd, bufPtr, 64, bytesReadOutPtr);
@@ -200,9 +203,7 @@ describe("host_fs_* — happy paths", () => {
     expect(bytesRead).toBe(content.length);
 
     // Decode what was read
-    const decoded = new TextDecoder().decode(
-      new Uint8Array(host.memory.buffer, bufPtr, bytesRead),
-    );
+    const decoded = new TextDecoder().decode(new Uint8Array(host.memory.buffer, bufPtr, bytesRead));
     expect(decoded).toBe(content);
 
     // Close
@@ -215,20 +216,20 @@ describe("host_fs_* — happy paths", () => {
   it("3. write+read round-trip: written bytes match read-back bytes", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsOpen = yh["host_fs_open"] as (
+    const hostFsOpen = yh.host_fs_open as (
       pp: number,
       pl: number,
       flags: number,
       outFd: number,
     ) => number;
-    const hostFsClose = yh["host_fs_close"] as (fd: number) => number;
-    const hostFsWrite = yh["host_fs_write"] as (
+    const hostFsClose = yh.host_fs_close as (fd: number) => number;
+    const hostFsWrite = yh.host_fs_write as (
       fd: number,
       bp: number,
       bl: number,
       outBw: number,
     ) => number;
-    const hostFsRead = yh["host_fs_read"] as (
+    const hostFsRead = yh.host_fs_read as (
       fd: number,
       bp: number,
       bl: number,
@@ -246,7 +247,7 @@ describe("host_fs_* — happy paths", () => {
     const writeFd = readI32LE(host, fdOutPtr);
 
     // Copy payload into linear memory and write
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
     const payloadPtr = hostAlloc(payload.length);
     new Uint8Array(host.memory.buffer).set(payload, payloadPtr);
     const bwOutPtr = allocSlot(host);
@@ -276,8 +277,8 @@ describe("host_fs_* — happy paths", () => {
   it("4. mkdir creates directory; unlink removes a file", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsMkdir = yh["host_fs_mkdir"] as (pp: number, pl: number, mode: number) => number;
-    const hostFsUnlink = yh["host_fs_unlink"] as (pp: number, pl: number) => number;
+    const hostFsMkdir = yh.host_fs_mkdir as (pp: number, pl: number, mode: number) => number;
+    const hostFsUnlink = yh.host_fs_unlink as (pp: number, pl: number) => number;
 
     // mkdir
     const dirPath = nodePath.join(tmpDir, "subdir-test");
@@ -301,8 +302,8 @@ describe("host_fs_* — happy paths", () => {
   it("5. stat returns plausible mtime and size for an existing file", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsStat = yh["host_fs_stat"] as (pp: number, pl: number, out: number) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostFsStat = yh.host_fs_stat as (pp: number, pl: number, out: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     const filePath = nodePath.join(tmpDir, "stat-test.txt");
     const fileContent = "stat me";
@@ -341,7 +342,7 @@ describe("host_fs_* — negative paths", () => {
   it("6. open non-existent file returns ENOENT", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsOpen = yh["host_fs_open"] as (
+    const hostFsOpen = yh.host_fs_open as (
       pp: number,
       pl: number,
       flags: number,
@@ -362,13 +363,13 @@ describe("host_fs_* — negative paths", () => {
   it("7. read from a never-opened fd returns EBADF", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsRead = yh["host_fs_read"] as (
+    const hostFsRead = yh.host_fs_read as (
       fd: number,
       bp: number,
       bl: number,
       out: number,
     ) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     // fd 9999 was never opened via host_fs_open
     const bufPtr = hostAlloc(16);
@@ -382,20 +383,20 @@ describe("host_fs_* — negative paths", () => {
   it("7b. read from fd that was opened then closed returns EBADF", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsOpen = yh["host_fs_open"] as (
+    const hostFsOpen = yh.host_fs_open as (
       pp: number,
       pl: number,
       flags: number,
       outFd: number,
     ) => number;
-    const hostFsClose = yh["host_fs_close"] as (fd: number) => number;
-    const hostFsRead = yh["host_fs_read"] as (
+    const hostFsClose = yh.host_fs_close as (fd: number) => number;
+    const hostFsRead = yh.host_fs_read as (
       fd: number,
       bp: number,
       bl: number,
       out: number,
     ) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     const filePath = nodePath.join(tmpDir, "close-then-read.txt");
     nodeFs.writeFileSync(filePath, "data");
@@ -438,21 +439,21 @@ describe("host_fs_open — O_RDWR|O_CREAT|O_TRUNC truncation (flags=1538)", () =
   it("7c. O_RDWR|O_CREAT|O_TRUNC (flags=1538) truncates an existing file to the newly written size", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsOpen = yh["host_fs_open"] as (
+    const hostFsOpen = yh.host_fs_open as (
       pp: number,
       pl: number,
       flags: number,
       outFd: number,
     ) => number;
-    const hostFsClose = yh["host_fs_close"] as (fd: number) => number;
-    const hostFsWrite = yh["host_fs_write"] as (
+    const hostFsClose = yh.host_fs_close as (fd: number) => number;
+    const hostFsWrite = yh.host_fs_write as (
       fd: number,
       bp: number,
       bl: number,
       outBw: number,
     ) => number;
-    const hostFsStat = yh["host_fs_stat"] as (pp: number, pl: number, out: number) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostFsStat = yh.host_fs_stat as (pp: number, pl: number, out: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     const filePath = nodePath.join(tmpDir, "trunc-rdwr-test.bin");
 
@@ -511,8 +512,8 @@ describe("host_proc_* — process imports", () => {
   it("8. argv: total bytes written is at least sum of process.argv strings + null terminators", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostProcArgv = yh["host_proc_argv"] as (bp: number, bl: number, out: number) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostProcArgv = yh.host_proc_argv as (bp: number, bl: number, out: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     const bufPtr = hostAlloc(4096);
     const outPtr = allocSlot(host);
@@ -521,7 +522,10 @@ describe("host_proc_* — process imports", () => {
 
     const bytesWritten = readI32LE(host, outPtr);
     // Each argv entry: encoded bytes + 1 null terminator
-    const expectedMin = nodeProcess.argv.reduce((acc, a) => acc + new TextEncoder().encode(a).length + 1, 0);
+    const expectedMin = nodeProcess.argv.reduce(
+      (acc, a) => acc + new TextEncoder().encode(a).length + 1,
+      0,
+    );
     expect(bytesWritten).toBeGreaterThanOrEqual(expectedMin);
 
     host.close();
@@ -530,14 +534,14 @@ describe("host_proc_* — process imports", () => {
   it("9. env_get returns expected value for a known env var", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostProcEnvGet = yh["host_proc_env_get"] as (
+    const hostProcEnvGet = yh.host_proc_env_get as (
       np: number,
       nl: number,
       bp: number,
       bl: number,
       out: number,
     ) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     // Set a known env var for this test
     const testKey = "YAKCC_V2_TEST_VAR_XYZ";
@@ -562,19 +566,16 @@ describe("host_proc_* — process imports", () => {
   it("9b. env_get returns NOENT for an unset variable", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostProcEnvGet = yh["host_proc_env_get"] as (
+    const hostProcEnvGet = yh.host_proc_env_get as (
       np: number,
       nl: number,
       bp: number,
       bl: number,
       out: number,
     ) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
-    const { ptr: namePtr, len: nameLen } = writeString(
-      host,
-      "YAKCC_DEFINITELY_NOT_SET_AAABBBCCC",
-    );
+    const { ptr: namePtr, len: nameLen } = writeString(host, "YAKCC_DEFINITELY_NOT_SET_AAABBBCCC");
     const bufPtr = hostAlloc(64);
     const outPtr = allocSlot(host);
     const errno = hostProcEnvGet(namePtr, nameLen, bufPtr, 64, outPtr);
@@ -591,7 +592,7 @@ describe("host_proc_* — process imports", () => {
       },
     });
     const yh = getHost(host);
-    const hostProcExit = yh["host_proc_exit"] as (code: number) => void;
+    const hostProcExit = yh.host_proc_exit as (code: number) => void;
 
     // host_proc_exit throws a WasmTrap after calling onExit (to unwind the call stack),
     // so we expect it to throw.
@@ -610,7 +611,7 @@ describe("host_time_* — time imports", () => {
   it("11. now_unix_ms is within 1 second of Date.now()", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostTimeNow = yh["host_time_now_unix_ms"] as (out: number) => number;
+    const hostTimeNow = yh.host_time_now_unix_ms as (out: number) => number;
 
     const outPtr = allocSlot64(host);
     const before = BigInt(Date.now());
@@ -629,8 +630,8 @@ describe("host_time_* — time imports", () => {
   it("12. monotonic_ns is strictly increasing across two successive calls", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostMonotonic = yh["host_time_monotonic_ns"] as (out: number) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostMonotonic = yh.host_time_monotonic_ns as (out: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     const out1 = hostAlloc(8);
     const out2 = hostAlloc(8);
@@ -638,7 +639,9 @@ describe("host_time_* — time imports", () => {
     hostMonotonic(out1);
     // Spin briefly to ensure monotonic advancement (performance.now() has ~100µs resolution)
     const spinEnd = Date.now() + 2;
-    while (Date.now() < spinEnd) { /* spin */ }
+    while (Date.now() < spinEnd) {
+      /* spin */
+    }
     hostMonotonic(out2);
 
     const ns1 = readI64LE(host, out1);
@@ -657,8 +660,8 @@ describe("host_random_bytes — randomness", () => {
   it("13. random_bytes(32) yields non-zero entropy; two calls produce different sequences", () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostRandom = yh["host_random_bytes"] as (bp: number, bl: number) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostRandom = yh.host_random_bytes as (bp: number, bl: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     const N = 32;
     const buf1Ptr = hostAlloc(N);
@@ -748,10 +751,10 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
     //   T3: (i32,i32,i32,i32) -> i32  (our exported test_roundtrip function)
     const typeSection = section(1, [
       ...vec([
-        [0x60, 0x00, 0x00],                                          // T0: () -> ()
-        [0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f],          // T1: (i32,i32,i32,i32)->i32
-        [0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f],          // T2: same
-        [0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f],          // T3: our function
+        [0x60, 0x00, 0x00], // T0: () -> ()
+        [0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f], // T1: (i32,i32,i32,i32)->i32
+        [0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f], // T2: same
+        [0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f], // T3: our function
       ]),
     ]);
 
@@ -768,15 +771,20 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
       // memory import
       ...strBytes("yakcc_host"),
       ...strBytes("memory"),
-      0x02, 0x01, 0x01, 0x01, // kind=memory, flags=1 (has max), min=1, max=1
+      0x02,
+      0x01,
+      0x01,
+      0x01, // kind=memory, flags=1 (has max), min=1, max=1
       // host_fs_write import (func index 0)
       ...strBytes("yakcc_host"),
       ...strBytes("host_fs_write"),
-      0x00, 0x01, // kind=func, type index 1
+      0x00,
+      0x01, // kind=func, type index 1
       // host_fs_read import (func index 1)
       ...strBytes("yakcc_host"),
       ...strBytes("host_fs_read"),
-      0x00, 0x02, // kind=func, type index 2
+      0x00,
+      0x02, // kind=func, type index 2
     ]);
 
     // Function section: 1 function, type T3 (index 3)
@@ -811,21 +819,34 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
     //   end
     const codeBody = [
       0x00, // 0 local declarations
-      0x20, 0x00,       // local.get 0
-      0x20, 0x01,       // local.get 1
-      0x20, 0x02,       // local.get 2
-      0x41, ...uleb(512), // i32.const 512
-      0x10, 0x00,       // call 0 (host_fs_write)
-      0x1a,             // drop
-      0x20, 0x03,       // local.get 3
-      0x20, 0x01,       // local.get 1
-      0x20, 0x02,       // local.get 2
-      0x41, ...uleb(516), // i32.const 516
-      0x10, 0x01,       // call 1 (host_fs_read)
-      0x1a,             // drop
-      0x41, ...uleb(516), // i32.const 516
-      0x28, 0x02, 0x00, // i32.load align=2 offset=0
-      0x0b,             // end
+      0x20,
+      0x00, // local.get 0
+      0x20,
+      0x01, // local.get 1
+      0x20,
+      0x02, // local.get 2
+      0x41,
+      ...uleb(512), // i32.const 512
+      0x10,
+      0x00, // call 0 (host_fs_write)
+      0x1a, // drop
+      0x20,
+      0x03, // local.get 3
+      0x20,
+      0x01, // local.get 1
+      0x20,
+      0x02, // local.get 2
+      0x41,
+      ...uleb(516), // i32.const 516
+      0x10,
+      0x01, // call 1 (host_fs_read)
+      0x1a, // drop
+      0x41,
+      ...uleb(516), // i32.const 516
+      0x28,
+      0x02,
+      0x00, // i32.load align=2 offset=0
+      0x0b, // end
     ];
     const codeSection = section(10, [
       ...uleb(1), // 1 function
@@ -834,8 +855,14 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
     ]);
 
     const bytes = [
-      0x00, 0x61, 0x73, 0x6d, // magic
-      0x01, 0x00, 0x00, 0x00, // version
+      0x00,
+      0x61,
+      0x73,
+      0x6d, // magic
+      0x01,
+      0x00,
+      0x00,
+      0x00, // version
       ...typeSection,
       ...importSection,
       ...funcSection,
@@ -848,14 +875,14 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
   it("14. WASM module using host_fs_write + host_fs_read round-trips bytes through a temp file", async () => {
     const host = createHost();
     const yh = getHost(host);
-    const hostFsOpen = yh["host_fs_open"] as (
+    const hostFsOpen = yh.host_fs_open as (
       pp: number,
       pl: number,
       flags: number,
       outFd: number,
     ) => number;
-    const hostFsClose = yh["host_fs_close"] as (fd: number) => number;
-    const hostAlloc = yh["host_alloc"] as (n: number) => number;
+    const hostFsClose = yh.host_fs_close as (fd: number) => number;
+    const hostAlloc = yh.host_alloc as (n: number) => number;
 
     // Open write fd
     const writeFile = nodePath.join(tmpDir, "wasm-roundtrip.bin");
@@ -881,7 +908,10 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
     // Copy into a concrete ArrayBuffer so TypeScript narrows to BufferSource correctly
     // (Uint8Array<ArrayBufferLike> is not assignable to BufferSource without the copy).
     const wasmBytes = buildTestModule();
-    const wasmBuffer = wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength) as ArrayBuffer;
+    const wasmBuffer = wasmBytes.buffer.slice(
+      wasmBytes.byteOffset,
+      wasmBytes.byteOffset + wasmBytes.byteLength,
+    ) as ArrayBuffer;
     const wasmModule = await WebAssembly.compile(wasmBuffer);
     const instance = await WebAssembly.instantiate(wasmModule, host.importObject);
 
@@ -905,7 +935,7 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
 
     // Use WASM function: test_roundtrip(writeFd, data_ptr, data_len, readFd) -> bytes_read
     // First: write through WASM using rwFd; then open separate read fd positioned at 0
-    const testRoundtrip = instance.exports["test_roundtrip"] as (
+    const testRoundtrip = instance.exports.test_roundtrip as (
       fd: number,
       ptr: number,
       len: number,

@@ -754,8 +754,24 @@ function i32ConstOps(n: number): number[] {
 }
 
 /**
- * Build the extended import section for string modules (memory + 9 host imports).
+ * Build the extended import section for string modules (memory + 11 host imports).
+ *
+ * Function index space after memory:
+ *   0: host_log            T0: (i32 i32) → ()
+ *   1: host_alloc          T1: (i32) → (i32)
+ *   2: host_free           T2: (i32) → ()
+ *   3: host_panic          T3: (i32 i32 i32) → ()
+ *   4: host_string_length  T4: (i32 i32) → (i32)
+ *   5: host_string_indexof T5: (4xi32) → (i32)
+ *   6: host_string_slice   T6: (5xi32) → ()
+ *   7: host_string_concat  T6: (5xi32) → ()
+ *   8: host_string_eq      T5: (4xi32) → (i32)
+ *   9: host_string_codepoint_at          T9: (3xi32) → (i32)
+ *  10: host_string_codepoint_next_offset T9: (3xi32) → (i32)
+ *  11: substrate (defined function)
+ *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001 (followup #82: adds indices 9 and 10)
  */
 function buildStringImportSection(): Uint8Array {
   const mod = encodeName("yakcc_host");
@@ -795,10 +811,24 @@ function buildStringImportSection(): Uint8Array {
     uleb128(6),
   );
   const strEqImp = concat(mod, encodeName("host_string_eq"), new Uint8Array([0x00]), uleb128(5));
+  // WI-V1W3-WASM-LOWER-08 followup (closes #82): codepoint iteration imports.
+  // T9 = (i32 i32 i32) → (i32) — shared by both codepoint imports.
+  const cpAtImp = concat(
+    mod,
+    encodeName("host_string_codepoint_at"),
+    new Uint8Array([0x00]),
+    uleb128(9),
+  );
+  const cpNextImp = concat(
+    mod,
+    encodeName("host_string_codepoint_next_offset"),
+    new Uint8Array([0x00]),
+    uleb128(9),
+  );
   return section(
     2,
     concat(
-      uleb128(10),
+      uleb128(12),
       mem,
       logImp,
       allocImp,
@@ -809,6 +839,8 @@ function buildStringImportSection(): Uint8Array {
       strSlcImp,
       strCatImp,
       strEqImp,
+      cpAtImp,
+      cpNextImp,
     ),
   );
 }
@@ -884,7 +916,7 @@ function buildStringBody(shape: StringShapeMeta): number[] {
  * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
  */
 function emitStringModule(shape: StringShapeMeta, fnName: string): Uint8Array<ArrayBuffer> {
-  // 8 types covering all string module signatures
+  // 10 types covering all string module signatures (T9 added by followup #82)
   const T0 = new Uint8Array([0x60, 2, I32, I32, 0]);
   const T1 = new Uint8Array([0x60, 1, I32, 1, I32]);
   const T2 = new Uint8Array([0x60, 1, I32, 0]);
@@ -894,7 +926,9 @@ function emitStringModule(shape: StringShapeMeta, fnName: string): Uint8Array<Ar
   const T6 = new Uint8Array([0x60, 5, I32, I32, I32, I32, I32, 0]);
   const T7 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
   const T8 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 0]); // (i32 i32 i32 i32)->()
-  const typeSection = section(1, concat(uleb128(9), T0, T1, T2, T3, T4, T5, T6, T7, T8));
+  // T9: (i32 i32 i32) → (i32) — type for host_string_codepoint_at and _next_offset
+  const T9 = new Uint8Array([0x60, 3, I32, I32, I32, 1, I32]);
+  const typeSection = section(1, concat(uleb128(10), T0, T1, T2, T3, T4, T5, T6, T7, T8, T9));
 
   let substrateFuncTypeIdx: number;
   switch (shape.shape) {
@@ -930,10 +964,11 @@ function emitStringModule(shape: StringShapeMeta, fnName: string): Uint8Array<Ar
   const importSection = buildStringImportSection();
   const funcSection = section(3, concat(uleb128(1), uleb128(substrateFuncTypeIdx)));
   const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+  // funcidx 11: 1 memory + 11 function imports (indices 0-10) → substrate is index 11
   const exportFn = concat(
     encodeName(`__wasm_export_${fnName}`),
     new Uint8Array([0x00]),
-    uleb128(9),
+    uleb128(11),
   );
   const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
   const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
@@ -1635,6 +1670,71 @@ function emitArrayModule(shape: ArrayShapeMeta, fnName: string): Uint8Array<Arra
 }
 
 // ---------------------------------------------------------------------------
+// Control-flow string module emitter (WI-V1W3-WASM-LOWER-08 followup, closes #82)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit a WASM module for a control-flow function that uses string host imports
+ * (host_string_codepoint_at, host_string_codepoint_next_offset, host_string_eq).
+ *
+ * Uses buildStringImportSection() (11 function imports, substrate at funcidx 11).
+ * Type section matches emitStringModule but substrate type is inferred from domain.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+ */
+function emitCFStringModule(
+  fnName: string,
+  wasmFn: WasmFunction,
+  domain: NumericDomain,
+): Uint8Array<ArrayBuffer> {
+  // Type section: T0–T9 same as emitStringModule, plus substrate type T10
+  const T0 = new Uint8Array([0x60, 2, I32, I32, 0]);
+  const T1 = new Uint8Array([0x60, 1, I32, 1, I32]);
+  const T2 = new Uint8Array([0x60, 1, I32, 0]);
+  const T3 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T4 = new Uint8Array([0x60, 2, I32, I32, 1, I32]);
+  const T5 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 1, I32]);
+  const T6 = new Uint8Array([0x60, 5, I32, I32, I32, I32, I32, 0]);
+  const T7 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T8 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 0]);
+  const T9 = new Uint8Array([0x60, 3, I32, I32, I32, 1, I32]); // (i32 i32 i32) → (i32)
+  // T10: substrate function type — (ptr i32, len i32) → (i32) for counting functions
+  // Most cf-5 substrates have (ptr: i32, len: i32) → i32 signature.
+  // Use T4 = (i32 i32) → (i32) as the substrate type (funcidx 11 = first defined fn).
+  const typeSection = section(1, concat(uleb128(10), T0, T1, T2, T3, T4, T5, T6, T7, T8, T9));
+
+  const importSection = buildStringImportSection();
+  // Substrate function type: T4 = (i32 i32) → (i32) matches cf-5 counting functions.
+  // funcidx 11 = substrate (0 memory + 11 function imports).
+  const funcSection = section(3, concat(uleb128(1), uleb128(4)));
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]),
+    uleb128(11), // funcidx 11: 11 imported functions (0-10) + 1 defined
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  const body = serializeWasmFunction(wasmFn);
+  const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
+
+  // Suppress unused parameter warning — domain is available for future multi-domain support
+  void domain;
+
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1686,6 +1786,13 @@ export async function compileToWasm(
     // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
     // __wasm_export_panic_demo) remains green.
     if (result.wave2Shape === "add") return emitSubstrateModule();
+    // WI-V1W3-WASM-LOWER-08 followup (closes #82): control-flow functions that use
+    // host_string_codepoint_at/next_offset (cf-5) or host_string_eq (cf-7) need the
+    // extended string import section. Use emitCFStringModule for these.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+    if (result.usesForOfString === true || result.usesStringSwitch === true) {
+      return emitCFStringModule(result.fnName, result.wasmFn, result.numericDomain ?? "i32");
+    }
     // General numeric lowering (wave2Shape === null): pass the inferred domain
     // so emitTypeLoweredModule can build the correct type entry (type 5 for i64/f64).
     return emitTypeLoweredModule(

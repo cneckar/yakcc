@@ -375,6 +375,31 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
   //   JavaScript .length is UTF-16 code unit count. TextDecoder gives a JS
   //   string; jsString.length is surrogate-aware, matching TS .length exactly.
   // -------------------------------------------------------------------------
+  //
+  // WI-V1W3-WASM-LOWER-08 followup (closes #82, #83):
+  // Two host imports supporting for-of-string iteration with correct codepoint
+  // semantics, including astral-plane characters (emoji, etc.).
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+  // @title Two scalar host imports for for-of-string (option a over b/c)
+  // @status accepted
+  // @rationale
+  //   Option (a) — two scalar imports `host_string_codepoint_at` and
+  //   `host_string_codepoint_next_offset` — was chosen over:
+  //   (b) Pack (codepoint << 32) | next_offset into i64:
+  //       Requires the WASM module to widen to i64, shift, and mask to extract
+  //       both values. Adds 4–6 opcodes per iteration. No alignment with the
+  //       existing i32-dominant import surface (all wave-3 string imports return i32).
+  //   (c) Out-params via linear memory (write results to caller-provided pointers):
+  //       Requires the module to allocate a small struct, pass its address, then
+  //       load back both fields — 6–8 additional opcodes + host_alloc round-trip.
+  //       More complex host implementation (DataView writes vs. return value).
+  //   Option (a) is the simplest: each import returns a single i32, matches the
+  //   existing host import style exactly, and requires no WASM-side decode logic.
+  //   The visitor emits two `call` opcodes per loop iteration: one for the codepoint
+  //   and one (after the body) to advance the offset. Both return -1 as sentinel.
+  //   WASM_HOST_CONTRACT.md §3.11–3.12 (v1 Wave-3.1 amendment).
+  // -------------------------------------------------------------------------
 
   /** host_string_length(ptr: i32, len_bytes: i32) -> i32 char_count */
   function hostStringLength(ptr: number, lenBytes: number): number {
@@ -475,6 +500,89 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
       throw new WasmTrap({
         kind: "unreachable",
         message: `WasmTrap(unreachable): host_string_eq: ${String(e)}`,
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // WI-V1W3-WASM-LOWER-08 followup (closes #82): for-of-string host imports.
+  // WASM_HOST_CONTRACT.md §3.11–3.12 (v1 Wave-3.1 amendment).
+  // See DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001 (above) for design rationale.
+  //
+  // Algorithm for both functions:
+  //   1. Decode the UTF-8 bytes [ptr, ptr+lenBytes) to a JS string via TextDecoder.
+  //   2. Build a parallel byte-offset table by iterating the JS string's code points
+  //      (String.prototype[Symbol.iterator] yields Unicode code points, not UTF-16
+  //      code units, so surrogate pairs are presented as a single code point).
+  //   3. For each code point, determine its UTF-8 byte length from the first byte
+  //      of its encoding (0xxxxxxx=1, 110xxxxx=2, 1110xxxx=3, 11110xxx=4).
+  //   4. Return the requested value or -1 as the sentinel for end-of-string.
+  //
+  // No caching: v1 recomputes on every call. This is simple and correct; caching
+  // is a wave-3 performance optimisation.
+  // -------------------------------------------------------------------------
+
+  /**
+   * host_string_codepoint_at(ptr: i32, len_bytes: i32, byte_offset: i32) -> i32
+   * Returns the Unicode code point at the given UTF-8 byte offset, or -1 if
+   * byte_offset >= len_bytes (end-of-string sentinel).
+   * WASM_HOST_CONTRACT.md §3.11
+   */
+  function hostStringCodepointAt(ptr: number, lenBytes: number, byteOffset: number): number {
+    try {
+      if (lenBytes === 0 || byteOffset >= lenBytes) return -1;
+      // Decode the entire string to access its code points
+      const s = readUtf8(memory, ptr, lenBytes);
+      // Walk the code points, tracking the byte offset of each
+      let currentByteOffset = 0;
+      const view = new Uint8Array(memory.buffer, ptr, lenBytes);
+      for (const cp of s) {
+        if (currentByteOffset === byteOffset) {
+          // cp is a single-code-point string; return its code point value
+          return cp.codePointAt(0) ?? -1;
+        }
+        // Advance currentByteOffset by the UTF-8 byte length of this code point
+        const firstByte = view[currentByteOffset] ?? 0;
+        const cpByteLen = firstByte < 0x80 ? 1 : firstByte < 0xe0 ? 2 : firstByte < 0xf0 ? 3 : 4;
+        currentByteOffset += cpByteLen;
+        if (currentByteOffset > byteOffset) {
+          // byteOffset points into the middle of a multi-byte sequence — return -1
+          return -1;
+        }
+      }
+      return -1; // byteOffset >= len_bytes
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_codepoint_at: ${String(e)}`,
+      });
+    }
+  }
+
+  /**
+   * host_string_codepoint_next_offset(ptr: i32, len_bytes: i32, byte_offset: i32) -> i32
+   * Returns the byte offset of the code point immediately following the one at
+   * byte_offset, or -1 if there is no next code point (end-of-string sentinel).
+   * WASM_HOST_CONTRACT.md §3.12
+   */
+  function hostStringCodepointNextOffset(
+    ptr: number,
+    lenBytes: number,
+    byteOffset: number,
+  ): number {
+    try {
+      if (lenBytes === 0 || byteOffset >= lenBytes) return -1;
+      const view = new Uint8Array(memory.buffer, ptr, lenBytes);
+      const firstByte = view[byteOffset] ?? 0;
+      const cpByteLen = firstByte < 0x80 ? 1 : firstByte < 0xe0 ? 2 : firstByte < 0xf0 ? 3 : 4;
+      const nextOffset = byteOffset + cpByteLen;
+      return nextOffset >= lenBytes ? -1 : nextOffset;
+    } catch (e) {
+      if (e instanceof WasmTrap) throw e;
+      throw new WasmTrap({
+        kind: "unreachable",
+        message: `WasmTrap(unreachable): host_string_codepoint_next_offset: ${String(e)}`,
       });
     }
   }
@@ -860,6 +968,9 @@ export function createHost(opts?: CreateHostOptions): YakccHost {
       host_string_slice: hostStringSlice,
       host_string_concat: hostStringConcat,
       host_string_eq: hostStringEq,
+      // WI-V1W3-WASM-LOWER-08 followup: for-of-string codepoint iteration (WASM_HOST_CONTRACT.md §3.11-3.12)
+      host_string_codepoint_at: hostStringCodepointAt,
+      host_string_codepoint_next_offset: hostStringCodepointNextOffset,
       // WI-WASM-HOST-CONTRACT-V2: WASI-shaped syscall imports (WASM_HOST_CONTRACT.md §14)
       host_fs_open: hostFsOpen,
       host_fs_close: hostFsClose,
