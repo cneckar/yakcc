@@ -90,7 +90,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "../../src/resolve.js";
 import { compileToWasm } from "../../src/wasm-backend.js";
-import { createHost } from "../../src/wasm-host.js";
+import { WasmTrap, createHost } from "../../src/wasm-host.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers (mirrors records.test.ts pattern)
@@ -364,10 +364,13 @@ describe("arr-2: index access arr[i] with bounds check", () => {
       cap: number,
       i: number,
     ) => number;
-    // Index 3 is length, which is >= length (0-indexed) — should trap
-    expect(() => fn(ptr, length, capacity, 3)).toThrow();
-    // Negative-cast large index also traps (i32.ge_u treats 0xFFFFFFFF >= any length)
-    expect(() => fn(ptr, length, capacity, -1)).toThrow();
+    // Index 3 is length, which is >= length (0-indexed) — should trap.
+    // Must be a WasmTrap (execute-time WASM trap), not a JS error or module-validation failure.
+    // A regression where the bounds check is removed and the module fails at instantiate-time
+    // would throw a generic Error, not a WasmTrap, so this assertion catches that class.
+    expect(() => fn(ptr, length, capacity, 3)).toThrow(WasmTrap);
+    // Negative-cast large index also traps (i32.ge_u treats 0xFFFFFFFF >= any length).
+    expect(() => fn(ptr, length, capacity, -1)).toThrow(WasmTrap);
   });
 });
 
