@@ -207,6 +207,9 @@ importers:
       '@yakcc/shave':
         specifier: workspace:*
         version: link:../shave
+      fast-check:
+        specifier: ^4.7.0
+        version: 4.7.0
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
