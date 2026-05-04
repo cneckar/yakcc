@@ -1146,18 +1146,35 @@ interface LoweringContext {
    */
   loopNestDepth: number;
   /**
-   * Import index for host_string_iter_codepoint.
-   * Set to the correct WASM import function index when the module includes this import.
-   * Used by for-of-string lowering.
-   * @decision DEC-V1-WAVE-3-WASM-LOWER-FOR-OF-STRING-001
+   * Import index for host_string_codepoint_at (funcidx 9 in the string import section).
+   * Used by for-of-string lowering (step 1: get codepoint at current offset).
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
    */
-  readonly stringIterImportIdx: number;
+  readonly codepointAtImportIdx: number;
+  /**
+   * Import index for host_string_codepoint_next_offset (funcidx 10 in the string import section).
+   * Used by for-of-string lowering (step 2: advance byte offset after loop body).
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+   */
+  readonly codepointNextOffsetImportIdx: number;
   /**
    * Import index for host_string_eq.
    * Used by switch-with-string-cases lowering.
    * @decision DEC-V1-WAVE-3-WASM-LOWER-SWITCH-DISPATCH-001
    */
   readonly stringEqImportIdx: number;
+  /**
+   * Mutable flag: set to true when a for-of-string loop is lowered.
+   * Propagated to LoweringResult.usesForOfString for wasm-backend dispatch.
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+   */
+  usesForOfString: boolean;
+  /**
+   * Mutable flag: set to true when a string-discriminant switch is lowered.
+   * Propagated to LoweringResult.usesStringSwitch for wasm-backend dispatch.
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-SWITCH-DISPATCH-001
+   */
+  usesStringSwitch: boolean;
 }
 
 /**
@@ -1980,36 +1997,25 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
     const isStringIterable = new RegExp(`${iterableText}\\s*:\\s*string`).test(fnSource);
 
     if (isStringIterable) {
-      // for-of string: call host_string_iter_codepoint(ptr, len_bytes, byte_offset)
-      //   returns (codepoint: i32, next_byte_offset: i32) packed as two separate calls
-      //   OR use a two-return approach. Since WASM multi-return needs explicit handling,
-      //   we use a single host import that writes next_byte_offset to a local.
+      // for-of string (cf-5): two-import ABI per DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001.
       //
-      // ABI: host_string_iter_codepoint(ptr: i32, len: i32, byteOffset: i32) → i32
-      //   Return value encodes: high 17 bits = next byte offset, low 21 bits = codepoint
-      //   Sentinel: returns -1 (0xFFFFFFFF) when exhausted.
+      // Per iteration:
+      //   1. cp = host_string_codepoint_at(ptr, len, byteOffset)  → i32 codepoint or -1 (done)
+      //   2. if cp == -1: break
+      //   3. loopVar = cp
+      //   4. [body]
+      //   5. byteOffset = host_string_codepoint_next_offset(ptr, len, byteOffset)
+      //   6. if byteOffset == -1: break  (last codepoint consumed)
+      //   7. goto loop
       //
-      // Wait — that encoding is fragile. Better: use TWO separate locals for result.
-      // The host import: host_string_iter_next(ptr, len, byteOffset) -> nextByteOffset | -1
-      //   AND the codepoint is passed back via a local that the host sets before returning.
-      //
-      // Actually the cleanest approach that matches the WI spec: the host function
-      // host_string_iter_codepoint(ptr: i32, len: i32, byteOffset: i32) returns i32
-      // where the return value packs (codepoint << 17) | nextByteOffset for valid positions,
-      // and -1 for exhausted. Since codepoints are ≤ U+10FFFF (21 bits) and byte offsets
-      // for a single UTF-8 byte sequence fit in the remaining bits for small strings,
-      // we use the simpler sentinel approach: return value is the next byte offset (≥0)
-      // or -1 for done. The codepoint itself is placed in a dedicated host local variable.
-      //
-      // For this WI, we use the simplest correct approach: two imports.
-      //   host_string_iter_codepoint(ptr, len, byteOffset) -> i32 (next byteOffset or -1)
-      //   The codepoint value is NOT passed back — we just iterate for the side effects.
-      //   This covers the common case: `for (const ch of s) count++;`
-      //   For getting the actual codepoint value, a future WI will use a richer ABI.
+      // Both imports live in the extended string import section (wasm-backend.ts
+      // buildStringImportSection). The wasm-backend selects this section when
+      // LoweringResult.usesForOfString is true.
       //
       // @decision DEC-V1-WAVE-3-WASM-LOWER-FOR-OF-STRING-001
+      // @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+      //
       // String param convention: s (ptr) and _len (length) from adjacent param slots.
-      // The ptr param slot index is looked up by iterableText; len is the next slot.
       const ptrSlot = ctx.table.lookup(iterableText);
       if (ptrSlot === undefined || ptrSlot.kind === "captured") {
         throw new LoweringError({
@@ -2020,7 +2026,7 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
       // The len param is the next slot after ptr (by string ABI convention: ptr then len)
       const lenSlot = ptrSlot.index + 1;
 
-      // Allocate a local for the byte offset
+      // Allocate a local for the byte offset (starts at 0)
       const byteOffsetSlot = ctx.table.defineLocal("_byteOffset", "i32");
       ctx.locals.push({ count: 1, type: "i32" });
       ctx.opcodes.push(0x41, 0x00, 0x21, byteOffsetSlot.index); // i32.const 0; local.set _byteOffset
@@ -2031,37 +2037,52 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
       ctx.opcodes.push(0x03, 0x40);
       ctx.loopNestDepth++;
 
-      // Call host_string_iter_codepoint(ptr, len, byteOffset) → nextByteOffset
+      // Step 1: cp = host_string_codepoint_at(ptr, len, byteOffset) → i32
       ctx.opcodes.push(0x20, ptrSlot.index); // local.get ptr
       ctx.opcodes.push(0x20, lenSlot); // local.get len
       ctx.opcodes.push(0x20, byteOffsetSlot.index); // local.get byteOffset
-      ctx.opcodes.push(0x10, ...uleb128Bytes(ctx.stringIterImportIdx)); // call host_string_iter_codepoint
+      ctx.opcodes.push(0x10, ...uleb128Bytes(ctx.codepointAtImportIdx)); // call host_string_codepoint_at
 
-      // tee result into byteOffset local, then check for -1 sentinel
-      ctx.opcodes.push(0x22, byteOffsetSlot.index); // local.tee _byteOffset (next or -1)
-      ctx.opcodes.push(0x41, 0x7f); // i32.const -1 (0x7f is SLEB128 for -1)
+      // Step 2: check sentinel (-1 = exhausted)
+      ctx.opcodes.push(0x41, 0x7f); // i32.const -1
       ctx.opcodes.push(0x46); // i32.eq
-      ctx.opcodes.push(0x0d, 0x01); // br_if 1 (exit block on sentinel)
+      ctx.opcodes.push(0x0d, 0x01); // br_if 1 (exit outer block on sentinel)
 
-      // Bind the loop variable — for string iteration, the codepoint is embedded in the offset result
-      // For side-effect-only loops (count++), we don't need the codepoint value.
-      // Allocate a local for the loop variable name even if unused.
+      // Step 3: bind loop variable to the codepoint — re-call codepoint_at to get value
+      // We need the codepoint value on the stack after the sentinel check consumed it.
+      // Re-call host_string_codepoint_at to get the codepoint for the loop variable.
       ctx.table.pushFrame({ isFunctionBoundary: false });
       const loopVarSlot = ctx.table.defineLocal(loopVarName, "i32");
       ctx.locals.push({ count: 1, type: "i32" });
-      // For now, we don't have the codepoint — set the loop var to 0 as a placeholder.
-      // The loop variable binding is provided for future WIs that need the codepoint value.
-      // A future amendment will pass the codepoint back from the host import.
-      ctx.opcodes.push(0x41, 0x00, 0x21, loopVarSlot.index); // i32.const 0; local.set loopVar
+      ctx.opcodes.push(0x20, ptrSlot.index); // local.get ptr
+      ctx.opcodes.push(0x20, lenSlot); // local.get len
+      ctx.opcodes.push(0x20, byteOffsetSlot.index); // local.get byteOffset
+      ctx.opcodes.push(0x10, ...uleb128Bytes(ctx.codepointAtImportIdx)); // call codepoint_at
+      ctx.opcodes.push(0x21, loopVarSlot.index); // local.set loopVar = codepoint
 
-      // Emit loop body
+      // Step 4: emit loop body
       lowerStatementList(ctx, body);
       ctx.table.popFrame();
+
+      // Step 5: advance byte offset — byteOffset = host_string_codepoint_next_offset(ptr, len, byteOffset)
+      ctx.opcodes.push(0x20, ptrSlot.index); // local.get ptr
+      ctx.opcodes.push(0x20, lenSlot); // local.get len
+      ctx.opcodes.push(0x20, byteOffsetSlot.index); // local.get byteOffset
+      ctx.opcodes.push(0x10, ...uleb128Bytes(ctx.codepointNextOffsetImportIdx)); // call next_offset
+      ctx.opcodes.push(0x22, byteOffsetSlot.index); // local.tee _byteOffset
+
+      // Step 6: if next_offset == -1 (last codepoint consumed), break
+      ctx.opcodes.push(0x41, 0x7f); // i32.const -1
+      ctx.opcodes.push(0x46); // i32.eq
+      ctx.opcodes.push(0x0d, 0x01); // br_if 1 (exit outer block)
 
       ctx.opcodes.push(0x0c, 0x00); // br 0 (continue loop)
       ctx.opcodes.push(0x0b); // end loop
       ctx.opcodes.push(0x0b); // end block
       ctx.loopNestDepth--;
+
+      // Mark that this function uses for-of-string (signals wasm-backend to use extended imports)
+      ctx.usesForOfString = true;
     } else {
       // for-of array: desugar to indexed while loop
       // Array ABI: (ptr: i32, len: i32, ...) — ptr is param 0, len is param 1
@@ -2387,6 +2408,7 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
           ctx.opcodes.push(0x41, 0x00); // i32.const 0 (case_ptr placeholder)
           ctx.opcodes.push(0x41, 0x00); // i32.const 0 (case_len placeholder)
           ctx.opcodes.push(0x10, ...uleb128Bytes(ctx.stringEqImportIdx)); // call host_string_eq
+          ctx.usesStringSwitch = true;
         } else {
           // Integer case: emit discriminant == caseValue
           lowerExpression(ctx, discriminant);
@@ -3293,6 +3315,20 @@ export interface LoweringResult {
    */
   readonly arrayShape?: ArrayShapeMeta;
   /**
+   * Set to true when the lowered function contains a for-of-string loop.
+   * Signals wasm-backend to use the extended string import section (indices 9-10
+   * for host_string_codepoint_at and host_string_codepoint_next_offset).
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+   */
+  readonly usesForOfString?: boolean;
+  /**
+   * Set to true when the lowered function contains a string-discriminant switch.
+   * Signals wasm-backend to use the extended string import section (index 8
+   * for host_string_eq).
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-SWITCH-DISPATCH-001
+   */
+  readonly usesStringSwitch?: boolean;
+  /**
    * Downgrade warnings emitted during lowering (e.g. ambiguous domain).
    * Non-empty means the caller may want to add hints for better codegen.
    */
@@ -4093,9 +4129,13 @@ export class LoweringVisitor {
       locals: [],
       blockDepth: 0,
       loopNestDepth: 0,
-      // WI-08 host import indices (see WASM_HOST_CONTRACT.md §3.x)
-      stringIterImportIdx: 9,
+      // WI-08 followup (closes #82): codepoint import indices in the string import section.
+      // See buildStringImportSection() in wasm-backend.ts for the index layout.
+      codepointAtImportIdx: 9,
+      codepointNextOffsetImportIdx: 10,
       stringEqImportIdx: 8,
+      usesForOfString: false,
+      usesStringSwitch: false,
     };
 
     // Register parameters in the symbol table and collect per-param domains.
@@ -4152,6 +4192,8 @@ export class LoweringVisitor {
       numericDomain: domain,
       paramDomains,
       warnings,
+      ...(ctx.usesForOfString ? { usesForOfString: true } : {}),
+      ...(ctx.usesStringSwitch ? { usesStringSwitch: true } : {}),
     };
   }
 
@@ -4198,9 +4240,13 @@ export class LoweringVisitor {
       locals,
       blockDepth: 0,
       loopNestDepth: 0,
-      // WI-08 host import indices (see WASM_HOST_CONTRACT.md §3.x)
-      stringIterImportIdx: 9,
+      // WI-08 followup (closes #82): codepoint import indices in the string import section.
+      // See buildStringImportSection() in wasm-backend.ts for the index layout.
+      codepointAtImportIdx: 9,
+      codepointNextOffsetImportIdx: 10,
       stringEqImportIdx: 8,
+      usesForOfString: false,
+      usesStringSwitch: false,
     };
 
     // Register parameters and build record param maps
@@ -4276,6 +4322,8 @@ export class LoweringVisitor {
       numericDomain: domain,
       recordShape,
       warnings,
+      ...(ctx.usesForOfString ? { usesForOfString: true } : {}),
+      ...(ctx.usesStringSwitch ? { usesStringSwitch: true } : {}),
     };
   }
 

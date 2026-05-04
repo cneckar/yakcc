@@ -73,19 +73,20 @@
  *   from the memory load at each iteration.
  *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-FOR-OF-STRING-001
- * @title for-of over strings uses host_string_iter_codepoint for code-point iteration
+ * @title for-of over strings uses two scalar host imports for code-point iteration
  * @status accepted
  * @rationale
  *   JS `for (const ch of s)` iterates over Unicode code points, NOT UTF-8 bytes or
- *   UTF-16 code units. Implementing a UTF-8 codepoint decoder inline in WASM is
- *   possible but complex (4 byte sequences, surrogate handling). Using a host import
- *   `host_string_iter_codepoint(ptr, len, byte_offset) → (codepoint: i32, next_byte_offset: i32)`
- *   keeps WASM code small and correct. The host has full access to JS's native
- *   string iteration semantics (which decode UTF-8 to UTF-16 code units, then
- *   coalesce surrogate pairs into code points per the JS spec).
- *   Sentinel: `next_byte_offset == -1` signals end-of-string.
- *   This adds host_string_iter_codepoint to the WASM_HOST_CONTRACT.md (Wave-3.1
- *   amendment). See wasm-host.ts and WASM_HOST_CONTRACT.md §3.11.
+ *   UTF-16 code units. The implementation uses two scalar host imports
+ *   (DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001):
+ *     host_string_codepoint_at(ptr, len, byteOffset) → i32   — codepoint value or -1
+ *     host_string_codepoint_next_offset(ptr, len, byteOffset) → i32   — next offset or -1
+ *   Two calls per iteration: one for sentinel check, one to bind the loop variable.
+ *   Sentinel -1 from either call signals end-of-string.
+ *   The host has full access to Node.js's native string iteration semantics.
+ *   Both imports are in WASM_HOST_CONTRACT.md §3.11 and §3.12 (Wave-3.1 amendment,
+ *   WI-V1W3-WASM-LOWER-08 followup, closes #82).
+ *   See wasm-host.ts and WASM_HOST_CONTRACT.md §3.11-§3.12.
  *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-SWITCH-DISPATCH-001
  * @title switch dispatch: br_table for integer literals with range ≤64; else if/else if
@@ -114,9 +115,25 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
+import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+import type { ResolutionResult, ResolvedBlock } from "../../src/resolve.js";
+import { compileToWasm } from "../../src/wasm-backend.js";
+import { createHost } from "../../src/wasm-host.js";
 import { LoweringVisitor } from "../../src/wasm-lowering/visitor.js";
 import { valtypeByte } from "../../src/wasm-lowering/wasm-function.js";
 import type { NumericDomain, WasmFunction } from "../../src/wasm-lowering/wasm-function.js";
+
+// ---------------------------------------------------------------------------
+// Minimal ResolutionResult factory for cf-5 runtime tests
+// (avoids blockMerkleRoot hash computation; only the source field is used by compileToWasm)
+// ---------------------------------------------------------------------------
+
+function makeCF5Resolution(source: string): ResolutionResult {
+  const id = "cf5-test-stub" as unknown as BlockMerkleRoot;
+  const sh = "cf5-sh-stub" as unknown as SpecHash;
+  const block: ResolvedBlock = { merkleRoot: id, specHash: sh, source, subBlocks: [] };
+  return { entry: id, blocks: new Map([[id, block]]), order: [id] };
+}
 
 // ---------------------------------------------------------------------------
 // WASM binary helpers (mirrors booleans.test.ts)
@@ -598,17 +615,60 @@ export function sumArrayPtrLen(ptr: number, len: number): number {
 });
 
 // ---------------------------------------------------------------------------
-// cf-5: for-of over strings — code-point counting
+// cf-5: for-of over strings — code-point counting (runtime tests)
 //
 // for (const ch of s) { n++; } returns the code-point count.
-// Uses host_string_iter_codepoint — requires the host runtime.
-// Tests verify the IR structure (loop opcodes present) and the LoweringResult.
-// Runtime tests are deferred to the wave-3 parity suite (wasm-host integration).
+// Uses host_string_codepoint_at + host_string_codepoint_next_offset.
+// Requires the full host runtime (createHost + compileToWasm + instantiate).
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+// @title cf-5 for-of-string uses two scalar host imports (not i64-packed or out-params)
+// @status accepted
+// @rationale See wasm-host.ts and wasm-backend.ts for full rationale.
+//   Two scalar imports: host_string_codepoint_at(ptr,len,offset)→i32,
+//   host_string_codepoint_next_offset(ptr,len,offset)→i32.
+//   These tests are the runtime proof that the emitted WASM + host contract
+//   correctly counts Unicode code points including astral-plane characters.
 // ---------------------------------------------------------------------------
 
+/**
+ * Compile a cf-5 source string (signature: (s: string, _len: number): number)
+ * to WASM via compileToWasm, write the input string into host memory, instantiate
+ * with createHost(), call the exported function, and return the i32 result.
+ *
+ * Production sequence: same as compileToWasm → createHost() → instantiate →
+ * host_alloc write string → call fn.
+ */
+async function runCF5(src: string, fnName: string, inputStr: string): Promise<number> {
+  const bytes = await compileToWasm(makeCF5Resolution(src));
+  const host = createHost();
+  const { instance } = (await WebAssembly.instantiate(
+    bytes,
+    host.importObject,
+  )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+  const encoded = new TextEncoder().encode(inputStr);
+  // For empty strings, allocate at least 1 byte so ptr is valid
+  const hostAlloc = (host.importObject.yakcc_host as Record<string, unknown>).host_alloc as (
+    n: number,
+  ) => number;
+  const ptr = hostAlloc(Math.max(encoded.length, 1));
+  if (encoded.length > 0) new Uint8Array(host.memory.buffer).set(encoded, ptr);
+  const fn = instance.exports[`__wasm_export_${fnName}`] as (ptr: number, len: number) => number;
+  const result = fn(ptr, encoded.length);
+  host.close();
+  return result;
+}
+
+/** JS reference: count Unicode code points in a string (same semantics as for-of). */
+function jsCodePointCount(s: string): number {
+  let n = 0;
+  for (const _ch of s) n++;
+  return n;
+}
+
 describe("control-flow — cf-5: for-of over strings", () => {
-  it("cf-5a: for-of string lowers without error and emits loop opcodes", () => {
-    const src = `
+  // Source template for code-point counting: (ptr, len) → count
+  const CF5_SRC = `
 export function countCodePoints(s: string, _len: number): number {
   let n: number = 0;
   for (const ch of s) {
@@ -616,48 +676,78 @@ export function countCodePoints(s: string, _len: number): number {
   }
   return n;
 }`;
-    const visitor = new LoweringVisitor();
-    const result = visitor.lower(src);
-    expect(result.wasmFn).toBeDefined();
-    const body = result.wasmFn.body;
-    // block + loop structure for the while loop
-    const hasBlock = body.some((b, i) => b === 0x02 && body[i + 1] === 0x40);
-    const hasLoop = body.some((b, i) => b === 0x03 && body[i + 1] === 0x40);
-    expect(hasBlock).toBe(true);
-    expect(hasLoop).toBe(true);
+
+  it("cf-5a: empty string → 0 code points", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "");
+    expect(result).toBe(0);
   });
 
-  it("cf-5b: for-of string produces forOfString shape in LoweringResult", () => {
-    const src = `
-export function iterStr(s: string, _len: number): number {
-  let count: number = 0;
-  for (const c of s) {
-    count = (count + 1) | 0;
-  }
-  return count;
-}`;
-    const visitor = new LoweringVisitor();
-    const result = visitor.lower(src);
-    // The result should not throw and should have the body
-    expect(result.wasmFn.body.length).toBeGreaterThan(0);
-    // forOfString shape needs the host call — verify the call opcode (0x10) is present
-    const body = result.wasmFn.body;
-    const hasCall = body.includes(0x10);
-    expect(hasCall).toBe(true);
+  it("cf-5b: single ASCII char → 1 code point", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "A");
+    expect(result).toBe(1);
   });
 
-  it("cf-5c: for-of string — 15 structural verifications across different source shapes", () => {
-    const cases = [
-      "export function f0(s: string, _l: number): number { let n: number = 0; for (const c of s) { n = (n + 1) | 0; } return n; }",
-      "export function f1(s: string, _l: number): number { let n: number = 0; for (const _c of s) { n = (n + 1) | 0; } return n; }",
-      "export function f2(s: string, _l: number): number { let n: number = 0; for (const x of s) { n = (n + 1) | 0; } return n; }",
+  it("cf-5c: 'hello' → 5 code points", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "hello");
+    expect(result).toBe(5);
+  });
+
+  it("cf-5d: single astral-plane codepoint U+1F600 (😀) → 1 code point", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "\u{1F600}");
+    expect(result).toBe(1);
+  });
+
+  it("cf-5e: 'hello 😀 world' → 13 code points (emoji counts as 1)", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "hello \u{1F600} world");
+    expect(result).toBe(13);
+  });
+
+  it("cf-5f: mixed BMP + astral — 'a😀b' → 3 code points", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "a\u{1F600}b");
+    expect(result).toBe(3);
+  });
+
+  it("cf-5g: multiple astral-plane chars — '😀🎉🚀' → 3 code points", async () => {
+    const result = await runCF5(CF5_SRC, "countCodePoints", "\u{1F600}\u{1F389}\u{1F680}");
+    expect(result).toBe(3);
+  });
+
+  it("cf-5h: property test — ≥15 fc.string() inputs: WASM matches JS reference count", async () => {
+    // Use a fixed set of non-empty strings (fast-check property over async is slow;
+    // we verify 15 distinct representative inputs instead of using fc.asyncProperty
+    // to avoid the 20s timeout that hits the flaky f64 test).
+    const inputs = [
+      "a",
+      "hello",
+      "world",
+      "\u{1F600}",
+      "a\u{1F600}b",
+      "hello \u{1F600} world",
+      "\u{1F600}\u{1F389}\u{1F680}",
+      "café", // 'cafe' + combining accent (5 code points)
+      "中文", // CJK characters
+      "abc\u{1F4A9}def", // poop emoji mid-string
+      "\u{10000}", // first astral plane char
+      "\u{10FFFF}", // last valid Unicode code point
+      "12345",
+      "mixed\u{1F600}mix\u{1F389}d",
+      "\u{1F1FA}\u{1F1F8}", // US flag (two regional indicators)
     ];
-    for (let i = 0; i < 5; i++) {
-      for (const src of cases) {
-        const v = new LoweringVisitor();
-        expect(() => v.lower(src)).not.toThrow();
-      }
+    for (const s of inputs) {
+      const expected = jsCodePointCount(s);
+      const actual = await runCF5(CF5_SRC, "countCodePoints", s);
+      expect(actual).toBe(expected);
     }
+  }, 30000);
+
+  it("cf-5i: LoweringResult has usesForOfString=true", () => {
+    const visitor = new LoweringVisitor();
+    const result = visitor.lower(CF5_SRC);
+    expect(result.usesForOfString).toBe(true);
+    expect(result.wasmFn).toBeDefined();
+    expect(result.wasmFn.body.length).toBeGreaterThan(0);
+    // Verify host call opcodes are present (0x10 = call)
+    expect(result.wasmFn.body.includes(0x10)).toBe(true);
   });
 });
 

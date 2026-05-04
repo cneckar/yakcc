@@ -1,4 +1,4 @@
-# WASM_HOST_CONTRACT.md — v1 Wave-3 WASM Host Interface Contract
+# WASM_HOST_CONTRACT.md — v1 Wave-3.1 WASM Host Interface Contract
 
 > The interface specification for the in-process host runtime that mediates
 > every yakcc-compiled WebAssembly module's interaction with the outside world.
@@ -102,7 +102,7 @@ Runtime version negotiation is a wave-3 surface (see §11).
 
 A module emitted by `compileToWasm` imports exactly the following symbols from
 the `yakcc_host` module namespace. The host's `importObject` MUST supply all
-ten; supplying additional symbols under `yakcc_host` is permitted and ignored.
+twelve; supplying additional symbols under `yakcc_host` is permitted and ignored.
 
 Wave-2 imports (§3.1–3.5): `memory`, `host_log`, `host_alloc`, `host_free`,
 `host_panic` — present in every module.
@@ -111,6 +111,11 @@ Wave-3 string imports (§3.6–3.10): `host_string_length`, `host_string_indexof
 `host_string_slice`, `host_string_concat`, `host_string_eq` — added by
 WI-V1W3-WASM-LOWER-05. Present in string-substrate modules (those whose compiled
 function has at least one `string` parameter or a `string` return type).
+
+Wave-3.1 codepoint iteration imports (§3.11–3.12): `host_string_codepoint_at`,
+`host_string_codepoint_next_offset` — added by WI-V1W3-WASM-LOWER-08 followup
+(closes #82). Present in control-flow modules that use `for (const ch of s)` or
+`switch` with string cases (`usesForOfString === true || usesStringSwitch === true`).
 
 ### 3.1 `memory` (memory import)
 
@@ -393,6 +398,89 @@ is needed.
 at every `===` site, keeps the emitted module size small, and handles surrogate
 pairs correctly without a UTF-16 decode loop in WASM (see
 `DEC-V1-WAVE-3-WASM-LOWER-STR-EQ-001`).
+
+---
+
+### 3.11 `host_string_codepoint_at` (Unicode code point at byte offset)
+
+```
+import: yakcc_host / host_string_codepoint_at
+type:   (ptr: i32, lenBytes: i32, byteOffset: i32) -> (i32)
+```
+
+The WASM module calls `host_string_codepoint_at(ptr, lenBytes, byteOffset)` to
+retrieve the Unicode code point (scalar value) of the character whose UTF-8
+encoding starts at `byteOffset` within the string at `[ptr, ptr+lenBytes)`.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + lenBytes <= 65536`
+- `byteOffset >= 0`
+- The byte range `[ptr, ptr+lenBytes)` contains valid UTF-8.
+
+**Host behavior:**
+1. If `byteOffset >= lenBytes`, return **-1** (end-of-string sentinel).
+2. Read `lenBytes` bytes from linear memory starting at `ptr`.
+3. Decode the UTF-8 bytes to a JS string via `TextDecoder`.
+4. Walk the JS string's code points (using `for...of`) to find the code point
+   that begins at `byteOffset` in the UTF-8 encoding.
+5. Return the code point value (Unicode scalar value) as a signed i32.
+   For BMP characters, this is in [0, 0xFFFF]. For astral-plane characters
+   (e.g. emoji), this is in [0x10000, 0x10FFFF].
+
+**Sentinel:** Return value **-1** means "no code point at this offset"
+(byteOffset is past end). The WASM caller uses this to break out of the
+iteration loop.
+
+**Usage pattern in `for (const ch of s)`:**
+```
+// sentinel check:
+cp = host_string_codepoint_at(ptr, len, byteOffset)
+if cp == -1: break
+// loop variable:
+ch = host_string_codepoint_at(ptr, len, byteOffset)  // second call to bind ch
+// advance:
+byteOffset = host_string_codepoint_next_offset(ptr, len, byteOffset)
+```
+
+**Decision:** `DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001` — option (a) two scalar
+imports was chosen over (b) i64-packed result or (c) out-params. See `wasm-host.ts`.
+
+---
+
+### 3.12 `host_string_codepoint_next_offset` (next UTF-8 code point offset)
+
+```
+import: yakcc_host / host_string_codepoint_next_offset
+type:   (ptr: i32, lenBytes: i32, byteOffset: i32) -> (i32)
+```
+
+The WASM module calls `host_string_codepoint_next_offset(ptr, lenBytes, byteOffset)`
+to advance the byte cursor past the UTF-8 character starting at `byteOffset`.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + lenBytes <= 65536`
+- `byteOffset >= 0`
+- The byte range `[ptr, ptr+lenBytes)` contains valid UTF-8.
+
+**Host behavior:**
+1. If `byteOffset >= lenBytes`, return **-1** (end-of-string sentinel).
+2. Read the first byte of the UTF-8 sequence at `byteOffset` to determine the
+   sequence length:
+   - `firstByte < 0x80` → 1 byte (ASCII)
+   - `firstByte < 0xE0` → 2 bytes
+   - `firstByte < 0xF0` → 3 bytes
+   - otherwise          → 4 bytes (astral-plane: emoji, mathematical symbols)
+3. Compute `nextOffset = byteOffset + sequenceLength`.
+4. If `nextOffset >= lenBytes`, return **-1** (this was the last character;
+   the WASM loop body will run for the current character but must not advance
+   further). The WASM caller MUST emit a sentinel check on the return value
+   AFTER the loop body (`br_if` on -1 comparison).
+5. Otherwise return `nextOffset`.
+
+**Sentinel:** Return value **-1** means "this was the last character; loop ends
+after processing the current character's loop body."
+
+**Decision:** `DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001`
 
 ---
 
@@ -817,6 +905,54 @@ work item (Strings — UTF-8 linear-memory + length, indexOf, slice, concat).
 6. `pnpm --filter @yakcc/compile test` passes (all 163 tests).
 7. `pnpm -r test` passes across all packages.
 8. `pnpm -r build` clean across all packages.
+
+---
+
+## 13.1 Acceptance for WI-V1W3-WASM-LOWER-08 followup (closes #82, closes #83)
+
+Wave-3.1 amendment: adds `host_string_codepoint_at` (§3.11) and
+`host_string_codepoint_next_offset` (§3.12) for correct for-of-string lowering in
+`emitCFStringModule`. Also fixes the dispatch bug where cf-5/cf-7 functions were
+routed to `emitTypeLoweredModule` (4-import section) instead of the extended
+11-import section.
+
+**Decision reference:** `DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001` (in `wasm-host.ts`
+and `wasm-backend.ts`).
+
+### Required
+
+1. `WASM_HOST_CONTRACT.md` amended with version bump (Wave-3 → Wave-3.1) and
+   §3.11–§3.12 documenting the two new codepoint iteration imports — this document.
+2. `packages/compile/src/wasm-host.ts` extended with:
+   - `hostStringCodepointAt(ptr, lenBytes, byteOffset)` — registered as
+     `host_string_codepoint_at` in `importObject`.
+   - `hostStringCodepointNextOffset(ptr, lenBytes, byteOffset)` — registered as
+     `host_string_codepoint_next_offset` in `importObject`.
+3. `packages/compile/src/wasm-backend.ts` extended with:
+   - `buildStringImportSection()` updated: 9 function imports → 11 (adds indices 9, 10).
+   - `emitStringModule()` updated: type section count 9 → 10 (adds T9), substrate funcidx 9 → 11.
+   - `emitCFStringModule(fnName, wasmFn, domain)` — new emitter for cf-5/cf-7 functions.
+   - `compileToWasm` dispatch: `usesForOfString` or `usesStringSwitch` → `emitCFStringModule`.
+4. `packages/compile/src/wasm-lowering/visitor.ts` updated:
+   - `LoweringContext`: removed `stringIterImportIdx`, added `codepointAtImportIdx: 9`,
+     `codepointNextOffsetImportIdx: 10`, `usesForOfString: boolean`, `usesStringSwitch: boolean`.
+   - `LoweringResult`: added `usesForOfString?: boolean`, `usesStringSwitch?: boolean`.
+   - For-of-string lowering: two-call-per-iteration pattern (sentinel check + variable bind).
+5. `packages/compile/src/wasm-host-v2.test.ts` updated: 24 → 26 keys in importObject shape test.
+6. `packages/compile/src/wasm-host.test.ts` extended: conformance tests for both new imports
+   (§9 conformance fixture, Test 9 and Test 10 describe blocks).
+7. `packages/compile/test/wasm-lowering/control-flow.test.ts` cf-5 tests converted from
+   structural-only to runtime tests: 9 cases (cf-5a through cf-5i) using `runCF5` helper
+   with `compileToWasm` + `createHost` + `WebAssembly.instantiate`. Tests verify:
+   - empty string → 0
+   - ASCII strings → correct count
+   - astral-plane codepoints (U+1F600) → count 1 per emoji
+   - mixed BMP + astral
+   - 15-input property-style spot-check against `jsCodePointCount` reference
+   - `LoweringResult.usesForOfString === true`
+8. `pnpm --filter @yakcc/compile test` passes (≥268 tests, excluding 1 pre-existing
+   f64-4-mod-property timeout flake).
+9. `pnpm -r build` clean across all packages.
 
 ---
 
