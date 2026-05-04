@@ -141,7 +141,8 @@ export type LoweringErrorKind =
   | "unsupported-node" // AST node kind not yet implemented (loud failure)
   | "unsupported-capture" // closure capture placeholder (WI-10 fills this)
   | "missing-export" // source has no exported function
-  | "parse-error"; // ts-morph reports a hard parse error
+  | "parse-error" // ts-morph reports a hard parse error
+  | "unknown-call-target"; // CallExpression callee not resolvable (WI-09)
 
 /**
  * Thrown when the visitor encounters a condition it cannot handle.
@@ -1175,6 +1176,29 @@ interface LoweringContext {
    * @decision DEC-V1-WAVE-3-WASM-LOWER-SWITCH-DISPATCH-001
    */
   usesStringSwitch: boolean;
+  /**
+   * Intra-module function index table for direct call resolution.
+   * Maps function name → funcIndex (0-based local index, NOT counting imports).
+   * To get the absolute WASM funcidx: localFuncIdx + importedFuncCount.
+   *
+   * Empty map (default) disables intra-module call resolution — CallExpressions
+   * that are not Math.* or BigInt throw "unsupported-node".
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   * @title Two-pass forward-reference resolution for intra-module calls
+   */
+  readonly funcIndexTable: ReadonlyMap<string, number>;
+  /**
+   * Number of imported functions preceding local functions in the WASM funcidx
+   * space. Used when emitting `call funcIdx` to convert a local function index
+   * (0-based in funcIndexTable) to the absolute WASM funcidx.
+   *
+   * Default 0 (no imports). Callers building multi-function modules with host
+   * imports must set this to the import section's function count.
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   */
+  readonly importedFuncCount: number;
 }
 
 /**
@@ -1590,9 +1614,55 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
       return;
     }
 
+    // Intra-module direct call resolution (WI-V1W3-WASM-LOWER-09)
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+    // @title Two-pass forward-reference resolution for intra-module calls
+    // @status accepted
+    // @rationale
+    //   Pass 1 (lowerModule): enumerate all top-level FunctionDeclarations in
+    //   declaration order and build funcIndexTable (name → local funcIdx, 0-based).
+    //   Pass 2: emit code; CallExpression resolves callee via funcIndexTable. The
+    //   absolute WASM funcidx = localFuncIdx + importedFuncCount (imports precede
+    //   defined functions in the WASM funcidx space). Recursive calls work by
+    //   construction (table populated before any code emission). Host-mediated I/O
+    //   calls (host_* callees) lower to `call <import_funcidx>` via HOST_IMPORT_INDICES.
+    //   Calls to functions outside both sets MUST throw LoweringError("unknown-call-target")
+    //   per Sacred Practice #5 (fail loudly and early, never silently).
+    //   call_indirect and closures are deferred to WI-V1W3-WASM-LOWER-10.
+    if (ctx.funcIndexTable.has(callText)) {
+      // Intra-module call: emit arguments then `call <absIdx>`
+      for (const arg of args) {
+        lowerExpression(ctx, arg as Expression);
+      }
+      const localIdx = ctx.funcIndexTable.get(callText) as number;
+      const absIdx = localIdx + ctx.importedFuncCount;
+      ctx.opcodes.push(0x10, ...uleb128Bytes(absIdx)); // call absIdx
+      return;
+    }
+
+    // host_* call: map to import function index
+    // HOST_IMPORT_INDICES maps host function names to their 0-based import funcidx.
+    // This mirrors the import ordering in wasm-backend.ts emitControlFlowModule().
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+    if (callText.startsWith("host_")) {
+      const hostIdx = HOST_IMPORT_INDICES[callText];
+      if (hostIdx === undefined) {
+        throw new LoweringError({
+          kind: "unknown-call-target",
+          message: `LoweringVisitor: unknown host import '${callText}' — not in HOST_IMPORT_INDICES table. Add it to the table and WASM_HOST_CONTRACT.md.`,
+        });
+      }
+      for (const arg of args) {
+        lowerExpression(ctx, arg as Expression);
+      }
+      ctx.opcodes.push(0x10, ...uleb128Bytes(hostIdx)); // call hostIdx
+      return;
+    }
+
     throw new LoweringError({
-      kind: "unsupported-node",
-      message: `LoweringVisitor: unsupported call expression '${callText}' (SyntaxKind 'CallExpression') in general numeric lowering`,
+      kind: "unknown-call-target",
+      message: `LoweringVisitor: cannot resolve call target '${callText}' — not a Math/BigInt builtin, not in funcIndexTable, and not a host_* import. Did you mean to pass a multi-function source to lowerModule()? call_indirect/closures deferred to WI-V1W3-WASM-LOWER-10.`,
     });
   }
 
@@ -1681,6 +1751,50 @@ function uleb128Bytes(n: number): number[] {
   } while (val !== 0);
   return bytes;
 }
+
+// ---------------------------------------------------------------------------
+// Host import function index table (WI-V1W3-WASM-LOWER-09)
+//
+// Maps host_* function names to their 0-based WASM funcidx in the import
+// section. This mirrors the ordering in wasm-backend.ts emitControlFlowModule()
+// and the WASM_HOST_CONTRACT.md import table. CallExpression lowering for
+// host_* callees uses this table to emit `call <importFuncIdx>`.
+//
+// Index assignment (matches wasm-backend.ts wave-3 import ordering):
+//   0: host_log(ptr, len) → void
+//   1: host_alloc(size) → i32
+//   2: host_free(ptr) → void
+//   3: host_panic(code, ptr, len) → void
+//   4: host_string_length(ptr, len_bytes) → i32
+//   5: host_string_indexof(hp, hl, np, nl) → i32
+//   6: host_string_slice(ptr, len, start, end, out_ptr) → void
+//   7: host_string_concat(p1, l1, p2, l2, out_ptr) → void
+//   8: host_string_eq(p1, l1, p2, l2) → i32
+//   9: host_string_iter_codepoint(ptr, len, byteOffset) → i32
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+// @title HOST_IMPORT_INDICES mirrors wasm-backend.ts import section ordering
+// @status accepted
+// @rationale
+//   A single authoritative table keeps import index assignment in sync between
+//   the visitor (code emitter) and the backend (module assembler). Any new host
+//   import added to WASM_HOST_CONTRACT.md must be added here AND in wasm-backend.ts
+//   emitControlFlowModule() in the same commit (Sacred Practice #12: single source
+//   of truth). The table is read-only at runtime; tests verify round-trip via WASM
+//   instantiation (calls.test.ts substrates call-1 through call-5).
+// ---------------------------------------------------------------------------
+const HOST_IMPORT_INDICES: Readonly<Record<string, number>> = {
+  host_log: 0,
+  host_alloc: 1,
+  host_free: 2,
+  host_panic: 3,
+  host_string_length: 4,
+  host_string_indexof: 5,
+  host_string_slice: 6,
+  host_string_concat: 7,
+  host_string_eq: 8,
+  host_string_iter_codepoint: 9,
+};
 
 /**
  * Lower a single statement in a numeric function body.
@@ -3335,6 +3449,45 @@ export interface LoweringResult {
   readonly warnings: ReadonlyArray<string>;
 }
 
+// ---------------------------------------------------------------------------
+// LoweringModuleResult — output of lowerModule() (WI-V1W3-WASM-LOWER-09)
+// ---------------------------------------------------------------------------
+
+/**
+ * Output of `LoweringVisitor.lowerModule()`.
+ *
+ * Contains one `LoweringResult` per function in declaration order, plus the
+ * function-index table built during Pass 1. The funcIndexTable maps each
+ * function's name to its 0-based local function index (NOT including imports).
+ * Test-local module assemblers use this to build the WASM func/type sections.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-EMIT-001
+ * @title Multi-function module emission deferred to WI-V1W3-WASM-LOWER-11
+ * @status accepted
+ * @rationale
+ *   Production multi-function module binary assembly (wasm-backend.ts) is
+ *   out of scope for WI-09 (forbidden file). Multi-function modules are only
+ *   exercised in tests via test-local module assemblers in calls.test.ts.
+ *   WI-V1W3-WASM-LOWER-11 will integrate lowerModule output into wasm-backend.ts.
+ *   This WI exposes LoweringModuleResult so callers can assemble modules independently.
+ */
+export interface LoweringModuleResult {
+  /**
+   * One LoweringResult per function, in declaration order (matching funcIndexTable).
+   */
+  readonly functions: ReadonlyArray<LoweringResult>;
+  /**
+   * Maps function name → 0-based local function index (NOT including imports).
+   * Built during Pass 1 (funcIndex assigned in declaration order).
+   */
+  readonly funcIndexTable: ReadonlyMap<string, number>;
+  /**
+   * Aggregated warnings from all lowered functions.
+   */
+  readonly warnings: ReadonlyArray<string>;
+}
+
 /**
  * Recursive-descent visitor: parse source → walk AST → emit WasmFunction.
  *
@@ -3918,6 +4071,98 @@ export class LoweringVisitor {
     return this._lowerFunction(fn);
   }
 
+  /**
+   * Lower a multi-function source using two-pass forward-reference resolution.
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   * @title Two-pass forward-reference resolution for intra-module calls
+   * @status accepted
+   * @rationale
+   *   Pass 1: enumerate all top-level FunctionDeclarations in declaration order
+   *   and assign funcIndex = 0, 1, 2, … (matching the WASM function section order).
+   *   This builds the funcIndexTable so that Pass 2 can resolve any forward or
+   *   backward call without re-scanning the source. Recursive calls work by
+   *   construction (the callee's index is in the table before any body is lowered).
+   *
+   *   Pass 2: lower each function body. CallExpression resolution checks the
+   *   funcIndexTable first (intra-module), then HOST_IMPORT_INDICES (host_* imports),
+   *   then throws LoweringError("unknown-call-target") per Sacred Practice #5.
+   *
+   *   Back-compat: `lower(source)` continues to work for single-function sources —
+   *   it is implemented as a thin wrapper around _findExportedFunction + _lowerFunction,
+   *   which does NOT use funcIndexTable (empty by default). lowerModule() must be used
+   *   for any source with inter-function calls.
+   *
+   *   call_indirect and closures are deferred to WI-V1W3-WASM-LOWER-10.
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-EMIT-001
+   * @title Production multi-function module emission deferred to WI-11
+   * @status accepted
+   * @rationale
+   *   wasm-backend.ts (forbidden in this WI) handles multi-function WASM module
+   *   binary assembly. lowerModule() returns LoweringModuleResult with all
+   *   WasmFunction IR; test-local assemblers in calls.test.ts serialize to WASM.
+   *   WI-V1W3-WASM-LOWER-11 integrates lowerModule into wasm-backend.ts.
+   *
+   * @throws LoweringError kind "missing-export" if no exported function found.
+   * @throws LoweringError kind "unsupported-node" for any unhandled node kind.
+   * @throws LoweringError kind "parse-error" for hard TypeScript syntax errors.
+   * @throws LoweringError kind "unknown-call-target" for unresolvable calls.
+   */
+  lowerModule(source: string): LoweringModuleResult {
+    const sourceFile = this._parseSource(source);
+
+    // Pass 1: collect ALL top-level FunctionDeclarations in source order and
+    // assign funcIndex (0-based local index, NOT counting imports).
+    const allFunctions = sourceFile.getFunctions();
+    if (allFunctions.length === 0) {
+      throw new LoweringError({
+        kind: "missing-export",
+        message:
+          "LoweringVisitor.lowerModule: source has no function declarations. " +
+          "At least one exported function is required.",
+      });
+    }
+    // Verify at least one exported function exists (required for module entry)
+    const hasExport = allFunctions.some((f) => f.isExported());
+    if (!hasExport) {
+      throw new LoweringError({
+        kind: "missing-export",
+        message:
+          "LoweringVisitor.lowerModule: source has no exported function declaration. " +
+          "Every module source must export at least one function.",
+      });
+    }
+
+    // Build funcIndexTable: functionName → localFuncIdx (0-based)
+    const funcIndexTable = new Map<string, number>();
+    for (let i = 0; i < allFunctions.length; i++) {
+      const name = allFunctions[i]?.getName();
+      if (name !== undefined && name.length > 0) {
+        funcIndexTable.set(name, i);
+      }
+    }
+
+    // Pass 2: lower each function body with the funcIndexTable available for
+    // CallExpression resolution. importedFuncCount is 0 by default — callers
+    // building modules with host imports must add the import count when assembling
+    // the final WASM module (the test-local assembler in calls.test.ts does this).
+    const results: LoweringResult[] = [];
+    const allWarnings: string[] = [];
+
+    for (const fn of allFunctions) {
+      const result = this._lowerFunctionWithCallCtx(fn, funcIndexTable, 0);
+      results.push(result);
+      allWarnings.push(...result.warnings);
+    }
+
+    return {
+      functions: results,
+      funcIndexTable,
+      warnings: allWarnings,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Parsing
   // -------------------------------------------------------------------------
@@ -3996,6 +4241,121 @@ export class LoweringVisitor {
   // -------------------------------------------------------------------------
   // Function lowering — dispatch
   // -------------------------------------------------------------------------
+
+  /**
+   * Lower a function with an explicit funcIndexTable injected into the
+   * LoweringContext for intra-module call resolution (WI-09).
+   *
+   * This variant is called by lowerModule() for each function in the module.
+   * The funcIndexTable maps all function names → local funcIndex (0-based),
+   * built during Pass 1. importedFuncCount is the number of host imports that
+   * precede the locally-defined functions in the WASM funcidx space.
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   */
+  private _lowerFunctionWithCallCtx(
+    fn: FunctionDeclaration,
+    funcIndexTable: ReadonlyMap<string, number>,
+    importedFuncCount: number,
+  ): LoweringResult {
+    // Delegate to _lowerNumericFunction but we need to thread the call context
+    // through. Since _lowerNumericFunction constructs LoweringContext internally,
+    // we inject by overriding the context after construction via a separate method.
+    // Strategy: use _lowerNumericFunctionWithCallCtx for numeric functions.
+    // For wave-2 fast-paths, string functions, record functions, and array functions,
+    // fall back to _lowerFunction (no intra-module call support — these shapes are
+    // unlikely to contain function calls in wave-3 substrates).
+    const fnName = fn.getName() ?? "fn";
+    // String shape: no call resolution needed (wave-3 string functions don't call user fns)
+    const strShape = detectStringShape(fn);
+    if (strShape !== null) return this._lowerStringFunction(fn, strShape);
+    // Wave-2 fast-paths: no call resolution needed
+    const shape = detectWave2Shape(fn);
+    if (shape !== null) {
+      const wasmFn = this._wave2FastPath(shape, fn);
+      return { fnName, wasmFn, wave2Shape: shape, warnings: [] };
+    }
+    // Record shape: no call resolution needed for wave-3 record functions
+    const recShape = detectRecordShape(fn);
+    if (recShape !== null) return this._lowerRecordFunction(fn, recShape);
+    // Array shape: no call resolution needed
+    const arrShape = detectArrayShape(fn);
+    const hasForOf = /for\s*\(\s*(?:const|let)\s+\w+\s+of\s+/.test(fn.getText());
+    if (arrShape !== null && !hasForOf) return this._lowerArrayFunction(fn, arrShape);
+    // General numeric lowering: inject funcIndexTable + importedFuncCount
+    return this._lowerNumericFunctionWithCallCtx(fn, funcIndexTable, importedFuncCount);
+  }
+
+  /**
+   * Lower a numeric function with call context injection.
+   * Identical to _lowerNumericFunction except the LoweringContext receives the
+   * provided funcIndexTable and importedFuncCount for intra-module call resolution.
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   */
+  private _lowerNumericFunctionWithCallCtx(
+    fn: FunctionDeclaration,
+    funcIndexTable: ReadonlyMap<string, number>,
+    importedFuncCount: number,
+  ): LoweringResult {
+    const fnName = fn.getName() ?? "fn";
+    const { domain, warning } = inferNumericDomain(fn);
+    const warnings: string[] = warning !== null ? [warning] : [];
+
+    const ctx: LoweringContext = {
+      domain,
+      table: this._table,
+      opcodes: [],
+      locals: [],
+      blockDepth: 0,
+      loopNestDepth: 0,
+      stringIterImportIdx: 9,
+      stringEqImportIdx: 8,
+      funcIndexTable,
+      importedFuncCount,
+    };
+
+    this._table.pushFrame({ isFunctionBoundary: true });
+    const paramDomains: NumericDomain[] = [];
+    for (const param of fn.getParameters()) {
+      const paramName = param.getName();
+      const paramTypeFlags = param.getType().getFlags();
+      const paramIsBigInt =
+        (paramTypeFlags & TypeFlags.BigInt) !== 0 ||
+        (paramTypeFlags & TypeFlags.BigIntLiteral) !== 0;
+      const paramDomain: NumericDomain = paramIsBigInt ? "i64" : domain === "i64" ? "i32" : domain;
+      this._table.defineParam(paramName, paramDomain);
+      paramDomains.push(paramDomain);
+    }
+
+    const bodyNode = fn.getBody();
+    if (bodyNode === undefined) {
+      this._table.popFrame();
+      throw new LoweringError({
+        kind: "unsupported-node",
+        message: `LoweringVisitor: function '${fnName}' has no body — abstract/ambient declarations are not supported`,
+      });
+    }
+    const body = bodyNode as Block;
+    const statements = body.getStatements();
+    for (const stmt of statements) {
+      lowerStatement(ctx, stmt);
+    }
+
+    this._table.popFrame();
+
+    return {
+      fnName,
+      wasmFn: {
+        locals: ctx.locals,
+        body: ctx.opcodes,
+      },
+      wave2Shape: null,
+      numericDomain: domain,
+      paramDomains,
+      warnings,
+    };
+  }
 
   private _lowerFunction(fn: FunctionDeclaration): LoweringResult {
     const fnName = fn.getName() ?? "fn";
@@ -4136,6 +4496,9 @@ export class LoweringVisitor {
       stringEqImportIdx: 8,
       usesForOfString: false,
       usesStringSwitch: false,
+      // WI-09 defaults: no intra-module calls. lowerModule() overrides these.
+      funcIndexTable: new Map(),
+      importedFuncCount: 0,
     };
 
     // Register parameters in the symbol table and collect per-param domains.
@@ -4247,6 +4610,9 @@ export class LoweringVisitor {
       stringEqImportIdx: 8,
       usesForOfString: false,
       usesStringSwitch: false,
+      // WI-09 defaults: no intra-module calls. lowerModule() overrides these.
+      funcIndexTable: new Map(),
+      importedFuncCount: 0,
     };
 
     // Register parameters and build record param maps
