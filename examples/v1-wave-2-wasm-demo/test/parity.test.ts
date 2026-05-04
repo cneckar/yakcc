@@ -42,6 +42,7 @@
  */
 
 import { WasmTrap, createHost, instantiateAndRun, tsBackend, wasmBackend } from "@yakcc/compile";
+import { instantiateAndRunBigInt } from "./bigint-instantiate.js";
 import type { ResolutionResult, ResolvedBlock } from "@yakcc/compile";
 import {
   type BlockMerkleRoot,
@@ -609,6 +610,128 @@ describe("WI-V1W3-WASM-LOWER-02 demo extension — numeric domain parity", () =>
         },
       ),
       { numRuns: 20 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-FOLLOWUP-LOWER-02-WIDEADD — i64 boundary coverage (Issue #48)
+//
+// These tests address Issue #48: the existing i64 property test in the block
+// above uses a narrow range (-1M..1M) that never exceeds Number.MAX_SAFE_INTEGER
+// (2^53 - 1 = 9007199254740991). The precision loss introduced by the
+// `number` cast in `instantiateAndRun` was therefore never observable.
+//
+// This block exercises the i64 precision boundary using `instantiateAndRunBigInt`,
+// the test-local helper that returns JS `bigint` (no cast to number), confirming:
+//   1. WASM i64 results are preserved past 2^53 - 1 with full 64-bit precision.
+//   2. The lowering path correctly assembles the i64 binary for wideAdd.
+//   3. A hypothetical 32-bit truncation bug in the visitor would be caught.
+//
+// wideAdd source: `function wideAdd(a: number, b: number): number { return a + 3000000000 + b; }`
+//   — the baked-in constant 3_000_000_000 > 2^31-1 forces i64 inference (rule 5).
+//   — WASM export: __wasm_export_wideAdd(a: i64, b: i64) → i64
+//
+// @decision DEC-WI-FOLLOWUP-WIDEADD-001
+// (See bigint-instantiate.ts for full rationale.)
+// ---------------------------------------------------------------------------
+
+/**
+ * @sacred-practice-4 truncation-injection-walkthrough
+ *
+ * If the visitor's i64 + lowering had a hypothetical `& 0xFFFFFFFFn` truncation bug,
+ * `wideAdd(2n**53n, 1n)` would emit `(0x10000000000000n + 0xb2d05e00n + 0x1n) & 0xFFFFFFFFn`
+ * = `0xb2d05e01n` = `3000000001n`, NOT `9007202254740993n`. The deterministic boundary
+ * test would fail with: expected 9007202254740993n, got 3000000001n. This proves the
+ * test catches the synthetic 32-bit truncation regression class.
+ */
+describe("wideAdd — i64 boundary past Number.MAX_SAFE_INTEGER (Issue #48)", () => {
+  // The wideAdd source: constant 3_000_000_000 > 2^31-1 forces i64 domain inference.
+  const WIDE_ADD_SRC =
+    "export function wideAdd(a: number, b: number): number { return a + 3000000000 + b; }";
+
+  // -------------------------------------------------------------------------
+  // Substrate 1 — deterministic boundary cases
+  //
+  // 2^53 = 9007199254740992 (Number.MAX_SAFE_INTEGER + 1 = 9007199254740991 + 1)
+  // wideAdd(2^53, 1)   = 9007199254740992 + 3_000_000_000 + 1   = 9007202254740993
+  // wideAdd(-2^53, -1) = -9007199254740992 + 3_000_000_000 - 1  = -9007196254740993
+  // wideAdd(2^62, 1)   = 4611686018427387904 + 3_000_000_000 + 1 = 4611686021427387905
+  //
+  // All three results exceed Number.MAX_SAFE_INTEGER in magnitude and therefore
+  // cannot be represented faithfully as JS `number`. Only the bigint path captures
+  // them correctly.
+  // -------------------------------------------------------------------------
+
+  it("wideAdd(2n**53n, 1n) → 9007202254740993n (= 2^53 + 3_000_000_000 + 1, beyond Number.MAX_SAFE_INTEGER)", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const { result } = await instantiateAndRunBigInt(
+      wasmBytes,
+      "__wasm_export_wideAdd",
+      [2n ** 53n, 1n],
+    );
+    // 2^53 + 3_000_000_000 + 1 = 9007199254740992 + 3000000000 + 1 = 9007202254740993
+    expect(result).toEqual(9007202254740993n);
+  });
+
+  it("wideAdd(-(2n**53n), -1n) → -9007196254740993n (negative i64 boundary; -2^53 + 3_000_000_000 - 1)", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const { result } = await instantiateAndRunBigInt(
+      wasmBytes,
+      "__wasm_export_wideAdd",
+      [-(2n ** 53n), -1n],
+    );
+    // -2^53 + 3_000_000_000 + (-1) = -9007199254740992 + 2999999999 = -9007196254740993
+    expect(result).toEqual(-9007196254740993n);
+  });
+
+  it("wideAdd(2n**62n, 1n) → 4611686021427387905n (i64 near-max boundary; 2^62 + 3_000_000_000 + 1)", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const { result } = await instantiateAndRunBigInt(
+      wasmBytes,
+      "__wasm_export_wideAdd",
+      [2n ** 62n, 1n],
+    );
+    // 2^62 + 3_000_000_000 + 1 = 4611686018427387904 + 3000000001 = 4611686021427387905
+    expect(result).toEqual(4611686021427387905n);
+  });
+
+  // -------------------------------------------------------------------------
+  // Substrate 2 — fast-check property
+  //
+  // Ranges chosen to avoid i64 signed overflow:
+  //   i64 signed max = 2^63 - 1 = 9223372036854775807
+  //   We need: a + 3_000_000_000 + b <= 2^63 - 1
+  //   Safe upper bound for a + b: 2^63 - 1 - 3_000_000_000 ≈ 9223372033854775807
+  //
+  //   a ∈ [2^52, 2^61]  — all values exceed Number.MAX_SAFE_INTEGER (2^53-1)
+  //   b ∈ [0,   2^61]   — non-negative; a + b + 3B stays well below 2^63
+  //
+  // JS reference: a + 3000000000n + b (pure bigint arithmetic, no precision loss)
+  // WASM result:  instantiateAndRunBigInt → bigint (no number cast)
+  // -------------------------------------------------------------------------
+  it("wideAdd over fc.bigInt — sums always match JS reference at any i64 magnitude", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.bigInt({ min: 2n ** 52n, max: 2n ** 61n }),
+        fc.bigInt({ min: 0n, max: 2n ** 61n }),
+        async (a, b) => {
+          const wasmResult = (
+            await instantiateAndRunBigInt(wasmBytes, "__wasm_export_wideAdd", [a, b])
+          ).result;
+          expect(wasmResult).toEqual(a + 3000000000n + b);
+        },
+      ),
+      { numRuns: 30 },
     );
   });
 });
