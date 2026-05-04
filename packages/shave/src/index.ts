@@ -278,6 +278,7 @@ export type {
   SlicePlanEntry,
   PointerEntry,
   NovelGlueEntry,
+  GlueLeafEntry,
 } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
@@ -764,17 +765,18 @@ export async function shave(
   }
 
   // Each SlicePlanEntry that carries an AST hash maps to a ShavedAtomStub.
-  // ForeignLeafEntry is intentionally excluded: it is an opaque leaf that
-  // has no canonicalAstHash or host-module sourceRange (the import declaration
-  // is a foreign dependency, not a shaved atom). The merkleRoots array was
-  // built with one slot per entry (including foreign-leaf slots, which received
-  // `undefined`), so we use flatMap with the index to skip foreign entries while
-  // keeping the merkleRoots[i] alignment intact.
-  // (per DEC-SHAVE-PIPELINE-001 rationale above and DEC-V2-FOREIGN-BLOCK-SCHEMA-001)
+  // ForeignLeafEntry and GlueLeafEntry are intentionally excluded:
+  //   - ForeignLeafEntry is an opaque leaf with no host-module sourceRange.
+  //   - GlueLeafEntry is a verbatim-preserved region with no sourceRange
+  //     (per DEC-V2-GLUE-LEAF-CONTRACT-001: glue is project-local, not registry-registered).
+  // The merkleRoots array was built with one slot per entry (including excluded
+  // slots, which received `undefined`), so we use flatMap with the index to skip
+  // excluded entries while keeping the merkleRoots[i] alignment intact.
+  // (per DEC-SHAVE-PIPELINE-001, DEC-V2-FOREIGN-BLOCK-SCHEMA-001, DEC-V2-GLUE-AWARE-SHAVE-001)
   const atoms = result.slicePlan.flatMap((entry, i): ShavedAtomStub[] => {
-    if (entry.kind === "foreign-leaf") {
-      // Foreign atoms are opaque leaves; they have no AST hash to dedupe by
-      // and no source range in the host module's body.
+    if (entry.kind === "foreign-leaf" || entry.kind === "glue") {
+      // Excluded: foreign deps are opaque leaves; glue regions are verbatim-preserved
+      // project-local code with no registry entry and no sourceRange field.
       return [];
     }
     return [
