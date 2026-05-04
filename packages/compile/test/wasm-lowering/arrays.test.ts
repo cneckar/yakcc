@@ -364,13 +364,21 @@ describe("arr-2: index access arr[i] with bounds check", () => {
       cap: number,
       i: number,
     ) => number;
-    // Index 3 is length, which is >= length (0-indexed) — should trap.
-    // Must be a WasmTrap (execute-time WASM trap), not a JS error or module-validation failure.
-    // A regression where the bounds check is removed and the module fails at instantiate-time
-    // would throw a generic Error, not a WasmTrap, so this assertion catches that class.
-    expect(() => fn(ptr, length, capacity, 3)).toThrow(WasmTrap);
-    // Negative-cast large index also traps (i32.ge_u treats 0xFFFFFFFF >= any length).
-    expect(() => fn(ptr, length, capacity, -1)).toThrow(WasmTrap);
+    // Index 3 is >= length (0-indexed) — must trap via host_panic(0x04) (oob_memory)
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-BOUNDS-CHECK-001: OOB index → host_panic(0x04)
+    for (const oobIndex of [3, -1]) {
+      let caught: unknown;
+      try {
+        fn(ptr, length, capacity, oobIndex);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(WasmTrap);
+      // Verify this is specifically the bounds-check panic (0x04), not OOM (0x01)
+      // or any other host_panic code — prevents silent regression if the bounds
+      // check is removed and the module fails to validate instead.
+      expect((caught as WasmTrap).hostPanicCode).toBe(0x04);
+    }
   });
 });
 
