@@ -4309,8 +4309,13 @@ export class LoweringVisitor {
       locals: [],
       blockDepth: 0,
       loopNestDepth: 0,
-      stringIterImportIdx: 9,
+      // WI-08 followup (closes #82): codepoint import indices in the string import section.
+      // See buildStringImportSection() in wasm-backend.ts for the index layout.
+      codepointAtImportIdx: 9,
+      codepointNextOffsetImportIdx: 10,
       stringEqImportIdx: 8,
+      usesForOfString: false,
+      usesStringSwitch: false,
       funcIndexTable,
       importedFuncCount,
     };
