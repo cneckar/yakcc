@@ -26,7 +26,13 @@ import { Project } from "ts-morph";
 import { describe, expect, it } from "vitest";
 import type { ShaveRegistryView } from "../types.js";
 import { classifyForeign, slice } from "./slicer.js";
-import type { AtomLeaf, BranchNode, ForeignLeafEntry, RecursionTree } from "./types.js";
+import type {
+  AtomLeaf,
+  BranchNode,
+  ForeignLeafEntry,
+  GlueLeafEntry,
+  RecursionTree,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -757,5 +763,92 @@ describe("classifyForeign — registry purity (L3-I2)", () => {
     const entries = classifyForeign(`import { readFileSync } from 'node:fs';`);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe("foreign-leaf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GlueLeafEntry schema (WI-V2-GLUE-LEAF-CONTRACT)
+//
+// These tests verify that:
+//   1. GlueLeafEntry round-trips through JSON (serialize/deserialize).
+//   2. SlicePlan.sourceBytesByKind.glue is present and equals 0 for plans
+//      produced by the current slicer (the search-algorithm slicer that emits
+//      GlueLeafEntry lives in WI-V2-SLICER-SEARCH-ALG; this slicer always
+//      emits 0 glue bytes).
+//   3. A manually-constructed SlicePlan containing a GlueLeafEntry is
+//      structurally valid and the entry fields are as specified.
+// ---------------------------------------------------------------------------
+
+describe("GlueLeafEntry — schema round-trip (WI-V2-GLUE-LEAF-CONTRACT)", () => {
+  it("GlueLeafEntry round-trips through JSON serialize/deserialize", () => {
+    const entry: GlueLeafEntry = {
+      kind: "glue",
+      source: "const unsupported = () => ({ [Symbol.iterator]: function* () {} });",
+      canonicalAstHash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+      reason: "unsupported-node: GeneratorFunction",
+    };
+
+    const serialized = JSON.stringify(entry);
+    const deserialized = JSON.parse(serialized) as GlueLeafEntry;
+
+    expect(deserialized.kind).toBe("glue");
+    expect(deserialized.source).toBe(entry.source);
+    expect(deserialized.canonicalAstHash).toBe(entry.canonicalAstHash);
+    expect(deserialized.reason).toBe(entry.reason);
+  });
+
+  it("SlicePlan.sourceBytesByKind.glue is 0 for plans without GlueLeafEntry", async () => {
+    const source = "const x = 1;";
+    const atom = makeAtom(source, "hash-glue-zero");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry);
+
+    expect(plan.sourceBytesByKind.glue).toBe(0);
+  });
+
+  it("SlicePlan with manually-constructed GlueLeafEntry has correct shape", () => {
+    const glueEntry: GlueLeafEntry = {
+      kind: "glue",
+      source: "function* gen() { yield 1; yield 2; }",
+      canonicalAstHash: "deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000",
+      reason: "unsupported-node: GeneratorDeclaration",
+    };
+
+    // A manually-constructed SlicePlan containing a GlueLeafEntry alongside a
+    // NovelGlueEntry — simulating a mixed shaveable + unshaveable source file.
+    // (The search-algorithm slicer that produces such plans lands in WI-V2-SLICER-SEARCH-ALG.)
+    const novelSource = "function add(a: number, b: number): number { return a + b; }";
+    const novelEntry = {
+      kind: "novel-glue" as const,
+      sourceRange: { start: 0, end: novelSource.length },
+      source: novelSource,
+      canonicalAstHash: "feedcafe00000000feedcafe00000000feedcafe00000000feedcafe00000000" as CanonicalAstHash,
+    };
+
+    const plan = {
+      entries: [novelEntry, glueEntry],
+      matchedPrimitives: [],
+      sourceBytesByKind: {
+        pointer: 0,
+        novelGlue: novelSource.length,
+        glue: glueEntry.source.length,
+      },
+    };
+
+    // Both entries are present.
+    expect(plan.entries).toHaveLength(2);
+    expect(plan.entries[0]?.kind).toBe("novel-glue");
+    expect(plan.entries[1]?.kind).toBe("glue");
+
+    // GlueLeafEntry fields are accessible.
+    const ge = plan.entries[1] as GlueLeafEntry;
+    expect(ge.source).toBe(glueEntry.source);
+    expect(ge.reason).toBe(glueEntry.reason);
+
+    // sourceBytesByKind includes the glue bucket.
+    expect(plan.sourceBytesByKind.glue).toBe(glueEntry.source.length);
+    expect(plan.sourceBytesByKind.novelGlue).toBe(novelSource.length);
+    expect(plan.sourceBytesByKind.pointer).toBe(0);
   });
 });

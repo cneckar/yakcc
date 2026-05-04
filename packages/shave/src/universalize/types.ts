@@ -248,8 +248,41 @@ export interface ForeignLeafEntry {
     | undefined;
 }
 
+/**
+ * A subgraph that the slicer could not shave into atoms — preserved verbatim
+ * in the project's source tree, NOT stored in the registry.
+ *
+ * Under DEC-V2-GLUE-AWARE-SHAVE-001, unsupported AST nodes that would previously
+ * have thrown LoweringError("unsupported-node") instead emit GlueLeafEntry. The
+ * slicer becomes a search algorithm: shave-what-shaves, emit glue for the rest.
+ *
+ * GlueLeafEntry is NOT stored in the registry (glue is project-local). It travels
+ * in the slice plan only so the compile pipeline knows where the boundary is.
+ *
+ * @decision DEC-V2-GLUE-AWARE-SHAVE-001
+ * @decision DEC-V2-GLUE-LEAF-CONTRACT-001
+ * title: GlueLeafEntry type contract for the glue-aware slice plan
+ * status: decided (WI-V2-GLUE-LEAF-CONTRACT)
+ * rationale:
+ *   The "glue" triplet variant (per DEC-V2-GLUE-AWARE-SHAVE-001) must be
+ *   represented in the SlicePlan union so downstream consumers (compile pipeline,
+ *   CLI, provenance manifest) can inspect glue boundaries without re-running the
+ *   slicer. GlueLeafEntry is the canonical type. It is NOT a registry entry;
+ *   consumers must not attempt to look it up by canonicalAstHash in the registry.
+ *   canonicalAstHash is present for deduplication and audit only.
+ */
+export interface GlueLeafEntry {
+  readonly kind: "glue";
+  /** Verbatim source bytes of the unsupported subgraph. */
+  readonly source: string;
+  /** BLAKE3/canonical hash of the AST — for deduplication and audit only. NOT a registry key. */
+  readonly canonicalAstHash: string;
+  /** Human-readable explanation of why this subgraph was not shaveable. */
+  readonly reason: string;
+}
+
 /** A discriminated union of all slicer output kinds. */
-export type SlicePlanEntry = PointerEntry | NovelGlueEntry | ForeignLeafEntry;
+export type SlicePlanEntry = PointerEntry | NovelGlueEntry | ForeignLeafEntry | GlueLeafEntry;
 
 /**
  * The complete slice plan produced by slice(). Contains the classified entries
@@ -263,6 +296,14 @@ export interface SlicePlan {
     readonly canonicalAstHash: CanonicalAstHash;
     readonly merkleRoot: BlockMerkleRoot;
   }[];
-  /** Bytes accounted by pointer vs. novel glue, for reviewer dashboards. */
-  readonly sourceBytesByKind: { readonly pointer: number; readonly novelGlue: number };
+  /**
+   * Bytes accounted by pointer vs. novel glue vs. glue regions, for reviewer dashboards.
+   * ForeignLeafEntry bytes are not counted in any bucket.
+   * glue is zero until WI-V2-SLICER-SEARCH-ALG lands the search-algorithm slicer.
+   */
+  readonly sourceBytesByKind: {
+    readonly pointer: number;
+    readonly novelGlue: number;
+    readonly glue: number;
+  };
 }

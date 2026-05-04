@@ -229,6 +229,8 @@ interface SliceAccumulator {
   >;
   pointerBytes: number;
   novelGlueBytes: number;
+  /** Bytes in GlueLeafEntry regions. Zero until WI-V2-SLICER-SEARCH-ALG. */
+  glueBytes: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +356,7 @@ export async function slice(
     matchedPrimitivesMap: new Map(),
     pointerBytes: 0,
     novelGlueBytes: 0,
+    glueBytes: 0,
   };
 
   await walkNode(tree.root, registry, acc);
@@ -364,6 +367,7 @@ export async function slice(
     sourceBytesByKind: {
       pointer: acc.pointerBytes,
       novelGlue: acc.novelGlueBytes,
+      glue: acc.glueBytes,
     },
   };
 }
