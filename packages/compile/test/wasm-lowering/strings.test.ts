@@ -727,7 +727,8 @@ describe("string lowering — str-6: === and !== equality", () => {
       }),
       { numRuns: 20 },
     );
-  });
+  // Each run does 2 WASM compilations; allow 30s for 20 runs in slow CI environments.
+  }, 30000);
 
   it("str-6b: a !== b — ≥15 property-based cases", async () => {
     await fc.assert(
@@ -748,7 +749,8 @@ describe("string lowering — str-6: === and !== equality", () => {
       }),
       { numRuns: 20 },
     );
-  });
+  // Each run does 2 WASM compilations; allow 30s for 20 runs in slow CI environments.
+  }, 30000);
 
   it("str-6c: edge cases — empty string equality, case sensitivity", async () => {
     // "" === "" is true

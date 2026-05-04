@@ -585,7 +585,11 @@ describe("numeric lowering — f64 domain", () => {
     const src = "export function modOp(a: number, b: number): number { return a % b; }";
     const { wasmBytes, domain } = lowerToWasm(src);
     expect(domain).toBe("f64");
-    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+    // Pre-compile once; instantiate a single instance and reuse the fn reference
+    // across all 30 property runs so we pay compilation cost once, not 30 times.
+    const module = new WebAssembly.Module(wasmBytes);
+    const instance = new WebAssembly.Instance(module, {});
+    const fn = instance.exports["fn"] as (a: number, b: number) => number;
 
     await fc.assert(
       fc.asyncProperty(
@@ -593,16 +597,15 @@ describe("numeric lowering — f64 domain", () => {
         fc.double({ min: -1e6, max: 1e6, noNaN: true }),
         // Non-zero divisor: filter out exact 0 and values very close to 0
         fc.double({ min: -1e6, max: 1e6, noNaN: true }).filter((b) => Math.abs(b) > 1e-10),
-        async (a, b) => {
+        (a, b) => {
           const tsRef = a % b;
-          const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+          const wasmResult = Number(fn(a, b));
           expect(f64Close(wasmResult, tsRef)).toBe(true);
         },
       ),
       { numRuns: 30 },
     );
-  // 30 async WASM instantiations; allow up to 20s (consistent with other f64 property tests)
-  }, 20000);
+  });
 });
 
 // ---------------------------------------------------------------------------
