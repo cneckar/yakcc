@@ -606,6 +606,74 @@ describe("numeric lowering — f64 domain", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Regression: WI-V1W3-WASM-LOWER-08 — unary-negation multi-byte SLEB128
+//
+// Pre-fix: splice(length-2, 0, ...) assumed 1-byte SLEB128, corrupting the stream for
+// operands ≥ 64. Constant 999 encodes to [0xe7, 0x07] (2 bytes); the splice landed
+// mid-constant, misplacing 0xe7 at offset 76 of the module instead of the intended opcode.
+// Fix: emit zero-const BEFORE lowerExpression(operand). Ref: DEC-V1-WAVE-3-WASM-LOWER-NEGATE-FIX-001.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-NEGATE-SLEB128-REGRESSION-001
+// @title Regression strategy: execute multi-byte-SLEB128 negation + assert byte ordering
+// @status accepted
+// @rationale
+//   A future refactor re-introducing splice-after would produce a malformed WASM module
+//   or an incorrect execution result. The two-pronged test (execute result + byte-sequence
+//   order) catches both: the result check catches incorrect execution, and the byte check
+//   catches opcode-stream corruption even if the wrong result happens to pass by coincidence.
+//   Always emit zero-const BEFORE lowerExpression(operand) — never splice-after.
+// ---------------------------------------------------------------------------
+describe("unary-negation regression — multi-byte SLEB128 (WI-V1W3-WASM-LOWER-08)", () => {
+  // 999 encodes to 2-byte SLEB128 [0xe7, 0x07]. The pre-fix splice(length-2, 0, ...)
+  // assumed a 1-byte SLEB128 operand; for 999 it would corrupt the opcode stream.
+  it("i32: -999 via `| 0` domain hint evaluates to -999", async () => {
+    // | 0 forces i32 domain; unary - sees literal 999 as its direct operand (2-byte SLEB128)
+    const src = "export function negBig(): number { return -999 | 0; }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    expect(domain).toBe("i32");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+    const result = await runWasm(wasmBytes, []);
+    expect(Number(result)).toBe(-999);
+  });
+
+  // Byte-level check: i32.const 0 (0x41 0x00) must appear immediately before
+  // i32.const 999 (0x41 0xe7 0x07) in the function body. Splice-based re-introduction
+  // would either omit the leading zero or land it after the constant bytes.
+  it("i32 byte-sequence: i32.const 0 (0x41 0x00) precedes i32.const 999 (0x41 0xe7 0x07) in body", () => {
+    const src = "export function negBig(): number { return -999 | 0; }";
+    const visitor = new LoweringVisitor();
+    const { wasmFn } = visitor.lower(src);
+    const body = wasmFn.body;
+
+    // Locate i32.const 999: opcode 0x41 followed by SLEB128 bytes 0xe7 0x07
+    let idx = -1;
+    for (let i = 0; i <= body.length - 3; i++) {
+      if (body[i] === 0x41 && body[i + 1] === 0xe7 && body[i + 2] === 0x07) {
+        idx = i;
+        break;
+      }
+    }
+    expect(idx).toBeGreaterThan(1); // must be present and have ≥2 bytes before it
+    // The 2 bytes immediately before i32.const 999 must be i32.const 0 (0x41 0x00)
+    expect(body[idx - 2]).toBe(0x41); // i32.const opcode
+    expect(body[idx - 1]).toBe(0x00); // zero value in SLEB128
+  });
+
+  // i64 domain: 3000000000 > 2^31-1 forces i64; negate path uses i64.const 0 + i64.sub.
+  // The large operand encodes to ≥5 SLEB128 bytes — the same splice-length assumption
+  // would corrupt the i64 path as well.
+  it("i64: -(a + 3000000000) evaluates correctly for i64 negation path", async () => {
+    const src = "export function negBigI64(a: number): number { return -(a + 3000000000); }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    expect(domain).toBe("i64");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+    // -(0n + 3000000000n) = -3000000000n
+    const result = await runWasm(wasmBytes, [0n]);
+    expect(result).toBe(-3000000000n);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Domain inference verification tests
 // ---------------------------------------------------------------------------
 
