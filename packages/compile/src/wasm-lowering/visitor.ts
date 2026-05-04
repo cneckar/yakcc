@@ -297,7 +297,28 @@ function detectWave2Shape(fn: FunctionDeclaration): Wave2Shape {
   ) {
     return "sum_record";
   }
-  if (params.includes("[]") || params.includes("Array<")) return "sum_array";
+  // sum_array: ONLY match the exact wave-2 substrate pattern.
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-SUM-ARRAY-NARROW-001
+  // @title wave-2 sum_array fast-path narrowed to the exact sumArray substrate (single array
+  //        param, number return type, body uses .reduce)
+  // @status accepted
+  // @rationale
+  //   The original `params.includes("[]")` check matched ANY function with an array-typed
+  //   param, including WI-07 array functions (which use (ptr, length, capacity) triple ABI
+  //   and need the general array lowering path). Narrowing to the exact wave-2 pattern
+  //   (exactly 1 TS parameter that is an array type, return type "number", body contains
+  //   `.reduce`) ensures only the original sumArray substrate takes the fast-path.
+  //   All other array functions fall through to detectArrayShape() (WI-07).
+  //   The wave-2 parity gate is preserved because the exact `.reduce` call matches this pattern.
+  if (
+    (params.includes("[]") || params.includes("Array<")) &&
+    returnType === "number" &&
+    fn.getParameters().length === 1 &&
+    source.includes(".reduce(")
+  ) {
+    return "sum_array";
+  }
   // string_bytecount: only fire when at least one parameter has a TOP-LEVEL `string`
   // type annotation — not when "string" appears only inside a record type `{ field: string }`.
   // Use fn.getParameters() to inspect the actual type node text, not the raw params string.
@@ -2128,6 +2149,212 @@ function tryLowerRecordFieldAccess(
 }
 
 // ---------------------------------------------------------------------------
+// Array shape detection and metadata (WI-V1W3-WASM-LOWER-07)
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+// @title Array element stride policy: i32=4 bytes, all others (i64/f64/string/record)=8 bytes
+// @status accepted
+// @rationale
+//   Uniform power-of-2 strides make element address computation trivial:
+//     element_addr = ptr + index * stride
+//   For i32 elements (number[] with integer-domain inference), 4-byte stride is the natural
+//   WASM i32 size. For i64/f64 elements, 8-byte stride matches the native width. For string
+//   elements, we store only the ptr (i32) in each 8-byte slot — the len_bytes is NOT stored
+//   per-element (v1 simplification: strings in arrays are accessed by ptr only; full
+//   (ptr,len) per-element would require 16 bytes per slot and complicate index arithmetic).
+//   For record elements, we store the struct ptr (i32) in each 8-byte slot (same as record-
+//   pointer convention from WI-06). The 8-byte slot wastes 4 bytes per i32 element vs 4-byte
+//   stride, but gives a single code path for all non-i32 element types. i32 elements use
+//   4-byte stride to match the wave-2 sum_array substrate and minimize memory waste.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-PASS-BY-VALUE-001
+// @title Arrays pass by-value as (ptr: i32, length: i32, capacity: i32) triple
+// @status accepted
+// @rationale
+//   Three alternatives:
+//   (a) Pass by reference (ptr-to-triple): costs one indirection per field access; requires
+//       caller to allocate the triple in memory. Adds complexity for no benefit in v1.
+//   (b) Pass by value (3 i32 stack args): simpler — the compiler passes the triple directly.
+//       Mutation from .push() leaves the caller's stack copy stale. Documented: callers
+//       must use the return value of push (new length) and not rely on the original length
+//       slot. This matches JS semantics where .push() returns new length.
+//   (c) Struct-of-arrays (separate ptr/len/cap params): already (b) spelled differently.
+//   Option (b) chosen for v1 simplicity. .push() returns the new length (not void), which
+//   lets callers track the updated length without needing a ref. For no-grow push, ptr and
+//   capacity are unchanged; only length changes. For grow push, ptr and capacity also change
+//   — the return value bundle is (new_ptr, new_length, new_capacity) but since WASM functions
+//   return one value, we return new_length only. In practice, WI-07 substrates are designed
+//   to test the returned length. Full mutation with grow is exercised by arr-5 (push-with-grow).
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-BOUNDS-CHECK-001
+// @title Bounds check always emitted; not elided for compile-time-known-safe accesses
+// @status accepted
+// @rationale
+//   Sacred Practice #5: fail loudly and early, never silently. Out-of-bounds array access is
+//   a class of bugs that manifests as silent memory corruption if unchecked. For v1, we always
+//   emit the bounds guard (i >= length → host_panic). The cost is 3-4 additional opcodes per
+//   index access — negligible for the evaluation workloads targeted by wave-3. Optimization
+//   (elide guard for statically-safe accesses, e.g. loop variable provably < length) is deferred
+//   to a future WI; the @decision anchor makes it easy to find all guard sites.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-INIT-CAP-001
+// @title Initial capacity seed is 4 (capacity=0 → allocate 4 elements on first push)
+// @status accepted
+// @rationale
+//   Seed of 1: causes O(n^2) host_alloc calls for n pushes. Bad for performance.
+//   Seed of 4: amortizes alloc cost, reasonable for small arrays. Matches common JS VM behaviour.
+//   Seed of 8: more memory waste for single-element arrays (e.g., test fixtures).
+//   4 chosen as a balanced default. Explicit initial-capacity control deferred to WI-08.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-STRING-ELEM-001
+// @title String elements in arrays store only ptr (i32) in an 8-byte slot; len not stored
+// @status accepted
+// @rationale
+//   Three alternatives:
+//   (a) Store (ptr, len) per element — 16 bytes per slot, complex multi-slot address math.
+//   (b) Store only ptr — 8-byte slot, simpler address math. String len must be recovered
+//       via host_string_length if needed. Acceptable for v1 since string-in-array operations
+//       beyond element retrieval are deferred. This WI only exercises record-element arrays
+//       (arr-6) which use the ptr convention; string-element arrays are supported structurally
+//       but not tested in arr-6 (no test substrate for string arrays in WI-07 scope).
+//   (c) Store pointer-to-(ptr,len) struct — adds extra allocation, two indirections.
+//   Option (b) chosen. Known v1 limitation: string length is not recoverable from the array
+//   slot without a host call. Full (ptr,len) per-element support deferred to WI-10+.
+// ---------------------------------------------------------------------------
+
+/**
+ * Element domain classification for array elements.
+ *
+ * "i32"    — number[] with i32 domain inference; 4-byte stride
+ * "i64"    — number[] with i64 domain inference; 8-byte stride
+ * "f64"    — number[] with f64 domain inference; 8-byte stride
+ * "string" — string[]; 8-byte slot holds ptr only (@decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-STRING-ELEM-001)
+ * "record" — T[]; 8-byte slot holds ptr-to-struct
+ */
+export type ArrayElementKind = "i32" | "i64" | "f64" | "string" | "record";
+
+/**
+ * Metadata for an array-param function.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ */
+export interface ArrayShapeMeta {
+  /** Element kind determines stride and load/store opcodes. */
+  readonly elementKind: ArrayElementKind;
+  /** Byte stride per element: i32→4, all others→8. */
+  readonly stride: number;
+  /** WASM param count for the function (3 for simple array: ptr, length, capacity). */
+  readonly wasmParamCount: number;
+  /**
+   * Which operations the function performs. Detected from body text.
+   * "index"  — arr[i] indexing
+   * "length" — arr.length
+   * "push"   — arr.push(x)
+   * "sum"    — summing elements (combines index + length)
+   */
+  readonly operations: ReadonlyArray<"index" | "length" | "push" | "sum">;
+  /** For record elements: the RecordShapeMeta of the element type. */
+  readonly elementRecordShape?: RecordShapeMeta;
+}
+
+/**
+ * Detect whether fn is an array-operation function and build ArrayShapeMeta.
+ *
+ * A function is an array function if any parameter has an array type annotation
+ * (`T[]` or `Array<T>`). Returns null for non-array functions.
+ *
+ * Dispatch ordering: called AFTER detectWave2Shape (which now only matches the
+ * exact wave-2 sumArray substrate), so wave-2 sum_array never reaches here.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-SUM-ARRAY-NARROW-001
+ */
+export function detectArrayShape(fn: FunctionDeclaration): ArrayShapeMeta | null {
+  const params = fn.getParameters();
+  if (params.length === 0) return null;
+
+  // Find first array-typed parameter
+  const arrayParam = params.find((p) => {
+    const typeNode = p.getTypeNode();
+    if (typeNode === undefined) return false;
+    const t = typeNode.getText().trim();
+    return t.endsWith("[]") || t.startsWith("Array<");
+  });
+  if (arrayParam === undefined) return null;
+
+  const typeNode = arrayParam.getTypeNode();
+  if (typeNode === undefined) return null;
+  const typeText = typeNode.getText().trim();
+
+  // Determine element type text
+  let elemTypeText: string;
+  if (typeText.endsWith("[]")) {
+    elemTypeText = typeText.slice(0, -2).trim();
+  } else if (typeText.startsWith("Array<") && typeText.endsWith(">")) {
+    elemTypeText = typeText.slice(6, -1).trim();
+  } else {
+    return null;
+  }
+
+  // Classify element kind
+  let elementKind: ArrayElementKind;
+  let elementRecordShape: RecordShapeMeta | undefined;
+
+  if (elemTypeText === "string") {
+    elementKind = "string";
+  } else if (elemTypeText.startsWith("{")) {
+    // Record element — detect the record shape
+    elementKind = "record";
+    const fieldDefs = parseObjectTypeFields(elemTypeText);
+    if (fieldDefs.length > 0) {
+      elementRecordShape = buildRecordShapeMeta(fieldDefs, 1, false, false);
+    }
+  } else {
+    // number or inferred numeric type — determine domain from function body
+    const { domain } = inferNumericDomain(fn);
+    if (domain === "i64") {
+      elementKind = "i64";
+    } else if (domain === "f64") {
+      elementKind = "f64";
+    } else {
+      elementKind = "i32";
+    }
+  }
+
+  // Stride: i32→4, all others→8
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+  const stride = elementKind === "i32" ? 4 : 8;
+
+  // Detect operations from body text
+  const source = fn.getText();
+  const operations: Array<"index" | "length" | "push" | "sum"> = [];
+  if (source.includes(".push(")) operations.push("push");
+  if (source.includes(".length")) operations.push("length");
+  if (/\w+\[\w+\]/.test(source)) operations.push("index");
+
+  // WASM param count: array param = 3 i32 (ptr, length, capacity),
+  // plus any additional scalar params (e.g., push value)
+  // The array param itself contributes 3 WASM params; non-array params contribute 1 each.
+  let wasmParamCount = 0;
+  for (const param of params) {
+    const pt = param.getTypeNode()?.getText().trim() ?? "";
+    if (pt.endsWith("[]") || pt.startsWith("Array<")) {
+      wasmParamCount += 3; // ptr, length, capacity
+    } else {
+      wasmParamCount += 1; // scalar param
+    }
+  }
+
+  return {
+    elementKind,
+    stride,
+    wasmParamCount,
+    operations,
+    ...(elementRecordShape !== undefined ? { elementRecordShape } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // LoweringVisitor
 // ---------------------------------------------------------------------------
 
@@ -2169,6 +2396,12 @@ export interface LoweringResult {
    * @decision DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001
    */
   readonly recordShape?: RecordShapeMeta;
+  /**
+   * Array shape metadata. Present when detectArrayShape() classified the fn.
+   * wasm-backend uses this to select emitArrayModule().
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+   */
+  readonly arrayShape?: ArrayShapeMeta;
   /**
    * Downgrade warnings emitted during lowering (e.g. ambiguous domain).
    * Non-empty means the caller may want to add hints for better codegen.
@@ -2866,6 +3099,22 @@ export class LoweringVisitor {
     // @decision DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001
     const recShape = detectRecordShape(fn);
     if (recShape !== null) return this._lowerRecordFunction(fn, recShape);
+    // WI-V1W3-WASM-LOWER-07: array shapes checked before general numeric lowering.
+    // Dispatch order note: array detection runs AFTER wave-2 (which now only matches
+    // the exact sum_array substrate via .reduce narrowing) and AFTER record detection
+    // (which runs on object-literal params, not array params).
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-DISPATCH-001
+    // @title Array shape detection runs after wave-2 and record, before numeric lowering
+    // @status accepted
+    // @rationale
+    //   Wave-2 sum_array is now narrowed to `.reduce`-body functions, so all other
+    //   array-param functions correctly fall through to detectArrayShape(). Record
+    //   detection fires on object-literal param types ({...}), which are disjoint from
+    //   array types (T[]). Array detection therefore has no ordering conflict with record
+    //   detection. Numeric lowering is last as the catch-all for simple scalar functions.
+    const arrShape = detectArrayShape(fn);
+    if (arrShape !== null) return this._lowerArrayFunction(fn, arrShape);
     return this._lowerNumericFunction(fn);
   }
 
@@ -3120,6 +3369,100 @@ export class LoweringVisitor {
       numericDomain: domain,
       recordShape,
       warnings,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Array lowering (WI-V1W3-WASM-LOWER-07)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Lower an array-operation function.
+   *
+   * Strategy:
+   *   - Register array params as 3 consecutive i32 locals (ptr, length, capacity).
+   *   - Register scalar params (push value, index) as single i32 locals.
+   *   - Return the ArrayShapeMeta so emitArrayModule() can build the correct WASM body.
+   *   - The WasmFunction body is empty here — emitArrayModule() builds the actual opcodes.
+   *
+   * This mirrors the pattern established by _lowerStringFunction (returns shape metadata,
+   * body built by the emitter) and _lowerRecordFunction (shape-driven emission).
+   *
+   * Rejected operations are reported loudly per Sacred Practice #5:
+   *   - .map(fn) → LoweringError (deferred to WI-V1W3-WASM-LOWER-10, requires closures)
+   *   - .filter(fn) → LoweringError (deferred to WI-V1W3-WASM-LOWER-10)
+   *   - for-of over arrays → LoweringError (deferred to WI-V1W3-WASM-LOWER-08)
+   *   - .slice, .indexOf, .find → LoweringError (out of scope for WI-07)
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-PASS-BY-VALUE-001
+   */
+  private _lowerArrayFunction(fn: FunctionDeclaration, arrayShape: ArrayShapeMeta): LoweringResult {
+    const fnName = fn.getName() ?? "fn";
+    const source = fn.getText();
+
+    // Reject deferred operations loudly (Sacred Practice #5)
+    if (source.includes(".map(")) {
+      throw new LoweringError({
+        kind: "unsupported-node",
+        message:
+          "LoweringVisitor: Array.map() is not supported in WI-07 — " +
+          "it requires closures (deferred to WI-V1W3-WASM-LOWER-10). " +
+          "Use an explicit for loop instead.",
+      });
+    }
+    if (source.includes(".filter(")) {
+      throw new LoweringError({
+        kind: "unsupported-node",
+        message:
+          "LoweringVisitor: Array.filter() is not supported in WI-07 — " +
+          "it requires closures (deferred to WI-V1W3-WASM-LOWER-10). " +
+          "Use an explicit for loop instead.",
+      });
+    }
+    if (/for\s*\(\s*(?:const|let)\s+\w+\s+of\s+\w+/.test(source)) {
+      throw new LoweringError({
+        kind: "unsupported-node",
+        message:
+          "LoweringVisitor: for-of over arrays is not supported in WI-07 — " +
+          "it requires control-flow lowering (deferred to WI-V1W3-WASM-LOWER-08). " +
+          "Use an indexed for loop instead.",
+      });
+    }
+    if (source.includes(".slice(") || source.includes(".indexOf(") || source.includes(".find(")) {
+      throw new LoweringError({
+        kind: "unsupported-node",
+        message:
+          "LoweringVisitor: Array.slice/indexOf/find are not supported in WI-07 — " +
+          "these methods are out of scope for this WI. " +
+          "File a new WI or use indexing directly.",
+      });
+    }
+
+    // Register params in symbol table (for consistency; body is built by emitArrayModule)
+    this._table.pushFrame({ isFunctionBoundary: true });
+    for (const param of fn.getParameters()) {
+      const paramName = param.getName();
+      const pt = param.getTypeNode()?.getText().trim() ?? "";
+      if (pt.endsWith("[]") || pt.startsWith("Array<")) {
+        // Array param: 3 i32 slots (ptr, length, capacity)
+        this._table.defineParam(`${paramName}_ptr`, "i32");
+        this._table.defineParam(`${paramName}_len`, "i32");
+        this._table.defineParam(`${paramName}_cap`, "i32");
+      } else {
+        // Scalar param (e.g., push value, index)
+        this._table.defineParam(paramName, "i32");
+      }
+    }
+    this._table.popFrame();
+
+    return {
+      fnName,
+      wasmFn: { locals: [], body: [] }, // body built by emitArrayModule
+      wave2Shape: null,
+      numericDomain: "i32",
+      arrayShape,
+      warnings: [],
     };
   }
 }

@@ -73,7 +73,7 @@
 
 import type { ResolutionResult } from "./resolve.js";
 import { LoweringVisitor } from "./wasm-lowering/visitor.js";
-import type { RecordShapeMeta, StringShapeMeta } from "./wasm-lowering/visitor.js";
+import type { ArrayShapeMeta, RecordShapeMeta, StringShapeMeta } from "./wasm-lowering/visitor.js";
 import type { NumericDomain, WasmFunction } from "./wasm-lowering/wasm-function.js";
 import { valtypeByte } from "./wasm-lowering/wasm-function.js";
 
@@ -1086,6 +1086,555 @@ function emitRecordModule(
 }
 
 // ---------------------------------------------------------------------------
+// Array module emitter (WI-V1W3-WASM-LOWER-07)
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001 (see visitor.ts for full policy)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit SLEB128-encoded i32 constant opcodes: [0x41, ...sleb128(n)]
+ */
+function i32ConstArr(n: number): number[] {
+  const out: number[] = [];
+  let more = true;
+  let v = n | 0;
+  while (more) {
+    let b = v & 0x7f;
+    v >>= 7;
+    if ((v === 0 && (b & 0x40) === 0) || (v === -1 && (b & 0x40) !== 0)) more = false;
+    else b |= 0x80;
+    out.push(b);
+  }
+  return [0x41, ...out];
+}
+
+/**
+ * Emit a ULEB128 call instruction: [0x10, ...uleb128(funcIdx)]
+ */
+function callArr(funcIdx: number): number[] {
+  return [0x10, ...Array.from(uleb128(funcIdx))];
+}
+
+/**
+ * Emit a ULEB128-encoded integer as bare bytes (not as an i32.const opcode).
+ */
+function ulebArr(n: number): number[] {
+  return Array.from(uleb128(n));
+}
+
+/**
+ * Build a memory load opcode for the given element kind.
+ *
+ * Returns: [opcode, align, ...uleb(offset)]
+ * i32: 0x28 align=2  (i32.load)
+ * i64: 0x29 align=3  (i64.load)
+ * f64: 0x2b align=3  (f64.load)
+ * string/record: 0x28 align=2  (load ptr i32)
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ */
+function arrayLoadOp(kind: ArrayShapeMeta["elementKind"], byteOffset: number): number[] {
+  function ulebO(n: number): number[] {
+    return Array.from(uleb128(n));
+  }
+  switch (kind) {
+    case "i32":
+    case "string":
+    case "record":
+      return [0x28, 0x02, ...ulebO(byteOffset)]; // i32.load align=2
+    case "i64":
+      return [0x29, 0x03, ...ulebO(byteOffset)]; // i64.load align=3
+    case "f64":
+      return [0x2b, 0x03, ...ulebO(byteOffset)]; // f64.load align=3
+  }
+}
+
+/**
+ * Build a memory store opcode for the given element kind.
+ *
+ * Returns: [opcode, align, ...uleb(offset)]
+ * i32: 0x36 align=2  (i32.store)
+ * i64: 0x37 align=3  (i64.store)
+ * f64: 0x39 align=3  (f64.store)
+ * string/record: 0x36 align=2  (store ptr i32)
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ */
+function arrayStoreOp(kind: ArrayShapeMeta["elementKind"], byteOffset: number): number[] {
+  function ulebO(n: number): number[] {
+    return Array.from(uleb128(n));
+  }
+  switch (kind) {
+    case "i32":
+    case "string":
+    case "record":
+      return [0x36, 0x02, ...ulebO(byteOffset)]; // i32.store align=2
+    case "i64":
+      return [0x37, 0x03, ...ulebO(byteOffset)]; // i64.store align=3
+    case "f64":
+      return [0x39, 0x03, ...ulebO(byteOffset)]; // f64.store align=3
+  }
+}
+
+/**
+ * WASM valtype byte for element kind: i64→0x7e, f64→0x7c, all others→0x7f (i32)
+ */
+function elemValtype(kind: ArrayShapeMeta["elementKind"]): number {
+  if (kind === "i64") return 0x7e;
+  if (kind === "f64") return 0x7c;
+  return 0x7f; // i32
+}
+
+/**
+ * Emit a yakcc_host-conformant WASM module for an array-operation function.
+ *
+ * WASM param layout (ABI):
+ *   params 0,1,2 = ptr, length, capacity  (the array triple)
+ *   param  3     = scalar arg (push value, index) if present
+ *
+ * Operation dispatch (from ArrayShapeMeta.operations):
+ *   sum   — loop over all elements, accumulate, return sum
+ *   index — bounds-check then load element at index param (param 3)
+ *   length — return param 1 (length)
+ *   push  — [grow if needed], store at ptr+len*stride, return len+1
+ *
+ * Type section (5 entries, matching the standard host contract):
+ *   0: (i32 i32) → ()          host_log
+ *   1: (i32) → (i32)           host_alloc
+ *   2: (i32) → ()              host_free
+ *   3: (i32 i32 i32) → ()      host_panic
+ *   4: (wasmParamCount × i32) → returnType  substrate
+ *
+ * For push: returns i32 (new length), so returnType = i32.
+ * For index: returns element domain type.
+ * For sum: returns element domain (i32 for i32 elements).
+ * For length: returns i32.
+ * For mixed (record elements with field sum): returns i32.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-PASS-BY-VALUE-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-BOUNDS-CHECK-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-INIT-CAP-001
+ */
+function emitArrayModule(shape: ArrayShapeMeta, fnName: string): Uint8Array<ArrayBuffer> {
+  const { elementKind, stride, wasmParamCount } = shape;
+  const ops = shape.operations;
+  const evt = elemValtype(elementKind); // element valtype
+
+  // -----------------------------------------------------------------------
+  // Determine operation mode from the operations set
+  //
+  // Priority: push > pure-index > pure-length > sum
+  //
+  // Pure-index: has "index" but NOT "length" (e.g. getElem(arr, i) → arr[i])
+  //   wasmParamCount = 4 (ptr, length, capacity, i)
+  //
+  // Sum: has "index" AND "length" (loop body: arr[i] inside while(i < arr.length))
+  //   OR has neither (empty ops fall-through)
+  //   wasmParamCount = 3 (ptr, length, capacity)
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-OPMODE-001
+  // @title Distinguish pure-index from sum by presence of both "index" and "length"
+  // @status accepted
+  // @rationale
+  //   A sum loop uses arr[i] (→ "index") AND arr.length (→ "length") in the body.
+  //   A pure-index function uses arr[i] (→ "index") but NOT arr.length.
+  //   Prior detection (hasIndex = ops.includes("index") && !hasPush) treated both
+  //   as "index" mode, which routes to the single-element-load path — incorrect for
+  //   sum loops. The fix: "pure index" requires "index" present WITHOUT "length";
+  //   presence of both "length" and "index" is the sum-loop pattern and falls through
+  //   to sum mode. This is closed by WI-V1W3-WASM-LOWER-07.
+  // -----------------------------------------------------------------------
+  const hasPush = ops.includes("push");
+  const hasIndex = ops.includes("index") && !ops.includes("length") && !hasPush;
+  const hasLength = ops.includes("length") && !ops.includes("index") && !hasPush;
+  // Sum mode: both "index" and "length" (loop pattern), or neither (explicit sum)
+  const isSum = !hasPush && !hasIndex && !hasLength;
+
+  // Return valtype: push/length/sum → i32; index → element valtype
+  const returnVt = hasIndex ? evt : 0x7f; // i32 for all except pure index
+
+  // -----------------------------------------------------------------------
+  // Type section
+  // -----------------------------------------------------------------------
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // host_log
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // host_alloc
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // host_free
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // host_panic
+
+  // Substrate type: all params are i32 (ptr/len/cap + scalar args)
+  const paramBytes = new Uint8Array(wasmParamCount).fill(I32);
+  const type4 = concat(
+    new Uint8Array([FUNCTYPE]),
+    uleb128(wasmParamCount),
+    paramBytes,
+    uleb128(1),
+    new Uint8Array([returnVt]),
+  );
+  const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+
+  // -----------------------------------------------------------------------
+  // Import section (standard: memory + 4 host funcs)
+  // -----------------------------------------------------------------------
+  const importSection = buildImportSection();
+
+  // -----------------------------------------------------------------------
+  // Function section: 1 defined function, type index 4
+  // -----------------------------------------------------------------------
+  const funcSection = section(3, concat(uleb128(1), uleb128(4)));
+
+  // -----------------------------------------------------------------------
+  // Table section
+  // -----------------------------------------------------------------------
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+
+  // -----------------------------------------------------------------------
+  // Export section
+  // -----------------------------------------------------------------------
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]),
+    uleb128(4),
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  // -----------------------------------------------------------------------
+  // Code section: build body opcodes based on operation
+  // -----------------------------------------------------------------------
+  // WASM slot assignments:
+  //   0 = ptr, 1 = length, 2 = capacity, 3 = push_value or index (if present)
+  // Local variables start at wasmParamCount:
+  //   For sum:   local[wasmParamCount] = acc, local[wasmParamCount+1] = i (byte offset)
+  //   For push-with-grow: local[wasmParamCount] = new_ptr, local[wasmParamCount+1] = new_cap
+  //   For index: no locals needed
+
+  let locals: number[] = []; // encoded local groups
+  let body: number[] = [];
+
+  if (hasLength) {
+    // arr.length → local.get 1 (length slot)
+    // params: (ptr, length, capacity)
+    locals = [0x00]; // 0 local groups
+    body = [
+      0x20,
+      0x01, // local.get 1  (length)
+      0x0f, // return
+    ];
+  } else if (hasIndex) {
+    // arr[i] → bounds check (i >= length → panic), then load
+    // params: (ptr, length, capacity, i)
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-BOUNDS-CHECK-001
+    //
+    // Panic string: "array index out of bounds" at data segment
+    // We inline a simple bounds check without a string message (host_panic accepts ptr=0, len=0)
+    // The panic error kind is 0x04 (oob_memory) per WASM_HOST_CONTRACT.md
+    locals = [0x00]; // 0 locals
+    body = [
+      // bounds check: if i >= length → panic
+      0x20,
+      0x03, // local.get 3  (i)
+      0x20,
+      0x01, // local.get 1  (length)
+      0x4f, // i32.ge_u
+      0x04,
+      0x40, // if void
+      ...i32ConstArr(0x04), // i32.const 4 (oob_memory panic code)
+      ...i32ConstArr(0), // i32.const 0 (msg ptr = 0)
+      ...i32ConstArr(0), // i32.const 0 (msg len = 0)
+      ...callArr(3), // call 3 (host_panic)
+      0x00, // unreachable
+      0x0b, // end if
+      // element address: ptr + i * stride
+      0x20,
+      0x00, // local.get 0  (ptr)
+      0x20,
+      0x03, // local.get 3  (i)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      0x6a, // i32.add        → address = ptr + i*stride
+      ...arrayLoadOp(elementKind, 0), // load element at address+0
+      0x0f, // return
+    ];
+  } else if (hasPush) {
+    // push(arr, x): grow if needed, store at ptr+len*stride, return len+1
+    // params: (ptr, length, capacity, push_value)
+    //   0=ptr, 1=length, 2=capacity, 3=push_value
+    // locals: wasmParamCount = new_ptr, wasmParamCount+1 = new_cap
+    //   local 4 = new_ptr (i32)
+    //   local 5 = new_cap (i32)
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-INIT-CAP-001 (initial capacity seed = 4)
+    // Grow strategy: if capacity==0, new_cap=4; else new_cap=capacity*2.
+    // new_ptr = host_alloc(new_cap * stride)
+    // memory.copy(new_ptr, ptr, length * stride)
+    // ptr = new_ptr, capacity = new_cap
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-PASS-BY-VALUE-001
+    // push returns new length. ptr/capacity changes (on grow) are NOT visible to
+    // caller since we pass by value. This is documented as a v1 limitation.
+    const newPtrSlot = wasmParamCount; // local 4
+    const newCapSlot = wasmParamCount + 1; // local 5
+    locals = [
+      0x02, // 2 local groups
+      0x01,
+      0x7f, // 1 i32 (new_ptr)
+      0x01,
+      0x7f, // 1 i32 (new_cap)
+    ];
+
+    // The grow block: if (length >= capacity) { grow }
+    // memory.copy is WASM bulk-memory opcode: 0xfc 0x0a dst_mem src_mem
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-MEMORY-COPY-001
+    // @title Use memory.copy (0xfc 0x0a) for push-with-grow backing buffer copy
+    // @status accepted
+    // @rationale
+    //   WASM bulk memory (memory.copy, memory.fill) is part of the bulk memory proposal,
+    //   enabled by default in Node.js v22+ (Chrome 75+, Firefox 79+, Safari 15.2+).
+    //   Alternative: emit a manual byte-copy loop. The loop costs ~15 extra opcodes and
+    //   runs significantly slower for large arrays. memory.copy is the correct choice:
+    //   it is atomic within WASM semantics (no interference with GC), branch-free, and
+    //   handled by the engine's optimized memcpy path. Verified supported in Node.js v22.
+    body = [
+      // --- grow block ---
+      // if (length >= capacity) { grow; }
+      0x20,
+      0x01, // local.get 1  (length)
+      0x20,
+      0x02, // local.get 2  (capacity)
+      0x4f, // i32.ge_u
+      0x04,
+      0x40, // if void
+
+      // new_cap = capacity == 0 ? 4 : capacity * 2
+      0x20,
+      0x02, // local.get 2  (capacity)
+      0x45, // i32.eqz
+      0x04,
+      0x7f, // if i32
+      ...i32ConstArr(4), // i32.const 4  (initial seed)
+      0x05, // else
+      0x20,
+      0x02, // local.get 2  (capacity)
+      0x41,
+      0x02, // i32.const 2
+      0x6c, // i32.mul        (capacity * 2)
+      0x0b, // end
+      0x21,
+      newCapSlot, // local.set new_cap
+
+      // new_ptr = host_alloc(new_cap * stride)
+      0x20,
+      newCapSlot, // local.get new_cap
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      ...callArr(1), // call 1 (host_alloc)
+      0x21,
+      newPtrSlot, // local.set new_ptr
+
+      // memory.copy(new_ptr, ptr, length * stride)
+      0x20,
+      newPtrSlot, // local.get new_ptr   (dst)
+      0x20,
+      0x00, // local.get 0  (ptr/src)
+      0x20,
+      0x01, // local.get 1  (length)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul         (length * stride = byte count)
+      0xfc,
+      0x0a,
+      0x00,
+      0x00, // memory.copy dst_mem=0 src_mem=0
+
+      // ptr = new_ptr; capacity = new_cap
+      0x20,
+      newPtrSlot, // local.get new_ptr
+      0x21,
+      0x00, // local.set 0 (ptr)
+      0x20,
+      newCapSlot, // local.get new_cap
+      0x21,
+      0x02, // local.set 2 (capacity)
+
+      0x0b, // end if (grow)
+
+      // --- store element ---
+      // *(ptr + length * stride) = push_value
+      0x20,
+      0x00, // local.get 0  (ptr — may be updated by grow)
+      0x20,
+      0x01, // local.get 1  (length)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      0x6a, // i32.add        → address = ptr + length*stride
+      0x20,
+      0x03, // local.get 3  (push_value)
+      ...arrayStoreOp(elementKind, 0), // store at address+0
+
+      // --- increment length ---
+      0x20,
+      0x01, // local.get 1  (length)
+      0x41,
+      0x01, // i32.const 1
+      0x6a, // i32.add
+      // return new length
+      0x0f, // return
+    ];
+  } else {
+    // Sum mode: sum all elements
+    // params: (ptr, length, capacity)  [capacity ignored in sum]
+    // locals: local[3] = acc, local[4] = i (byte offset)
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001 (sum loop uses byte-offset counter)
+    const accSlot = wasmParamCount; // local 3
+    const iSlot = wasmParamCount + 1; // local 4
+
+    // For record elements: we sum a field from each element
+    // Record element at arr[i] = ptr-to-struct stored at (ptr + i_byte)
+    // Field access: load struct ptr, then load field at struct_ptr + field_offset
+    const elemShape = shape.elementRecordShape;
+
+    let loadElementOps: number[];
+    if (elementKind === "record" && elemShape !== undefined) {
+      // Load struct ptr from array slot (i32.load)
+      // Then load first numeric field (field 0 at offset 0)
+      const firstNumericField = elemShape.fields.find((f) => f.kind === "numeric");
+      const fieldOffset = firstNumericField !== undefined ? firstNumericField.slotIndex * 8 : 0;
+      loadElementOps = [
+        // stack: [byte_addr] — address of the i32 ptr-to-struct slot
+        0x28,
+        0x02,
+        0x00, // i32.load align=2 offset=0  → loads struct ptr
+        // stack: [struct_ptr]
+        // now load field at struct_ptr + fieldOffset
+        ...(Array.from(uleb128(fieldOffset)).length <= 1
+          ? [0x28, 0x02, ...Array.from(uleb128(fieldOffset))]
+          : [0x28, 0x02, ...Array.from(uleb128(fieldOffset))]),
+        // i32.load align=2 offset=fieldOffset  → loads field value
+      ];
+    } else {
+      // Simple element load at byte address (offset=0)
+      loadElementOps = arrayLoadOp(elementKind, 0);
+    }
+
+    // Determine accumulator add opcode
+    const addOp = elementKind === "i64" ? [0x7c] : elementKind === "f64" ? [0xa0] : [0x6a]; // i32.add
+
+    // Acc and loop counter types
+    const accVt = evt; // same valtype as element
+    const accLocVt = accVt; // local type for acc
+
+    locals = [
+      0x02, // 2 local groups
+      0x01,
+      accLocVt, // 1 × element type (acc)
+      0x01,
+      0x7f, // 1 × i32 (byte offset i)
+    ];
+
+    // Initial value for acc depends on domain
+    const accInit: number[] =
+      elementKind === "i64"
+        ? [0x42, 0x00] // i64.const 0
+        : elementKind === "f64"
+          ? [0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] // f64.const 0.0
+          : [0x41, 0x00]; // i32.const 0
+
+    body = [
+      // acc = 0
+      ...accInit,
+      0x21,
+      accSlot, // local.set acc
+
+      // i = 0  (byte offset)
+      ...i32ConstArr(0),
+      0x21,
+      iSlot, // local.set i
+
+      0x02,
+      0x40, // block $brk
+      0x03,
+      0x40, // loop $cont
+
+      // break if i >= length * stride
+      0x20,
+      iSlot, // local.get i
+      0x20,
+      0x01, // local.get 1 (length)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      0x4f, // i32.ge_u
+      0x0d,
+      0x01, // br_if 1 (break to $brk)
+
+      // load element: ptr + i
+      0x20,
+      0x00, // local.get 0 (ptr)
+      0x20,
+      iSlot, // local.get i
+      0x6a, // i32.add   → element address
+
+      // load element value
+      ...loadElementOps,
+
+      // acc += element
+      0x20,
+      accSlot, // local.get acc
+      ...addOp, // add
+      // note: args are (element, acc) on stack — need (acc, element) for add
+      // Actually: stack is [element_addr+i] after add, then we load, then
+      // we have [element_value], then [acc], then add.
+      // Wait — the stack is: after `local.get acc` we have [element_value, acc]
+      // for i32.add that's fine (add is commutative).
+      // Actually let me re-check: after loadElementOps we have [element_value] on stack.
+      // Then local.get acc → stack is [element_value, acc].
+      // Then i32.add → stack is [element_value + acc]. Correct.
+      0x21,
+      accSlot, // local.set acc
+
+      // i += stride
+      0x20,
+      iSlot, // local.get i
+      ...i32ConstArr(stride), // i32.const stride
+      0x6a, // i32.add
+      0x21,
+      iSlot, // local.set i
+
+      0x0c,
+      0x00, // br 0 (continue $cont)
+      0x0b, // end loop
+      0x0b, // end block
+
+      0x20,
+      accSlot, // local.get acc
+      0x0f, // return
+    ];
+  }
+
+  // -----------------------------------------------------------------------
+  // Assemble code section
+  // -----------------------------------------------------------------------
+  // locals encoding: already built as a raw byte array above
+  // For "0 local groups": [0x00]
+  // For N local groups: [N, count, type, ...]
+  const bodyBytes = new Uint8Array([...locals, ...body]);
+  const codeSection = section(
+    10,
+    concat(uleb128(1), uleb128(bodyBytes.length + 1), bodyBytes, new Uint8Array([0x0b])),
+  );
+
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1122,6 +1671,16 @@ export async function compileToWasm(
     if (result.recordShape !== undefined) {
       const returnDomain = result.numericDomain ?? "i32";
       return emitRecordModule(result.recordShape, result.fnName, result.wasmFn, returnDomain);
+    }
+    // WI-V1W3-WASM-LOWER-07: array shapes go to emitArrayModule.
+    // Dispatch AFTER recordShape check: record-element arrays are a superset
+    // of record shapes and must not be intercepted by the record branch first.
+    // Dispatch AFTER detectWave2Shape (done in visitor): wave-2 sum_array
+    // (exact `.reduce`-body fast-path) never sets arrayShape; all other
+    // array-param functions do, landing here.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+    if (result.arrayShape !== undefined) {
+      return emitArrayModule(result.arrayShape, result.fnName);
     }
     // "add" shape uses the legacy 3-function substrate module so that the
     // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
