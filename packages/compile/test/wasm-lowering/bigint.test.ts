@@ -34,7 +34,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 
-import { LoweringVisitor } from "../../src/wasm-lowering/visitor.js";
+import { LoweringError, LoweringVisitor } from "../../src/wasm-lowering/visitor.js";
 import { valtypeByte } from "../../src/wasm-lowering/wasm-function.js";
 import type { NumericDomain, WasmFunction } from "../../src/wasm-lowering/wasm-function.js";
 
@@ -428,5 +428,65 @@ describe("bigint lowering — domain inference unit tests", () => {
     // BigIntLiteral node and infers i64 — the body's bigint arithmetic dominates.
     const visitor = new LoweringVisitor();
     expect(visitor.lower("export function f(a: number, b: number): number { return 123n + BigInt(a); }").numericDomain).toBe("i64");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LOWER-03 regression: cross-domain comparison must throw LoweringError
+//
+// @decision DEC-V2-GLUE-AWARE-SHAVE-001 (L4-#57)
+// @title Cross-domain comparison (bigint i64 vs number i32) detection
+// @status decided
+// Rationale: mixed i64/i32 operands in a comparison produce invalid WASM
+// (type mismatch). Silently defaulting to f64 domain changes comparison
+// semantics. Throwing LoweringError("unsupported-node") causes the glue-aware
+// slicer to emit GlueLeafEntry so the TypeScript compilation path preserves
+// correct comparison semantics verbatim.
+// ---------------------------------------------------------------------------
+
+describe("bigint lowering — cross-domain comparison throws LoweringError (LOWER-03 / L4-#57)", () => {
+  it("throws LoweringError for bigint === number comparison", () => {
+    const visitor = new LoweringVisitor();
+    const src = `export function crossEq(a: bigint, n: number): boolean { return a === n; }`;
+    expect(() => visitor.lower(src)).toThrow(LoweringError);
+  });
+
+  it("thrown error has kind 'unsupported-node'", () => {
+    const visitor = new LoweringVisitor();
+    const src = `export function crossEq(a: bigint, n: number): boolean { return a === n; }`;
+    let caught: unknown;
+    try {
+      visitor.lower(src);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(LoweringError);
+    expect((caught as LoweringError).kind).toBe("unsupported-node");
+  });
+
+  it("error message mentions cross-domain comparison", () => {
+    const visitor = new LoweringVisitor();
+    const src = `export function crossEq(a: bigint, n: number): boolean { return a === n; }`;
+    let caught: unknown;
+    try {
+      visitor.lower(src);
+    } catch (e) {
+      caught = e;
+    }
+    const msg = (caught as LoweringError).message;
+    expect(msg).toContain("cross-domain");
+    expect(msg).toContain("GlueLeafEntry");
+  });
+
+  it("bigint-only comparison still compiles (same-domain, no throw)", () => {
+    const visitor = new LoweringVisitor();
+    const src = `export function bigEq(a: bigint, b: bigint): boolean { return a === b; }`;
+    expect(() => visitor.lower(src)).not.toThrow();
+  });
+
+  it("number-only comparison still compiles (same-domain, no throw)", () => {
+    const visitor = new LoweringVisitor();
+    const src = `export function numEq(a: number, b: number): boolean { return a === b; }`;
+    expect(() => visitor.lower(src)).not.toThrow();
   });
 });
