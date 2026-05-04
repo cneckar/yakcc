@@ -1403,6 +1403,47 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
       return;
     }
 
+    // @decision DEC-V2-GLUE-AWARE-SHAVE-001 (L4-#57, issue #57 LOWER-03)
+    // @title Cross-domain comparison (bigint vs number) throws LoweringError
+    // @status decided
+    // @rationale
+    //   Mixed i64/i32 operands in a comparison produce invalid WASM (type mismatch).
+    //   Silently defaulting to f64 domain was incorrect: bigint values are i64, and
+    //   promoting both operands to f64 loses precision and changes comparison semantics.
+    //   Throwing here causes the glue-aware slicer to emit a GlueLeafEntry so the
+    //   TypeScript compilation path preserves correct comparison semantics verbatim.
+    if (
+      opText === "===" ||
+      opText === "==" ||
+      opText === "!==" ||
+      opText === "!=" ||
+      opText === "<" ||
+      opText === "<=" ||
+      opText === ">" ||
+      opText === ">="
+    ) {
+      const getIdentDomain = (e: Expression): NumericDomain | undefined => {
+        if (e.getKind() === SyntaxKind.Identifier) {
+          const slot = ctx.table.lookup(e.asKindOrThrow(SyntaxKind.Identifier).getText());
+          if (slot !== undefined && slot.kind !== "captured") return slot.domain;
+        }
+        if (e.getKind() === SyntaxKind.BigIntLiteral) return "i64";
+        return undefined;
+      };
+      const leftDomain = getIdentDomain(binExpr.getLeft());
+      const rightDomain = getIdentDomain(binExpr.getRight());
+      if (leftDomain !== undefined && rightDomain !== undefined && leftDomain !== rightDomain) {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message:
+            `LoweringVisitor: cross-domain comparison '${binExpr.getText()}' between` +
+            ` ${leftDomain} (left) and ${rightDomain} (right) cannot be safely lowered —` +
+            ` glue-aware slicer will emit GlueLeafEntry so the TypeScript compilation path` +
+            ` preserves correct comparison semantics verbatim (DEC-V2-GLUE-AWARE-SHAVE-001 L4-#57).`,
+        });
+      }
+    }
+
     lowerExpression(ctx, binExpr.getLeft());
     lowerExpression(ctx, binExpr.getRight());
 
@@ -3832,6 +3873,41 @@ function lowerExpressionRecord(
       }
       ctx.opcodes.push(0x22, slot.index); // local.tee
       return;
+    }
+
+    // @decision DEC-V2-GLUE-AWARE-SHAVE-001 (L4-#68, issue #68 LOWER-06)
+    // @title Record string field equality cannot be safely lowered to WASM
+    // @status decided
+    // @rationale
+    //   emitFieldLoad for string fields loads only the PTR (first 8-byte slot).
+    //   Comparing two string-field PTRs via i32.eq/ne tests pointer identity, not
+    //   value equality. JavaScript === on strings always means value equality.
+    //   Rather than generating semantically wrong WASM we throw LoweringError so the
+    //   glue-aware slicer emits a GlueLeafEntry for the enclosing atom; the TypeScript
+    //   compilation path (compileToTypeScript) preserves correct === semantics verbatim.
+    if (opText === "===" || opText === "==" || opText === "!==" || opText === "!=") {
+      const isStringFieldExpr = (e: Expression): boolean => {
+        if (e.getKind() !== SyntaxKind.PropertyAccessExpression) return false;
+        const pa = e as PropertyAccessExpression;
+        const obj = pa.getExpression();
+        if (obj.getKind() !== SyntaxKind.Identifier) return false;
+        const pName = obj.asKindOrThrow(SyntaxKind.Identifier).getText();
+        const shape = recordParams.get(pName);
+        if (shape === undefined) return false;
+        const field = shape.fields.find((f) => f.name === pa.getName());
+        return field !== undefined && field.kind === "string";
+      };
+      if (isStringFieldExpr(binExpr.getLeft()) || isStringFieldExpr(binExpr.getRight())) {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message:
+            `LoweringVisitor: equality/inequality on record string field` +
+            ` ('${binExpr.getText()}') cannot be safely lowered — pointer comparison` +
+            ` is semantically wrong; glue-aware slicer will emit GlueLeafEntry so the` +
+            ` TypeScript compilation path preserves correct === semantics verbatim` +
+            ` (DEC-V2-GLUE-AWARE-SHAVE-001 L4-#68).`,
+        });
+      }
     }
 
     // For all other binary ops: emit both operands via record-aware path

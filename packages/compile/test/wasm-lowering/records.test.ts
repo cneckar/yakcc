@@ -69,6 +69,7 @@ import { describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "../../src/resolve.js";
 import { compileToWasm } from "../../src/wasm-backend.js";
 import { createHost } from "../../src/wasm-host.js";
+import { LoweringError, LoweringVisitor } from "../../src/wasm-lowering/visitor.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers (mirrors strings.test.ts pattern)
@@ -555,5 +556,59 @@ describe("record-05: record-equality (inline field-by-field compare)", () => {
     writeI32Field(mem, bPtr, 1, 100); // y differs
     const fn = instance.exports["__wasm_export_recEq"] as (...a: number[]) => number;
     expect(fn(aPtr, STRUCT_SIZE, bPtr, STRUCT_SIZE)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LOWER-06 regression: record string field equality must throw LoweringError
+//
+// @decision DEC-V2-GLUE-AWARE-SHAVE-001 (L4-#68)
+// @title String field equality detection — unsupported-node so glue-aware slicer emits GlueLeafEntry
+// @status decided
+// Rationale: emitFieldLoad for string fields loads only the PTR. Comparing two
+// string-field PTRs via i32.eq tests pointer identity, not value equality.
+// Generating semantically wrong WASM is worse than refusing to lower; throwing
+// LoweringError("unsupported-node") causes the slicer to emit GlueLeafEntry
+// and the TypeScript compilation path preserves correct === semantics verbatim.
+// ---------------------------------------------------------------------------
+
+describe("record-06: string field equality throws LoweringError (LOWER-06 / L4-#68)", () => {
+  const src = `export function nameEq(a: { name: string; age: number }, _as: number, b: { name: string; age: number }, _bs: number): boolean { return a.name === b.name; }`;
+
+  it("throws LoweringError for string field === comparison", () => {
+    const visitor = new LoweringVisitor();
+    expect(() => visitor.lower(src)).toThrow(LoweringError);
+  });
+
+  it("thrown error has kind 'unsupported-node'", () => {
+    const visitor = new LoweringVisitor();
+    let caught: unknown;
+    try {
+      visitor.lower(src);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(LoweringError);
+    expect((caught as LoweringError).kind).toBe("unsupported-node");
+  });
+
+  it("error message mentions string field semantics", () => {
+    const visitor = new LoweringVisitor();
+    let caught: unknown;
+    try {
+      visitor.lower(src);
+    } catch (e) {
+      caught = e;
+    }
+    const msg = (caught as LoweringError).message;
+    expect(msg).toContain("string field");
+    expect(msg).toContain("GlueLeafEntry");
+  });
+
+  it("numeric-only field equality (record-05 shape) still compiles without error", async () => {
+    const numericEq = `export function numEq(a: { x: number; y: number }, _as: number, b: { x: number; y: number }, _bs: number): boolean { return (a.x === b.x) && (a.y === b.y); }`;
+    const resolution = makeSingleBlockResolution(numericEq);
+    const bytes = await compileToWasm(resolution);
+    expect(() => new WebAssembly.Module(bytes)).not.toThrow();
   });
 });
