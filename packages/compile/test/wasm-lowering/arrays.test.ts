@@ -687,10 +687,215 @@ describe("arr-5: push-with-grow (capacity-doubling via host_alloc + memory.copy)
       { numRuns: 15 },
     );
   });
-});
 
-// ---------------------------------------------------------------------------
-// SUBSTRATE arr-6: mixed-element-type (record-elements)
+  // -------------------------------------------------------------------------
+  // READBACK TESTS — WI-V1W3-WASM-LOWER-07 followup (#75)
+  //
+  // The tests above verify return value and no-panic but do NOT confirm that
+  // memory.copy ran correctly.  A bug where memory.copy is mis-sized (e.g.
+  // only copies first length/2 elements, or copies zero bytes) would pass all
+  // of the assertions above silently.
+  //
+  // These sub-tests read ALL elements back from the post-grow buffer to verify:
+  //   1. Pre-existing elements were preserved (memory.copy ran for full length)
+  //   2. The newly pushed element was written at the correct offset
+  //   3. host_alloc was called exactly once (one buffer allocation per grow)
+  //
+  // Alloc tracking: YakccHost does not expose a public allocs array.  We wrap
+  // the host.importObject to intercept host_alloc calls at the JS boundary.
+  //
+  // Buffer location: bumpPtr starts at 16 (WASM_HOST_CONTRACT.md §5).  For a
+  // fresh host with a 4-element i32 array (cap=4, stride=4), the first grow
+  // call is host_alloc(8 * 4 = 32 bytes) → returns 16.  We place the initial
+  // array at ARR_PTR=4096 (well above the bump region) to ensure the allocator
+  // does not overwrite it.
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-ARR5-READBACK-001
+  // @title Readback approach: intercept host_alloc + read from known bump base (16)
+  // @status accepted
+  // @rationale
+  //   YakccHost exposes only memory, logs, and close() — no allocs array.
+  //   The bump allocator is deterministic: starts at 16 per WASM_HOST_CONTRACT.md §5,
+  //   increments by requested size each call.  For a fresh host, the first allocation
+  //   always lands at 16.  We exploit this to read back the post-grow buffer without
+  //   modifying the host API surface.  Wrapping importObject.yakcc_host.host_alloc
+  //   gives us an accurate per-call count without touching production code.
+  //   ARR_PTR=4096 ensures no aliasing between the initial array and the new buffer.
+  // -------------------------------------------------------------------------
+
+  it("readback: pre-populated elements survive grow (memory.copy correctness)", async () => {
+    // Pre-populate with 4 distinct sentinel values, then push a 5th.
+    // capacity=4, length=4 → grow fires: new_cap=8, host_alloc(32) returns 16.
+    // memory.copy(16, ARR_PTR, 16) copies all 4 i32s.  Element 5 written at 16+16=32.
+    // Post-grow buffer at offset 16: expect [10, 20, 30, 40, 50].
+    //
+    // Regression: if memory.copy size were length*stride/2 instead of length*stride,
+    // only 2 elements would be copied → elements at index 2 and 3 would read as 0
+    // (uninitialized), failing the assertions below.
+    const sentinels = [10, 20, 30, 40];
+    const pushVal = 50;
+    const resolution = makeSingleBlockResolution(pushSrc);
+    const wasmBytes = await compileToWasm(resolution);
+    const host = createHost();
+
+    // Wrap host_alloc to count invocations.
+    let allocCallCount = 0;
+    const originalAlloc = (
+      host.importObject["yakcc_host"] as Record<string, unknown>
+    )["host_alloc"] as (size: number) => number;
+    const trackedImports: WebAssembly.Imports = {
+      ...host.importObject,
+      yakcc_host: {
+        ...(host.importObject["yakcc_host"] as WebAssembly.ModuleImports),
+        host_alloc: (size: number): number => {
+          allocCallCount++;
+          return originalAlloc(size);
+        },
+      },
+    };
+
+    const { instance } = (await WebAssembly.instantiate(
+      wasmBytes,
+      trackedImports,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+
+    // ARR_PTR well above the bump allocator region to avoid aliasing.
+    const ARR_PTR = 4096;
+    // capacity == length == 4 so grow fires immediately on push.
+    const [ptr, length, capacity] = writeI32Array(host.memory, ARR_PTR, sentinels, 4);
+    expect(ptr).toBe(ARR_PTR);
+    expect(length).toBe(4);
+    expect(capacity).toBe(4);
+
+    const fn = instance.exports["__wasm_export_pushElem"] as (
+      ptr: number,
+      len: number,
+      cap: number,
+      x: number,
+    ) => number;
+
+    const allocsBefore = allocCallCount;
+    const result = fn(ptr, length, capacity, pushVal);
+    const allocsAfter = allocCallCount;
+
+    // Return value check (existing assertion).
+    expect(result).toBe(5);
+
+    // Alloc count: exactly one host_alloc call across the grow.
+    expect(allocsAfter - allocsBefore).toBe(1);
+
+    // No panic.
+    expect(host.logs.some((l) => l.includes("panic"))).toBe(false);
+
+    // Readback: bump allocator starts at 16; first allocation (32 bytes) → new buffer at 16.
+    // new_cap=8 elements × stride=4 = 32 bytes; element 5 is at offset 16 + 4*4 = 32.
+    const BUMP_BASE = 16;
+    const dv = new DataView(host.memory.buffer);
+    const allElems = [10, 20, 30, 40, 50];
+    for (let i = 0; i < allElems.length; i++) {
+      const actual = dv.getInt32(BUMP_BASE + i * I32_STRIDE, true);
+      expect(actual).toBe(allElems[i]);
+    }
+  });
+
+  it("readback: multi-grow back-to-back (two doublings) — all elements preserved", async () => {
+    // Start with capacity=1, push 4 elements.  The grow sequence is:
+    //   push #1: cap=1, len=1 → grow: new_cap=2, alloc #1 at 16 (8 bytes), copy 1 elem → elems at 16
+    //   push #2: cap=2, len=2 → grow: new_cap=4, alloc #2 at 24 (16 bytes), copy 2 elems → elems at 24
+    //   push #3: cap=4, len=3 → no grow (len=3 < cap=4) → element written at 24+3*4=36
+    //   push #4: cap=4, len=4 → grow: new_cap=8, alloc #3 at 40 (32 bytes), copy 4 elems → elems at 40
+    //
+    // Wait — capacity=1 with 1 element seeds differently.  Let's use capacity=2 and push 3 elements:
+    //   Initial: [10, 20], capacity=2, length=2 → grow fires on push(30):
+    //     alloc #1: new_cap=4, host_alloc(16) → ptr=16, copy [10,20] to 16..24, write 30 at 28
+    //   Second push(40): cap=4, len=3 → no grow needed, writes 40 at 16+3*4=28... wait len=3.
+    //     Actually: ptr is now 16 (inside WASM local), len=3, cap=4 → no grow.
+    //     But the caller's ptr is still ARR_PTR (pass-by-value limitation).
+    //     So the second WASM call gets the ORIGINAL (ARR_PTR, len=3?, cap=4?) — but we don't have
+    //     the updated triple from the first call.
+    //
+    // Pass-by-value means we must simulate: after each push we infer the new state from
+    // the bump allocator's deterministic layout.
+    //
+    // Simpler design: pre-populate [10, 20], cap=2, len=2 → first push triggers exactly 1 grow.
+    // Then call push again using (BUMP_BASE, 3, 4, 40) to exercise the no-grow path.
+    // This verifies two calls with the new ptr, and host_alloc count = 1 across two pushes.
+    //
+    // For the "two doublings" intent: use cap=1, len=1, then push twice.
+    //   Call 1: (ARR_PTR, 1, 1, 20) → grow: new_cap=2, alloc returns 16 (8 bytes), copy [10] to 16, write 20 at 20 → returns 2
+    //   Call 2: (16, 2, 2, 30) → grow: new_cap=4, alloc returns 24 (16 bytes), copy [10,20] to 24..32, write 30 at 32+2*4=32 → returns 3
+    //   Final buffer at 24: [10, 20, 30], capacity=4
+    //   host_alloc count across both calls = 2
+
+    const resolution = makeSingleBlockResolution(pushSrc);
+    const wasmBytes = await compileToWasm(resolution);
+    const host = createHost();
+
+    let allocCallCount = 0;
+    const originalAlloc = (
+      host.importObject["yakcc_host"] as Record<string, unknown>
+    )["host_alloc"] as (size: number) => number;
+    const trackedImports: WebAssembly.Imports = {
+      ...host.importObject,
+      yakcc_host: {
+        ...(host.importObject["yakcc_host"] as WebAssembly.ModuleImports),
+        host_alloc: (size: number): number => {
+          allocCallCount++;
+          return originalAlloc(size);
+        },
+      },
+    };
+
+    const { instance } = (await WebAssembly.instantiate(
+      wasmBytes,
+      trackedImports,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+
+    const ARR_PTR = 4096;
+    // Write initial 1-element array at ARR_PTR with capacity=1 (forces grow on first push).
+    const [ptr0, len0, cap0] = writeI32Array(host.memory, ARR_PTR, [10], 1);
+    expect(ptr0).toBe(ARR_PTR);
+
+    const fn = instance.exports["__wasm_export_pushElem"] as (
+      ptr: number,
+      len: number,
+      cap: number,
+      x: number,
+    ) => number;
+
+    // First push: cap=1, len=1 → grow fires.
+    // new_cap=2, host_alloc(8) → returns 16 (bumpPtr=16+8=24)
+    // memory.copy(16, ARR_PTR, 4): copies [10]
+    // writes 20 at 16+1*4=20
+    // returns 2
+    const r1 = fn(ptr0, len0, cap0, 20);
+    expect(r1).toBe(2);
+    expect(allocCallCount).toBe(1);
+
+    // After first grow: new ptr=16, new cap=2, length=2.
+    const buf1 = 16;
+    const dv = new DataView(host.memory.buffer);
+    expect(dv.getInt32(buf1 + 0 * I32_STRIDE, true)).toBe(10); // copied
+    expect(dv.getInt32(buf1 + 1 * I32_STRIDE, true)).toBe(20); // pushed
+
+    // Second push: (buf1=16, len=2, cap=2, 30) → grow fires again.
+    // new_cap=4, host_alloc(16) → returns 24 (bumpPtr=24+16=40)
+    // memory.copy(24, 16, 8): copies [10, 20]
+    // writes 30 at 24+2*4=32
+    // returns 3
+    const r2 = fn(buf1, 2, 2, 30);
+    expect(r2).toBe(3);
+    expect(allocCallCount).toBe(2); // exactly 2 grows across both calls
+
+    const buf2 = 24;
+    expect(dv.getInt32(buf2 + 0 * I32_STRIDE, true)).toBe(10);
+    expect(dv.getInt32(buf2 + 1 * I32_STRIDE, true)).toBe(20);
+    expect(dv.getInt32(buf2 + 2 * I32_STRIDE, true)).toBe(30);
+
+    // No panics across both calls.
+    expect(host.logs.some((l) => l.includes("panic"))).toBe(false);
+  });
+});
 //
 // TypeScript: (arr: Point[]) => number  — sum field x of each Point record.
 // Exercises WI-06 record layout + WI-07 array lowering together.
