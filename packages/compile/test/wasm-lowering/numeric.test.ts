@@ -12,7 +12,7 @@
  * Domain coverage:
  *   i32 (4 substrates): arithmetic add/sub, bitwise ops, mixed compound, integer-divide
  *   i64 (3 substrates): wide-range add near i64 max, multiplication, bitwise ops
- *   f64 (3 substrates): division, Math.sqrt, Math.sin
+ *   f64 (4 substrates): division, Math.sqrt, Math.sin, f64 modulo with negative dividends
  *
  * f64 tolerance:
  *   f64 results are compared with an epsilon of 1e-9 (relative tolerance) or
@@ -516,6 +516,93 @@ describe("numeric lowering — f64 domain", () => {
       { numRuns: 25 },
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Substrate f64-4: f64 modulo with negative dividends
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-F64-MOD-001 (see visitor.ts)
+  // @title f64 modulo coverage — negative dividend and all sign quadrants
+  // @status accepted
+  // @rationale
+  //   The visitor emits f64 `%` as `x - trunc(x/y)*y` (truncated-division remainder),
+  //   matching the JS `%` operator semantics exactly. Prior to this substrate, the
+  //   lowering had ZERO test coverage. These tests cover all four sign quadrants of
+  //   (dividend, divisor) with emphasis on negative-dividend cases which exercise the
+  //   sign-preservation behaviour of the f64.trunc opcode (0x9d). Both explicit
+  //   deterministic cases (f64-4-mod-explicit) and a broad property test
+  //   (f64-4-mod-property) are provided to pin the lowering against regression.
+  // ---------------------------------------------------------------------------
+
+  // Substrate f64-4-mod-explicit: deterministic sign-quadrant coverage
+  //
+  // Eight deterministic cases spanning all four (dividend, divisor) sign quadrants
+  // with emphasis on negative-dividend inputs. Expected values computed as:
+  //   a % b = a - Math.trunc(a/b) * b   (JS `%` matches WASM lowering)
+  //
+  // Cases:
+  //   1. (-5.5,  2.0) → -1.5   negative dividend, positive divisor
+  //   2. (-7.0,  3.0) → -1.0   negative dividend, positive divisor (integer)
+  //   3. (-10.5, -2.5) → -0.5  negative dividend, negative divisor
+  //   4. (-3.0, -2.0) → -1.0   negative dividend, negative divisor (integer)
+  //   5. ( 5.5,  2.0) →  1.5   positive both (control)
+  //   6. ( 5.5, -2.0) →  1.5   positive dividend, negative divisor
+  //   7. ( 0.0,  3.0) →  0.0   zero dividend
+  //   8. (-9.0,  4.0) → -1.0   negative dividend, positive divisor (additional)
+  it("f64-4-mod-explicit: modOp(a, b) — 8 deterministic sign-quadrant cases including ≥4 negative dividends", async () => {
+    const src = "export function modOp(a: number, b: number): number { return a % b; }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    // `a % b` with no bitops or large literals → ambiguous → defaults to f64 (rule 8).
+    // Domain f64 routes `%` to the special f64-modulo emitter (DEC-V1-WAVE-3-WASM-LOWER-F64-MOD-001).
+    expect(domain).toBe("f64");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+
+    const cases: Array<[number, number, number]> = [
+      // [a, b, expected]
+      [-5.5, 2.0, -1.5],   // negative dividend, positive divisor
+      [-7.0, 3.0, -1.0],   // negative dividend, positive divisor (integer result)
+      [-10.5, -2.5, -0.5], // negative both
+      [-3.0, -2.0, -1.0],  // negative both (integer result)
+      [5.5, 2.0, 1.5],     // positive both (control case)
+      [5.5, -2.0, 1.5],    // positive dividend, negative divisor
+      [0.0, 3.0, 0.0],     // zero dividend
+      [-9.0, 4.0, -1.0],   // additional negative dividend
+    ];
+
+    for (const [a, b, expected] of cases) {
+      const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+      // Use exact equality for all cases here — these are clean IEEE 754 values
+      // that produce exact results under truncated-division remainder.
+      expect(wasmResult).toBe(expected);
+    }
+  });
+
+  // Substrate f64-4-mod-property: fast-check symmetric signed range
+  //
+  // Uses a symmetric signed range to guarantee negative dividend inputs appear
+  // in the random sample. Divisor is filtered to non-zero to avoid NaN/Infinity.
+  // Result is compared with f64Close (epsilon-based) consistent with f64-1..3.
+  it("f64-4-mod-property: modOp(a, b) — property: a % b matches JS reference for 30+ signed float pairs", async () => {
+    const src = "export function modOp(a: number, b: number): number { return a % b; }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    expect(domain).toBe("f64");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+
+    await fc.assert(
+      fc.asyncProperty(
+        // Symmetric range guarantees negative dividends in the sample
+        fc.double({ min: -1e6, max: 1e6, noNaN: true }),
+        // Non-zero divisor: filter out exact 0 and values very close to 0
+        fc.double({ min: -1e6, max: 1e6, noNaN: true }).filter((b) => Math.abs(b) > 1e-10),
+        async (a, b) => {
+          const tsRef = a % b;
+          const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+          expect(f64Close(wasmResult, tsRef)).toBe(true);
+        },
+      ),
+      { numRuns: 30 },
+    );
+  // 30 async WASM instantiations; allow up to 20s (consistent with other f64 property tests)
+  }, 20000);
 });
 
 // ---------------------------------------------------------------------------
