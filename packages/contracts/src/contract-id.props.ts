@@ -44,10 +44,8 @@ const distinctPairArb: fc.Arbitrary<[Uint8Array, Uint8Array]> = fc
 // ---------------------------------------------------------------------------
 
 /**
- * prop_contractIdFromBytes_deterministic
+ * contractIdFromBytes() is deterministic: same Uint8Array → same ContractId string.
  *
- * For every Uint8Array, two consecutive calls to contractIdFromBytes with the
- * same input return the same ContractId string.
  * Invariant: the function is a pure, deterministic mapping.
  */
 export const prop_contractIdFromBytes_deterministic = fc.property(uint8ArrayArb, (bytes) => {
@@ -57,20 +55,19 @@ export const prop_contractIdFromBytes_deterministic = fc.property(uint8ArrayArb,
 });
 
 /**
- * prop_contractIdFromBytes_format_brand
+ * contractIdFromBytes() always produces a well-formed 64-char lowercase hex ContractId.
  *
- * For every Uint8Array, the returned ContractId passes isValidContractId.
- * Invariant: contractIdFromBytes always produces a well-formed 64-char lowercase hex id.
+ * Invariant: every output passes isValidContractId (64-char lowercase hex).
  */
 export const prop_contractIdFromBytes_format_brand = fc.property(uint8ArrayArb, (bytes) => {
   return isValidContractId(contractIdFromBytes(bytes));
 });
 
 /**
- * prop_contractIdFromBytes_collision_resistance
+ * contractIdFromBytes() maps distinct byte arrays to distinct ContractIds.
  *
- * For two distinct Uint8Arrays of the same length (≥32 bytes), the resulting
- * ContractIds are distinct. Uses numRuns=200 to exercise a wider input space.
+ * For two distinct Uint8Arrays of the same length (≥32 bytes) the resulting
+ * ContractIds are distinct (numRuns=200 to exercise a wider input space).
  * Invariant: BLAKE3-256 has sufficient collision resistance for any realistic input set.
  */
 export const prop_contractIdFromBytes_collision_resistance = fc.property(
@@ -81,10 +78,9 @@ export const prop_contractIdFromBytes_collision_resistance = fc.property(
 );
 
 /**
- * prop_contractIdFromBytes_pure
+ * contractIdFromBytes() does not mutate its input Uint8Array.
  *
- * The input Uint8Array is byte-equal before and after calling contractIdFromBytes.
- * Invariant: the function does not mutate its input in place.
+ * Invariant: the function is pure — the input bytes are unchanged after the call.
  */
 export const prop_contractIdFromBytes_pure = fc.property(uint8ArrayArb, (bytes) => {
   const snapshot = new Uint8Array(bytes);
@@ -101,9 +97,8 @@ export const prop_contractIdFromBytes_pure = fc.property(uint8ArrayArb, (bytes) 
 // ---------------------------------------------------------------------------
 
 /**
- * prop_contractId_equals_idFromBytesOfCanonicalize
+ * contractId(spec) equals contractIdFromBytes(canonicalize(spec)) for every ContractSpec.
  *
- * For every ContractSpec, contractId(spec) === contractIdFromBytes(canonicalize(spec)).
  * Invariant: contractId is a composition of canonicalize then contractIdFromBytes.
  */
 export const prop_contractId_equals_idFromBytesOfCanonicalize = fc.property(
@@ -114,9 +109,8 @@ export const prop_contractId_equals_idFromBytesOfCanonicalize = fc.property(
 );
 
 /**
- * prop_contractId_field_order_invariant
+ * contractId() is invariant to ContractSpec key insertion order.
  *
- * Permuting object key insertion order in the input spec produces the same ContractId.
  * Invariant: contractId delegates to canonicalize which sorts keys — order is irrelevant.
  */
 export const prop_contractId_field_order_invariant = fc.property(contractSpecArb, (spec) => {
@@ -163,9 +157,8 @@ const nonHexArb: fc.Arbitrary<string> = fc
   .map((s) => `${s.replace(/[0-9a-fA-F]/g, "x")}!`); // ensure at least one non-hex
 
 /**
- * prop_isValidContractId_accepts_valid
+ * isValidContractId() accepts every 64-character lowercase hex string.
  *
- * For every 64-character lowercase hex string, isValidContractId returns true.
  * Invariant: the function accepts all well-formed ContractId strings.
  */
 export const prop_isValidContractId_accepts_valid = fc.property(validContractIdArb, (id) => {
@@ -173,9 +166,8 @@ export const prop_isValidContractId_accepts_valid = fc.property(validContractIdA
 });
 
 /**
- * prop_isValidContractId_rejects_wrong_length
+ * isValidContractId() rejects any hex string whose length is not 64.
  *
- * For every hex string whose length ≠ 64, isValidContractId returns false.
  * Invariant: a ContractId must be exactly 64 characters.
  */
 export const prop_isValidContractId_rejects_wrong_length = fc.property(wrongLengthHexArb, (s) => {
@@ -183,19 +175,17 @@ export const prop_isValidContractId_rejects_wrong_length = fc.property(wrongLeng
 });
 
 /**
- * prop_isValidContractId_rejects_uppercase
+ * isValidContractId() rejects 64-char hex strings that contain uppercase letters.
  *
- * For 64-char hex strings containing an uppercase letter, isValidContractId returns false.
- * Invariant: a ContractId must be lowercase hex.
+ * Invariant: a ContractId must be lowercase hex only.
  */
 export const prop_isValidContractId_rejects_uppercase = fc.property(uppercaseHexArb, (s) => {
   return !isValidContractId(s);
 });
 
 /**
- * prop_isValidContractId_rejects_non_hex
+ * isValidContractId() rejects 64-char strings that contain non-hex characters.
  *
- * For 64-char strings containing a non-hex character, isValidContractId returns false.
  * Invariant: a ContractId may only contain [0-9a-f].
  */
 export const prop_isValidContractId_rejects_non_hex = fc.property(nonHexArb, (s) => {
@@ -206,10 +196,9 @@ export const prop_isValidContractId_rejects_non_hex = fc.property(nonHexArb, (s)
 });
 
 /**
- * prop_isValidContractId_total
+ * isValidContractId() is total: never throws for any string input, only returns boolean.
  *
- * For every string (including empty, long, Unicode), isValidContractId never throws.
- * Invariant: the function is total — it never throws, only returns boolean.
+ * Invariant: the function is total — it handles empty, long, and Unicode inputs.
  */
 export const prop_isValidContractId_total = fc.property(fc.string(), (s) => {
   try {

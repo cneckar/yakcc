@@ -136,17 +136,12 @@ function makeSingleBlockResolution(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_buildManifest_single_block_shape
+ * buildManifest() returns a well-formed ProvenanceManifest for a single block.
  *
- * For a registry with exactly one block and no test history, buildManifest
- * returns a ProvenanceManifest where:
- *   - manifest.entry === resolution.entry
- *   - manifest.entries.length === 1
- *   - entries[0].blockMerkleRoot === entry root
- *   - entries[0].specHash === the block's specHash
- *   - entries[0].source === implSource
- *   - entries[0].subBlocks is an array (possibly empty)
- *   - entries[0].referencedForeign is an array
+ * For a registry with one block and no test history the manifest has:
+ * entry === resolution.entry, entries.length === 1, entries[0].blockMerkleRoot
+ * === root, entries[0].specHash, entries[0].source, and both subBlocks and
+ * referencedForeign are arrays.
  *
  * Invariant (A3.2, A3.3, A3.7): buildManifest populates all required
  * ProvenanceEntry fields for every block in the resolution.
@@ -180,10 +175,7 @@ export const prop_buildManifest_single_block_shape = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_buildManifest_unverified_when_no_passing_history
- *
- * When the registry has no test history for a block (empty testHistory),
- * buildManifest sets verificationStatus to "unverified".
+ * buildManifest() sets verificationStatus to "unverified" when testHistory is empty.
  *
  * Invariant (A3.4): absence of a passing ProvenanceTestEntry → "unverified".
  * The sentinel empty provenance (testHistory: []) maps to "unverified".
@@ -203,9 +195,7 @@ export const prop_buildManifest_unverified_when_no_passing_history = fc.asyncPro
 );
 
 /**
- * prop_buildManifest_unverified_when_all_tests_failed
- *
- * When all test history entries have passed=false, verificationStatus is "unverified".
+ * buildManifest() is "unverified" when all test history entries have passed=false.
  *
  * Invariant (A3.4): "passing" requires at least one entry with passed===true;
  * all-false histories do not satisfy that condition.
@@ -230,10 +220,7 @@ export const prop_buildManifest_unverified_when_all_tests_failed = fc.asyncPrope
 // ---------------------------------------------------------------------------
 
 /**
- * prop_buildManifest_passing_when_at_least_one_passing_test
- *
- * When the registry has at least one ProvenanceTestEntry with passed=true,
- * buildManifest sets verificationStatus to "passing".
+ * buildManifest() sets verificationStatus to "passing" when any test entry passed.
  *
  * Invariant (A3.4): `some(entry => entry.passed)` → "passing".
  * The check is non-exclusive: one pass among many failures still yields "passing".
@@ -259,10 +246,7 @@ export const prop_buildManifest_passing_when_at_least_one_passing_test = fc.asyn
 // ---------------------------------------------------------------------------
 
 /**
- * prop_buildManifest_referencedForeign_is_always_array
- *
- * For every block, the referencedForeign field in the manifest entry is always
- * an array (never undefined, never null).
+ * buildManifest() referencedForeign is always an array, never undefined or null.
  *
  * Invariant (A3.5, DEC-COMPILE-MANIFEST-003, L4-I3): referencedForeign is a
  * required field. [] is the empty case for blocks with no foreign deps.
@@ -291,10 +275,7 @@ export const prop_buildManifest_referencedForeign_is_always_array = fc.asyncProp
 // ---------------------------------------------------------------------------
 
 /**
- * prop_buildManifest_entries_count_matches_order_length
- *
- * The number of entries in the manifest always equals the length of
- * ResolutionResult.order (one entry per resolved block, in order).
+ * buildManifest() entries count always equals ResolutionResult.order length.
  *
  * Invariant (A3.6): buildManifest iterates exactly over resolution.order;
  * no blocks are silently dropped or duplicated.
@@ -330,10 +311,7 @@ export const prop_buildManifest_entries_count_matches_order_length = fc.asyncPro
 );
 
 /**
- * prop_buildManifest_entry_field_matches_resolution_entry
- *
- * manifest.entry always equals resolution.entry, regardless of how many
- * blocks are in the resolution.
+ * buildManifest() manifest.entry always equals resolution.entry.
  *
  * Invariant (A3.7): manifest.entry is derived directly from resolution.entry —
  * it is not re-derived from order or blocks.

@@ -122,13 +122,11 @@ function makeAssembleStubRegistry(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_assemble_artifact_shape
+ * assemble() returns a well-formed Artifact for a single-block registry.
  *
- * For a single-block registry with a simple export function impl, assemble()
- * returns an Artifact with:
- *   - source: a non-empty string
- *   - manifest.entry === the entry BlockMerkleRoot
- *   - manifest.entries.length === 1
+ * For a registry with one block and a simple export function impl, the
+ * returned Artifact has: source (non-empty string), manifest.entry ===
+ * entry BlockMerkleRoot, and manifest.entries.length === 1.
  *
  * Invariant (A2.6, A2.7): assemble() always returns a well-formed Artifact;
  * the manifest entry count matches the transitive block closure size.
@@ -151,9 +149,7 @@ export const prop_assemble_artifact_shape = fc.asyncProperty(
 );
 
 /**
- * prop_assemble_source_includes_header_comment
- *
- * The emitted source always starts with the "Assembled by @yakcc/compile" header.
+ * assemble() emitted source always starts with the yakcc/compile header comment.
  *
  * Invariant (A2.6, DEC-COMPILE-TS-BACKEND-001): tsBackend always prepends the
  * header comment; assemble() does not alter the backend's output.
@@ -175,10 +171,7 @@ export const prop_assemble_source_includes_header_comment = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_assemble_throws_ResolutionError_for_missing_block
- *
- * When the entry BlockMerkleRoot is not in the registry, assemble() throws
- * a ResolutionError with kind="missing-block".
+ * assemble() throws ResolutionError with kind="missing-block" for absent entry root.
  *
  * Invariant (A2.6): assemble() propagates ResolutionError from resolveComposition()
  * unwrapped for the missing-block case.
@@ -202,10 +195,7 @@ export const prop_assemble_throws_ResolutionError_for_missing_block = fc.asyncPr
 // ---------------------------------------------------------------------------
 
 /**
- * prop_assemble_deterministic_byte_identical_reemit
- *
- * Two consecutive calls to assemble() with the same entry root and registry
- * produce byte-identical source strings.
+ * Two assemble() calls with the same registry and entry root are byte-identical.
  *
  * Invariant (A2.6, DEC-COMPILE-ASSEMBLE-003): given an unchanged registry,
  * selectBlocks returns the same ordered list, the same BlockMerkleRoot is chosen,
@@ -230,11 +220,11 @@ export const prop_assemble_deterministic_byte_identical_reemit = fc.asyncPropert
 // ---------------------------------------------------------------------------
 
 /**
- * prop_assemble_knownMerkleRoots_enables_sub_block_resolution
+ * knownMerkleRoots enables sub-block resolution via stem-to-SpecHash index.
  *
- * When knownMerkleRoots is supplied, assemble() pre-builds a stem → SpecHash index
- * and can resolve sub-block imports via selectBlocks. For a two-block graph where
- * the parent imports a child via "@yakcc/seeds/blocks/leaf", passing both roots as
+ * When knownMerkleRoots is supplied, assemble() pre-builds a stem → SpecHash
+ * index and resolves sub-block imports via selectBlocks. For a two-block graph
+ * where the parent imports a child via "@yakcc/seeds/blocks/leaf", both roots as
  * knownMerkleRoots enables the child to be found and included in the manifest.
  *
  * Invariant (A2.4, A2.5, A2.8): buildStemSpecHashIndex pre-fetches known roots;
@@ -274,18 +264,14 @@ export function entry(x: number): number { return x; }`;
 // ---------------------------------------------------------------------------
 
 /**
- * prop_importPathStem_seeds_prefix_extracts_stem
+ * importPathStem extracts the last segment from "@yakcc/seeds/blocks/<name>" paths.
  *
- * The private importPathStem function extracts the last path segment (without ".js")
- * from "@yakcc/seeds/blocks/<name>" import paths.
+ * Tested transitively via assemble(): when a block's implSource has an import
+ * from "@yakcc/seeds/blocks/<stem>" and knownMerkleRoots provides a block that
+ * exports a function named camelCase(stem), assemble() resolves the sub-block.
  *
- * Tested transitively: when a block's implSource has `import type { X } from
- * "@yakcc/seeds/blocks/<stem>"`, and knownMerkleRoots provides a block that exports
- * a function named `<camelCase(stem)>`, assemble() successfully builds the index and
- * resolves the sub-block reference.
- *
- * This property verifies the stem extraction is consistent with the camelCase
- * conversion by checking a simple case: stem "bracket" → fnName "bracket" (no hyphens).
+ * This property verifies stem extraction is consistent with the camelCase
+ * conversion: stem "bracket" → fnName "bracket" (no hyphens, trivial case).
  *
  * Invariant (A2.1, A2.2): importPathStem + stemToCamelCase must produce the same
  * identifier that extractFunctionName returns from the sub-block's implSource.
