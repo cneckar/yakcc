@@ -285,6 +285,7 @@ async function runVerify(
       const result = await shaveImpl(absPath, shaveRegistry, {
         offline: true,
         intentStrategy: "static",
+        shaveMode: "glue-aware",
       });
       for (const atom of result.atoms) {
         if (atom.merkleRoot !== undefined) {
@@ -478,10 +479,13 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     const relPath = relative(repoRoot, absPath);
     try {
       // Force offline: true to disable AI-corpus extraction (DEC-V2-BOOT-NO-AI-CORPUS-001).
+      // Use shaveMode: 'glue-aware' so non-IR-valid subgraphs become GlueLeafEntry rather
+      // than throwing (DEC-V2-07-PREFLIGHT-L8-003; scope extension to WI-V2-07-PREFLIGHT-L8).
       // TODO: when ShaveOptions gains corpusOptions.disableSourceC, use that instead.
       const result = await shaveImpl(absPath, shaveRegistry, {
         offline: true,
         intentStrategy: "static",
+        shaveMode: "glue-aware",
       });
       outcomes.push({
         path: relPath,

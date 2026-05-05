@@ -106,6 +106,31 @@ export interface ShaveOptions {
    * FOREIGN_POLICY_DEFAULT from this module; no inline 'tag' literals elsewhere.
    */
   readonly foreignPolicy?: ForeignPolicy | undefined;
+
+  /**
+   * Controls whether the slicer applies the IR strict-subset predicate per-subgraph.
+   *
+   * @decision DEC-V2-07-PREFLIGHT-L8-003 (scope extension, WI-V2-07-PREFLIGHT-L8)
+   * title: shaveMode is plumbed through ShaveOptions to the slicer (DEC-V2-GLUE-AWARE-SHAVE-001)
+   * status: accepted
+   * rationale:
+   *   The slicer's shaveMode option existed only as a SliceOptions field, unreachable from
+   *   universalize() or shave() callers. Plumbing it through ShaveOptions allows bootstrap
+   *   to explicitly opt into glue-aware mode, which treats non-IR-valid subgraphs as
+   *   GlueLeafEntry (verbatim-preserved, not registered) rather than throwing. This is
+   *   the correct behavior for production bootstrap runs where some project-local code
+   *   (e.g. *.props.ts fast-check arbitraries) contains constructs that are valid TS
+   *   but not in the strict subset. Bootstrap defaults to 'glue-aware' per DEC-V2-07-PREFLIGHT-L8-003.
+   *   The default 'strict' in SliceOptions is preserved for backward-compatibility of
+   *   callers that use slice() directly.
+   *
+   *   - 'strict' (default): unmatched atoms become NovelGlueEntry regardless of IR validity.
+   *     Preserves backward compatibility for direct universalize()/slice() callers.
+   *   - 'glue-aware': atoms failing IR strict-subset validation become GlueLeafEntry
+   *     (not registered); atoms passing become NovelGlueEntry (registered). Bootstrap
+   *     uses this mode via bootstrap.ts passing shaveMode: 'glue-aware'.
+   */
+  readonly shaveMode?: "strict" | "glue-aware" | undefined;
 }
 
 // ---------------------------------------------------------------------------

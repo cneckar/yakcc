@@ -486,7 +486,13 @@ export async function universalize(
   const tree = await decompose(candidate.source, registry, options?.recursionOptions);
 
   // Step 4: slice the RecursionTree into a SlicePlan.
-  const plan = await slice(tree, registry);
+  // Forward shaveMode from options so callers can opt into glue-aware mode
+  // (DEC-V2-07-PREFLIGHT-L8-003; default 'strict' preserved for backward compat).
+  const plan = await slice(
+    tree,
+    registry,
+    options?.shaveMode !== undefined ? { shaveMode: options.shaveMode } : undefined,
+  );
 
   // Step 5: attach intentCard to every NovelGlueEntry in the slice plan.
   //
