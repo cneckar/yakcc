@@ -5,6 +5,12 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     pool: "forks",
+    // See DEC-INFRA-VITEST-FORK-CAP-001 in packages/compile/vitest.config.ts
+    // for the canonical reference. Capping at 2 matches CI's 2-vCPU baseline
+    // and prevents the multi-core pool-storm flake (~6000s vs ~40s on 10+ core
+    // hardware). Uses vitest 4.x top-level maxWorkers/minWorkers.
+    maxWorkers: 2,
+    minWorkers: 1,
     testTimeout: 30_000,
     hookTimeout: 30_000,
     coverage: {
