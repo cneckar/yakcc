@@ -111,13 +111,10 @@ async function nullResolver(_importedFrom: string): Promise<BlockMerkleRoot | nu
 // ---------------------------------------------------------------------------
 
 /**
- * prop_resolveComposition_single_block_result_shape
+ * resolveComposition() returns a well-formed single-block ResolutionResult.
  *
- * For a registry with exactly one block (no sub-block imports), resolveComposition
- * returns a ResolutionResult where:
- *   - entry === the supplied merkleRoot
- *   - blocks.size === 1 (only the entry)
- *   - order.length === 1 and order[0] === entry
+ * For a registry with one block (no sub-block imports): entry === merkleRoot,
+ * blocks.size === 1, order.length === 1 and order[0] === entry.
  *
  * Invariant: the trivial no-composition case always produces a well-formed
  * ResolutionResult with the entry as the sole block.
@@ -140,10 +137,7 @@ export const prop_resolveComposition_single_block_result_shape = fc.asyncPropert
 );
 
 /**
- * prop_resolveComposition_resolved_block_fields
- *
- * The ResolvedBlock stored in result.blocks for a single-block registry contains
- * the correct merkleRoot, specHash, source (= implSource), and empty subBlocks.
+ * resolveComposition() ResolvedBlock has correct merkleRoot, specHash, source, subBlocks.
  *
  * Invariant (A5.5): visitBlock populates all four ResolvedBlock fields from the
  * registry row; no field is left undefined or mismatched.
@@ -173,10 +167,7 @@ export const prop_resolveComposition_resolved_block_fields = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_resolveComposition_deterministic
- *
- * Two consecutive calls to resolveComposition with the same registry and entry
- * produce results with the same order array and the same blocks map keys.
+ * resolveComposition() is deterministic: same registry + entry → same order and blocks.
  *
  * Invariant: resolveComposition is a pure function with no observable
  * side effects between calls on the same registry state.
@@ -203,11 +194,7 @@ export const prop_resolveComposition_deterministic = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_ResolutionError_missing_block_kind_and_root
- *
- * When the registry does not contain the entry block, resolveComposition throws
- * a ResolutionError with kind="missing-block" and merkleRoot equal to the
- * requested entry.
+ * resolveComposition() throws ResolutionError kind="missing-block" for absent entry.
  *
  * Invariant (A5.4): ResolutionError always carries kind and merkleRoot; kind is
  * one of "missing-block" | "cycle" | "invalid-block".
@@ -227,10 +214,7 @@ export const prop_ResolutionError_missing_block_kind_and_root = fc.asyncProperty
 );
 
 /**
- * prop_ResolutionError_is_instanceof_Error
- *
- * ResolutionError is a subclass of Error; every instance passes instanceof Error
- * and instanceof ResolutionError. The message field is a non-empty string.
+ * ResolutionError is an instanceof Error with a non-empty message string.
  *
  * Invariant: ResolutionError extends Error correctly so callers can use both
  * catch clauses and explicit instanceof guards interchangeably.
@@ -258,10 +242,7 @@ export const prop_ResolutionError_is_instanceof_Error = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_ResolutionError_cycle_detected
- *
- * When the composition graph contains a self-cycle (a block that imports itself),
- * resolveComposition throws a ResolutionError with kind="cycle".
+ * resolveComposition() throws ResolutionError kind="cycle" for a self-cyclic graph.
  *
  * Invariant: visitBlock's path Set detects the cycle before recursing infinitely;
  * the error is thrown with kind="cycle" and the offending merkleRoot.
@@ -293,10 +274,7 @@ export const prop_ResolutionError_cycle_detected = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_SubBlockResolver_null_skips_sub_block
- *
- * When the SubBlockResolver returns null for a sub-block import, the ref is
- * silently skipped: the resolved block has zero sub-block deps recorded.
+ * SubBlockResolver returning null silently skips the sub-block import.
  *
  * Invariant: visitBlock treats null from the resolver as "skip this import" —
  * it neither errors nor adds the null to subBlocks.
@@ -326,11 +304,7 @@ export const prop_SubBlockResolver_null_skips_sub_block = fc.asyncProperty(
 // ---------------------------------------------------------------------------
 
 /**
- * prop_extractSubBlockImports_seeds_prefix_resolved
- *
- * A block with an `import type { X } from "@yakcc/seeds/blocks/x"` line will
- * have that import resolved by the SubBlockResolver. When the resolver returns
- * a concrete root for that specifier, the sub-block appears in subBlocks.
+ * extractSubBlockImports resolves "@yakcc/seeds/blocks/x" imports via the resolver.
  *
  * Invariant (A5.1): SUB_BLOCK_IMPORT_RE matches the @yakcc/seeds/ prefix;
  * extractSubBlockImports correctly extracts the full specifier.
@@ -366,10 +340,7 @@ export const prop_extractSubBlockImports_seeds_prefix_resolved = fc.asyncPropert
 );
 
 /**
- * prop_extractSubBlockImports_dot_slash_prefix_resolved
- *
- * A block with `import type { X } from "./x.js"` is also matched by the
- * sub-block import regex and passed to the resolver.
+ * extractSubBlockImports also resolves "./" relative imports via the resolver.
  *
  * Invariant (A5.1): SUB_BLOCK_IMPORT_RE covers the "./" prefix in addition
  * to "@yakcc/seeds/" and "@yakcc/blocks/".
@@ -402,10 +373,7 @@ export const prop_extractSubBlockImports_dot_slash_prefix_resolved = fc.asyncPro
 // ---------------------------------------------------------------------------
 
 /**
- * prop_resolveComposition_topological_order_two_depth
- *
- * For a two-level chain (grandchild → child → parent), the order array places
- * grandchild first, child second, parent last.
+ * resolveComposition() order is topological: grandchild first, child, parent last.
  *
  * Invariant: post-order DFS in visitBlock guarantees topological order —
  * every dependency appears before its dependent in result.order.
