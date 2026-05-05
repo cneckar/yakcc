@@ -92,6 +92,16 @@ surface the conflict to the user. Do not proceed by relaxing a cornerstone
   code shows the plan is wrong about *what* we are building, that is a
   replanning conversation. If the code shows the plan is wrong about *how*,
   the code wins and you record the rationale in the decision log.
+- **Do not resolve a closer/parity-WI gap by filtering the corpus.** When
+  a closer or parity harness surfaces a gap between corpus shape and
+  consumer capability (e.g. atoms unsupported by the wasm-backend, atoms
+  missing source bytes, atoms below an arbitrary threshold), the routing
+  default is *fix the consumer, not filter the corpus*. Filtering hides the
+  signal the closer was designed to surface. See `DEC-CLOSER-CONSUMER-FIX-001`
+  in `MASTER_PLAN.md` for the project-wide policy and precedents (#36,
+  #125). Any future closer/parity WI MUST cite this DEC in its
+  pre-assigned-decision section. Operator approval required for genuine
+  corpus-filter exceptions.
 
 ## Before you open a PR — branch hygiene is load-bearing
 
