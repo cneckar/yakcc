@@ -711,6 +711,25 @@ export async function regenerateCorpus(
   let cacheHits = 0;
   let cacheMisses = 0;
 
+  // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-CORPUS-PROVENANCE-001
+  // @title corpus-loader captures EVERY merkleRoot per shave to fix sourcePath provenance
+  // @status accepted (WI-V1W4-LOWER-EXTEND-CORPUS-PROVENANCE-001 / yakcc #127)
+  // @rationale
+  //   shave() produces sub-fragments at multiple levels (parent block + sub-blocks).
+  //   The prior implementation labelled all corpus atoms with "registry:<hash>"
+  //   because sourcePath was not stored in the registry, and the post-shave atom
+  //   enumeration had no way to recover which source file produced each block.
+  //   Fix: as each file is processed (cache hit or live shave), map every
+  //   blockMerkleRoot returned by tryHitOrShave to the current absPath.
+  //   tryHitOrShave already captures all newly-stored blocks via manifest diff
+  //   (for live shave) and full cache entry replay (for cache hits), so this map
+  //   covers parent blocks AND sub-blocks alike. First-seen wins for atoms
+  //   dedup'd across multiple files. Any block that has no map entry (should not
+  //   happen in a correct walk) falls back to "registry:<hash>" with console.warn
+  //   so future implementers are alerted rather than silently mislabelled.
+  //   No schema changes to @yakcc/registry or @yakcc/shave are required.
+  const merkleRootToSourcePath = new Map<string, string>();
+
   // Resolve the file list: explicit override or full packages walk.
   let filesToProcess: string[];
   if (opts?.sourceFiles !== undefined) {
@@ -768,6 +787,16 @@ export async function regenerateCorpus(
         cacheEntries[contentHash] = result.rows.map((r) => serializeRow({ ...r, createdAt: 0 }));
       }
     }
+
+    // Map every blockMerkleRoot produced by this file to its source path.
+    // First-seen wins: if two files produce the same block (dedup'd by registry),
+    // the first file in the walk order is credited.
+    // (DEC-V1-WAVE-4-WASM-LOWER-EXTEND-CORPUS-PROVENANCE-001)
+    for (const row of result.rows) {
+      if (!merkleRootToSourcePath.has(row.blockMerkleRoot)) {
+        merkleRootToSourcePath.set(row.blockMerkleRoot, absPath);
+      }
+    }
   }
 
   // Save updated cache back to disk
@@ -797,13 +826,21 @@ export async function regenerateCorpus(
     const block = await registry.getBlock(entry.blockMerkleRoot);
     if (block === null) continue; // should not happen; guard anyway
 
+    // Resolve sourcePath from the merkleRoot→file map built during the shave walk.
+    // First-seen wins for atoms dedup'd across multiple files.
+    // Sacred Practice #5: warn loudly when a merkleRoot has no known source file
+    // rather than silently mislabelling atoms. (DEC-V1-WAVE-4-WASM-LOWER-EXTEND-CORPUS-PROVENANCE-001)
+    const resolvedSourcePath = merkleRootToSourcePath.get(entry.blockMerkleRoot);
+    if (resolvedSourcePath === undefined) {
+      console.warn(
+        `[corpus-loader] No sourcePath found for blockMerkleRoot=${entry.blockMerkleRoot.slice(0, 16)} — falling back to registry label. This block was stored in the registry but not produced by any file in this walk (possible dedup across multiple files or a registry pre-populated from a prior run).`,
+      );
+    }
+
     atoms.set(entry.canonicalAstHash, {
       canonicalAstHash: entry.canonicalAstHash,
       implSource: block.implSource,
-      // sourcePath is not stored in the registry — we label it with the block merkle root
-      // so error messages are traceable. Future: thread sourcePath through shave() atoms
-      // and store it in the registry (WI-V1W4-LOWER-CORPUS-PROVENANCE-001).
-      sourcePath: `registry:${entry.blockMerkleRoot.slice(0, 16)}`,
+      sourcePath: resolvedSourcePath ?? `registry:${entry.blockMerkleRoot.slice(0, 16)}`,
       blockMerkleRoot: entry.blockMerkleRoot,
       pBucket: "P-OTHER",
     });

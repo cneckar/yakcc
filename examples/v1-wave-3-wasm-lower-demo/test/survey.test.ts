@@ -284,10 +284,33 @@ describe("WI-V1W4-LOWER-EXTEND-SURVEY-001 sampled cold-pass survey", () => {
         }
       }
 
-      // Step 3: Merge with any pre-existing pending atoms (preserve prior state).
+      // Step 3: Merge with any pre-existing pending atoms.
+      // Preserve prior state (reason, category) but upgrade sourcePath when the
+      // prior entry has a registry: fallback and this run resolved a real path.
+      // This handles the corpus-provenance fix (WI-V1W4-LOWER-EXTEND-CORPUS-PROVENANCE-001):
+      // the prior pending-atoms.json was written before the merkleRoot→sourcePath map
+      // was implemented, so all entries carried "registry:<hash>" labels. On re-run,
+      // the corpus-loader now provides real file paths — the merge should absorb them.
       const preExisting = loadPendingAtoms(PENDING_PATH);
+      const newByHash = new Map(pendingAtoms.map((p) => [p.canonicalAstHash, p]));
+      const mergedPending: PendingAtom[] = preExisting.map((existing) => {
+        const updated = newByHash.get(existing.canonicalAstHash);
+        if (
+          updated !== undefined &&
+          existing.sourcePath !== null &&
+          existing.sourcePath.startsWith("registry:") &&
+          updated.sourcePath !== null &&
+          !updated.sourcePath.startsWith("registry:")
+        ) {
+          // Upgrade the sourcePath from registry fallback to real path; keep
+          // other fields (reason, category) from the existing entry so edits
+          // made by prior implementers are not silently overwritten.
+          return { ...existing, sourcePath: updated.sourcePath };
+        }
+        return existing;
+      });
+      // Append genuinely new atoms (not in the pre-existing list at all).
       const existingHashes = new Set(preExisting.map((p) => p.canonicalAstHash));
-      const mergedPending = [...preExisting];
       for (const p of pendingAtoms) {
         if (!existingHashes.has(p.canonicalAstHash)) {
           mergedPending.push(p);
