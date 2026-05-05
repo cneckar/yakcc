@@ -96,6 +96,7 @@
  */
 
 import {
+  type ArrowFunction,
   type BigIntLiteral,
   type BinaryExpression,
   type Block,
@@ -107,9 +108,11 @@ import {
   type ForOfStatement,
   type ForStatement,
   type FunctionDeclaration,
+  type FunctionExpression,
   type IfStatement,
   type NoSubstitutionTemplateLiteral,
   type NumericLiteral,
+  type ParameterDeclaration,
   type PrefixUnaryExpression,
   Project,
   type PropertyAccessExpression,
@@ -124,6 +127,7 @@ import {
   type ThrowStatement,
   type TryStatement,
   TypeFlags,
+  type VariableDeclaration,
   type VariableStatement,
   type WhileStatement,
 } from "ts-morph";
@@ -139,7 +143,8 @@ import type { NumericDomain } from "./wasm-function.js";
 /** The category of a lowering failure. */
 export type LoweringErrorKind =
   | "unsupported-node" // AST node kind not yet implemented (loud failure)
-  | "unsupported-capture" // closure capture placeholder (WI-10 fills this)
+  | "unsupported-capture" // closure capture placeholder (superseded by WI-10)
+  | "unsupported-runtime-closure" // closure value not statically resolvable at call site (WI-10)
   | "missing-export" // source has no exported function
   | "parse-error" // ts-morph reports a hard parse error
   | "unknown-call-target"; // CallExpression callee not resolvable (WI-09)
@@ -1199,6 +1204,21 @@ interface LoweringContext {
    * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
    */
   readonly importedFuncCount: number;
+  /**
+   * Map of variable binding name → LiftedClosure descriptor (WI-10).
+   *
+   * Populated by lowerModule() Pass 1b for `let f = (x) => ...` patterns.
+   * When a CallExpression target is not in funcIndexTable (not a plain function
+   * name) but IS in this map, the call is emitted as:
+   *   [captures in closure order] [call args] call <closure.funcIndex>
+   *
+   * Empty map (default) disables closure call inlining — WI-09 sources that
+   * have no closures work unchanged.
+   *
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-RETURN-001
+   */
+  readonly closureBindingMap: ReadonlyMap<string, LiftedClosure>;
 }
 
 /**
@@ -1682,6 +1702,216 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
       return;
     }
 
+    // Closure binding call: `f(arg)` where `f` was bound as `let f = (x) => ...`
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-RETURN-001
+    // @title Closure call sites emit captures-then-args + direct call via closureBindingMap
+    // @status accepted
+    // @rationale
+    //   When a variable binding `f` is present in closureBindingMap (populated by
+    //   Pass 1b for `let f = (...) => ...` patterns), `f(arg)` is lowered as:
+    //     [captures from enclosing scope, in capture order] [call args] call <funcIndex>
+    //   This avoids call_indirect. The enclosing scope captures are read from the
+    //   current SymbolTable (they are params/locals of the current function). The
+    //   funcIndex is the synthetic function index assigned by Pass 1b.
+    //   Non-statically-resolvable calls (e.g. arr[i](x)) throw unsupported-runtime-closure.
+    if (ctx.closureBindingMap.has(callText)) {
+      const lifted = ctx.closureBindingMap.get(callText) as LiftedClosure;
+      // Emit captures first (each capture is a local.get from the current scope)
+      for (const captureName of lifted.captureNames) {
+        const captureSlot = ctx.table.lookup(captureName);
+        if (captureSlot === undefined || captureSlot.kind === "captured") {
+          throw new LoweringError({
+            kind: "unsupported-runtime-closure",
+            message: `LoweringVisitor: closure capture '${captureName}' not found in current scope when lowering call to '${callText}'`,
+          });
+        }
+        ctx.opcodes.push(0x20, captureSlot.index); // local.get capture
+      }
+      // Emit call arguments
+      for (const arg of args) {
+        lowerExpression(ctx, arg as Expression);
+      }
+      const absIdx = lifted.funcIndex + ctx.importedFuncCount;
+      ctx.opcodes.push(0x10, ...uleb128Bytes(absIdx)); // call <liftedFuncIdx>
+      return;
+    }
+
+    // HOF inline-desugar: arr.map(f) and arr.filter(f) (WI-10)
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-HOF-INLINE-001
+    // @title arr.map(f)/arr.filter(f) inline-desugar to for-loop + lifted closure call
+    // @status accepted
+    // @rationale
+    //   `arr.map(f)` where arr is an array param (ptr, len, cap) desugars to:
+    //     result = host_alloc(len * 4);  result_len = 0;
+    //     for (let i = 0; i < len; i++) { result[result_len++] = f(arr[i]); }
+    //     return (result, result_len, result_len)  [not used in scalar context]
+    //   For the eval contract substrates, .map/.filter are used in an array context
+    //   where the result is immediately assigned. The loop uses the existing for-loop
+    //   lowering machinery. The closure argument `f` is resolved via closureBindingMap.
+    //   `arr.filter(f)` similarly but only pushes elements where f(el) is truthy.
+    //
+    //   Limitation: only simple identifier callees (not complex expressions) are
+    //   supported. Non-identifier or non-closureBindingMap callees throw.
+    if (callText.endsWith(".map") || callText.endsWith(".filter")) {
+      const dotIdx = callText.lastIndexOf(".");
+      const arrVarName = callText.slice(0, dotIdx);
+      const methodName = callText.slice(dotIdx + 1); // "map" or "filter"
+
+      // Resolve the array ptr slot (ptr is registered in the symbol table)
+      const ptrSlot = ctx.table.lookup(arrVarName);
+      if (ptrSlot === undefined || ptrSlot.kind === "captured") {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message: `LoweringVisitor: HOF ${methodName}: array variable '${arrVarName}' not found in symbol table`,
+        });
+      }
+      // Array ABI: ptr at ptrSlot.index, len at ptrSlot.index + 1
+      const lenSlotIdx = ptrSlot.index + 1;
+
+      // Resolve the closure argument (must be a single identifier in closureBindingMap)
+      if (args.length !== 1) {
+        throw new LoweringError({
+          kind: "unsupported-node",
+          message: `LoweringVisitor: arr.${methodName}() requires exactly 1 argument (the mapping function), got ${args.length}`,
+        });
+      }
+      const cbArgText = (args[0] as Expression).getText().trim();
+      const lifted = ctx.closureBindingMap.get(cbArgText);
+      if (lifted === undefined) {
+        throw new LoweringError({
+          kind: "unsupported-runtime-closure",
+          message: `LoweringVisitor: arr.${methodName}(${cbArgText}): callback '${cbArgText}' is not a statically-known closure binding. Only closures declared as 'let f = (...) => ...' in the same function are supported. Dynamic callees require call_indirect (not yet supported).`,
+        });
+      }
+
+      // Allocate loop index local
+      const idxSlot = ctx.table.defineLocal(`_hof_i_${arrVarName}`, "i32");
+      ctx.locals.push({ count: 1, type: "i32" });
+      ctx.opcodes.push(0x41, 0x00, 0x21, idxSlot.index); // i32.const 0; local.set _hof_i
+
+      // For .map: allocate result ptr and result len locals
+      // For .filter: same structure but conditional push
+      const resultPtrSlot = ctx.table.defineLocal(`_hof_rptr_${arrVarName}`, "i32");
+      ctx.locals.push({ count: 1, type: "i32" });
+      const resultLenSlot = ctx.table.defineLocal(`_hof_rlen_${arrVarName}`, "i32");
+      ctx.locals.push({ count: 1, type: "i32" });
+
+      // Allocate result buffer: host_alloc(len * 4) → result ptr
+      // host_alloc is import index 1
+      ctx.opcodes.push(0x20, lenSlotIdx); // local.get len
+      ctx.opcodes.push(0x41, 0x04); // i32.const 4
+      ctx.opcodes.push(0x6c); // i32.mul
+      ctx.opcodes.push(0x10, ...uleb128Bytes(HOST_IMPORT_INDICES.host_alloc ?? 1)); // call host_alloc
+      ctx.opcodes.push(0x21, resultPtrSlot.index); // local.set resultPtr
+      ctx.opcodes.push(0x41, 0x00, 0x21, resultLenSlot.index); // i32.const 0; local.set resultLen
+
+      // Emit for loop: for (let i = 0; i < len; i++)
+      ctx.opcodes.push(0x02, 0x40); // block (void)
+      ctx.opcodes.push(0x03, 0x40); // loop (void)
+      ctx.loopNestDepth++;
+
+      // Condition: i >= len → exit
+      ctx.opcodes.push(0x20, idxSlot.index); // local.get i
+      ctx.opcodes.push(0x20, lenSlotIdx); // local.get len
+      ctx.opcodes.push(0x4e); // i32.ge_s
+      ctx.opcodes.push(0x0d, 0x01); // br_if 1 (exit)
+
+      // Load element: el = i32.load(ptr + i * 4)
+      ctx.table.pushFrame({ isFunctionBoundary: false });
+      const elSlot = ctx.table.defineLocal(`_hof_el_${arrVarName}`, "i32");
+      ctx.locals.push({ count: 1, type: "i32" });
+      ctx.opcodes.push(0x20, ptrSlot.index); // local.get ptr
+      ctx.opcodes.push(0x20, idxSlot.index); // local.get i
+      ctx.opcodes.push(0x41, 0x04); // i32.const 4
+      ctx.opcodes.push(0x6c); // i32.mul
+      ctx.opcodes.push(0x6a); // i32.add (ptr + i*4)
+      ctx.opcodes.push(0x28, 0x02, 0x00); // i32.load align=2 offset=0
+      ctx.opcodes.push(0x21, elSlot.index); // local.set el
+
+      if (methodName === "map") {
+        // result = f(el): emit captures then el, then call lifted closure
+        for (const captureName of lifted.captureNames) {
+          const captureSlot = ctx.table.lookup(captureName);
+          if (captureSlot === undefined || captureSlot.kind === "captured") {
+            throw new LoweringError({
+              kind: "unsupported-runtime-closure",
+              message: `LoweringVisitor: .map closure capture '${captureName}' not in scope`,
+            });
+          }
+          ctx.opcodes.push(0x20, captureSlot.index);
+        }
+        ctx.opcodes.push(0x20, elSlot.index); // local.get el (closure arg)
+        const absMapIdx = lifted.funcIndex + ctx.importedFuncCount;
+        ctx.opcodes.push(0x10, ...uleb128Bytes(absMapIdx)); // call closure
+
+        // Store result: i32.store(resultPtr + resultLen * 4, callResult)
+        ctx.opcodes.push(0x21, elSlot.index); // reuse elSlot to hold result temporarily
+        ctx.opcodes.push(0x20, resultPtrSlot.index); // local.get resultPtr
+        ctx.opcodes.push(0x20, resultLenSlot.index); // local.get resultLen
+        ctx.opcodes.push(0x41, 0x04); // i32.const 4
+        ctx.opcodes.push(0x6c); // i32.mul
+        ctx.opcodes.push(0x6a); // i32.add (resultPtr + resultLen*4)
+        ctx.opcodes.push(0x20, elSlot.index); // local.get result
+        ctx.opcodes.push(0x36, 0x02, 0x00); // i32.store align=2 offset=0
+        // resultLen++
+        ctx.opcodes.push(0x20, resultLenSlot.index); // local.get resultLen
+        ctx.opcodes.push(0x41, 0x01); // i32.const 1
+        ctx.opcodes.push(0x6a); // i32.add
+        ctx.opcodes.push(0x21, resultLenSlot.index); // local.set resultLen
+      } else {
+        // filter: if f(el) { result[resultLen++] = el }
+        for (const captureName of lifted.captureNames) {
+          const captureSlot = ctx.table.lookup(captureName);
+          if (captureSlot === undefined || captureSlot.kind === "captured") {
+            throw new LoweringError({
+              kind: "unsupported-runtime-closure",
+              message: `LoweringVisitor: .filter closure capture '${captureName}' not in scope`,
+            });
+          }
+          ctx.opcodes.push(0x20, captureSlot.index);
+        }
+        ctx.opcodes.push(0x20, elSlot.index); // local.get el
+        const absFilterIdx = lifted.funcIndex + ctx.importedFuncCount;
+        ctx.opcodes.push(0x10, ...uleb128Bytes(absFilterIdx)); // call closure → i32 predicate
+
+        // if (predicate) { store el; resultLen++ }
+        ctx.opcodes.push(0x04, 0x40); // if (void)
+        ctx.opcodes.push(0x20, resultPtrSlot.index); // local.get resultPtr
+        ctx.opcodes.push(0x20, resultLenSlot.index); // local.get resultLen
+        ctx.opcodes.push(0x41, 0x04); // i32.const 4
+        ctx.opcodes.push(0x6c); // i32.mul
+        ctx.opcodes.push(0x6a); // i32.add (resultPtr + resultLen*4)
+        ctx.opcodes.push(0x20, elSlot.index); // local.get el
+        ctx.opcodes.push(0x36, 0x02, 0x00); // i32.store align=2 offset=0
+        ctx.opcodes.push(0x20, resultLenSlot.index); // local.get resultLen
+        ctx.opcodes.push(0x41, 0x01); // i32.const 1
+        ctx.opcodes.push(0x6a); // i32.add
+        ctx.opcodes.push(0x21, resultLenSlot.index); // local.set resultLen
+        ctx.opcodes.push(0x0b); // end if
+      }
+
+      ctx.table.popFrame();
+
+      // i++
+      ctx.opcodes.push(0x20, idxSlot.index); // local.get i
+      ctx.opcodes.push(0x41, 0x01); // i32.const 1
+      ctx.opcodes.push(0x6a); // i32.add
+      ctx.opcodes.push(0x21, idxSlot.index); // local.set i
+
+      ctx.opcodes.push(0x0c, 0x00); // br 0 (continue)
+      ctx.opcodes.push(0x0b); // end loop
+      ctx.opcodes.push(0x0b); // end block
+      ctx.loopNestDepth--;
+
+      // The HOF expression produces the result ptr (i32) on the stack as its value.
+      // Callers that store `let result = arr.map(f)` assign this to a local.
+      // We push resultPtr as the "value" of the map/filter expression.
+      ctx.opcodes.push(0x20, resultPtrSlot.index); // local.get resultPtr
+      return;
+    }
+
     // host_* call: map to import function index
     // HOST_IMPORT_INDICES maps host function names to their 0-based import funcidx.
     // This mirrors the import ordering in wasm-backend.ts emitControlFlowModule().
@@ -1703,7 +1933,7 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
 
     throw new LoweringError({
       kind: "unknown-call-target",
-      message: `LoweringVisitor: cannot resolve call target '${callText}' — not a Math/BigInt builtin, not in funcIndexTable, and not a host_* import. Did you mean to pass a multi-function source to lowerModule()? call_indirect/closures deferred to WI-V1W3-WASM-LOWER-10.`,
+      message: `LoweringVisitor: cannot resolve call target '${callText}' — not a Math/BigInt builtin, not in funcIndexTable, not a closure binding, and not a host_* import. Did you mean to pass a multi-function source to lowerModule()?`,
     });
   }
 
@@ -1887,6 +2117,26 @@ function lowerStatement(ctx: LoweringContext, stmt: Statement): void {
     for (const decl of decls) {
       const initializer = decl.getInitializer();
       const varName = decl.getName();
+
+      // If this variable is a lifted closure (e.g. `let f = (x) => x + base`),
+      // skip the variable declaration entirely. The closure has been extracted to
+      // a synthetic top-level function in Pass 1b; at call sites `f(arg)` is
+      // resolved via closureBindingMap to a direct WASM `call` instruction.
+      // No WASM local slot is needed for a closure-binding variable.
+      //
+      // @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
+      // @title Lifted closure bindings skip VariableStatement lowering
+      // @status accepted
+      // @rationale
+      //   Lambda-lifting replaces `let f = (...) => ...` with a synthetic function.
+      //   The binding `f` only exists in TypeScript to carry the reference; in WASM
+      //   the reference becomes a static funcIndex in closureBindingMap. No local slot
+      //   is allocated. This guard prevents the ArrowFunction initializer from reaching
+      //   lowerExpression() which correctly cannot lower a function literal as a value.
+      if (ctx.closureBindingMap.has(varName)) {
+        continue;
+      }
+
       if (initializer !== undefined) {
         lowerExpression(ctx, initializer);
       } else {
@@ -3529,6 +3779,339 @@ export interface LoweringModuleResult {
   readonly warnings: ReadonlyArray<string>;
 }
 
+// ---------------------------------------------------------------------------
+// Closure / Lambda-lifting infrastructure (WI-V1W3-WASM-LOWER-10)
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
+// @title Lambda-lift closures at lowering time; NO call_indirect/funcref/Table
+// @status accepted
+// @rationale
+//   Option (b) chosen: lambda-lift at lowering time. Each closure expression
+//   (ArrowFunction or FunctionExpression) inside a top-level function body is
+//   extracted into a synthetic top-level function named `__closure_<n>` (or
+//   `<enclosingFn>__closure_<n>` for disambiguation). Captured variables from
+//   the enclosing scope are collected via SymbolTable lookups and prepended as
+//   extra parameters in the lifted signature: `(captureParams..., closureParams...)
+//   → closureReturn`. At the call site of a binding `let f = (x) => ...`,
+//   captures are pushed first, then the call arguments, then `call <syntheticIdx>`.
+//   Option (a) (funcref/Table/Element) rejected: requires WASM table section,
+//   funcref type, ref.func, and call_indirect — significant machinery for v1.
+//   Option (c) (reject all closures) rejected: .map/.filter and makeAdder are
+//   in the eval contract.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-HOF-INLINE-001
+// @title .map/.filter inline-desugar at lowering time; reuse WI-07/.push/WI-08 control flow
+// @status accepted
+// @rationale
+//   `arr.map(f)` is desugared to a for-loop that pushes `f(arr[i])` into a
+//   result array. `arr.filter(f)` similarly pushes elements where `f(el)` is
+//   truthy. Both are inlined as `call <liftedClosureIdx>` within a for-loop
+//   body, reusing the existing for-loop + .push lowering machinery from WI-07/08.
+//   No call_indirect required.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-RETURN-001
+// @title Returns-a-closure: closure VALUE is the synthetic funcIndex (i32)
+// @status accepted
+// @rationale
+//   When a variable is bound to a closure (`let f = (x) => x + n`), the
+//   lowering records the binding name → syntheticFuncIndex in a closureBindingMap.
+//   Subsequent calls `f(arg)` look up the name, find the funcIndex, and emit
+//   captures-then-args + `call <funcIndex>` without call_indirect. If a call
+//   site is NOT statically resolvable (e.g., `arr[i](x)`, passing closures as
+//   function params), throw LoweringError("unsupported-runtime-closure") per
+//   Sacred Practice #5 (fail loudly, never silently corrupt).
+// ---------------------------------------------------------------------------
+
+/**
+ * Metadata for a single lambda-lifted closure function.
+ * Produced by Pass 1b (collectClosures); consumed by Pass 2 (code emission).
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
+ */
+export interface LiftedClosure {
+  /** Synthetic function name, e.g. `__closure_0` or `makeAdder__closure_0`. */
+  readonly syntheticName: string;
+  /** Local function index in the module's funcIndexTable (0-based, no imports). */
+  readonly funcIndex: number;
+  /**
+   * Names of captured variables (from the enclosing scope), in capture order.
+   * These become the leading parameters of the lifted function.
+   */
+  readonly captureNames: ReadonlyArray<string>;
+  /**
+   * Names of the closure's own parameters (excluding captures), in declaration order.
+   */
+  readonly closureParamNames: ReadonlyArray<string>;
+  /**
+   * The ArrowFunction or FunctionExpression AST node.
+   * Retained so Pass 2 can lower the closure body.
+   */
+  readonly node: ArrowFunction | FunctionExpression;
+  /**
+   * Name of the enclosing top-level function that contains this closure.
+   */
+  readonly enclosingFnName: string;
+}
+
+/**
+ * Walk a top-level FunctionDeclaration body and collect all closure expressions
+ * (ArrowFunction or FunctionExpression). For each closure:
+ *   1. Determine the set of captured variables: identifiers in the closure body
+ *      that resolve to params/locals of the enclosing function scope (but NOT
+ *      the closure's own params or locals).
+ *   2. Assign a synthetic name and funcIndex (continuing from `nextFuncIndex`).
+ *   3. Append to `out`.
+ *
+ * Also builds `closureBindingMap`: maps variable-declaration name → LiftedClosure
+ * for `let f = (x) => ...` patterns, so call sites `f(arg)` can resolve to the
+ * lifted funcIndex.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001 (Pass 1b implementation)
+ *
+ * @param fn             - Top-level FunctionDeclaration to scan.
+ * @param nextFuncIndex  - Next available local funcIndex (modified as closures are added).
+ * @param out            - Accumulator for discovered closures.
+ * @param closureBindingMap - Accumulator: varName → LiftedClosure for static call sites.
+ * @returns Updated nextFuncIndex (after assigning indices to all found closures).
+ */
+function collectClosures(
+  fn: FunctionDeclaration,
+  initialNextFuncIndex: number,
+  out: LiftedClosure[],
+  closureBindingMap: Map<string, LiftedClosure>,
+): number {
+  let nextFuncIndex = initialNextFuncIndex;
+  const enclosingFnName = fn.getName() ?? "_fn";
+
+  // Collect all param/local names declared in the enclosing function scope.
+  // These are candidates for capture detection.
+  const enclosingParamNames = new Set<string>(fn.getParameters().map((p) => p.getName()));
+
+  // We also need to track locally declared names (const/let) in the enclosing
+  // function body to detect captures of those too.
+  const enclosingLocalNames = new Set<string>();
+  fn.getBody()?.forEachDescendant((node) => {
+    if (node.getKind() === SyntaxKind.VariableDeclaration) {
+      const varDecl = node as VariableDeclaration;
+      // Only top-level (direct children of enclosing function body) locals count
+      // as enclosing scope for capture analysis. Nested locals inside the closure
+      // itself are NOT in scope. We collect all for now and subtract closure-own
+      // params/locals at analysis time.
+      enclosingLocalNames.add(varDecl.getName());
+    }
+  });
+
+  // Find all closure expressions (ArrowFunction or FunctionExpression) inside fn.
+  // We scan depth-first but do NOT recurse into nested closures found here —
+  // each closure is lifted exactly once at the first level it appears.
+  const closureNodes: Array<ArrowFunction | FunctionExpression> = [];
+  const visitedNodes = new Set<ArrowFunction | FunctionExpression>();
+
+  fn.getBody()?.forEachDescendant((node) => {
+    const kind = node.getKind();
+    if (kind === SyntaxKind.ArrowFunction || kind === SyntaxKind.FunctionExpression) {
+      const closureNode = node as ArrowFunction | FunctionExpression;
+      // Skip if this node is nested inside another closure already collected at
+      // this pass level (we don't lift closures-within-closures in this WI).
+      // Use getAncestors() on the potential descendant to detect nesting.
+      const ancestors = new Set(closureNode.getAncestors());
+      let isNested = false;
+      for (const existing of closureNodes) {
+        if (ancestors.has(existing)) {
+          isNested = true;
+          break;
+        }
+      }
+      if (!isNested && !visitedNodes.has(closureNode)) {
+        closureNodes.push(closureNode);
+        visitedNodes.add(closureNode);
+      }
+    }
+  });
+
+  // For each found closure, determine captures and assign a funcIndex.
+  for (const closureNode of closureNodes) {
+    // Collect the closure's own parameter names (to exclude from capture analysis).
+    const closureOwnParams = new Set<string>(
+      closureNode.getParameters().map((p: ParameterDeclaration) => p.getName()),
+    );
+
+    // Collect identifier names referenced inside the closure body that resolve to
+    // enclosing scope variables (params or locals of the enclosing function).
+    const captureSet = new Set<string>();
+    closureNode.forEachDescendant((node) => {
+      if (node.getKind() === SyntaxKind.Identifier) {
+        const name = node.getText();
+        // Captured if: referenced in closure body, not a closure-own param,
+        // and IS a param or local of the enclosing function.
+        if (
+          !closureOwnParams.has(name) &&
+          (enclosingParamNames.has(name) || enclosingLocalNames.has(name))
+        ) {
+          captureSet.add(name);
+        }
+      }
+    });
+
+    // Stable capture order: params first (in declaration order), then locals
+    // (in the order they appear in the enclosing function text).
+    const captureNames: string[] = [];
+    for (const pName of enclosingParamNames) {
+      if (captureSet.has(pName)) captureNames.push(pName);
+    }
+    for (const lName of enclosingLocalNames) {
+      if (captureSet.has(lName) && !captureNames.includes(lName)) captureNames.push(lName);
+    }
+
+    // Closure's own parameters in declaration order.
+    const closureParamNames = closureNode
+      .getParameters()
+      .map((p: ParameterDeclaration) => p.getName());
+
+    // Assign synthetic name and funcIndex.
+    const closureIdx = out.filter((c) => c.enclosingFnName === enclosingFnName).length;
+    const syntheticName = `${enclosingFnName}__closure_${closureIdx}`;
+    const funcIndex = nextFuncIndex++;
+
+    const lifted: LiftedClosure = {
+      syntheticName,
+      funcIndex,
+      captureNames,
+      closureParamNames,
+      node: closureNode,
+      enclosingFnName,
+    };
+    out.push(lifted);
+
+    // If this closure is the initializer of a variable declaration, record the binding.
+    // Pattern: `const/let f = (x) => ...` or `const/let f = function(...) {...}`
+    // The parent chain is: closure → VariableDeclaration → VariableDeclarationList → VariableStatement
+    const parent = closureNode.getParent();
+    if (parent !== undefined && parent.getKind() === SyntaxKind.VariableDeclaration) {
+      const varDecl = parent as VariableDeclaration;
+      const bindingName = varDecl.getName();
+      closureBindingMap.set(bindingName, lifted);
+    }
+  }
+
+  return nextFuncIndex;
+}
+
+/**
+ * Lower a lifted closure as a synthetic top-level function.
+ * The lifted function receives `(captureParams..., closureParams...)` in that order.
+ * The body of the closure is lowered using the general numeric lowering path.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001 (Pass 2 emission for lifted closures)
+ *
+ * @param closure         - The lifted closure metadata.
+ * @param funcIndexTable  - Full funcIndex table (including synthetic functions).
+ * @param closureBindingMap - Maps varName → LiftedClosure for inlining nested calls.
+ * @param table           - The visitor's SymbolTable (reset per function via pushFrame).
+ */
+function lowerLiftedClosure(
+  closure: LiftedClosure,
+  funcIndexTable: ReadonlyMap<string, number>,
+  table: SymbolTable,
+): LoweringResult {
+  const { node, captureNames, closureParamNames, syntheticName } = closure;
+
+  // Infer domain from the closure body text + params.
+  // We use a heuristic: scan closure source for f64/i32/i64 indicators.
+  // Since the closure node is an ArrowFunction/FunctionExpression (not a
+  // FunctionDeclaration), we can't use inferNumericDomain directly (it takes
+  // FunctionDeclaration). We'll use i32 as the default for closures, unless
+  // the closure body contains float-forcing indicators.
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-DOMAIN-001
+  // @title Closure domain defaults to i32; f64 forced by body scan for '/' or float literals
+  // @status accepted
+  // @rationale
+  //   Closures in the wave-3 eval contract are integer arithmetic (makeAdder, .map,
+  //   .filter). Using i32 as the default is correct for the corpus. The body scan
+  //   adds f64 for closures that explicitly use float operations. This mirrors the
+  //   enclosing function's inferNumericDomain heuristic applied to the closure text.
+  const closureText = node.getText();
+  let domain: import("./wasm-function.js").NumericDomain = "i32";
+  if (/\//.test(closureText) && !/\/\//g.test(closureText.replace(/\/\/.*/g, ""))) {
+    // True division in closure body → f64 (same as rule 1 in inferNumericDomain)
+    // But only if it's not a comment. Simplified: any `/` that isn't `//` or `/*`.
+    const strippedComments = closureText
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    if (/(?<![/*])\//u.test(strippedComments.replace(/['"]/g, ""))) {
+      domain = "f64";
+    }
+  }
+  // Float literal → f64
+  if (/\d+\.\d/.test(closureText)) {
+    domain = "f64";
+  }
+
+  const opcodes: number[] = [];
+  const locals: import("./wasm-function.js").LocalDecl[] = [];
+
+  const ctx: LoweringContext = {
+    domain,
+    table,
+    opcodes,
+    locals,
+    blockDepth: 0,
+    loopNestDepth: 0,
+    codepointAtImportIdx: 9,
+    codepointNextOffsetImportIdx: 10,
+    stringEqImportIdx: 8,
+    usesForOfString: false,
+    usesStringSwitch: false,
+    funcIndexTable,
+    importedFuncCount: 0,
+    closureBindingMap: new Map(),
+  };
+
+  table.pushFrame({ isFunctionBoundary: true });
+
+  // Register capture params first, then closure own params.
+  for (const captureName of captureNames) {
+    table.defineParam(captureName, domain);
+  }
+  for (const paramName of closureParamNames) {
+    table.defineParam(paramName, domain);
+  }
+
+  // Lower the closure body.
+  const bodyNode = node.getBody();
+  if (bodyNode === undefined) {
+    table.popFrame();
+    throw new LoweringError({
+      kind: "unsupported-node",
+      message: `LoweringVisitor: closure '${syntheticName}' has no body`,
+    });
+  }
+
+  const bodyKind = bodyNode.getKind();
+  if (bodyKind === SyntaxKind.Block) {
+    // Block body: `(x) => { return x + 1; }`
+    const block = bodyNode as Block;
+    for (const stmt of block.getStatements()) {
+      lowerStatement(ctx, stmt as Statement);
+    }
+  } else {
+    // Concise body: `(x) => x + 1` — emit expression + return
+    lowerExpression(ctx, bodyNode as Expression);
+    ctx.opcodes.push(0x0f); // return
+  }
+
+  table.popFrame();
+
+  return {
+    fnName: syntheticName,
+    wasmFn: { locals: ctx.locals, body: ctx.opcodes },
+    wave2Shape: null,
+    numericDomain: domain,
+    warnings: [],
+  };
+}
+
 /**
  * Recursive-descent visitor: parse source → walk AST → emit WasmFunction.
  *
@@ -4211,12 +4794,36 @@ export class LoweringVisitor {
     }
 
     // Build funcIndexTable: functionName → localFuncIdx (0-based)
+    // Pass 1a: enumerate all top-level function declarations in source order.
     const funcIndexTable = new Map<string, number>();
     for (let i = 0; i < allFunctions.length; i++) {
       const name = allFunctions[i]?.getName();
       if (name !== undefined && name.length > 0) {
         funcIndexTable.set(name, i);
       }
+    }
+
+    // Pass 1b: collect closures from each top-level function body.
+    //
+    // For each ArrowFunction/FunctionExpression found inside a top-level
+    // function body, assign a synthetic funcIndex (continuing from the
+    // last user-declared function index). The funcIndexTable is extended
+    // with synthetic entries so Pass 2 can resolve `call <syntheticFuncIdx>`
+    // for closure call sites.
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001 (Pass 1b implementation)
+    const liftedClosures: LiftedClosure[] = [];
+    // closureBindingMap: varName → LiftedClosure for static `let f = (x) => ...` sites.
+    const closureBindingMap = new Map<string, LiftedClosure>();
+    let nextFuncIndex = allFunctions.length; // continue index after user-declared fns
+
+    for (const fn of allFunctions) {
+      nextFuncIndex = collectClosures(fn, nextFuncIndex, liftedClosures, closureBindingMap);
+    }
+
+    // Register synthetic closure names in funcIndexTable so Pass 2 call emission works.
+    for (const lifted of liftedClosures) {
+      funcIndexTable.set(lifted.syntheticName, lifted.funcIndex);
     }
 
     // Pass 2: lower each function body with the funcIndexTable available for
@@ -4227,7 +4834,14 @@ export class LoweringVisitor {
     const allWarnings: string[] = [];
 
     for (const fn of allFunctions) {
-      const result = this._lowerFunctionWithCallCtx(fn, funcIndexTable, 0);
+      const result = this._lowerFunctionWithCallCtx(fn, funcIndexTable, 0, closureBindingMap);
+      results.push(result);
+      allWarnings.push(...result.warnings);
+    }
+
+    // Also lower the lifted closure bodies as synthetic top-level functions.
+    for (const lifted of liftedClosures) {
+      const result = lowerLiftedClosure(lifted, funcIndexTable, this._table);
       results.push(result);
       allWarnings.push(...result.warnings);
     }
@@ -4324,15 +4938,22 @@ export class LoweringVisitor {
    *
    * This variant is called by lowerModule() for each function in the module.
    * The funcIndexTable maps all function names → local funcIndex (0-based),
-   * built during Pass 1. importedFuncCount is the number of host imports that
-   * precede the locally-defined functions in the WASM funcidx space.
+   * built during Pass 1 (including synthetic closure names from Pass 1b).
+   * importedFuncCount is the number of host imports that precede the
+   * locally-defined functions in the WASM funcidx space.
+   *
+   * closureBindingMap (WI-10): maps variable binding names (e.g. `f` from
+   * `let f = (x) => ...`) to their LiftedClosure descriptor. Used by call
+   * expression lowering to emit captures-then-args + direct call.
    *
    * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
    */
   private _lowerFunctionWithCallCtx(
     fn: FunctionDeclaration,
     funcIndexTable: ReadonlyMap<string, number>,
     importedFuncCount: number,
+    closureBindingMap: ReadonlyMap<string, LiftedClosure> = new Map(),
   ): LoweringResult {
     // Delegate to _lowerNumericFunction but we need to thread the call context
     // through. Since _lowerNumericFunction constructs LoweringContext internally,
@@ -4354,25 +4975,33 @@ export class LoweringVisitor {
     // Record shape: no call resolution needed for wave-3 record functions
     const recShape = detectRecordShape(fn);
     if (recShape !== null) return this._lowerRecordFunction(fn, recShape);
-    // Array shape: no call resolution needed
+    // Array shape: no call resolution needed (WI-10: .map/.filter handled at general path)
     const arrShape = detectArrayShape(fn);
     const hasForOf = /for\s*\(\s*(?:const|let)\s+\w+\s+of\s+/.test(fn.getText());
     if (arrShape !== null && !hasForOf) return this._lowerArrayFunction(fn, arrShape);
-    // General numeric lowering: inject funcIndexTable + importedFuncCount
-    return this._lowerNumericFunctionWithCallCtx(fn, funcIndexTable, importedFuncCount);
+    // General numeric lowering: inject funcIndexTable + importedFuncCount + closureBindingMap
+    return this._lowerNumericFunctionWithCallCtx(
+      fn,
+      funcIndexTable,
+      importedFuncCount,
+      closureBindingMap,
+    );
   }
 
   /**
    * Lower a numeric function with call context injection.
    * Identical to _lowerNumericFunction except the LoweringContext receives the
-   * provided funcIndexTable and importedFuncCount for intra-module call resolution.
+   * provided funcIndexTable, importedFuncCount, and closureBindingMap for
+   * intra-module call and closure call resolution.
    *
    * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
+   * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
    */
   private _lowerNumericFunctionWithCallCtx(
     fn: FunctionDeclaration,
     funcIndexTable: ReadonlyMap<string, number>,
     importedFuncCount: number,
+    closureBindingMap: ReadonlyMap<string, LiftedClosure> = new Map(),
   ): LoweringResult {
     const fnName = fn.getName() ?? "fn";
     const { domain, warning } = inferNumericDomain(fn);
@@ -4394,6 +5023,7 @@ export class LoweringVisitor {
       usesStringSwitch: false,
       funcIndexTable,
       importedFuncCount,
+      closureBindingMap,
     };
 
     this._table.pushFrame({ isFunctionBoundary: true });
@@ -4580,6 +5210,7 @@ export class LoweringVisitor {
       // WI-09 defaults: no intra-module calls. lowerModule() overrides these.
       funcIndexTable: new Map(),
       importedFuncCount: 0,
+      closureBindingMap: new Map(),
     };
 
     // Register parameters in the symbol table and collect per-param domains.
@@ -4694,6 +5325,7 @@ export class LoweringVisitor {
       // WI-09 defaults: no intra-module calls. lowerModule() overrides these.
       funcIndexTable: new Map(),
       importedFuncCount: 0,
+      closureBindingMap: new Map(),
     };
 
     // Register parameters and build record param maps
@@ -4803,25 +5435,10 @@ export class LoweringVisitor {
     const fnName = fn.getName() ?? "fn";
     const source = fn.getText();
 
-    // Reject deferred operations loudly (Sacred Practice #5)
-    if (source.includes(".map(")) {
-      throw new LoweringError({
-        kind: "unsupported-node",
-        message:
-          "LoweringVisitor: Array.map() is not supported in WI-07 — " +
-          "it requires closures (deferred to WI-V1W3-WASM-LOWER-10). " +
-          "Use an explicit for loop instead.",
-      });
-    }
-    if (source.includes(".filter(")) {
-      throw new LoweringError({
-        kind: "unsupported-node",
-        message:
-          "LoweringVisitor: Array.filter() is not supported in WI-07 — " +
-          "it requires closures (deferred to WI-V1W3-WASM-LOWER-10). " +
-          "Use an explicit for loop instead.",
-      });
-    }
+    // .map() and .filter() are now handled by the general numeric lowering path
+    // via lambda-lifting (WI-V1W3-WASM-LOWER-10). Functions using these methods
+    // should route through _lowerNumericFunctionWithCallCtx, not this array path.
+    // The remaining rejections guard operations still out of scope.
     if (/for\s*\(\s*(?:const|let)\s+\w+\s+of\s+\w+/.test(source)) {
       throw new LoweringError({
         kind: "unsupported-node",
