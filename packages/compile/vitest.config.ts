@@ -40,5 +40,20 @@ export default defineConfig({
     // forks isolation: better-sqlite3 uses native bindings; isolation avoids
     // SQLite handle conflicts between test files.
     pool: "forks",
+    // @decision DEC-INFRA-VITEST-FORK-CAP-001
+    // @title Cap vitest workers at 2 (matches CI 2-vCPU baseline)
+    // @status accepted
+    // @rationale Vitest 4.x default spawns one worker per CPU. On 10+ core
+    //   dispatcher hardware the pool bootstrap races and stalls one worker,
+    //   cascading to ~6000s timeouts on full-suite runs (vs ~40s with the cap).
+    //   CI's ubuntu-latest is 2-vCPU and dodges the problem; matching that
+    //   baseline locally + agent-side aligns posture and prevents
+    //   "works on CI, hangs on dev hardware" platform-divergent flakes.
+    //   Per-package config (Sacred Practice #12) is the canonical authority;
+    //   CLI flags or env vars would silently drift.
+    //   Uses vitest 4.x top-level maxWorkers/minWorkers (the pool-agnostic
+    //   surface that replaced the removed `poolOptions` shape).
+    maxWorkers: 2,
+    minWorkers: 1,
   },
 });
