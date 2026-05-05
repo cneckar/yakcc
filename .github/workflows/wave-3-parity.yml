@@ -1,0 +1,105 @@
+name: wave-3-parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "packages/compile/**"
+      - "packages/shave/**"
+      - "packages/registry/**"
+      - "packages/contracts/**"
+      - "examples/v1-wave-3-wasm-lower-demo/**"
+      - ".github/workflows/wave-3-parity.yml"
+
+concurrency:
+  group: wave-3-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: wave-3 closer parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Fast-skip cache.
+      #
+      # The parity result is a deterministic function of:
+      #   - all .ts source under the affected packages and the demo itself
+      #   - the lockfile (transitive deps)
+      #
+      # Cache a marker file keyed on the input hash; skip on cache hit.
+      # Cache miss = first time we've seen this source state OR a prior run
+      # failed (markers are only written after a successful test pass).
+      # -----------------------------------------------------------------------
+      - name: Compute source hash
+        id: source-hash
+        run: |
+          HASH=$(
+            { find packages/compile packages/shave packages/registry packages/contracts \
+                   examples/v1-wave-3-wasm-lower-demo \
+                   -name '*.ts' -type f -print0 \
+                  | sort -z \
+                  | xargs -0 sha256sum
+              sha256sum pnpm-lock.yaml
+            } | sha256sum | awk '{print $1}'
+          )
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "Computed input hash: $HASH"
+
+      - name: Restore verified-marker cache
+        id: verified-cache
+        uses: actions/cache@v4
+        with:
+          path: tmp/wave-3-parity/.verified-marker
+          key: wave-3-parity-verified-${{ steps.source-hash.outputs.hash }}
+
+      - name: Skip — already verified for this source state
+        if: steps.verified-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "Cache hit — wave-3 parity was previously verified for this exact source state."
+          echo
+          cat tmp/wave-3-parity/.verified-marker
+
+      # -----------------------------------------------------------------------
+      # Slow path — runs only on cache miss.
+      # -----------------------------------------------------------------------
+      - name: Set up pnpm
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: pnpm -r build
+
+      - name: Run wave-3 parity tests
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter v1-wave-3-wasm-lower-demo test
+
+      - name: Write verified-marker
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tmp/wave-3-parity
+          {
+            echo "input-hash: ${{ steps.source-hash.outputs.hash }}"
+            echo "verified-at: $(date -u +%FT%TZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "ref: ${{ github.ref }}"
+          } > tmp/wave-3-parity/.verified-marker
+          cat tmp/wave-3-parity/.verified-marker
