@@ -1219,6 +1219,23 @@ interface LoweringContext {
    * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-RETURN-001
    */
   readonly closureBindingMap: ReadonlyMap<string, LiftedClosure>;
+  /**
+   * Optional map of record-typed param name → RecordShapeMeta.
+   * Present in the general numeric lowering path when at least one param has an
+   * object-literal type annotation. Populated by _lowerNumericFunctionWithCallCtx
+   * so that lowerExpression can handle PropertyAccessExpression (obj.field) in
+   * the general path without requiring full _lowerRecordFunction routing.
+   *
+   * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001 (see below)
+   */
+  generalRecordParams?: ReadonlyMap<string, RecordShapeMeta>;
+  /**
+   * Optional map of record-typed param name → WASM slot index for the ptr.
+   * Present alongside generalRecordParams.
+   *
+   * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001 (see below)
+   */
+  generalPtrSlotMap?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -1455,11 +1472,7 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
       if (leftDomain !== undefined && rightDomain !== undefined && leftDomain !== rightDomain) {
         throw new LoweringError({
           kind: "unsupported-node",
-          message:
-            `LoweringVisitor: cross-domain comparison '${binExpr.getText()}' between` +
-            ` ${leftDomain} (left) and ${rightDomain} (right) cannot be safely lowered —` +
-            ` glue-aware slicer will emit GlueLeafEntry so the TypeScript compilation path` +
-            ` preserves correct comparison semantics verbatim (DEC-V2-GLUE-AWARE-SHAVE-001 L4-#57).`,
+          message: `LoweringVisitor: cross-domain comparison '${binExpr.getText()}' between ${leftDomain} (left) and ${rightDomain} (right) cannot be safely lowered — glue-aware slicer will emit GlueLeafEntry so the TypeScript compilation path preserves correct comparison semantics verbatim (DEC-V2-GLUE-AWARE-SHAVE-001 L4-#57).`,
         });
       }
     }
@@ -1934,6 +1947,86 @@ function lowerExpression(ctx: LoweringContext, expr: Expression): void {
     throw new LoweringError({
       kind: "unknown-call-target",
       message: `LoweringVisitor: cannot resolve call target '${callText}' — not a Math/BigInt builtin, not in funcIndexTable, not a closure binding, and not a host_* import. Did you mean to pass a multi-function source to lowerModule()?`,
+    });
+  }
+
+  // PropertyAccessExpression in the general numeric lowering path.
+  //
+  // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001
+  // @title General numeric lowerExpression handles obj.field via generalRecordParams
+  // @status accepted
+  // @rationale
+  //   WI-V1W4-LOWER-EXTEND-UNSUPPORTED-NODE closes issue #126: atoms with
+  //   numeric-typed property reads on record-typed params hit the general
+  //   lowerExpression fallback (not _lowerRecordFunction) in two scenarios:
+  //
+  //   (a) Functions routed to _lowerNumericFunctionWithCallCtx that have
+  //       object-literal-typed params alongside scalar ones — e.g.
+  //       `function getX(obj: {x: number; y: number}): number { return obj.x | 0; }`
+  //       where the body's bitop forces an i32 domain that bypasses detectRecordShape
+  //       in edge cases, or where callers from lowerModule assign params as scalar.
+  //
+  //   (b) Sub-expression lowering within lowerStatement (which calls lowerExpression
+  //       directly) where a PropertyAccessExpression is nested inside a compound
+  //       expression (e.g. BinaryExpression) and the general BinaryExpression handler
+  //       recurses into lowerExpression for each operand.
+  //
+  //   The fix: _lowerNumericFunctionWithCallCtx populates ctx.generalRecordParams and
+  //   ctx.generalPtrSlotMap for any params with object-literal type annotations. This
+  //   handler then intercepts PropertyAccessExpression and emits the field load using
+  //   the same emitFieldLoad machinery as the record-specific path.
+  //
+  //   Non-record property access (receiver is NOT a known record param) falls through
+  //   to the loud LoweringError below per Sacred Practice #5.
+  //
+  //   Wave-2 sum_record fast-path: unaffected — the fast-path check runs before
+  //   _lowerNumericFunctionWithCallCtx is ever reached. The fast-path output is
+  //   byte-identical before and after this WI (DEC-V1-WAVE-3-WASM-LOWER-SUM-RECORD-NARROW-001).
+  if (kind === SyntaxKind.PropertyAccessExpression) {
+    const propAccess = expr as PropertyAccessExpression;
+    const objExpr = propAccess.getExpression();
+    const fieldName = propAccess.getName();
+
+    // Only handle simple `param.field` where param is a known record param.
+    // Chained access (a.b.c), closure captures, array elements, etc. fall through
+    // to the loud LoweringError below — Sacred Practice #5.
+    if (
+      objExpr.getKind() === SyntaxKind.Identifier &&
+      ctx.generalRecordParams !== undefined &&
+      ctx.generalPtrSlotMap !== undefined
+    ) {
+      const paramName = objExpr.asKindOrThrow(SyntaxKind.Identifier).getText();
+      const shape = ctx.generalRecordParams.get(paramName);
+      if (shape !== undefined) {
+        const field = shape.fields.find((f) => f.name === fieldName);
+        if (field === undefined) {
+          throw new LoweringError({
+            kind: "unsupported-node",
+            message: `LoweringVisitor: record field '${fieldName}' not found in shape for param '${paramName}' — available fields: ${shape.fields.map((f) => f.name).join(", ")}`,
+          });
+        }
+        const ptrSlot = ctx.generalPtrSlotMap.get(paramName);
+        if (ptrSlot === undefined) {
+          throw new LoweringError({
+            kind: "unsupported-node",
+            message: `LoweringVisitor: no ptr slot found for record param '${paramName}' in generalPtrSlotMap`,
+          });
+        }
+        // Use the function body's inferred domain (ctx.domain) for numeric field loads,
+        // not the field's conservatively-inferred domain. This matches the logic in
+        // lowerExpressionRecord / emitFieldLoad.
+        // @decision DEC-V1-WAVE-3-WASM-LOWER-FIELD-LOAD-DOMAIN-001
+        const loadDomain = field.kind === "numeric" ? ctx.domain : "i32";
+        emitFieldLoad(ctx, ptrSlot, field, loadDomain);
+        return;
+      }
+    }
+
+    // Receiver is not a known record param (chained access, closure capture, etc.)
+    // Fail loudly per Sacred Practice #5.
+    throw new LoweringError({
+      kind: "unsupported-node",
+      message: `LoweringVisitor: PropertyAccessExpression '${propAccess.getText()}' in general numeric lowering — receiver '${objExpr.getText()}' is not a known record-typed parameter. Only simple param.field access on object-literal-typed params is supported. Chained access (a.b.c), closure captures, and array-element access are not supported here.`,
     });
   }
 
@@ -4483,12 +4576,7 @@ function lowerExpressionRecord(
       if (isStringFieldExpr(binExpr.getLeft()) || isStringFieldExpr(binExpr.getRight())) {
         throw new LoweringError({
           kind: "unsupported-node",
-          message:
-            `LoweringVisitor: equality/inequality on record string field` +
-            ` ('${binExpr.getText()}') cannot be safely lowered — pointer comparison` +
-            ` is semantically wrong; glue-aware slicer will emit GlueLeafEntry so the` +
-            ` TypeScript compilation path preserves correct === semantics verbatim` +
-            ` (DEC-V2-GLUE-AWARE-SHAVE-001 L4-#68).`,
+          message: `LoweringVisitor: equality/inequality on record string field ('${binExpr.getText()}') cannot be safely lowered — pointer comparison is semantically wrong; glue-aware slicer will emit GlueLeafEntry so the TypeScript compilation path preserves correct === semantics verbatim (DEC-V2-GLUE-AWARE-SHAVE-001 L4-#68).`,
         });
       }
     }
@@ -4994,8 +5082,13 @@ export class LoweringVisitor {
    * provided funcIndexTable, importedFuncCount, and closureBindingMap for
    * intra-module call and closure call resolution.
    *
+   * WI-V1W4-LOWER-EXTEND-UNSUPPORTED-NODE: also builds generalRecordParams and
+   * generalPtrSlotMap for any object-literal-typed params so that lowerExpression
+   * can handle PropertyAccessExpression in the general numeric lowering path.
+   *
    * @decision DEC-V1-WAVE-3-WASM-LOWER-CALL-001
    * @decision DEC-V1-WAVE-3-WASM-LOWER-CLOSURE-001
+   * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001
    */
   private _lowerNumericFunctionWithCallCtx(
     fn: FunctionDeclaration,
@@ -5006,6 +5099,39 @@ export class LoweringVisitor {
     const fnName = fn.getName() ?? "fn";
     const { domain, warning } = inferNumericDomain(fn);
     const warnings: string[] = warning !== null ? [warning] : [];
+
+    // Build generalRecordParams and generalPtrSlotMap for object-literal params.
+    // This is a pre-pass over the params before the main registration loop so that
+    // the maps are available when we construct LoweringContext.
+    //
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001
+    // We scan params for object-literal type annotations ({...}) and build
+    // shape metadata using parseObjectTypeFields / buildRecordShapeMeta — the same
+    // machinery used by _lowerRecordFunction. The resulting maps are injected into
+    // LoweringContext.generalRecordParams and .generalPtrSlotMap so that
+    // lowerExpression can resolve obj.field to a ptr load without needing to route
+    // through _lowerRecordFunction's statement dispatcher.
+    const _generalRecordParams: Map<string, RecordShapeMeta> = new Map();
+    const _generalPtrSlotMap: Map<string, number> = new Map();
+    // Slot index counter — tracks how many WASM param slots have been assigned
+    // BEFORE the main registration loop. Used to pre-compute ptr slot indices.
+    // Note: this is reset to 0 here and only used to predict slot assignments;
+    // the actual registration happens in the loop below and must match.
+    let _preSlotIdx = 0;
+    for (const param of fn.getParameters()) {
+      const typeNode = param.getTypeNode();
+      const typeText = typeNode?.getText().trim() ?? "";
+      if (typeText.startsWith("{")) {
+        const fieldDefs = parseObjectTypeFields(typeText);
+        if (fieldDefs.length > 0) {
+          const paramShape = buildRecordShapeMeta(fieldDefs, 1, false, false);
+          _generalRecordParams.set(param.getName(), paramShape);
+          _generalPtrSlotMap.set(param.getName(), _preSlotIdx);
+        }
+      }
+      _preSlotIdx++;
+    }
+    const hasRecordParams = _generalRecordParams.size > 0;
 
     const ctx: LoweringContext = {
       domain,
@@ -5024,12 +5150,27 @@ export class LoweringVisitor {
       funcIndexTable,
       importedFuncCount,
       closureBindingMap,
+      // Populate record maps only when there are object-literal params to handle.
+      // Empty maps or absent maps both cause the PropertyAccessExpression handler
+      // to fall through to the loud LoweringError — this is correct and intentional.
+      ...(hasRecordParams
+        ? { generalRecordParams: _generalRecordParams, generalPtrSlotMap: _generalPtrSlotMap }
+        : {}),
     };
 
     this._table.pushFrame({ isFunctionBoundary: true });
     const paramDomains: NumericDomain[] = [];
     for (const param of fn.getParameters()) {
       const paramName = param.getName();
+      const typeNode = param.getTypeNode();
+      const typeText = typeNode?.getText().trim() ?? "";
+      // Object-literal params are record pointers (i32) in the general path.
+      // Their fields are accessed via generalRecordParams / generalPtrSlotMap.
+      if (typeText.startsWith("{")) {
+        this._table.defineParam(paramName, "i32");
+        paramDomains.push("i32");
+        continue;
+      }
       const paramTypeFlags = param.getType().getFlags();
       const paramIsBigInt =
         (paramTypeFlags & TypeFlags.BigInt) !== 0 ||
@@ -5192,6 +5333,27 @@ export class LoweringVisitor {
     const { domain, warning } = inferNumericDomain(fn);
     const warnings: string[] = warning !== null ? [warning] : [];
 
+    // Build generalRecordParams / generalPtrSlotMap for object-literal params.
+    // Same pattern as _lowerNumericFunctionWithCallCtx.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001
+    const _generalRecordParams: Map<string, RecordShapeMeta> = new Map();
+    const _generalPtrSlotMap: Map<string, number> = new Map();
+    let _preSlotIdx = 0;
+    for (const param of fn.getParameters()) {
+      const typeNode = param.getTypeNode();
+      const typeText = typeNode?.getText().trim() ?? "";
+      if (typeText.startsWith("{")) {
+        const fieldDefs = parseObjectTypeFields(typeText);
+        if (fieldDefs.length > 0) {
+          const paramShape = buildRecordShapeMeta(fieldDefs, 1, false, false);
+          _generalRecordParams.set(param.getName(), paramShape);
+          _generalPtrSlotMap.set(param.getName(), _preSlotIdx);
+        }
+      }
+      _preSlotIdx++;
+    }
+    const hasRecordParams = _generalRecordParams.size > 0;
+
     // Build lowering context
     const ctx: LoweringContext = {
       domain,
@@ -5211,6 +5373,9 @@ export class LoweringVisitor {
       funcIndexTable: new Map(),
       importedFuncCount: 0,
       closureBindingMap: new Map(),
+      ...(hasRecordParams
+        ? { generalRecordParams: _generalRecordParams, generalPtrSlotMap: _generalPtrSlotMap }
+        : {}),
     };
 
     // Register parameters in the symbol table and collect per-param domains.
@@ -5229,6 +5394,14 @@ export class LoweringVisitor {
     const paramDomains: NumericDomain[] = [];
     for (const param of fn.getParameters()) {
       const paramName = param.getName();
+      const typeNode = param.getTypeNode();
+      const typeText = typeNode?.getText().trim() ?? "";
+      // Object-literal params: register as i32 (struct ptr).
+      if (typeText.startsWith("{")) {
+        this._table.defineParam(paramName, "i32");
+        paramDomains.push("i32");
+        continue;
+      }
       const paramTypeFlags = param.getType().getFlags();
       const paramIsBigInt =
         (paramTypeFlags & TypeFlags.BigInt) !== 0 ||
@@ -5328,38 +5501,33 @@ export class LoweringVisitor {
       closureBindingMap: new Map(),
     };
 
-    // Register parameters and build record param maps
-    this._table.pushFrame({ isFunctionBoundary: true });
-
+    // Pre-pass: build record param maps before context construction so they can be
+    // injected into ctx.generalRecordParams / ctx.generalPtrSlotMap. This allows
+    // lowerExpression (called as fallback from lowerExpressionRecord for CallExpression
+    // args) to also resolve PropertyAccessExpression on record params when they appear
+    // inside call arguments (e.g. Math.abs(obj.x)).
+    //
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-PROPACCESS-001
     const recordParams: RecordParamMap = new Map();
     const ptrSlotMap: Map<string, number> = new Map();
-    const params = fn.getParameters();
 
-    for (const param of params) {
+    let _preSlotIdx = 0;
+    for (const param of fn.getParameters()) {
       const paramName = param.getName();
       const typeNode = param.getTypeNode();
       const typeText = typeNode?.getText().trim() ?? "";
-
       if (typeText.startsWith("{")) {
-        // Record-typed param: receives the struct ptr (i32)
-        const slot = this._table.defineParam(paramName, "i32");
-        ptrSlotMap.set(paramName, slot.index);
-
-        // Find the RecordShapeMeta for this param by parsing its type
         const fieldDefs = parseObjectTypeFields(typeText);
         if (fieldDefs.length > 0) {
           const paramShape = buildRecordShapeMeta(fieldDefs, 1, false, false);
           recordParams.set(paramName, paramShape);
-
-          // Build nested field maps for nested record fields
+          ptrSlotMap.set(paramName, _preSlotIdx);
           for (const field of paramShape.fields) {
             if (field.kind === "record") {
-              // The field type text is available from fieldDefs
               const fieldDef = fieldDefs.find((f) => f.name === field.name);
               if (fieldDef !== undefined) {
                 const nestedFieldDefs = parseObjectTypeFields(fieldDef.typeText);
                 if (nestedFieldDefs.length > 0) {
-                  // Store nested shape under composite key "paramName.fieldName"
                   const nestedShape = buildRecordShapeMeta(nestedFieldDefs, 1, false, false);
                   recordParams.set(`${paramName}.${field.name}`, nestedShape);
                 }
@@ -5367,6 +5535,29 @@ export class LoweringVisitor {
             }
           }
         }
+      }
+      _preSlotIdx++;
+    }
+
+    // Wire the maps into ctx so lowerExpression's PropAccess handler can use them.
+    ctx.generalRecordParams = recordParams;
+    ctx.generalPtrSlotMap = ptrSlotMap;
+
+    // Register parameters in symbol table (actual slot assignment happens here)
+    this._table.pushFrame({ isFunctionBoundary: true });
+
+    for (const param of fn.getParameters()) {
+      const paramName = param.getName();
+      const typeNode = param.getTypeNode();
+      const typeText = typeNode?.getText().trim() ?? "";
+
+      if (typeText.startsWith("{")) {
+        // Record-typed param: receives the struct ptr (i32)
+        // ptrSlotMap was pre-built above with predicted slot indices; these must
+        // match the actual slot indices from defineParam. Since pushFrame resets
+        // the slot counter, we update ptrSlotMap with the real slot index here.
+        const slot = this._table.defineParam(paramName, "i32");
+        ptrSlotMap.set(paramName, slot.index);
       } else {
         // Non-record param (e.g., _size: number) — register as i32 (size params are integers)
         this._table.defineParam(paramName, "i32");
