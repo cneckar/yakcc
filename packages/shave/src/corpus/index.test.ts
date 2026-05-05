@@ -2,26 +2,29 @@
 // title: Corpus extraction unit tests: determinism, cache seeding, priority chain, cascade, and error path
 // status: decided (WI-016)
 // rationale:
-//   Six tests cover the full contract of the corpus extraction module:
+//   Eight tests cover the full contract of the corpus extraction module:
 //   (1) upstream-test determinism, (2) documented-usage determinism,
 //   (3) ai-derived cache cold/warm, (4) priority order a>b>c,
-//   (5) cascade variant (a+b disabled → c), (6) all-disabled error.
+//   (5) cascade variant (a+b disabled → c), (6) all-disabled error,
+//   (7) extractFromPropsFile (match/no-match/missing-file),
+//   (8) props-file priority over upstream-test in extractCorpus().
 //   DEC-SHAVE-002: no Anthropic SDK import; cache is seeded via public seedCorpusCache.
 //   DEC-SHAVE-003: seedCorpusCache is the only authority for priming the AI-derived cache.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { extractFromAiDerivedCached } from "./ai-derived.js";
 import { extractFromDocumentedUsage } from "./documented-usage.js";
 import {
   extractCorpus,
   extractCorpusCascade,
+  extractFromPropsFile,
   seedCorpusCache,
 } from "./index.js";
 import type { CorpusAtomSpec, IntentCardInput } from "./types.js";
 import { extractFromUpstreamTest } from "./upstream-test.js";
-import { extractFromAiDerivedCached } from "./ai-derived.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -265,5 +268,115 @@ describe("extractCorpus() — all-sources-disabled error", () => {
         enableAiDerived: false,
       }),
     ).rejects.toThrow("all enabled sources failed or were disabled");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 7: extractFromPropsFile — match, no-match, missing-file
+// ---------------------------------------------------------------------------
+
+/** Props file content containing a prop_parseIntList_ export (matching PLAIN_SOURCE). */
+const PROPS_FILE_CONTENT = `// Hand-authored fast-check property tests
+import * as fc from "fast-check";
+
+export const prop_parseIntList_returns_array = fc.property(
+  fc.array(fc.integer()),
+  (nums) => {
+    const raw = nums.join(",");
+    const result = parseIntList(raw);
+    return Array.isArray(result);
+  },
+);
+`;
+
+describe("extractFromPropsFile()", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), "yakcc-props-file-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns a CorpusResult with source='props-file' when the file has a matching prop_<atomName>_ export", async () => {
+    const propsPath = join(tmpDir, "parseIntList.props.ts");
+    writeFileSync(propsPath, PROPS_FILE_CONTENT, "utf-8");
+
+    const result = await extractFromPropsFile(propsPath, makeIntentCard(), PLAIN_SOURCE);
+
+    expect(result).not.toBeUndefined();
+    expect(result!.source).toBe("props-file");
+    expect(result!.bytes).toBeInstanceOf(Uint8Array);
+    expect(result!.bytes.length).toBeGreaterThan(0);
+    expect(result!.path).toBe("parseIntList.props.ts");
+    expect(result!.contentHash.length).toBeGreaterThan(0);
+  });
+
+  it("returns undefined when the props file has no matching prop_<atomName>_ export", async () => {
+    const propsPath = join(tmpDir, "other.props.ts");
+    writeFileSync(propsPath, "export const prop_unrelatedFunction_foo = true;\n", "utf-8");
+
+    const result = await extractFromPropsFile(propsPath, makeIntentCard(), PLAIN_SOURCE);
+
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined when the props file does not exist", async () => {
+    const result = await extractFromPropsFile(
+      join(tmpDir, "nonexistent.props.ts"),
+      makeIntentCard(),
+      PLAIN_SOURCE,
+    );
+
+    expect(result).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 8: props-file takes priority over upstream-test in extractCorpus()
+// ---------------------------------------------------------------------------
+
+describe("extractCorpus() — props-file priority over upstream-test", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), "yakcc-props-priority-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns props-file result (source 0) when propsFilePath has a matching export, even with enableUpstreamTest=true", async () => {
+    const propsPath = join(tmpDir, "parseIntList.props.ts");
+    writeFileSync(propsPath, PROPS_FILE_CONTENT, "utf-8");
+
+    const atomSpec: CorpusAtomSpec = {
+      source: PLAIN_SOURCE,
+      intentCard: makeIntentCard(),
+      propsFilePath: propsPath,
+    };
+
+    const result = await extractCorpus(atomSpec);
+
+    expect(result.source).toBe("props-file");
+    expect(new TextDecoder().decode(result.bytes)).toBe(PROPS_FILE_CONTENT);
+  });
+
+  it("falls through to upstream-test when propsFilePath has no matching export", async () => {
+    const propsPath = join(tmpDir, "other.props.ts");
+    writeFileSync(propsPath, "export const prop_unrelatedFunction_foo = true;\n", "utf-8");
+
+    const atomSpec: CorpusAtomSpec = {
+      source: PLAIN_SOURCE,
+      intentCard: makeIntentCard(),
+      propsFilePath: propsPath,
+    };
+
+    const result = await extractCorpus(atomSpec);
+
+    expect(result.source).toBe("upstream-test");
   });
 });

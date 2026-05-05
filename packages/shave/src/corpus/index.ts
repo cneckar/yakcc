@@ -33,9 +33,11 @@ export {
   CORPUS_DEFAULT_MODEL,
   CORPUS_PROMPT_VERSION,
 } from "./ai-derived.js";
+export { extractFromPropsFile } from "./props-file.js";
 
 import { extractFromAiDerivedCached } from "./ai-derived.js";
 import { extractFromDocumentedUsage } from "./documented-usage.js";
+import { extractFromPropsFile } from "./props-file.js";
 import type { CorpusAtomSpec, CorpusExtractionOptions, CorpusResult } from "./types.js";
 import { extractFromUpstreamTest } from "./upstream-test.js";
 
@@ -66,9 +68,24 @@ export async function extractCorpus(
   atomSpec: CorpusAtomSpec,
   options?: CorpusExtractionOptions,
 ): Promise<CorpusResult> {
+  const enableP = options?.enablePropsFile ?? true;
   const enableA = options?.enableUpstreamTest ?? true;
   const enableB = options?.enableDocumentedUsage ?? true;
   const enableC = options?.enableAiDerived ?? true;
+
+  // Source (0): props-file — hand-authored *.props.ts sibling.
+  // Highest priority. Only attempted when propsFilePath is provided.
+  // Returns undefined if the file is absent or has no matching prop_<atomName>_ export.
+  if (enableP && atomSpec.propsFilePath !== undefined) {
+    const result = await extractFromPropsFile(
+      atomSpec.propsFilePath,
+      atomSpec.intentCard,
+      atomSpec.source,
+    );
+    if (result !== undefined) {
+      return result;
+    }
+  }
 
   // Source (a): upstream-test adaptation.
   // Always succeeds (pure, deterministic). Attempted first.
@@ -128,9 +145,22 @@ export async function extractCorpusCascade(
   atomSpec: CorpusAtomSpec,
   options?: CorpusExtractionOptions,
 ): Promise<CorpusResult> {
+  const enableP = options?.enablePropsFile ?? true;
   const enableA = options?.enableUpstreamTest ?? true;
   const enableB = options?.enableDocumentedUsage ?? true;
   const enableC = options?.enableAiDerived ?? true;
+
+  // Source (0): props-file — hand-authored *.props.ts sibling (highest priority).
+  if (enableP && atomSpec.propsFilePath !== undefined) {
+    const result = await extractFromPropsFile(
+      atomSpec.propsFilePath,
+      atomSpec.intentCard,
+      atomSpec.source,
+    );
+    if (result !== undefined) {
+      return result;
+    }
+  }
 
   // Source (a): upstream-test adaptation (always succeeds when enabled).
   if (enableA) {

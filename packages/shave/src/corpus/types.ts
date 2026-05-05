@@ -18,10 +18,14 @@
 /**
  * Which extraction source produced this corpus result.
  *
- * Priority order: upstream-test > documented-usage > ai-derived.
+ * Priority order: props-file > upstream-test > documented-usage > ai-derived.
  * The highest-priority available source wins; the rest are not consulted.
+ *
+ * "props-file": hand-authored *.props.ts sibling file (WI-V2-07-PREFLIGHT L8).
+ *   Takes priority over all auto-generated sources. Only available when a sibling
+ *   *.props.ts file exists and contains a matching prop_<atomName>_ export.
  */
-export type CorpusSource = "upstream-test" | "documented-usage" | "ai-derived";
+export type CorpusSource = "props-file" | "upstream-test" | "documented-usage" | "ai-derived";
 
 /**
  * The output of extractCorpus() for a single atom.
@@ -72,6 +76,14 @@ export interface CorpusAtomSpec {
    * Omitting this disables source (c).
    */
   readonly cacheDir?: string | undefined;
+
+  /**
+   * Absolute path to a sibling *.props.ts file for source (0) props-file extraction.
+   * When provided, extractCorpus() attempts to read this file and match prop_<atomName>_
+   * exports before trying any auto-generated source. Omitting this disables source (0).
+   * Set to `undefined` when no sibling .props.ts is available (WI-V2-07-PREFLIGHT L8).
+   */
+  readonly propsFilePath?: string | undefined;
 }
 
 /**
@@ -105,10 +117,15 @@ export interface IntentCardInput {
 /**
  * Options controlling which sources are attempted by extractCorpus().
  *
- * By default all three sources are enabled. Disable individual sources for
+ * By default all sources are enabled. Disable individual sources for
  * testing or to force a specific extraction path.
  */
 export interface CorpusExtractionOptions {
+  /**
+   * Whether to attempt props-file extraction (source 0).
+   * Default: true. Only takes effect when atomSpec.propsFilePath is provided.
+   */
+  readonly enablePropsFile?: boolean | undefined;
   /**
    * Whether to attempt upstream-test adaptation (source a).
    * Default: true.

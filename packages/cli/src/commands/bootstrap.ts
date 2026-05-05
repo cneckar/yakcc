@@ -98,6 +98,7 @@ function shouldSkip(absPath: string): boolean {
 
   // Skip by filename
   if (basename.endsWith(".test.ts")) return true;
+  if (basename.endsWith(".props.ts")) return true;
   if (basename.endsWith(".d.ts")) return true;
   if (basename === "vitest.config.ts") return true;
 
