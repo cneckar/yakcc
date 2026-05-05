@@ -18,10 +18,10 @@
 /**
  * Which extraction source produced this corpus result.
  *
- * Priority order: upstream-test > documented-usage > ai-derived.
+ * Priority order: props-file > upstream-test > documented-usage > ai-derived.
  * The highest-priority available source wins; the rest are not consulted.
  */
-export type CorpusSource = "upstream-test" | "documented-usage" | "ai-derived";
+export type CorpusSource = "props-file" | "upstream-test" | "documented-usage" | "ai-derived";
 
 /**
  * The output of extractCorpus() for a single atom.
@@ -72,6 +72,18 @@ export interface CorpusAtomSpec {
    * Omitting this disables source (c).
    */
   readonly cacheDir?: string | undefined;
+
+  /**
+   * Absolute path to the sibling *.props.ts file for the source file being shaved.
+   *
+   * When provided, source (0) props-file lookup is attempted first: the file is
+   * read, exports matching `prop_<atomName>_*` are located (name-based convention,
+   * DEC-V2-07-PREFLIGHT-L8-001), and if any are found the full file is used as
+   * the property_tests corpus (present-real, no placeholder markers).
+   *
+   * When absent or when no matching exports are found, falls through to source (a).
+   */
+  readonly propsFilePath?: string | undefined;
 }
 
 /**
@@ -105,10 +117,15 @@ export interface IntentCardInput {
 /**
  * Options controlling which sources are attempted by extractCorpus().
  *
- * By default all three sources are enabled. Disable individual sources for
+ * By default all sources are enabled. Disable individual sources for
  * testing or to force a specific extraction path.
  */
 export interface CorpusExtractionOptions {
+  /**
+   * Whether to attempt props-file lookup (source 0).
+   * Default: true.
+   */
+  readonly enablePropsFile?: boolean | undefined;
   /**
    * Whether to attempt upstream-test adaptation (source a).
    * Default: true.

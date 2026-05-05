@@ -100,6 +100,10 @@ function shouldSkip(absPath: string): boolean {
   if (basename.endsWith(".test.ts")) return true;
   if (basename.endsWith(".d.ts")) return true;
   if (basename === "vitest.config.ts") return true;
+  // *.props.ts are property-test corpus files — they are consumed by the
+  // bootstrap pipeline as siblings of their parent source files but are not
+  // themselves shaved as source atoms (WI-V2-07-PREFLIGHT-L8).
+  if (basename.endsWith(".props.ts")) return true;
 
   // Skip by directory segment — normalize to forward slashes for cross-platform matching
   const normalized = absPath.replace(/\\/g, "/");

@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-001 (see corpus/types.ts)
-// title: extractCorpus() implements a three-source priority chain for property-test corpus
-// status: decided (WI-016)
+// title: extractCorpus() implements a four-source priority chain for property-test corpus
+// status: updated (WI-V2-07-PREFLIGHT-L8)
 // rationale:
-//   Priority order: upstream-test (a) > documented-usage (b) > ai-derived (c).
+//   Priority order: props-file (0) > upstream-test (a) > documented-usage (b) > ai-derived (c).
+//   Source (0) is the highest priority: when a *.props.ts sibling file exists and contains
+//   matching prop_<atomName>_* exports, those real hand-authored properties win over all
+//   generated stubs. This is the primary change introduced by WI-V2-07-PREFLIGHT-L8.
+//
 //   The highest-priority source that succeeds (produces non-empty bytes) wins;
 //   lower-priority sources are not consulted. This ensures that the cheapest,
 //   most deterministic source is always preferred.
@@ -11,9 +15,10 @@
 //   "Succeeds" means: the extractor returns a CorpusResult without throwing.
 //   Sources (a) and (b) are pure functions and always succeed (they degrade
 //   gracefully to behavior-only stubs). Source (c) returns undefined on a cache
-//   miss and is only attempted when cacheDir is provided.
+//   miss and is only attempted when cacheDir is provided. Source (0) returns
+//   undefined when no matching exports are found (falls through to (a)).
 //
-//   DEC-SHAVE-002 offline discipline: sources (a) and (b) work without API key.
+//   DEC-SHAVE-002 offline discipline: sources (0), (a) and (b) work without API key.
 //   Source (c) reads from cache only in unit tests; live AI calls are never made
 //   in the test suite.
 //
@@ -36,27 +41,30 @@ export {
 
 import { extractFromAiDerivedCached } from "./ai-derived.js";
 import { extractFromDocumentedUsage } from "./documented-usage.js";
+import { extractFromPropsFile } from "./props-file.js";
 import type { CorpusAtomSpec, CorpusExtractionOptions, CorpusResult } from "./types.js";
 import { extractFromUpstreamTest } from "./upstream-test.js";
 
 /**
- * Extract a property-test corpus for an atom using a three-source priority chain.
+ * Extract a property-test corpus for an atom using a four-source priority chain.
  *
  * Priority order (highest to lowest):
+ *   (0) props-file lookup — real hand-authored properties from sibling *.props.ts.
  *   (a) upstream-test adaptation — deterministic, derived from IntentCard spec fields.
  *   (b) documented-usage synthesis — deterministic, derived from JSDoc @example blocks.
  *   (c) ai-derived synthesis — cache-backed, requires cacheDir; offline-only in tests.
  *
- * The first source that successfully produces a result wins. Sources (a) and (b) are
- * always attempted because they are pure functions that never fail. Source (c) is
- * only attempted when `atomSpec.cacheDir` is provided and the cache contains a warm
- * entry (no live AI calls are made in unit tests per DEC-SHAVE-002).
+ * The first source that successfully produces a result wins. Source (0) requires
+ * `atomSpec.propsFilePath` to be set and a matching `prop_<atomName>_*` export to
+ * exist in the file. Sources (a) and (b) are always attempted because they are pure
+ * functions that never fail. Source (c) is only attempted when `atomSpec.cacheDir`
+ * is provided and the cache contains a warm entry (no live AI calls per DEC-SHAVE-002).
  *
  * The returned CorpusResult bundles all property checks into a single fast-check file.
  * This satisfies the L0 manifest constraint of exactly one "property_tests" artifact
  * (validateProofManifestL0).
  *
- * @param atomSpec - Atom description: source text, IntentCard, optional cacheDir.
+ * @param atomSpec - Atom description: source text, IntentCard, optional paths.
  * @param options  - Optional source-enable flags. Default: all sources enabled.
  * @returns A CorpusResult from the highest-priority available source.
  * @throws Error if all enabled sources are disabled or all fail (should not happen
@@ -66,12 +74,22 @@ export async function extractCorpus(
   atomSpec: CorpusAtomSpec,
   options?: CorpusExtractionOptions,
 ): Promise<CorpusResult> {
+  const enable0 = options?.enablePropsFile ?? true;
   const enableA = options?.enableUpstreamTest ?? true;
   const enableB = options?.enableDocumentedUsage ?? true;
   const enableC = options?.enableAiDerived ?? true;
 
+  // Source (0): props-file lookup — highest priority.
+  // Returns undefined when propsFilePath is absent or atom has no matching exports.
+  if (enable0 && atomSpec.propsFilePath !== undefined) {
+    const result = extractFromPropsFile(atomSpec.propsFilePath, atomSpec.source);
+    if (result !== undefined) {
+      return result;
+    }
+  }
+
   // Source (a): upstream-test adaptation.
-  // Always succeeds (pure, deterministic). Attempted first.
+  // Always succeeds (pure, deterministic). Attempted first among generated stubs.
   if (enableA) {
     const result = extractFromUpstreamTest(atomSpec.intentCard, atomSpec.source);
     return result;
@@ -105,14 +123,15 @@ export async function extractCorpus(
 }
 
 /**
- * Extract corpus using the full priority chain including fallback from (a) to (b) to (c).
+ * Extract corpus using the full priority chain including fallback from (0) to (a) to (b) to (c).
  *
  * This variant attempts all enabled sources in priority order and falls through to the
  * next source when a higher-priority source is explicitly disabled or unavailable.
  * Unlike extractCorpus(), which returns the first enabled source immediately, this
  * function implements a true cascade:
  *
- *   if (a enabled and succeeds) → return a
+ *   if (0 enabled and propsFilePath set and match found) → return 0
+ *   else if (a enabled and succeeds) → return a
  *   else if (b enabled and succeeds) → return b
  *   else if (c enabled and cache hit) → return c
  *   else throw
@@ -120,7 +139,7 @@ export async function extractCorpus(
  * Sources (a) and (b) always "succeed" (they are pure functions), so in practice
  * the cascade only reaches (c) when (a) and (b) are explicitly disabled.
  *
- * @param atomSpec - Atom description: source text, IntentCard, optional cacheDir.
+ * @param atomSpec - Atom description: source text, IntentCard, optional paths.
  * @param options  - Optional source-enable flags. Default: all sources enabled.
  * @returns A CorpusResult from the highest-priority available source.
  */
@@ -128,9 +147,16 @@ export async function extractCorpusCascade(
   atomSpec: CorpusAtomSpec,
   options?: CorpusExtractionOptions,
 ): Promise<CorpusResult> {
+  const enable0 = options?.enablePropsFile ?? true;
   const enableA = options?.enableUpstreamTest ?? true;
   const enableB = options?.enableDocumentedUsage ?? true;
   const enableC = options?.enableAiDerived ?? true;
+
+  // Source (0): props-file lookup (highest priority, returns undefined if no match).
+  if (enable0 && atomSpec.propsFilePath !== undefined) {
+    const result = extractFromPropsFile(atomSpec.propsFilePath, atomSpec.source);
+    if (result !== undefined) return result;
+  }
 
   // Source (a): upstream-test adaptation (always succeeds when enabled).
   if (enableA) {

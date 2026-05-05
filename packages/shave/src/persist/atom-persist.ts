@@ -48,6 +48,14 @@ export interface PersistOptions {
   readonly cacheDir?: string | undefined;
 
   /**
+   * Absolute path to the sibling *.props.ts file for the source file being shaved.
+   * Forwarded to CorpusAtomSpec.propsFilePath for source (0) props-file lookup.
+   * When present and a match is found, the real hand-authored props take priority
+   * over all generated stubs (upstream-test, documented-usage, ai-derived).
+   */
+  readonly propsFilePath?: string | undefined;
+
+  /**
    * Corpus extraction options forwarded to extractCorpus().
    * Use to disable individual sources (e.g. for testing).
    */
@@ -113,10 +121,14 @@ export async function persistNovelGlueAtom(
   // The corpus result carries the artifact bytes that become the "property_tests"
   // entry in the ProofManifest, making the BlockMerkleRoot content-dependent on
   // the actual test corpus (not empty bytes).
+  //
+  // WI-V2-07-PREFLIGHT-L8: propsFilePath enables source (0) — highest-priority
+  // props-file lookup before falling back to generated stubs.
   const atomSpec: CorpusAtomSpec = {
     source: entry.source,
     intentCard,
     cacheDir: options?.cacheDir,
+    propsFilePath: options?.propsFilePath,
   };
   const corpusResult = await extractCorpus(atomSpec, options?.corpusOptions);
 

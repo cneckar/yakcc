@@ -353,6 +353,7 @@ export interface ShaveResultWithForeign extends ShaveResult {
 // Internal imports
 // ---------------------------------------------------------------------------
 
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { writeIntent as _writeIntent } from "./cache/file-cache.js";
@@ -637,6 +638,25 @@ export async function shave(
     throw new Error(`shave: source file not found: ${sourcePath}`, { cause: err });
   }
 
+  // Step 1b: Detect sibling *.props.ts file for source (0) corpus lookup.
+  //
+  // @decision DEC-V2-07-PREFLIGHT-L8-002
+  // title: shave() detects sibling *.props.ts and forwards path to persist layer
+  // status: decided (WI-V2-07-PREFLIGHT-L8)
+  // rationale:
+  //   The *.props.ts path is a simple substitution on sourcePath (replace .ts
+  //   suffix). Checking existsSync here avoids a cold-start file-not-found error
+  //   inside extractFromPropsFile() and makes the fallback path explicit: if the
+  //   file does not exist, propsFilePath is undefined and extractCorpus() skips
+  //   source (0) entirely.  Only *.ts files can have a sibling *.props.ts, so we
+  //   only perform the check when sourcePath ends with ".ts" and NOT ".props.ts"
+  //   (the latter case is excluded from the bootstrap walk, but be defensive).
+  const propsFilePath: string | undefined = (() => {
+    if (!sourcePath.endsWith(".ts") || sourcePath.endsWith(".props.ts")) return undefined;
+    const candidate = `${sourcePath.slice(0, -3)}.props.ts`;
+    return existsSync(candidate) ? candidate : undefined;
+  })();
+
   // Step 2: Wrap in a CandidateBlock with a hint derived from the file name.
   const candidate: CandidateBlock = {
     source,
@@ -754,6 +774,7 @@ export async function shave(
       const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
         ...options,
         parentBlockRoot,
+        propsFilePath,
       });
       merkleRoots.push(merkleRoot);
       if (merkleRoot !== undefined) {
