@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: MIT
 // @decision DEC-CORPUS-001 (see corpus/types.ts)
-// title: extractCorpus() implements a three-source priority chain for property-test corpus
-// status: decided (WI-016)
+// title: extractCorpus() implements a four-source priority chain for property-test corpus
+// status: decided (WI-016, extended WI-V2-07-L8)
 // rationale:
-//   Priority order: upstream-test (a) > documented-usage (b) > ai-derived (c).
+//   Priority order: props-file (0) > upstream-test (a) > documented-usage (b) > ai-derived (c).
 //   The highest-priority source that succeeds (produces non-empty bytes) wins;
 //   lower-priority sources are not consulted. This ensures that the cheapest,
 //   most deterministic source is always preferred.
+//
+//   Source (0) props-file: hand-authored sibling *.props.ts file. Attempted only when
+//   CorpusAtomSpec.propsFilePath is set. Returns undefined when no matching prop_<atom>_*
+//   export is found, falling through to source (a).
 //
 //   "Succeeds" means: the extractor returns a CorpusResult without throwing.
 //   Sources (a) and (b) are pure functions and always succeed (they degrade
 //   gracefully to behavior-only stubs). Source (c) returns undefined on a cache
 //   miss and is only attempted when cacheDir is provided.
 //
-//   DEC-SHAVE-002 offline discipline: sources (a) and (b) work without API key.
+//   DEC-SHAVE-002 offline discipline: sources (0), (a) and (b) work without API key.
 //   Source (c) reads from cache only in unit tests; live AI calls are never made
 //   in the test suite.
 //
@@ -34,8 +38,11 @@ export {
   CORPUS_PROMPT_VERSION,
 } from "./ai-derived.js";
 
+export { extractFromPropsFile } from "./props-file.js";
+
 import { extractFromAiDerivedCached } from "./ai-derived.js";
 import { extractFromDocumentedUsage } from "./documented-usage.js";
+import { extractFromPropsFile } from "./props-file.js";
 import type { CorpusAtomSpec, CorpusExtractionOptions, CorpusResult } from "./types.js";
 import { extractFromUpstreamTest } from "./upstream-test.js";
 
@@ -66,12 +73,28 @@ export async function extractCorpus(
   atomSpec: CorpusAtomSpec,
   options?: CorpusExtractionOptions,
 ): Promise<CorpusResult> {
+  const enableProps = options?.enablePropsFile ?? true;
   const enableA = options?.enableUpstreamTest ?? true;
   const enableB = options?.enableDocumentedUsage ?? true;
   const enableC = options?.enableAiDerived ?? true;
 
+  // Source (0): props-file — hand-authored sibling *.props.ts corpus.
+  // Highest priority. Only attempted when propsFilePath is provided.
+  // Returns undefined when no matching prop_<atom>_* export is found,
+  // in which case the chain falls through to source (a).
+  if (enableProps && atomSpec.propsFilePath !== undefined) {
+    const result = await extractFromPropsFile(
+      atomSpec.propsFilePath,
+      atomSpec.intentCard,
+      atomSpec.source,
+    );
+    if (result !== undefined) {
+      return result;
+    }
+  }
+
   // Source (a): upstream-test adaptation.
-  // Always succeeds (pure, deterministic). Attempted first.
+  // Always succeeds (pure, deterministic). Attempted first among generated sources.
   if (enableA) {
     const result = extractFromUpstreamTest(atomSpec.intentCard, atomSpec.source);
     return result;
@@ -128,9 +151,22 @@ export async function extractCorpusCascade(
   atomSpec: CorpusAtomSpec,
   options?: CorpusExtractionOptions,
 ): Promise<CorpusResult> {
+  const enableProps = options?.enablePropsFile ?? true;
   const enableA = options?.enableUpstreamTest ?? true;
   const enableB = options?.enableDocumentedUsage ?? true;
   const enableC = options?.enableAiDerived ?? true;
+
+  // Source (0): props-file — highest priority when propsFilePath is set.
+  if (enableProps && atomSpec.propsFilePath !== undefined) {
+    const result = await extractFromPropsFile(
+      atomSpec.propsFilePath,
+      atomSpec.intentCard,
+      atomSpec.source,
+    );
+    if (result !== undefined) {
+      return result;
+    }
+  }
 
   // Source (a): upstream-test adaptation (always succeeds when enabled).
   if (enableA) {
