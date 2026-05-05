@@ -22,8 +22,10 @@
 //      NOT call the Anthropic API. It still parses ASTs and runs decompose/slice
 //      over each file. The corpus regen pass is wrapped in a 30-minute beforeAll
 //      budget — acceptable for a graduation harness, not for a hot-path test.
-//      Future optimization (out of scope): source-file content-hash cache.
-//      See WI-V1W4-LOWER-PARITY-CACHE-001 in the follow-up WIs.
+//      A source-file content-hash cache (shave-cache.json) accelerates warm runs:
+//      on a warm cache, previously-shaved files skip the shave() call entirely and
+//      replay stored BlockTripletRows into the in-memory registry. See
+//      WI-V1W4-LOWER-PARITY-CACHE-001 — implemented in this file.
 //
 //   4. The CURATED_SUBSTRATES pivot is permanently rejected. Do NOT restore it.
 //      If a future implementer needs the curated atoms for a different purpose,
@@ -35,11 +37,67 @@
 //   are covered. At that point, remove `it.fails` from the gate in
 //   closer-parity.test.ts (see the comment above that assertion).
 
+// @decision DEC-V1-WAVE-4-WASM-PARITY-CACHE-001
+// @title Content-hash-keyed shave cache for corpus regeneration warm runs
+// @status decided (WI-V1W4-LOWER-PARITY-CACHE-001)
+// @rationale
+//   The corpus regeneration walk over all packages/*/src/**/*.ts runs shave()
+//   on each file. shave() parses ASTs, runs decompose/slice, and (in offline
+//   mode) still takes non-trivial CPU per file. A prior implementer reported
+//   ~150s/file (unverified empirically by this WI — see the it.skip profile
+//   test in cache.test.ts for an ad-hoc capture affordance).
+//
+//   Cache key: sourceHash(content) from @yakcc/shave — BLAKE3-256 of normalized
+//   source. ONLY content changes bust the cache. mtime and absPath are
+//   intentionally excluded: a file moved to a new location with identical
+//   content is a cache hit; a file with the same mtime but different content
+//   (unlikely but possible) is a miss (BLAKE3 collision probability < 2^-128).
+//
+//   shaveVersionHash: BLAKE3(STATIC_MODEL_TAG || "\x00" || STATIC_PROMPT_VERSION)
+//   keyed via sourceHash() for uniformity. A shave algorithm upgrade that
+//   changes these constants busts the entire cache deterministically — no
+//   manual cache invalidation needed.
+//
+//   BlockTripletRow.createdAt is stripped to 0 on write so the committed cache
+//   file is byte-stable across regenerations on different machines and times.
+//
+//   The cold/warm wall-clock speed improvement is deferred for empirical
+//   measurement (see WI scope notes). Cache correctness is verifiable via the
+//   unit tests in cache.test.ts without running the full corpus walk.
+
+// @decision DEC-V1-WAVE-4-WASM-PARITY-CACHE-FORMAT-001
+// @title shave-cache.json schema: formatVersion + shaveVersionHash + entries
+// @status decided (WI-V1W4-LOWER-PARITY-CACHE-001)
+// @rationale
+//   Schema: { formatVersion: 1, shaveVersionHash: string, entries: Record<contentHash, CacheEntry[]> }
+//   - formatVersion (integer): bumped when the schema changes incompatibly. Cache
+//     files with an unknown formatVersion are treated as corrupt (warn + empty).
+//   - shaveVersionHash (hex string): BLAKE3 of shave algorithm version tag. A
+//     mismatch means the shave algorithm changed; the entire cache is stale and
+//     must be rebuilt. Treated as corrupt/version-mismatch → warn + empty.
+//   - entries: map from contentHash (sourceHash of raw file content) to array of
+//     BlockTripletRows (createdAt=0, artifacts serialized as [[key, hexBytes]]
+//     pairs for JSON round-trip safety since Map is not JSON-serializable).
+//   Sorted keys in JSON output for byte-stable diffs in git.
+
+// @decision DEC-V1-WAVE-4-WASM-PARITY-CACHE-PROFILE-001
+// @title Profiling affordance only — wall-clock numbers unverified empirically
+// @status decided (WI-V1W4-LOWER-PARITY-CACHE-001)
+// @rationale
+//   A prior implementer claimed ~150s/file for shave() on production source.
+//   This figure was not verified empirically by WI-V1W4-LOWER-PARITY-CACHE-001:
+//   running the full corpus walk takes hours in cold mode, which exceeds the
+//   WI dispatch budget. An it.skip("profile: shave wall-clock per file") test
+//   in cache.test.ts provides an ad-hoc profiling affordance — future implementers
+//   can flip .skip to capture real numbers without rebuilding the test harness.
+//   The cache architecture ships either way: content-hash caching is the correct
+//   architecture regardless of the exact per-file wall-clock figure.
+
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { openRegistry } from "@yakcc/registry";
-import type { RegistryOptions } from "@yakcc/registry";
-import { shave } from "@yakcc/shave";
+import type { BlockTripletRow, RegistryOptions } from "@yakcc/registry";
+import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION, shave, sourceHash } from "@yakcc/shave";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,6 +163,48 @@ export interface RegeneratedCorpus {
   readonly filesWalked: number;
   /** How many files failed to shave (shave() threw or returned zero atoms). */
   readonly shaveFailures: number;
+  /** How many files were served from the cache (warm hits). */
+  readonly cacheHits: number;
+  /** How many files required a live shave() call (cache misses). */
+  readonly cacheMisses: number;
+}
+
+// ---------------------------------------------------------------------------
+// Cache types (DEC-V1-WAVE-4-WASM-PARITY-CACHE-FORMAT-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialized representation of a BlockTripletRow for JSON storage.
+ * artifacts (Map<string,Uint8Array>) is stored as [key, hexBytes][] pairs.
+ * createdAt is always 0 to ensure byte-stable committed cache files.
+ */
+export interface CachedBlockRow {
+  readonly blockMerkleRoot: string;
+  readonly specHash: string;
+  readonly specCanonicalBytes: string; // hex
+  readonly implSource: string;
+  readonly proofManifestJson: string;
+  readonly level: "L0" | "L1" | "L2" | "L3";
+  readonly createdAt: 0;
+  readonly canonicalAstHash: string;
+  readonly parentBlockRoot?: string | null;
+  readonly artifacts: ReadonlyArray<readonly [string, string]>; // [path, hexBytes]
+  readonly kind?: "local" | "foreign";
+  readonly foreignPkg?: string | null;
+  readonly foreignExport?: string | null;
+  readonly foreignDtsHash?: string | null;
+}
+
+/** One cache entry: all blocks produced by shave()-ing a file with a given contentHash. */
+export type CacheEntry = CachedBlockRow[];
+
+/**
+ * The full shave cache file schema (DEC-V1-WAVE-4-WASM-PARITY-CACHE-FORMAT-001).
+ */
+export interface ShaveCache {
+  readonly formatVersion: 1;
+  readonly shaveVersionHash: string;
+  readonly entries: Record<string, CacheEntry>;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +286,322 @@ function findRepoRoot(startPath: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// shaveVersionHash: cache-busting key for the shave algorithm version
+// (DEC-V1-WAVE-4-WASM-PARITY-CACHE-001)
+//
+// Uses BLAKE3 (via sourceHash) of the concatenation of the shave algorithm
+// constants used for corpus walks: STATIC_MODEL_TAG and STATIC_PROMPT_VERSION.
+// When either constant changes (algorithm upgrade), ALL cache entries are
+// invalidated without any manual intervention.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a stable version hash from shave algorithm constants.
+ * Changing STATIC_MODEL_TAG or STATIC_PROMPT_VERSION busts the cache.
+ */
+export function computeShaveVersionHash(): string {
+  return sourceHash(`${STATIC_MODEL_TAG}\x00${STATIC_PROMPT_VERSION}`);
+}
+
+// ---------------------------------------------------------------------------
+// Cache serialization helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a Uint8Array to a lowercase hex string for JSON storage.
+ */
+function uint8ToHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("hex");
+}
+
+/**
+ * Convert a hex string back to a Uint8Array.
+ */
+function hexToUint8(hex: string): Uint8Array {
+  return new Uint8Array(Buffer.from(hex, "hex"));
+}
+
+/**
+ * Convert a BlockTripletRow to a JSON-safe CachedBlockRow.
+ * createdAt is always set to 0 for byte-stable cache files.
+ */
+function serializeRow(row: BlockTripletRow): CachedBlockRow {
+  const artifactsArr: Array<readonly [string, string]> = [];
+  for (const [k, v] of row.artifacts) {
+    artifactsArr.push([k, uint8ToHex(v)] as const);
+  }
+  // Sort artifact keys for deterministic output
+  artifactsArr.sort((a, b) => a[0].localeCompare(b[0]));
+
+  const result: CachedBlockRow = {
+    blockMerkleRoot: row.blockMerkleRoot as string,
+    specHash: row.specHash as string,
+    specCanonicalBytes: uint8ToHex(row.specCanonicalBytes),
+    implSource: row.implSource,
+    proofManifestJson: row.proofManifestJson,
+    level: row.level,
+    createdAt: 0,
+    canonicalAstHash: row.canonicalAstHash as string,
+    parentBlockRoot: row.parentBlockRoot ?? null,
+    artifacts: artifactsArr,
+  };
+
+  // Include optional migration-6 fields only when present
+  if (row.kind !== undefined) {
+    return {
+      ...result,
+      kind: row.kind,
+      foreignPkg: row.foreignPkg ?? null,
+      foreignExport: row.foreignExport ?? null,
+      foreignDtsHash: row.foreignDtsHash ?? null,
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Convert a CachedBlockRow back to a BlockTripletRow suitable for storeBlock().
+ * createdAt is set to 0 (matching the stored value — no live timestamps on replay).
+ */
+export function deserializeRow(cached: CachedBlockRow): BlockTripletRow {
+  const artifacts = new Map<string, Uint8Array>();
+  for (const [k, v] of cached.artifacts) {
+    artifacts.set(k, hexToUint8(v));
+  }
+
+  // Build the required fields of BlockTripletRow first, then spread in the
+  // optional parentBlockRoot only when it's present in the cached row.
+  // exactOptionalPropertyTypes forbids setting optional props to `undefined`.
+  const baseRequired = {
+    blockMerkleRoot: cached.blockMerkleRoot as BlockTripletRow["blockMerkleRoot"],
+    specHash: cached.specHash as BlockTripletRow["specHash"],
+    specCanonicalBytes: hexToUint8(cached.specCanonicalBytes),
+    implSource: cached.implSource,
+    proofManifestJson: cached.proofManifestJson,
+    level: cached.level,
+    createdAt: 0 as const,
+    canonicalAstHash: cached.canonicalAstHash as BlockTripletRow["canonicalAstHash"],
+    artifacts,
+  };
+  // Spread parentBlockRoot only when it's present (null or non-null) in the cache.
+  const base: BlockTripletRow =
+    cached.parentBlockRoot !== undefined
+      ? {
+          ...baseRequired,
+          parentBlockRoot: cached.parentBlockRoot as BlockTripletRow["blockMerkleRoot"] | null,
+        }
+      : baseRequired;
+
+  if (cached.kind !== undefined) {
+    return {
+      ...base,
+      kind: cached.kind,
+      foreignPkg: cached.foreignPkg ?? null,
+      foreignExport: cached.foreignExport ?? null,
+      foreignDtsHash: cached.foreignDtsHash ?? null,
+    };
+  }
+
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Cache I/O (DEC-V1-WAVE-4-WASM-PARITY-CACHE-FORMAT-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the shave cache from disk.
+ *
+ * Returns null in three cases (all treated as "empty cache" by regenerateCorpus):
+ *   - File does not exist (first run)
+ *   - File is corrupt / unparseable JSON
+ *   - formatVersion mismatch or shaveVersionHash mismatch (stale cache)
+ *
+ * Emits console.warn for corrupt/version-mismatch cases so future implementers
+ * can tell the difference between "first run" and "stale cache".
+ */
+export function loadCache(cacheFilePath: string): ShaveCache | null {
+  if (!existsSync(cacheFilePath)) {
+    return null; // first run — silent
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(cacheFilePath, "utf-8");
+  } catch (err) {
+    console.warn(`[corpus-loader] shave-cache.json read error (treating as empty): ${String(err)}`);
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn("[corpus-loader] shave-cache.json is corrupt JSON — treating as empty cache");
+    return null;
+  }
+
+  if (typeof parsed !== "object" || parsed === null) {
+    console.warn(
+      "[corpus-loader] shave-cache.json root is not an object — treating as empty cache",
+    );
+    return null;
+  }
+
+  const obj = parsed as Record<string, unknown>;
+
+  if (obj.formatVersion !== 1) {
+    console.warn(
+      `[corpus-loader] shave-cache.json formatVersion mismatch (got ${String(obj.formatVersion)}, expected 1) — treating as empty cache`,
+    );
+    return null;
+  }
+
+  const expectedVersion = computeShaveVersionHash();
+  if (obj.shaveVersionHash !== expectedVersion) {
+    console.warn(
+      "[corpus-loader] shave-cache.json shaveVersionHash mismatch — shave algorithm changed; rebuilding cache",
+    );
+    return null;
+  }
+
+  if (typeof obj.entries !== "object" || obj.entries === null) {
+    console.warn(
+      "[corpus-loader] shave-cache.json missing entries field — treating as empty cache",
+    );
+    return null;
+  }
+
+  return {
+    formatVersion: 1,
+    shaveVersionHash: String(obj.shaveVersionHash),
+    entries: obj.entries as Record<string, CacheEntry>,
+  };
+}
+
+/**
+ * Save the shave cache to disk.
+ *
+ * Writes JSON with 2-space indent, sorted top-level keys (alphabetical), and sorted
+ * entry sub-keys for byte-stable diffs in git at every level.
+ *
+ * Top-level key order: entries → formatVersion → shaveVersionHash (alphabetical).
+ * This matches the committed shave-cache.json so that the first real corpus run
+ * does not produce an unexpected dirty diff.
+ *
+ * A trailing newline is appended so the file ends correctly on POSIX systems
+ * and git does not warn about "No newline at end of file".
+ *
+ * @decision DEC-V1-WAVE-4-WASM-PARITY-CACHE-SAVEFORMAT-001
+ * @title saveCache() sorts ALL keys (top-level + entries) alphabetically
+ * @status decided (WI-V1W4-LOWER-PARITY-CACHE-001 round-2 reviewer fix)
+ * @rationale
+ *   Round-1 saveCache() only sorted entries sub-keys; the top-level object was
+ *   constructed with literal key order { formatVersion, shaveVersionHash, entries }.
+ *   The committed shave-cache.json had the reverse order { entries, formatVersion,
+ *   shaveVersionHash }. On first real corpus run, saveCache() would overwrite the
+ *   committed file with a different key order, producing an unexpected dirty diff.
+ *   Fix: sort top-level keys alphabetically via Object.keys().sort() reduce so the
+ *   output is byte-identical to the committed file. The @decision claim "sorted keys
+ *   for byte-stable diffs" now applies at all levels.
+ */
+export function saveCache(cacheFilePath: string, cache: ShaveCache): void {
+  // Sort entry keys for determinism
+  const sortedEntries: Record<string, CacheEntry> = {};
+  for (const key of Object.keys(cache.entries).sort()) {
+    const entry = cache.entries[key];
+    if (entry !== undefined) {
+      sortedEntries[key] = entry;
+    }
+  }
+
+  // Build a plain object with ALL top-level keys sorted alphabetically.
+  // Alphabetical order: entries < formatVersion < shaveVersionHash.
+  // This ensures the committed shave-cache.json (which also uses alphabetical
+  // order) is byte-identical to what saveCache() produces on a fresh run.
+  const allKeys: (keyof ShaveCache)[] = ["entries", "formatVersion", "shaveVersionHash"];
+  const sortedCache = allKeys.reduce((acc, k) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (acc as unknown as Record<string, unknown>)[k] = k === "entries" ? sortedEntries : cache[k];
+    return acc;
+  }, {} as ShaveCache);
+
+  // Trailing newline: POSIX convention; prevents git "No newline at end of file" noise.
+  writeFileSync(cacheFilePath, `${JSON.stringify(sortedCache, null, 2)}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Per-file cache try: replay from cache or call shave() (live miss path)
+// ---------------------------------------------------------------------------
+
+/**
+ * ShaveRegistryView adapter: Registry.getBlock returns null; ShaveRegistryView
+ * expects undefined. This adapter bridges the two interfaces.
+ */
+type ShaveRegistryView = Parameters<typeof shave>[1];
+
+/**
+ * Attempt to serve a file from cache or fall back to live shave().
+ *
+ * Returns the list of new BlockTripletRows produced by this file (empty if
+ * shave produced nothing new), plus whether this was a cache hit or miss.
+ *
+ * On error (shave throws), returns an empty list and `wasError: true`.
+ */
+export async function tryHitOrShave(
+  absPath: string,
+  fileContent: string,
+  contentHash: string,
+  cacheEntries: Record<string, CacheEntry>,
+  registry: Awaited<ReturnType<typeof openRegistry>>,
+  shaveRegistry: ShaveRegistryView,
+): Promise<{ rows: BlockTripletRow[]; fromCache: boolean; wasError: boolean }> {
+  const existing = cacheEntries[contentHash];
+  if (existing !== undefined) {
+    // Cache hit: replay stored blocks into the in-memory registry
+    const rows: BlockTripletRow[] = [];
+    for (const cachedRow of existing) {
+      const row = deserializeRow(cachedRow);
+      try {
+        await registry.storeBlock(row);
+        rows.push(row);
+      } catch (err) {
+        // storeBlock failed for a cached row — this is a replay error
+        // (e.g. hash integrity mismatch). Surface it so tests can detect it.
+        throw new Error(`Cache replay error for contentHash=${contentHash}: ${String(err)}`);
+      }
+    }
+    return { rows, fromCache: true, wasError: false };
+  }
+
+  // Cache miss: run live shave()
+  // Capture the manifest before and after to identify new blocks produced.
+  const manifestBefore = await registry.exportManifest();
+  const rootsBefore = new Set(manifestBefore.map((e) => e.blockMerkleRoot));
+
+  try {
+    await shave(absPath, shaveRegistry, { offline: true, intentStrategy: "static" });
+  } catch {
+    return { rows: [], fromCache: false, wasError: true };
+  }
+
+  // Identify newly stored blocks by diffing manifest
+  const manifestAfter = await registry.exportManifest();
+  const newRoots = manifestAfter.map((e) => e.blockMerkleRoot).filter((r) => !rootsBefore.has(r));
+
+  const rows: BlockTripletRow[] = [];
+  for (const root of newRoots) {
+    const block = await registry.getBlock(root);
+    if (block !== null) {
+      rows.push(block);
+    }
+  }
+
+  return { rows, fromCache: false, wasError: false };
+}
+
+// ---------------------------------------------------------------------------
 // Corpus regeneration via shave-walk
 // @decision DEC-V1-WAVE-3-WASM-DEMO-CORPUS-LOADER-001 (see file header)
 //
@@ -199,27 +615,82 @@ function findRepoRoot(startPath: string): string {
 // considered but adds complexity without meaningful benefit — the simpler
 // "always update on disk" approach is correct for a graduation harness that
 // is explicitly expected to run slowly and write files.
+//
+// Cache integration (DEC-V1-WAVE-4-WASM-PARITY-CACHE-001):
+//   shave-cache.json (in the same test/ directory as this file) is loaded at
+//   the start of regenerateCorpus(). For each source file, if a cache hit
+//   exists, stored blocks are replayed into the in-memory registry. Otherwise
+//   shave() is called live and new blocks are captured. At the end, the cache
+//   is saved back to disk (with new entries appended, old hits preserved).
 // ---------------------------------------------------------------------------
+
+/**
+ * Options bag for regenerateCorpus().
+ *
+ * @decision DEC-V1-WAVE-4-WASM-PARITY-CORPUS-SOURCEWALK-001
+ * @title regenerateCorpus accepts optional sourceFiles override for test isolation
+ * @status decided (WI-V1W4-LOWER-PARITY-CACHE-001 round-2 reviewer fix)
+ * @rationale
+ *   The integrated cold→warm determinism test needs to call regenerateCorpus() on a
+ *   small, controlled file set instead of the full packages walk (which takes minutes).
+ *   Adding sourceFiles?: string[] to the options bag is the minimal invasive change:
+ *   when provided, it replaces the packages walk entirely; when omitted the existing
+ *   packages/star/src walk runs unchanged. This avoids adding a separate exported
+ *   helper (option b) and avoids hardcoding real file paths inside the test (option c
+ *   from the reviewer brief) — instead, the test passes whatever small real files it
+ *   chooses via this parameter.
+ */
+export interface RegenerateCorpusOptions {
+  /**
+   * Override the source file walk with an explicit list of absolute paths.
+   * When provided, the packages/star/src walk is skipped entirely and only
+   * these files are processed. Intended for test isolation — keeps the test
+   * fast by shaving 2-3 tiny files instead of the full corpus.
+   *
+   * Default: undefined (run the full packages/star/src walk).
+   */
+  readonly sourceFiles?: string[];
+}
 
 /**
  * Regenerate the corpus from the current source tree via shave().
  *
  * Opens ONE in-memory registry, zero-embedding opts (no network).
- * Walks packages-star-src/**\/**.ts (same exclusions as bootstrap.ts).
+ * Walks packages-star-src/**\/**.ts (same exclusions as bootstrap.ts),
+ * or uses the explicit sourceFiles override when provided.
  * Shaves each file against the shared registry, opts: offline=true, intentStrategy=static.
  * After all files, enumerates blocks via exportManifest() + getBlock().
  * Returns a RegeneratedCorpus keyed by canonicalAstHash (first-occurrence dedup).
  *
+ * Cache: reads shave-cache.json for warm-run acceleration. Files whose content
+ * hash is already in the cache skip shave() entirely — stored blocks are
+ * replayed into the in-memory registry. New results are written back at the end.
+ *
  * Performance note: shave() using static strategy still parses ASTs and runs
- * decompose/slice. On the ~93-file production source, this takes several minutes.
- * The beforeAll budget in closer-parity.test.ts is 30 minutes.
- * Future optimization: source-file content-hash cache (WI-V1W4-LOWER-PARITY-CACHE-001).
+ * decompose/slice. On the ~93-file production source, this takes several minutes
+ * on a cold cache. On a warm cache, regeneration should complete in <30s.
+ *
+ * @param cacheFilePath - Optional path to the cache file. Defaults to
+ *   shave-cache.json in the same directory as this module. Override in tests.
+ * @param opts - Optional configuration (see RegenerateCorpusOptions).
  */
-export async function regenerateCorpus(): Promise<RegeneratedCorpus> {
+export async function regenerateCorpus(
+  cacheFilePath?: string,
+  opts?: RegenerateCorpusOptions,
+): Promise<RegeneratedCorpus> {
   // Locate the repo root relative to this file's location at runtime.
-  // __dirname equivalent via import.meta.url is handled by the caller (test file uses fileURLToPath).
-  // Here we resolve from process.cwd() which in vitest is the package root.
   const repoRoot = findRepoRoot(process.cwd());
+
+  // Resolve cache file path: default is shave-cache.json in test/
+  const resolvedCachePath =
+    cacheFilePath ??
+    join(repoRoot, "examples", "v1-wave-3-wasm-lower-demo", "test", "shave-cache.json");
+
+  // Load the cache (null = empty / stale)
+  const loadedCache = loadCache(resolvedCachePath);
+  const shaveVersionHash = computeShaveVersionHash();
+  const cacheEntries: Record<string, CacheEntry> =
+    loadedCache !== null ? { ...loadedCache.entries } : {};
 
   // Open ONE in-memory registry shared across all shave() calls.
   const registry = await openRegistry(":memory:", BOOTSTRAP_EMBEDDING_OPTS);
@@ -235,33 +706,80 @@ export async function regenerateCorpus(): Promise<RegeneratedCorpus> {
     storeBlock: registry.storeBlock?.bind(registry),
   };
 
-  // Walk packages/*/src/**/*.ts
-  const packagesDir = join(repoRoot, "packages");
   let filesWalked = 0;
   let shaveFailures = 0;
+  let cacheHits = 0;
+  let cacheMisses = 0;
 
-  if (existsSync(packagesDir)) {
-    const pkgDirs = readdirSync(packagesDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => join(packagesDir, e.name, "src"))
-      .sort(); // lexicographic order for determinism (DEC-V2-BOOT-FILE-ORDER-001)
-
-    for (const srcDir of pkgDirs) {
-      const rawFiles: string[] = [];
-      walkTs(srcDir, rawFiles);
-      const files = rawFiles.filter((f) => !shouldSkip(f)).sort();
-
-      for (const absPath of files) {
-        filesWalked++;
-        try {
-          await shave(absPath, shaveRegistry, { offline: true, intentStrategy: "static" });
-        } catch {
-          // Shave failures (LicenseRefusedError, OfflineCacheMissError, etc.) are
-          // counted but do not abort the walk — partial corpus is better than no corpus.
-          shaveFailures++;
-        }
+  // Resolve the file list: explicit override or full packages walk.
+  let filesToProcess: string[];
+  if (opts?.sourceFiles !== undefined) {
+    // Test-isolation path: use the caller-supplied list directly (sorted for determinism).
+    filesToProcess = [...opts.sourceFiles].sort();
+  } else {
+    // Production path: walk packages/*/src/**/*.ts
+    const packagesDir = join(repoRoot, "packages");
+    filesToProcess = [];
+    if (existsSync(packagesDir)) {
+      const pkgDirs = readdirSync(packagesDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => join(packagesDir, e.name, "src"))
+        .sort(); // lexicographic order for determinism (DEC-V2-BOOT-FILE-ORDER-001)
+      for (const srcDir of pkgDirs) {
+        const rawFiles: string[] = [];
+        walkTs(srcDir, rawFiles);
+        filesToProcess.push(...rawFiles.filter((f) => !shouldSkip(f)).sort());
       }
     }
+  }
+
+  for (const absPath of filesToProcess) {
+    filesWalked++;
+
+    // Compute content hash for cache lookup
+    let fileContent: string;
+    try {
+      fileContent = readFileSync(absPath, "utf-8");
+    } catch {
+      shaveFailures++;
+      continue;
+    }
+    const contentHash = sourceHash(fileContent);
+
+    const result = await tryHitOrShave(
+      absPath,
+      fileContent,
+      contentHash,
+      cacheEntries,
+      registry,
+      shaveRegistry as ShaveRegistryView,
+    );
+
+    if (result.fromCache) {
+      cacheHits++;
+      // Cache hit: new rows may be empty (file produced no blocks on
+      // original shave) — that's fine, we still count it as a hit.
+    } else {
+      cacheMisses++;
+      if (result.wasError) {
+        shaveFailures++;
+      } else {
+        // Store new rows in cache (createdAt=0 for byte-stability)
+        cacheEntries[contentHash] = result.rows.map((r) => serializeRow({ ...r, createdAt: 0 }));
+      }
+    }
+  }
+
+  // Save updated cache back to disk
+  const newCache: ShaveCache = {
+    formatVersion: 1,
+    shaveVersionHash,
+    entries: cacheEntries,
+  };
+  try {
+    saveCache(resolvedCachePath, newCache);
+  } catch (err) {
+    console.warn(`[corpus-loader] Failed to write shave-cache.json: ${String(err)}`);
   }
 
   // Enumerate all stored blocks via exportManifest() + getBlock() for implSource.
@@ -298,6 +816,8 @@ export async function regenerateCorpus(): Promise<RegeneratedCorpus> {
     size: atoms.size,
     filesWalked,
     shaveFailures,
+    cacheHits,
+    cacheMisses,
   };
 }
 
