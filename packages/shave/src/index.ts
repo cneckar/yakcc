@@ -754,6 +754,7 @@ export async function shave(
       const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
         ...options,
         parentBlockRoot,
+        sourceFilePath: sourcePath,
       });
       merkleRoots.push(merkleRoot);
       if (merkleRoot !== undefined) {
