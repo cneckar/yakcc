@@ -15,7 +15,9 @@
 //   - WI-016: Property-test corpus is extracted via extractCorpus() before buildTriplet().
 //     The CorpusResult is passed to buildTriplet() as the canonical artifact source.
 //     The bootstrap placeholder (empty bytes) is no longer the silent default.
-//   - Corpus extraction source preference: upstream-test (a) > documented-usage (b) > ai-derived (c).
+//   - Corpus extraction source preference:
+//     props-file (d) > upstream-test (a) > documented-usage (b) > ai-derived (c).
+//     sourceFilePath is forwarded from PersistOptions when provided, enabling source (d).
 //     cacheDir is forwarded from PersistOptions when provided, enabling source (c).
 //   - Effect declaration is empty (atoms are pure-by-default at this stage;
 //     effect inference is a future pass).
@@ -76,6 +78,23 @@ export interface PersistOptions {
    * part of the block's content address — it is registry row metadata only.
    */
   readonly parentBlockRoot?: BlockMerkleRoot | null | undefined;
+
+  /**
+   * Absolute path of the source file containing this atom.
+   *
+   * When provided, corpus extraction source (d) — props-file discovery — is
+   * attempted first. The sibling `<dir>/<base>.props.ts` is checked for
+   * `prop_<atomName>_*` exports matching this atom's primary exported name.
+   *
+   * When omitted, source (d) is skipped and the extraction falls through to
+   * sources (a)/(b)/(c) (backward-compatible behavior).
+   *
+   * @decision DEC-V2-PREFLIGHT-L8-BOOTSTRAP-PROPS-001
+   * Added in WI-V2-07-PREFLIGHT-L8 to wire the sibling props-file corpus.
+   * Optional for backward compatibility: existing callers that don't supply
+   * sourceFilePath silently skip source (d).
+   */
+  readonly sourceFilePath?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +114,8 @@ export interface PersistOptions {
  *                     for persistence; entries without one are skipped.
  * @param registry   - Full Registry interface (requires storeBlock). For callers
  *                     with a read-only view, use the opt-in path in shave() instead.
- * @param options    - Optional persistence options (cacheDir for corpus source c).
+ * @param options    - Optional persistence options (cacheDir for corpus source c,
+ *                     sourceFilePath for corpus source d).
  */
 export async function persistNovelGlueAtom(
   entry: NovelGlueEntry,
@@ -109,7 +129,8 @@ export async function persistNovelGlueAtom(
     return undefined;
   }
 
-  // WI-016: Extract the property-test corpus before building the triplet.
+  // WI-016 + WI-V2-07-PREFLIGHT-L8: Extract the property-test corpus before building
+  // the triplet. Priority: (d) props-file > (a) upstream-test > (b) documented-usage > (c) ai-derived.
   // The corpus result carries the artifact bytes that become the "property_tests"
   // entry in the ProofManifest, making the BlockMerkleRoot content-dependent on
   // the actual test corpus (not empty bytes).
@@ -117,6 +138,7 @@ export async function persistNovelGlueAtom(
     source: entry.source,
     intentCard,
     cacheDir: options?.cacheDir,
+    sourceFilePath: options?.sourceFilePath,
   };
   const corpusResult = await extractCorpus(atomSpec, options?.corpusOptions);
 

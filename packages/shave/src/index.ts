@@ -45,7 +45,7 @@ export type { IntentCard, IntentParam } from "./intent/types.js";
  * status: decided (WI-016)
  * rationale:
  *   extractCorpus() is the primary API for property-test corpus extraction. It
- *   implements a three-source priority chain (upstream-test > documented-usage >
+ *   implements a four-source priority chain (props-file > upstream-test > documented-usage >
  *   ai-derived) and returns a CorpusResult suitable for buildTriplet(). Placing it
  *   on the main entry keeps the public contract stable while letting the corpus
  *   implementation evolve internally.
@@ -56,7 +56,7 @@ export type { IntentCard, IntentParam } from "./intent/types.js";
  *   entries are found on the first cache lookup.
  *
  *   DEC-SHAVE-002 offline discipline: loadling @yakcc/shave and calling extractCorpus()
- *   MUST work without ANTHROPIC_API_KEY. Sources (a) and (b) are pure; source (c)
+ *   MUST work without ANTHROPIC_API_KEY. Sources (d), (a) and (b) are pure; source (c)
  *   reads from cache only.
  */
 
@@ -751,9 +751,13 @@ export async function shave(
       // For subsequent novel-glue entries the preceding novel-glue's merkle root
       // is the structural parent — it is the outer function that was just persisted.
       const parentBlockRoot: BlockMerkleRoot | null = lastNovelMerkleRoot ?? null;
+      // @decision DEC-V2-PREFLIGHT-L8-BOOTSTRAP-PROPS-001
+      // sourceFilePath is forwarded so corpus extraction source (d) — props-file
+      // discovery — can locate the sibling *.props.ts for this atom's source file.
       const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
         ...options,
         parentBlockRoot,
+        sourceFilePath: sourcePath,
       });
       merkleRoots.push(merkleRoot);
       if (merkleRoot !== undefined) {

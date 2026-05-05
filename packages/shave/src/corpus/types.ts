@@ -3,14 +3,14 @@
 // title: CorpusResult is the canonical output shape for property-test corpus extraction
 // status: decided (WI-016)
 // rationale:
-//   Three extraction sources are tried in priority order: upstream-test adaptation (a),
-//   documented-usage synthesis (b), and AI-derived synthesis (c). The CorpusResult
-//   records which source succeeded so callers can reason about provenance. A single
+//   Four extraction sources are tried in priority order:
+//   (d) props-file (WI-V2-07-PREFLIGHT-L8) > (a) upstream-test > (b) documented-usage > (c) ai-derived.
+//   The CorpusResult records which source succeeded so callers can reason about provenance. A single
 //   fast-check file is produced regardless of source — multiple property checks are
 //   bundled into one artifact file to satisfy the L0 manifest constraint of exactly
 //   one "property_tests" artifact per atom (validateProofManifestL0).
 //
-//   DEC-SHAVE-002 offline discipline: sources (a) and (b) work without any API key.
+//   DEC-SHAVE-002 offline discipline: sources (d), (a) and (b) work without any API key.
 //   Source (c) uses the same file-cache.ts surface as intent extraction (DEC-SHAVE-003)
 //   with a distinct schemaVersion discriminant so corpus and intent cache entries
 //   cannot collide.
@@ -18,10 +18,15 @@
 /**
  * Which extraction source produced this corpus result.
  *
- * Priority order: upstream-test > documented-usage > ai-derived.
+ * Priority order: props-file > upstream-test > documented-usage > ai-derived.
  * The highest-priority available source wins; the rest are not consulted.
+ *
+ * "props-file" (WI-V2-07-PREFLIGHT-L8, DEC-V2-PREFLIGHT-L8-BOOTSTRAP-PROPS-001):
+ * hand-authored *.props.ts corpus discovered as a sibling of the source file.
+ * Highest priority because it contains real property tests authored by the package
+ * author, producing present-real classification in the audit script.
  */
-export type CorpusSource = "upstream-test" | "documented-usage" | "ai-derived";
+export type CorpusSource = "props-file" | "upstream-test" | "documented-usage" | "ai-derived";
 
 /**
  * The output of extractCorpus() for a single atom.
@@ -59,9 +64,9 @@ export interface CorpusAtomSpec {
 
   /**
    * The extracted intent card for this atom.
-   * Used by all three sources. Source (a) uses propertyTests hints; source (b)
+   * Used by all four sources. Source (a) uses propertyTests hints; source (b)
    * uses behavior/inputs/outputs/preconditions; source (c) sends the full card
-   * to the AI for property synthesis.
+   * to the AI for property synthesis; source (d) uses the atom name.
    */
   readonly intentCard: IntentCardInput;
 
@@ -72,6 +77,18 @@ export interface CorpusAtomSpec {
    * Omitting this disables source (c).
    */
   readonly cacheDir?: string | undefined;
+
+  /**
+   * Absolute path of the source file containing this atom.
+   * Used by source (d) props-file discovery to locate the sibling *.props.ts.
+   * Omitting this disables source (d).
+   *
+   * @decision DEC-V2-PREFLIGHT-L8-BOOTSTRAP-PROPS-001
+   * Added in WI-V2-07-PREFLIGHT-L8 to wire the sibling props-file discovery.
+   * Optional for backward compatibility: existing callers that don't supply a
+   * sourceFilePath silently skip source (d) and fall through to source (a).
+   */
+  readonly sourceFilePath?: string | undefined;
 }
 
 /**
@@ -105,10 +122,16 @@ export interface IntentCardInput {
 /**
  * Options controlling which sources are attempted by extractCorpus().
  *
- * By default all three sources are enabled. Disable individual sources for
+ * By default all four sources are enabled. Disable individual sources for
  * testing or to force a specific extraction path.
  */
 export interface CorpusExtractionOptions {
+  /**
+   * Whether to attempt props-file discovery (source d).
+   * Default: true. Requires CorpusAtomSpec.sourceFilePath to be set.
+   * @decision DEC-V2-PREFLIGHT-L8-BOOTSTRAP-PROPS-001
+   */
+  readonly enablePropsFile?: boolean | undefined;
   /**
    * Whether to attempt upstream-test adaptation (source a).
    * Default: true.
