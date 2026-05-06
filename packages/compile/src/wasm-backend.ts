@@ -1788,6 +1788,22 @@ function emitCFStringModule(
 const EXPORT_FUNCTION_RE = /export\s+function\s+/m;
 
 /**
+ * Regex that identifies statement-block sources — those beginning with a statement
+ * keyword (if/while/for/do/switch/return/const/let/var/function/class/interface/
+ * type/throw/try) rather than an expression.
+ *
+ * Statement blocks cannot be wrapped as `return (...)` because TypeScript (and JS)
+ * do not allow statements inside a parenthesised return expression.
+ * Bare expressions (e.g. `a + b`) can be wrapped as `return (...)` safely.
+ *
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002 (sub-001)
+ * Statement-block sources are wrapped as function-body, not return-expression.
+ * `if`/`while`/etc. are statements not expressions; `return (if (...))` is invalid TS.
+ */
+const STATEMENT_BLOCK_RE =
+  /^\s*(?:if|while|for|do|switch|return|const|let|var|function|class|interface|type|throw|try)\b/;
+
+/**
  * Regex that matches a bare arrow function and captures:
  *   group 1: full parenthesised param list, possibly with type annotations e.g. "a: number, b: number"
  *   group 2: single-identifier param (no parens) e.g. "x"
@@ -1884,7 +1900,21 @@ function synthesizeExportWrapper(source: string, merkleRoot: string): string {
     return `export function ${atomName}(${paramStr})${returnAnnotation} ${bodyText}`;
   }
 
-  // Case 2: bare expression or statement block — use ...args rest form.
+  // Case 2: statement block or bare expression — use ...args rest form.
+  // Bifurcate: statement blocks (if/while/for/const/return/…) must NOT be
+  // wrapped as `return (stmt)` because that is a parse error in TypeScript.
+  // Genuine bare expressions (e.g. `a + b`, `Math.abs(x)`) use the return-
+  // expression form which the LoweringVisitor can handle via its existing path.
+  if (STATEMENT_BLOCK_RE.test(trimmed)) {
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002 (sub-001)
+    // Statement-block sources are wrapped as function-body, not return-expression.
+    // `if`/`while`/etc. are statements not expressions; `return (if (...))` is invalid TS.
+    return [`export function ${atomName}(...args: number[]): number {`, `  ${trimmed}`, "}"].join(
+      "\n",
+    );
+  }
+
+  // Bare expression — safe to wrap in return (...).
   // The visitor may emit a LoweringError for unsupported constructs,
   // but the source will no longer fail with missing-export.
   return [
