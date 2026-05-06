@@ -37,6 +37,7 @@ import {
   deserializeRow,
   loadCache,
   regenerateCorpus,
+  relativizeSourcePath,
   saveCache,
   tryHitOrShave,
 } from "./corpus-loader.js";
@@ -560,6 +561,49 @@ describe("regenerateCorpus — integrated determinism", () => {
     },
     60_000, // 60s timeout — real shave on tiny files should complete in seconds
   );
+});
+
+// ---------------------------------------------------------------------------
+// relativizeSourcePath — unit tests (DEC-V1-WAVE-4-PENDING-ATOMS-PATH-NORMALIZE-001)
+//
+// Verifies that the helper converts absolute paths to repo-relative forward-slash
+// strings, matching the contract documented in corpus-loader.ts.
+// ---------------------------------------------------------------------------
+
+describe("relativizeSourcePath", () => {
+  it("converts an absolute path under repoRoot to a repo-relative forward-slash path", () => {
+    const result = relativizeSourcePath(
+      "/repo/packages/seeds/src/blocks/digit/impl.ts",
+      "/repo",
+    );
+    expect(result).toBe("packages/seeds/src/blocks/digit/impl.ts");
+  });
+
+  it("sanity: shallow absolute path under repoRoot", () => {
+    const result = relativizeSourcePath("/repo/foo/bar.ts", "/repo");
+    expect(result).toBe("foo/bar.ts");
+  });
+
+  it("precondition doc: already-relative input produces leading '../' (documents the boundary)", () => {
+    // relativizeSourcePath expects absolute input. If called with a relative path
+    // the result starts with ".." — callers must ensure only absolute paths are passed.
+    // This test documents the precondition rather than asserting a guard.
+    const result = relativizeSourcePath("packages/seeds/src/blocks/digit/impl.ts", "/repo");
+    // path.relative("/repo", "packages/...") produces a ../... result — not a valid
+    // repo-relative path. We assert it is NOT a clean forward-slash relative path.
+    expect(result.startsWith("..")).toBe(true);
+  });
+
+  it("forward-slash normalization: result contains no backslashes", () => {
+    // On Linux path.sep is '/' so this is a no-op, but the test documents the
+    // cross-platform contract: any platform-native separators are normalised.
+    const result = relativizeSourcePath(
+      "/repo/packages/seeds/src/blocks/digit/impl.ts",
+      "/repo",
+    );
+    expect(result).not.toContain("\\");
+    expect(result).toBe("packages/seeds/src/blocks/digit/impl.ts");
+  });
 });
 
 // ---------------------------------------------------------------------------
