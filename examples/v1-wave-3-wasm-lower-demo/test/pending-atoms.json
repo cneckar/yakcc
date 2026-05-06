@@ -1,524 +1,524 @@
 [
   {
     "canonicalAstHash": "fd1b367bdbb3b8329bd8e91e739479b234ceda52795dca698dc11cfa217604b6",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "18eecbe09035985434e601768c91bdebaa04d1e1d7815eb7380b3feaccea4a6f",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "3c22a99a5893e3e1657d3e9f3ade839cafbf59e31840817103287185d28c069b",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "9258f2a22734ab4ce3efbbef8e88e0de3adc9d400b1457ae132d30a156e07fa1",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/bracket/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/bracket/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "e47bae1123302cc6bacbea14d8668c44c262c0c9cbe00ea5b7668511f0e8ee6a",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/string-from-position/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/string-from-position/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "11ce64544f08c21f3d365d9af829423cdf752b6e302904f395acb932fdb3efc3",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/char-code/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/char-code/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "85319e426e99fc26c357707e5e2bcf6dd834dd1ddaaed74227d7d5663ab3fee6",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/bracket/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/bracket/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "4149d2cf4f0c0995324b6f5184bd7a62cd48ffa0f78071ca052da36da2ed5b15",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/bracket/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/bracket/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "d17b5be43b3a7e1735d2e8e6cac8e1a850d98c65225c36833d3ec19c75a0030f",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "84e812e4372915b415e772f402dcf9e6b401b11a0abeebfb277edb5aa6b90593",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "6d5a7353ed145ca021f680a643a82bcf2d3297a410159902d27bb6d6e93b95f6",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "1a8b942325ab3f14192363c472a5f45c80c7462f1c59191799ba017818402ce1",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "1f605bd6b722b5d5dc7e0b41ec0c42500d032c406e26a6f90c736474f1c0ee7e",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/empty-list-content/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/empty-list-content/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "c43d21ea7b6975e8d280d08fb239d3d443aad6c8688e0548dfca6ae985eea94f",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "bc4baec389953e908879f0ee59cc8793725887cc875dd1dfb5fe6e5a0b7c872b",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/bracket/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/bracket/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "b538ad5dcfcf96f89a4e19775d439849e288b23335e27125847e9567cb0e04b9",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "fbad94d13b87d3c53e4e1b7ab40dcbf44adf82327bec0e6b996bb739828368e7",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/signed-integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/signed-integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "8a50fbcd62fdd710eb228c1497e06f04680f492225e2fd62eb8d149455d32ee4",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/signed-integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/signed-integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "fc81a714e69c2770f22a85b905e31357a72ac02600d5e365832e5c7629e22e62",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/position-step/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/position-step/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "52a6853afc5c99342284a159f912c2694d1943dac83ae6b63abfeaf4ca7597fa",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "2c51dcfc56882677ef96a4ecd1efaee67006a6dd7a1cd96a3395f0c1399f8503",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "fd315234c0e02a89da579587a683f40e1b888afce09fe01472b9fc3aa33273aa",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "6c5b080836e8128c533d6ef3ce96cb5774e36ccf17def7f06e820b2381c07c7a",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/non-ascii-rejector/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ':' expected.; ',' expected.; ',' expected.; ';' expected.; Declaration or statement expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/non-ascii-rejector/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "45dbe138c125cd5bbd8ed4cc8aac8a2bab1dc84fbdb1e132cdac4a5a4aec8446",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "bd3c96055e49f17839fadf637b1b9d37649f5d81316762c0b814c47870981441",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "7d283cec980f24b367f69dfe7f8f75c4f1fb8bf4747f1dac055f70238ec4b2d5",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "5b8d297d4da96362292156bbfc98984b5d566e997ef1663e28acf630dcada803",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "1757301a07b2b6f9b0d7353fc719c008d0a89815443d107bfad3e9c0cf0591be",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/digit-or-throw/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/digit-or-throw/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "2c57d140444e568a59e17efc08036db1c04477be91399807b55af30fe54b026b",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/eof-check/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/eof-check/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "66c3b3965c916da1b3922e37e5e2b7900ca217b69a20a33cf2493bec60a9f1f8",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "f88795a741ba7860e40229f074b7d05118d3b11148c41a836b256df2ae802d5e",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/ascii-char/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/ascii-char/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "201af44ac6e045dede8fe3ca6e8c3fafcf79096d6a03067c1110ce8dbabbe9f9",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "1a5122b2795b6ca77dab71e77d277e8060027f3d1e4a11d547a675bc817d8089",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "fd1f170143ace4bc16dfad044f155ac4993f66812382dabcea5728e964a19d5d",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/string-from-position/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/string-from-position/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "901df2053c05cbb4aafa5502b4150ef0dc5e0f44cd7210cace5508e920c9893d",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "f31be2acbd9f7791b8d2d835d3bf2e1b692a2b66bfe3456b2a9e2edc2507d468",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "7ebd2461c40e10da91f5fd85a116aa4398e80260903d5d35cf5dea8f8af87227",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "26396b5dc610f49a4c5f1e984734ebd52226c2a6029d4a06f33f8ab0b92819b4",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "00a7a543fcaa0cd5c3644296ec73eccfadf7ea1eaecbc3c043b5d3cc9cb5c097",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/ascii-char/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Identifier expected. 'const' is a reserved word that cannot be used here.; ',' expected.; ',' expected.; '=>' expected.",
+    "sourcePath": "packages/seeds/src/blocks/ascii-char/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "58b7b5157a095ca35990102f8fbc009dc36b8ab0c687bfe58f71471e98ecd7b0",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Identifier expected. 'const' is a reserved word that cannot be used here.; ',' expected.; ',' expected.; '=>' expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "be0fceb4a7cf447ebd0e01fd7fcafb14fc29b1aa3115f44e6936616144d5a7e9",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "84f5c991194a41433f8c3c1c4132ec08f093a6efc907500a35e3dbba34a15ec3",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "ec185585f29b6e66dce11b88d739802a41927067d48aa8cd9333c3b71464e208",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "6b63eaf1121d8eb1b6397c48a4f2ee28453a7dc9f671c100751122b7b046393f",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "b412f9f557f9aaba98d982d8d340c9011285dbbd119438a34dd48f75aad56979",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "92c38536e74b0f72e89e7a5ead6c1acde6f5152f9b16a6f065faa571c06a45c3",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/char-code/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/char-code/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "becfb73145f231e52b4f5295f0700d4fc90fbaf539d244428351b3e61242a136",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/peek-char/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/peek-char/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "dd107735da907f15e2de11f756c1968d5f93e6082d79db3e202d9137bc4142e4",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/position-step/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/position-step/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "8ce2935f234329ae27ebd66439b7ccdaba984f9125d4aff769f9e4b202413b61",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/ascii-char/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/ascii-char/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "06e51973c144e090039809c19de689f7ea25dff6c744172354785bdf718455df",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "52ecec74b21502424ec62258377b9b4289e821fc3d0a147b15165e11375c72a8",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/position-step/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/position-step/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "02eeb257e651cf5b6590a96ebee800b48a8a5fbe442a1adf87d22e36ffea4518",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Identifier expected. 'const' is a reserved word that cannot be used here.; ',' expected.; ',' expected.; '=>' expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "3c09bee7562e7d4398fe2a4e2c6b669c08b5e7ddd38991d6601b841f8608c3c6",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "43de37d7d360aee6d847f72016a53f173e33b4a030a98eceff21c38c4c0b86c1",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "36c95f9c3f2ee61c1bc4ea1406fea6d0880326a4a7ed06036fb43bd059851748",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "5ec544bbb9a070bb4545dd4f3d59df5b38f557a875e558703b100064c68ce79d",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "c41535c991a15d6457c5c2932a27d5ff15f43137111adf64cea8cb8c8d6d9a32",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "9c91bdcd395132716f6e459eef4af1c37cdfaa3bd821dd174f74883c503c20d3",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "b8954c3c2d00ac9f47e6140ced63283a360a222b422b7ca9124c9d8a9e7e41b8",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/digit-or-throw/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/digit-or-throw/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "920d86ac134d7971ee71c394f0db7415f762d5d36678d097191df4aed2fe74fd",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/string-from-position/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/string-from-position/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "68acc878633783387be9e104f9c96a736db89a27d9d154fb537675ca823cfeb4",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/optional-whitespace/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/optional-whitespace/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "79594c03149290382ed6847ec73dfe081f8097d5102c927d3fe1c54e1c59f210",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Identifier expected. 'const' is a reserved word that cannot be used here.; ',' expected.; ',' expected.; '=>' expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "10ffd09820abb1f8663ff22d53e8b2426dc4f969fdc288515be7d9b4c9f63fc1",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/string-from-position/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/string-from-position/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "2476995ba1c71ca0ed3f1885ce818b7379ce70a3f766fa4a2c8e6361ae37d6b3",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/position-step/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/position-step/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "6785e8d950d4134ecf3ebc38a63a108a3f99e2695dec408b5c435791ef610f8a",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ',' expected.; ',' expected.; Property assignment expected.; Declaration or statement expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "b914ceaee0b012fab639808110a677ec9421efd4634d77ed69e23d40dc6f473b",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "682a0a6f5d689d04bd63cc4c6c2dd0763452280e100c336905a8d317bb2d69df",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/eof-check/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/eof-check/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "3b91184ba965b564453af12d3404b8376a04c159c07b363cc3c652bb7b05b268",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/ascii-char/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/ascii-char/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "b2a585f04ef6c0353c859e56579542a4e8c3458a713e44782ab5484f43f39da5",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/signed-integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/signed-integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "304085d57e60fcbaf1aaf920ef06f81b59e16f6697d257c19e6350de4b1aee5d",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/signed-integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/signed-integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "456a72c505dd9fc7831e707950e636a4e848fd09fcab2c337a4208e88338157c",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "e4b2647e14ad1cb3ccd50056c06550de248cd246908e0bffc021d27fb367d119",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/empty-list-content/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/empty-list-content/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "d4a930652b380dbcb4620ae5f6b060bcca17081c13bdd9f8aae25d7b00368250",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/position-step/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Identifier expected. 'const' is a reserved word that cannot be used here.; ',' expected.; ',' expected.; '=>' expected.",
+    "sourcePath": "packages/seeds/src/blocks/position-step/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "0d6cdad5f7fd5ab2ad161390458868e105fecfac1e295f54af686f0342851e2a",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "edfb49ce3ac2a44d1f60ce3e730cd991ea365bffd814960d7469e362dd98212a",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "d63532868039de238bd60c2032b967d8369cedcf48e5ab05c28e802c7cc870b6",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "07e926523bc811296137c82c8b46fac827ec6d9c20828d427dbadb72e2285a86",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "563e0fe3a7e22e47e1815d54575b21fa4f6f12a9fa63dce3f2275318be22ffd7",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/digit-or-throw/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Identifier expected. 'const' is a reserved word that cannot be used here.; ',' expected.; ',' expected.; '=>' expected.",
+    "sourcePath": "packages/seeds/src/blocks/digit-or-throw/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "2b33dd2cfc3b6567160a6670a7805a9c6baa07cad06e72807aebcbc7b3139df5",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "0c56683f156759a8d2c1723876f161d1a2046d3092cfb1c59a10cb8b1f0c536f",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/digit/impl.ts",
-    "reason": "LoweringError (unsupported-node): LoweringVisitor: PropertyAccessExpression 's.length' in general numeric lowering — receiver 's' is not a known record-typed parameter. Only simple param.field access ",
+    "sourcePath": "packages/seeds/src/blocks/digit/impl.ts",
+    "reason": "LoweringError (unsupported-node): LoweringVisitor: unsupported expression SyntaxKind 'PropertyAccessExpression' in general numeric lowering",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "875b32ce4c71ae37aa117374607a1788e362a4005c90e26c05995ba1151d0c47",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "549f6639c7456f0d8bb4871445f889ade87f0b295024ec06f136709cf741d390",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "a0023d6472c0ea8000094b2a964206542fb76d4eb4caab4448e69784504b3451",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/digit-or-throw/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/digit-or-throw/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "f16e6cc4b0e56ceb69e3a270b718fd165567d88f073ccb6dd50fadfacdb18ba2",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/comma-separated-integers/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: ')' expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/comma-separated-integers/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "cd767830c4dd493609e9b950a4a64f5cf2828af184129342bfbfb9addc333a52",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/list-of-ints/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/list-of-ints/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "cddc4bd21df8f64e0bc5b2cc6451a81d05714eaab6f6023c53239e2e4eb21b8a",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/optional-whitespace/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/optional-whitespace/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   },
   {
     "canonicalAstHash": "b4d0da8fbd64ee526e03033840e087b7fa13c4fd390a6ed571e81d3cebfef6aa",
-    "sourcePath": "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-extend-missing-export/packages/seeds/src/blocks/signed-integer/impl.ts",
-    "reason": "LoweringError (parse-error): ts-morph parse error in block source: Expression expected.; Declaration or statement expected.",
+    "sourcePath": "packages/seeds/src/blocks/signed-integer/impl.ts",
+    "reason": "LoweringError (missing-export): LoweringVisitor: source has no exported function declaration. Every ResolvedBlock.source must export exactly one function.",
     "category": "lowering-error"
   }
 ]

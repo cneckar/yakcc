@@ -94,7 +94,7 @@
 //   architecture regardless of the exact per-file wall-clock figure.
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, RegistryOptions } from "@yakcc/registry";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION, shave, sourceHash } from "@yakcc/shave";
@@ -283,6 +283,51 @@ function findRepoRoot(startPath: string): string {
     dir = parent;
   }
   return startPath;
+}
+
+// @decision DEC-V1-WAVE-4-PENDING-ATOMS-PATH-NORMALIZE-001
+// @title Normalize absolute sourcePaths to repo-relative forward-slash paths at emission
+// @status accepted (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT-FOLLOWUP-02 / yakcc #139)
+// @rationale
+//   The merkleRootToSourcePath map and the CorpusAtom.sourcePath field were
+//   previously populated with absolute filesystem paths (e.g.
+//   /home/claude/yakcc/packages/seeds/src/blocks/digit/impl.ts).
+//   Absolute paths are machine-local: they differ between developer machines
+//   and CI environments, breaking content-stable identifiers
+//   (DEC-V2-BOOTSTRAP-MANIFEST-001) and making pending-atoms.json non-portable.
+//   Fix: apply path.relative(repoRoot, absPath) at the emission site inside
+//   regenerateCorpus() — the merkleRootToSourcePath.set() call — so every
+//   sourcePath written to pending-atoms.json or carried in CorpusAtom is a
+//   repo-relative forward-slash string such as
+//   "packages/seeds/src/blocks/digit/impl.ts".
+//   repoRoot is already computed at the top of regenerateCorpus() via
+//   findRepoRoot() (the walk-up helper in this file), so no subprocess call
+//   (git rev-parse) is needed.
+//   Cross-reference:
+//   - DEC-V2-BOOTSTRAP-MANIFEST-001: content-stable identifiers
+//   - DEC-V1-WAVE-4-WASM-LOWER-EXTEND-CORPUS-PROVENANCE-001: introduced the
+//     absolute-path emission that this helper corrects
+/**
+ * Convert an absolute source path to a repo-relative forward-slash path.
+ *
+ * Uses path.relative(repoRoot, absPath) then normalises OS path separators to
+ * forward slashes so the result is identical on all platforms.
+ *
+ * Precondition: absPath must be an absolute path under repoRoot. Passing a
+ * path that is already relative will produce a "../"-prefixed result — callers
+ * must ensure only absolute paths are passed (the shave walk always provides
+ * absolute paths via readdirSync + join).
+ *
+ * Examples:
+ *   relativizeSourcePath("/repo/packages/seeds/src/blocks/digit/impl.ts", "/repo")
+ *     → "packages/seeds/src/blocks/digit/impl.ts"
+ *   relativizeSourcePath("/repo/foo/bar.ts", "/repo")
+ *     → "foo/bar.ts"
+ */
+export function relativizeSourcePath(absPath: string, repoRoot: string): string {
+  const rel = relative(repoRoot, absPath);
+  // Normalise to forward slashes for cross-platform stability.
+  return rel.split(sep).join("/");
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +839,7 @@ export async function regenerateCorpus(
     // (DEC-V1-WAVE-4-WASM-LOWER-EXTEND-CORPUS-PROVENANCE-001)
     for (const row of result.rows) {
       if (!merkleRootToSourcePath.has(row.blockMerkleRoot)) {
-        merkleRootToSourcePath.set(row.blockMerkleRoot, absPath);
+        merkleRootToSourcePath.set(row.blockMerkleRoot, relativizeSourcePath(absPath, repoRoot));
       }
     }
   }
