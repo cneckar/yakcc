@@ -637,8 +637,11 @@ function serializeWasmFunction(fn: WasmFunction): Uint8Array {
  *
  * @param kind      - Wave-2 substrate kind (null for general numeric lowering)
  * @param fnName    - Exported function name (used as __wasm_export_<fnName>)
- * @param wasmFn    - WasmFunction IR from LoweringVisitor
- * @param domain    - Numeric domain for general lowering (undefined → i32 for wave-2)
+ * @param wasmFn      - WasmFunction IR from LoweringVisitor
+ * @param domain      - Numeric domain for general lowering (undefined → i32 for wave-2)
+ * @param paramDomains - Per-parameter domains for N-ary functions (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT).
+ *                       When present, overrides the 2-param assumption in the general lowering type.
+ *                       Required for synthesized functions with 1 or 3+ params.
  *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001
  * @title General numeric lowering extends type section with domain-specific type
@@ -649,12 +652,18 @@ function serializeWasmFunction(fn: WasmFunction): Uint8Array {
  *   (general lowering), a type 5 entry `(domain domain) → domain` is appended and
  *   the substrate function references it. Wave-2 substrates continue to use types
  *   1 and 4 as before, preserving full backward compatibility.
+ *
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+ *   WI-V1W4: synthesized functions may have any arity. When `paramDomains` is provided,
+ *   the substrate type entry is built from the full per-parameter domain list rather
+ *   than the hardcoded 2-param assumption. This is correct for all synthesized wrappers.
  */
 function emitTypeLoweredModule(
   kind: SubstrateKind | null,
   fnName: string,
   wasmFn: WasmFunction,
   domain?: NumericDomain,
+  paramDomains?: ReadonlyArray<NumericDomain>,
 ): Uint8Array<ArrayBuffer> {
   // -----------------------------------------------------------------------
   // Type section
@@ -665,15 +674,33 @@ function emitTypeLoweredModule(
   const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32) → ()
   const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]); // (i32 i32) → (i32)
 
-  // For general numeric lowering (domain provided), append type 5: (D D) → D
+  // For general numeric lowering (domain provided), append type 5: (D D...) → D
   // @decision DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001 (see above)
+  // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
   let typeSection: Uint8Array;
   let substrateFuncTypeIdx: number;
 
   if (domain !== undefined) {
-    // General lowering: build a domain-specific type 5 entry
-    const vt = domain === "i64" ? I64 : domain === "f64" ? F64 : I32;
-    const type5 = new Uint8Array([FUNCTYPE, 2, vt, vt, 1, vt]); // (D D) → D
+    // General lowering: build a domain-specific substrate type (type 5).
+    // When paramDomains is present (N-ary synthesized functions), use the full
+    // per-parameter list; otherwise fall back to the legacy 2-param assumption.
+    const retVt = domain === "i64" ? I64 : domain === "f64" ? F64 : I32;
+    let type5: Uint8Array;
+    if (paramDomains !== undefined && paramDomains.length !== 2) {
+      // Build (p0 p1 ... pN-1) → retVt from per-parameter domains.
+      const paramVts = paramDomains.map((d) => (d === "i64" ? I64 : d === "f64" ? F64 : I32));
+      type5 = concat(
+        new Uint8Array([FUNCTYPE]),
+        uleb128(paramVts.length),
+        new Uint8Array(paramVts),
+        uleb128(1),
+        new Uint8Array([retVt]),
+      );
+    } else {
+      // Legacy 2-param path (original DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001 behaviour)
+      const vt = retVt;
+      type5 = new Uint8Array([FUNCTYPE, 2, vt, vt, 1, vt]); // (D D) → D
+    }
     typeSection = section(1, concat(uleb128(6), type0, type1, type2, type3, type4, type5));
     substrateFuncTypeIdx = 5; // general numeric substrate uses type 5
   } else {
@@ -1735,6 +1762,139 @@ function emitCFStringModule(
 }
 
 // ---------------------------------------------------------------------------
+// Wrapper synthesis — WI-V1W4-LOWER-EXTEND-MISSING-EXPORT
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+// Title: Wrapper synthesis at compileToWasm entry for bare/non-exported implSources
+// Status: decided (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT)
+// Rationale:
+//   1. Wrapper synthesis happens at compileToWasm entry, not in visitor.
+//      The visitor entry stays unchanged — it continues to expect `export function X(...)`.
+//      Before passing source to the visitor, compileToWasm checks whether the atom's
+//      implSource is already wrapped; if not (bare expression / arrow function /
+//      statement fragment), this function synthesizes the wrapper.
+//   2. Synthesis only fires when no top-level `export function` is detected.
+//      Detection uses a simple regex check (/export\s+function\s+/m). The regex
+//      is refinable to an AST check via ts-morph if false-positives appear (e.g.
+//      an `export function` inside a string literal), but the seed corpus has no
+//      such cases.
+//   3. Rationale for entry-point synthesis: ts-backend handles sub-fragments via
+//      natural composition; wasm-backend matches that semantic via explicit wrapper
+//      synthesis. This keeps the visitor's invariant ("source must export exactly one
+//      function") intact without modifying visitor.ts (diff-zero on that file).
+
+/** Regex that detects a top-level `export function` declaration in a source string. */
+const EXPORT_FUNCTION_RE = /export\s+function\s+/m;
+
+/**
+ * Regex that matches a bare arrow function and captures:
+ *   group 1: full parenthesised param list, possibly with type annotations e.g. "a: number, b: number"
+ *   group 2: single-identifier param (no parens) e.g. "x"
+ *   group 3: the body (everything after `=>`, possibly prefixed with whitespace)
+ *
+ * Matches forms:
+ *   (a: number, b: number) => expr
+ *   (a, b) => expr
+ *   x => expr
+ *
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+ * Inline-body synthesis: the wrapper directly inlines the arrow body as the function
+ * body rather than calling the arrow via `(arrow)(args)`. This avoids the LoweringVisitor
+ * "cannot resolve call target" error that fires when the visitor encounters a
+ * parenthesised-arrow-as-call expression it cannot trace to a funcIndexTable entry.
+ */
+const ARROW_RE = /^\s*(?:\(([^)]*)\)|(\w+))\s*=>\s*([\s\S]+)$/;
+
+/**
+ * Synthesize an `export function` wrapper around bare implSource if needed.
+ *
+ * If `source` already contains a top-level `export function`, returns it unchanged.
+ * Otherwise produces a wrapped form the LoweringVisitor can parse:
+ *
+ *   Arrow function — inline body directly:
+ *     `(a: number, b: number) => a + b`
+ *       →  `export function <name>(a: number, b: number): number { return a + b; }`
+ *
+ *   Arrow function, params without type annotations — add `number` type:
+ *     `(a, b) => a + b`
+ *       →  `export function <name>(a: number, b: number): number { return a + b; }`
+ *
+ *   Arrow function, block body `(a) => { return a; }`:
+ *     Body is emitted verbatim as the function body (block body arrows start with `{`).
+ *
+ *   Zero-param arrow `() => expr`:
+ *       →  `export function <name>(): number { return expr; }`
+ *
+ *   Single-param no-parens `x => expr`:
+ *       →  `export function <name>(x: number): number { return expr; }`
+ *
+ *   Bare expression / statement (no arrow): wrap in a rest-arg function so the
+ *   source no longer fails with missing-export (visitor may still emit a LoweringError
+ *   for unsupported constructs, but that is a separate concern).
+ *
+ * @param source       Raw implSource from the ResolvedBlock.
+ * @param merkleRoot   BlockMerkleRoot used as the synthesized function name basis.
+ */
+function synthesizeExportWrapper(source: string, merkleRoot: string): string {
+  // Pass through already-wrapped sources unchanged (idempotent).
+  if (EXPORT_FUNCTION_RE.test(source)) {
+    return source;
+  }
+
+  // Derive a stable, WASM-identifier-safe function name from the merkle root.
+  const shortId = merkleRoot.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+  const atomName = `wasm_export_${shortId}`;
+
+  const trimmed = source.trim();
+
+  // Case 1: bare arrow function — inline the arrow body directly.
+  // This avoids the "cannot resolve call target" LoweringError that fires when
+  // the visitor encounters a parenthesised arrow expression used as a call target.
+  // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+  const arrowMatch = ARROW_RE.exec(trimmed);
+  if (arrowMatch !== null) {
+    // group 1: params inside parens (may include type annotations, may be empty)
+    // group 2: single bare identifier param (no parens)
+    // group 3: arrow body (expr or block)
+    const rawParams = arrowMatch[1] !== undefined ? arrowMatch[1] : (arrowMatch[2] ?? "");
+    const body = (arrowMatch[3] ?? "").trim();
+
+    // Build the parameter declarations, adding `: number` if type annotation absent.
+    const paramDecls = rawParams
+      .split(",")
+      .map((p) => {
+        const pt = p.trim();
+        if (pt.length === 0) return null; // skip empty (zero-param parens)
+        // If it already has a colon (type annotation), use as-is
+        if (pt.includes(":")) return pt;
+        // Bare name — add number annotation
+        return `${pt}: number`;
+      })
+      .filter((p): p is string => p !== null);
+
+    // Determine the function body text.
+    // Block body arrows: `(a) => { return a; }` — body starts with `{`
+    // Expression body arrows: `(a) => a * 2` — wrap in `{ return ...; }`
+    const isBlockBody = body.startsWith("{");
+    const bodyText = isBlockBody ? body : `{ return ${body}; }`;
+
+    const paramStr = paramDecls.join(", ");
+    const returnAnnotation = isBlockBody ? "" : ": number";
+    return `export function ${atomName}(${paramStr})${returnAnnotation} ${bodyText}`;
+  }
+
+  // Case 2: bare expression or statement block — use ...args rest form.
+  // The visitor may emit a LoweringError for unsupported constructs,
+  // but the source will no longer fail with missing-export.
+  return [
+    `export function ${atomName}(...args: number[]): number {`,
+    `  return (${trimmed});`,
+    "}",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1746,6 +1906,10 @@ function emitCFStringModule(
  * serialises it. The wave-2 "add" substrate still emits the legacy 3-function
  * substrate module so that wasm-host.test.ts conformance tests (which rely on
  * __wasm_export_string_len and __wasm_export_panic_demo) remain green.
+ *
+ * WI-V1W4-LOWER-EXTEND-MISSING-EXPORT: bare implSources (no `export function`)
+ * are wrapped via synthesizeExportWrapper() before being passed to the visitor.
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
  *
  * @decision DEC-V1-WAVE-3-WASM-PARSE-001
  * The visitor is the single dispatch entrypoint. detectSubstrateKind is no
@@ -1759,8 +1923,11 @@ export async function compileToWasm(
 ): Promise<Uint8Array<ArrayBuffer>> {
   const entryBlock = resolution.blocks.get(resolution.entry);
   if (entryBlock !== undefined) {
+    // WI-V1W4-LOWER-EXTEND-MISSING-EXPORT: synthesize export wrapper for bare sources.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+    const source = synthesizeExportWrapper(entryBlock.source, entryBlock.merkleRoot);
     const visitor = new LoweringVisitor();
-    const result = visitor.lower(entryBlock.source);
+    const result = visitor.lower(source);
     // WI-V1W3-WASM-LOWER-05: string shapes go to emitStringModule.
     // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
     if (result.stringShape !== undefined) {
@@ -1782,10 +1949,17 @@ export async function compileToWasm(
     if (result.arrayShape !== undefined) {
       return emitArrayModule(result.arrayShape, result.fnName);
     }
-    // "add" shape uses the legacy 3-function substrate module so that the
-    // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
-    // __wasm_export_panic_demo) remains green.
-    if (result.wave2Shape === "add") return emitSubstrateModule();
+    // "add" shape with the literal function name "add" uses the legacy 3-function
+    // substrate module so that the wasm-host.test.ts conformance fixture
+    // (__wasm_export_string_len, __wasm_export_panic_demo) remains green.
+    //
+    // WI-V1W4-LOWER-EXTEND-MISSING-EXPORT: synthesized functions (e.g. `wasm_export_<hash>`)
+    // also classify as wave2Shape="add" when their body is simple arithmetic. Those must
+    // NOT route to emitSubstrateModule() — that path hardcodes 2-param i32 ABI and exports
+    // __wasm_export_add, which is wrong for synthesized names and for 3+ param functions.
+    // Only the original wave-2 "add" fixture (fnName === "add") gets the legacy path.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+    if (result.wave2Shape === "add" && result.fnName === "add") return emitSubstrateModule();
     // WI-V1W3-WASM-LOWER-08 followup (closes #82): control-flow functions that use
     // host_string_codepoint_at/next_offset (cf-5) or host_string_eq (cf-7) need the
     // extended string import section. Use emitCFStringModule for these.
@@ -1794,12 +1968,16 @@ export async function compileToWasm(
       return emitCFStringModule(result.fnName, result.wasmFn, result.numericDomain ?? "i32");
     }
     // General numeric lowering (wave2Shape === null): pass the inferred domain
-    // so emitTypeLoweredModule can build the correct type entry (type 5 for i64/f64).
+    // and paramDomains so emitTypeLoweredModule can build the correct type entry.
+    // paramDomains is required for N-ary synthesized functions (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT)
+    // where the param count may differ from the legacy 2-param assumption.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
     return emitTypeLoweredModule(
       result.wave2Shape as SubstrateKind | null,
       result.fnName,
       result.wasmFn,
       result.wave2Shape === null ? result.numericDomain : undefined,
+      result.wave2Shape === null ? result.paramDomains : undefined,
     );
   }
   // Empty resolution fallback: emit the substrate module.
