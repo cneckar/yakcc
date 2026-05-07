@@ -1,0 +1,21 @@
+=== Install Log ===
+asc version: Version 0.28.17
+Node version: v22.22.2
+npm version: 10.9.7
+wasmtime: NOT INSTALLED
+wasm2c: NOT INSTALLED
+
+╭──────────────────────────────╮
+│ Stats                        │
+╞════════════╤════════════╤════╡
+│ parse      │ 291.642 ms │ 89 │
+│ initialize │  15.657 ms │  1 │
+│ compile    │  65.970 ms │  1 │
+│ emit       │  46.673 ms │  1 │
+│ validate   │  11.215 ms │  1 │
+│ optimize   │ 782.805 ms │  1 │
+│ transform  │        n/a │  0 │
+├────────────┴────────────┴────┤
+│ Took 1231.686 ms             │
+│ 2 reads, 1 writes            │
+╰──────────────────────────────╯
