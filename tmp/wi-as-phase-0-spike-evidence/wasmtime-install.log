@@ -1,0 +1,18 @@
+=== wasmtime install attempts ===
+date: Thu May  7 08:29:27 PM UTC 2026
+
+--- Attempt 1: npm install -g @bytecodealliance/wasmtime ---
+npm error code E404
+npm error 404 Not Found - GET https://registry.npmjs.org/@bytecodealliance%2fwasmtime - Not found
+npm error 404
+npm error 404  '@bytecodealliance/wasmtime@*' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/claude/.npm/_logs/2026-05-07T20_29_27_452Z-debug-0.log
+
+wasmtime not in PATH
+--- Attempt 2: Download pre-built static binary from GitHub releases ---
+Platform: linux-x86_64
+Attempting: https://github.com/bytecodealliance/wasmtime/releases/download/v31.0.0/wasmtime-v31.0.0-x86_64-linux.tar.xz
+wasmtime 31.0.0 (7a9be587f 2025-03-20)

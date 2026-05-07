@@ -1,0 +1,59 @@
+=== Q2-comma-sep: comma-separated-integers/impl.ts (verbatim) ===
+date: Thu May  7 08:28:46 PM UTC 2026
+
+ERROR TS1005: 'from' expected.
+    :
+ 16 │ import type { comma } from "@yakcc/seeds/blocks/comma";
+    │        ~~~~
+    └─ in q2-comma-sep.ts(16,8)
+
+ERROR TS1005: 'from' expected.
+    :
+ 17 │ import type { integer } from "@yakcc/seeds/blocks/integer";
+    │        ~~~~
+    └─ in q2-comma-sep.ts(17,8)
+
+ERROR TS1005: 'from' expected.
+    :
+ 18 │ import type { optionalWhitespace } from "@yakcc/seeds/blocks/optional-whitespace";
+    │        ~~~~
+    └─ in q2-comma-sep.ts(18,8)
+
+ERROR TS1005: 'from' expected.
+    :
+ 19 │ import type { peekChar } from "@yakcc/seeds/blocks/peek-char";
+    │        ~~~~
+    └─ in q2-comma-sep.ts(19,8)
+
+ERROR TS1110: Type expected.
+    :
+ 22 │ type _Comma = typeof comma;
+    │               ~~~~~~
+    └─ in q2-comma-sep.ts(22,15)
+
+ERROR TS1110: Type expected.
+    :
+ 23 │ type _Integer = typeof integer;
+    │                 ~~~~~~
+    └─ in q2-comma-sep.ts(23,17)
+
+ERROR TS1110: Type expected.
+    :
+ 24 │ type _OptionalWhitespace = typeof optionalWhitespace;
+    │                            ~~~~~~
+    └─ in q2-comma-sep.ts(24,28)
+
+ERROR TS1110: Type expected.
+    :
+ 25 │ type _PeekChar = typeof peekChar;
+    │                  ~~~~~~
+    └─ in q2-comma-sep.ts(25,18)
+
+ERROR TS1110: Type expected.
+    :
+ 40 │ ): readonly [ReadonlyArray<number>, number] {
+    │             ~
+    └─ in q2-comma-sep.ts(40,13)
+
+FAILURE 9 parse error(s)
+COMPILED: no

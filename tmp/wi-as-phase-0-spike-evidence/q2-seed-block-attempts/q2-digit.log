@@ -1,0 +1,13 @@
+=== Q2-digit: digit/impl.ts (verbatim) ===
+date: Thu May  7 08:28:20 PM UTC 2026
+source: packages/seeds/src/blocks/digit/impl.ts (verbatim copy)
+
+ERROR TS2304: Cannot find name 'JSON'.
+   :
+ 9 │ throw new RangeError(`Not a digit: ${JSON.stringify(s)}`);
+   │                                      ~~~~
+   └─ in q2-digit.ts(9,42)
+
+FAILURE 1 compile error(s)
+
+COMPILED: no (exit 1)

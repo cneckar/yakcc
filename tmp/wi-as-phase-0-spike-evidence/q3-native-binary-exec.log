@@ -1,0 +1,19 @@
+=== Q3 native binary execution ===
+date: Thu May  7 08:30:03 PM UTC 2026
+
+--- wasmtime run --invoke add q1-add-run-1.wasm 2 3 ---
+warning: using `--invoke` with a function that takes arguments is experimental and may break in the future
+warning: using `--invoke` with a function that returns values is experimental and may break in the future
+5
+
+--- additional invocations ---
+--- additional invocations ---
+add(0, 0) = 0
+add(1, 1) = 2
+add(100, 200) = 300
+add(2147483646, 1) = 2147483647
+add(999, 1) = 1000
+
+cwasm artifact (AOT native):
+99ee1a12825b5c1020e84bc41545453c3f6b81c3be85809841352dc6504c822e  /home/claude/yakcc/.worktrees/feature-wi-as-phase-0-spike/tmp/wi-as-phase-0-spike/q3-add.cwasm
+-rw-r--r--. 1 claude claude 14K May  7 20:29 /home/claude/yakcc/.worktrees/feature-wi-as-phase-0-spike/tmp/wi-as-phase-0-spike/q3-add.cwasm
