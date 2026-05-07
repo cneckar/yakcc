@@ -1,0 +1,9 @@
+=== Q2-optional-whitespace: optional-whitespace/impl.ts (verbatim) ===
+ERROR AS200: Conversion from type 'f64' to 'i32' requires an explicit cast.
+    :
+ 14 │ const c = input[pos];
+    │                 ~~~
+    └─ in q2-optional-whitespace.ts(14,21)
+
+FAILURE 1 compile error(s)
+COMPILED: no

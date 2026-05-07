@@ -1,0 +1,11 @@
+=== Q2-integer: integer/impl.ts (verbatim) ===
+date: Thu May  7 08:28:39 PM UTC 2026
+
+ERROR TS1110: Type expected.
+   :
+ 7 │ export function integer(input: string, position: number): readonly [number, number] {
+   │                                                                    ~
+   └─ in q2-integer.ts(7,68)
+
+FAILURE 1 parse error(s)
+COMPILED: no
