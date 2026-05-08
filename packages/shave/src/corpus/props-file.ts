@@ -76,7 +76,11 @@ export async function extractFromPropsFile(
   // Check whether any prop_<atomName>_* export exists (name-based mapping).
   // The regex uses a word boundary before `prop_` to avoid false matches on
   // names like `my_prop_foo_bar` (which would not be a valid prop export).
-  if (!new RegExp(`(?:^|\\s|;)export\\s+const\\s+prop_${atomName}_`).test(fileContent)) {
+  // Escape regex meta chars in atomName before substitution. Fixes #165: identifiers
+  // like `$` or `$0` contain regex metacharacters (notably `$` as end-of-input anchor)
+  // that would silently break the match when interpolated unescaped.
+  const escapedAtomName = atomName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp(`(?:^|\\s|;)export\\s+const\\s+prop_${escapedAtomName}_`).test(fileContent)) {
     return undefined;
   }
 

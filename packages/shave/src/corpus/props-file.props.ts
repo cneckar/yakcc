@@ -75,17 +75,10 @@ const intentCardInputArb: fc.Arbitrary<IntentCardInput> = fc.record({
   promptVersion: nonEmptyStr,
 });
 
-/**
- * Valid identifier string for use as an atom/function name.
- *
- * Note: regex excludes `$` even though TypeScript identifier syntax allows
- * it. The `$` exclusion dodges #165 (props-file.ts:79 builds a regex from
- * atomName without escaping, breaking on `$`-containing names). When #165
- * lands, this filter can be widened back to `/^[a-zA-Z_$][a-zA-Z0-9_$]*$/`.
- */
+/** Valid identifier string for use as an atom/function name. */
 const identifierArb: fc.Arbitrary<string> = fc
   .string({ minLength: 1, maxLength: 20 })
-  .filter((s) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s));
+  .filter((s) => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(s));
 
 /** Source string with a valid function declaration (inferFunctionName → function-decl path). */
 const sourceFnDeclArb: fc.Arbitrary<[string, string]> = identifierArb.map((name) => [
