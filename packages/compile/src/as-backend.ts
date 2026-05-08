@@ -127,6 +127,23 @@ const INTEGER_FLOOR_MATH_FNS: ReadonlySet<string> = new Set(["floor", "ceil", "r
 
 type NumericDomain = "i32" | "i64" | "f64";
 
+// @decision DEC-V1-DOMAIN-INFER-PARITY-001
+// Title: as-backend inferDomainFromSource priority order aligned with visitor.ts inferNumericDomain
+// Status: decided (WI-AS-PHASE-1-MVP-DOMAIN-INFER-PARITY, Issue #170)
+// Rationale:
+//   Pre-fix, two early-return paths (bigint/n-suffix → i64; >2^31 literal → i64) won
+//   over the subsequent f64/bitop scans. visitor.ts checks the priority block in the
+//   order bitop > f64 > i64 > floor > fallback. For two edge-case shapes — (a) source
+//   with >2^31 literal AND true division, and (b) source with n-suffix bigint AND a
+//   bitwise op — the two implementations disagreed. Phase 1 corpus has no such atoms,
+//   so no tests failed, but the @decision DEC-V1-LOWER-BACKEND-REUSE-001 annotation's
+//   "identical domain decisions" claim was technically false at the edges.
+// Fix:
+//   Collect i64 indicators into boolean flags alongside f64/bitop/floor flags, then
+//   apply the canonical priority block. This makes the "identical decisions" claim
+//   literally true for the documented shapes.
+// Reference: packages/compile/src/wasm-lowering/visitor.ts inferNumericDomain (read-only consumer)
+
 /**
  * Infer the numeric domain of a TypeScript atom source via text-level heuristics.
  *
@@ -137,40 +154,36 @@ type NumericDomain = "i32" | "i64" | "f64";
  * are guaranteed by the evaluation contract to be simple enough for text scanning.
  *
  * @decision DEC-V1-LOWER-BACKEND-REUSE-001 (analysis half reuse)
+ * @decision DEC-V1-DOMAIN-INFER-PARITY-001 (priority order alignment)
  */
 export function inferDomainFromSource(src: string): NumericDomain {
   // Strip comments to avoid false positives from commented-out code.
   const noComments = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // Rule -1 / rule 7: bigint keyword or n-suffix literal → i64
-  if (/\bbigint\b/.test(noComments) || /\b\d+n\b/.test(noComments)) {
-    return "i64";
-  }
+  let hasF64 = false;
+  let hasBitop = false;
+  let hasFloorHint = false;
+  let hasBigIntKeyword = false;
+  let hasBigIntLiteral = false;
+  let hasI64RangeLiteral = false;
 
-  // Rule 5: large integer literals → i64
-  const intLiterals = noComments.match(/\b(\d{10,})\b|\b(2[12]\d{8,})\b/g);
-  if (intLiterals !== null) {
-    for (const lit of intLiterals) {
-      const v = Number(lit);
-      if (Number.isInteger(v) && !lit.includes(".") && (v > 2147483647 || v < -2147483648)) {
-        return "i64";
-      }
-    }
-  }
-  // Also catch the pattern 3000000000 or 4294967296 etc. directly
+  // Rule -1 / rule 7: bigint keyword or n-suffix literal (collected as flag, NOT early-return)
+  // DEC-V1-DOMAIN-INFER-PARITY-001: these must not short-circuit before bitop/f64 scans
+  if (/\bbigint\b/.test(noComments)) hasBigIntKeyword = true;
+  if (/\b\d+n\b/.test(noComments)) hasBigIntLiteral = true;
+
+  // Rule 5: large integer literals > 2^31-1 (collected as flag, NOT early-return)
+  // DEC-V1-DOMAIN-INFER-PARITY-001: f64 indicators (true division) must win over i64 range literals
   const allNums = noComments.match(/\b(\d+)\b/g);
   if (allNums !== null) {
     for (const lit of allNums) {
       const v = Number(lit);
       if (Number.isInteger(v) && v > 2147483647) {
-        return "i64";
+        hasI64RangeLiteral = true;
+        break;
       }
     }
   }
-
-  let hasF64 = false;
-  let hasBitop = false;
-  let hasFloorHint = false;
 
   // Rule 1: true division (/) — but not // (handled by comment stripping)
   // Match `/` that is not `/=` (assign) and not in regex-like contexts.
@@ -204,10 +217,15 @@ export function inferDomainFromSource(src: string): NumericDomain {
     hasBitop = true;
   }
 
-  // Priority order matching visitor.ts:
-  // bitop wins over f64 (| 0 pattern is explicit i32 intent per DEC-V1-WAVE-3-WASM-LOWER-BITOP-PRIORITY-001)
+  // Priority order matching visitor.ts (DEC-V1-DOMAIN-INFER-PARITY-001):
+  //   bitop   → i32  (| 0 idiom; DEC-V1-WAVE-3-WASM-LOWER-BITOP-PRIORITY-001)
+  //   f64     → f64  (true division / float literal / Math.f64 / Number.is*)
+  //   i64     → i64  (bigint keyword / n-suffix / >2^31 literal)
+  //   floor   → i32  (Math.floor/ceil/round/trunc hint)
+  //   default → f64  (ambiguous → conservative f64)
   if (hasBitop) return "i32";
   if (hasF64) return "f64";
+  if (hasBigIntKeyword || hasBigIntLiteral || hasI64RangeLiteral) return "i64";
   if (hasFloorHint) return "i32";
 
   // Ambiguous → f64 (conservative, matching visitor.ts policy)
