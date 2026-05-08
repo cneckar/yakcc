@@ -20,6 +20,8 @@ export type { Backend } from "./ts-backend.js";
 export { tsBackend } from "./ts-backend.js";
 export type { WasmBackend } from "./wasm-backend.js";
 export { wasmBackend, compileToWasm } from "./wasm-backend.js";
+// AssemblyScript backend (WI-AS-PHASE-1-MVP — Phase 1 of AS-backend integration #143/#145)
+export { assemblyScriptBackend } from "./as-backend.js";
 
 // WASM host runtime (WI-V1W2-WASM-03 — DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001)
 // v2 syscall surface (WI-WASM-HOST-CONTRACT-V2 — DEC-V2-WASM-HOST-CONTRACT-WASI-001)
