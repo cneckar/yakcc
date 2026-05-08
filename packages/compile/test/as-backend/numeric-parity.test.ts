@@ -54,7 +54,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 
 import { type BlockMerkleRoot, type LocalTriplet, type SpecYak, blockMerkleRoot, specHash } from "@yakcc/contracts";
-import { assemblyScriptBackend } from "../../src/as-backend.js";
+import { assemblyScriptBackend, inferDomainFromSource } from "../../src/as-backend.js";
 import type { ResolutionResult, ResolvedBlock } from "../../src/resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -554,5 +554,37 @@ describe("AS backend compound-interaction (end-to-end production sequence)", () 
     expect(fn(1n, 2n)).toBe(3000000003n);
     expect(fn(0n, 0n)).toBe(3000000000n);
     expect(fn(-1n, 0n)).toBe(2999999999n);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AS backend domain-inference parity — divergent edge cases (#170)
+//
+// These cases pin the priority-order alignment between as-backend's text-scan
+// inferDomainFromSource and visitor.ts's ts-morph inferNumericDomain.
+// They are inference-level tests (do not invoke emit()) because asc rejects
+// arbitrary bigint literals in some shapes, and the inference function is the
+// targeted change in this WI.
+//
+// Pre-fix behavior (documenting regression guard):
+//   edge-1: large literal + true division → was i64 (early-return), now f64
+//   edge-2: n-suffix literal + bitop → was i64 (early-return), now i32
+//
+// @decision DEC-V1-DOMAIN-INFER-PARITY-001 (see as-backend.ts)
+// ---------------------------------------------------------------------------
+
+describe("AS backend domain-inference parity — divergent edge cases (#170)", () => {
+  it("edge-1: large literal + true division returns f64 (#170)", () => {
+    // Pre-fix: large literal >2^31 triggered early-return i64 before true-division f64 scan ran.
+    // Post-fix: f64 wins per canonical priority order (bitop > f64 > i64 > floor > fallback).
+    const src = "export function f(a: number, b: number): number { return (a + 3000000000) / b; }";
+    expect(inferDomainFromSource(src)).toBe("f64");
+  });
+
+  it("edge-2: n-suffix literal + bitop returns i32 (#170)", () => {
+    // Pre-fix: n-suffix triggered early-return i64 before bitop scan ran.
+    // Post-fix: hasBitop wins per canonical priority order (bitop > f64 > i64 > floor > fallback).
+    const src = "function f(a: number, b: number): number { const x = 123n; return (a + b) | 0; }";
+    expect(inferDomainFromSource(src)).toBe("i32");
   });
 });
