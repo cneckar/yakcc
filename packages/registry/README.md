@@ -70,11 +70,9 @@ for (const r of results) {
 See `DEC-VECTOR-RETRIEVAL-004` in `packages/registry/src/index.ts` for why the
 types are structurally-equivalent rather than imported.
 
-## What is not yet wired
+## Federation
 
-- **Federation publishing path (F2+)**: the F1 read-only mirror (`@yakcc/federation`)
-  covers content-addressed pull only. F2+ (block submission, dispute adjudication)
-  is deferred. See `FEDERATION.md` for the F0..F4 axis.
+The F1 read-only mirror (`@yakcc/federation`) covers content-addressed pull. F2+ capabilities (block submission, dispute adjudication) are not yet implemented. See `FEDERATION.md` for the full axis.
 
 ## How callers consume this package
 
