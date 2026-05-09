@@ -2,8 +2,6 @@
 
 The `yakcc` command-line interface.
 
-**Status: v1 fully closed. v1 wave-2 closed (live IDE hooks + WASM backend). v2 bootstrap in progress.**
-
 ## Commands
 
 | Command | What it does today |

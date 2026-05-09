@@ -71,13 +71,4 @@ console.log(`Seeded ${stored} blocks`);
 
 ## Source-text strategy
 
-Each block file exports a `SOURCE` string constant containing its own source
-text. This avoids runtime filesystem access post-build (dist has `.js`, not
-`.ts`). The `SOURCE` export is co-located in the same file so it remains in
-sync by construction — a change to the implementation logic requires updating
-both the function and the SOURCE string in the same edit, which is mechanical
-and review-visible.
-
-This is a deliberate v0 pragmatic choice. A build-time codegen step that
-inlines source text automatically is the v1 improvement; it is noted in
-`MASTER_PLAN.md` as a known simplification target.
+Each block file exports a `SOURCE` string constant containing its own source text. This avoids runtime filesystem access post-build. The `SOURCE` export is co-located in the same file so it stays in sync by construction — a change to the implementation requires updating both the function and `SOURCE` in the same edit.
