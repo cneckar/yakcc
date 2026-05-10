@@ -47,6 +47,7 @@
  *       formula post DEC-V3-DISCOVERY-CALIBRATION-FIX-002: combinedScore = 1 - d²/4)
  */
 
+import type { SpecYak } from "@yakcc/contracts";
 import type { CandidateMatch } from "@yakcc/registry";
 
 // ---------------------------------------------------------------------------
@@ -185,13 +186,95 @@ export interface BindingShape {
 }
 
 // ---------------------------------------------------------------------------
+// Contract comment rendering — Phase 3 D-HOOK-4
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-HOOK-PHASE-3-001
+ * @title Phase 3 contract comment: format, placement, and content selection
+ * @status accepted
+ * @rationale
+ *   D-HOOK-4 specifies that the hook prepends an inline contract comment above
+ *   the atom import statement so the LLM can reason about the substitution in
+ *   subsequent turns without an additional tool call.
+ *
+ *   FORMAT CHOICE (`// @atom <name> (<signature>; <key-guarantee>) — yakcc:<hash[:8]>`):
+ *   The format is intentionally compact (~60–120 chars) to minimise context-window
+ *   cost while providing the minimum information for routine multi-turn coherence:
+ *     - `<name>`: immediate identifier — the LLM can reference it without guessing.
+ *     - `<signature>`: type-level summary (`(in1, in2) => out`) — tells the LLM
+ *       whether the atom's I/O contract matches its intended usage without requiring
+ *       a `yakcc_resolve` call.
+ *     - `<key-guarantee>`: FIRST guarantee in canonical order — the single most
+ *       salient behavioral commitment. Emitting all guarantees would bloat the
+ *       comment; emitting none would leave the LLM unable to reason about
+ *       correctness. "First in canonical order" is deterministic and operator-
+ *       controllable: the spec author controls ordering.
+ *     - `yakcc:<hash[:8]>`: uniquely identifies the block for `yakcc_resolve`
+ *       lookups; 8 hex chars provides 2^32 collision resistance — sufficient
+ *       for a per-session reference, not a permanent identity. The full root is
+ *       in telemetry and can be retrieved via `yakcc_resolve` if needed.
+ *
+ *   WHY OMIT THE PARENTHETICAL WHEN GUARANTEES IS EMPTY:
+ *   Rendering `// @atom name (() => out; )` with a trailing semicolon would be
+ *   syntactically surprising and regex-unfriendly (B5 failure mode: brittle parsing
+ *   in agent prompts). When guarantees[] is empty or absent, the semicolon and
+ *   key-guarantee are omitted entirely, yielding `// @atom name (() => out)`.
+ *
+ *   WHY ABOVE-IMPORT (NOT ABOVE CALL SITE):
+ *   TS convention documents import-level bindings at the import declaration, not
+ *   at each call site. Placing the comment above the import makes it visible to
+ *   any reader scanning for where `atomName` is introduced, matches JSDoc placement
+ *   conventions, and avoids duplicating the comment across multiple call sites.
+ *
+ *   Cross-reference: DEC-HOOK-LAYER-001 D-HOOK-4, DEC-V3-DISCOVERY-D4-001.
+ */
+
+/**
+ * Render the D-HOOK-4 inline contract comment for a substituted atom.
+ *
+ * Format: `// @atom <atomName> (<signature>; <key-guarantee>) — yakcc:<hash[:8]>`
+ * When `spec.guarantees` is empty or absent, the `; <key-guarantee>` portion
+ * is omitted to avoid a trailing-semicolon artifact.
+ *
+ * @param atomName - The atom's function name (from BindingShape.atomName).
+ * @param atomHash - Full BlockMerkleRoot; only the first 8 chars are emitted.
+ * @param spec     - The atom's SpecYak contract (provides inputs, outputs, guarantees).
+ * @returns Single-line comment string (no trailing newline).
+ */
+export function renderContractComment(atomName: string, atomHash: string, spec: SpecYak): string {
+  // Build <signature>: input types joined by ", " + " => " + first output type.
+  // Zero inputs: rendered as "()" before "=>" so the result is "() => out".
+  const inputParts = spec.inputs.map((p) => p.type);
+  const inputTypes = inputParts.length === 0 ? "()" : inputParts.join(", ");
+  const outputType = spec.outputs[0]?.type ?? "void";
+  const signature = `${inputTypes} => ${outputType}`;
+
+  // Build <key-guarantee>: first guarantee description, or absent.
+  const firstGuarantee = spec.guarantees?.[0]?.description;
+  const parenthetical = firstGuarantee !== undefined && firstGuarantee.length > 0
+    ? `(${signature}; ${firstGuarantee})`
+    : `(${signature})`;
+
+  // Truncate hash to first 8 characters per DEC-HOOK-PHASE-3-001.
+  const shortHash = atomHash.slice(0, 8);
+
+  return `// @atom ${atomName} ${parenthetical} — yakcc:${shortHash}`;
+}
+
+// ---------------------------------------------------------------------------
 // Substitution rendering
 // ---------------------------------------------------------------------------
 
 /**
  * Generate the substituted source text for a registry atom.
  *
- * Produces a two-line fragment:
+ * When `spec` is provided (Phase 3), produces a three-line fragment:
+ *   // @atom <atomName> (<signature>; <key-guarantee>) — yakcc:<hash[:8]>
+ *   import { <atomName> } from "@yakcc/atoms/<atomName>";
+ *   const <name> = <atomName>(<args...>);
+ *
+ * When `spec` is absent (Phase 2 backward-compat), produces the two-line fragment:
  *   import { <atomName> } from "@yakcc/atoms/<atomName>";
  *   const <name> = <atomName>(<args...>);
  *
@@ -199,29 +282,39 @@ export interface BindingShape {
  *   The import path is `@yakcc/atoms/<atomName>`. This is the official yakcc atom
  *   distribution channel. See the module-level @decision for full rationale.
  *
- * @param atomHash      - BlockMerkleRoot of the substituted atom (used for telemetry;
- *                        NOT included in the rendered output — the import path is
- *                        derived from atomName, not the content hash).
+ * @decision DEC-HOOK-PHASE-3-001 (cross-reference)
+ *   Contract comment is placed ABOVE the import, not above the call site.
+ *   See renderContractComment() for full rationale.
+ *
+ * @param atomHash      - BlockMerkleRoot of the substituted atom (first 8 chars used
+ *                        in the contract comment; full value retained for telemetry).
  * @param _originalCode - The agent's original code (kept for telemetry and future
  *                        diff-based verification; not used in rendering today).
  * @param binding       - Extracted binding shape from the original code.
- * @returns Substituted source text (import + binding statement).
+ * @param spec          - Optional SpecYak contract data. When present, the D-HOOK-4
+ *                        contract comment is prepended above the import line.
+ *                        When absent, the output is the two-line Phase 2 fragment
+ *                        (backward-compatible; callers that don't yet pass SpecYak
+ *                        data continue to work unchanged).
+ * @returns Substituted source text (contract comment if spec provided + import + binding).
  */
 export function renderSubstitution(
   atomHash: string,
   _originalCode: string,
   binding: BindingShape,
+  spec?: SpecYak | undefined,
 ): string {
-  // atomHash is intentionally unused in the rendered output (it drives telemetry).
-  // The rendered code uses atomName for the import path per DEC-HOOK-PHASE-2-001(A).
-  void atomHash;
-
   const { name, args, atomName } = binding;
   const importPath = `@yakcc/atoms/${atomName}`;
   const argList = args.join(", ");
 
   const importLine = `import { ${atomName} } from "${importPath}";`;
   const bindingLine = `const ${name} = ${atomName}(${argList});`;
+
+  if (spec !== undefined) {
+    const contractComment = renderContractComment(atomName, atomHash, spec);
+    return `${contractComment}\n${importLine}\n${bindingLine}`;
+  }
 
   return `${importLine}\n${bindingLine}`;
 }
@@ -304,8 +397,25 @@ export async function executeSubstitution(
     return { substituted: false, reason: "binding-extract-failed" };
   }
 
-  // Step 3: Render the substitution.
-  const substitutedCode = renderSubstitution(decision.atomHash, originalCode, binding);
+  // Step 3: Attempt to recover SpecYak from the winning candidate's specCanonicalBytes.
+  // specCanonicalBytes is a UTF-8-encoded canonical JSON blob (see canonicalize.ts).
+  // If parsing/validation fails we fall through to the two-line Phase 2 rendering
+  // (no contract comment) rather than failing the substitution entirely.
+  let spec: SpecYak | undefined;
+  const winningBlock = candidates[0]?.block;
+  if (winningBlock !== undefined) {
+    try {
+      const { validateSpecYak } = await import("@yakcc/contracts");
+      const specJson = new TextDecoder().decode(winningBlock.specCanonicalBytes);
+      spec = validateSpecYak(JSON.parse(specJson));
+    } catch {
+      // Spec parse failure is non-fatal — Phase 2 two-line output is the fallback.
+      spec = undefined;
+    }
+  }
+
+  // Step 4: Render the substitution (with contract comment if spec was recovered).
+  const substitutedCode = renderSubstitution(decision.atomHash, originalCode, binding, spec);
 
   return {
     substituted: true,

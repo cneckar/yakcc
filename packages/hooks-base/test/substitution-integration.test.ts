@@ -465,6 +465,56 @@ describe("executeRegistryQueryWithSubstitution — telemetry", () => {
   );
 
   it(
+    "Phase 3: substitutedCode starts with contract comment line (additive bytes only)",
+    async () => {
+      // Phase 3 sanity: the substitutedAtomHash in telemetry matches the hash[:8] in the comment.
+      // makeSpecYak produces guarantees:[] so the parenthetical is (string => number) — no semicolon.
+      const d = Math.sqrt((1 - 0.95) * 4);
+      const mockRow = makeBlockRow(makeSpecYak("listOfInts", "Produce a list of integers"));
+      const highConfRegistry = makeHighConfidenceRegistry(registry, [
+        { block: mockRow, cosineDistance: d },
+      ]);
+
+      const result = await executeRegistryQueryWithSubstitution(
+        highConfRegistry,
+        { intent: "Produce a list of integers" },
+        "const result = listOfInts(input);",
+        "Write",
+        {
+          threshold: 1.5,
+          sessionId: testSessionId,
+          telemetryDir: testTelemetryDir,
+        },
+      );
+
+      expect(result.substituted).toBe(true);
+      if (!result.substituted) return;
+
+      const lines = result.substitutedCode.split("\n");
+
+      // Line 0: contract comment in D-HOOK-4 format
+      expect(lines[0]).toMatch(/^\/\/ @atom listOfInts \(.* => .*\) — yakcc:[0-9a-f]{8}$/);
+
+      // The hash[:8] in the comment must match the first 8 chars of the block's merkleRoot
+      const hashInComment = lines[0]?.match(/yakcc:([0-9a-f]{8})/)?.[1];
+      expect(hashInComment).toBe(mockRow.blockMerkleRoot.slice(0, 8));
+
+      // Line 1: import (Phase 2 content preserved)
+      expect(lines[1]).toContain("import { listOfInts }");
+      expect(lines[1]).toContain("@yakcc/atoms/listOfInts");
+
+      // Line 2: binding (Phase 2 content preserved)
+      expect(lines[2]).toContain("const result");
+      expect(lines[2]).toContain("listOfInts(input)");
+
+      // Phase 2 telemetry field still correlates with comment hash
+      const event = readLastTelemetryEvent();
+      expect(event?.substitutedAtomHash).toBe(mockRow.blockMerkleRoot);
+    },
+    15_000,
+  );
+
+  it(
     "Phase 1 fields are still present in Phase 2 telemetry events (no regression)",
     async () => {
       await executeRegistryQueryWithSubstitution(
