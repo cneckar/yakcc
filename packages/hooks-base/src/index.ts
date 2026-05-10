@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { contractIdFromBytes } from "@yakcc/contracts";
 import type { ContractId, ContractSpec } from "@yakcc/contracts";
-import type { Registry } from "@yakcc/registry";
+import type { CandidateMatch, Registry } from "@yakcc/registry";
 
 export type { ContractId, ContractSpec };
 
@@ -177,6 +177,12 @@ type RegistryQueryInternalResult = {
   readonly candidateCount: number;
   /** Cosine distance of the top candidate, or null if none returned. */
   readonly topScore: number | null;
+  /**
+   * Full candidate list from findCandidatesByIntent.
+   * Phase 1 callers ignore this; Phase 2 substitution uses it for the D2 gap check.
+   * Always present (empty array when no candidates).
+   */
+  readonly candidates: readonly CandidateMatch[];
 };
 
 /**
@@ -194,7 +200,9 @@ async function _executeRegistryQueryInternal(
   const query = buildIntentCardQuery(ctx);
 
   try {
-    const candidates = await registry.findCandidatesByIntent(query, { k: 1, rerank: "structural" });
+    // Phase 2: fetch top-2 so decideToSubstitute() can compute the gap.
+    // Phase 1 callers only used k=1; k=2 is a superset and backward-compatible.
+    const candidates = await registry.findCandidatesByIntent(query, { k: 2, rerank: "structural" });
 
     const best = candidates[0];
     if (best !== undefined && best.cosineDistance < options.threshold) {
@@ -206,6 +214,7 @@ async function _executeRegistryQueryInternal(
         response: { kind: "registry-hit", id },
         candidateCount: candidates.length,
         topScore: best.cosineDistance,
+        candidates,
       };
     }
 
@@ -216,12 +225,19 @@ async function _executeRegistryQueryInternal(
       },
       candidateCount: candidates.length,
       topScore: best !== undefined ? best.cosineDistance : null,
+      candidates,
     };
   } catch {
     // Registry error: fall through to passthrough so the IDE works normally.
-    return { response: { kind: "passthrough" }, candidateCount: 0, topScore: null };
+    return { response: { kind: "passthrough" }, candidateCount: 0, topScore: null, candidates: [] };
   }
 }
+
+/**
+ * Alias used by executeRegistryQueryWithSubstitution — same as the internal
+ * function but the name makes the Phase 2 usage intent explicit.
+ */
+const _executeRegistryQueryInternalWithCandidates = _executeRegistryQueryInternal;
 
 /**
  * Execute the registry query and return the appropriate HookResponse.
@@ -321,3 +337,161 @@ export async function executeRegistryQueryWithTelemetry(
 
   return response;
 }
+
+// ---------------------------------------------------------------------------
+// D-HOOK-3 latency budget constant
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum end-to-end hook latency in milliseconds per D-HOOK-3.
+ * When the full pipeline (discovery + substitution) exceeds this, the hook
+ * falls through to the original code and emits a LATENCY_BUDGET_EXCEEDED
+ * telemetry event.
+ */
+export const HOOK_LATENCY_BUDGET_MS = 200;
+
+// ---------------------------------------------------------------------------
+// executeRegistryQueryWithSubstitution (Phase 2 — L3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute the registry query, attempt Phase 2 substitution, and capture telemetry.
+ *
+ * @decision DEC-HOOK-PHASE-2-001
+ * @title Phase 2 hook wrapper: substitution + telemetry extension
+ * @status accepted
+ * @rationale
+ *   This wrapper extends executeRegistryQueryWithTelemetry (Phase 1) with:
+ *   (1) Substitution attempt when the registry returns a high-confidence candidate
+ *       per D2 auto-accept rule (combinedScore > 0.85 AND gap > 0.15).
+ *   (2) Extended telemetry fields: substitutionLatencyMs, top1Score, top1Gap,
+ *       latencyBudgetExceeded — added to the Phase 1 TelemetryEvent schema
+ *       (backwards-compatible; old consumers see them as optional).
+ *   (3) YAKCC_HOOK_DISABLE_SUBSTITUTE=1 escape hatch: bypasses substitution,
+ *       falls through to Phase 1 observe-only behaviour.
+ *   (4) D-HOOK-3 latency budget: when total pipeline time exceeds 200ms,
+ *       latencyBudgetExceeded=true is recorded in telemetry AND the hook
+ *       falls through to the original code (no async escape; the violation is
+ *       a discovery-side bug per D-HOOK-3). The latency check happens after
+ *       the substitution attempt so we always have a result to return.
+ *
+ *   Observe-don't-mutate is preserved: substitution failure at any stage
+ *   returns the original HookResponse unchanged; only successful substitution
+ *   returns the modified response with substituted bytes.
+ *
+ *   Cross-reference:
+ *     DEC-HOOK-PHASE-1-001 (Phase 1 telemetry wrapper)
+ *     DEC-HOOK-LAYER-001 (D-HOOK-2 tool-call rewrite, D-HOOK-3 latency)
+ *     DEC-V3-DISCOVERY-D2-001 (auto-accept rule)
+ *     DEC-V3-DISCOVERY-D3-001 (cornerstone #4: structural filter is binary)
+ *
+ * @param registry     - Registry instance to query.
+ * @param ctx          - Emission context from the IDE hook call.
+ * @param originalCode - The agent's emitted code (from the tool call new_string / content).
+ * @param toolName     - Claude Code tool that triggered this intercept.
+ * @param options      - threshold + optional sessionId / telemetryDir for tests.
+ * @returns HookResponse (unchanged from Phase 1 shape) PLUS optional substitutedCode
+ *          field when substitution occurred — callers must check for this field.
+ */
+export async function executeRegistryQueryWithSubstitution(
+  registry: Registry,
+  ctx: EmissionContext,
+  originalCode: string,
+  toolName: "Edit" | "Write" | "MultiEdit",
+  options: {
+    threshold: number;
+    sessionId?: string | undefined;
+    telemetryDir?: string | undefined;
+  },
+): Promise<HookResponseWithSubstitution> {
+  const start = Date.now();
+
+  // Run the registry query (rerank="structural" so structural filter gates candidates).
+  const { response, candidateCount, topScore, candidates } =
+    await _executeRegistryQueryInternalWithCandidates(registry, ctx, options);
+
+  // Attempt substitution if not disabled.
+  let substitutionResult: import("./substitute.js").SubstitutionResult | null = null;
+  let substitutionLatencyMs: number | null = null;
+
+  if (process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE !== "1") {
+    const subStart = Date.now();
+    try {
+      const { executeSubstitution } = await import("./substitute.js");
+      substitutionResult = await executeSubstitution(candidates, originalCode);
+    } catch {
+      // Substitution failure must not affect the hook outcome.
+      substitutionResult = null;
+    }
+    substitutionLatencyMs = Date.now() - subStart;
+  }
+
+  const latencyMs = Date.now() - start;
+  const latencyBudgetExceeded = latencyMs > HOOK_LATENCY_BUDGET_MS;
+
+  // Build the output response — carry substituted bytes when substitution succeeded.
+  const substituted = substitutionResult?.substituted === true;
+  const atomHash = substituted && substitutionResult?.substituted
+    ? (substitutionResult as import("./substitute.js").SubstitutionResult & { substituted: true }).atomHash
+    : null;
+
+  // Capture telemetry (fire-and-forget; errors swallowed).
+  try {
+    const { captureTelemetry } = await import("./telemetry.js");
+    const { candidatesToCombinedScores } = await import("./substitute.js");
+    const scores = candidatesToCombinedScores(candidates);
+    const top1Score = scores[0] ?? null;
+    const top2Score = scores[1] ?? 0;
+    const top1Gap = top1Score !== null ? top1Score - top2Score : null;
+
+    captureTelemetry({
+      intent: ctx.intent,
+      toolName,
+      response,
+      candidateCount,
+      topScore,
+      latencyMs,
+      substituted,
+      substitutedAtomHash: atomHash,
+      substitutionLatencyMs,
+      top1Score,
+      top1Gap,
+      latencyBudgetExceeded,
+      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      ...(options.telemetryDir !== undefined ? { telemetryDir: options.telemetryDir } : {}),
+    });
+  } catch {
+    // Telemetry write failure must NOT affect the hook outcome.
+  }
+
+  if (
+    substituted &&
+    substitutionResult !== null &&
+    substitutionResult.substituted === true &&
+    !latencyBudgetExceeded
+  ) {
+    return {
+      ...response,
+      substituted: true,
+      substitutedCode: substitutionResult.substitutedCode,
+      atomHash: substitutionResult.atomHash,
+    };
+  }
+
+  return { ...response, substituted: false };
+}
+
+/**
+ * HookResponse extended with Phase 2 substitution information.
+ *
+ * The base HookResponse fields are unchanged (registry-hit | synthesis-required | passthrough).
+ * Phase 2 adds substituted + optional substitutedCode + atomHash to the same object.
+ *
+ * Callers check `result.substituted` first; if true, `result.substitutedCode` contains
+ * the rendered substitution to write to disk instead of the agent's original code.
+ */
+export type HookResponseWithSubstitution = HookResponse & (
+  | { readonly substituted: false }
+  | { readonly substituted: true; readonly substitutedCode: string; readonly atomHash: string }
+);
+

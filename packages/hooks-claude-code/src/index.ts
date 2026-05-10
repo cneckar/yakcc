@@ -33,25 +33,28 @@
 // @decision DEC-HOOK-PHASE-1-001 (cross-reference)
 // title: Telemetry wire-in — adapter calls executeRegistryQueryWithTelemetry
 // status: accepted (WI-HOOK-PHASE-1 layer 2, closes #216 / #260)
+// rationale: see full rationale in original commit.
+
+// @decision DEC-HOOK-PHASE-2-001 (cross-reference)
+// title: Phase 2 wire-in — adapter calls executeRegistryQueryWithSubstitution
+// status: accepted (WI-HOOK-PHASE-2-SUBSTITUTION, refs #217)
 // rationale:
-//   Layer 1 (#216 layer 1) shipped executeRegistryQueryWithTelemetry in @yakcc/hooks-base
-//   as a dormant wrapper. Layer 2 (this commit) re-points onCodeEmissionIntent() from the
-//   bare executeRegistryQuery to executeRegistryQueryWithTelemetry so real Claude Code
-//   sessions produce JSONL telemetry per D-HOOK-5.
+//   Phase 2 extends onCodeEmissionIntent() with an optional originalCode parameter.
+//   When originalCode is provided, the adapter delegates to
+//   executeRegistryQueryWithSubstitution() which runs the D2 decide-to-substitute
+//   gate, AST binding extraction, and substitution rendering. The result carries
+//   an optional substitutedCode field when substitution fires.
 //
-//   The wrapper's signature differs from executeRegistryQuery in two ways:
-//   (a) It requires toolName ("Edit" | "Write" | "MultiEdit") — a Claude Code-specific
-//       concept that only this adapter knows. toolName is therefore threaded through
-//       onCodeEmissionIntent(ctx, toolName) as a required argument.
-//   (b) It accepts optional sessionId / telemetryDir in its options object for test
-//       isolation. These are forwarded from ClaudeCodeHookOptions (extends HookOptions)
-//       so tests can point telemetry at a tmpdir without touching ~/.yakcc/telemetry/.
+//   Backwards compatibility: originalCode defaults to "" (empty string). When empty,
+//   extractBindingShape() returns null → substitution skips gracefully, preserving
+//   Phase 1 behaviour for callers that have not yet passed originalCode.
 //
-//   Telemetry errors inside the wrapper are swallowed by the wrapper itself (observe-
-//   don't-mutate guarantee from DEC-HOOK-PHASE-1-001). The adapter does not need to
-//   handle them — if the wrapper throws for any other reason, the adapter propagates it
-//   as a passthrough-equivalent failure, consistent with the error handling already
-//   present for registry failures.
+//   The HookResponseWithSubstitution type adds substituted+substitutedCode fields
+//   to the base HookResponse shape. Old callers that type the return as HookResponse
+//   still compile (HookResponseWithSubstitution extends HookResponse via intersection).
+//
+//   YAKCC_HOOK_DISABLE_SUBSTITUTE=1 bypasses all substitution in this path too
+//   (forwarded through executeRegistryQueryWithSubstitution).
 
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -60,12 +63,13 @@ import {
   type EmissionContext,
   type HookOptions,
   type HookResponse,
-  executeRegistryQueryWithTelemetry,
+  type HookResponseWithSubstitution,
+  executeRegistryQueryWithSubstitution,
   writeMarkerCommand,
 } from "@yakcc/hooks-base";
 import type { Registry } from "@yakcc/registry";
 
-export type { EmissionContext, HookOptions, HookResponse };
+export type { EmissionContext, HookOptions, HookResponse, HookResponseWithSubstitution };
 export { DEFAULT_REGISTRY_HIT_THRESHOLD };
 
 export type { ContractId } from "@yakcc/hooks-base";
@@ -115,18 +119,26 @@ export interface ClaudeCodeHook {
   /** Register the /yakcc slash command with the Claude Code harness. */
   registerSlashCommand(): void;
   /**
-   * Called when Claude Code is about to emit code. Returns a HookResponse
-   * indicating whether to use an existing block, synthesise a new one, or
-   * fall through to normal behaviour.
+   * Called when Claude Code is about to emit code. Returns a HookResponseWithSubstitution
+   * that extends HookResponse with Phase 2 substitution fields.
    *
    * toolName identifies which Claude Code tool triggered the intercept
-   * (Edit | Write | MultiEdit). It is required by executeRegistryQueryWithTelemetry
-   * for D-HOOK-5 telemetry (DEC-HOOK-PHASE-1-001).
+   * (Edit | Write | MultiEdit). Required for D-HOOK-5 telemetry (DEC-HOOK-PHASE-1-001).
+   *
+   * originalCode is the agent's emitted code (new_string / content from the tool call).
+   * Phase 2: when provided, the hook attempts substitution per D2 auto-accept rule.
+   * Phase 1 callers may omit originalCode; it defaults to "" and substitution skips
+   * gracefully (extractBindingShape("") returns null → substituted=false).
+   *
+   * Check result.substituted to determine if substitution occurred:
+   *   result.substituted === true  → use result.substitutedCode instead of originalCode
+   *   result.substituted === false → use originalCode unchanged (Phase 1 behaviour)
    */
   onCodeEmissionIntent(
     ctx: EmissionContext,
     toolName: "Edit" | "Write" | "MultiEdit",
-  ): Promise<HookResponse>;
+    originalCode?: string,
+  ): Promise<HookResponseWithSubstitution>;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,26 +193,32 @@ export function createHook(registry: Registry, options?: ClaudeCodeHookOptions):
     },
 
     /**
-     * Determine how to respond to an emission intent and capture telemetry.
+     * Determine how to respond to an emission intent, attempt Phase 2 substitution,
+     * and capture telemetry.
      *
-     * Delegates to executeRegistryQueryWithTelemetry() from @yakcc/hooks-base
-     * (DEC-HOOK-PHASE-1-001). Production sequence:
+     * Delegates to executeRegistryQueryWithSubstitution() from @yakcc/hooks-base
+     * (DEC-HOOK-PHASE-2-001). Production sequence:
      * 1. Build an IntentQuery from ctx.intent (+ ctx.sourceContext if present).
-     * 2. Call registry.findCandidatesByIntent() with k=1, rerank="structural".
+     * 2. Call registry.findCandidatesByIntent() with k=2, rerank="structural".
      * 3. If cosineDistance < threshold → registry-hit (return block identity).
-     * 4. If no candidate beats threshold → synthesis-required (return skeleton).
-     * 5. On registry error → passthrough (preserve normal Claude Code behaviour).
-     * 6. Append one TelemetryEvent to <telemetryDir>/<sessionId>.jsonl (D-HOOK-5).
+     * 4. Apply D2 auto-accept rule: top-1 combinedScore > 0.85 AND gap > 0.15.
+     * 5. If D2 passes: extract binding from originalCode, render substitution.
+     * 6. If no candidate beats threshold → synthesis-required (return skeleton).
+     * 7. On registry error → passthrough (preserve normal Claude Code behaviour).
+     * 8. Append one TelemetryEvent to <telemetryDir>/<sessionId>.jsonl (D-HOOK-5),
+     *    including Phase 2 fields (substituted, top1Score, top1Gap, etc.).
      *    Telemetry write failures are swallowed — observe-don't-mutate invariant.
      *
-     * toolName is required because D-HOOK-5 captures it per event, and it is
-     * known only by the IDE-specific adapter (DEC-HOOK-PHASE-1-001).
+     * toolName is required because D-HOOK-5 captures it per event.
+     * originalCode defaults to "" — Phase 1 callers that don't pass it get
+     * substituted=false (extractBindingShape("") returns null).
      */
     async onCodeEmissionIntent(
       ctx: EmissionContext,
       toolName: "Edit" | "Write" | "MultiEdit",
-    ): Promise<HookResponse> {
-      return executeRegistryQueryWithTelemetry(registry, ctx, toolName, {
+      originalCode = "",
+    ): Promise<HookResponseWithSubstitution> {
+      return executeRegistryQueryWithSubstitution(registry, ctx, originalCode, toolName, {
         threshold,
         ...(sessionId !== undefined ? { sessionId } : {}),
         ...(telemetryDir !== undefined ? { telemetryDir } : {}),
