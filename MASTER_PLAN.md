@@ -1472,13 +1472,13 @@ All four `runCli` switch arms (`compile`, `search`, `seed`, `federation` at `ind
 
 Single-WI initiative; no dependency map needed. Critical path = 1 wave. When this lands, `runCli` is the canonical CLI entry for tests that need offline embedding injection, and the per-command-import bypass pattern becomes a documented bounded-backwards-compatibility seam (DEC-CI-OFFLINE-006) rather than the only way to inject.
 
-### Initiative: WI-CI-FAST-PATH — Tiered PR CI (Phase 1: Tier-1 fast-path)
+### Initiative: WI-CI-FAST-PATH — Tiered PR CI (Phases 1 + 3: Tier-1 fast-path + nightly)
 
-Status: **active 2026-05-10.** Issue #196. Single-WI Phase 1 initiative owned by Wrath. Runtime workflow id: `wi-ci-fast-path-phase-1`. Runtime goal id: `g-wi-ci-fast-path-phase-1`. Runtime work-item id: `wi-ci-fast-path-phase-1-impl`.
+Status: **active 2026-05-10.** Issue #196. Phase 1 owned by Wrath (landed PR #234); Phase 3 owned by FuckGoblin (landed PR TBD). Runtime workflow id: `wi-ci-fast-path-phase-1`. Runtime goal id: `g-wi-ci-fast-path-phase-1`.
 
-**Why this initiative exists.** The existing trio of CI workflows (`bootstrap.yml`, `test.yml`, `wave-3-parity.yml`) all fire on every PR and take 30–90 minutes each. This burns developer feedback loops and blocks sister-session PRs from getting CI signal in time to act on it before context compacts. Phase 1 stops the bleeding by shipping a new `.github/workflows/pr-ci.yml` that gates PRs in ≤5 min on the median PR.
+**Why this initiative exists.** The existing trio of CI workflows (`bootstrap.yml`, `test.yml`, `wave-3-parity.yml`) all fire on every PR and take 30–90 minutes each. This burns developer feedback loops and blocks sister-session PRs from getting CI signal in time to act on it before context compacts. Phase 1 stops the bleeding by shipping a new `.github/workflows/pr-ci.yml` that gates PRs in ≤5 min on the median PR. Phase 3 adds daily scheduled coverage so the full suite runs even on days with no pushes to main.
 
-**Phase 1 scope (this WI):**
+**Phase 1 scope (landed PR #234):**
 - Add `.github/workflows/pr-ci.yml` — Tier-1 PR CI workflow (DEC-CI-FAST-PATH-PHASE-1-001..006).
 - Add `scripts/affected-packages.sh` — thin affected-package base-ref resolver (DEC-CI-FAST-PATH-PHASE-1-002).
 - Modify `bootstrap.yml`, `test.yml`, `wave-3-parity.yml` — drop `pull_request:` triggers; retain `push: { branches: [main] }` (DEC-CI-FAST-PATH-PHASE-1-005).
@@ -1486,18 +1486,27 @@ Status: **active 2026-05-10.** Issue #196. Single-WI Phase 1 initiative owned by
 
 **Phase 1 mechanism:** lint + typecheck run full-workspace always (cheap, turbo-cached). build + test run via `pnpm --filter "...[origin/<base-ref>]"` (affected packages + their dependents). Branch hygiene check via existing `scripts/pre-pr-check.sh`. No source files touched.
 
+**Phase 3 scope (this WI — FuckGoblin):**
+- Add `.github/workflows/nightly.yml` — Tier-2 nightly cron workflow (DEC-CI-FAST-PATH-PHASE-3-001).
+- Update comments in `bootstrap.yml`, `test.yml`, `wave-3-parity.yml` to reference `nightly.yml`.
+- Add CI status badges to `README.md` (Tier-1 PR CI + Nightly).
+- MASTER_PLAN.md — 1 Decision Log entry + this initiative section update.
+
+**Phase 3 mechanism:** `nightly.yml` runs on `schedule: cron: '0 3 * * *'` (03:00 UTC daily) and `workflow_dispatch`. Three jobs mirror the trio exactly (including cache-skip logic). A `notify-failure` job runs `if: always() && contains(needs.*.result, 'failure')` and creates a GitHub issue assigned to `cneckar` so no regression goes undetected.
+
 **Explicitly deferred to follow-up WIs:**
 - B6 air-gapped CI gate (blocked on #190 landing) — follow-up WI filed.
 - `FAST_CHECK_NUM_RUNS` env-var reduction — requires source-side `*.props.ts` refactor; follow-up WI filed.
 - Vitest fork cap (`poolOptions.forks.maxForks`) — DEC-INFRA-VITEST-FORK-CAP-001 is not backed by current vitest configs; follow-up WI filed.
-- Phase 2 (nightly cron schedule for the trio) — follow-up WI filed.
-- Phase 3 (release CI: cross-platform, manual trigger, full benchmarks) — follow-up WI filed.
+- Phase 2 (test selection improvements beyond affected-package detection) — addressed by Phase 1's `scripts/affected-packages.sh`; no separate WI needed.
+- Release CI (cross-platform, manual trigger, full benchmarks) — separate WI when release cadence is established.
 
 | ID | Title | Description | Deps | Gate | State |
 |---|---|---|---|---|---|
-| `wi-ci-fast-path-phase-1-impl` | Phase 1: Tier-1 PR CI workflow + trio PR-trigger removal | Add `.github/workflows/pr-ci.yml` per DEC-CI-FAST-PATH-PHASE-1-001..006. Add `scripts/affected-packages.sh`. Modify `bootstrap.yml`/`test.yml`/`wave-3-parity.yml` `on:` blocks per DEC-CI-FAST-PATH-PHASE-1-005. Add MASTER_PLAN initiative section + 6 Decision Log entries. File 5 follow-up issues: B6 wiring, FAST_CHECK_NUM_RUNS refactor, vitest fork cap backfill, Phase 2 nightly, Phase 3 release. | none | reviewer (read-only) -> Guardian (land) | active 2026-05-10 — implementer pass |
+| `wi-ci-fast-path-phase-1-impl` | Phase 1: Tier-1 PR CI workflow + trio PR-trigger removal | Add `.github/workflows/pr-ci.yml` per DEC-CI-FAST-PATH-PHASE-1-001..006. Add `scripts/affected-packages.sh`. Modify `bootstrap.yml`/`test.yml`/`wave-3-parity.yml` `on:` blocks per DEC-CI-FAST-PATH-PHASE-1-005. Add MASTER_PLAN initiative section + 6 Decision Log entries. | none | reviewer (read-only) -> Guardian (land) | **landed PR #234 2026-05-10** |
+| `wi-ci-fast-path-phase-3-impl` | Phase 3: Nightly cron workflow + failure notification + README badges | Add `.github/workflows/nightly.yml` per DEC-CI-FAST-PATH-PHASE-3-001. Update trio workflow comments. Add README CI badges. Add MASTER_PLAN decision row. | Phase 1 | reviewer (read-only) -> Guardian (land) | active 2026-05-10 — FuckGoblin implementer pass |
 
-Single-WI initiative. Critical path = 1 wave. When this lands, pr-ci.yml is the sole PR gate; the trio runs post-merge only on `push: main` until Phase 2 wires a proper nightly cron.
+Critical path = 2 waves (Phase 1 → Phase 3). Phase 1 landed; Phase 3 closes the nightly coverage gap and completes the tiered CI architecture per #196 acceptance criteria.
 
 ### Initiative: Shave-what-shaves + glue framing (WI-V2-GLUE-AWARE-SHAVE)
 
@@ -2144,3 +2153,4 @@ PLAN_VERDICT placeholder — see trailer at end of orchestrator response.
 | DEC-CI-FAST-PATH-PHASE-1-004 | **WI-CI-FAST-PATH Phase 1 (#196, 2026-05-10).** Phase 1 does NOT introduce `FAST_CHECK_NUM_RUNS`. Property tests run with their current hard-coded `numRuns` values. | Every `*.props.ts` file currently hard-codes its `numRuns` per-property with a per-property rationale (e.g., "balances coverage with async HTTP overhead"). Honoring DEC-CI-FAST-PATH-002 from the issue body would require source refactoring every `*.props.ts` — substantial work explicitly forbidden by the Scope Manifest's `forbidden_paths`. The dominant runtime-reduction lever in Phase 1 is affected-package selection (typically 1–3 packages out of 13 on a representative PR). A follow-up WI (`WI-CI-FAST-PATH-PHASE-1-FOLLOWUP-NUMRUNS`) covers the source refactor. |
 | DEC-CI-FAST-PATH-PHASE-1-005 | **WI-CI-FAST-PATH Phase 1 (#196, 2026-05-10).** `bootstrap.yml`, `test.yml`, `wave-3-parity.yml` each have their `pull_request:` trigger removed; `push: { branches: [main] }` is retained. Files are NOT renamed to `*.yml.disabled`. | Dropping the `pull_request:` trigger immediately stops the trio from gating PRs (the Phase 1 goal). Keeping `push: main` preserves their post-merge correctness signal until Phase 2 lands a proper `schedule:` cron trigger. Renaming to `*.yml.disabled` is rejected: it severs git rename detection, makes the files invisible to GitHub Actions workflow discovery, and obscures that the files remain active for `push: main`. This is reversible — Phase 2 re-adds `schedule:` without forensic git work. |
 | DEC-CI-FAST-PATH-PHASE-1-006 | **WI-CI-FAST-PATH Phase 1 (#196, 2026-05-10).** pr-ci.yml's branch-hygiene step invokes the existing `scripts/pre-pr-check.sh` (detects file deletions outside scope — stale-rebase damage class). No new hygiene logic created. | The script exists, is canonical (`AGENTS.md` references it), and exits non-zero on stale-rebase damage. CI is the right enforcement surface (today it is only in the human "before opening a PR" checklist, which agents skip). One-line workflow step, zero new code. Diff-stat warnings (size) remain soft/warn-only per the script's design — this is not a hard CI gate in Phase 1. |
+| DEC-CI-FAST-PATH-PHASE-3-001 | **WI-CI-FAST-PATH Phase 3 (#196, 2026-05-10).** Add `.github/workflows/nightly.yml` as the Tier-2 nightly cron gate. Three jobs mirror `bootstrap.yml`, `test.yml`, `wave-3-parity.yml` exactly (including cache-skip logic). A `notify-failure` job with `permissions: issues: write` uses `actions/github-script@v7` to create a GitHub issue assigned to `cneckar` when any job fails. The trio's `push: main` triggers are retained unchanged. | Rejected: adding `schedule:` to the trio directly — valid technically, but a dedicated `nightly.yml` makes the tier boundary explicit in a single file and avoids touching three files' `on:` blocks. Rejected: omitting cache-skip in nightly — the cache proves byte-identical re-shave; skipping is correct even on the nightly cadence. Rejected: skipping failure notification — a nightly failure that nobody sees within 24 hours defeats the purpose of nightly CI. `actions/github-script@v7` is already used in other open-source yamls in this pattern and requires only `issues: write` permission (not admin). The assignee is `cneckar` (the orchestrator) because nightly regressions are operator-level concerns, not individual-sister concerns. |
