@@ -27,6 +27,11 @@
 
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
 
+// Re-export query surface types from @yakcc/contracts so consumers can import
+// from a single package (DEC-V3-IMPL-QUERY-005 coexistence contract).
+export type { QueryIntentCard, QueryTypeSignatureParam } from "@yakcc/contracts";
+export { canonicalizeQueryText } from "@yakcc/contracts";
+
 // ---------------------------------------------------------------------------
 // Registry value types (v0.6 triplet schema)
 // ---------------------------------------------------------------------------
@@ -358,6 +363,144 @@ export interface FindCandidatesOptions {
 }
 
 // ---------------------------------------------------------------------------
+// WI-V3-DISCOVERY-IMPL-QUERY: Multi-dimensional query types (D2+D3 ADRs)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V3-IMPL-QUERY-004
+// title: QueryCandidate shape + autoAccepted flag
+// status: accepted
+// rationale: D2 §Q3 established Candidate shape; D3 §Q1 pinned autoAccepted:boolean.
+//   Renamed QueryCandidate (not Candidate) to avoid shadowing the existing Candidate
+//   type (for search() path) already exported from this module. The autoAccepted flag
+//   is computed at query time (never inherited from storage) per D3 §Q1.
+//   perDimensionScores uses null (not undefined) for zero-vector dimensions per D1.
+
+/**
+ * Per-dimension cosine similarity scores for a QueryCandidate.
+ *
+ * In v1 (single unified embedding column), `unified` carries the sole
+ * combinedScore. The per-dimension keys (behavior, guarantees, …) are reserved
+ * for v3.1 when migration 7 (5-column schema) ships. Callers must key off
+ * `unified` for v1; per-dimension keys will be undefined.
+ *
+ * A dimension is absent (undefined) when the query did not include that dimension,
+ * OR when the stored atom has a zero vector for that dimension (D1 absent-dimension
+ * fallback). null means the dimension was queried but the stored atom has no signal.
+ *
+ * This lets callers distinguish "not queried" from "queried but no signal".
+ */
+export interface PerDimensionScores {
+  /** v1 unified score — present in all v1 QueryCandidate results (DEC-V3-IMPL-QUERY-003). */
+  readonly unified?: number | null | undefined;
+  /** Reserved for v3.1 per-dimension schema (migration 7 / D1). */
+  readonly behavior?: number | null | undefined;
+  readonly guarantees?: number | null | undefined;
+  readonly errorConditions?: number | null | undefined;
+  readonly nonFunctional?: number | null | undefined;
+  readonly propertyTests?: number | null | undefined;
+}
+
+/**
+ * A candidate returned by findCandidatesByQuery().
+ *
+ * Extends CandidateMatch with multi-dimensional scores (D2 §Q3 + D3 §Q1).
+ *
+ * @decision DEC-V3-IMPL-QUERY-004 (see above)
+ */
+export interface QueryCandidate extends CandidateMatch {
+  /** Per-dimension cosine similarity scores in [0, 1]. */
+  readonly perDimensionScores: PerDimensionScores;
+  /**
+   * Weighted sum of per-dimension scores, normalized over surviving dimensions.
+   * Always in [0, 1] (D3 §Q1 renormalized formula).
+   * Formula: Σ(weights[d] * similarity[d]) / Σ(weights[d])  for d in surviving_dims
+   * where similarity[d] = 1 - L²/4 (re-stated: 1 - cosineDistance[d]/2).
+   *
+   * @decision DEC-V3-IMPL-QUERY-007 — re-stated 1 - L²/4 formula inline.
+   * Canonical site: discovery-eval-helpers.ts cosineDistanceToCombinedScore.
+   */
+  readonly combinedScore: number;
+  /**
+   * True when auto-accept rule fires: combinedScore > 0.85 AND gap-to-top-2 > 0.15
+   * (D2 §Q5 + D3 §Q1). Always false for CandidateNearMiss entries.
+   */
+  readonly autoAccepted: boolean;
+}
+
+/**
+ * A near-miss candidate that failed at a pipeline filter stage.
+ *
+ * Returned in FindCandidatesByQueryResult.nearMisses when 0 regular candidates
+ * survive all pipeline stages (D3 §Q6).
+ *
+ * @decision DEC-V3-IMPL-QUERY-006
+ * @title D3 5-stage pipeline + CandidateNearMiss envelope
+ * @status accepted
+ * @rationale D3 §Q6 requires near-miss surfacing when the pipeline returns 0
+ *   candidates. Near-misses are drawn from Stage 1 K' candidates, annotated
+ *   with failedAtLayer and failureReason. autoAccepted is always false (D3 §Q1).
+ *   The v3 pipeline: Stage1=KNN, Stage2=structural, Stage3=strictness,
+ *   Stage4=reserved(no-op), Stage5=ranking+tiebreak. Stage 4 is a pass-through
+ *   with @decision annotation per DEC-VERIFY-010 trigger (v3.1 boundary).
+ */
+export interface CandidateNearMiss extends QueryCandidate {
+  /** Always false — near-misses are never auto-accepted. */
+  readonly autoAccepted: false;
+  /**
+   * Pipeline layer at which this candidate was rejected:
+   * - 'structural'    — failed Stage 2 (structuralMatch returned false)
+   * - 'strictness'    — failed Stage 3 (level/purity/threadSafety mismatch)
+   * - 'property_test' — reserved Stage 4 (v3.1; unused in v3)
+   * - 'min_score'     — survived filter stages but combinedScore < minScore
+   */
+  readonly failedAtLayer: "structural" | "strictness" | "property_test" | "min_score";
+  /** One-line human-readable rejection reason. */
+  readonly failureReason: string;
+}
+
+/**
+ * Options for findCandidatesByQuery().
+ *
+ * @decision DEC-V3-IMPL-QUERY-003
+ * @title Per-dimension weight collapse for v1 (key 'unified')
+ * @status accepted
+ * @rationale v1 of findCandidatesByQuery uses a single unified embedding column
+ *   (the existing contract_embeddings.embedding) rather than the 5 per-dimension
+ *   columns planned by D1 (those require schema migration 7, deferred).
+ *   Per-dimension weights in QueryIntentCard.weights are accepted by the API
+ *   surface for forward-compatibility but collapsed to a single weight key
+ *   ('unified') internally. The combinedScore is computed from the single
+ *   cosineDistance as: 1 - L²/4. All perDimensionScores map to the unified
+ *   score; per-dimension granularity ships in v3.1 once migration 7 lands.
+ */
+export interface FindCandidatesByQueryOptions {
+  /**
+   * Embedding provider model ID used to write the query-time vectors.
+   * Must match the registry's stored model ID; otherwise the query is rejected
+   * with reason='cross_provider_rejected' (D2 cross-provider invariant).
+   * Defaults to the registry's own embedding provider model ID.
+   */
+  readonly queryEmbeddings?: { readonly modelId: string } | undefined;
+}
+
+/**
+ * Result envelope for findCandidatesByQuery().
+ *
+ * Distinguishes matched candidates from near-misses (D3 §Q6).
+ * The two lists are always separate; matched candidates are never mixed
+ * with near-misses (D3 §Q6 "result envelope distinction").
+ */
+export interface FindCandidatesByQueryResult {
+  /** Matched candidates that survived all pipeline stages, ranked by combinedScore. */
+  readonly candidates: readonly QueryCandidate[];
+  /**
+   * Near-miss candidates when candidates is empty (0 survivors).
+   * Empty array when candidates is non-empty.
+   */
+  readonly nearMisses: readonly CandidateNearMiss[];
+}
+
+// ---------------------------------------------------------------------------
 // Registry interface (v0.6 triplet schema)
 // ---------------------------------------------------------------------------
 
@@ -429,6 +572,41 @@ export interface Registry {
    * recorded yet — absence of evidence is not evidence of absence.
    */
   getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance>;
+
+  // @decision DEC-V3-IMPL-QUERY-005
+  // title: findCandidatesByQuery coexistence with findCandidatesByIntent
+  // status: accepted
+  // rationale: D2 ADR §Q3 mandates that findCandidatesByIntent remains on the
+  //   Registry interface unchanged. The new findCandidatesByQuery is added
+  //   alongside it (not as a replacement). A QueryIntentCard with only behavior
+  //   set is semantically equivalent to findCandidatesByIntent for a behavior-only
+  //   query. The implementation WI owns the runtime decision (deprecate/alias/wrap);
+  //   D2 constrains: no breaking changes without a documented migration path.
+  //   findCandidatesByIntent callers are NOT broken.
+  /**
+   * Find candidates using a multi-dimensional QueryIntentCard (D2/D3 ADRs).
+   *
+   * Runs the D3 5-stage pipeline:
+   *   Stage 1 — KNN retrieval (K' = max(topK*5, 50))
+   *   Stage 2 — Structural filter (structuralMatch on signature)
+   *   Stage 3 — Strictness filter (level/purity/threadSafety)
+   *   Stage 4 — Reserved no-op (DEC-VERIFY-010 trigger; v3.1 boundary)
+   *   Stage 5 — Ranking (combinedScore desc, ε=0.02 tiebreaker, minScore, topK)
+   *
+   * When 0 candidates survive Stages 2–4, returns near-misses from Stage 1
+   * candidates annotated with failedAtLayer/failureReason (D3 §Q6).
+   *
+   * Cross-provider rejection: throws Error with reason='cross_provider_rejected'
+   * when options.queryEmbeddings.modelId !== registry's embedding model ID
+   * (D2 cross-provider invariant, checked before any KNN call).
+   *
+   * @param query   - The LLM-provided QueryIntentCard.
+   * @param options - Optional: queryEmbeddings model ID for cross-provider check.
+   */
+  findCandidatesByQuery(
+    query: import("@yakcc/contracts").QueryIntentCard,
+    options?: FindCandidatesByQueryOptions,
+  ): Promise<FindCandidatesByQueryResult>;
 
   // @decision DEC-VECTOR-RETRIEVAL-001
   // title: Public vector-search surface on the Registry interface

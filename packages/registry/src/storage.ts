@@ -36,10 +36,12 @@ import {
   type CanonicalAstHash,
   type EmbeddingProvider,
   type ProofManifest,
+  type QueryIntentCard,
   type SpecHash,
   type SpecYak,
   canonicalAstHash,
   canonicalize,
+  canonicalizeQueryText,
   blockMerkleRoot as computeBlockMerkleRoot,
   generateEmbedding,
 } from "@yakcc/contracts";
@@ -49,10 +51,15 @@ import type {
   BlockTripletRow,
   BootstrapManifestEntry,
   CandidateMatch,
+  CandidateNearMiss,
+  FindCandidatesByQueryOptions,
+  FindCandidatesByQueryResult,
   FindCandidatesOptions,
   ForeignRefRow,
   IntentQuery,
+  PerDimensionScores,
   Provenance,
+  QueryCandidate,
   Registry,
 } from "./index.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
@@ -639,6 +646,420 @@ class SqliteRegistry implements Registry {
 
     // Default: return in KNN distance order (already ascending from vec0 query).
     return results;
+  }
+
+  // -------------------------------------------------------------------------
+  // findCandidatesByQuery — D3 5-stage multi-dimensional discovery pipeline
+  // -------------------------------------------------------------------------
+
+  // @decision DEC-V3-IMPL-QUERY-002
+  // title: Cross-provider rejection at constructor layer
+  // status: accepted
+  // rationale: The embedding provider modelId is snapshotted at openRegistry()
+  //   time (this.embeddings.modelId). findCandidatesByQuery() checks the caller's
+  //   queryEmbeddings.modelId against the snapshot before any KNN call. Mismatch
+  //   throws a typed Error with reason='cross_provider_rejected' (D2 cross-provider
+  //   invariant). Silent fallback is explicitly forbidden (D2 §"Cross-provider
+  //   rejection invariant"). This check fires at the method boundary, not at
+  //   first-use, so mocks that throw if reached are the correct test sentinel.
+
+  // @decision DEC-V3-IMPL-QUERY-003
+  // title: Per-dimension weight collapse for v1 (key 'unified')
+  // status: accepted
+  // rationale: v3 uses the single contract_embeddings.embedding column (no
+  //   per-column KNN — migration 7 for 5-column schema is deferred). Per-dimension
+  //   weights in QueryIntentCard.weights are accepted by the API for forward-compat
+  //   but collapsed to a single 'unified' weight. combinedScore = 1 - L²/4
+  //   (DEC-V3-IMPL-QUERY-007 re-stated; canonical site: discovery-eval-helpers.ts).
+  //   perDimensionScores carries a single entry under the queried dimension key(s).
+
+  // @decision DEC-V3-IMPL-QUERY-006
+  // title: D3 5-stage pipeline + CandidateNearMiss
+  // status: accepted
+  // rationale: Pipeline stages per D3 §Q3:
+  //   Stage 1: KNN with K' = max(topK*5, 50) against contract_embeddings.
+  //   Stage 2: structuralMatch() gate on QueryIntentCard.signature.
+  //   Stage 3: Strictness gate on level, nonFunctional.purity, nonFunctional.threadSafety.
+  //   Stage 4: Reserved no-op (DEC-VERIFY-010 v3.1 trigger; MUST NOT implement logic).
+  //   Stage 5: combinedScore ranking (desc), ε=0.02 lex-BlockMerkleRoot tiebreaker
+  //            (smaller wins), minScore filter, truncate to topK.
+  //   When Stages 2–4 reduce to 0: near-miss envelope from Stage 1 K' set.
+  //   autoAccepted: top-1.combinedScore > 0.85 AND (top-1 - top-2).combinedScore > 0.15.
+
+  /**
+   * Query the registry for atom candidates matching a multi-dimensional intent card.
+   *
+   * TRUST DOMAIN: This API is correct only within a same-process trust domain.
+   * Registry-file portability across machines with different default embedding
+   * providers is a known-untreated boundary deferred to migration-7 /
+   * WI-V3-DISCOVERY-IMPL-MIGRATION-VERIFY. The cross-provider rejection gate
+   * (see below) catches provider mismatches within the same process, but it
+   * cannot detect binary-identical model IDs from different machines.
+   *
+   * @see DEC-V3-IMPL-QUERY-002 for the cross-provider rejection design.
+   */
+  async findCandidatesByQuery(
+    query: QueryIntentCard,
+    options?: FindCandidatesByQueryOptions,
+  ): Promise<FindCandidatesByQueryResult> {
+    this.assertOpen();
+
+    // Cross-provider rejection (DEC-V3-IMPL-QUERY-002):
+    // Verify model ID before any KNN call. Throw loud error on mismatch.
+    // TRUST DOMAIN NOTE: This gate is correct only within a same-process trust domain.
+    // Registry-file portability across machines with different default embedding
+    // providers is a known-untreated boundary deferred to migration-7 /
+    // WI-V3-DISCOVERY-IMPL-MIGRATION-VERIFY. See DEC-V3-IMPL-QUERY-002.
+    const registryModelId = this.embeddings.modelId;
+    const callerModelId = options?.queryEmbeddings?.modelId;
+    if (callerModelId !== undefined && callerModelId !== registryModelId) {
+      const err = new Error(
+        `query-time embedding provider "${callerModelId}" does not match registry provider "${registryModelId}"; aborting`,
+      );
+      (err as Error & { reason: string }).reason = "cross_provider_rejected";
+      throw err;
+    }
+
+    const topK = query.topK ?? 10;
+    const kPrime = Math.max(topK * 5, 50); // D3 §Q3: K' = max(K×5, 50)
+
+    // -----------------------------------------------------------------------
+    // Stage 1 — Vector KNN retrieval with K' candidates
+    // -----------------------------------------------------------------------
+
+    // Derive query text and embed it (DEC-V3-IMPL-QUERY-001 symmetric derivation).
+    // canonicalizeQueryText projects only the provided dimensions into the
+    // canonical JSON, ensuring query and document are in the same text-space.
+    const queryText = canonicalizeQueryText(query);
+    const queryEmbedding = await this.embeddings.embed(queryText);
+    const queryBuf = serializeEmbedding(queryEmbedding);
+
+    interface EmbeddingRow {
+      spec_hash: string;
+      distance: number;
+    }
+
+    let stage1Rows: EmbeddingRow[];
+    try {
+      stage1Rows = this.db
+        .prepare<[Buffer, number], EmbeddingRow>(
+          "SELECT spec_hash, distance FROM contract_embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+        )
+        .all(queryBuf, kPrime);
+    } catch {
+      // vec0 throws when table is empty
+      return { candidates: [], nearMisses: [] };
+    }
+
+    if (stage1Rows.length === 0) {
+      return { candidates: [], nearMisses: [] };
+    }
+
+    // Hydrate blocks for each Stage 1 candidate.
+    // Use the same hydration logic as findCandidatesByIntent: best block per spec_hash.
+    interface HydratedCandidate {
+      block: BlockTripletRow;
+      cosineDistance: number;
+      specYak: SpecYak;
+    }
+
+    const stage1: HydratedCandidate[] = [];
+    for (const eRow of stage1Rows) {
+      const specHash = eRow.spec_hash as SpecHash;
+      const roots = await this.selectBlocks(specHash);
+      if (roots.length === 0) continue;
+      const bestRoot = roots[0];
+      if (bestRoot === undefined) continue;
+      const block = await this.getBlock(bestRoot);
+      if (block === null) continue;
+      const specYak = JSON.parse(
+        Buffer.from(block.specCanonicalBytes).toString("utf-8"),
+      ) as SpecYak;
+      stage1.push({ block, cosineDistance: eRow.distance, specYak });
+    }
+
+    if (stage1.length === 0) {
+      return { candidates: [], nearMisses: [] };
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 2 — Structural filter (structuralMatch on QueryIntentCard.signature)
+    // -----------------------------------------------------------------------
+    // Build a minimal SpecYak query shape from the card's signature field.
+    // If no signature is provided, this stage is a no-op (all pass).
+
+    // Track which Stage 1 candidates failed Stage 2 (for near-miss envelope).
+    const stage2Failed: Array<{ item: HydratedCandidate; reason: string }> = [];
+    let stage2Passed: HydratedCandidate[];
+
+    if (
+      query.signature === undefined ||
+      (query.signature.inputs === undefined && query.signature.outputs === undefined)
+    ) {
+      // No-op: all Stage 1 candidates pass through.
+      stage2Passed = stage1;
+    } else {
+      const querySpec: SpecYak = {
+        name: "query",
+        inputs: (query.signature.inputs ?? []).map((p, i) => ({
+          name: p.name ?? `arg${i}`,
+          type: p.type,
+        })),
+        outputs: (query.signature.outputs ?? []).map((p, i) => ({
+          name: p.name ?? `out${i}`,
+          type: p.type,
+        })),
+        preconditions: [],
+        postconditions: [],
+        invariants: [],
+        effects: [],
+        level: "L0",
+      };
+
+      stage2Passed = [];
+      for (const item of stage1) {
+        const result = structuralMatch(querySpec, item.specYak);
+        if (result.matches) {
+          stage2Passed.push(item);
+        } else {
+          const reason = result.reasons.join("; ");
+          stage2Failed.push({ item, reason });
+        }
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 3 — Strictness filter (level, nonFunctional.purity, threadSafety)
+    // -----------------------------------------------------------------------
+    // Only applies when QueryIntentCard.nonFunctional is provided.
+    // A candidate fails Stage 3 if:
+    //   - Its purity rank < query's purity rank
+    //   - Its threadSafety rank < query's threadSafety rank
+    // (The same ordering as structuralMatch's NF check.)
+
+    const stage3Failed: Array<{ item: HydratedCandidate; reason: string }> = [];
+    let stage3Passed: HydratedCandidate[];
+
+    const queryNF = query.nonFunctional;
+    if (queryNF === undefined) {
+      // No-op: all Stage 2 survivors pass through.
+      stage3Passed = stage2Passed;
+    } else {
+      const PURITY_RANK: Record<string, number> = {
+        pure: 3,
+        io: 2,
+        stateful: 1,
+        nondeterministic: 0,
+      };
+      const THREAD_RANK: Record<string, number> = {
+        safe: 2,
+        sequential: 1,
+        unsafe: 0,
+      };
+
+      stage3Passed = [];
+      for (const item of stage2Passed) {
+        const reasons: string[] = [];
+        const candidateNF = item.specYak.nonFunctional;
+
+        if (candidateNF !== undefined) {
+          if (queryNF.purity !== undefined) {
+            const qRank = PURITY_RANK[queryNF.purity] ?? 0;
+            const cRank = PURITY_RANK[candidateNF.purity] ?? 0;
+            if (cRank < qRank) {
+              reasons.push(`purity=${candidateNF.purity} but query requires ${queryNF.purity}`);
+            }
+          }
+          if (queryNF.threadSafety !== undefined) {
+            const qRank = THREAD_RANK[queryNF.threadSafety] ?? 0;
+            const cRank = THREAD_RANK[candidateNF.threadSafety] ?? 0;
+            if (cRank < qRank) {
+              reasons.push(
+                `threadSafety=${candidateNF.threadSafety} but query requires ${queryNF.threadSafety}`,
+              );
+            }
+          }
+        } else if (queryNF.purity !== undefined || queryNF.threadSafety !== undefined) {
+          // Candidate has no NF declaration — treat as failing when query requires one.
+          reasons.push("candidate has no nonFunctional declaration");
+        }
+
+        if (reasons.length > 0) {
+          stage3Failed.push({ item, reason: reasons.join("; ") });
+        } else {
+          stage3Passed.push(item);
+        }
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage 4 — Reserved no-op (DEC-VERIFY-010 v3.1 trigger)
+    // @decision DEC-V3-IMPL-QUERY-006 (Stage 4)
+    // This slot is explicitly reserved. In v3, ALL Stage 3 survivors pass through
+    // unconditionally. Property-test verification infrastructure (DEC-VERIFY-010)
+    // is the v3.1 trigger for implementing this stage. DO NOT add logic here.
+    // -----------------------------------------------------------------------
+    const stage4Passed = stage3Passed; // pass-through, no filtering
+
+    // -----------------------------------------------------------------------
+    // Stage 5 — Final ranking + combinedScore + tiebreaker + minScore + topK
+    // -----------------------------------------------------------------------
+
+    // combinedScore formula (DEC-V3-IMPL-QUERY-007 re-stated, 1 - L²/4):
+    // For unit-sphere embeddings: cosineDistance ∈ [0, 2].
+    // similarity = 1 - cosineDistance/2 = 1 - L²/4 ∈ [0, 1].
+    // v1 uses unified single-column embedding; per-dimension breakdown deferred.
+    // perDimensionScores carries the 'unified' dimension under the queried keys.
+
+    // Build unified score entries for all stage4Passed candidates.
+    const scored: Array<{
+      item: HydratedCandidate;
+      combinedScore: number;
+      perDimensionScores: PerDimensionScores;
+    }> = stage4Passed.map((item) => {
+      // @decision DEC-V3-IMPL-QUERY-007
+      // @title combinedScore formula — L2→[0,1] via 1 - d²/4
+      // @status accepted
+      // @cross-links DEC-V3-DISCOVERY-CALIBRATION-FIX-002 (live calibration authority,
+      //   supersedes -001; canonical site: discovery-eval-helpers.ts cosineDistanceToCombinedScore)
+      // @deferred WI-V3-DISCOVERY-COMBINED-SCORE-CONSOLIDATE (consolidate inline formula
+      //   into cosineDistanceToCombinedScore call to eliminate duplication)
+      // @rationale vec0 returns L2 Euclidean distance (not cosine) for unit-normalized
+      //   vectors. For unit vectors: L2² = 2 - 2·cos(θ) ⟹ cos(θ) = 1 - L2²/2.
+      //   combinedScore = (1 + cos(θ)) / 2 = 1 - L2²/4. This is the corrected formula
+      //   from PR #275 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002. The earlier formula
+      //   (1 - d/2) was incorrect — it applied a cosine-distance formula to an L2 distance.
+      const combinedScore = Math.max(0, 1 - (item.cosineDistance * item.cosineDistance) / 4);
+
+      // v1 per-dimension scores: single 'unified' key carries the combinedScore.
+      // Using actual dimension keys (behavior, guarantees, …) here would falsely
+      // imply per-dimension semantics that aren't implemented — v1 has only one
+      // shared embedding column. Per-dimension granularity ships in v3.1 when
+      // migration 7 (5-column schema) lands (DEC-V3-IMPL-QUERY-003).
+      const perDimensionScores: PerDimensionScores = { unified: combinedScore };
+
+      return { item, combinedScore, perDimensionScores };
+    });
+
+    // Sort by combinedScore descending.
+    // Tiebreaker (D3 §Q4): within ε=0.02, lex-BlockMerkleRoot ascending (smaller wins).
+    // D3 §Q4 tiebreakers 2–4 (usage history, test depth, atom age) are deferred to
+    // WI-V3-DISCOVERY-D3-TIEBREAKERS. Only tiebreaker 5 (lex root) is implemented here.
+    const EPSILON = 0.02;
+    scored.sort((a, b) => {
+      const diff = b.combinedScore - a.combinedScore;
+      if (Math.abs(diff) <= EPSILON) {
+        // Within tie window: lex BlockMerkleRoot ascending (smaller wins, D3 §Q4 prio 5).
+        return a.item.block.blockMerkleRoot < b.item.block.blockMerkleRoot ? -1 : 1;
+      }
+      return diff; // descending by combinedScore
+    });
+
+    // Apply minScore filter.
+    const minScore = query.minScore;
+    const minScoreFailed: Array<{ item: HydratedCandidate; combinedScore: number }> = [];
+    const afterMinScore =
+      minScore !== undefined
+        ? scored.filter((s) => {
+            if (s.combinedScore < minScore) {
+              minScoreFailed.push({ item: s.item, combinedScore: s.combinedScore });
+              return false;
+            }
+            return true;
+          })
+        : scored;
+
+    // Truncate to topK.
+    const topKResults = afterMinScore.slice(0, topK);
+
+    if (topKResults.length === 0) {
+      // 0 survivors: build near-miss envelope from Stage 1 K' set.
+      // Near-misses are drawn from stage1 sorted by best combinedScore, up to topK.
+      const nearMissMap = new Map<
+        string,
+        {
+          item: HydratedCandidate;
+          failedAtLayer: CandidateNearMiss["failedAtLayer"];
+          failureReason: string;
+        }
+      >();
+
+      // Stage 2 failures first (structural)
+      for (const { item, reason } of stage2Failed) {
+        nearMissMap.set(item.block.blockMerkleRoot, {
+          item,
+          failedAtLayer: "structural",
+          failureReason: reason,
+        });
+      }
+      // Stage 3 failures (strictness) — may overlap with stage 2 items; stage 2 wins
+      for (const { item, reason } of stage3Failed) {
+        if (!nearMissMap.has(item.block.blockMerkleRoot)) {
+          nearMissMap.set(item.block.blockMerkleRoot, {
+            item,
+            failedAtLayer: "strictness",
+            failureReason: reason,
+          });
+        }
+      }
+      // minScore failures (min_score)
+      for (const { item, combinedScore: cs } of minScoreFailed) {
+        if (!nearMissMap.has(item.block.blockMerkleRoot)) {
+          nearMissMap.set(item.block.blockMerkleRoot, {
+            item,
+            failedAtLayer: "min_score",
+            failureReason: `combinedScore=${cs.toFixed(4)} < minScore=${minScore ?? 0}`,
+          });
+        }
+      }
+
+      // Sort near-misses by combinedScore descending (best first), take topK.
+      // Formula: 1 - d²/4 (DEC-V3-IMPL-QUERY-007 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
+      const nearMissEntries = [...nearMissMap.values()]
+        .sort((a, b) => {
+          const sa = Math.max(0, 1 - (a.item.cosineDistance * a.item.cosineDistance) / 4);
+          const sb = Math.max(0, 1 - (b.item.cosineDistance * b.item.cosineDistance) / 4);
+          return sb - sa;
+        })
+        .slice(0, topK);
+
+      const nearMisses: CandidateNearMiss[] = nearMissEntries.map(
+        ({ item, failedAtLayer, failureReason }) => {
+          // Formula: 1 - d²/4 (DEC-V3-IMPL-QUERY-007 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
+          const cs = Math.max(0, 1 - (item.cosineDistance * item.cosineDistance) / 4);
+          const pds: PerDimensionScores = { unified: cs };
+          return {
+            block: item.block,
+            cosineDistance: item.cosineDistance,
+            combinedScore: cs,
+            perDimensionScores: pds,
+            autoAccepted: false,
+            failedAtLayer,
+            failureReason,
+          };
+        },
+      );
+
+      return { candidates: [], nearMisses };
+    }
+
+    // Non-empty results: compute autoAccepted flag.
+    // D2 §Q5 + D3 §Q1: autoAccepted iff top-1 combinedScore > 0.85 AND gap > 0.15.
+    const top1 = topKResults[0];
+    const top2 = topKResults[1];
+    const top1Score = top1?.combinedScore ?? 0;
+    const top2Score = top2?.combinedScore ?? 0;
+    const autoAcceptFires = top1Score > 0.85 && top1Score - top2Score > 0.15;
+
+    const candidates: QueryCandidate[] = topKResults.map((s, idx) => ({
+      block: s.item.block,
+      cosineDistance: s.item.cosineDistance,
+      combinedScore: s.combinedScore,
+      perDimensionScores: s.perDimensionScores,
+      autoAccepted: autoAcceptFires && idx === 0,
+    }));
+
+    return { candidates, nearMisses: [] };
   }
 
   // -------------------------------------------------------------------------

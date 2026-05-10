@@ -1,7 +1,7 @@
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { __testing__, canonicalize, canonicalizeText } from "./canonicalize.js";
-import type { ContractSpec } from "./index.js";
+import { __testing__, canonicalize, canonicalizeQueryText, canonicalizeText } from "./canonicalize.js";
+import type { ContractSpec, QueryIntentCard } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -275,5 +275,149 @@ describe("canonicalize", () => {
       expect(__testing__.encodeNumber(1.25)).toBe("1.25");
       expect(__testing__.encodeNumber(-3.14)).toBe("-3.14");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canonicalizeQueryText — DEC-V3-IMPL-QUERY-001
+// Tests: 6 dimension projections + safe-defaults + omitted-dimension rule
+// ---------------------------------------------------------------------------
+
+describe("canonicalizeQueryText", () => {
+  // @decision DEC-V3-IMPL-QUERY-001
+  // title: Symmetric query-text derivation via canonicalizeQueryText
+  // status: accepted
+  // rationale: canonicalizeQueryText projects a QueryIntentCard into a
+  //   SpecYak-shaped canonical text so that query and document vectors are in
+  //   the same semantic space. Each provided dimension field maps to the
+  //   corresponding SpecYak optional field. Absent fields are omitted from the
+  //   projection so they don't introduce noise in the embedding.
+
+  it("projects behavior dimension into canonical text", () => {
+    const card: QueryIntentCard = {
+      behavior: "parse an integer from a string",
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    expect(parsed["behavior"]).toBe("parse an integer from a string");
+  });
+
+  it("projects guarantees dimension as description array", () => {
+    const card: QueryIntentCard = {
+      guarantees: ["always returns a number", "never returns NaN"],
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as { guarantees?: Array<{ id: string; description: string }> };
+    expect(parsed.guarantees).toHaveLength(2);
+    expect(parsed.guarantees?.[0]?.description).toBe("always returns a number");
+    expect(parsed.guarantees?.[1]?.description).toBe("never returns NaN");
+    // ids are synthetic sentinels
+    expect(parsed.guarantees?.[0]?.id).toBe("q0");
+    expect(parsed.guarantees?.[1]?.id).toBe("q1");
+  });
+
+  it("projects errorConditions dimension as description array", () => {
+    const card: QueryIntentCard = {
+      errorConditions: ["throws RangeError when out of bounds"],
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as {
+      errorConditions?: Array<{ description: string }>;
+    };
+    expect(parsed.errorConditions).toHaveLength(1);
+    expect(parsed.errorConditions?.[0]?.description).toBe("throws RangeError when out of bounds");
+  });
+
+  it("projects nonFunctional dimension as spec-shaped object", () => {
+    const card: QueryIntentCard = {
+      nonFunctional: { purity: "pure", threadSafety: "safe" },
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as {
+      nonFunctional?: { purity: string; threadSafety: string };
+    };
+    expect(parsed.nonFunctional?.purity).toBe("pure");
+    expect(parsed.nonFunctional?.threadSafety).toBe("safe");
+  });
+
+  it("projects propertyTests dimension as description array", () => {
+    const card: QueryIntentCard = {
+      propertyTests: ["output equals reverse(reverse(output))"],
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as {
+      propertyTests?: Array<{ id: string; description: string }>;
+    };
+    expect(parsed.propertyTests).toHaveLength(1);
+    expect(parsed.propertyTests?.[0]?.description).toBe("output equals reverse(reverse(output))");
+    expect(parsed.propertyTests?.[0]?.id).toBe("p0");
+  });
+
+  it("projects signature dimension as inputs/outputs arrays", () => {
+    const card: QueryIntentCard = {
+      signature: {
+        inputs: [{ type: "string" }, { name: "radix", type: "number" }],
+        outputs: [{ type: "number" }],
+      },
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as {
+      inputs?: Array<{ name: string; type: string }>;
+      outputs?: Array<{ name: string; type: string }>;
+    };
+    expect(parsed.inputs).toHaveLength(2);
+    expect(parsed.inputs?.[0]?.type).toBe("string");
+    expect(parsed.inputs?.[0]?.name).toBe("arg0"); // sentinel for absent name
+    expect(parsed.inputs?.[1]?.name).toBe("radix");
+    expect(parsed.outputs?.[0]?.type).toBe("number");
+  });
+
+  it("omits absent dimensions from the projection (safe-defaults rule)", () => {
+    const card: QueryIntentCard = {
+      behavior: "multiply two numbers",
+      // guarantees, errorConditions, nonFunctional, propertyTests, signature all absent
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    expect(parsed["behavior"]).toBe("multiply two numbers");
+    expect(Object.prototype.hasOwnProperty.call(parsed, "guarantees")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, "errorConditions")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, "nonFunctional")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, "propertyTests")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, "inputs")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(parsed, "outputs")).toBe(false);
+  });
+
+  it("safe-default: empty card produces minimal canonical text (no crash)", () => {
+    const card: QueryIntentCard = {};
+    // Should not throw; produces at minimum an empty object or minimal structure
+    expect(() => canonicalizeQueryText(card)).not.toThrow();
+    const text = canonicalizeQueryText(card);
+    expect(typeof text).toBe("string");
+    // Parse must succeed
+    expect(() => JSON.parse(text)).not.toThrow();
+  });
+
+  it("produces deterministic output for the same card", () => {
+    const card: QueryIntentCard = {
+      behavior: "sort an array",
+      guarantees: ["output is sorted ascending"],
+      nonFunctional: { purity: "pure", threadSafety: "safe" },
+    };
+    const t1 = canonicalizeQueryText(card);
+    const t2 = canonicalizeQueryText(card);
+    expect(t1).toBe(t2);
+  });
+
+  it("keys in canonical text are sorted lexicographically", () => {
+    const card: QueryIntentCard = {
+      behavior: "compute hash",
+      nonFunctional: { purity: "pure", threadSafety: "safe", time: "O(n)" },
+      guarantees: ["output is 32 bytes"],
+    };
+    const text = canonicalizeQueryText(card);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const keys = Object.keys(parsed);
+    expect(keys).toEqual([...keys].sort());
   });
 });

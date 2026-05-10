@@ -225,7 +225,13 @@ export async function proposeContract(spec: ContractSpec): Promise<ProposalResul
 // Re-exports from sub-modules
 // ---------------------------------------------------------------------------
 
-export { canonicalize, canonicalizeText } from "./canonicalize.js";
+export {
+  canonicalize,
+  canonicalizeText,
+  canonicalizeQueryText,
+  type QueryIntentCard,
+  type QueryTypeSignatureParam,
+} from "./canonicalize.js";
 export {
   contractIdFromBytes,
   isValidContractId,
