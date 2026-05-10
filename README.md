@@ -34,10 +34,10 @@ The name is a yak-shave joke that is also a thesis. The double-c is a nod to the
 # Install dependencies and build all packages
 pnpm install && pnpm build
 
-# Create a local registry
-yakcc registry init
+# Initialize yakcc in your project directory (creates .yakcc/, .claude/settings.json, .yakccrc.json)
+yakcc init
 
-# Ingest the seed corpus (~20 blocks composing a JSON integer-list parser)
+# Optionally ingest the seed corpus (~20 blocks composing a JSON integer-list parser)
 yakcc seed
 
 # Assemble the parse-int-list demo
@@ -57,6 +57,14 @@ parse-int-list demo — assembled by Yakcc v0
   listOfInts("[ 42 ]") => [42]
   listOfInts("[10,200,3000]") => [10,200,3000]
 ```
+
+`yakcc init` creates an empty registry, wires the Claude Code hook, and writes `.yakccrc.json` in one step. To initialize in a different directory or connect to a team registry peer:
+
+```sh
+yakcc init --target my-project/ [--peer https://registry.example.com]
+```
+
+For the full walkthrough see `docs/USING_YAKCC.md`.
 
 ## Shaving your own code
 
