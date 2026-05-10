@@ -2,7 +2,7 @@
   "name": "@yakcc/example-parse-int-list",
   "version": "0.0.1",
   "private": true,
-  "license": "Unlicense",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "build": "tsc -p .",
