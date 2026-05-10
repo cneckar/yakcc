@@ -319,13 +319,41 @@ export function prepareAsSource(source: string, domain: NumericDomain): string {
 // Exported factory
 // ---------------------------------------------------------------------------
 
+// @decision DEC-AS-BACKEND-OPTIONS-001
+// Title: assemblyScriptBackend() accepts optional AsBackendOptions for per-factory asc flags
+// Status: decided (WI-AS-PHASE-2A-MULTI-EXPORT-AND-RECORDS, 2026-05-10)
+// Rationale:
+//   Phase 1 compiled all atoms with --noExportMemory (pure function substrate).
+//   Phase 2A adds record substrate support (DEC-AS-RECORD-LAYOUT-001) where the
+//   test needs to write struct bytes into the WASM memory before calling the function.
+//   This requires omitting --noExportMemory (i.e. exporting memory). Rather than
+//   adding a second factory function (which would be a parallel mechanism per
+//   Sacred Practice #12), an options bag is passed to the factory. Default behaviour
+//   (exportMemory: false) is byte-identical to Phase 1.
+//
+//   Alternative considered: separate `assemblyScriptRecordBackend()` factory.
+//   Rejected: creates two nearly-identical factories that diverge over time. One
+//   factory with a documented option is the single-source-of-truth design.
+export interface AsBackendOptions {
+  /**
+   * When true, omit --noExportMemory from the asc invocation so the compiled
+   * module exports its linear memory. Required for record substrates where the
+   * test harness writes struct bytes directly into WASM memory before calling
+   * the entry function. Default: false (matches Phase 1 pure-numeric behaviour).
+   *
+   * @decision DEC-AS-BACKEND-OPTIONS-001
+   * @decision DEC-AS-RECORD-LAYOUT-001
+   */
+  readonly exportMemory?: boolean;
+}
+
 /**
  * Create the AssemblyScript WASM backend.
  *
- * The backend compiles yakcc numeric atoms to .wasm via AssemblyScript (asc).
- * MVP scope: numeric substrate (i32/i64/f64 arithmetic, bitops, Math.*).
- * Non-numeric atoms (strings, records, arrays, closures) are out of scope
- * for Phase 1 — those are covered in Phase 2 (#146) via a dialect adapter.
+ * The backend compiles yakcc atoms to .wasm via AssemblyScript (asc).
+ * Phase 1 scope: numeric substrate (i32/i64/f64 arithmetic, bitops, Math.*).
+ * Phase 2A extensions: multi-export modules (DEC-AS-MULTI-EXPORT-001),
+ * records via flat-struct linear-memory (DEC-AS-RECORD-LAYOUT-001).
  *
  * Workflow per emit() call:
  *   1. Extract the entry block's implSource from the ResolutionResult
@@ -334,10 +362,23 @@ export function prepareAsSource(source: string, domain: NumericDomain): string {
  *   4. Write source to a temp directory, invoke asc via Node child_process
  *   5. Read the .wasm bytes, clean up temp directory, return Uint8Array
  *
+ * Multi-export support (DEC-AS-MULTI-EXPORT-001):
+ *   asc natively emits exports for every `export function` in the source.
+ *   No change to the emitter is needed — prepareAsSource() already preserves
+ *   all `export function` declarations. The consumer (closer-parity-as.test.ts)
+ *   treats WASM with ≥1 export as covered (structural coverage for P-OTHER,
+ *   per-export value parity when an oracle exists).
+ *
+ * @param opts - Optional factory configuration (see AsBackendOptions)
  * @decision DEC-V1-LOWER-BACKEND-REUSE-001 (see file header)
  * @decision DEC-AS-BACKEND-TMPDIR-001 (see file header)
+ * @decision DEC-AS-MULTI-EXPORT-001 (multi-export: asc handles natively; no emitter change)
+ * @decision DEC-AS-RECORD-LAYOUT-001 (records: flat-struct linear-memory; exportMemory option)
+ * @decision DEC-AS-BACKEND-OPTIONS-001 (optional AsBackendOptions for per-factory asc flags)
  */
-export function assemblyScriptBackend(): WasmBackend {
+export function assemblyScriptBackend(opts?: AsBackendOptions): WasmBackend {
+  const exportMemory = opts?.exportMemory ?? false;
+
   return {
     name: "as",
     async emit(resolution: ResolutionResult): Promise<Uint8Array<ArrayBuffer>> {
@@ -373,9 +414,25 @@ export function assemblyScriptBackend(): WasmBackend {
           outPath,
           "--optimize",
           "--runtime",
-          "stub", // minimal AS runtime (no GC) — pure numeric
-          "--noExportMemory", // no memory export — pure function substrate
+          "stub", // minimal AS runtime (no GC) — numeric + struct substrates
         ];
+
+        // --noExportMemory: suppress memory export for pure numeric functions
+        // (Phase 1 default). Omit when exportMemory is requested (Phase 2A
+        // record substrates need to write struct bytes into WASM memory).
+        // @decision DEC-AS-BACKEND-OPTIONS-001
+        // @decision DEC-AS-RECORD-LAYOUT-001
+        if (!exportMemory) {
+          ascArgs.push("--noExportMemory");
+        } else {
+          // --initialMemory 1: guarantee ≥1 page (64 KiB) when memory is exported.
+          // The AS stub runtime does not allocate memory pages by default; without
+          // an initial page, DataView writes by the test harness throw RangeError.
+          // 1 page (64 KiB) is sufficient for all Phase 2A record substrates
+          // (struct pointers start at byte 64, struct data fits well within 64 KiB).
+          // @decision DEC-AS-RECORD-LAYOUT-001
+          ascArgs.push("--initialMemory", "1");
+        }
 
         execFileSync(process.execPath, ascArgs, {
           // Capture stderr to include in errors; stdio: pipe prevents terminal noise.
