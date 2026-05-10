@@ -8,6 +8,7 @@
   "include": ["src", "test", "vitest.config.ts"],
   "references": [
     { "path": "../contracts" },
+    { "path": "../ir" },
     { "path": "../registry" }
   ]
 }
