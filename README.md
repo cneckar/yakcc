@@ -140,4 +140,9 @@ See [docs/V2_SELF_HOSTING_DEMO.md](docs/V2_SELF_HOSTING_DEMO.md) for the fresh-c
 
 ## License
 
-This project is dedicated to the public domain under [The Unlicense](LICENSE).
+Yakcc consists of two distinct artifacts with different licenses:
+
+- **Substrate code** — the engine (shave, compile, discovery, registry storage, hooks, CLI, tooling, configs, build files) — is licensed under the [Apache License 2.0](LICENSE).
+- **Atom content** — items in the atom registry, including everything under `packages/seeds/blocks/**` and the artifact contents referenced by `bootstrap/expected-roots.json` — is dedicated to the public domain under [The Unlicense](LICENSE-ATOMS).
+
+The split reflects the nature of the artifacts: the engine is a software tool with conventional copyright; the registry is a content commons.
