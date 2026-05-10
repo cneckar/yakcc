@@ -7,7 +7,10 @@ dist/
 .env
 .env.local
 .yakcc/
-tmp/
+tmp/*
+!tmp/discovery-eval/
+tmp/discovery-eval/*
+!tmp/discovery-eval/measurement-first-decision.md
 .claude/
 .worktrees/
 
