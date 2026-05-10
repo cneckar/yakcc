@@ -274,6 +274,8 @@ describe("onCodeEmissionIntent — passthrough (error) path", () => {
       findByCanonicalAstHash: registry.findByCanonicalAstHash.bind(registry),
       getProvenance: registry.getProvenance.bind(registry),
       enumerateSpecs: registry.enumerateSpecs.bind(registry),
+      exportManifest: registry.exportManifest.bind(registry),
+      getForeignRefs: registry.getForeignRefs.bind(registry),
       close: registry.close.bind(registry),
       findCandidatesByIntent: async () => {
         throw new Error("simulated DB failure");

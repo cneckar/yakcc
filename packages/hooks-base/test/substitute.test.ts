@@ -27,7 +27,7 @@ import {
 function makeCandidate(cosineDistance: number, blockMerkleRoot = "deadbeef") {
   return {
     block: {
-      blockMerkleRoot,
+      blockMerkleRoot: blockMerkleRoot as import("@yakcc/contracts").BlockMerkleRoot,
       specHash: "aabbcc" as import("@yakcc/contracts").SpecHash,
       specCanonicalBytes: new Uint8Array(0),
       implSource: `export function stub(): void {}`,

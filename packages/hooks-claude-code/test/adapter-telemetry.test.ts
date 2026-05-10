@@ -277,6 +277,8 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       findByCanonicalAstHash: registry.findByCanonicalAstHash.bind(registry),
       getProvenance: registry.getProvenance.bind(registry),
       enumerateSpecs: registry.enumerateSpecs.bind(registry),
+      exportManifest: registry.exportManifest.bind(registry),
+      getForeignRefs: registry.getForeignRefs.bind(registry),
       close: registry.close.bind(registry),
       findCandidatesByIntent: async () => {
         throw new Error("simulated DB failure");
