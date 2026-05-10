@@ -34,23 +34,17 @@ describe("universalize/atom-test.ts — property corpus", () => {
 
   // AT-REG-1: empty registry + 0 CF options sweep → always atomic
   it("property: isAtom — empty registry + 0-CF source is always atomic across options sweep", async () => {
-    await fc.assert(
-      Props.prop_isAtom_empty_registry_zero_cf_options_sweep_always_atomic,
-    );
+    await fc.assert(Props.prop_isAtom_empty_registry_zero_cf_options_sweep_always_atomic);
   });
 
   // AT-MATCH-1: matchedPrimitive is absent for non-contains-known-primitive results
   it("property: isAtom — matchedPrimitive is absent for non-contains-known-primitive reason", async () => {
-    await fc.assert(
-      Props.prop_isAtom_matchedPrimitive_absent_for_non_contains_reason,
-    );
+    await fc.assert(Props.prop_isAtom_matchedPrimitive_absent_for_non_contains_reason);
   });
 
   // AT-REG-2: always-match registry triggers contains-known-primitive
   it("property: isAtom — always-match registry triggers contains-known-primitive", async () => {
-    await fc.assert(
-      Props.prop_isAtom_always_match_registry_triggers_contains_known_primitive,
-    );
+    await fc.assert(Props.prop_isAtom_always_match_registry_triggers_contains_known_primitive);
   });
 
   // Compound: real parse → isAtom → CF-varies-by-maxCF correctness

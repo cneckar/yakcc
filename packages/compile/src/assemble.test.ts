@@ -296,7 +296,9 @@ describe("assemble — artifact structure", () => {
 
   it("assembled source has no intra-corpus '@yakcc/blocks/' import lines", async () => {
     const artifact = await assemble(computeRoot, registry, undefined, assembleOpts);
-    expect(artifact.source).not.toMatch(/import type\s+\{[^}]*\}\s+from\s+["']@yakcc\/blocks\/[^"']*["']/);
+    expect(artifact.source).not.toMatch(
+      /import type\s+\{[^}]*\}\s+from\s+["']@yakcc\/blocks\/[^"']*["']/,
+    );
   });
 });
 

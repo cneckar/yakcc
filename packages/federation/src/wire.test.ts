@@ -26,12 +26,18 @@
  */
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
 import { blockMerkleRoot, canonicalize, specHash, validateProofManifestL0 } from "@yakcc/contracts";
-import type { BlockMerkleRoot, CanonicalAstHash, LocalTriplet, SpecHash, SpecYak } from "@yakcc/contracts";
+import type {
+  BlockMerkleRoot,
+  CanonicalAstHash,
+  LocalTriplet,
+  SpecHash,
+  SpecYak,
+} from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
 import { IntegrityError } from "./types.js";
 import { deserializeWireBlockTriplet, serializeWireBlockTriplet } from "./wire.js";
 
@@ -57,7 +63,7 @@ const TEST_SPEC: SpecYak = {
   level: "L0",
 };
 
-const TEST_IMPL_SOURCE = 'export function testFn(x: string): number { return parseInt(x, 10); }';
+const TEST_IMPL_SOURCE = "export function testFn(x: string): number { return parseInt(x, 10); }";
 
 /**
  * Minimal valid L0 proofManifestJson — exactly one property_tests artifact.
@@ -75,9 +81,7 @@ const TEST_ARTIFACT_BYTES = TEXT_ENCODER.encode(
   "import fc from 'fast-check';\nfc.assert(fc.property(fc.string(), (s) => typeof testFn(s) === 'number'));",
 );
 
-const TEST_ARTIFACTS = new Map<string, Uint8Array>([
-  ["tests.fast-check.ts", TEST_ARTIFACT_BYTES],
-]);
+const TEST_ARTIFACTS = new Map<string, Uint8Array>([["tests.fast-check.ts", TEST_ARTIFACT_BYTES]]);
 
 /**
  * Build a BlockTripletRow using @yakcc/contracts blockMerkleRoot() — the
@@ -87,10 +91,11 @@ const TEST_ARTIFACTS = new Map<string, Uint8Array>([
  */
 function makeRow(overrides: Partial<BlockTripletRow> = {}): BlockTripletRow {
   const overridesAny = overrides as Record<string, unknown>;
-  const spec = (overridesAny["spec"] as SpecYak | undefined) ?? TEST_SPEC;
+  const spec = (overridesAny.spec as SpecYak | undefined) ?? TEST_SPEC;
   const implSource = overrides.implSource ?? TEST_IMPL_SOURCE;
   // `manifest` is not a field of BlockTripletRow; it drives proofManifestJson and the hash.
-  const manifest = (overridesAny["manifest"] as LocalTriplet["manifest"] | undefined) ?? VALID_PROOF_MANIFEST;
+  const manifest =
+    (overridesAny.manifest as LocalTriplet["manifest"] | undefined) ?? VALID_PROOF_MANIFEST;
   // BlockTripletRow.artifacts is ReadonlyMap; blockMerkleRoot accepts Map — cast is safe.
   const artifacts = (overrides.artifacts as Map<string, Uint8Array> | undefined) ?? TEST_ARTIFACTS;
 
@@ -164,6 +169,7 @@ describe("serializeWireBlockTriplet / deserializeWireBlockTriplet — round-trip
       expect(recovered.artifacts.has(path)).toBe(true);
       const recoveredBytes = recovered.artifacts.get(path);
       expect(recoveredBytes).toBeInstanceOf(Uint8Array);
+      // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
       expect(Buffer.from(recoveredBytes!).toString("base64")).toBe(
         Buffer.from(bytes).toString("base64"),
       );
@@ -213,7 +219,9 @@ describe("deserializeWireBlockTriplet — tampered blockMerkleRoot", () => {
     const row = makeRow();
     const wire = serializeWireBlockTriplet(row);
     const tampered = { ...wire, blockMerkleRoot: "f".repeat(64) };
-    expect(() => deserializeWireBlockTriplet(JSON.parse(JSON.stringify(tampered)))).toThrow(IntegrityError);
+    expect(() => deserializeWireBlockTriplet(JSON.parse(JSON.stringify(tampered)))).toThrow(
+      IntegrityError,
+    );
     try {
       deserializeWireBlockTriplet(JSON.parse(JSON.stringify(tampered)));
     } catch (err) {
@@ -230,7 +238,9 @@ describe("deserializeWireBlockTriplet — tampered blockMerkleRoot", () => {
         ? `b${wire.blockMerkleRoot.slice(1)}`
         : `a${wire.blockMerkleRoot.slice(1)}`;
     const tampered = { ...wire, blockMerkleRoot: flipped };
-    expect(() => deserializeWireBlockTriplet(JSON.parse(JSON.stringify(tampered)))).toThrow(IntegrityError);
+    expect(() => deserializeWireBlockTriplet(JSON.parse(JSON.stringify(tampered)))).toThrow(
+      IntegrityError,
+    );
   });
 });
 
@@ -268,9 +278,12 @@ describe("deserializeWireBlockTriplet — tampered artifact bytes (v2 acceptance
     const wire = serializeWireBlockTriplet(row);
 
     // Decode the artifact bytes, flip one byte, re-encode.
+    // biome-ignore lint/style/noNonNullAssertion: [0] on non-empty object keys array; record index access
     const artifactPath = Object.keys(wire.artifactBytes)[0]!;
+    // biome-ignore lint/style/noNonNullAssertion: key known present from artifactPath
     const originalBytes = Buffer.from(wire.artifactBytes[artifactPath]!, "base64");
     const tampered_buf = Buffer.from(originalBytes);
+    // biome-ignore lint/style/noNonNullAssertion: Buffer index access for byte mutation
     tampered_buf[0] = tampered_buf[0]! ^ 0xff; // flip all bits in first byte
     const tamperedArtifactBytes = {
       ...wire.artifactBytes,
@@ -290,6 +303,7 @@ describe("deserializeWireBlockTriplet — tampered artifact bytes (v2 acceptance
   it("completely replaced artifact bytes for an existing key fails integrity_failed", () => {
     const row = makeRow();
     const wire = serializeWireBlockTriplet(row);
+    // biome-ignore lint/style/noNonNullAssertion: [0] on non-empty object keys array
     const artifactPath = Object.keys(wire.artifactBytes)[0]!;
     const replacedArtifactBytes = {
       ...wire.artifactBytes,
@@ -349,7 +363,9 @@ describe("deserializeWireBlockTriplet — artifactBytes key set mismatch", () =>
   it("renamed key in artifactBytes → manifest_invalid", () => {
     const row = makeRow();
     const wire = serializeWireBlockTriplet(row);
+    // biome-ignore lint/style/noNonNullAssertion: [0] on non-empty object keys array
     const originalPath = Object.keys(wire.artifactBytes)[0]!;
+    // biome-ignore lint/style/noNonNullAssertion: key known present from originalPath
     const origVal = wire.artifactBytes[originalPath]!;
     // Rename the key — same bytes but wrong path
     const { [originalPath]: _removed, ...rest } = wire.artifactBytes;
@@ -408,7 +424,9 @@ describe("deserializeWireBlockTriplet — level_unsupported", () => {
 describe("deserializeWireBlockTriplet — manifest_invalid", () => {
   it("rejects a manifest with smt_cert artifact (L2 only) with manifest_invalid", () => {
     // Build a row with an L2 manifest and correctly computed merkle root for it.
-    const badManifest = { artifacts: [{ kind: "smt_cert" as const, path: "refinement.smt2", theory: ["bv64"] }] };
+    const badManifest = {
+      artifacts: [{ kind: "smt_cert" as const, path: "refinement.smt2", theory: ["bv64"] }],
+    };
     const badManifestJson = JSON.stringify(badManifest);
     // We need a row whose blockMerkleRoot matches the bad manifest — but since
     // validateProofManifestL0 will reject before we reach the merkle check, any
@@ -550,7 +568,9 @@ describe("DEC-V1-FEDERATION-WIRE-ARTIFACTS-002 — no parallel merkle helper", (
     const wireSrc = readFileSync(resolve(__dirname, "wire.ts"), "utf-8");
 
     // Must import blockMerkleRoot from contracts
-    expect(wireSrc).toMatch(/import\s*\{[^}]*blockMerkleRoot[^}]*\}\s*from\s*["']@yakcc\/contracts["']/);
+    expect(wireSrc).toMatch(
+      /import\s*\{[^}]*blockMerkleRoot[^}]*\}\s*from\s*["']@yakcc\/contracts["']/,
+    );
   });
 
   it("wire.ts does NOT contain a local BLAKE3(proofManifestJson) computation", () => {
@@ -637,4 +657,3 @@ describe("deserializeWireBlockTriplet — structural validation", () => {
     expect(() => deserializeWireBlockTriplet(tampered)).toThrow(TypeError);
   });
 });
-

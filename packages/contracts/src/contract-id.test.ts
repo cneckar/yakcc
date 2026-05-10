@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { contractId, contractIdFromBytes, isValidContractId } from "./contract-id.js";
+import { describe, expect, it } from "vitest";
 import { canonicalize } from "./canonicalize.js";
+import { contractId, contractIdFromBytes, isValidContractId } from "./contract-id.js";
 import type { ContractSpec } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -13,7 +13,9 @@ const BASE_SPEC: ContractSpec = {
   outputs: [{ name: "result", type: "number[]" }],
   behavior: "Parse a JSON array of integers from a string.",
   guarantees: [{ id: "rejects-non-int", description: "Rejects non-integer values." }],
-  errorConditions: [{ description: "Throws SyntaxError on malformed input.", errorType: "SyntaxError" }],
+  errorConditions: [
+    { description: "Throws SyntaxError on malformed input.", errorType: "SyntaxError" },
+  ],
   nonFunctional: { purity: "pure", threadSafety: "safe" },
   propertyTests: [],
 };
@@ -49,12 +51,9 @@ const contractSpecArb: fc.Arbitrary<ContractSpec> = fc.record({
     { maxLength: 4 },
   ),
   nonFunctional: fc.record({
-    purity: fc.constantFrom(
-      "pure",
-      "io",
-      "stateful",
-      "nondeterministic",
-    ) as fc.Arbitrary<"pure" | "io" | "stateful" | "nondeterministic">,
+    purity: fc.constantFrom("pure", "io", "stateful", "nondeterministic") as fc.Arbitrary<
+      "pure" | "io" | "stateful" | "nondeterministic"
+    >,
     threadSafety: fc.constantFrom("safe", "unsafe", "sequential") as fc.Arbitrary<
       "safe" | "unsafe" | "sequential"
     >,

@@ -12,6 +12,9 @@ import {
   prop_LoweringError_name_is_LoweringError,
   prop_detectArrayShape_array_param_sets_arrayShape,
   prop_detectArrayShape_non_array_returns_null_arrayShape,
+  prop_lowerModule_funcIndexTable_has_all_functions,
+  prop_lowerModule_missing_export_throws_LoweringError,
+  prop_lowerModule_single_export_matches_lower,
   prop_lower_bigint_domain_infers_i64,
   prop_lower_bitop_domain_forces_i32,
   prop_lower_f64_domain_division_uses_f64_opcodes,
@@ -19,16 +22,13 @@ import {
   prop_lower_missing_export_throws_LoweringError,
   prop_lower_result_has_fnName,
   prop_lower_string_concat_sets_stringShape,
+  prop_lower_string_length_fn_produces_str_length_shape,
   prop_lower_string_length_sets_stringShape,
   prop_lower_sum_record_wave2_fast_path,
   prop_lower_switch_numeric_succeeds,
   prop_lower_warnings_is_array,
   prop_lower_wave2_add_returns_wasmFn_with_i32_add_opcode,
   prop_lower_wave2_shape_null_for_general_lowering,
-  prop_lower_string_length_fn_produces_str_length_shape,
-  prop_lowerModule_funcIndexTable_has_all_functions,
-  prop_lowerModule_missing_export_throws_LoweringError,
-  prop_lowerModule_single_export_matches_lower,
 } from "./visitor.props.js";
 
 // LoweringVisitor.lower() and lowerModule() invoke ts-morph per call — expensive.

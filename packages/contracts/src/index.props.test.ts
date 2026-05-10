@@ -3,11 +3,11 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling index.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
-  prop_proposeContract_v0_always_accepted,
   prop_proposeContract_id_matches_contractId,
+  prop_proposeContract_v0_always_accepted,
 } from "./index.props.js";
 
 // numRuns: 100 (fast-check default, explicitly documented per eval contract).

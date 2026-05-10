@@ -13,7 +13,6 @@ import {
   prop_maybePersistNovelGlueAtom_delegates_when_store_block_present,
   prop_maybePersistNovelGlueAtom_returns_undefined_when_no_store_block,
   prop_maybePersistNovelGlueAtom_skips_no_intent_card,
-  prop_persist_atom_compound_interaction,
   prop_persistNovelGlueAtom_calls_store_block_once,
   prop_persistNovelGlueAtom_distinct_sources_yield_distinct_merkle_roots,
   prop_persistNovelGlueAtom_forwards_parent_block_root,
@@ -21,6 +20,7 @@ import {
   prop_persistNovelGlueAtom_return_equals_stored_merkle_root,
   prop_persistNovelGlueAtom_skips_no_intent_card,
   prop_persistNovelGlueAtom_stored_row_level_is_L0,
+  prop_persist_atom_compound_interaction,
 } from "./atom-persist.props.js";
 
 // persistNovelGlueAtom calls extractCorpus() (filesystem-backed IO).
@@ -52,10 +52,7 @@ it("property: prop_persistNovelGlueAtom_stored_row_level_is_L0", async () => {
 });
 
 it("property: prop_persistNovelGlueAtom_distinct_sources_yield_distinct_merkle_roots", async () => {
-  await fc.assert(
-    prop_persistNovelGlueAtom_distinct_sources_yield_distinct_merkle_roots,
-    opts,
-  );
+  await fc.assert(prop_persistNovelGlueAtom_distinct_sources_yield_distinct_merkle_roots, opts);
 });
 
 it("property: prop_maybePersistNovelGlueAtom_returns_undefined_when_no_store_block", async () => {

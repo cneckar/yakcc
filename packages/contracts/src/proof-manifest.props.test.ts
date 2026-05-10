@@ -3,12 +3,12 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling proof-manifest.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
-  prop_validateProofManifestL0_round_trip,
-  prop_validateProofManifestL0_rejects_garbage,
   prop_validateProofManifestL0_idempotent,
+  prop_validateProofManifestL0_rejects_garbage,
+  prop_validateProofManifestL0_round_trip,
 } from "./proof-manifest.props.js";
 
 // numRuns: 100 (fast-check default, explicitly documented per eval contract).

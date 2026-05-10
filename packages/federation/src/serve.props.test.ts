@@ -3,8 +3,8 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling serve.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
   prop_handleGetBlock_returns_200_json_object_when_block_present,
   prop_handleGetBlock_returns_404_when_block_absent,

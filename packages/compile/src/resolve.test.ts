@@ -142,7 +142,7 @@ afterEach(async () => {
 
 describe("resolveComposition — single block", () => {
   it("resolves a single block with no sub-blocks", async () => {
-    const implSource = `export function answer(): number { return 42; }\n`;
+    const implSource = "export function answer(): number { return 42; }\n";
     const { row, merkleRoot } = makeBlockRow("answer", "Return the integer 42", implSource);
     await registry.storeBlock(row);
 
@@ -159,7 +159,7 @@ describe("resolveComposition — single block", () => {
   });
 
   it("ResolvedBlock carries both merkleRoot and specHash", async () => {
-    const implSource = `export function identity(x: string): string { return x; }\n`;
+    const implSource = "export function identity(x: string): string { return x; }\n";
     const { row, merkleRoot, specHashValue } = makeBlockRow(
       "identity",
       "Return input unchanged",

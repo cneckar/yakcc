@@ -28,16 +28,12 @@
  * DEC-V1-FEDERATION-WIRE-ARTIFACTS-002, DEC-CONTRACTS-AUTHORITY-001.
  */
 
-import { describe, expect, it } from "vitest";
-import {
-  blockMerkleRoot,
-  canonicalize,
-  specHash,
-  validateProofManifestL0,
-} from "@yakcc/contracts";
+import { blockMerkleRoot, canonicalize, specHash, validateProofManifestL0 } from "@yakcc/contracts";
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
+import { mirrorRegistry } from "./mirror.js";
 import { SchemaVersionMismatchError } from "./types.js";
 import type {
   CatalogPage,
@@ -47,7 +43,6 @@ import type {
   WireBlockTriplet,
 } from "./types.js";
 import { serializeWireBlockTriplet } from "./wire.js";
-import { mirrorRegistry } from "./mirror.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -148,7 +143,11 @@ function makeRow(
  * Build a row where the implSource is varied by a discriminator so that
  * different blocks under the same spec produce distinct merkle roots.
  */
-function makeRowVariant(spec: SpecYak, artifactBytes: Uint8Array, variant: string): BlockTripletRow {
+function makeRowVariant(
+  spec: SpecYak,
+  artifactBytes: Uint8Array,
+  variant: string,
+): BlockTripletRow {
   const implSource = `export function fn(n: number): unknown { return n; } /* v=${variant} */`;
   const artifacts = new Map<string, Uint8Array>([[ARTIFACT_PATH, artifactBytes]]);
   const specCanonicalBytes = canonicalize(spec as unknown as Parameters<typeof canonicalize>[0]);
@@ -409,7 +408,12 @@ describe("mirrorRegistry — integrity failure on one block", () => {
     const registry = await openRegistry(":memory:", { embeddings: ZERO_EMBEDDINGS });
     const { rows, specHashes, blocksBySpec } = buildHappyPathFixture();
 
-    const [rowA1, rowA2, rowB1, rowB2] = rows as [BlockTripletRow, BlockTripletRow, BlockTripletRow, BlockTripletRow];
+    const [rowA1, rowA2, rowB1, rowB2] = rows as [
+      BlockTripletRow,
+      BlockTripletRow,
+      BlockTripletRow,
+      BlockTripletRow,
+    ];
 
     // Build a wire version of rowA2 with a tampered proofManifestJson.
     // The manifest will fail validateProofManifestL0 because it has no artifacts.
@@ -447,11 +451,11 @@ describe("mirrorRegistry — integrity failure on one block", () => {
     expect(report.failures).toHaveLength(1);
     const failure = report.failures[0];
     expect(failure).toBeDefined();
-    expect(failure!.blockMerkleRoot).toBe(rowA2.blockMerkleRoot);
-    expect(failure!.specHash).toBe(rowA2.specHash);
-    expect(typeof failure!.reason).toBe("string");
-    expect(failure!.reason.length).toBeGreaterThan(0);
-    expect(failure!.at).toMatch(ISO8601_PATTERN);
+    expect(failure?.blockMerkleRoot).toBe(rowA2.blockMerkleRoot);
+    expect(failure?.specHash).toBe(rowA2.specHash);
+    expect(typeof failure?.reason).toBe("string");
+    expect(failure?.reason.length).toBeGreaterThan(0);
+    expect(failure?.at).toMatch(ISO8601_PATTERN);
   });
 });
 
@@ -480,9 +484,9 @@ describe("mirrorRegistry — schema-version mismatch", () => {
       wireByRoot,
     });
 
-    await expect(
-      mirrorRegistry(REMOTE, registry, transport),
-    ).rejects.toBeInstanceOf(SchemaVersionMismatchError);
+    await expect(mirrorRegistry(REMOTE, registry, transport)).rejects.toBeInstanceOf(
+      SchemaVersionMismatchError,
+    );
 
     // Verify the local registry has zero rows — no insertion should have happened.
     const blocks = await registry.selectBlocks(specHashA);

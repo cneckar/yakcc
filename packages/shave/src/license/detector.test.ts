@@ -70,17 +70,13 @@ describe("detectLicense — header-text", () => {
   });
 
   it("detects Apache-2.0 via header text", () => {
-    const result = detectLicense(
-      "Licensed under the Apache License, Version 2.0 (the License)",
-    );
+    const result = detectLicense("Licensed under the Apache License, Version 2.0 (the License)");
     expect(result.identifier).toBe("Apache-2.0");
     expect(result.source).toBe("header-text");
   });
 
   it("detects Apache-2.0 via URL", () => {
-    const result = detectLicense(
-      "See http://www.apache.org/licenses/LICENSE-2.0",
-    );
+    const result = detectLicense("See http://www.apache.org/licenses/LICENSE-2.0");
     expect(result.identifier).toBe("Apache-2.0");
     expect(result.source).toBe("header-text");
   });

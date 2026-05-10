@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { canonicalize, canonicalizeText, __testing__ } from "./canonicalize.js";
+import { describe, expect, it } from "vitest";
+import { __testing__, canonicalize, canonicalizeText } from "./canonicalize.js";
 import type { ContractSpec } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,9 @@ const MINIMAL_SPEC: ContractSpec = {
   outputs: [{ name: "result", type: "number[]" }],
   behavior: "Parse a JSON array of integers from a string.",
   guarantees: [{ id: "rejects-non-int", description: "Rejects non-integer values." }],
-  errorConditions: [{ description: "Throws SyntaxError on malformed input.", errorType: "SyntaxError" }],
+  errorConditions: [
+    { description: "Throws SyntaxError on malformed input.", errorType: "SyntaxError" },
+  ],
   nonFunctional: { purity: "pure", threadSafety: "safe", time: "O(n)", space: "O(n)" },
   propertyTests: [
     {
@@ -29,7 +31,9 @@ const MINIMAL_SPEC: ContractSpec = {
 function buildSpecAlternateOrder(): ContractSpec {
   return {
     behavior: "Parse a JSON array of integers from a string.",
-    errorConditions: [{ errorType: "SyntaxError", description: "Throws SyntaxError on malformed input." }],
+    errorConditions: [
+      { errorType: "SyntaxError", description: "Throws SyntaxError on malformed input." },
+    ],
     guarantees: [{ description: "Rejects non-integer values.", id: "rejects-non-int" }],
     inputs: [{ description: "raw input", name: "s", type: "string" }],
     nonFunctional: { purity: "pure", space: "O(n)", threadSafety: "safe", time: "O(n)" },
@@ -156,7 +160,11 @@ describe("canonicalize", () => {
       };
       const text = canonicalizeText(spec);
       const parsed = JSON.parse(text) as { errorConditions: Array<{ description: string }> };
-      expect(parsed.errorConditions.map((e) => e.description)).toEqual(["first", "second", "third"]);
+      expect(parsed.errorConditions.map((e) => e.description)).toEqual([
+        "first",
+        "second",
+        "third",
+      ]);
     });
   });
 
@@ -173,11 +181,11 @@ describe("canonicalize", () => {
       const parsed = JSON.parse(text) as Record<string, unknown>;
 
       // input should have no description key
-      const inputs = parsed["inputs"] as Array<Record<string, unknown>>;
+      const inputs = parsed.inputs as Array<Record<string, unknown>>;
       expect(Object.prototype.hasOwnProperty.call(inputs[0], "description")).toBe(false);
 
       // nonFunctional should have no time or space keys
-      const nf = parsed["nonFunctional"] as Record<string, unknown>;
+      const nf = parsed.nonFunctional as Record<string, unknown>;
       expect(Object.prototype.hasOwnProperty.call(nf, "time")).toBe(false);
       expect(Object.prototype.hasOwnProperty.call(nf, "space")).toBe(false);
     });
@@ -231,7 +239,7 @@ describe("canonicalize", () => {
       const specWithNaN = {
         ...MINIMAL_SPEC,
         // Inject NaN via an unknown cast — in real usage this would be a type error
-        behavior: NaN,
+        behavior: Number.NaN,
       } as unknown as ContractSpec;
       expect(() => canonicalizeText(specWithNaN)).toThrow(TypeError);
     });
@@ -239,7 +247,7 @@ describe("canonicalize", () => {
     it("throws TypeError for Infinity in a nested numeric field", () => {
       const specWithInfinity = {
         ...MINIMAL_SPEC,
-        behavior: Infinity,
+        behavior: Number.POSITIVE_INFINITY,
       } as unknown as ContractSpec;
       expect(() => canonicalizeText(specWithInfinity)).toThrow(TypeError);
     });

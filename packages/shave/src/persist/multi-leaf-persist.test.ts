@@ -60,10 +60,10 @@
  *   Corpus extraction uses the default sources (a)+(b) only (no cache dir for (c)).
  */
 
+import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
@@ -160,126 +160,114 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("WI-031: multi-leaf intentCard attachment + lineage (openRegistry :memory:)", () => {
-  it(
-    "shave() persists > 1 BlockTripletRow with valid parent_block_root lineage chain",
-    async () => {
-      // strategy: "static" is offline-safe — no seedIntentCache() needed.
-      const result = await shave(tmpFilePath, registry, {
+  it("shave() persists > 1 BlockTripletRow with valid parent_block_root lineage chain", async () => {
+    // strategy: "static" is offline-safe — no seedIntentCache() needed.
+    const result = await shave(tmpFilePath, registry, {
+      cacheDir,
+      offline: true,
+      // strategy: "static" is the default per DEC-INTENT-STRATEGY-001; explicit here for clarity.
+      intentStrategy: "static",
+    });
+
+    // ---- Assert > 1 atoms persisted ----
+    const persistedAtoms = result.atoms.filter((a) => a.merkleRoot !== undefined);
+    expect(
+      persistedAtoms.length,
+      "Expected > 1 atoms persisted for multi-leaf source",
+    ).toBeGreaterThan(1);
+
+    // ---- Readback all rows from registry ----
+    const allRows: BlockTripletRow[] = [];
+    for (const atom of result.atoms) {
+      if (atom.merkleRoot !== undefined) {
+        const row = await registry.getBlock(atom.merkleRoot);
+        expect(row, `Expected row for merkleRoot ${atom.merkleRoot}`).not.toBeNull();
+        // biome-ignore lint/style/noNonNullAssertion: row asserted not-null above
+        allRows.push(row!);
+      }
+    }
+
+    expect(allRows.length, "Row count must match persisted atom count").toBe(persistedAtoms.length);
+
+    // ---- Assert exactly one root (parentBlockRoot === null) ----
+    const rootRows = allRows.filter((r) => r.parentBlockRoot === null);
+    expect(rootRows.length, "Exactly one row must have parentBlockRoot === null (the root)").toBe(
+      1,
+    );
+
+    // ---- Assert all non-root rows have parentBlockRoot pointing to a valid merkle root ----
+    const allMerkleRoots = new Set(allRows.map((r) => r.blockMerkleRoot));
+    const nonRootRows = allRows.filter((r) => r.parentBlockRoot !== null);
+
+    expect(
+      nonRootRows.length,
+      "Non-root rows must exist (lineage chain must be populated)",
+    ).toBeGreaterThan(0);
+
+    for (const row of nonRootRows) {
+      expect(
+        allMerkleRoots.has(row.parentBlockRoot as BlockMerkleRoot),
+        `Non-root row parentBlockRoot ${row.parentBlockRoot} must reference a valid sibling row`,
+      ).toBe(true);
+    }
+  }, 30_000);
+
+  it("shave() is deterministic: two independent shave calls produce byte-identical merkle roots", async () => {
+    // Determinism proof: run shave() against two separate fresh in-memory registries.
+    // Each registry starts empty so both calls go through the novel-glue persist path.
+    // The resulting merkle roots must be byte-identical (content-address determinism).
+    //
+    // Why separate registries rather than two calls on the same registry:
+    //   A second call against a populated registry finds all blocks already stored and
+    //   emits PointerEntry items (slicer deduplicates against registry). PointerEntry
+    //   carries no merkleRoot on the ShavedAtomStub. To assert determinism we need both
+    //   runs to independently persist from scratch — hence two fresh in-memory registries.
+    const registry2 = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+    });
+
+    try {
+      // First shave: uses the beforeEach registry (fresh, empty).
+      const result1 = await shave(tmpFilePath, registry, {
         cacheDir,
         offline: true,
-        // strategy: "static" is the default per DEC-INTENT-STRATEGY-001; explicit here for clarity.
         intentStrategy: "static",
       });
 
-      // ---- Assert > 1 atoms persisted ----
-      const persistedAtoms = result.atoms.filter((a) => a.merkleRoot !== undefined);
-      expect(
-        persistedAtoms.length,
-        "Expected > 1 atoms persisted for multi-leaf source",
-      ).toBeGreaterThan(1);
+      const merkleRoots1 = result1.atoms
+        .filter((a) => a.merkleRoot !== undefined)
+        .map((a) => a.merkleRoot as BlockMerkleRoot)
+        .sort();
 
-      // ---- Readback all rows from registry ----
-      const allRows: BlockTripletRow[] = [];
-      for (const atom of result.atoms) {
-        if (atom.merkleRoot !== undefined) {
-          const row = await registry.getBlock(atom.merkleRoot);
-          expect(row, `Expected row for merkleRoot ${atom.merkleRoot}`).not.toBeNull();
-          allRows.push(row!);
-        }
-      }
+      expect(merkleRoots1.length, "First shave must produce > 1 persisted atoms").toBeGreaterThan(
+        1,
+      );
 
-      expect(
-        allRows.length,
-        "Row count must match persisted atom count",
-      ).toBe(persistedAtoms.length);
-
-      // ---- Assert exactly one root (parentBlockRoot === null) ----
-      const rootRows = allRows.filter((r) => r.parentBlockRoot === null);
-      expect(
-        rootRows.length,
-        "Exactly one row must have parentBlockRoot === null (the root)",
-      ).toBe(1);
-
-      // ---- Assert all non-root rows have parentBlockRoot pointing to a valid merkle root ----
-      const allMerkleRoots = new Set(allRows.map((r) => r.blockMerkleRoot));
-      const nonRootRows = allRows.filter((r) => r.parentBlockRoot !== null);
-
-      expect(
-        nonRootRows.length,
-        "Non-root rows must exist (lineage chain must be populated)",
-      ).toBeGreaterThan(0);
-
-      for (const row of nonRootRows) {
-        expect(
-          allMerkleRoots.has(row.parentBlockRoot as BlockMerkleRoot),
-          `Non-root row parentBlockRoot ${row.parentBlockRoot} must reference a valid sibling row`,
-        ).toBe(true);
-      }
-    },
-    30_000,
-  );
-
-  it(
-    "shave() is deterministic: two independent shave calls produce byte-identical merkle roots",
-    async () => {
-      // Determinism proof: run shave() against two separate fresh in-memory registries.
-      // Each registry starts empty so both calls go through the novel-glue persist path.
-      // The resulting merkle roots must be byte-identical (content-address determinism).
-      //
-      // Why separate registries rather than two calls on the same registry:
-      //   A second call against a populated registry finds all blocks already stored and
-      //   emits PointerEntry items (slicer deduplicates against registry). PointerEntry
-      //   carries no merkleRoot on the ShavedAtomStub. To assert determinism we need both
-      //   runs to independently persist from scratch — hence two fresh in-memory registries.
-      const registry2 = await openRegistry(":memory:", {
-        embeddings: mockEmbeddingProvider(),
+      // Second shave: uses a second fresh registry — independent from the first.
+      const result2 = await shave(tmpFilePath, registry2, {
+        cacheDir,
+        offline: true,
+        intentStrategy: "static",
       });
 
-      try {
-        // First shave: uses the beforeEach registry (fresh, empty).
-        const result1 = await shave(tmpFilePath, registry, {
-          cacheDir,
-          offline: true,
-          intentStrategy: "static",
-        });
+      const merkleRoots2 = result2.atoms
+        .filter((a) => a.merkleRoot !== undefined)
+        .map((a) => a.merkleRoot as BlockMerkleRoot)
+        .sort();
 
-        const merkleRoots1 = result1.atoms
-          .filter((a) => a.merkleRoot !== undefined)
-          .map((a) => a.merkleRoot as BlockMerkleRoot)
-          .sort();
+      // Same number of atoms.
+      expect(
+        merkleRoots2.length,
+        "Second shave must produce same number of persisted atoms as first",
+      ).toBe(merkleRoots1.length);
 
-        expect(
-          merkleRoots1.length,
-          "First shave must produce > 1 persisted atoms",
-        ).toBeGreaterThan(1);
-
-        // Second shave: uses a second fresh registry — independent from the first.
-        const result2 = await shave(tmpFilePath, registry2, {
-          cacheDir,
-          offline: true,
-          intentStrategy: "static",
-        });
-
-        const merkleRoots2 = result2.atoms
-          .filter((a) => a.merkleRoot !== undefined)
-          .map((a) => a.merkleRoot as BlockMerkleRoot)
-          .sort();
-
-        // Same number of atoms.
-        expect(
-          merkleRoots2.length,
-          "Second shave must produce same number of persisted atoms as first",
-        ).toBe(merkleRoots1.length);
-
-        // Byte-identical merkle roots (content-address determinism).
-        expect(
-          merkleRoots2,
-          "Second shave must produce byte-identical merkle roots (determinism)",
-        ).toEqual(merkleRoots1);
-      } finally {
-        await registry2.close();
-      }
-    },
-    30_000,
-  );
+      // Byte-identical merkle roots (content-address determinism).
+      expect(
+        merkleRoots2,
+        "Second shave must produce byte-identical merkle roots (determinism)",
+      ).toEqual(merkleRoots1);
+    } finally {
+      await registry2.close();
+    }
+  }, 30_000);
 });

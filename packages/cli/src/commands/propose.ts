@@ -89,7 +89,7 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
     logger.log(JSON.stringify(spec, null, 2));
     logger.log("");
     logger.log("To register an implementation, author a block triplet (spec.yak, impl.ts, proof/)");
-    logger.log(`matching the spec above, then seed the registry.`);
+    logger.log("matching the spec above, then seed the registry.");
     return 0;
   } finally {
     await registry.close();

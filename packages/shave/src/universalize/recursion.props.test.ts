@@ -51,7 +51,9 @@ describe("universalize/recursion.ts — property corpus", () => {
   // Creates a real ts-morph Project per run — cap numRuns to stay within the
   // 30s global testTimeout. 10 runs × ~0.8s/run ≈ 8s budget.
   it("property: compound — real parse: branch root joint invariants (leafCount, maxDepth, hash, consistency)", async () => {
-    await fc.assert(Props.prop_compound_decompose_real_parse_branch_and_atom_invariants, { numRuns: 10 });
+    await fc.assert(Props.prop_compound_decompose_real_parse_branch_and_atom_invariants, {
+      numRuns: 10,
+    });
   });
 
   // canonicalAstHash stability across calls.

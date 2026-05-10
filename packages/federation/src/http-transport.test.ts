@@ -27,8 +27,8 @@
  * shape through faithfully.
  */
 
-import { describe, expect, it, vi } from "vitest";
 import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+import { describe, expect, it, vi } from "vitest";
 import { createHttpTransport } from "./http-transport.js";
 import { TransportError } from "./types.js";
 import type { CatalogPage, RemoteManifest, WireBlockTriplet } from "./types.js";
@@ -124,7 +124,9 @@ const CATALOG_PAGE_FIXTURE: CatalogPage = {
 const WIRE_TRIPLET_FIXTURE: WireBlockTriplet = {
   blockMerkleRoot: ROOT_A,
   specHash: SPEC_HASH,
-  specCanonicalBytes: Buffer.from('{"inputs":[{"name":"x","type":"string"}],"output":"string"}').toString("base64"),
+  specCanonicalBytes: Buffer.from(
+    '{"inputs":[{"name":"x","type":"string"}],"output":"string"}',
+  ).toString("base64"),
   implSource: "export const x = (s: string) => s;",
   proofManifestJson: '{"artifacts":[{"kind":"property_tests","path":"tests.ts"}]}',
   artifactBytes: { "tests.ts": Buffer.from("// test content").toString("base64") },
@@ -396,8 +398,7 @@ describe("createHttpTransport — compound interaction: full catalog pagination 
     let callCount = 0;
     const capturedUrls: string[] = [];
     const stubFetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       capturedUrls.push(url);
       const body = callCount === 0 ? page1 : page2;
       callCount++;

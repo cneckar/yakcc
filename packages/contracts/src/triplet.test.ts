@@ -17,15 +17,15 @@
  *       v1-only required fields — the "spec-hash continuity" check.
  */
 
-import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
+import { describe, expect, it } from "vitest";
 import { contractId } from "./contract-id.js";
 import type { ContractSpec } from "./index.js";
+import { blockMerkleRoot, isForeignTriplet, isLocalTriplet, specHash } from "./merkle.js";
+import type { BlockTriplet, ForeignTripletFields } from "./merkle.js";
+import { validateProofManifestL0 } from "./proof-manifest.js";
 import { validateSpecYak } from "./spec-yak.js";
 import type { SpecYak } from "./spec-yak.js";
-import { validateProofManifestL0 } from "./proof-manifest.js";
-import { blockMerkleRoot, specHash, isLocalTriplet, isForeignTriplet } from "./merkle.js";
-import type { BlockTriplet, ForeignTripletFields } from "./merkle.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,7 +54,10 @@ function minimalSpecYak(overrides: Partial<SpecYak> = {}): SpecYak {
  * Produce a minimal valid BlockTriplet from a SpecYak.
  * Uses a fixed impl source and a single property_tests artifact.
  */
-function minimalTriplet(spec: SpecYak, implSource = "export function f(x: string): number { return 0; }"): BlockTriplet {
+function minimalTriplet(
+  spec: SpecYak,
+  implSource = "export function f(x: string): number { return 0; }",
+): BlockTriplet {
   const artifactBytes = new TextEncoder().encode("// property tests\n");
   return {
     spec,
@@ -151,7 +154,13 @@ const SEED_SPEC_BRACKET: SpecYak = {
     { name: "open", type: "string", description: "Opening bracket character." },
     { name: "close", type: "string", description: "Closing bracket character." },
   ],
-  outputs: [{ name: "result", type: "{ open: number; close: number }", description: "Positions of brackets." }],
+  outputs: [
+    {
+      name: "result",
+      type: "{ open: number; close: number }",
+      description: "Positions of brackets.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -179,7 +188,13 @@ const SEED_SPEC_COMMA_SEP_INTS: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Zero-based start position." },
   ],
-  outputs: [{ name: "result", type: "{ values: number[]; end: number }", description: "Parsed integers and end position." }],
+  outputs: [
+    {
+      name: "result",
+      type: "{ values: number[]; end: number }",
+      description: "Parsed integers and end position.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -207,7 +222,13 @@ const SEED_SPEC_DIGIT_OR_THROW: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Zero-based position to read from." },
   ],
-  outputs: [{ name: "result", type: "{ digit: number; next: number }", description: "Digit value and next position." }],
+  outputs: [
+    {
+      name: "result",
+      type: "{ digit: number; next: number }",
+      description: "Digit value and next position.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -235,7 +256,9 @@ const SEED_SPEC_EOF_CHECK: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Expected end position." },
   ],
-  outputs: [{ name: "result", type: "boolean", description: "True if position equals input.length." }],
+  outputs: [
+    { name: "result", type: "boolean", description: "True if position equals input.length." },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -249,7 +272,13 @@ const SEED_SPEC_INTEGER: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Zero-based start position." },
   ],
-  outputs: [{ name: "result", type: "{ value: number; end: number }", description: "Parsed integer and end position." }],
+  outputs: [
+    {
+      name: "result",
+      type: "{ value: number; end: number }",
+      description: "Parsed integer and end position.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -271,7 +300,9 @@ const SEED_SPEC_LIST_OF_INTS: SpecYak = {
 const SEED_SPEC_NON_ASCII_REJECTOR: SpecYak = {
   name: "non-ascii-rejector",
   inputs: [{ name: "input", type: "string", description: "The full input string to validate." }],
-  outputs: [{ name: "result", type: "void", description: "Returns undefined if all bytes are ASCII." }],
+  outputs: [
+    { name: "result", type: "void", description: "Returns undefined if all bytes are ASCII." },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -285,7 +316,13 @@ const SEED_SPEC_NONEMPTY_LIST_CONTENT: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Position immediately after '['." },
   ],
-  outputs: [{ name: "result", type: "{ values: number[]; end: number }", description: "Parsed values and end position." }],
+  outputs: [
+    {
+      name: "result",
+      type: "{ values: number[]; end: number }",
+      description: "Parsed values and end position.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -313,7 +350,13 @@ const SEED_SPEC_PEEK_CHAR: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Zero-based position to peek at." },
   ],
-  outputs: [{ name: "char", type: "string | undefined", description: "Character at position or undefined." }],
+  outputs: [
+    {
+      name: "char",
+      type: "string | undefined",
+      description: "Character at position or undefined.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -327,7 +370,9 @@ const SEED_SPEC_POSITION_STEP: SpecYak = {
     { name: "position", type: "number", description: "Current zero-based position." },
     { name: "n", type: "number", description: "Number of characters to advance." },
   ],
-  outputs: [{ name: "next", type: "number", description: "New position after advancing n characters." }],
+  outputs: [
+    { name: "next", type: "number", description: "New position after advancing n characters." },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -341,7 +386,13 @@ const SEED_SPEC_SIGNED_INTEGER: SpecYak = {
     { name: "input", type: "string", description: "The full input string." },
     { name: "position", type: "number", description: "Zero-based start position." },
   ],
-  outputs: [{ name: "result", type: "{ value: number; end: number }", description: "Parsed signed integer." }],
+  outputs: [
+    {
+      name: "result",
+      type: "{ value: number; end: number }",
+      description: "Parsed signed integer.",
+    },
+  ],
   preconditions: [],
   postconditions: [],
   invariants: [],
@@ -623,28 +674,36 @@ describe("blockMerkleRoot — determinism (Test c)", () => {
 describe("blockMerkleRoot — sensitivity (Test d)", () => {
   it("a change in spec.yak produces a different root", () => {
     fc.assert(
-      fc.property(blockTripletArb, fc.string({ minLength: 1, maxLength: 32 }), (triplet, suffix) => {
-        if (!isLocalTriplet(triplet)) return;
-        const modified: BlockTriplet = {
-          ...triplet,
-          spec: { ...triplet.spec, name: `${triplet.spec.name}${suffix}` },
-        };
-        expect(blockMerkleRoot(triplet)).not.toBe(blockMerkleRoot(modified));
-      }),
+      fc.property(
+        blockTripletArb,
+        fc.string({ minLength: 1, maxLength: 32 }),
+        (triplet, suffix) => {
+          if (!isLocalTriplet(triplet)) return;
+          const modified: BlockTriplet = {
+            ...triplet,
+            spec: { ...triplet.spec, name: `${triplet.spec.name}${suffix}` },
+          };
+          expect(blockMerkleRoot(triplet)).not.toBe(blockMerkleRoot(modified));
+        },
+      ),
       { numRuns: 500 },
     );
   });
 
   it("a change in impl.ts produces a different root", () => {
     fc.assert(
-      fc.property(blockTripletArb, fc.string({ minLength: 1, maxLength: 32 }), (triplet, suffix) => {
-        if (!isLocalTriplet(triplet)) return;
-        const modified: BlockTriplet = {
-          ...triplet,
-          implSource: `${triplet.implSource}${suffix}`,
-        };
-        expect(blockMerkleRoot(triplet)).not.toBe(blockMerkleRoot(modified));
-      }),
+      fc.property(
+        blockTripletArb,
+        fc.string({ minLength: 1, maxLength: 32 }),
+        (triplet, suffix) => {
+          if (!isLocalTriplet(triplet)) return;
+          const modified: BlockTriplet = {
+            ...triplet,
+            implSource: `${triplet.implSource}${suffix}`,
+          };
+          expect(blockMerkleRoot(triplet)).not.toBe(blockMerkleRoot(modified));
+        },
+      ),
       { numRuns: 500 },
     );
   });
@@ -747,8 +806,13 @@ describe("specHash continuity with contractId (Test e)", () => {
     // For each seed spec, project to the ContractSpec field set (drop v1-only fields)
     // and confirm specHash matches contractId.
     const v0FieldSet = new Set([
-      "inputs", "outputs", "behavior", "guarantees",
-      "errorConditions", "nonFunctional", "propertyTests",
+      "inputs",
+      "outputs",
+      "behavior",
+      "guarantees",
+      "errorConditions",
+      "nonFunctional",
+      "propertyTests",
     ]);
 
     for (const spec of ALL_SEED_SPECS) {
@@ -761,8 +825,15 @@ describe("specHash continuity with contractId (Test e)", () => {
       // Some seed specs omit optional v0 fields (e.g. behavior, guarantees) — those
       // specs cannot produce a matching ContractSpec projection. Check only the ones
       // that have all v0 required fields.
-      const hasAllV0Fields = ["inputs", "outputs", "behavior", "guarantees", "errorConditions", "nonFunctional", "propertyTests"]
-        .every((f) => f in projected);
+      const hasAllV0Fields = [
+        "inputs",
+        "outputs",
+        "behavior",
+        "guarantees",
+        "errorConditions",
+        "nonFunctional",
+        "propertyTests",
+      ].every((f) => f in projected);
       if (!hasAllV0Fields) continue;
 
       const sha = specHash(projected as unknown as SpecYak);
@@ -852,7 +923,9 @@ describe("end-to-end: validate → blockMerkleRoot (production sequence)", () =>
 /**
  * Minimal valid foreign triplet for use in tests below.
  */
-function minimalForeignTriplet(overrides: Partial<ForeignTripletFields> = {}): ForeignTripletFields {
+function minimalForeignTriplet(
+  overrides: Partial<ForeignTripletFields> = {},
+): ForeignTripletFields {
   return {
     kind: "foreign",
     pkg: "node:fs",
@@ -1031,8 +1104,18 @@ describe("foreign triplet — package-keyed identity (Requirement 4)", () => {
   });
 
   it("equal (pkg, export, dtsHash) produces the same root", () => {
-    const t1: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "deadbeef" };
-    const t2: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "deadbeef" };
+    const t1: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "ts-morph",
+      export: "Project",
+      dtsHash: "deadbeef",
+    };
+    const t2: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "ts-morph",
+      export: "Project",
+      dtsHash: "deadbeef",
+    };
     expect(blockMerkleRoot(t1)).toBe(blockMerkleRoot(t2));
   });
 
@@ -1049,22 +1132,45 @@ describe("foreign triplet — package-keyed identity (Requirement 4)", () => {
   });
 
   it("same (pkg, export) with different dtsHash produces different root", () => {
-    const t1: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "hash-v1" };
-    const t2: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "hash-v2" };
+    const t1: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "ts-morph",
+      export: "Project",
+      dtsHash: "hash-v1",
+    };
+    const t2: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "ts-morph",
+      export: "Project",
+      dtsHash: "hash-v2",
+    };
     expect(blockMerkleRoot(t1)).not.toBe(blockMerkleRoot(t2));
   });
 
   it("absent dtsHash and present dtsHash produce different roots", () => {
     const t1: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project" };
-    const t2: ForeignTripletFields = { kind: "foreign", pkg: "ts-morph", export: "Project", dtsHash: "somehash" };
+    const t2: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "ts-morph",
+      export: "Project",
+      dtsHash: "somehash",
+    };
     expect(blockMerkleRoot(t1)).not.toBe(blockMerkleRoot(t2));
   });
 
   it("foreign identity is impl-source-agnostic: same (pkg, export) always matches regardless of calling context", () => {
     // Simulate two shave runs that encounter the same foreign dep in different source files.
     // The foreign triplet carries no impl source — the root is always the same.
-    const fromFileA: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "readFileSync" };
-    const fromFileB: ForeignTripletFields = { kind: "foreign", pkg: "node:fs", export: "readFileSync" };
+    const fromFileA: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "node:fs",
+      export: "readFileSync",
+    };
+    const fromFileB: ForeignTripletFields = {
+      kind: "foreign",
+      pkg: "node:fs",
+      export: "readFileSync",
+    };
     expect(blockMerkleRoot(fromFileA)).toBe(blockMerkleRoot(fromFileB));
   });
 });

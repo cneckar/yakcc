@@ -27,20 +27,13 @@
  *   internal behaviour.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CollectingLogger } from "./index.js";
 import { bootstrap } from "./commands/bootstrap.js";
+import { CollectingLogger } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Suite lifecycle helpers
@@ -152,14 +145,7 @@ describe("bootstrap on a fixture mini-project produces a manifest", () => {
     let code: number;
     try {
       code = await bootstrap(
-        [
-          "--registry",
-          registryPath,
-          "--manifest",
-          manifestPath,
-          "--report",
-          reportPath,
-        ],
+        ["--registry", registryPath, "--manifest", manifestPath, "--report", reportPath],
         logger,
       );
     } finally {
@@ -207,14 +193,7 @@ describe("bootstrap exits 1 on file-shave failure", () => {
     let code: number;
     try {
       code = await bootstrap(
-        [
-          "--registry",
-          registryPath,
-          "--manifest",
-          manifestPath,
-          "--report",
-          reportPath,
-        ],
+        ["--registry", registryPath, "--manifest", manifestPath, "--report", reportPath],
         logger,
       );
     } finally {
@@ -277,14 +256,7 @@ export function dbl(a: number): number { return a * 2; }
     let code: number;
     try {
       code = await bootstrap(
-        [
-          "--registry",
-          registryPath,
-          "--manifest",
-          manifestPath,
-          "--report",
-          reportPath,
-        ],
+        ["--registry", registryPath, "--manifest", manifestPath, "--report", reportPath],
         logger,
       );
     } finally {
@@ -347,27 +319,13 @@ describe("bootstrap is deterministic across runs", () => {
     try {
       const logger1 = new CollectingLogger();
       const code1 = await bootstrap(
-        [
-          "--registry",
-          run1Registry,
-          "--manifest",
-          run1Manifest,
-          "--report",
-          run1Report,
-        ],
+        ["--registry", run1Registry, "--manifest", run1Manifest, "--report", run1Report],
         logger1,
       );
 
       const logger2 = new CollectingLogger();
       const code2 = await bootstrap(
-        [
-          "--registry",
-          run2Registry,
-          "--manifest",
-          run2Manifest,
-          "--report",
-          run2Report,
-        ],
+        ["--registry", run2Registry, "--manifest", run2Manifest, "--report", run2Report],
         logger2,
       );
 
@@ -426,10 +384,7 @@ describe("bootstrap --verify exits 0 on byte-identical manifest", () => {
       // Both runs use the same offline pipeline over the same source files, so they
       // produce byte-identical manifests — exit 0 regardless of file-level success.
       const logger2 = new CollectingLogger();
-      const code2 = await bootstrap(
-        ["--verify", "--manifest", committedManifestPath],
-        logger2,
-      );
+      const code2 = await bootstrap(["--verify", "--manifest", committedManifestPath], logger2);
       expect(code2).toBe(0);
       const out = logger2.logLines.join("\n");
       expect(out).toContain("OK");

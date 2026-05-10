@@ -98,10 +98,9 @@ describe("extract.ts — Path A property corpus", () => {
   // (j) offline + cache miss → OfflineCacheMissError
   // -------------------------------------------------------------------------
   it("property: offline + cold cache throws OfflineCacheMissError", async () => {
-    await fc.assert(
-      Props.prop_extract_llm_offline_cache_miss_throws_OfflineCacheMissError,
-      { numRuns: 20 },
-    );
+    await fc.assert(Props.prop_extract_llm_offline_cache_miss_throws_OfflineCacheMissError, {
+      numRuns: 20,
+    });
   });
 
   it("property: offline + warm cache returns cached card", async () => {
@@ -114,10 +113,9 @@ describe("extract.ts — Path A property corpus", () => {
   // (k) no client + no API key → AnthropicApiKeyMissingError
   // -------------------------------------------------------------------------
   it("property: no client and no ANTHROPIC_API_KEY throws AnthropicApiKeyMissingError", async () => {
-    await fc.assert(
-      Props.prop_extract_llm_no_client_no_key_throws_AnthropicApiKeyMissingError,
-      { numRuns: 20 },
-    );
+    await fc.assert(Props.prop_extract_llm_no_client_no_key_throws_AnthropicApiKeyMissingError, {
+      numRuns: 20,
+    });
   });
 
   // -------------------------------------------------------------------------

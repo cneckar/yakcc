@@ -22,19 +22,14 @@
  * DEC-V1-FEDERATION-WIRE-ARTIFACTS-002, forbidden shortcuts in dispatch contract).
  */
 
-import { describe, expect, it } from "vitest";
-import {
-  blockMerkleRoot,
-  canonicalize,
-  specHash,
-  validateProofManifestL0,
-} from "@yakcc/contracts";
+import { blockMerkleRoot, canonicalize, specHash, validateProofManifestL0 } from "@yakcc/contracts";
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
+import { pullBlock, pullSpec } from "./pull.js";
 import { IntegrityError, TransportError } from "./types.js";
 import type { CatalogPage, RemoteManifest, Transport, WireBlockTriplet } from "./types.js";
 import { serializeWireBlockTriplet } from "./wire.js";
-import { pullBlock, pullSpec } from "./pull.js";
 
 // ---------------------------------------------------------------------------
 // Constants and fixtures
@@ -57,8 +52,7 @@ const TEST_SPEC: SpecYak = {
   level: "L0",
 };
 
-const TEST_IMPL_SOURCE =
-  "export function pullFn(n: number): string { return String(n); }";
+const TEST_IMPL_SOURCE = "export function pullFn(n: number): string { return String(n); }";
 
 /**
  * Minimal valid L0 proofManifestJson — exactly one property_tests artifact.
@@ -81,12 +75,10 @@ const TEXT_ENCODER = new TextEncoder();
  */
 const TEST_ARTIFACT_BYTES = TEXT_ENCODER.encode(
   "import fc from 'fast-check';\n" +
-  "fc.assert(fc.property(fc.integer(), (n) => typeof pullFn(n) === 'string'));",
+    "fc.assert(fc.property(fc.integer(), (n) => typeof pullFn(n) === 'string'));",
 );
 
-const TEST_ARTIFACTS = new Map<string, Uint8Array>([
-  ["tests.fast-check.ts", TEST_ARTIFACT_BYTES],
-]);
+const TEST_ARTIFACTS = new Map<string, Uint8Array>([["tests.fast-check.ts", TEST_ARTIFACT_BYTES]]);
 
 // ---------------------------------------------------------------------------
 // Fixture builder
@@ -159,10 +151,7 @@ function makeStubTransport(opts: {
     ): Promise<CatalogPage> {
       throw new Error("stubTransport: fetchCatalogPage not expected in this test");
     },
-    async fetchBlock(
-      _remote: string,
-      _root: BlockMerkleRoot,
-    ): Promise<WireBlockTriplet> {
+    async fetchBlock(_remote: string, _root: BlockMerkleRoot): Promise<WireBlockTriplet> {
       if (opts.fetchBlockResult === undefined) {
         throw new Error("stubTransport: fetchBlock not expected in this test");
       }
@@ -170,10 +159,7 @@ function makeStubTransport(opts: {
         ? opts.fetchBlockResult()
         : opts.fetchBlockResult;
     },
-    async fetchSpec(
-      _remote: string,
-      _specHash: SpecHash,
-    ): Promise<readonly BlockMerkleRoot[]> {
+    async fetchSpec(_remote: string, _specHash: SpecHash): Promise<readonly BlockMerkleRoot[]> {
       if (opts.fetchSpecResult === undefined) {
         throw new Error("stubTransport: fetchSpec not expected in this test");
       }
@@ -250,6 +236,7 @@ describe("pullBlock — success path (compound-interaction)", () => {
       expect(result.artifacts.has(path)).toBe(true);
       const recoveredBytes = result.artifacts.get(path);
       expect(recoveredBytes).toBeInstanceOf(Uint8Array);
+      // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
       expect(Buffer.from(recoveredBytes!).toString("base64")).toBe(
         Buffer.from(bytes).toString("base64"),
       );
@@ -300,8 +287,7 @@ describe("pullBlock — corrupted blockMerkleRoot rejected by integrity gate", (
     const transport = makeStubTransport({ fetchBlockResult: tamperedWire });
 
     await expect(pullBlock(REMOTE, row.blockMerkleRoot, { transport })).rejects.toSatisfy(
-      (err: unknown) =>
-        err instanceof IntegrityError && err.reason === "integrity_failed",
+      (err: unknown) => err instanceof IntegrityError && err.reason === "integrity_failed",
     );
   });
 });
@@ -327,10 +313,12 @@ describe("pullBlock — corrupted artifact bytes rejected by integrity gate (v2 
 
     // Corrupt one byte of the artifact's base64 value.
     // Decode, flip a byte, re-encode — the blockMerkleRoot check must now diverge.
+    // biome-ignore lint/style/noNonNullAssertion: key known present (makeRow always adds this artifact)
     const originalB64 = wire.artifactBytes["tests.fast-check.ts"]!;
     const decoded = Buffer.from(originalB64, "base64");
     // Flip one byte in the middle of the content.
     const byteIndex = Math.floor(decoded.length / 2);
+    // biome-ignore lint/style/noNonNullAssertion: Buffer index access for byte mutation
     decoded[byteIndex]! ^= 0xff;
     const corruptedB64 = decoded.toString("base64");
 
@@ -344,8 +332,7 @@ describe("pullBlock — corrupted artifact bytes rejected by integrity gate (v2 
     const transport = makeStubTransport({ fetchBlockResult: tamperedWire });
 
     await expect(pullBlock(REMOTE, row.blockMerkleRoot, { transport })).rejects.toSatisfy(
-      (err: unknown) =>
-        err instanceof IntegrityError && err.reason === "integrity_failed",
+      (err: unknown) => err instanceof IntegrityError && err.reason === "integrity_failed",
     );
   });
 });
@@ -398,8 +385,7 @@ describe("pullSpec — success path", () => {
     const specHashHex = "c".repeat(64) as SpecHash;
 
     await expect(pullSpec(REMOTE, specHashHex, { transport })).rejects.toSatisfy(
-      (err: unknown) =>
-        err instanceof TransportError && err.code === "internal_error",
+      (err: unknown) => err instanceof TransportError && err.code === "internal_error",
     );
   });
 
@@ -408,8 +394,7 @@ describe("pullSpec — success path", () => {
     const specHashHex = "c".repeat(64) as SpecHash;
 
     await expect(pullSpec(REMOTE, specHashHex, { transport })).rejects.toSatisfy(
-      (err: unknown) =>
-        err instanceof TransportError && err.code === "rate_limited",
+      (err: unknown) => err instanceof TransportError && err.code === "rate_limited",
     );
   });
 });

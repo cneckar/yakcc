@@ -33,8 +33,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateStrictSubset, validateStrictSubsetFile } from "./strict-subset.js";
 import { validateStrictSubsetProject } from "./strict-subset-project.js";
+import { validateStrictSubset, validateStrictSubsetFile } from "./strict-subset.js";
 
 // Fixture root — resolve from this test file's location.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -208,7 +208,7 @@ describe("project mode — false-positive comparison", () => {
     for (const [rule, count] of [...byRule.entries()].sort()) {
       lines.push(`  ${rule}: ${count}`);
     }
-    writeFileSync(join(EVIDENCE_DIR, "false-positive-comparison.txt"), lines.join("\n") + "\n");
+    writeFileSync(join(EVIDENCE_DIR, "false-positive-comparison.txt"), `${lines.join("\n")}\n`);
   });
 });
 
@@ -239,7 +239,7 @@ describe("project mode — yakcc self-validation", () => {
     // Write evidence file (non-asserting on count — WI-V2-02 will address actual violations)
     ensureEvidenceDir();
     const lines = [
-      `yakcc packages/ir self-validation`,
+      "yakcc packages/ir self-validation",
       `tsconfig: ${result.tsconfigPath}`,
       `filesValidated: ${result.filesValidated}`,
       `totalViolations: ${result.violations.length}`,
@@ -259,7 +259,7 @@ describe("project mode — yakcc self-validation", () => {
         lines.push(`  ${v.file}:${v.line}:${v.column} [${v.rule}] ${v.message}`);
       }
     }
-    writeFileSync(join(EVIDENCE_DIR, "yakcc-self-validation.txt"), lines.join("\n") + "\n");
+    writeFileSync(join(EVIDENCE_DIR, "yakcc-self-validation.txt"), `${lines.join("\n")}\n`);
 
     // Structural assertions — call succeeds and returns valid shape
     expect(typeof result.filesValidated).toBe("number");
@@ -275,8 +275,7 @@ describe("project mode — yakcc self-validation", () => {
       (v) => v.rule === "no-top-level-side-effects",
     );
     for (const v of sideEffectViolations) {
-      const isInWiV202Set =
-        v.file.includes("strict-subset-cli.ts") || v.file.includes("bin.ts");
+      const isInWiV202Set = v.file.includes("strict-subset-cli.ts") || v.file.includes("bin.ts");
       expect(isInWiV202Set).toBe(true);
     }
 
@@ -356,10 +355,7 @@ describe("project mode — rule-registry parity", () => {
 
     // Isolated mode rule set: run against the same violations source to collect names
     const { readFileSync } = await import("node:fs");
-    const source = readFileSync(
-      join(FIXTURES, "real-violations", "src", "violations.ts"),
-      "utf-8",
-    );
+    const source = readFileSync(join(FIXTURES, "real-violations", "src", "violations.ts"), "utf-8");
     const isolatedResult = validateStrictSubset(source);
     const isolatedRules = new Set<string>();
     if (!isolatedResult.ok) {
@@ -433,7 +429,7 @@ describe("project mode — test-file exclusion (WI-V2-03)", () => {
     ensureEvidenceDir();
     const { writeFileSync } = await import("node:fs");
     const lines = [
-      `yakcc packages/ir self-validation (WI-V2-03 post-fix)`,
+      "yakcc packages/ir self-validation (WI-V2-03 post-fix)",
       `tsconfig: ${result.tsconfigPath}`,
       `filesValidated: ${result.filesValidated}`,
       `totalViolations: ${result.violations.length}`,
@@ -444,7 +440,10 @@ describe("project mode — test-file exclusion (WI-V2-03)", () => {
         lines.push(`  ${v.file}:${v.line}:${v.column} [${v.rule}] ${v.message}`);
       }
     }
-    writeFileSync(join(EVIDENCE_DIR, "yakcc-self-validation-wi-v2-03.txt"), lines.join("\n") + "\n");
+    writeFileSync(
+      join(EVIDENCE_DIR, "yakcc-self-validation-wi-v2-03.txt"),
+      `${lines.join("\n")}\n`,
+    );
 
     expect(result.violations).toHaveLength(0);
     expect(result.filesValidated).toBeGreaterThan(0);

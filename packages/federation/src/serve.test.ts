@@ -28,7 +28,6 @@
  * openRegistry but no longer supplies an enumerateSpecs callback to serveRegistry.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   blockMerkleRoot,
   canonicalize,
@@ -39,11 +38,12 @@ import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakc
 import type { BlockTripletRow } from "@yakcc/registry";
 import { SCHEMA_VERSION, openRegistry } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHttpTransport } from "./http-transport.js";
-import { TransportError } from "./types.js";
-import { deserializeWireBlockTriplet } from "./wire.js";
 import { serveRegistry } from "./serve.js";
 import type { ServeHandle, ServeOptions } from "./serve.js";
+import { TransportError } from "./types.js";
+import { deserializeWireBlockTriplet } from "./wire.js";
 
 // ---------------------------------------------------------------------------
 // Stub embedding provider (avoids loading transformers.js model in tests)

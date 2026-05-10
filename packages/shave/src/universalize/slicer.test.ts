@@ -42,24 +42,24 @@ import type {
  * A TypeScript source snippet that PASSES all strict-subset rules.
  * Used to verify that pure-shaveable sources do NOT get false-glue emissions.
  */
-const PURE_SHAVEABLE_SOURCE =
-  `export function add(a: number, b: number): number { return a + b; }`;
+const PURE_SHAVEABLE_SOURCE = "export function add(a: number, b: number): number { return a + b; }";
 
 /**
  * A TypeScript source snippet that FAILS the strict-subset `no-eval` rule.
  * Used to verify glue-aware mode emits GlueLeafEntry for unsupported constructs.
  */
-const EVAL_SOURCE = `function runUnsafe(code: string): unknown { return eval(code); }`;
+const EVAL_SOURCE = "function runUnsafe(code: string): unknown { return eval(code); }";
 
 /**
  * A TypeScript source that FAILS via `no-with`.
  */
-const WITH_SOURCE = `function withUnsafe(obj: object, key: string): void { with (obj) { console.log(key); } }`;
+const WITH_SOURCE =
+  "function withUnsafe(obj: object, key: string): void { with (obj) { console.log(key); } }";
 
 /**
  * A TypeScript source that fails `no-any`.
  */
-const ANY_SOURCE = `export function identity(x: any): any { return x; }`;
+const ANY_SOURCE = "export function identity(x: any): any { return x; }";
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -69,11 +69,7 @@ const ANY_SOURCE = `export function identity(x: any): any { return x; }`;
  * Build a minimal AtomLeaf fixture. The sourceRange and source text are
  * constructed to be consistent: source.length === end - start.
  */
-function makeAtom(
-  source: string,
-  hash: string,
-  start = 0,
-): AtomLeaf {
+function makeAtom(source: string, hash: string, start = 0): AtomLeaf {
   return {
     kind: "atom",
     sourceRange: { start, end: start + source.length },
@@ -541,7 +537,7 @@ describe("slice — DFS order for nested tree", () => {
     const plan = await slice(tree, registry);
 
     expect(plan.entries).toHaveLength(3);
-    expect(plan.entries[0]?.kind).toBe("pointer");   // atomA — first visited
+    expect(plan.entries[0]?.kind).toBe("pointer"); // atomA — first visited
     expect(plan.entries[1]?.kind).toBe("novel-glue"); // atomB
     expect(plan.entries[2]?.kind).toBe("novel-glue"); // atomC
   });
@@ -850,7 +846,8 @@ describe("GlueLeafEntry — schema round-trip (WI-V2-GLUE-LEAF-CONTRACT)", () =>
       kind: "novel-glue" as const,
       sourceRange: { start: 0, end: novelSource.length },
       source: novelSource,
-      canonicalAstHash: "feedcafe00000000feedcafe00000000feedcafe00000000feedcafe00000000" as CanonicalAstHash,
+      canonicalAstHash:
+        "feedcafe00000000feedcafe00000000feedcafe00000000feedcafe00000000" as CanonicalAstHash,
     };
 
     const plan = {
@@ -1050,7 +1047,11 @@ describe("slice glue-aware — GA-4: multi-glue file produces multiple GlueLeafE
   it("mixed un-shaveable + shaveable → correct counts for each", async () => {
     const atom1 = makeAtom(EVAL_SOURCE, "hash-ga4-mixed-a", 0);
     const atom2 = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga4-mixed-b", EVAL_SOURCE.length);
-    const atom3 = makeAtom(WITH_SOURCE, "hash-ga4-mixed-c", EVAL_SOURCE.length + PURE_SHAVEABLE_SOURCE.length);
+    const atom3 = makeAtom(
+      WITH_SOURCE,
+      "hash-ga4-mixed-c",
+      EVAL_SOURCE.length + PURE_SHAVEABLE_SOURCE.length,
+    );
     const branchSource = EVAL_SOURCE + PURE_SHAVEABLE_SOURCE + WITH_SOURCE;
     const branch = makeBranch(branchSource, "hash-ga4-mixed-branch", [atom1, atom2, atom3], 0);
     const tree = makeTree(branch, 3, 1);

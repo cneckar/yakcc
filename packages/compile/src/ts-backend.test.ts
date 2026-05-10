@@ -198,11 +198,7 @@ type _CharCode = typeof charCode;
 export const CONTRACT: ContractSpec = { behavior: "Check if character is open bracket" } as unknown as ContractSpec;
 export function isBracket(s: string, i: number): boolean { return s[i] === "["; }
 `;
-    const parentId = makeMerkleRoot(
-      "isBracket",
-      "Check if character is open bracket",
-      parentImpl,
-    );
+    const parentId = makeMerkleRoot("isBracket", "Check if character is open bracket", parentImpl);
 
     // Topological order: leaf first, parent last
     const resolution = makeResolution([
@@ -367,11 +363,7 @@ type _SpecLeaf = typeof specLeaf;
 export const CONTRACT: ContractSpec = { behavior: "Parent also importing ContractSpec" } as unknown as ContractSpec;
 export function specParent(): string { return "parent"; }
 `;
-    const parentId = makeMerkleRoot(
-      "specParent",
-      "Parent also importing ContractSpec",
-      parentImpl,
-    );
+    const parentId = makeMerkleRoot("specParent", "Parent also importing ContractSpec", parentImpl);
 
     const resolution = makeResolution([
       { id: leafId, source: leafImpl },

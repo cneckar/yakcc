@@ -64,10 +64,9 @@ describe("static-pick.ts — Path A property corpus", () => {
   // SP8 — Priority 2: exported function-expr-const returns VariableStatement
   // -------------------------------------------------------------------------
   it("property: SP8 — exported FunctionExpression const returns VariableStatement at Priority 2", () => {
-    fc.assert(
-      Props.prop_pick_priority2_exported_function_expr_const_returns_variable_statement,
-      { numRuns: 50 },
-    );
+    fc.assert(Props.prop_pick_priority2_exported_function_expr_const_returns_variable_statement, {
+      numRuns: 50,
+    });
   });
 
   // -------------------------------------------------------------------------

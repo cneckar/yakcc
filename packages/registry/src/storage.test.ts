@@ -13,7 +13,6 @@
  * and `yakcc search` commands under the v0.6 triplet schema.
  */
 
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import {
   type BlockMerkleRoot,
   type CanonicalAstHash,
@@ -26,8 +25,9 @@ import {
   canonicalAstHash as deriveCanonicalAstHash,
   specHash as deriveSpecHash,
 } from "@yakcc/contracts";
-import { openRegistry } from "./storage.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BlockTripletRow, Registry } from "./index.js";
+import { openRegistry } from "./storage.js";
 
 // ---------------------------------------------------------------------------
 // Deterministic mock embedding provider
@@ -194,9 +194,9 @@ describe("schema migrations", () => {
     expect(indexNames).toContain("idx_blocks_canonical_ast_hash");
 
     // v0 tables must NOT exist.
-    const tables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-    ).all() as Array<{ name: string }>;
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as Array<{ name: string }>;
     const tableNames = tables.map((t) => t.name);
     expect(tableNames).not.toContain("contracts");
     expect(tableNames).not.toContain("implementations");
@@ -210,7 +210,9 @@ describe("schema migrations", () => {
     expect(tableNames).toContain("block_artifacts");
 
     // block_artifacts columns present.
-    const artCols = db.prepare("PRAGMA table_info(block_artifacts)").all() as Array<{ name: string }>;
+    const artCols = db.prepare("PRAGMA table_info(block_artifacts)").all() as Array<{
+      name: string;
+    }>;
     const artColNames = artCols.map((c) => c.name);
     expect(artColNames).toContain("block_merkle_root");
     expect(artColNames).toContain("path");
@@ -248,8 +250,8 @@ describe("schema migrations", () => {
     sqliteVec.load(db);
 
     // Bootstrap migration 1 manually (create v0 tables).
-    db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`);
-    db.exec(`INSERT OR IGNORE INTO schema_version(version) VALUES (0)`);
+    db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    db.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (0)");
     db.exec(`CREATE TABLE IF NOT EXISTS contracts (
       id TEXT PRIMARY KEY, canonical_bytes BLOB NOT NULL,
       spec_json TEXT NOT NULL, created_at INTEGER NOT NULL
@@ -282,9 +284,9 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // v0 tables gone.
-    const tables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-    ).all() as Array<{ name: string }>;
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as Array<{ name: string }>;
     const tableNames = tables.map((t) => t.name);
     expect(tableNames).not.toContain("contracts");
     expect(tableNames).not.toContain("implementations");
@@ -338,8 +340,16 @@ describe("storeBlock and selectBlocks", () => {
 
   it("stores two blocks for the same spec and returns both merkle roots", async () => {
     const spec = makeSpecYak();
-    const rowA = makeBlockRow(spec, "export function f(x: string): number { return parseInt(x, 10); }", "// artifact A");
-    const rowB = makeBlockRow(spec, "export function f(x: string): number { return Number(x); }", "// artifact B");
+    const rowA = makeBlockRow(
+      spec,
+      "export function f(x: string): number { return parseInt(x, 10); }",
+      "// artifact A",
+    );
+    const rowB = makeBlockRow(
+      spec,
+      "export function f(x: string): number { return Number(x); }",
+      "// artifact B",
+    );
 
     // Both blocks share the same specHash but differ in impl/artifacts.
     expect(rowA.specHash).toBe(rowB.specHash);
@@ -513,7 +523,10 @@ describe("production sequence: storeBlock → selectBlocks → getBlock → getP
     // Two structurally distinct specs.
     const specA = makeSpecYak("parse-int", "Parse integer from string");
     const specB = makeSpecYak("format-num", "Format number to string");
-    const rowA = makeBlockRow(specA, "export function f(s: string): number { return parseInt(s, 10); }");
+    const rowA = makeBlockRow(
+      specA,
+      "export function f(s: string): number { return parseInt(s, 10); }",
+    );
     const rowB = makeBlockRow(specB, "export function g(n: number): string { return String(n); }");
 
     await registry.storeBlock(rowA);
@@ -546,8 +559,16 @@ describe("production sequence: storeBlock → selectBlocks → getBlock → getP
   it("two blocks for same spec share spec_hash, have distinct merkle roots", async () => {
     const spec = makeSpecYak("shared-spec", "Parse integer from string");
 
-    const rowA = makeBlockRow(spec, "export function impl(x: string): number { return parseInt(x, 10); }", "// tests A");
-    const rowB = makeBlockRow(spec, "export function impl(x: string): number { return +x; }", "// tests B");
+    const rowA = makeBlockRow(
+      spec,
+      "export function impl(x: string): number { return parseInt(x, 10); }",
+      "// tests A",
+    );
+    const rowB = makeBlockRow(
+      spec,
+      "export function impl(x: string): number { return +x; }",
+      "// tests B",
+    );
 
     // Spec hashes must be equal (same spec).
     expect(rowA.specHash).toBe(rowB.specHash);
@@ -603,7 +624,7 @@ describe("BlockMerkleRoot determinism", () => {
 
 describe("findByCanonicalAstHash", () => {
   it("returns [] for a hash with no stored block", async () => {
-    const dummyHash = ("0".repeat(64)) as CanonicalAstHash;
+    const dummyHash = "0".repeat(64) as CanonicalAstHash;
     const result = await registry.findByCanonicalAstHash(dummyHash);
     expect(result).toEqual([]);
   });
@@ -621,8 +642,8 @@ describe("findByCanonicalAstHash", () => {
     const implSource = "export function f(x: string): number { return parseInt(x, 10); }";
     const rowA = makeBlockRow(makeSpecYak("specA", "behavior A"), implSource);
     const rowB = makeBlockRow(makeSpecYak("specB", "behavior B"), implSource);
-    expect(rowA.canonicalAstHash).toEqual(rowB.canonicalAstHash);  // sanity check
-    expect(rowA.blockMerkleRoot).not.toEqual(rowB.blockMerkleRoot);  // sanity check (different specs → different merkle)
+    expect(rowA.canonicalAstHash).toEqual(rowB.canonicalAstHash); // sanity check
+    expect(rowA.blockMerkleRoot).not.toEqual(rowB.blockMerkleRoot); // sanity check (different specs → different merkle)
     await registry.storeBlock(rowA);
     await registry.storeBlock(rowB);
     const found = await registry.findByCanonicalAstHash(rowA.canonicalAstHash);
@@ -692,24 +713,37 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     db1.exec("CREATE INDEX idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)");
     // schema_version stays at 2: openRegistry.preMigrationVersion will see 2 and
     // trigger the backfill + bump to SCHEMA_VERSION.
-    const versionBeforeBackfill = (db1.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const versionBeforeBackfill = (
+      db1.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(versionBeforeBackfill).toBe(2);
 
     // Insert a block row directly with empty canonical_ast_hash.
     const spec = makeSpecYak();
     const row = makeBlockRow(spec);
-    db1.prepare(
-      "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(row.blockMerkleRoot, row.specHash, row.specCanonicalBytes, row.implSource, row.proofManifestJson, row.level, row.createdAt, "");
+    db1
+      .prepare(
+        "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        row.blockMerkleRoot,
+        row.specHash,
+        row.specCanonicalBytes,
+        row.implSource,
+        row.proofManifestJson,
+        row.level,
+        row.createdAt,
+        "",
+      );
     db1.close();
 
     // Phase 2: openRegistry triggers the backfill + version bump.
     const reg = await openRegistry(dbPath, { embeddings: mockEmbeddingProvider() });
     const fetched = await reg.getBlock(row.blockMerkleRoot);
     expect(fetched).not.toBeNull();
-    expect(fetched!.canonicalAstHash).not.toBe("");
+    expect(fetched?.canonicalAstHash).not.toBe("");
     // The backfilled hash should equal canonicalAstHash(impl_source).
-    expect(fetched!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
+    expect(fetched?.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg.close();
 
     // Verify schema_version is now 6: openRegistry ran the canonical_ast_hash backfill
@@ -720,14 +754,16 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     // ran even though later migrations would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
-    const versionAfterBackfill = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const versionAfterBackfill = (
+      db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(versionAfterBackfill).toBe(6);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
     const reg2 = await openRegistry(dbPath, { embeddings: mockEmbeddingProvider() });
     const fetched2 = await reg2.getBlock(row.blockMerkleRoot);
-    expect(fetched2!.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
+    expect(fetched2?.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg2.close();
 
     // Cleanup
@@ -789,18 +825,20 @@ describe("migration 3 → 4: parent_block_root column", () => {
     // Insert a block row at v3 (no parent_block_root column yet).
     const spec = makeSpecYak("v3-migration-test");
     const row = makeBlockRow(spec);
-    db1.prepare(
-      "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(
-      row.blockMerkleRoot,
-      row.specHash,
-      row.specCanonicalBytes,
-      row.implSource,
-      row.proofManifestJson,
-      row.level,
-      row.createdAt,
-      row.canonicalAstHash,
-    );
+    db1
+      .prepare(
+        "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        row.blockMerkleRoot,
+        row.specHash,
+        row.specCanonicalBytes,
+        row.implSource,
+        row.proofManifestJson,
+        row.level,
+        row.createdAt,
+        row.canonicalAstHash,
+      );
     db1.close();
 
     // openRegistry applies migrations 4→5: adds parent_block_root column,
@@ -810,22 +848,26 @@ describe("migration 3 → 4: parent_block_root column", () => {
     // parent_block_root column must exist and have NULL for the pre-existing row.
     const fetched = await reg.getBlock(row.blockMerkleRoot);
     expect(fetched).not.toBeNull();
-    expect(fetched!.parentBlockRoot).toBeNull();
+    expect(fetched?.parentBlockRoot).toBeNull();
     // Pre-WI-022 block hydrates with empty artifacts Map.
-    expect(fetched!.artifacts.size).toBe(0);
+    expect(fetched?.artifacts.size).toBe(0);
     await reg.close();
 
     // schema_version is now 6 (migration 4 added parent_block_root; migration 5 added
     // block_artifacts; migration 6 added kind/foreign_* columns + block_foreign_refs).
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
-    const ver = (db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const ver = (
+      db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(ver).toBe(6);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
     // block_artifacts table is present (migration 5).
-    const tables2 = db2.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: string }>;
+    const tables2 = db2
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as Array<{ name: string }>;
     expect(tables2.map((t) => t.name)).toContain("block_artifacts");
     db2.close();
 
@@ -847,7 +889,7 @@ describe("parent_block_root round-trip", () => {
     await registry.storeBlock(row);
     const fetched = await registry.getBlock(row.blockMerkleRoot);
     expect(fetched).not.toBeNull();
-    expect(fetched!.parentBlockRoot).toBeNull();
+    expect(fetched?.parentBlockRoot).toBeNull();
   });
 
   it("storeBlock + getBlock round-trips a non-null parent_block_root", async () => {
@@ -869,7 +911,7 @@ describe("parent_block_root round-trip", () => {
 
     const fetched = await registry.getBlock(childRow.blockMerkleRoot);
     expect(fetched).not.toBeNull();
-    expect(fetched!.parentBlockRoot).toBe(parentRow.blockMerkleRoot);
+    expect(fetched?.parentBlockRoot).toBe(parentRow.blockMerkleRoot);
   });
 });
 
@@ -909,9 +951,15 @@ describe("artifacts persistence (WI-022)", () => {
     // Verify via a second DB handle.
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
-    const artRows = db2.prepare(
-      "SELECT path, bytes, declaration_index FROM block_artifacts WHERE block_merkle_root = ? ORDER BY declaration_index ASC",
-    ).all(row.blockMerkleRoot) as Array<{ path: string; bytes: Buffer; declaration_index: number }>;
+    const artRows = db2
+      .prepare(
+        "SELECT path, bytes, declaration_index FROM block_artifacts WHERE block_merkle_root = ? ORDER BY declaration_index ASC",
+      )
+      .all(row.blockMerkleRoot) as Array<{
+      path: string;
+      bytes: Buffer;
+      declaration_index: number;
+    }>;
 
     // makeBlockRow creates one artifact: "property_tests.ts"
     expect(artRows).toHaveLength(1);
@@ -931,8 +979,8 @@ describe("artifacts persistence (WI-022)", () => {
     const fetched = await registry.getBlock(row.blockMerkleRoot);
     expect(fetched).not.toBeNull();
     // artifacts Map has the single entry "property_tests.ts".
-    expect(fetched!.artifacts.size).toBe(1);
-    expect(fetched!.artifacts.has("property_tests.ts")).toBe(true);
+    expect(fetched?.artifacts.size).toBe(1);
+    expect(fetched?.artifacts.has("property_tests.ts")).toBe(true);
   });
 
   it("storeBlock failure rolls back artifacts (atomicity)", async () => {
@@ -945,9 +993,7 @@ describe("artifacts persistence (WI-022)", () => {
     const tamperedRow = { ...row, implSource: "tampered source" };
 
     // storeBlock must throw due to integrity check.
-    await expect(registry.storeBlock(tamperedRow)).rejects.toThrow(
-      /integrity check failed/,
-    );
+    await expect(registry.storeBlock(tamperedRow)).rejects.toThrow(/integrity check failed/);
 
     // Neither the blocks row nor any artifact rows should exist.
     const fetchedBlock = await registry.getBlock(row.blockMerkleRoot);
@@ -973,9 +1019,11 @@ describe("artifacts persistence (WI-022)", () => {
     const sqliteVec = await import("sqlite-vec");
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
-    const artCount = (db2.prepare(
-      "SELECT COUNT(*) AS cnt FROM block_artifacts WHERE block_merkle_root = ?",
-    ).get(row.blockMerkleRoot) as { cnt: number }).cnt;
+    const artCount = (
+      db2
+        .prepare("SELECT COUNT(*) AS cnt FROM block_artifacts WHERE block_merkle_root = ?")
+        .get(row.blockMerkleRoot) as { cnt: number }
+    ).cnt;
     // Each artifact path appears exactly once per block.
     expect(artCount).toBe(row.artifacts.size);
     db2.close();
@@ -993,11 +1041,15 @@ describe("artifacts persistence (WI-022)", () => {
     const fetched = await registry.getBlock(row.blockMerkleRoot);
     expect(fetched).not.toBeNull();
     const originalBytes = row.artifacts.get("property_tests.ts");
+    // biome-ignore lint/style/noNonNullAssertion: fetched asserted not-null above
     const fetchedBytes = fetched!.artifacts.get("property_tests.ts");
     expect(fetchedBytes).not.toBeUndefined();
     // Byte-identical: every byte must match.
+    // biome-ignore lint/style/noNonNullAssertion: Map.get known non-null (same key used in storeBlock)
     expect(fetchedBytes!.length).toBe(originalBytes!.length);
+    // biome-ignore lint/style/noNonNullAssertion: loop bound and index access on Uint8Array known non-null
     for (let i = 0; i < originalBytes!.length; i++) {
+      // biome-ignore lint/style/noNonNullAssertion: both arrays verified non-null above
       expect(fetchedBytes![i]).toBe(originalBytes![i]);
     }
   });
@@ -1009,9 +1061,7 @@ describe("artifacts persistence (WI-022)", () => {
     const badRow = { ...row, implSource: "completely different impl source" };
     // The stored root was computed with the original implSource, so recomputing
     // from badRow's implSource will produce a different root → integrity failure.
-    await expect(registry.storeBlock(badRow)).rejects.toThrow(
-      /integrity check failed/,
-    );
+    await expect(registry.storeBlock(badRow)).rejects.toThrow(/integrity check failed/);
   });
 
   it("empty artifacts Map: stores and retrieves empty Map cleanly", async () => {
@@ -1019,8 +1069,12 @@ describe("artifacts persistence (WI-022)", () => {
     const spec = makeSpecYak("empty-artifacts");
     const manifest: ReturnType<typeof makeManifest> = { artifacts: [] };
     const artifacts = new Map<string, Uint8Array>();
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
     const implSource = "export function emptyArtifact(): void {}";
     const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
     const root = bRoot({ spec, implSource, manifest, artifacts });
@@ -1039,7 +1093,7 @@ describe("artifacts persistence (WI-022)", () => {
 
     const fetched = await registry.getBlock(root);
     expect(fetched).not.toBeNull();
-    expect(fetched!.artifacts.size).toBe(0);
+    expect(fetched?.artifacts.size).toBe(0);
   });
 
   it("pre-WI-022 backfill: raw-SQL inserted block (no block_artifacts entry) hydrates to empty Map", async () => {
@@ -1057,8 +1111,12 @@ describe("artifacts persistence (WI-022)", () => {
     // Build a normal row but insert directly into blocks (bypassing block_artifacts).
     const spec = makeSpecYak("pre-wi022-block");
     // We need an empty-artifacts root for the raw insert to be self-consistent.
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
     const implSource = "export function legacy(): void {}";
     const manifest = { artifacts: [] as Array<{ kind: string; path: string }> };
     const artifacts = new Map<string, Uint8Array>();
@@ -1076,7 +1134,16 @@ describe("artifacts persistence (WI-022)", () => {
     sqliteVec.load(db);
     db.prepare(
       "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-    ).run(root, sh(spec), Buffer.from(specCanonicalBytes), implSource, JSON.stringify(manifest), "L0", Date.now(), cah(implSource));
+    ).run(
+      root,
+      sh(spec),
+      Buffer.from(specCanonicalBytes),
+      implSource,
+      JSON.stringify(manifest),
+      "L0",
+      Date.now(),
+      cah(implSource),
+    );
     // No corresponding block_artifacts rows inserted — simulates pre-WI-022 state.
     db.close();
 
@@ -1086,8 +1153,8 @@ describe("artifacts persistence (WI-022)", () => {
     await reg2.close();
 
     expect(fetched).not.toBeNull();
-    expect(fetched!.artifacts).toBeInstanceOf(Map);
-    expect(fetched!.artifacts.size).toBe(0);
+    expect(fetched?.artifacts).toBeInstanceOf(Map);
+    expect(fetched?.artifacts.size).toBe(0);
 
     const { rmSync } = await import("node:fs");
     rmSync(tmpDir, { recursive: true, force: true });
@@ -1200,10 +1267,22 @@ describe("enumerateSpecs", () => {
     const specB = makeSpecYak("compound-spec-b", "Format number as string");
 
     // Two blocks under specA (different impl text → different merkle roots).
-    const rowA1 = makeBlockRow(specA, "export function f(x: string): number { return parseInt(x, 10); }", "// compound a1");
-    const rowA2 = makeBlockRow(specA, "export function f(x: string): number { return +x; }", "// compound a2");
+    const rowA1 = makeBlockRow(
+      specA,
+      "export function f(x: string): number { return parseInt(x, 10); }",
+      "// compound a1",
+    );
+    const rowA2 = makeBlockRow(
+      specA,
+      "export function f(x: string): number { return +x; }",
+      "// compound a2",
+    );
     // One block under specB.
-    const rowB = makeBlockRow(specB, "export function f(n: number): string { return String(n); }", "// compound b");
+    const rowB = makeBlockRow(
+      specB,
+      "export function f(n: number): string { return String(n); }",
+      "// compound b",
+    );
 
     await registry.storeBlock(rowA1);
     await registry.storeBlock(rowA2);
@@ -1342,7 +1421,9 @@ describe("exportManifest (WI-V2-BOOTSTRAP-01)", () => {
     // Build a block with known impl.ts and proof/manifest.json artifact bytes.
     const enc = new TextEncoder();
     const implBytes = enc.encode("export function hashTest(): string { return 'ok'; }");
-    const manifestBytes = enc.encode('{"artifacts":[{"kind":"source","path":"impl.ts"},{"kind":"property_tests","path":"proof/manifest.json"}]}');
+    const manifestBytes = enc.encode(
+      '{"artifacts":[{"kind":"source","path":"impl.ts"},{"kind":"property_tests","path":"proof/manifest.json"}]}',
+    );
 
     const spec = makeSpecYak("hash-correctness", "hash correctness test");
     const implSource = "export function hashTest(): string { return 'ok'; }";
@@ -1368,8 +1449,8 @@ describe("exportManifest (WI-V2-BOOTSTRAP-01)", () => {
     const expectedImplHash = toHex(blake3(implBytes));
     const expectedManifestHash = toHex(blake3(manifestBytes));
 
-    expect(entry!.implSourceHash).toBe(expectedImplHash);
-    expect(entry!.manifestJsonHash).toBe(expectedManifestHash);
+    expect(entry?.implSourceHash).toBe(expectedImplHash);
+    expect(entry?.manifestJsonHash).toBe(expectedManifestHash);
   });
 });
 
@@ -1439,7 +1520,9 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
       parent_block_root    TEXT    NULL
     )`);
     db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_spec_hash ON blocks(spec_hash)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_blocks_canonical_ast_hash ON blocks(canonical_ast_hash)",
+    );
     db.exec("CREATE INDEX IF NOT EXISTS idx_blocks_parent_block_root ON blocks(parent_block_root)");
     db.exec(`CREATE TABLE IF NOT EXISTS test_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1462,7 +1545,9 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
       declaration_index INTEGER NOT NULL,
       PRIMARY KEY (block_merkle_root, path)
     )`);
-    db.exec("CREATE INDEX IF NOT EXISTS idx_block_artifacts_block_merkle_root ON block_artifacts(block_merkle_root)");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_block_artifacts_block_merkle_root ON block_artifacts(block_merkle_root)",
+    );
     // Freeze at v5.
     db.prepare("UPDATE schema_version SET version = ?").run(5);
 
@@ -1475,7 +1560,16 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     for (const row of [rowA, rowB]) {
       db.prepare(
         "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-      ).run(row.blockMerkleRoot, row.specHash, Buffer.from(row.specCanonicalBytes), row.implSource, row.proofManifestJson, row.level, row.createdAt, row.canonicalAstHash);
+      ).run(
+        row.blockMerkleRoot,
+        row.specHash,
+        Buffer.from(row.specCanonicalBytes),
+        row.implSource,
+        row.proofManifestJson,
+        row.level,
+        row.createdAt,
+        row.canonicalAstHash,
+      );
       // Insert one block_artifacts row per block (simulates WI-022 v5 state).
       db.prepare(
         "INSERT INTO block_artifacts(block_merkle_root, path, bytes, declaration_index) VALUES (?, ?, ?, ?)",
@@ -1483,14 +1577,22 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     }
 
     // Verify pre-migration state: version=5, no kind column, 2 blocks, 2 artifact rows.
-    const vPre = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const vPre = (
+      db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(vPre).toBe(5);
-    const colsPre = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map((c) => c.name);
+    const colsPre = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
     expect(colsPre).not.toContain("kind");
 
-    const blockCountPre = (db.prepare("SELECT COUNT(*) AS cnt FROM blocks").get() as { cnt: number }).cnt;
+    const blockCountPre = (
+      db.prepare("SELECT COUNT(*) AS cnt FROM blocks").get() as { cnt: number }
+    ).cnt;
     expect(blockCountPre).toBe(2);
-    const artCountPre = (db.prepare("SELECT COUNT(*) AS cnt FROM block_artifacts").get() as { cnt: number }).cnt;
+    const artCountPre = (
+      db.prepare("SELECT COUNT(*) AS cnt FROM block_artifacts").get() as { cnt: number }
+    ).cnt;
     expect(artCountPre).toBe(2);
 
     // Apply the migration — applyMigrations on a v5 DB runs only the v5 → v6 step.
@@ -1498,30 +1600,46 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     applyMigrations(db);
 
     // Post-migration assertions.
-    const vPost = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const vPost = (
+      db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(vPost).toBe(6);
 
     // kind column now present.
-    const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map((c) => c.name);
+    const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
     expect(colsPost).toContain("kind");
     expect(colsPost).toContain("foreign_pkg");
     expect(colsPost).toContain("foreign_export");
     expect(colsPost).toContain("foreign_dts_hash");
 
     // block_foreign_refs table present.
-    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((t) => t.name);
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{
+        name: string;
+      }>
+    ).map((t) => t.name);
     expect(tables).toContain("block_foreign_refs");
 
     // Row count preserved (no rows dropped).
-    const blockCountPost = (db.prepare("SELECT COUNT(*) AS cnt FROM blocks").get() as { cnt: number }).cnt;
+    const blockCountPost = (
+      db.prepare("SELECT COUNT(*) AS cnt FROM blocks").get() as { cnt: number }
+    ).cnt;
     expect(blockCountPost).toBe(2);
 
     // Existing rows have kind='local' (DEFAULT 'local' applied at migration time).
-    const kinds = (db.prepare("SELECT kind FROM blocks ORDER BY block_merkle_root").all() as Array<{ kind: string }>).map((r) => r.kind);
+    const kinds = (
+      db.prepare("SELECT kind FROM blocks ORDER BY block_merkle_root").all() as Array<{
+        kind: string;
+      }>
+    ).map((r) => r.kind);
     expect(kinds).toEqual(["local", "local"]);
 
     // Existing block_artifacts rows from v5 are intact (WI-022 rows preserved).
-    const artCountPost = (db.prepare("SELECT COUNT(*) AS cnt FROM block_artifacts").get() as { cnt: number }).cnt;
+    const artCountPost = (
+      db.prepare("SELECT COUNT(*) AS cnt FROM block_artifacts").get() as { cnt: number }
+    ).cnt;
     expect(artCountPost).toBe(2);
 
     db.close();
@@ -1543,17 +1661,23 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
 
     // First run — migrates from 0 to 6.
     applyMigrations(db);
-    const vAfterFirst = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const vAfterFirst = (
+      db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(vAfterFirst).toBe(6);
     expect(SCHEMA_VERSION).toBe(6);
 
     // Second run — must be a complete no-op; no throws; version stays at 6.
     expect(() => applyMigrations(db)).not.toThrow();
-    const vAfterSecond = (db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }).version;
+    const vAfterSecond = (
+      db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
+    ).version;
     expect(vAfterSecond).toBe(6);
 
     // Verify column count is stable (no duplicate columns created).
-    const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map((c) => c.name);
+    const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
     // kind column appears exactly once.
     expect(cols.filter((c) => c === "kind")).toHaveLength(1);
     // foreign_pkg appears exactly once.
@@ -1570,8 +1694,12 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
    * enforcement path (storage-layer guard, not SQL CHECK constraint).
    */
   it("L2-T3: storeBlock rejects kind='foreign' row with null foreignPkg (L2-I3 guard)", async () => {
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
 
     // Build a foreign-shaped row where foreignPkg is null (invariant violation).
     const spec = makeSpecYak("l2-foreign-null-pkg");
@@ -1610,8 +1738,12 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
    * stores successfully and hydrates back with kind='foreign'.
    */
   it("L2-T4: storeBlock accepts kind='foreign' row with non-null foreignPkg and foreignExport", async () => {
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
 
     const spec = makeSpecYak("l2-foreign-valid-row");
     const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
@@ -1643,10 +1775,10 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     // Hydrated row must have kind='foreign' and correct foreign fields.
     const fetched = await registry.getBlock(root);
     expect(fetched).not.toBeNull();
-    expect(fetched!.kind).toBe("foreign");
-    expect(fetched!.foreignPkg).toBe(foreignPkg);
-    expect(fetched!.foreignExport).toBe(foreignExport);
-    expect(fetched!.foreignDtsHash).toBeNull();
+    expect(fetched?.kind).toBe("foreign");
+    expect(fetched?.foreignPkg).toBe(foreignPkg);
+    expect(fetched?.foreignExport).toBe(foreignExport);
+    expect(fetched?.foreignDtsHash).toBeNull();
   });
 
   /**
@@ -1680,8 +1812,12 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     await reg.storeBlock(parentRow);
 
     // Store a foreign block — this is the FK target in foreign_block_root.
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
     const foreignSpec = makeSpecYak("l2-fk-foreign");
     const foreignSpecBytes = canon(foreignSpec as unknown as Parameters<typeof canon>[0]);
     const foreignPkg = "node:fs";
@@ -1719,7 +1855,9 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     }).not.toThrow();
 
     // Verify the row was inserted.
-    const inserted = db.prepare("SELECT * FROM block_foreign_refs WHERE parent_block_root = ?").all(parentRow.blockMerkleRoot) as Array<{ declaration_index: number }>;
+    const inserted = db
+      .prepare("SELECT * FROM block_foreign_refs WHERE parent_block_root = ?")
+      .all(parentRow.blockMerkleRoot) as Array<{ declaration_index: number }>;
     expect(inserted).toHaveLength(1);
     expect(inserted[0]?.declaration_index).toBe(0);
 
@@ -1761,8 +1899,12 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     await reg.storeBlock(parentRow);
 
     // Store 3 foreign blocks with distinct (pkg, export) pairs.
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
 
     type ForeignMeta = { pkg: string; export: string };
     const foreignMetas: ForeignMeta[] = [
@@ -1868,18 +2010,36 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     sqliteVec.load(db);
 
     const spec = makeSpecYak("l2-backcompat-block");
-    const { blockMerkleRoot: bRoot, canonicalize: canon, canonicalAstHash: cah, specHash: sh } =
-      await import("@yakcc/contracts");
+    const {
+      blockMerkleRoot: bRoot,
+      canonicalize: canon,
+      canonicalAstHash: cah,
+      specHash: sh,
+    } = await import("@yakcc/contracts");
     const implSource = "export function backcompat(): void {}";
     const manifest = { artifacts: [] as Array<{ kind: string; path: string }> };
     const artifacts = new Map<string, Uint8Array>();
-    const root = bRoot({ spec, implSource, manifest: manifest as import("@yakcc/contracts").ProofManifest, artifacts });
+    const root = bRoot({
+      spec,
+      implSource,
+      manifest: manifest as import("@yakcc/contracts").ProofManifest,
+      artifacts,
+    });
     const specCanonicalBytes = canon(spec as unknown as Parameters<typeof canon>[0]);
 
     // Raw SQL insert without kind/foreign_* columns — they default to 'local'/NULL.
     db.prepare(
       "INSERT INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-    ).run(root, sh(spec), Buffer.from(specCanonicalBytes), implSource, JSON.stringify(manifest), "L0", Date.now(), cah(implSource));
+    ).run(
+      root,
+      sh(spec),
+      Buffer.from(specCanonicalBytes),
+      implSource,
+      JSON.stringify(manifest),
+      "L0",
+      Date.now(),
+      cah(implSource),
+    );
     db.close();
 
     // Reopen via registry API; getBlock must return kind='local' for the raw-inserted row.
@@ -1889,11 +2049,11 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
 
     expect(fetched).not.toBeNull();
     // kind must be 'local' — the DEFAULT ensures pre-v6 rows are correctly labelled.
-    expect(fetched!.kind).toBe("local");
+    expect(fetched?.kind).toBe("local");
     // foreign fields must be null — no foreign identity for a local block.
-    expect(fetched!.foreignPkg).toBeNull();
-    expect(fetched!.foreignExport).toBeNull();
-    expect(fetched!.foreignDtsHash).toBeNull();
+    expect(fetched?.foreignPkg).toBeNull();
+    expect(fetched?.foreignExport).toBeNull();
+    expect(fetched?.foreignDtsHash).toBeNull();
 
     const { rmSync } = await import("node:fs");
     rmSync(tmpDir, { recursive: true, force: true });

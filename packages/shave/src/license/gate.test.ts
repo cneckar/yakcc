@@ -13,7 +13,10 @@ import type { LicenseDetection } from "./types.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function det(identifier: string, source: LicenseDetection["source"] = "spdx-comment"): LicenseDetection {
+function det(
+  identifier: string,
+  source: LicenseDetection["source"] = "spdx-comment",
+): LicenseDetection {
   return { identifier, source };
 }
 
@@ -51,13 +54,7 @@ describe("licenseGate — accepted licenses", () => {
 // ---------------------------------------------------------------------------
 
 describe("licenseGate — copyleft/proprietary rejections", () => {
-  const cases = [
-    "GPL-3.0-or-later",
-    "AGPL-3.0",
-    "LGPL-2.1",
-    "BUSL-1.1",
-    "Proprietary",
-  ];
+  const cases = ["GPL-3.0-or-later", "AGPL-3.0", "LGPL-2.1", "BUSL-1.1", "Proprietary"];
 
   for (const identifier of cases) {
     it(`rejects ${identifier} with copyleft/proprietary reason`, () => {
@@ -103,12 +100,7 @@ it("rejects unrecognized WTFPL identifier", () => {
 // ---------------------------------------------------------------------------
 
 describe("licenseGate — normalization for Apache-2.0 variants", () => {
-  const variants = [
-    "apache-2.0",
-    "APACHE 2.0",
-    "Apache 2.0",
-    "(Apache-2.0)",
-  ];
+  const variants = ["apache-2.0", "APACHE 2.0", "Apache 2.0", "(Apache-2.0)"];
 
   for (const variant of variants) {
     it(`normalizes "${variant}" → accepted as Apache-2.0`, () => {

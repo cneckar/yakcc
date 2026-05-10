@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
 import type { BlockMerkleRoot, CanonicalAstHash, EmbeddingProvider } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
+import { describe, expect, it, vi } from "vitest";
 import { extractCorpus } from "../corpus/index.js";
 import type { CorpusAtomSpec } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
@@ -85,6 +85,7 @@ describe("persistNovelGlueAtom()", () => {
     // storeBlock must have been called exactly once.
     expect(calls).toHaveLength(1);
 
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const row = calls[0]!;
 
     // Row fields match the expected BlockTripletRow shape.
@@ -100,7 +101,7 @@ describe("persistNovelGlueAtom()", () => {
     // proofManifestJson must be valid JSON and contain the L0 artifact.
     const manifest = JSON.parse(row.proofManifestJson) as { artifacts: Array<{ kind: string }> };
     expect(Array.isArray(manifest.artifacts)).toBe(true);
-    expect(manifest.artifacts[0]!.kind).toBe("property_tests");
+    expect(manifest.artifacts[0]?.kind).toBe("property_tests");
   });
 
   it("returned merkleRoot matches the row's blockMerkleRoot (no divergence)", async () => {
@@ -108,7 +109,7 @@ describe("persistNovelGlueAtom()", () => {
     const entry = makeEntry();
 
     const result = await persistNovelGlueAtom(entry, registry);
-    expect(result).toBe(calls[0]!.blockMerkleRoot);
+    expect(result).toBe(calls[0]?.blockMerkleRoot);
   });
 
   it("skips and returns undefined when entry has no intentCard", async () => {
@@ -151,12 +152,14 @@ describe("maybePersistNovelGlueAtom()", () => {
 
     expect(typeof result).toBe("string");
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.blockMerkleRoot).toBe(result);
+    expect(calls[0]?.blockMerkleRoot).toBe(result);
   });
 
   it("returns undefined and does not throw when storeBlock is absent", async () => {
     // Registry view without storeBlock — e.g. a read-only mock.
-    const registryView: { findByCanonicalAstHash?: (hash: CanonicalAstHash) => Promise<readonly BlockMerkleRoot[]> } = {};
+    const registryView: {
+      findByCanonicalAstHash?: (hash: CanonicalAstHash) => Promise<readonly BlockMerkleRoot[]>;
+    } = {};
     const entry = makeEntry();
 
     const result = await maybePersistNovelGlueAtom(entry, registryView);
@@ -214,9 +217,10 @@ describe("maybePersistNovelGlueAtom()", () => {
 
     // merkleRoot is non-empty and equals the row's blockMerkleRoot.
     expect(typeof merkleRoot).toBe("string");
-    expect(merkleRoot).toBe(storedRows[0]!.blockMerkleRoot);
+    expect(merkleRoot).toBe(storedRows[0]?.blockMerkleRoot);
 
     // Row carries the expected structural properties from the full pipeline.
+    // biome-ignore lint/style/noNonNullAssertion: storedRows[0] checked via toBe above
     const row = storedRows[0]!;
     expect(row.level).toBe("L0");
     expect(row.implSource).toBe(entry.source);
@@ -224,7 +228,7 @@ describe("maybePersistNovelGlueAtom()", () => {
 
     // Spec name should incorporate the last 6 chars of FAKE_HASH.
     const storedSpec = JSON.parse(row.proofManifestJson) as { artifacts: Array<{ kind: string }> };
-    expect(storedSpec.artifacts[0]!.kind).toBe("property_tests");
+    expect(storedSpec.artifacts[0]?.kind).toBe("property_tests");
   });
 });
 
@@ -254,6 +258,7 @@ describe("WI-017 parentBlockRoot lineage", () => {
 
     // storeBlock was called exactly once.
     expect(calls).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const row = calls[0]!;
 
     // The parentBlockRoot on the stored row must exactly equal the value supplied.
@@ -272,6 +277,7 @@ describe("WI-017 parentBlockRoot lineage", () => {
     await persistNovelGlueAtom(entry, registry);
 
     expect(calls).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const row = calls[0]!;
 
     // parentBlockRoot must be null (explicit null, not the sentinel undefined).
@@ -297,10 +303,10 @@ describe("WI-017 parentBlockRoot lineage", () => {
     expect(calls).toHaveLength(1);
 
     // The parent is forwarded byte-identically.
-    expect(calls[0]!.parentBlockRoot).toBe(PARENT_ROOT);
+    expect(calls[0]?.parentBlockRoot).toBe(PARENT_ROOT);
 
     // Returned merkle root is consistent with the stored row.
-    expect(calls[0]!.blockMerkleRoot).toBe(result);
+    expect(calls[0]?.blockMerkleRoot).toBe(result);
   });
 });
 
@@ -332,6 +338,7 @@ describe("WI-016 corpus integration", () => {
 
     // Registry must have been written exactly once.
     expect(calls).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const row = calls[0]!;
 
     // (i) proofManifestJson parses and has exactly one artifact with kind === "property_tests".
@@ -340,10 +347,10 @@ describe("WI-016 corpus integration", () => {
     };
     expect(Array.isArray(manifest.artifacts)).toBe(true);
     expect(manifest.artifacts).toHaveLength(1);
-    expect(manifest.artifacts[0]!.kind).toBe("property_tests");
+    expect(manifest.artifacts[0]?.kind).toBe("property_tests");
 
     // (ii) The artifact path is NOT the bootstrap sentinel "property-tests.ts".
-    const artifactPath = manifest.artifacts[0]!.path;
+    const artifactPath = manifest.artifacts[0]?.path;
     expect(artifactPath).not.toBe("property-tests.ts");
 
     // (iii–iv) Re-extract corpus using the same atom spec to obtain the artifact bytes
@@ -351,6 +358,7 @@ describe("WI-016 corpus integration", () => {
     //   Then verify the bytes are non-empty and contain the "fast-check" import.
     const atomSpec: CorpusAtomSpec = {
       source: entry.source,
+      // biome-ignore lint/style/noNonNullAssertion: intentCard known present from makeEntry()
       intentCard: entry.intentCard!,
     };
     const corpusResult = await extractCorpus(atomSpec);
@@ -452,7 +460,9 @@ describe("WI-022 artifact threading — stub-capture test", () => {
   it("storeBlock receives a row whose artifacts are byte-identical to buildTriplet's computed Map", async () => {
     const capturedRows: BlockTripletRow[] = [];
     const stubRegistry = {
-      storeBlock: vi.fn(async (row: BlockTripletRow) => { capturedRows.push(row); }),
+      storeBlock: vi.fn(async (row: BlockTripletRow) => {
+        capturedRows.push(row);
+      }),
     } as unknown as Registry;
 
     const entry = makeEntry();
@@ -462,16 +472,19 @@ describe("WI-022 artifact threading — stub-capture test", () => {
     expect(root).toBeDefined();
     expect(capturedRows).toHaveLength(1);
 
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const capturedRow = capturedRows[0]!;
 
     // Re-run extractCorpus + buildTriplet with the same inputs to obtain the
     // reference Map — this mirrors exactly what persistNovelGlueAtom does internally.
     const atomSpec: CorpusAtomSpec = {
       source: entry.source,
+      // biome-ignore lint/style/noNonNullAssertion: intentCard known present from makeEntry()
       intentCard: entry.intentCard!,
     };
     const corpusResult = await extractCorpus(atomSpec);
     const refTriplet = buildTriplet(
+      // biome-ignore lint/style/noNonNullAssertion: intentCard known present from makeEntry()
       entry.intentCard!,
       entry.source,
       entry.canonicalAstHash,
@@ -487,6 +500,7 @@ describe("WI-022 artifact threading — stub-capture test", () => {
     expect(capturedRow.artifacts.size).toBe(refTriplet.artifacts.size);
     for (const [path, refBytes] of refTriplet.artifacts) {
       expect(capturedRow.artifacts.has(path)).toBe(true);
+      // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
       const capturedBytes = capturedRow.artifacts.get(path)!;
       expect(capturedBytes.length).toBe(refBytes.length);
       expect(Array.from(capturedBytes)).toEqual(Array.from(refBytes));
@@ -520,17 +534,21 @@ describe("WI-022 artifact threading — real-registry round-trip", () => {
       expect(merkleRoot).toBeDefined();
 
       // Retrieve the block.
+      // biome-ignore lint/style/noNonNullAssertion: merkleRoot asserted defined above
       const hydrated = await registry.getBlock(merkleRoot!);
       expect(hydrated).not.toBeNull();
+      // biome-ignore lint/style/noNonNullAssertion: hydrated asserted not-null above
       const hydratedRow = hydrated!;
 
       // Obtain the reference artifacts from a parallel buildTriplet call.
       const atomSpec: CorpusAtomSpec = {
         source: entry.source,
+        // biome-ignore lint/style/noNonNullAssertion: intentCard known present from makeEntry()
         intentCard: entry.intentCard!,
       };
       const corpusResult = await extractCorpus(atomSpec);
       const refTriplet = buildTriplet(
+        // biome-ignore lint/style/noNonNullAssertion: intentCard known present from makeEntry()
         entry.intentCard!,
         entry.source,
         entry.canonicalAstHash,
@@ -543,6 +561,7 @@ describe("WI-022 artifact threading — real-registry round-trip", () => {
 
       for (const [path, refBytes] of refTriplet.artifacts) {
         expect(hydratedRow.artifacts.has(path)).toBe(true);
+        // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
         const hydratedBytes = hydratedRow.artifacts.get(path)!;
         expect(hydratedBytes.length).toBe(refBytes.length);
         expect(Array.from(hydratedBytes)).toEqual(Array.from(refBytes));

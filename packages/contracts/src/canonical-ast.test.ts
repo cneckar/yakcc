@@ -34,7 +34,7 @@ describe("canonicalAstHash – hash format", () => {
 
 describe("canonicalAstHash – determinism", () => {
   it("returns the same hash on repeated calls with the same source", () => {
-    const src = `function add(a: number, b: number): number { return a + b; }`;
+    const src = "function add(a: number, b: number): number { return a + b; }";
     const h1 = canonicalAstHash(src);
     const h2 = canonicalAstHash(src);
     const h3 = canonicalAstHash(src);
@@ -53,7 +53,7 @@ describe("canonicalAstHash – determinism", () => {
 // ---------------------------------------------------------------------------
 
 describe("canonicalAstHash – comment-invariance", () => {
-  const base = `function add(a: number, b: number): number { return a + b; }`;
+  const base = "function add(a: number, b: number): number { return a + b; }";
 
   it("single-line comment does not change the hash", () => {
     const withComment = `// adds two numbers\n${base}`;
@@ -71,7 +71,7 @@ describe("canonicalAstHash – comment-invariance", () => {
   });
 
   it("inline comment inside function body does not change the hash", () => {
-    const withInline = `function add(a: number, b: number): number { /* add */ return a + b; }`;
+    const withInline = "function add(a: number, b: number): number { /* add */ return a + b; }";
     expect(canonicalAstHash(base)).toBe(canonicalAstHash(withInline));
   });
 });
@@ -84,15 +84,15 @@ describe("canonicalAstHash – whitespace-invariance", () => {
   it("type annotation spacing is normalized: 'a:number' equals 'a: number'", () => {
     // ts-morph's printer normalizes type-annotation whitespace — colon spacing
     // is standardized regardless of how the source was written.
-    const withSpace = `function add(a: number, b: number): number { return a + b; }`;
+    const withSpace = "function add(a: number, b: number): number { return a + b; }";
     // The printer always emits 'a: number' (with space), so two sources that
     // differ only in colon-spacing canonicalize identically.
-    const alsoWithSpace = `function add(a: number,  b:  number):   number { return a + b; }`;
+    const alsoWithSpace = "function add(a: number,  b:  number):   number { return a + b; }";
     expect(canonicalAstHash(withSpace)).toBe(canonicalAstHash(alsoWithSpace));
   });
 
   it("leading/trailing newlines do not change the hash", () => {
-    const src = `function f(a: number): number { return a; }`;
+    const src = "function f(a: number): number { return a; }";
     const withNewlines = `\n\n${src}\n\n`;
     expect(canonicalAstHash(src)).toBe(canonicalAstHash(withNewlines));
   });
@@ -100,8 +100,8 @@ describe("canonicalAstHash – whitespace-invariance", () => {
   it("extra indentation inside function body does not change the hash", () => {
     // Both forms have the same block structure; indentation inside the body
     // is re-emitted uniformly by the printer.
-    const src1 = `function f(a: number): number {\n  return a + 1;\n}`;
-    const src2 = `function f(a: number): number {\n    return a + 1;\n}`;
+    const src1 = "function f(a: number): number {\n  return a + 1;\n}";
+    const src2 = "function f(a: number): number {\n    return a + 1;\n}";
     expect(canonicalAstHash(src1)).toBe(canonicalAstHash(src2));
   });
 });
@@ -112,20 +112,20 @@ describe("canonicalAstHash – whitespace-invariance", () => {
 
 describe("canonicalAstHash – local-rename invariance", () => {
   it("non-exported function parameter rename produces the same hash", () => {
-    const withA = `function f(a: number): number { return a + 1; }`;
-    const withB = `function f(b: number): number { return b + 1; }`;
+    const withA = "function f(a: number): number { return a + 1; }";
+    const withB = "function f(b: number): number { return b + 1; }";
     expect(canonicalAstHash(withA)).toBe(canonicalAstHash(withB));
   });
 
   it("local variable rename produces the same hash", () => {
-    const withX = `function f(): number { const x = 1; return x + 1; }`;
-    const withY = `function f(): number { const y = 1; return y + 1; }`;
+    const withX = "function f(): number { const x = 1; return x + 1; }";
+    const withY = "function f(): number { const y = 1; return y + 1; }";
     expect(canonicalAstHash(withX)).toBe(canonicalAstHash(withY));
   });
 
   it("multiple parameter renames produce the same hash", () => {
-    const src1 = `function compute(a: number, b: number, c: number): number { return a * b + c; }`;
-    const src2 = `function compute(x: number, y: number, z: number): number { return x * y + z; }`;
+    const src1 = "function compute(a: number, b: number, c: number): number { return a * b + c; }";
+    const src2 = "function compute(x: number, y: number, z: number): number { return x * y + z; }";
     expect(canonicalAstHash(src1)).toBe(canonicalAstHash(src2));
   });
 });
@@ -136,14 +136,14 @@ describe("canonicalAstHash – local-rename invariance", () => {
 
 describe("canonicalAstHash – exported names ARE significant", () => {
   it("exported function name change produces a different hash", () => {
-    const f = `export function f(a: number): number { return a + 1; }`;
-    const g = `export function g(a: number): number { return a + 1; }`;
+    const f = "export function f(a: number): number { return a + 1; }";
+    const g = "export function g(a: number): number { return a + 1; }";
     expect(canonicalAstHash(f)).not.toBe(canonicalAstHash(g));
   });
 
   it("exported variable name change produces a different hash", () => {
-    const v1 = `export const myValue = 42;`;
-    const v2 = `export const otherValue = 42;`;
+    const v1 = "export const myValue = 42;";
+    const v2 = "export const otherValue = 42;";
     expect(canonicalAstHash(v1)).not.toBe(canonicalAstHash(v2));
   });
 });
@@ -154,8 +154,8 @@ describe("canonicalAstHash – exported names ARE significant", () => {
 
 describe("canonicalAstHash – semantic differences produce different hashes", () => {
   it("a + b vs a - b", () => {
-    const add = `function f(a: number, b: number): number { return a + b; }`;
-    const sub = `function f(a: number, b: number): number { return a - b; }`;
+    const add = "function f(a: number, b: number): number { return a + b; }";
+    const sub = "function f(a: number, b: number): number { return a - b; }";
     expect(canonicalAstHash(add)).not.toBe(canonicalAstHash(sub));
   });
 
@@ -167,8 +167,8 @@ describe("canonicalAstHash – semantic differences produce different hashes", (
   });
 
   it("different literal values", () => {
-    const s1 = `const x = 1;`;
-    const s2 = `const x = 2;`;
+    const s1 = "const x = 1;";
+    const s2 = "const x = 2;";
     expect(canonicalAstHash(s1)).not.toBe(canonicalAstHash(s2));
   });
 
@@ -185,7 +185,7 @@ describe("canonicalAstHash – semantic differences produce different hashes", (
 
 describe("canonicalAstHash – type annotations ARE significant", () => {
   it("number vs string parameter type produces different hash", () => {
-    const num = `function f(a: number): number { return a + 1; }`;
+    const num = "function f(a: number): number { return a + 1; }";
     const str = `function f(a: string): string { return a + "!"; }`;
     expect(canonicalAstHash(num)).not.toBe(canonicalAstHash(str));
   });
@@ -193,14 +193,14 @@ describe("canonicalAstHash – type annotations ARE significant", () => {
   it("with vs without return type annotation produces different hash", () => {
     // ts-morph prints the return type annotation when present; its presence
     // changes the canonical text and thus the hash.
-    const withReturn = `function f(a: number): number { return a + 1; }`;
-    const withoutReturn = `function f(a: number) { return a + 1; }`;
+    const withReturn = "function f(a: number): number { return a + 1; }";
+    const withoutReturn = "function f(a: number) { return a + 1; }";
     expect(canonicalAstHash(withReturn)).not.toBe(canonicalAstHash(withoutReturn));
   });
 
   it("function(a: number) vs function(a: string) → different hashes", () => {
-    const numFn = `export function process(a: number): void {}`;
-    const strFn = `export function process(a: string): void {}`;
+    const numFn = "export function process(a: number): void {}";
+    const strFn = "export function process(a: string): void {}";
     expect(canonicalAstHash(numFn)).not.toBe(canonicalAstHash(strFn));
   });
 });
@@ -213,7 +213,7 @@ describe("canonicalAstHash – sourceRange", () => {
   it("range covering full source equals no-range hash", () => {
     // When the range exactly covers [0, src.length), findEnclosingNode
     // returns the SourceFile — identical to the no-range call.
-    const src = `const a = 1;\nconst b = 2;`;
+    const src = "const a = 1;\nconst b = 2;";
     const noRange = canonicalAstHash(src);
     const fullRange = canonicalAstHash(src, { start: 0, end: src.length });
     assertHashFormat(noRange);
@@ -222,7 +222,7 @@ describe("canonicalAstHash – sourceRange", () => {
   });
 
   it("range over a function declaration produces a stable, valid hash", () => {
-    const fnSrc = `function add(a: number, b: number): number { return a + b; }`;
+    const fnSrc = "function add(a: number, b: number): number { return a + b; }";
     const fullSrc = `const x = 1;\n${fnSrc}\nconst y = 2;`;
 
     const start = fullSrc.indexOf(fnSrc);
@@ -239,7 +239,7 @@ describe("canonicalAstHash – sourceRange", () => {
     // The hash of a range depends only on the node's content, not its position
     // in the file. Two identical function declarations at different offsets
     // must produce the same hash when extracted by range.
-    const fn = `function add(a: number, b: number): number { return a + b; }`;
+    const fn = "function add(a: number, b: number): number { return a + b; }";
     const src1 = `const x = 1;\n${fn}\nconst y = 2;`;
     const src2 = `const longPreamble = "hello world";\nconst anotherVar = 99;\n${fn}\nconst z = 3;`;
 
@@ -257,30 +257,30 @@ describe("canonicalAstHash – sourceRange", () => {
   it("range spanning multiple top-level nodes throws CanonicalAstParseError", () => {
     // A range that starts inside one node and ends inside a sibling node
     // cannot be covered by any single AST node, so it must throw.
-    const twoFns = `function f(): void {}\nfunction g(): void {}`;
+    const twoFns = "function f(): void {}\nfunction g(): void {}";
     // Start at position 1 (inside 'f' keyword body) and end at len-1
     // (inside 'g' declaration) — no single node spans this range.
     const midStart = 1;
     const midEnd = twoFns.length - 1;
-    expect(() =>
-      canonicalAstHash(twoFns, { start: midStart, end: midEnd }),
-    ).toThrow(CanonicalAstParseError);
+    expect(() => canonicalAstHash(twoFns, { start: midStart, end: midEnd })).toThrow(
+      CanonicalAstParseError,
+    );
   });
 
   it("range outside source bounds throws CanonicalAstParseError", () => {
-    const src = `const x = 1;`;
-    expect(() =>
-      canonicalAstHash(src, { start: 0, end: src.length + 100 }),
-    ).toThrow(CanonicalAstParseError);
+    const src = "const x = 1;";
+    expect(() => canonicalAstHash(src, { start: 0, end: src.length + 100 })).toThrow(
+      CanonicalAstParseError,
+    );
   });
 
   it("range with start > end throws CanonicalAstParseError", () => {
-    const src = `const x = 1;`;
+    const src = "const x = 1;";
     expect(() => canonicalAstHash(src, { start: 5, end: 3 })).toThrow(CanonicalAstParseError);
   });
 
   it("range with negative start throws CanonicalAstParseError", () => {
-    const src = `const x = 1;`;
+    const src = "const x = 1;";
     expect(() => canonicalAstHash(src, { start: -1, end: 5 })).toThrow(CanonicalAstParseError);
   });
 });
@@ -296,7 +296,7 @@ describe("canonicalAstHash – external imports are tolerated", () => {
     // 'Cannot find module' (TS2307) must be ignored.
     const src = [
       `import { something } from "some-external-package";`,
-      `export function useIt(x: number): number { return x * 2; }`,
+      "export function useIt(x: number): number { return x * 2; }",
     ].join("\n");
     expect(() => canonicalAstHash(src)).not.toThrow();
     assertHashFormat(canonicalAstHash(src));
@@ -335,8 +335,8 @@ describe("canonicalAstHash – error handling", () => {
       if (e instanceof CanonicalAstParseError) caught = e;
     }
     expect(caught).toBeDefined();
-    expect(Array.isArray(caught!.diagnostics)).toBe(true);
-    expect(caught!.diagnostics.length).toBeGreaterThan(0);
+    expect(Array.isArray(caught?.diagnostics)).toBe(true);
+    expect(caught?.diagnostics.length).toBeGreaterThan(0);
   });
 });
 
@@ -358,22 +358,22 @@ describe("canonicalAstHash – compound integration: full production sequence", 
   it("range-extracted function hashes equal across semantically equivalent rewrites", () => {
     // Source with preamble, a target function with local vars, and a suffix.
     const src1 = [
-      `function helper(): void {}`,
-      `function inner(alpha: number): number {`,
-      `  const result = alpha * 2;`,
-      `  return result;`,
-      `}`,
-      `export function outer(): void {}`,
+      "function helper(): void {}",
+      "function inner(alpha: number): number {",
+      "  const result = alpha * 2;",
+      "  return result;",
+      "}",
+      "export function outer(): void {}",
     ].join("\n");
 
     const src2 = [
-      `function helper(): void {}`,
-      `function inner(x: number): number {`,
-      `  // compute double`,
-      `  const doubled = x * 2;`,
-      `  return doubled;`,
-      `}`,
-      `export function outer(): void {}`,
+      "function helper(): void {}",
+      "function inner(x: number): number {",
+      "  // compute double",
+      "  const doubled = x * 2;",
+      "  return doubled;",
+      "}",
+      "export function outer(): void {}",
     ].join("\n");
 
     // Extract range of the `inner` function in both sources.
@@ -393,12 +393,12 @@ describe("canonicalAstHash – compound integration: full production sequence", 
 
     // Structurally different: multiply vs add → must produce a different hash.
     const src3 = [
-      `function helper(): void {}`,
-      `function inner(alpha: number): number {`,
-      `  const result = alpha + 2;`, // different operator
-      `  return result;`,
-      `}`,
-      `export function outer(): void {}`,
+      "function helper(): void {}",
+      "function inner(alpha: number): number {",
+      "  const result = alpha + 2;", // different operator
+      "  return result;",
+      "}",
+      "export function outer(): void {}",
     ].join("\n");
 
     const innerStart3 = src3.indexOf("function inner");
@@ -428,10 +428,10 @@ describe("canonicalAstHash – compound integration: full production sequence", 
 
     // Add comments — hash must stay the same.
     const withComments = [
-      `/**`,
-      ` * Parses an integer from a string.`,
-      ` * @throws if input is not a valid integer`,
-      ` */`,
+      "/**",
+      " * Parses an integer from a string.",
+      " * @throws if input is not a valid integer",
+      " */",
       source,
     ].join("\n");
     const h3 = canonicalAstHash(withComments);

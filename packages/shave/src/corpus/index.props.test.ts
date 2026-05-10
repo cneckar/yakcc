@@ -6,6 +6,10 @@
 import * as fc from "fast-check";
 import { it } from "vitest";
 import {
+  prop_extractCorpusCascade_fallsThroughBToA,
+  prop_extractCorpusCascade_fallsThroughCToBToA,
+  prop_extractCorpusCascade_returnsPropsFileSourceWhenAvailable,
+  prop_extractCorpusCascade_throwsWhenAllDisabledOrUnavailable,
   prop_extractCorpus_doesNotMutateAtomSpec,
   prop_extractCorpus_doesNotMutateOptions,
   prop_extractCorpus_fallsThroughToUpstreamTest_whenPropsFileMissing,
@@ -17,10 +21,6 @@ import {
   prop_extractCorpus_returnsResult_whenAllSourcesEnabledAndPropsFileMissing,
   prop_extractCorpus_throwsWhenAllSourcesDisabled,
   prop_extractCorpus_throwsWhenOnlyAiDisabledAndCacheDirOmitted,
-  prop_extractCorpusCascade_fallsThroughBToA,
-  prop_extractCorpusCascade_fallsThroughCToBToA,
-  prop_extractCorpusCascade_returnsPropsFileSourceWhenAvailable,
-  prop_extractCorpusCascade_throwsWhenAllDisabledOrUnavailable,
   prop_indexExports_corpusDefaultModelIsClaudeHaiku45,
   prop_indexExports_corpusPromptVersionIsCorpus1,
   prop_indexExports_corpusSchemaVersionIs2,

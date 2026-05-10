@@ -3,16 +3,16 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling canonical-ast.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
+  prop_CanonicalAstParseError_cause_preserved,
+  prop_CanonicalAstParseError_message_preserved,
+  prop_CanonicalAstParseError_name_constant,
   prop_canonicalAstHash_deterministic,
-  prop_canonicalAstHash_whitespace_invariant,
   prop_canonicalAstHash_format_brand,
   prop_canonicalAstHash_throws_on_invalid,
-  prop_CanonicalAstParseError_name_constant,
-  prop_CanonicalAstParseError_message_preserved,
-  prop_CanonicalAstParseError_cause_preserved,
+  prop_canonicalAstHash_whitespace_invariant,
 } from "./canonical-ast.props.js";
 
 // canonicalAstHash properties: numRuns=15, timeout=60s.
