@@ -73,10 +73,20 @@ yakcc bootstrap --verify
 
 ## IDE hook installation
 
+> **Status (2026-05-10):** the install commands listed below are **v0 facades**
+> — they write a documentation stub to `.claude/`, but do not yet wire the
+> production hook into Claude Code's integration surfaces (slash commands,
+> `.claude/settings.json` hooks, MCP server). Production wiring is in flight
+> under `WI-HOOK-LAYER` ([#194](https://github.com/cneckar/yakcc/issues/194))
+> with the CLI install replacement at [#203](https://github.com/cneckar/yakcc/issues/203),
+> a fresh-project `yakcc init` command at [#204](https://github.com/cneckar/yakcc/issues/204),
+> and an end-user walkthrough at [#205](https://github.com/cneckar/yakcc/issues/205).
+> Until those land, daily Claude-Code-with-yakcc local-dev usage is best-effort.
+
 ```sh
-yakcc hooks claude-code install   # Claude Code
-yakcc hooks cursor install        # Cursor
-yakcc hooks codex install         # Codex CLI
+yakcc hooks claude-code install   # Claude Code (v0 facade today; #203 retires it)
+yakcc hooks cursor install        # Cursor (v0 facade; WI-HOOK-LAYER Phase 4)
+yakcc hooks codex install         # Codex CLI (v0 facade; WI-HOOK-LAYER Phase 5 if justified)
 ```
 
 ## Prerequisites

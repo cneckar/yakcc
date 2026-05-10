@@ -461,8 +461,14 @@ provenance manifest naming every basic block by content-address. The
 compilation engine *does not generate code* — it composes pre-written blocks.
 Code synthesis happens in `@yakcc/hooks-claude-code` (v0.5+), never here.
 
-v0 ships only the TS backend. WASM is a v1 backend; LLVM/JVM are v1+. The
-backend interface is real now so adding targets later is mechanical.
+v0 ships only the TS backend. WASM landed in v1 wave-2 and wave-3.
+**WASM-track update (2026-05-10):** the v1-wave-3 hand-rolled emitter
+(`packages/compile/src/wasm-backend.ts` + `wasm-lowering/`) was found
+to be chasing an impossible target; AssemblyScript replaced it as the
+production WASM path per `DEC-AS-BACKEND-PIVOT-001` in MASTER_PLAN. The
+hand-rolled emitter remains in-tree as a differential oracle pending
+`WI-AS-PHASE-3` retirement (#147). LLVM/JVM are v1+. The backend
+interface is real now so adding targets later is mechanical.
 
 ### `@yakcc/cli`
 
@@ -473,16 +479,25 @@ is the v0 acceptance check.
 
 ### `@yakcc/hooks-claude-code`
 
-The leverage point. In v0 it ships as a facade — real install command, real
-slash-command surface, real project config — with the proposal flow stubbed
-behind a clear "v0.5 feature" message. The surface ships early so v0.5 is a
-behavioral change, not an interface change.
+The leverage point. In v0 it shipped as a facade. In **WI-V1W2-HOOKS-01**
+the package internals went live: `createHook(registry).onCodeEmissionIntent(ctx)`
+queries `Registry.findCandidatesByIntent` and returns one of three typed
+results — `registry-hit` (top-1 candidate beats threshold), `synthesis-required`
+(no hit; emit a contract skeleton), or `passthrough` (registry-call error
+only). See `DEC-HOOK-CLAUDE-CODE-PROD-001`.
 
-In v0.5 the stub becomes a live interceptor: the agent's "I need to write
-code that does X" moment is rerouted into the registry, and the agent's
-output becomes a reference to a registry entry rather than a wall of
-generated code. That is when Yakcc starts paying for itself in real authoring
-loops.
+**Integration-surface update (2026-05-10):** the package code is real but
+the **CLI install command** (`yakcc hooks claude-code install`) is still
+the v0 facade — it writes a CLAUDE.md stub instead of wiring the production
+hook into Claude Code's actual integration mechanisms (slash commands,
+`.claude/settings.json` hooks, MCP server). The integration-surface gap
+is owned by **`WI-HOOK-LAYER` (#194)**: a Phase 0 design pass + Phase 1
+telemetry-only MVP + Phase 2 smart-substitution + Phase 3 contract-surfacing
++ Phase 4 Cursor + (conditional) Phase 5 agnostic proxy. The CLI install
+facade replacement is **#203**, fresh-project setup is **`yakcc init`** (#204),
+and the user walkthrough is `docs/USING_YAKCC.md` (#205). v0.5's GTM thesis
+("Yakcc starts paying for itself in real authoring loops") closes when
+WI-HOOK-LAYER closes — see MASTER_PLAN's "Initiative: WI-HOOK-LAYER" row.
 
 ### `@yakcc/shave` (v0.7)
 
