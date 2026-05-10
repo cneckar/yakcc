@@ -444,6 +444,75 @@
 // See also: DEC-AS-CONTROL-FLOW-001 in control-flow-parity.test.ts for the
 // full substrate inventory (CF1-CF5), exportMemory: false convention, and the
 // 20-run fast-check parity methodology.
+//
+// @decision DEC-AS-GC-STRATEGY-001
+// Title: assemblyScriptBackend() GC objects are exercised by per-substrate probes
+//        that document COMPILE OK / COMPILE FAIL / RUNTIME TRAP under the existing
+//        --runtime stub baseline; the flat-memory @unmanaged substrate from
+//        DEC-AS-RECORD-LAYOUT-001 is the production-supported equivalent for
+//        managed-class field access in v1; full managed new T() allocation, GC
+//        retention, sweep, cycle handling, and finalizers are deferred to a future
+//        phase that adopts --runtime minimal/full.
+// Status: decided (WI-AS-PHASE-2H-GC, Issue #232, 2026-05-10)
+// Rationale:
+//   GC objects in AssemblyScript = managed classes governed by the asc-emitted
+//   GC barriers. AssemblyScript has four runtime tiers:
+//
+//     --runtime stub:        NO GC heap. @unmanaged classes only (flat memory).
+//                            new T() without @unmanaged: compile-fail or runtime trap.
+//                            Used by this backend (see DEC-AS-BACKEND-TMPDIR-001).
+//     --runtime minimal:     Partial GC (manual __pin/__unpin). new T() allocates.
+//     --runtime incremental: Full GC, on-the-fly increments.
+//     --runtime full:        Full GC, stop-the-world.
+//
+//   Probe outcomes (G1-G5) recorded in gc-parity.test.ts — empirical, asc 0.28.x
+//   --runtime stub, observed 2026-05-10 ("Code is Truth" — planner hypotheses revised):
+//
+//   (G1) Managed class new Box() (single i32 field): COMPILE OK — UNEXPECTED.
+//        asc 0.28.x --runtime stub compiles `new Box()` for a class with a
+//        single i32 field. The stub __new path is stub-linked but compilation
+//        succeeds. Runtime behavior of the resulting WASM is unprobed.
+//
+//   (G2) Two managed class allocations (new Box(), new Box()): COMPILE OK.
+//        Consistent with G1. Multiple managed allocations compile under stub.
+//
+//   (G3) Nullable managed reference field (Node | null): COMPILE FAIL.
+//        The stub compile boundary: `T | null` reference fields require GC type
+//        metadata absent from stub. Scalar i32 fields in managed classes compile
+//        OK (G1/G2); nullable managed reference fields COMPILE FAIL.
+//
+//   (G4) @final class + __finalize() no-op void method: COMPILE OK.
+//        @final = optimization modifier (not GC finalizer decorator). There is
+//        no @finalize decorator in asc 0.28.x; the GC collect hook is the
+//        __finalize() method on the class body. @final + no-op __finalize()
+//        compiles under stub (never invoked by stub collect path).
+//
+//   (G5) @unmanaged flat-memory field access: COMPILE OK + value parity.
+//        @unmanaged opts the class out of GC. Field access lowers to
+//        load<i32>/store<i32> on host-provided linear-memory pointers.
+//        This is the production-supported "GC opt-out" equivalent for v1.
+//        Mirrors DEC-AS-RECORD-LAYOUT-001 flat-memory ABI.
+//
+//   Alternatives rejected (abbreviated; full rationale in PLAN.md §2.4):
+//
+//   (Alt B) Flip --runtime to minimal/incremental/full for the GC test only:
+//       Rejected. Requires either a per-call runtime override field in
+//       AsBackendOptions (new emit mode — parallel mechanism, Sacred Practice
+//       #12 violation) or a parallel factory (dual-authority). Both paths
+//       diverge from every existing sibling's invariant.
+//
+//   (Alt C) Skip GC entirely; mark #232 as impossible:
+//       Rejected. Operator unblocked explicitly (2026-05-10): "start NOW".
+//       The probe pattern used by every Phase 2 sibling documents reality.
+//
+//   Decision: Probe-and-flat-memory pattern for v1. Managed new T() allocation,
+//   GC retention, sweep, cycle handling, and finalizers are deferred until a
+//   future phase adopts --runtime minimal/full.
+//
+//   Cross-links: #232 (this WI), DEC-AS-MULTI-EXPORT-001 (parent Phase 2A.0).
+//
+// See also: DEC-AS-GC-LAYOUT-001 and DEC-AS-GC-ORACLE-001 in gc-parity.test.ts
+// for flat-memory layout constants (GC_BASE_PTR = 24576) and oracle details.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
