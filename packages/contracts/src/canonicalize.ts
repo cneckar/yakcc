@@ -8,7 +8,93 @@
 // A 90-line encoder written from first principles is the only way to guarantee
 // byte-identical output on every JS runtime.
 
-import type { ContractSpec } from "./index.js";
+import type { ContractSpec, NonFunctionalProperties } from "./index.js";
+
+// ---------------------------------------------------------------------------
+// QueryIntentCard — LLM-facing query surface (D2 ADR, DEC-V3-DISCOVERY-D2-001)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V3-IMPL-QUERY-001
+// title: Symmetric query-text derivation via canonicalizeQueryText
+// status: accepted
+// rationale: canonicalizeQueryText(card: QueryIntentCard): string projects the
+//   query into a SpecYak-shaped canonical JSON text so that query and document
+//   vectors occupy the same semantic space. Each provided dimension field maps
+//   to the corresponding SpecYak optional field (behavior, guarantees, etc.).
+//   Absent fields are omitted (same semantics as D1's absent-dimension zero-vector
+//   rule). The function uses the same hand-rolled canonical encoder so key ordering
+//   and number serialization are identical to storeBlock's embedding text.
+//   Canonical site for the 1 - L²/4 formula re-stated in storage.ts (DEC-V3-IMPL-QUERY-007).
+//   References: docs/adr/discovery-query-language.md §Q1, docs/adr/discovery-ranking.md §Q3.
+
+/**
+ * A query parameter with optional name (at query time the LLM may not know
+ * argument names; only the type is required). Used in QueryIntentCard.signature.
+ */
+export interface QueryTypeSignatureParam {
+  /** Optional argument name. If absent, a positional sentinel is generated. */
+  readonly name?: string | undefined;
+  /** Required type string, e.g. "number", "string[]". */
+  readonly type: string;
+}
+
+/**
+ * The LLM-facing query surface for multi-dimensional vector search.
+ *
+ * Each field corresponds to one semantic dimension of a stored SpecYak.
+ * Omitting a field skips that dimension at scoring time (D1 absent-dimension rule).
+ *
+ * @decision DEC-V3-DISCOVERY-D2-001 — Query schema. QueryIntentCard is intentionally
+ *   smaller than SpecYak: no id/hash/strictness/proof fields; all dimension fields
+ *   are optional; freeform description strings replace structured array types.
+ *   Reference: docs/adr/discovery-query-language.md §Q1.
+ */
+export interface QueryIntentCard {
+  // Dimension fields — each is optional; omitting skips that dimension
+  /** Behavior dimension: maps to SpecYak.behavior. */
+  readonly behavior?: string | undefined;
+  /** Guarantees dimension: freeform descriptions (no id required at query time). */
+  readonly guarantees?: readonly string[] | undefined;
+  /** Error-conditions dimension: freeform descriptions. */
+  readonly errorConditions?: readonly string[] | undefined;
+  /**
+   * Non-functional dimension: any subset of NonFunctionalProperties.
+   * purity and threadSafety are NOT required at query time (D2 §Q1 deviation).
+   */
+  readonly nonFunctional?: Partial<NonFunctionalProperties> | undefined;
+  /** Property-tests dimension: freeform descriptions. */
+  readonly propertyTests?: readonly string[] | undefined;
+  /**
+   * Structural-match dimension (not embedded; used by D3 Stage 2).
+   * Maps to SpecYak inputs/outputs for structuralMatch().
+   */
+  readonly signature?:
+    | {
+        readonly inputs?: readonly QueryTypeSignatureParam[] | undefined;
+        readonly outputs?: readonly QueryTypeSignatureParam[] | undefined;
+      }
+    | undefined;
+
+  // Retrieval controls
+  /**
+   * Per-dimension relative weights for combinedScore computation (D3 §Q1).
+   * Keys mirror SpecYak field names (no embedding_ prefix).
+   * Omitted dimensions use default weight 1.0.
+   */
+  readonly weights?:
+    | {
+        readonly behavior?: number | undefined;
+        readonly guarantees?: number | undefined;
+        readonly errorConditions?: number | undefined;
+        readonly nonFunctional?: number | undefined;
+        readonly propertyTests?: number | undefined;
+      }
+    | undefined;
+  /** Maximum number of candidates to return. Default: 10. */
+  readonly topK?: number | undefined;
+  /** Minimum combinedScore threshold; candidates below this are excluded. */
+  readonly minScore?: number | undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Internal JSON value type (closed over ContractSpec shape)
@@ -195,6 +281,102 @@ export function canonicalize(spec: ContractSpec): Uint8Array {
  */
 export function canonicalizeText(spec: ContractSpec): string {
   return encodeValue(spec as unknown as JsonValue);
+}
+
+// ---------------------------------------------------------------------------
+// canonicalizeQueryText — D2/D3 query-text derivation (DEC-V3-IMPL-QUERY-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Project a QueryIntentCard into a SpecYak-shaped canonical text for embedding.
+ *
+ * The produced text uses the same canonical JSON encoder as canonicalizeText(),
+ * so the query and document vectors are in the same semantic space
+ * (DEC-V3-IMPL-QUERY-001 — symmetric query-text derivation).
+ *
+ * Projection rules (per D2 ADR §Q1 and D3 ADR §Q3):
+ * - `behavior`          → "behavior" key (string, direct)
+ * - `guarantees`        → "guarantees" key: array of {id:"q<n>", description: text}
+ * - `errorConditions`   → "errorConditions" key: array of {description: text}
+ * - `nonFunctional`     → "nonFunctional" key: Partial<NonFunctionalProperties> as-is
+ * - `propertyTests`     → "propertyTests" key: array of {id:"p<n>", description: text}
+ * - `signature.inputs`  → "inputs" key: array of {name: name|"arg<n>", type}
+ * - `signature.outputs` → "outputs" key: array of {name: name|"out<n>", type}
+ *
+ * Absent fields are omitted from the projection (D1 absent-dimension rule):
+ * a query that includes only `behavior` produces only a "behavior" key — the
+ * embedding model sees only the behavior text, not noise from absent dimensions.
+ *
+ * The function is pure and deterministic: same card → same string, byte-for-byte.
+ *
+ * @param card - The LLM-provided QueryIntentCard.
+ * @returns A canonical JSON string suitable for embedding via EmbeddingProvider.embed().
+ */
+export function canonicalizeQueryText(card: QueryIntentCard): string {
+  // Build a plain object with only the keys that are present in the card.
+  // The encodeValue function will sort keys lexicographically, matching the
+  // storage embedding's key order (same encoder, same rules).
+  const projection: Record<string, JsonValue> = {};
+
+  // behavior dimension — direct string
+  if (card.behavior !== undefined && card.behavior !== "") {
+    projection.behavior = card.behavior;
+  }
+
+  // errorConditions dimension — array of {description}
+  if (card.errorConditions !== undefined && card.errorConditions.length > 0) {
+    projection.errorConditions = card.errorConditions.map((desc) => ({
+      description: desc,
+    }));
+  }
+
+  // guarantees dimension — array of {description, id: "q<n>"}
+  if (card.guarantees !== undefined && card.guarantees.length > 0) {
+    projection.guarantees = card.guarantees.map((desc, i) => ({
+      description: desc,
+      id: `q${i}`,
+    }));
+  }
+
+  // signature.inputs dimension — array of {name, type}
+  if (card.signature?.inputs !== undefined && card.signature.inputs.length > 0) {
+    projection.inputs = card.signature.inputs.map((p, i) => ({
+      name: p.name ?? `arg${i}`,
+      type: p.type,
+    }));
+  }
+
+  // nonFunctional dimension — Partial<NonFunctionalProperties> as-is
+  // Only include if at least one key is present (avoid empty-object noise).
+  if (card.nonFunctional !== undefined) {
+    const nf = card.nonFunctional;
+    const nfEntry: Record<string, JsonValue> = {};
+    if (nf.purity !== undefined) nfEntry.purity = nf.purity;
+    if (nf.space !== undefined) nfEntry.space = nf.space;
+    if (nf.threadSafety !== undefined) nfEntry.threadSafety = nf.threadSafety;
+    if (nf.time !== undefined) nfEntry.time = nf.time;
+    if (Object.keys(nfEntry).length > 0) {
+      projection.nonFunctional = nfEntry;
+    }
+  }
+
+  // signature.outputs dimension — array of {name, type}
+  if (card.signature?.outputs !== undefined && card.signature.outputs.length > 0) {
+    projection.outputs = card.signature.outputs.map((p, i) => ({
+      name: p.name ?? `out${i}`,
+      type: p.type,
+    }));
+  }
+
+  // propertyTests dimension — array of {description, id: "p<n>"}
+  if (card.propertyTests !== undefined && card.propertyTests.length > 0) {
+    projection.propertyTests = card.propertyTests.map((desc, i) => ({
+      description: desc,
+      id: `p${i}`,
+    }));
+  }
+
+  return encodeValue(projection);
 }
 
 // ---------------------------------------------------------------------------

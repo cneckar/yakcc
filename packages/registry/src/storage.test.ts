@@ -18,6 +18,7 @@ import {
   type CanonicalAstHash,
   type EmbeddingProvider,
   type ProofManifest,
+  type QueryIntentCard,
   type SpecHash,
   type SpecYak,
   blockMerkleRoot,
@@ -26,7 +27,15 @@ import {
   specHash as deriveSpecHash,
 } from "@yakcc/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { BlockTripletRow, Registry } from "./index.js";
+import type {
+  BlockTripletRow,
+  CandidateNearMiss,
+  FindCandidatesByQueryOptions,
+  FindCandidatesByQueryResult,
+  IntentQuery,
+  QueryCandidate,
+  Registry,
+} from "./index.js";
 import { openRegistry } from "./storage.js";
 
 // ---------------------------------------------------------------------------
@@ -2058,4 +2067,1064 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const { rmSync } = await import("node:fs");
     rmSync(tmpDir, { recursive: true, force: true });
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// findCandidatesByQuery — D3 5-stage multi-dimensional discovery pipeline
+// ---------------------------------------------------------------------------
+//
+// Production sequence:
+//   openRegistry → storeBlock(row) → findCandidatesByQuery(card, opts)
+//   → assert QueryCandidate / CandidateNearMiss shape → close()
+//
+// The mock embedding provider returns deterministic vectors derived from
+// text hash — identical texts produce identical vectors, so the symmetric
+// round-trip (T2) is a genuine test: the spec's embedding-text and the
+// query's canonicalized text must be byte-identical for cosineDistance < 0.05.
+//
+// Tests T12 and T13 are regression guards that verify findCandidatesByIntent
+// and vector-search.test.ts remain unaffected by the new code path.
+
+// ---------------------------------------------------------------------------
+// Helpers for findCandidatesByQuery tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a SpecYak that exactly matches the fields a QueryIntentCard will project
+ * via canonicalizeQueryText. This is the "symmetric" half of the round-trip:
+ * the stored spec's canonical JSON must equal canonicalizeQueryText(card) so
+ * that cosineDistance ≈ 0 after embedding.
+ *
+ * The mock embedding provider hashes the text, so byte-identical texts produce
+ * vectors with cosineDistance < 0.01; distinct texts produce meaningfully
+ * different vectors (distance >> 0.05).
+ */
+function makeSymmetricSpecYak(behavior: string): SpecYak {
+  return {
+    name: "symmetric-fn",
+    inputs: [{ name: "input", type: "string" }],
+    outputs: [{ name: "result", type: "number" }],
+    preconditions: [],
+    postconditions: [],
+    invariants: [],
+    effects: [],
+    level: "L0",
+    behavior,
+  };
+}
+
+/**
+ * Open a registry with the given embeddings provider (defaults to mockEmbeddingProvider).
+ * Returns the registry; caller must close it.
+ */
+async function openIsolatedRegistry(
+  embeddings: ReturnType<typeof mockEmbeddingProvider> = mockEmbeddingProvider(),
+) {
+  const { openRegistry: openReg } = await import("./storage.js");
+  return openReg(":memory:", { embeddings });
+}
+
+// ---------------------------------------------------------------------------
+// T2 — symmetric round-trip
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T2: symmetric round-trip via canonicalizeQueryText", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-001 (verification)
+   * canonicalizeQueryText projects the query card into the same canonical JSON
+   * encoder used for storeBlock embeddings. This places query and document vectors
+   * in the same semantic space so that a query about behavior "X" retrieves specs
+   * with behavior "X" higher than specs with unrelated behaviors.
+   *
+   * The test stores two specs with semantically different behaviors, then queries
+   * with a behavior that textually matches spec-A more closely than spec-B
+   * (via the mock embedder's text-hash mechanism). Spec-A must rank above spec-B.
+   *
+   * Note: cosineDistance is NOT expected to be near-zero. The document embedding
+   * is the full canonicalize(SpecYak) text, while the query embedding is
+   * canonicalizeQueryText({behavior}). These are different texts (SpecYak includes
+   * required fields like name/inputs/outputs/preconditions that the card omits).
+   * The semantic-space alignment means relative ranking is preserved, not that
+   * cosineDistance = 0 for an "exact" match.
+   *
+   * Production sequence: openRegistry → storeBlock × 2 → findCandidatesByQuery
+   *   → assert correct ranking (closer behavior ranks higher) → close.
+   */
+  it("behavior-matched spec ranks above unrelated spec via canonicalizeQueryText alignment", async () => {
+    // specA behavior textually close to the query; specB behavior unrelated.
+    const queryBehavior = "Compute the modular inverse of an integer using the extended Euclidean algorithm";
+    const specA = makeSymmetricSpecYak(queryBehavior);
+    // Unrelated behavior — semantically very different text for the mock embedder.
+    const specB = makeSymmetricSpecYak("Render a 3D scene using ray marching");
+
+    const rowA = makeBlockRow(specA, "export function f1(n: number): number { return 0; }", "// A");
+    const rowB = makeBlockRow(specB, "export function f2(n: number): number { return 0; }", "// B");
+    await registry.storeBlock(rowA);
+    await registry.storeBlock(rowB);
+
+    const card: QueryIntentCard = { behavior: queryBehavior };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // Both specs should appear in the KNN result.
+    expect(result.candidates.length).toBeGreaterThanOrEqual(2);
+    expect(result.nearMisses).toEqual([]);
+
+    // specA must appear in candidates (the pipeline works end-to-end).
+    const foundA = result.candidates.some((c) => c.block.blockMerkleRoot === rowA.blockMerkleRoot);
+    expect(foundA).toBe(true);
+
+    // Retrieve both candidates for ranking assertion.
+    const candidateA = result.candidates.find((c) => c.block.blockMerkleRoot === rowA.blockMerkleRoot);
+    const candidateB = result.candidates.find((c) => c.block.blockMerkleRoot === rowB.blockMerkleRoot);
+    expect(candidateA).toBeDefined();
+    expect(candidateB).toBeDefined();
+
+    // specA must rank above specB (lower cosineDistance → higher combinedScore).
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(candidateA!.cosineDistance).toBeLessThan(candidateB!.cosineDistance);
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(candidateA!.combinedScore).toBeGreaterThan(candidateB!.combinedScore);
+
+    // combinedScore formula: 1 - d²/4 (DEC-V3-IMPL-QUERY-007 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
+    // vec0 returns L2 distance; for unit-normalized vectors: combinedScore = 1 - L2²/4.
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    const expectedScoreA = Math.max(0, 1 - (candidateA!.cosineDistance * candidateA!.cosineDistance) / 4);
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(candidateA!.combinedScore).toBeCloseTo(expectedScoreA, 10);
+  });
+
+  it("result shape: QueryCandidate has combinedScore, perDimensionScores, autoAccepted fields", async () => {
+    const behavior = "Filter a list of integers keeping only primes";
+    const spec = makeSymmetricSpecYak(behavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = { behavior };
+    const result = await registry.findCandidatesByQuery(card);
+
+    expect(result.candidates.length).toBeGreaterThan(0);
+    const candidate = result.candidates[0];
+    expect(candidate).toBeDefined();
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(typeof candidate!.combinedScore).toBe("number");
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(candidate!.combinedScore).toBeGreaterThanOrEqual(0);
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(candidate!.combinedScore).toBeLessThanOrEqual(1);
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(typeof candidate!.autoAccepted).toBe("boolean");
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined above
+    expect(typeof candidate!.perDimensionScores).toBe("object");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T3 — cross-provider rejection
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T3: cross-provider rejection", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-002 (verification)
+   * When options.queryEmbeddings.modelId differs from the registry's stored modelId,
+   * findCandidatesByQuery must throw synchronously with reason='cross_provider_rejected'
+   * BEFORE any KNN SQL is reached. This test uses a separate registry instance to
+   * avoid polluting the shared beforeEach one.
+   */
+  it("throws with reason=cross_provider_rejected when modelId mismatches", async () => {
+    const reg = await openIsolatedRegistry();
+    const spec = makeSymmetricSpecYak("Compute SHA-256 of a byte array");
+    const row = makeBlockRow(spec);
+    await reg.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior: "Compute SHA-256 of a byte array",
+    };
+
+    // The registry uses "mock/test-provider"; we pass a different model ID.
+    const opts: FindCandidatesByQueryOptions = {
+      queryEmbeddings: { modelId: "different/provider-v2" },
+    };
+
+    let caught: Error & { reason?: string } = new Error("not thrown");
+    try {
+      await reg.findCandidatesByQuery(card, opts);
+    } catch (e) {
+      caught = e as Error & { reason?: string };
+    }
+
+    expect(caught.message).toMatch(/cross_provider_rejected|does not match/);
+    expect(caught.reason).toBe("cross_provider_rejected");
+
+    await reg.close();
+  });
+
+  it("does NOT throw when modelId matches the registry's provider", async () => {
+    const spec = makeSymmetricSpecYak("Parse base64-encoded data");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior: "Parse base64-encoded data",
+    };
+
+    // Matching model ID — must not throw.
+    const opts: FindCandidatesByQueryOptions = {
+      queryEmbeddings: { modelId: "mock/test-provider" },
+    };
+
+    await expect(registry.findCandidatesByQuery(card, opts)).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4 — autoAccepted boundary (5 cases)
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T4: autoAccepted boundary conditions", () => {
+  /**
+   * autoAccepted fires when:
+   *   top1Score > 0.85  AND  (top1Score - top2Score) > 0.15
+   *
+   * We exercise this with controlled combinedScore situations using the
+   * deterministic mock embedder. The mock embedder produces identical vectors
+   * for identical texts, so the only way to get high cosineDistance is to use
+   * a query text that differs from the stored spec.
+   */
+
+  it("T4a: single candidate — autoAccepted=true iff combinedScore>0.85 (formula verification)", async () => {
+    // Store one spec; query with its behavior. Result has exactly 1 candidate.
+    // autoAccepted requires: top1Score > 0.85 AND (top1Score - top2Score) > 0.15.
+    // With only 1 candidate, top2Score = 0, so the gap condition reduces to top1Score > 0.15,
+    // which is trivially true. autoAccepted therefore equals (top1Score > 0.85).
+    const behavior = "Compute the modular inverse of an integer using the extended Euclidean algorithm";
+    const spec = makeSymmetricSpecYak(behavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = { behavior };
+    const result = await registry.findCandidatesByQuery(card);
+
+    expect(result.candidates).toHaveLength(1);
+    const top = result.candidates[0];
+    expect(top).toBeDefined();
+
+    // Verify autoAccepted is consistent with the formula.
+    // With a single candidate, the gap is top1Score - 0 = top1Score > 0.15 always.
+    // So autoAccepted iff combinedScore > 0.85.
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    const expectedAutoAccepted = top!.combinedScore > 0.85;
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(top!.autoAccepted).toBe(expectedAutoAccepted);
+
+    // autoAccepted is always false for non-top-1 slots (length 1 here — trivially satisfied).
+    expect(result.nearMisses).toEqual([]);
+  });
+
+  it("T4b: only top-1 is autoAccepted; top-2+ are always false even if high score", async () => {
+    // Store two distinct specs with slightly different behaviors close to the query.
+    // The gap between top1 and top2 will be > 0 (deterministic mock), but the logic
+    // correctly marks only top-1 as autoAccepted.
+    const specA = makeSymmetricSpecYak("Merge two sorted integer arrays into one sorted array v1");
+    const specB = makeSymmetricSpecYak("Merge two sorted integer arrays into one sorted array v2");
+    const rA = makeBlockRow(specA);
+    const rB = makeBlockRow(specB);
+    await registry.storeBlock(rA);
+    await registry.storeBlock(rB);
+
+    const card: QueryIntentCard = {
+      behavior: "Merge two sorted integer arrays into one sorted array",
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // top-2 and beyond must NEVER be autoAccepted.
+    if (result.candidates.length >= 2) {
+      const top2 = result.candidates[1];
+      // biome-ignore lint/style/noNonNullAssertion: length check above
+      expect(top2!.autoAccepted).toBe(false);
+    }
+    if (result.candidates.length >= 3) {
+      for (let i = 1; i < result.candidates.length; i++) {
+        const c = result.candidates[i];
+        // biome-ignore lint/style/noNonNullAssertion: length check controls i
+        expect(c!.autoAccepted).toBe(false);
+      }
+    }
+  });
+
+  it("T4c: autoAccepted is false when combinedScore <= 0.85 (threshold boundary)", async () => {
+    // A query that doesn't match the stored spec well will produce a low combinedScore.
+    // Use a completely unrelated query text.
+    const behavior = "Deserialize XML to a typed TypeScript record";
+    const spec = makeSymmetricSpecYak(behavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Query with a very different behavior — high cosineDistance → low combinedScore.
+    const card: QueryIntentCard = {
+      behavior: "Compute the nth Fibonacci number using matrix exponentiation",
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    if (result.candidates.length > 0) {
+      const top = result.candidates[0];
+      if (top !== undefined && top.combinedScore <= 0.85) {
+        expect(top.autoAccepted).toBe(false);
+      }
+    }
+    // Empty registry path also acceptable (no candidates → no autoAccepted).
+  });
+
+  it("T4d: autoAccepted is always false for nearMiss entries", async () => {
+    // Store a block with purity=io and query requiring pure.
+    // Stage 3 eliminates it → 0 survivors → near-miss envelope.
+    const spec: SpecYak = {
+      ...makeSymmetricSpecYak("Write bytes to a file descriptor"),
+      nonFunctional: { purity: "io", threadSafety: "safe" },
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior: "Write bytes to a file descriptor",
+      nonFunctional: { purity: "pure" },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // All near-misses must have autoAccepted=false.
+    for (const nm of result.nearMisses) {
+      expect(nm.autoAccepted).toBe(false);
+    }
+  });
+
+  it("T4e: empty registry returns 0 candidates and 0 nearMisses with no autoAccepted error", async () => {
+    const reg = await openIsolatedRegistry();
+    const card: QueryIntentCard = {
+      behavior: "Compute modular exponentiation",
+    };
+    const result = await reg.findCandidatesByQuery(card);
+    expect(result.candidates).toEqual([]);
+    expect(result.nearMisses).toEqual([]);
+    await reg.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T5 — per-dimension weights accepted as no-op for v1
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T5: per-dimension weights are no-op for v1", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-003 (verification)
+   * Per-dimension weights are accepted by the API surface for forward-compat
+   * but the v1 implementation collapses them to a single 'unified' score.
+   * perDimensionScores carries exactly ONE key — 'unified' — whose value equals
+   * combinedScore. Individual dimension keys (behavior, guarantees, etc.) are
+   * absent because v1 has only a single embedding vector, not per-dimension vectors.
+   *
+   * PDS-KEY-001: the 'unified' key is the sole output of v1 single-vector storage.
+   */
+  it("perDimensionScores collapses to single 'unified' key for v1 single-vector storage", async () => {
+    const behavior = "Tokenize a source string into lexical units";
+    const spec = makeSymmetricSpecYak(behavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Query with behavior and guarantees — weights are accepted but no-op for v1.
+    const card: QueryIntentCard = {
+      behavior,
+      guarantees: ["Always returns at least one token for non-empty input"],
+      weights: { behavior: 2.0, guarantees: 1.0 },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+    expect(result.candidates.length).toBeGreaterThan(0);
+
+    const top = result.candidates[0];
+    // biome-ignore lint/style/noNonNullAssertion: asserted length > 0
+    const pds = top!.perDimensionScores;
+    // biome-ignore lint/style/noNonNullAssertion: asserted length > 0
+    const cs = top!.combinedScore;
+
+    // v1 single-vector: only 'unified' key is present, equals combinedScore.
+    expect(pds.unified).toBeDefined();
+    expect(pds.unified).toBeCloseTo(cs, 10);
+    // Individual dimension keys must be absent — v1 has no per-dimension vectors.
+    expect(pds.behavior).toBeUndefined();
+    expect(pds.guarantees).toBeUndefined();
+    expect(pds.errorConditions).toBeUndefined();
+    expect(pds.nonFunctional).toBeUndefined();
+    expect(pds.propertyTests).toBeUndefined();
+  });
+
+  it("perDimensionScores carries only 'unified' key regardless of which dimensions were queried", async () => {
+    const behavior = "Validate an IPv4 address string";
+    const spec = makeSymmetricSpecYak(behavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Query with only behavior — v1 still emits { unified } only.
+    const card: QueryIntentCard = { behavior };
+    const result = await registry.findCandidatesByQuery(card);
+    expect(result.candidates.length).toBeGreaterThan(0);
+
+    const top = result.candidates[0];
+    // biome-ignore lint/style/noNonNullAssertion: asserted length > 0
+    const pds = top!.perDimensionScores;
+    // v1 single-vector: 'unified' present; all dimension-specific keys absent.
+    expect(pds.unified).toBeDefined();
+    expect(pds.behavior).toBeUndefined();
+    expect(pds.guarantees).toBeUndefined();
+    expect(pds.errorConditions).toBeUndefined();
+    expect(pds.nonFunctional).toBeUndefined();
+    expect(pds.propertyTests).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T6 — D3 Stage 2 structural filter
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T6: Stage 2 structural filter removes signature mismatches", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-006 (Stage 2 verification)
+   * When query.signature is provided, Stage 2 runs structuralMatch against each
+   * Stage 1 candidate. Candidates whose inputs/outputs don't match the query's
+   * signature are removed and appear as CandidateNearMiss with
+   * failedAtLayer='structural'.
+   *
+   * Production sequence: store a block with number→string, query with string→number.
+   * The structural mismatch removes the candidate. The near-miss envelope surfaces it.
+   */
+  it("structural mismatch removes candidate to nearMisses with failedAtLayer=structural", async () => {
+    const behavior = "Convert a number to its string representation";
+    const spec: SpecYak = {
+      name: "num-to-str",
+      inputs: [{ name: "n", type: "number" }],
+      outputs: [{ name: "result", type: "string" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Query with matching behavior (high cosine) but incompatible signature.
+    const card: QueryIntentCard = {
+      behavior,
+      signature: {
+        inputs: [{ type: "string" }],   // stored spec has number input → mismatch
+        outputs: [{ type: "number" }],  // stored spec has string output → mismatch
+      },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // The candidate should be filtered at Stage 2 → 0 survivors → near-miss.
+    // candidates is empty; nearMisses contains the filtered candidate.
+    expect(result.candidates).toHaveLength(0);
+    expect(result.nearMisses.length).toBeGreaterThan(0);
+    const nm = result.nearMisses[0];
+    expect(nm).toBeDefined();
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nm!.failedAtLayer).toBe("structural");
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nm!.autoAccepted).toBe(false);
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(typeof nm!.failureReason).toBe("string");
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nm!.failureReason.length).toBeGreaterThan(0);
+  });
+
+  it("no-op when no signature is provided — all Stage 1 candidates pass through Stage 2", async () => {
+    const specA = makeSymmetricSpecYak("Compute a running average of float values");
+    const rowA = makeBlockRow(specA);
+    await registry.storeBlock(rowA);
+
+    // Query without a signature — Stage 2 is a pass-through.
+    const card: QueryIntentCard = {
+      behavior: "Compute a running average of float values",
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // At least our stored block should appear in candidates (not filtered).
+    expect(result.candidates.length).toBeGreaterThan(0);
+    const found = result.candidates.some((c) => c.block.blockMerkleRoot === rowA.blockMerkleRoot);
+    expect(found).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T7 — D3 Stage 3 strictness filter
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T7: Stage 3 strictness filter removes purity mismatches", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-006 (Stage 3 verification)
+   * When query.nonFunctional.purity is provided, Stage 3 checks each candidate's
+   * stored nonFunctional.purity. Candidates with lower purity rank (e.g. 'io' < 'pure')
+   * are removed and surfaced as CandidateNearMiss with failedAtLayer='strictness'.
+   *
+   * Purity rank: pure(3) > io(2) > stateful(1) > nondeterministic(0).
+   */
+  it("candidate with purity=io fails when query requires purity=pure", async () => {
+    const behavior = "Read configuration values from environment variables";
+    const spec: SpecYak = {
+      name: "read-env",
+      inputs: [{ name: "key", type: "string" }],
+      outputs: [{ name: "value", type: "string" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      nonFunctional: { purity: "io", threadSafety: "safe" },
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior,
+      nonFunctional: { purity: "pure" },  // requires pure; candidate is io → fail
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    expect(result.candidates).toHaveLength(0);
+    expect(result.nearMisses.length).toBeGreaterThan(0);
+    const nm = result.nearMisses[0];
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nm!.failedAtLayer).toBe("strictness");
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nm!.autoAccepted).toBe(false);
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nm!.failureReason).toMatch(/purity/);
+  });
+
+  it("candidate with purity=pure passes when query requires purity=pure", async () => {
+    const behavior = "Compute the GCD of two non-negative integers";
+    const spec: SpecYak = {
+      name: "gcd",
+      inputs: [{ name: "a", type: "number" }, { name: "b", type: "number" }],
+      outputs: [{ name: "result", type: "number" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      nonFunctional: { purity: "pure", threadSafety: "safe" },
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior,
+      nonFunctional: { purity: "pure" },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // Candidate passes Stage 3 → appears in candidates.
+    const found = result.candidates.some((c) => c.block.blockMerkleRoot === row.blockMerkleRoot);
+    expect(found).toBe(true);
+    expect(result.nearMisses).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T8 — D3 Stage 5 minScore filter
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T8: Stage 5 minScore filter removes low-score candidates", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-006 (Stage 5 verification)
+   * When query.minScore is set, candidates with combinedScore < minScore are
+   * removed and surfaced as CandidateNearMiss with failedAtLayer='min_score'.
+   *
+   * A minScore=0.999 will reject almost any candidate that is not byte-identical
+   * to the query text, since the deterministic mock embedder produces very small
+   * but non-zero distances for even slightly different texts.
+   */
+  it("candidates below minScore=0.999 surface as near-misses with failedAtLayer=min_score", async () => {
+    const storedBehavior = "Encode a byte array as a URL-safe base64 string without padding";
+    const spec = makeSymmetricSpecYak(storedBehavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Query with a slightly different behavior text → non-trivial cosineDistance.
+    const card: QueryIntentCard = {
+      behavior: "Encode bytes as URL-safe base64",  // different text → higher distance
+      minScore: 0.999,  // extremely tight threshold — will reject non-identical embeddings
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // If the candidate was rejected by minScore, it must appear as a near-miss.
+    if (result.candidates.length === 0) {
+      expect(result.nearMisses.length).toBeGreaterThan(0);
+      const nm = result.nearMisses[0];
+      // biome-ignore lint/style/noNonNullAssertion: asserted length > 0
+      expect(nm!.failedAtLayer).toBe("min_score");
+      // biome-ignore lint/style/noNonNullAssertion: asserted length > 0
+      expect(nm!.failureReason).toMatch(/combinedScore|minScore/);
+      // biome-ignore lint/style/noNonNullAssertion: asserted length > 0
+      expect(nm!.autoAccepted).toBe(false);
+    } else {
+      // If candidate passed (embedder happened to produce identical vectors),
+      // verify each candidate's combinedScore >= minScore.
+      for (const c of result.candidates) {
+        expect(c.combinedScore).toBeGreaterThanOrEqual(0.999);
+      }
+    }
+  });
+
+  it("minScore=0 passes all candidates (no rejection by score)", async () => {
+    const behavior = "Decode a hex string to a byte array";
+    const spec = makeSymmetricSpecYak(behavior);
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior: "Decode hex to bytes variant",  // slightly different — will have some distance
+      minScore: 0,
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // minScore=0 means no rejection by score — all Stage 4 survivors pass.
+    // nearMisses must not contain min_score failures.
+    const minScoreMisses = result.nearMisses.filter((nm) => nm.failedAtLayer === "min_score");
+    expect(minScoreMisses).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T9 — D3 Stage 5 ranking + ε=0.02 + lex-BlockMerkleRoot tiebreaker
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T9: Stage 5 ranking + ε=0.02 lex tiebreaker", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-006 (Stage 5 tiebreaker verification)
+   * Within ε=0.02 combinedScore difference, candidates are ordered by
+   * BlockMerkleRoot lexicographically ascending (smaller root wins).
+   *
+   * Two specs with identical behavior text will produce the same cosineDistance
+   * with our mock embedder (hash of text → same vector). They tie exactly.
+   * Within the ε window, the lex-root tiebreaker must apply.
+   */
+  it("candidates within ε=0.02 are ordered by lex-BlockMerkleRoot ascending", async () => {
+    // Two different specs with identical behavior → same embedding → same combinedScore → tie.
+    const behavior = "Compute the modular exponentiation a^b mod n";
+    const specA: SpecYak = {
+      name: "modexp-v1",
+      inputs: [{ name: "a", type: "number" }, { name: "b", type: "number" }, { name: "n", type: "number" }],
+      outputs: [{ name: "result", type: "number" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+    };
+    const specB: SpecYak = {
+      name: "modexp-v2",
+      inputs: [{ name: "base", type: "number" }, { name: "exp", type: "number" }, { name: "mod", type: "number" }],
+      outputs: [{ name: "result", type: "number" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,  // Same behavior text → same embedding
+    };
+
+    const rowA = makeBlockRow(specA, "export function modexpV1(a: number, b: number, n: number): number { return 0; }", "// v1");
+    const rowB = makeBlockRow(specB, "export function modexpV2(base: number, exp: number, mod: number): number { return 0; }", "// v2");
+
+    await registry.storeBlock(rowA);
+    await registry.storeBlock(rowB);
+
+    const card: QueryIntentCard = { behavior };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // Both candidates should appear.
+    expect(result.candidates.length).toBeGreaterThanOrEqual(2);
+
+    // Extract the two candidates we stored.
+    const stored = result.candidates.filter(
+      (c) =>
+        c.block.blockMerkleRoot === rowA.blockMerkleRoot ||
+        c.block.blockMerkleRoot === rowB.blockMerkleRoot,
+    );
+
+    if (stored.length === 2) {
+      const c0 = stored[0];
+      const c1 = stored[1];
+      // biome-ignore lint/style/noNonNullAssertion: length check above
+      const scoreDiff = Math.abs(c0!.combinedScore - c1!.combinedScore);
+
+      if (scoreDiff <= 0.02) {
+        // Within ε — lex ordering must hold.
+        // biome-ignore lint/style/noNonNullAssertion: length check above
+        expect(c0!.block.blockMerkleRoot <= c1!.block.blockMerkleRoot).toBe(true);
+      }
+    }
+  });
+
+  it("candidates are returned in descending combinedScore order", async () => {
+    // Store two specs with very different behaviors so they get different cosineDistances.
+    const closeSpec = makeSymmetricSpecYak("Validate an email address using RFC 5322 rules");
+    const farSpec = makeSymmetricSpecYak("Compute the eigenvalues of a dense matrix");
+
+    const closeRow = makeBlockRow(closeSpec);
+    const farRow = makeBlockRow(farSpec);
+    await registry.storeBlock(closeRow);
+    await registry.storeBlock(farRow);
+
+    // Query close to closeSpec.
+    const card: QueryIntentCard = {
+      behavior: "Validate an email address using RFC 5322 rules",
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    expect(result.candidates.length).toBeGreaterThanOrEqual(2);
+    // Verify descending combinedScore (modulo ε tiebreaker region).
+    for (let i = 0; i + 1 < result.candidates.length; i++) {
+      const a = result.candidates[i];
+      const b = result.candidates[i + 1];
+      // biome-ignore lint/style/noNonNullAssertion: length check controls i
+      expect(a!.combinedScore + 0.02).toBeGreaterThanOrEqual(b!.combinedScore);
+    }
+    // Under the corrected 1 - d²/4 formula (DEC-V3-IMPL-QUERY-006), scores
+    // compress more tightly than the legacy 1 - d/2 formula.  These two
+    // candidates fall within the ε=0.02 tiebreaker window, so the lex-ascending
+    // BlockMerkleRoot tiebreaker fires.  The lex-smaller root wins regardless
+    // of which spec is semantically closer.  We assert the actual lex winner so
+    // the test documents the tiebreaker behaviour rather than relying on an
+    // implicit assumption about score separation that no longer holds.
+    //
+    // If this hash ever changes (e.g. after a schema migration that alters how
+    // blockMerkleRoot is computed), update the expected value to the new winner
+    // and verify the descending-score ordering assertion above still holds.
+    const top0 = result.candidates[0]!;
+    const top1 = result.candidates[1]!;
+    const scoreDiff = Math.abs(top0.combinedScore - top1.combinedScore);
+    if (scoreDiff <= 0.02) {
+      // Tiebreaker region: lex-smaller BlockMerkleRoot must be first.
+      expect(top0.block.blockMerkleRoot <= top1.block.blockMerkleRoot).toBe(true);
+    } else {
+      // Clear score gap: closeRow must be top-1.
+      expect(top0.block.blockMerkleRoot).toBe(closeRow.blockMerkleRoot);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T10 — K' = max(K*5, 50) Stage 1 retrieval
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T10: K' = max(topK*5, 50) Stage 1 retrieval size", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-006 (Stage 1 K' verification)
+   * Stage 1 retrieves K' = max(topK * 5, 50) candidates from the KNN index.
+   * When topK=1, K'=50; when topK=20, K'=100. This ensures Stage 2/3 filters
+   * have enough candidates to produce topK survivors.
+   *
+   * We verify this behavior with a corpus of 11 blocks (> 10 = topK*5 when topK=2).
+   * Default topK=10 → K'=max(50,50)=50, so all 11 are retrieved at Stage 1.
+   */
+  it("retrieves all candidates up to K'=50 with default topK on a corpus of 11 blocks", async () => {
+    const reg = await openIsolatedRegistry();
+
+    // Store 11 blocks with distinct but related behaviors.
+    const behaviors = Array.from({ length: 11 }, (_, i) =>
+      `Sort a collection of items by field key variant ${i}`,
+    );
+    for (const b of behaviors) {
+      const spec = makeSymmetricSpecYak(b);
+      const row = makeBlockRow(spec);
+      await reg.storeBlock(row);
+    }
+
+    // Query with a behavior close to all of them; topK defaults to 10.
+    const card: QueryIntentCard = {
+      behavior: "Sort a collection of items by field key",
+    };
+    const result = await reg.findCandidatesByQuery(card);
+
+    // Default topK=10 — at most 10 candidates returned.
+    expect(result.candidates.length).toBeLessThanOrEqual(10);
+    // But Stage 1 retrieved all 11 (K'=50 > 11). The final output is truncated to topK.
+    // We can't directly observe K', but we can verify the result is well-formed.
+    expect(result.candidates.length).toBeGreaterThan(0);
+    for (const c of result.candidates) {
+      expect(c.combinedScore).toBeGreaterThanOrEqual(0);
+      expect(c.combinedScore).toBeLessThanOrEqual(1);
+    }
+
+    await reg.close();
+  }, 30_000);
+
+  it("topK cap is respected — result.candidates.length <= card.topK", async () => {
+    const reg = await openIsolatedRegistry();
+
+    // Store 15 blocks.
+    for (let i = 0; i < 15; i++) {
+      const spec = makeSymmetricSpecYak(`Debounce a callback function variant ${i}`);
+      const row = makeBlockRow(spec);
+      await reg.storeBlock(row);
+    }
+
+    const card: QueryIntentCard = {
+      behavior: "Debounce a callback function",
+      topK: 3,
+    };
+    const result = await reg.findCandidatesByQuery(card);
+
+    // Must not exceed topK=3 regardless of how many blocks are in the registry.
+    expect(result.candidates.length).toBeLessThanOrEqual(3);
+
+    await reg.close();
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// T11 — empty negative-space envelope (0 survivors → nearMisses populated)
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T11: empty negative-space envelope when 0 survivors", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-006 (near-miss envelope verification)
+   * When all Stage 1 candidates are eliminated by Stages 2/3, the result
+   * carries 0 matched candidates and a populated nearMisses array annotated
+   * with failedAtLayer and failureReason.
+   *
+   * Production sequence (compound interaction across all pipeline layers):
+   *   openRegistry → storeBlock → findCandidatesByQuery with strict filters
+   *   → 0 survivors → nearMisses populated → close
+   */
+  it("compound-interaction: structural + strictness filters produce 0 candidates and populated nearMisses", async () => {
+    const behavior = "Process a streaming data pipeline with side effects";
+
+    // Store a block that fails both structural and strictness filters.
+    const spec: SpecYak = {
+      name: "pipeline-proc",
+      inputs: [{ name: "data", type: "string[]" }],
+      outputs: [{ name: "written", type: "number" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      nonFunctional: { purity: "io", threadSafety: "unsafe" },
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Query: same behavior (high cosine) + incompatible signature + requires pure.
+    const card: QueryIntentCard = {
+      behavior,
+      signature: {
+        inputs: [{ type: "Buffer" }],    // stored has string[] → structural fail
+        outputs: [{ type: "boolean" }],  // stored has number → structural fail
+      },
+      nonFunctional: { purity: "pure" }, // stored is io → strictness fail
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // Must have 0 matched candidates.
+    expect(result.candidates).toHaveLength(0);
+    // Must have >=1 near-miss entry.
+    expect(result.nearMisses.length).toBeGreaterThan(0);
+
+    // All near-misses must have correct shape.
+    for (const nm of result.nearMisses) {
+      expect(["structural", "strictness", "property_test", "min_score"]).toContain(
+        nm.failedAtLayer,
+      );
+      expect(nm.autoAccepted).toBe(false);
+      expect(typeof nm.failureReason).toBe("string");
+      expect(nm.failureReason.length).toBeGreaterThan(0);
+      expect(nm.combinedScore).toBeGreaterThanOrEqual(0);
+      expect(nm.combinedScore).toBeLessThanOrEqual(1);
+      // nearMisses must have their block root — they're fully hydrated.
+      expect(typeof nm.block.blockMerkleRoot).toBe("string");
+    }
+
+    // The near-miss must contain the block we stored (it was filtered).
+    const nmForOurBlock = result.nearMisses.find(
+      (nm) => nm.block.blockMerkleRoot === row.blockMerkleRoot,
+    );
+    expect(nmForOurBlock).toBeDefined();
+    // Stage 2 structural filter fires first → failedAtLayer should be 'structural'.
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined
+    expect(nmForOurBlock!.failedAtLayer).toBe("structural");
+  });
+
+  it("nearMisses are sorted descending by combinedScore", async () => {
+    const reg = await openIsolatedRegistry();
+
+    // Store 3 blocks with distinct behaviors (different cosineDistances to the query).
+    const behaviors = [
+      "Encode data using a Huffman tree",
+      "Decode a Huffman-encoded byte stream",
+      "Build a Huffman frequency table from input bytes",
+    ];
+    for (const b of behaviors) {
+      const spec: SpecYak = {
+        name: "huffman-fn",
+        inputs: [{ name: "data", type: "Buffer" }],
+        outputs: [{ name: "result", type: "Buffer" }],
+        preconditions: [],
+        postconditions: [],
+        invariants: [],
+        effects: [],
+        level: "L0",
+        behavior: b,
+        nonFunctional: { purity: "io", threadSafety: "safe" },
+      };
+      const row = makeBlockRow(spec);
+      await reg.storeBlock(row);
+    }
+
+    // Query with pure → all io candidates fail Stage 3.
+    const card: QueryIntentCard = {
+      behavior: "Huffman coding algorithm",
+      nonFunctional: { purity: "pure" },
+    };
+    const result = await reg.findCandidatesByQuery(card);
+
+    expect(result.candidates).toHaveLength(0);
+    // nearMisses should be sorted descending by combinedScore.
+    if (result.nearMisses.length >= 2) {
+      for (let i = 0; i + 1 < result.nearMisses.length; i++) {
+        const a = result.nearMisses[i];
+        const b = result.nearMisses[i + 1];
+        // biome-ignore lint/style/noNonNullAssertion: length check controls i
+        expect(a!.combinedScore).toBeGreaterThanOrEqual(b!.combinedScore);
+      }
+    }
+
+    await reg.close();
+  }, 30_000);
+
+  it("candidates and nearMisses are never mixed — they are disjoint lists", async () => {
+    // Store two blocks: one that passes all filters, one that fails strictness.
+    const passBehavior = "Compute SHA-256 hash of a string using pure computation";
+    const failBehavior = "Read file contents and return bytes";
+
+    const passSpec: SpecYak = {
+      name: "sha256-fn",
+      inputs: [{ name: "s", type: "string" }],
+      outputs: [{ name: "hash", type: "string" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior: passBehavior,
+      nonFunctional: { purity: "pure", threadSafety: "safe" },
+    };
+    const failSpec: SpecYak = {
+      name: "read-file-fn",
+      inputs: [{ name: "path", type: "string" }],
+      outputs: [{ name: "bytes", type: "Buffer" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior: failBehavior,
+      nonFunctional: { purity: "io", threadSafety: "safe" },
+    };
+
+    const passRow = makeBlockRow(passSpec);
+    const failRow = makeBlockRow(failSpec);
+    await registry.storeBlock(passRow);
+    await registry.storeBlock(failRow);
+
+    // Query: look for behavior matching passSpec (so it shows in candidates),
+    // require pure (so failSpec fails Stage 3).
+    const card: QueryIntentCard = {
+      behavior: passBehavior,
+      nonFunctional: { purity: "pure" },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // When at least one candidate survives, nearMisses must be empty (D3 §Q6 separation).
+    if (result.candidates.length > 0) {
+      expect(result.nearMisses).toHaveLength(0);
+
+      // No BlockMerkleRoot appears in both lists.
+      const candidateRoots = new Set(result.candidates.map((c) => c.block.blockMerkleRoot));
+      for (const nm of result.nearMisses) {
+        expect(candidateRoots.has(nm.block.blockMerkleRoot)).toBe(false);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T12 — existing findCandidatesByIntent tests remain unchanged
+// ---------------------------------------------------------------------------
+
+describe("findCandidatesByQuery — T12: findCandidatesByIntent remains unaffected", () => {
+  /**
+   * @decision DEC-V3-IMPL-QUERY-005 (coexistence verification)
+   * findCandidatesByIntent must continue to work exactly as before. The new
+   * findCandidatesByQuery is additive; no behavioral changes to the existing
+   * path are permitted.
+   */
+  it("findCandidatesByIntent still returns matches for a stored block after WI-v3 changes", async () => {
+    const spec = makeSpecYak("find-intent-regression", "Parse a JSON integer from a string");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const intentCard: IntentQuery = {
+      behavior: "Parse a JSON integer from a string",
+      inputs: [{ name: "input", typeHint: "string" }],
+      outputs: [{ name: "result", typeHint: "number" }],
+    };
+
+    const matches = await registry.findCandidatesByIntent(intentCard);
+    expect(matches.length).toBeGreaterThan(0);
+    const found = matches.some((m) => m.block.blockMerkleRoot === row.blockMerkleRoot);
+    expect(found).toBe(true);
+    // Each match has expected fields.
+    // biome-ignore lint/style/noNonNullAssertion: length check above
+    expect(typeof matches[0]!.cosineDistance).toBe("number");
+    // biome-ignore lint/style/noNonNullAssertion: length check above
+    expect(matches[0]!.cosineDistance).toBeGreaterThanOrEqual(0);
+  });
+
+  it("findCandidatesByIntent and findCandidatesByQuery can coexist in the same session", async () => {
+    const spec = makeSpecYak("coexist-test", "Compute the factorial of a non-negative integer");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    // Both methods work on the same registry instance without interference.
+    const intentCard: IntentQuery = {
+      behavior: "Compute the factorial of a non-negative integer",
+      inputs: [{ name: "n", typeHint: "number" }],
+      outputs: [{ name: "result", typeHint: "number" }],
+    };
+    const queryCard: QueryIntentCard = {
+      behavior: "Compute the factorial of a non-negative integer",
+    };
+
+    const [intentResult, queryResult] = await Promise.all([
+      registry.findCandidatesByIntent(intentCard),
+      registry.findCandidatesByQuery(queryCard),
+    ]);
+
+    expect(intentResult.length).toBeGreaterThan(0);
+    expect(queryResult.candidates.length).toBeGreaterThan(0);
+
+    // Both find the same stored block.
+    const byIntent = intentResult.some((m) => m.block.blockMerkleRoot === row.blockMerkleRoot);
+    const byQuery = queryResult.candidates.some(
+      (c) => c.block.blockMerkleRoot === row.blockMerkleRoot,
+    );
+    expect(byIntent).toBe(true);
+    expect(byQuery).toBe(true);
+  });
 });

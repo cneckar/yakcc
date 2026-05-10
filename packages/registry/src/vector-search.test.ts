@@ -19,6 +19,7 @@ import {
   type CanonicalAstHash,
   type EmbeddingProvider,
   type ProofManifest,
+  type QueryIntentCard,
   type SpecYak,
   blockMerkleRoot,
   canonicalize,
