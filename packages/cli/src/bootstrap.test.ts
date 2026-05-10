@@ -452,3 +452,312 @@ describe("bootstrap --verify exits 1 with structured diff on mismatch", () => {
     expect(logger.errLines.join("\n")).toContain("committed manifest not found");
   }, 10_000);
 });
+
+// ---------------------------------------------------------------------------
+// Suite 8: expected-failures reclassification
+//
+// These tests exercise the expected-failures.json exemption mechanism without
+// running the full shave pipeline. They use a real temp-file sqlite registry
+// but a fixture project where failures are synthetic (no-SPDX header) and the
+// expected-failures.json file is written inline so we control path+errorClass.
+//
+// Production sequence exercised (Compound-Interaction requirement):
+//   bootstrap([...flags, "--expected-failures", efPath], logger)
+//   → loadExpectedFailures(efPath)
+//   → shave loop produces FileOutcomeFailure for no-SPDX file
+//   → reclassification maps it to FileOutcomeExpectedFailure via path+errorClass key
+//   → summary shows expected-failures count, exit 0
+//   → report.json contains outcome:"expected-failure"
+// ---------------------------------------------------------------------------
+
+describe("bootstrap expected-failures exemption", () => {
+  /**
+   * Build an expected-failures.json that matches a given path and errorClass.
+   * Written to a temp file; returns the path.
+   */
+  function makeExpectedFailuresFile(
+    dir: string,
+    name: string,
+    entries: Array<{ path: string; errorClass: string; rationale: string }>,
+  ): string {
+    const filePath = join(dir, name);
+    const content = {
+      schemaVersion: 1,
+      entries,
+    };
+    writeFileSync(filePath, `${JSON.stringify(content, null, 2)}\n`, "utf-8");
+    return filePath;
+  }
+
+  it("reclassifies a LicenseRefusedError failure as expected-failure and exits 0", async () => {
+    // Create a fixture project with a no-SPDX file (triggers LicenseRefusedError or
+    // similar gate failure). We also include one valid file so the bootstrap isn't empty.
+    const projDir = makeFixtureProject(suiteDir, "proj-ef-basic", [
+      {
+        relativePath: "packages/foo/src/ok.ts",
+        content: VALID_TS_SOURCE,
+      },
+      {
+        relativePath: "packages/foo/src/bad.ts",
+        content: NO_SPDX_SOURCE,
+      },
+    ]);
+
+    // Run without expected-failures first to confirm bad.ts causes a real failure.
+    const registryPath1 = join(suiteDir, "ef-basic-r1.sqlite");
+    const manifestPath1 = join(suiteDir, "ef-basic-m1.json");
+    const reportPath1 = join(suiteDir, "ef-basic-rep1.json");
+
+    const origCwd = process.cwd();
+    process.chdir(projDir);
+    let codeWithout: number;
+    let errorClassObserved: string;
+    try {
+      const logger1 = new CollectingLogger();
+      codeWithout = await bootstrap(
+        ["--registry", registryPath1, "--manifest", manifestPath1, "--report", reportPath1],
+        logger1,
+      );
+      // Must fail without the exemption.
+      expect(codeWithout).toBe(1);
+
+      // Discover the actual errorClass the shave pipeline throws for this fixture.
+      const report1 = JSON.parse(readFileSync(reportPath1, "utf-8")) as Array<{
+        outcome: string;
+        path: string;
+        errorClass?: string;
+      }>;
+      const badEntry = report1.find((r) => r.path.endsWith("bad.ts"));
+      expect(badEntry).toBeDefined();
+      expect(badEntry?.outcome).toBe("failure");
+      errorClassObserved = badEntry?.errorClass ?? "Error";
+    } finally {
+      process.chdir(origCwd);
+    }
+
+    // Write an expected-failures.json that covers bad.ts with the observed errorClass.
+    // The path in expected-failures.json must be repo-relative (matches outcomes[].path).
+    const efPath = makeExpectedFailuresFile(suiteDir, "ef-basic.json", [
+      {
+        path: "packages/foo/src/bad.ts",
+        errorClass: errorClassObserved,
+        rationale: "Test fixture: intentional license-gate failure for unit test coverage.",
+      },
+    ]);
+
+    // Run again with expected-failures — bad.ts should be reclassified, exit 0.
+    const registryPath2 = join(suiteDir, "ef-basic-r2.sqlite");
+    const manifestPath2 = join(suiteDir, "ef-basic-m2.json");
+    const reportPath2 = join(suiteDir, "ef-basic-rep2.json");
+
+    process.chdir(projDir);
+    try {
+      const logger2 = new CollectingLogger();
+      const codeWith = await bootstrap(
+        [
+          "--registry",
+          registryPath2,
+          "--manifest",
+          manifestPath2,
+          "--report",
+          reportPath2,
+          "--expected-failures",
+          efPath,
+        ],
+        logger2,
+      );
+
+      // Exit 0: the only failure is now an expected-failure.
+      expect(codeWith).toBe(0);
+
+      // Report must show outcome:"expected-failure" for bad.ts.
+      expect(existsSync(reportPath2)).toBe(true);
+      const report2 = JSON.parse(readFileSync(reportPath2, "utf-8")) as Array<{
+        outcome: string;
+        path: string;
+        errorClass?: string;
+        rationale?: string;
+      }>;
+      const efEntry = report2.find((r) => r.path.endsWith("bad.ts"));
+      expect(efEntry).toBeDefined();
+      expect(efEntry?.outcome).toBe("expected-failure");
+      expect(efEntry?.rationale).toContain("Test fixture");
+
+      // Summary output must mention expected-failures count.
+      const logOutput = logger2.logLines.join("\n");
+      expect(logOutput).toContain("expected-failures");
+      expect(logOutput).toContain("1");
+    } finally {
+      process.chdir(origCwd);
+    }
+  }, 120_000);
+
+  it("still exits 1 when a non-exempted file also fails", async () => {
+    // Two bad files; only one is in expected-failures.json. The other must still fail.
+    const projDir = makeFixtureProject(suiteDir, "proj-ef-partial", [
+      {
+        relativePath: "packages/foo/src/bad1.ts",
+        content: NO_SPDX_SOURCE,
+      },
+      {
+        relativePath: "packages/foo/src/bad2.ts",
+        content: NO_SPDX_SOURCE,
+      },
+    ]);
+
+    // First, get the errorClass for the no-SPDX files.
+    const registryPath1 = join(suiteDir, "ef-partial-r1.sqlite");
+    const manifestPath1 = join(suiteDir, "ef-partial-m1.json");
+    const reportPath1 = join(suiteDir, "ef-partial-rep1.json");
+
+    const origCwd = process.cwd();
+    process.chdir(projDir);
+    let errorClassObserved: string;
+    try {
+      const logger1 = new CollectingLogger();
+      await bootstrap(
+        ["--registry", registryPath1, "--manifest", manifestPath1, "--report", reportPath1],
+        logger1,
+      );
+      const report1 = JSON.parse(readFileSync(reportPath1, "utf-8")) as Array<{
+        outcome: string;
+        path: string;
+        errorClass?: string;
+      }>;
+      const bad1 = report1.find((r) => r.path.endsWith("bad1.ts"));
+      errorClassObserved = bad1?.errorClass ?? "Error";
+    } finally {
+      process.chdir(origCwd);
+    }
+
+    // Exempt only bad1.ts; bad2.ts remains a real failure.
+    const efPath = makeExpectedFailuresFile(suiteDir, "ef-partial.json", [
+      {
+        path: "packages/foo/src/bad1.ts",
+        errorClass: errorClassObserved,
+        rationale: "Intentional fixture.",
+      },
+    ]);
+
+    const registryPath2 = join(suiteDir, "ef-partial-r2.sqlite");
+    const manifestPath2 = join(suiteDir, "ef-partial-m2.json");
+    const reportPath2 = join(suiteDir, "ef-partial-rep2.json");
+
+    process.chdir(projDir);
+    try {
+      const logger2 = new CollectingLogger();
+      const code = await bootstrap(
+        [
+          "--registry",
+          registryPath2,
+          "--manifest",
+          manifestPath2,
+          "--report",
+          reportPath2,
+          "--expected-failures",
+          efPath,
+        ],
+        logger2,
+      );
+
+      // bad2.ts is still a real failure → exit 1.
+      expect(code).toBe(1);
+
+      const report2 = JSON.parse(readFileSync(reportPath2, "utf-8")) as Array<{
+        outcome: string;
+        path: string;
+      }>;
+      const ef1 = report2.find((r) => r.path.endsWith("bad1.ts"));
+      const f2 = report2.find((r) => r.path.endsWith("bad2.ts"));
+      expect(ef1?.outcome).toBe("expected-failure");
+      expect(f2?.outcome).toBe("failure");
+    } finally {
+      process.chdir(origCwd);
+    }
+  }, 120_000);
+
+  it("emits a warning for an untriggered expected-failure entry (path not in processed files)", async () => {
+    // A project with one valid file; expected-failures.json references a path that
+    // doesn't exist in the project. The entry is never triggered → warning, but exit 0.
+    const projDir = makeFixtureProject(suiteDir, "proj-ef-untriggered", [
+      {
+        relativePath: "packages/foo/src/ok.ts",
+        content: VALID_TS_SOURCE,
+      },
+    ]);
+
+    const efPath = makeExpectedFailuresFile(suiteDir, "ef-untriggered.json", [
+      {
+        path: "examples/v0.7-mri-demo/src/gpl-fixture.ts",
+        errorClass: "LicenseRefusedError",
+        rationale: "Intentional GPL fixture — but this fixture is not in this mini-project.",
+      },
+    ]);
+
+    const registryPath = join(suiteDir, "ef-unt-r.sqlite");
+    const manifestPath = join(suiteDir, "ef-unt-m.json");
+    const reportPath = join(suiteDir, "ef-unt-rep.json");
+
+    const origCwd = process.cwd();
+    process.chdir(projDir);
+    try {
+      const logger = new CollectingLogger();
+      const code = await bootstrap(
+        [
+          "--registry",
+          registryPath,
+          "--manifest",
+          manifestPath,
+          "--report",
+          reportPath,
+          "--expected-failures",
+          efPath,
+        ],
+        logger,
+      );
+
+      // Untriggered entry does NOT fail the bootstrap (warning only).
+      expect(code).toBe(0);
+
+      // Warning must appear in log output.
+      const logOutput = logger.logLines.join("\n");
+      expect(logOutput).toContain("warning");
+      expect(logOutput).toContain("expected-failure");
+      expect(logOutput).toContain("gpl-fixture.ts");
+    } finally {
+      process.chdir(origCwd);
+    }
+  }, 120_000);
+
+  it("exits 1 when expected-failures.json has an unsupported schemaVersion", async () => {
+    const badEfPath = join(suiteDir, "ef-badschema.json");
+    writeFileSync(badEfPath, JSON.stringify({ schemaVersion: 99, entries: [] }, null, 2), "utf-8");
+
+    const projDir = makeFixtureProject(suiteDir, "proj-ef-badschema", [
+      { relativePath: "packages/foo/src/ok.ts", content: VALID_TS_SOURCE },
+    ]);
+
+    const origCwd = process.cwd();
+    process.chdir(projDir);
+    try {
+      const logger = new CollectingLogger();
+      const code = await bootstrap(
+        [
+          "--registry",
+          join(suiteDir, "ef-badschema-r.sqlite"),
+          "--manifest",
+          join(suiteDir, "ef-badschema-m.json"),
+          "--report",
+          join(suiteDir, "ef-badschema-rep.json"),
+          "--expected-failures",
+          badEfPath,
+        ],
+        logger,
+      );
+      expect(code).toBe(1);
+      expect(logger.errLines.join("\n")).toContain("schemaVersion");
+    } finally {
+      process.chdir(origCwd);
+    }
+  }, 30_000);
+});
