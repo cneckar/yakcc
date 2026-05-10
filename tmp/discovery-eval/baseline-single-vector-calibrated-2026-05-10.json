@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "date": "2026-05-10",
+  "head_sha": "c4dbfee",
+  "provider": "yakcc/offline-blake3-stub",
+  "corpus_source": "bootstrap-inline",
+  "corpus_entries": 9,
+  "metrics": {
+    "M1_hit_rate": 1,
+    "M1_target": 0.8,
+    "M1_pass": true,
+    "M2_precision_at_1": 0.4,
+    "M2_target": 0.7,
+    "M2_pass": false,
+    "M3_recall_at_10": 1,
+    "M3_target": 0.9,
+    "M3_pass": true,
+    "M4_mrr": 0.54,
+    "M4_target": 0.7,
+    "M4_pass": false,
+    "M5_brier_per_band": {
+      "strong": {
+        "N": 0,
+        "correct": 0,
+        "P": null,
+        "midpoint": 0.925,
+        "brier": null
+      },
+      "confident": {
+        "N": 0,
+        "correct": 0,
+        "P": null,
+        "midpoint": 0.775,
+        "brier": null
+      },
+      "weak": {
+        "N": 9,
+        "correct": 2,
+        "P": 0.2222222222222222,
+        "midpoint": 0.6,
+        "brier": 0.14271604938271604
+      },
+      "poor": {
+        "N": 0,
+        "correct": 0,
+        "P": null,
+        "midpoint": 0.25,
+        "brier": null
+      }
+    },
+    "M5_target": 0.1,
+    "M5_pass": false
+  },
+  "worst_entries": {
+    "M1": [
+      "synth-clamp-001",
+      "synth-haversine-negative-001",
+      "seed-comma-001"
+    ],
+    "M2": [
+      "seed-ascii-char-001",
+      "seed-integer-001",
+      "seed-digit-001"
+    ],
+    "M3": [],
+    "M4": [
+      "seed-digit-001",
+      "seed-ascii-char-001",
+      "seed-integer-001"
+    ]
+  },
+  "provider_note": "OFFLINE PROVIDER (BLAKE3 hashes — NOT semantic). M1..M4 numbers reflect hash-space proximity, not semantic quality. Re-run with DISCOVERY_EVAL_PROVIDER=local for operator-facing baseline."
+}

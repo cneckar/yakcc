@@ -1,0 +1,36 @@
+{
+  "corpus": "bootstrap-inline",
+  "head_sha": "c4dbfee",
+  "generated_at": "2026-05-10T18:27:30.635Z",
+  "provider": "yakcc/offline-blake3-stub",
+  "bands": {
+    "strong": {
+      "N": 0,
+      "correct": 0,
+      "P": null,
+      "midpoint": 0.925,
+      "brier": null
+    },
+    "confident": {
+      "N": 0,
+      "correct": 0,
+      "P": null,
+      "midpoint": 0.775,
+      "brier": null
+    },
+    "weak": {
+      "N": 9,
+      "correct": 2,
+      "P": 0.2222222222222222,
+      "midpoint": 0.6,
+      "brier": 0.14271604938271604
+    },
+    "poor": {
+      "N": 0,
+      "correct": 0,
+      "P": null,
+      "midpoint": 0.25,
+      "brier": null
+    }
+  }
+}
