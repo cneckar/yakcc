@@ -58,7 +58,15 @@
  *
  * @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-001
  * @title M1 hit-rate threshold calibration — lower from 0.50 to M1_HIT_THRESHOLD (0.40)
- * @status accepted
+ * @status superseded — see DEC-V3-DISCOVERY-CALIBRATION-FIX-002 at `cosineDistanceToCombinedScore` below
+ * @supersession-note
+ *   The diagnosis below ("store/query text asymmetry") was incorrect. The actual bug is
+ *   that sqlite-vec vec0 returns L2 Euclidean distance (not cosine), but the formula `1 - d/2`
+ *   was applied to it as if it were cosine distance. Lowering the threshold to 0.40 was an
+ *   incorrect fix for the actual bug. PR #268 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002 fixes
+ *   the formula to `1 - d²/4` (the correct L2 → combinedScore mapping for unit-normalized
+ *   vectors) and restores the threshold to 0.50. The diagnosis below is preserved for
+ *   audit-trail purposes; the code reflects the corrected -002 fix.
  * @rationale
  *   PR #254 surfaced M1=0% with M2=80%/M3=100%/M4≈0.88 under the local semantic provider.
  *   Investigation (tmp/discovery-eval/calibration-investigation.md, HEAD 31192ca) showed
@@ -207,14 +215,59 @@ export interface PendingEntry {
 export type ScoreBand = "strong" | "confident" | "weak" | "poor";
 
 /**
- * Convert a cosineDistance from sqlite-vec to D3's combinedScore.
+ * Convert a vec0 distance value to D3's combinedScore.
  *
- * Linear mapping: combinedScore = max(0, 1 - cosineDistance/2).
- * For L2-normalized unit vectors, cosineDistance in [0, 2] maps to combinedScore in [0, 1].
- * This is consistent with the CandidateMatch.cosineDistance documentation.
+ * @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-002
+ * @title L2-as-cosine units bug — correct the score-mapping formula
+ * @status accepted
+ * @rationale
+ *   sqlite-vec's `vec0` virtual table returns **L2 Euclidean distance** by default
+ *   (no `distance=cosine` specifier on the column declaration in `schema.ts`).
+ *   The previous formula `1 - d/2` was the correct mapping if `d` were cosine
+ *   distance — but it isn't. For unit-normalized vectors, the identity is
+ *   `cosine_distance = (L2)² / 2`, so the correct mapping from L2 distance to
+ *   combinedScore is `1 - L2²/4 = (1 + cos(θ)) / 2`.
+ *
+ *   PR #267 (DEC-V3-DISCOVERY-CALIBRATION-FIX-001) misdiagnosed the M1=0% bug
+ *   surfaced in PR #254 as a "store/query text asymmetry" issue and lowered the
+ *   threshold from 0.50 to 0.40 to compensate. The actual bug was the formula
+ *   treating L2 distance as cosine distance. Empirical evidence:
+ *     - PR #267 observed cosine distances on correct hits in [1.02, 1.16].
+ *       That range is impossible for actual cosine distance on a hit but IS
+ *       consistent with L2 distance for vectors with cos(θ) ≈ 0.3.
+ *     - PR #268 (this fix) on the offline BLAKE3 provider with the corrected
+ *       formula recovered M1 to 100% — only possible if the formula was the
+ *       single bug for that provider's symmetric-text-derivation case.
+ *
+ *   The parameter is still named `cosineDistance` because that's what the
+ *   `CandidateMatch.cosineDistance` field is named throughout the codebase.
+ *   Renaming the field would cascade through many call sites; we keep the name
+ *   and document the L2 reality here. The variable holds whatever vec0 returns
+ *   from `SELECT distance FROM contract_embeddings WHERE embedding MATCH ?`.
+ *
+ *   This DEC supersedes the formula-related portions of
+ *   DEC-V3-DISCOVERY-CALIBRATION-FIX-001 (file header). The threshold portion
+ *   of -001 is reverted: M1_HIT_THRESHOLD returns to 0.50 (D3 ADR Q5's
+ *   weak-band entry boundary).
+ *
+ *   Cross-references:
+ *     DEC-V3-DISCOVERY-D3-001 (discovery-ranking.md) — D3 ADR's [0,1] band
+ *       boundaries are now correctly reproduced by this formula.
+ *     DEC-V3-DISCOVERY-D5-001 (discovery-quality-measurement.md) — D5 Q1
+ *       threshold value reverts to 0.50 alongside this fix.
+ *     DEC-V3-INITIATIVE-002 (MASTER_PLAN.md) — this fix removes the
+ *       store/query symmetry framing as the PRIMARY contamination source;
+ *       sample-size framing remains.
+ *     DEC-VECTOR-RETRIEVAL-002 — store/query text derivation difference is a
+ *       SECONDARY concern (real but not the dominant cause of M1=0%).
+ *
+ * For unit-normalized vectors, L2 distance d ∈ [0, 2]:
+ *   d = 0    → combinedScore = 1.0  (identical vectors)
+ *   d = √2   → combinedScore = 0.5  (orthogonal vectors, cos(θ) = 0)
+ *   d = 2    → combinedScore = 0.0  (antipodal vectors, cos(θ) = -1)
  */
 export function cosineDistanceToCombinedScore(cosineDistance: number): number {
-  return Math.max(0, Math.min(1, 1 - cosineDistance / 2));
+  return Math.max(0, Math.min(1, 1 - (cosineDistance * cosineDistance) / 4));
 }
 
 /**
@@ -244,22 +297,19 @@ export const BAND_MIDPOINTS: Record<ScoreBand, number> = {
 /**
  * M1 hit-rate threshold — combinedScore value at or above which a query counts as a "hit".
  *
- * @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-001
- * Calibrated to 0.40 (amended from D5 ADR Q1's original 0.50) based on empirical distance
- * investigation at HEAD 31192ca (tmp/discovery-eval/calibration-investigation.md).
+ * @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-002
+ * Restored to 0.50 alongside the L2-as-cosine formula fix in
+ * `cosineDistanceToCombinedScore`. The threshold was always correct (it's D3
+ * ADR Q5's weak-band entry boundary); the formula was wrong, and lowering the
+ * threshold under DEC-V3-DISCOVERY-CALIBRATION-FIX-001 was an incorrect fix
+ * for the actual bug. With the corrected formula, correct top-1 hits score
+ * above 0.50 in the natural [0, 1] band semantics that D3 ADR specifies.
  *
- * Under the current embedding strategy (storeBlock uses canonicalizeText(spec); findCandidatesByIntent
- * uses behavior+params text), correct top-1 hits produce cosineDistance in [1.02, 1.16], mapping
- * to combinedScore in [0.42, 0.49] via (1 - d/2). All 4/5 correct hits score above 0.40.
- * None reach 0.50 — the original D3 weak-band entry threshold.
- *
- * This threshold should be re-calibrated (likely back to 0.50 or higher) when
- * WI-V3-DISCOVERY-IMPL-QUERY fixes the store/query text asymmetry so that correct hits
- * produce cosineDistance < 0.5.
- *
- * Cross-refs: DEC-V3-DISCOVERY-D5-001, DEC-VECTOR-RETRIEVAL-002, DEC-V3-DISCOVERY-D3-001.
+ * Cross-refs: DEC-V3-DISCOVERY-D5-001 (Q1 threshold = 0.50), DEC-V3-DISCOVERY-D3-001
+ *   (band boundaries), DEC-V3-DISCOVERY-CALIBRATION-FIX-002 (formula fix in
+ *   cosineDistanceToCombinedScore), DEC-V3-INITIATIVE-002 (gate criteria).
  */
-export const M1_HIT_THRESHOLD = 0.4;
+export const M1_HIT_THRESHOLD = 0.5;
 
 // ---------------------------------------------------------------------------
 // Per-query result type (intermediate computation)

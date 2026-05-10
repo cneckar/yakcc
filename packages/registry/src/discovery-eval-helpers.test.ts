@@ -75,41 +75,48 @@ function makeResult(id: string, overrides: Partial<QueryResult> = {}): QueryResu
 // ---------------------------------------------------------------------------
 
 describe("cosineDistanceToCombinedScore", () => {
-  it("distance 0 → score 1.0 (identical vectors)", () => {
+  // Per DEC-V3-DISCOVERY-CALIBRATION-FIX-002, vec0 returns L2 distance.
+  // Formula: combinedScore = 1 - L2²/4, valid for L2 ∈ [0, 2].
+  // Reference points (L2 → score):
+  //   0       → 1.00 (identical)
+  //   √0.6    → 0.85 (strong-band entry, ≈ 0.7746)
+  //   √1.2    → 0.70 (confident-band entry, ≈ 1.0954)
+  //   √2      → 0.50 (orthogonal vectors, weak-band entry, ≈ 1.4142)
+  //   2       → 0.00 (antipodal vectors)
+
+  it("L2 distance 0 → score 1.0 (identical vectors)", () => {
     expect(cosineDistanceToCombinedScore(0)).toBe(1.0);
   });
 
-  it("distance 1 → score 0.5 (orthogonal vectors)", () => {
-    expect(cosineDistanceToCombinedScore(1)).toBe(0.5);
+  it("L2 distance √2 → score 0.5 (orthogonal vectors, weak-band entry)", () => {
+    expect(cosineDistanceToCombinedScore(Math.SQRT2)).toBeCloseTo(0.5, 10);
   });
 
-  it("distance 2 → score 0.0 (anti-parallel vectors)", () => {
+  it("L2 distance 2 → score 0.0 (antipodal vectors)", () => {
     expect(cosineDistanceToCombinedScore(2)).toBe(0.0);
   });
 
-  it("distance 1.2 → score 0.4 (calibration boundary — DEC-V3-DISCOVERY-CALIBRATION-FIX-001)", () => {
-    expect(cosineDistanceToCombinedScore(1.2)).toBeCloseTo(0.4, 10);
-  });
-
-  it("distance > 2 is clamped to 0", () => {
+  it("L2 distance > 2 is clamped to 0", () => {
     expect(cosineDistanceToCombinedScore(2.5)).toBe(0.0);
   });
 
-  it("distance < 0 is clamped to 1", () => {
-    // Negative cosine distances should not occur but are clamped for robustness.
-    expect(cosineDistanceToCombinedScore(-0.5)).toBe(1.0);
+  it("L2 distance < 0 maps via squared term (negatives produce non-extreme scores)", () => {
+    // Negative L2 distances should not occur but the clamp still bounds output to [0, 1].
+    // 1 - (-0.5)²/4 = 1 - 0.0625 = 0.9375 (not clamped; within range).
+    expect(cosineDistanceToCombinedScore(-0.5)).toBeCloseTo(0.9375, 10);
   });
 
-  it("distance 0.3 → score 0.85 (strong band entry)", () => {
-    expect(cosineDistanceToCombinedScore(0.3)).toBeCloseTo(0.85, 10);
+  it("L2 distance √0.6 → score 0.85 (strong-band entry)", () => {
+    expect(cosineDistanceToCombinedScore(Math.sqrt(0.6))).toBeCloseTo(0.85, 10);
   });
 
-  it("distance 0.6 → score 0.7 (confident band entry)", () => {
-    expect(cosineDistanceToCombinedScore(0.6)).toBeCloseTo(0.7, 10);
+  it("L2 distance √1.2 → score 0.70 (confident-band entry)", () => {
+    expect(cosineDistanceToCombinedScore(Math.sqrt(1.2))).toBeCloseTo(0.7, 10);
   });
 
-  it("distance 1.0 → score 0.5 (weak band entry — original D5 threshold)", () => {
-    expect(cosineDistanceToCombinedScore(1.0)).toBe(0.5);
+  it("L2 distance 1.0 → score 0.75 (close vectors; mid-confident band)", () => {
+    // 1 - 1²/4 = 0.75
+    expect(cosineDistanceToCombinedScore(1.0)).toBe(0.75);
   });
 });
 
@@ -157,17 +164,17 @@ describe("assignScoreBand", () => {
 // ---------------------------------------------------------------------------
 
 describe("M1_HIT_THRESHOLD", () => {
-  it("is 0.40 (DEC-V3-DISCOVERY-CALIBRATION-FIX-001)", () => {
-    expect(M1_HIT_THRESHOLD).toBe(0.4);
+  it("is 0.50 (DEC-V3-DISCOVERY-CALIBRATION-FIX-002 — restored from -001's 0.40)", () => {
+    expect(M1_HIT_THRESHOLD).toBe(0.5);
   });
 
-  it("is below the D3 weak-band entry (0.50)", () => {
-    expect(M1_HIT_THRESHOLD).toBeLessThan(0.5);
+  it("matches the D3 weak-band entry boundary", () => {
+    expect(M1_HIT_THRESHOLD).toBe(0.5);
   });
 
-  it("corresponds to cosineDistance 1.2 via the D3 formula", () => {
-    // M1_HIT_THRESHOLD = 1 - 1.2/2 = 0.4
-    expect(cosineDistanceToCombinedScore(1.2)).toBeCloseTo(M1_HIT_THRESHOLD, 10);
+  it("corresponds to L2 distance √2 (orthogonal vectors) via the corrected formula", () => {
+    // M1_HIT_THRESHOLD = 1 - (√2)²/4 = 1 - 0.5 = 0.5
+    expect(cosineDistanceToCombinedScore(Math.SQRT2)).toBeCloseTo(M1_HIT_THRESHOLD, 10);
   });
 });
 
@@ -206,14 +213,14 @@ describe("computeHitRate (M1)", () => {
     const results = [
       makeResult("a", { top1Score: 0.8 }),
       makeResult("b", { top1Score: 0.6 }),
-      makeResult("c", { top1Score: 0.45 }), // above 0.40
+      makeResult("c", { top1Score: 0.55 }), // above 0.50
     ];
     expect(computeHitRate(results)).toBe(1.0);
   });
 
   it("all results below M1_HIT_THRESHOLD → 0.0", () => {
     const results = [
-      makeResult("a", { top1Score: 0.38 }),
+      makeResult("a", { top1Score: 0.49 }),
       makeResult("b", { top1Score: 0.2 }),
       makeResult("c", { top1Score: 0.0 }),
     ];
@@ -223,28 +230,28 @@ describe("computeHitRate (M1)", () => {
   it("mixed: 3/5 above threshold → 0.6", () => {
     const results = [
       makeResult("a", { top1Score: 0.8 }),
-      makeResult("b", { top1Score: 0.42 }),
-      makeResult("c", { top1Score: 0.49 }),
-      makeResult("d", { top1Score: 0.38 }), // below
+      makeResult("b", { top1Score: 0.55 }),
+      makeResult("c", { top1Score: 0.51 }),
+      makeResult("d", { top1Score: 0.45 }), // below
       makeResult("e", { top1Score: 0.0 }), // below
     ];
     expect(computeHitRate(results)).toBe(0.6);
   });
 
-  it("score exactly at M1_HIT_THRESHOLD (0.40) counts as a hit", () => {
-    const results = [makeResult("a", { top1Score: 0.4 })];
+  it("score exactly at M1_HIT_THRESHOLD (0.50) counts as a hit", () => {
+    const results = [makeResult("a", { top1Score: 0.5 })];
     expect(computeHitRate(results)).toBe(1.0);
   });
 
-  it("score just below M1_HIT_THRESHOLD (0.3999) does NOT count as hit", () => {
-    const results = [makeResult("a", { top1Score: 0.3999 })];
+  it("score just below M1_HIT_THRESHOLD (0.4999) does NOT count as hit", () => {
+    const results = [makeResult("a", { top1Score: 0.4999 })];
     expect(computeHitRate(results)).toBe(0.0);
   });
 
   it("includes negative-space entries (expectedAtom=null) in hit count", () => {
     const results = [
       makeResult("pos", { top1Score: 0.8, expectedAtom: "some-hash" }),
-      makeResult("neg", { top1Score: 0.45, expectedAtom: null, top1Correct: false }),
+      makeResult("neg", { top1Score: 0.55, expectedAtom: null, top1Correct: false }),
     ];
     // Both score above M1_HIT_THRESHOLD → hit rate = 1.0
     // (negative-space entry with score >= threshold is a false hit, still counted)
@@ -544,10 +551,10 @@ describe("computeBaseline", () => {
     expect(baseline.metrics.M5_target).toBe(0.1);
   });
 
-  it("M1_pass reflects M1_HIT_THRESHOLD (0.40), not original 0.50", () => {
-    // Score 0.45: above M1_HIT_THRESHOLD (0.40), so hit rate = 1.0 → M1_pass = true
+  it("M1_pass reflects M1_HIT_THRESHOLD (0.50, restored per DEC-V3-DISCOVERY-CALIBRATION-FIX-002)", () => {
+    // Score 0.55: above M1_HIT_THRESHOLD (0.50), so hit rate = 1.0 → M1_pass = true
     const results: readonly QueryResult[] = [
-      makeResult("test-001", { top1Score: 0.45, top1Band: "poor" }),
+      makeResult("test-001", { top1Score: 0.55, top1Band: "weak" }),
     ];
     const baseline = computeBaseline("c", corpus.slice(0, 1), results, "sha", "model");
     expect(baseline.metrics.M1_hit_rate).toBeCloseTo(1.0, 10);
