@@ -141,6 +141,55 @@
 //
 // See also: DEC-AS-JSON-LAYOUT-001 in json-parity.test.ts for the byte-layout
 // specifics (JSON_BASE_PTR, DST_BASE_PTR, ASCII-ONLY CONSTRAINT).
+//
+// @decision DEC-AS-EXCEPTIONS-STRATEGY-001
+// Title: AS-backend exception/error handling uses primitive abort(), flat-memory error
+//        codes (store<u8>(errPtr, code)), and sentinel return values rather than
+//        try/catch exception dispatch, because try/catch requires exception-table
+//        support absent from --runtime stub (asc 0.28.x). Bare throw new Error()
+//        (no enclosing try/catch) compiles under stub — an unexpected finding.
+// Status: decided (WI-AS-PHASE-2C-EXCEPTIONS, Issue #207, 2026-05-10)
+// Rationale:
+//   AS exception handling options evaluated:
+//
+//   (A) Managed try/catch exception dispatch:
+//       Requires exception-table support in the WASM binary — catch routing,
+//       finalizer calls, and stack unwinding to the matching catch block.
+//       Under --runtime stub, asc refuses to compile `try { throw } catch {}`.
+//       PROBE RESULT (E5): COMPILE FAIL. asc error: exception-table absent.
+//
+//   (B) Managed throw new Error("msg") with catch:
+//       Same failure mode as (A) when enclosed in a try/catch. The Error object
+//       constructor itself does not require GC under stub; it is the catch-dispatch
+//       mechanism that fails. PROBE RESULT: COMPILE FAIL (when try/catch present).
+//
+//   (C) Flat-memory error protocol (CHOSEN):
+//       Three complementary patterns, all WASM-intrinsic compatible:
+//         abort():           AS primitive; traps the WASM instance on error.
+//                            No GC or exception-table needed.
+//         errPtr (i32):      Caller passes a pointer into WASM linear memory.
+//                            store<u8>(errPtr, code) writes error code byte.
+//                            load<u8>(errPtr) lets host read error state.
+//                            ERR_BASE_PTR=512: above AS stub header,
+//                            below STR_BASE_PTR=1024 (strings-parity ABI).
+//         Sentinel values:   Return -1 (or other out-of-band integer) on error.
+//                            Mirrors S4/indexOfByte pattern from strings-parity.
+//       All three patterns use only load<u8>/store<u8>/i32 arithmetic — no GC.
+//       Compatible with --runtime stub. PROBE RESULT: COMPILE OK.
+//
+//   FINDING (E4 — UNEXPECTED): bare `throw new Error("msg")` with NO enclosing
+//   try/catch DOES compile under asc 0.28.x --runtime stub and passes
+//   WebAssembly.validate(). The Error constructor is more stub-permissive than
+//   initially assumed; it is the catch-dispatch that requires the exception-table.
+//   The non-negative pass-through path is verified at runtime (E4 probe test).
+//
+//   Decision: Use flat-memory approach (C) for v1. try/catch exception dispatch
+//   is deferred until a future phase adopts --runtime minimal/full (GC tier).
+//   A follow-up issue should track the GC runtime upgrade path and reassess
+//   native AS exception handling at that point.
+//
+// See also: DEC-AS-EXCEPTION-LAYOUT-001 in exceptions-parity.test.ts for the
+// full substrate inventory (E1-E5), ERR_BASE_PTR layout, and probe methodology.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
