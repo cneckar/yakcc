@@ -688,7 +688,7 @@ function emitTypeLoweredModule(
     let type5: Uint8Array;
     if (paramDomains !== undefined && paramDomains.length !== 2) {
       // Build (p0 p1 ... pN-1) → retVt from per-parameter domains.
-      const paramVts = paramDomains.map((d) => (d === "i64" ? I64 : d === "f64" ? F64 : I32));
+      const paramVts = paramDomains.map(valtypeByte);
       type5 = concat(
         new Uint8Array([FUNCTYPE]),
         uleb128(paramVts.length),
