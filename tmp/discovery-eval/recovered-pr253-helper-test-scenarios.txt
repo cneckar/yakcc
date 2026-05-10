@@ -1,0 +1,248 @@
+// REFERENCE MATERIAL — recovered from closed PR #253 (fuckgoblin/issue-200-d5-eval-harness)
+//
+// PR #253 was closed as superseded by PR #254. Its 21 helper unit tests
+// addressed a real gap that PR #254's tester verification flagged as a
+// followup — see #258 (CALIBRATION-FIX) scope item (8): "Add
+// `discovery-eval-helpers.test.ts` per D5 ADR Q3 requirement."
+//
+// PR #253's tests were authored against PR #253's earlier helper interface
+// shape, where QueryEvalResult carried a `candidates: { blockMerkleRoot,
+// combinedScore }[]` array. PR #254 landed a different interface
+// (`QueryResult` with pre-computed `top1Score` / `top1Atom` /
+// `top1Correct` / `expectedAtomRank` / `allAtoms`), so these fixtures
+// don't compile against the canonical helpers module.
+//
+// USE THIS AS A SCENARIO REFERENCE when authoring the helper unit tests
+// in #258. The test SCENARIOS (all-correct-strong, mixed, with-negative-
+// space, ties, etc.) are valuable; the fixture shape needs translation to
+// PR #254's QueryResult interface.
+//
+// Original committer: FuckGoblin, 2026-05-10
+// Recovery: orchestrator pre-deletion of fuckgoblin/issue-200-d5-eval-harness
+
+describe("discovery-eval-helpers — unit tests", () => {
+  const ROOT_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const ROOT_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const ROOT_C = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+  // All correct: 3 results where top-1 matches expectedAtom with strong score.
+  const allCorrectStrong: QueryEvalResult[] = [
+    {
+      entryId: "s1",
+      expectedAtom: ROOT_A,
+      acceptableAtoms: [],
+      candidates: [
+        { blockMerkleRoot: ROOT_A, combinedScore: 0.92 },
+        { blockMerkleRoot: ROOT_B, combinedScore: 0.70 },
+      ],
+    },
+    {
+      entryId: "s2",
+      expectedAtom: ROOT_B,
+      acceptableAtoms: [],
+      candidates: [
+        { blockMerkleRoot: ROOT_B, combinedScore: 0.88 },
+        { blockMerkleRoot: ROOT_A, combinedScore: 0.65 },
+      ],
+    },
+    {
+      entryId: "s3",
+      expectedAtom: ROOT_C,
+      acceptableAtoms: [],
+      candidates: [
+        { blockMerkleRoot: ROOT_C, combinedScore: 0.95 },
+        { blockMerkleRoot: ROOT_A, combinedScore: 0.80 },
+      ],
+    },
+  ];
+
+  // Mixed: 2 correct (one via acceptableAtoms), 1 miss, 1 not-in-topK.
+  const mixedResults: QueryEvalResult[] = [
+    {
+      entryId: "m1",
+      expectedAtom: ROOT_A,
+      acceptableAtoms: [],
+      candidates: [
+        { blockMerkleRoot: ROOT_A, combinedScore: 0.88 }, // correct (top-1)
+        { blockMerkleRoot: ROOT_B, combinedScore: 0.70 },
+      ],
+    },
+    {
+      entryId: "m2",
+      expectedAtom: ROOT_B,
+      acceptableAtoms: [ROOT_C],
+      candidates: [
+        { blockMerkleRoot: ROOT_C, combinedScore: 0.75 }, // correct via acceptableAtoms (top-1)
+        { blockMerkleRoot: ROOT_A, combinedScore: 0.60 },
+      ],
+    },
+    {
+      entryId: "m3",
+      expectedAtom: ROOT_A,
+      acceptableAtoms: [],
+      candidates: [
+        { blockMerkleRoot: ROOT_B, combinedScore: 0.52 }, // miss
+        { blockMerkleRoot: ROOT_C, combinedScore: 0.48 },
+      ],
+    },
+    {
+      entryId: "m4",
+      expectedAtom: ROOT_C,
+      acceptableAtoms: [],
+      candidates: [
+        { blockMerkleRoot: ROOT_A, combinedScore: 0.45 }, // miss, below 0.50
+        { blockMerkleRoot: ROOT_B, combinedScore: 0.40 }, // ROOT_C not in results
+      ],
+    },
+  ];
+
+  // One negative-space entry.
+  const withNegativeSpace: QueryEvalResult[] = [
+    {
+      entryId: "pos1",
+      expectedAtom: ROOT_A,
+      acceptableAtoms: [],
+      candidates: [{ blockMerkleRoot: ROOT_A, combinedScore: 0.90 }],
+    },
+    {
+      entryId: "neg1",
+      expectedAtom: null, // negative-space
+      acceptableAtoms: [],
+      candidates: [{ blockMerkleRoot: ROOT_B, combinedScore: 0.55 }],
+    },
+  ];
+
+  describe("computeHitRate", () => {
+    it("returns 1.0 for all strong-band correct results", () => {
+      expect(computeHitRate(allCorrectStrong)).toBe(1.0);
+    });
+
+    it("excludes negative-space entries from denominator", () => {
+      // 1 positive entry, top-1 score = 0.90 ≥ 0.50 → hit rate = 1.0
+      expect(computeHitRate(withNegativeSpace)).toBe(1.0);
+    });
+
+    it("counts a miss when top-1 score < 0.50", () => {
+      // mixedResults: m1 hits (0.88), m2 hits (0.75), m3 hits (0.52), m4 misses (0.45)
+      // 3 hits / 4 total = 0.75
+      expect(computeHitRate(mixedResults)).toBeCloseTo(0.75, 5);
+    });
+
+    it("returns 1.0 for empty corpus", () => {
+      expect(computeHitRate([])).toBe(1.0);
+    });
+  });
+
+  describe("computePrecisionAt1", () => {
+    it("returns 1.0 when all top-1 candidates match expectedAtom", () => {
+      expect(computePrecisionAt1(allCorrectStrong)).toBe(1.0);
+    });
+
+    it("counts acceptableAtoms as correct", () => {
+      // m1: ROOT_A correct; m2: ROOT_C correct (alternate); m3: ROOT_B incorrect; m4: ROOT_A incorrect
+      // 2/4 = 0.50
+      expect(computePrecisionAt1(mixedResults)).toBeCloseTo(0.5, 5);
+    });
+
+    it("excludes negative-space entries from denominator", () => {
+      // pos1: ROOT_A correct → 1/1 = 1.0 (neg1 is excluded)
+      expect(computePrecisionAt1(withNegativeSpace)).toBe(1.0);
+    });
+
+    it("returns 1.0 for empty corpus", () => {
+      expect(computePrecisionAt1([])).toBe(1.0);
+    });
+  });
+
+  describe("computeRecallAtK", () => {
+    it("returns 1.0 when all expectedAtoms appear in top-1 (k=1)", () => {
+      expect(computeRecallAtK(allCorrectStrong, 1)).toBe(1.0);
+    });
+
+    it("counts a result recalled when expectedAtom appears beyond rank-1", () => {
+      // m1: expectedAtom=ROOT_A at rank-0 → recalled.
+      // m2: expectedAtom=ROOT_B; acceptableAtoms=[ROOT_C]; ROOT_C at rank-0 → recalled via alternate.
+      // m3: expectedAtom=ROOT_A; candidates=[ROOT_B, ROOT_C] — not recalled.
+      // m4: expectedAtom=ROOT_C; candidates=[ROOT_A, ROOT_B] — not recalled.
+      // 2 recalled / 4 = 0.50
+      expect(computeRecallAtK(mixedResults, 2)).toBeCloseTo(0.5, 5);
+    });
+
+    it("excludes negative-space entries", () => {
+      expect(computeRecallAtK(withNegativeSpace, 10)).toBe(1.0);
+    });
+
+    it("returns 1.0 for empty corpus", () => {
+      expect(computeRecallAtK([], 10)).toBe(1.0);
+    });
+  });
+
+  describe("computeMRR", () => {
+    it("returns 1.0 when all expectedAtoms are rank-1", () => {
+      // All correct at rank-1 → reciprocal = 1.0 each → MRR = 1.0
+      expect(computeMRR(allCorrectStrong)).toBe(1.0);
+    });
+
+    it("returns 0 contribution for queries where expectedAtom is absent", () => {
+      // mixedResults: m1 rank-1 (1/1=1), m2 via alternate rank-1 (1/1=1, ROOT_C match),
+      //   m3 ROOT_A not in candidates (0), m4 ROOT_C not in candidates (0)
+      // sum = 1+1+0+0 = 2; MRR = 2/4 = 0.5
+      expect(computeMRR(mixedResults)).toBeCloseTo(0.5, 5);
+    });
+
+    it("excludes negative-space entries", () => {
+      // pos1 rank-1 = 1.0; neg1 excluded → MRR = 1.0
+      expect(computeMRR(withNegativeSpace)).toBe(1.0);
+    });
+
+    it("returns 1.0 for empty corpus", () => {
+      expect(computeMRR([])).toBe(1.0);
+    });
+  });
+
+  describe("computeBrierPerBand", () => {
+    it("computes strong-band brier from all-correct strong-score results", () => {
+      // All 3 results in strong band (scores 0.92, 0.88, 0.95 all ≥ 0.85).
+      // P_strong = 3/3 = 1.0; err_strong = (1.0 - 0.925)² = 0.005625
+      const result = computeBrierPerBand(allCorrectStrong);
+      expect(result.strong.N).toBe(3);
+      expect(result.strong.correct).toBe(3);
+      expect(result.strong.P).toBeCloseTo(1.0, 5);
+      expect(result.strong.brier).toBeCloseTo(0.005625, 5);
+    });
+
+    it("reports N=0 and brier=0 for empty bands", () => {
+      // allCorrectStrong has no confident/weak/poor-band entries.
+      const result = computeBrierPerBand(allCorrectStrong);
+      expect(result.confident.N).toBe(0);
+      expect(result.confident.brier).toBe(0);
+      expect(result.confident.P).toBeNull();
+    });
+
+    it("includes negative-space entries in band counts (they are always incorrect)", () => {
+      // withNegativeSpace: pos1 in strong band (0.90), correct.
+      //   neg1 in weak band (0.55), incorrect (expectedAtom=null).
+      // strong: N=1, correct=1, P=1.0, brier=(1.0-0.925)²=0.005625
+      // weak: N=1, correct=0, P=0.0, brier=(0.0-0.60)²=0.36
+      const result = computeBrierPerBand(withNegativeSpace);
+      expect(result.strong.N).toBe(1);
+      expect(result.strong.correct).toBe(1);
+      expect(result.weak.N).toBe(1);
+      expect(result.weak.correct).toBe(0);
+      expect(result.weak.P).toBeCloseTo(0.0, 5);
+      expect(result.weak.brier).toBeCloseTo(0.36, 5);
+    });
+
+    it("handles no candidates gracefully (entry with no results)", () => {
+      const noResults: QueryEvalResult[] = [
+        { entryId: "empty", expectedAtom: ROOT_A, acceptableAtoms: [], candidates: [] },
+      ];
+      // No candidates → no band contributions.
+      const result = computeBrierPerBand(noResults);
+      expect(result.strong.N).toBe(0);
+      expect(result.confident.N).toBe(0);
+      expect(result.weak.N).toBe(0);
+      expect(result.poor.N).toBe(0);
+    });
+  });
+});
