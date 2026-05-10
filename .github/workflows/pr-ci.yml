@@ -148,3 +148,47 @@ jobs:
 
       - name: Branch hygiene (pre-pr-check)
         run: bash scripts/pre-pr-check.sh
+
+  # ---------------------------------------------------------------------------
+  # airgap-bench — B6a air-gapped / zero-outbound CI gate
+  # DEC-BENCH-B6-001: runs `pnpm bench:airgap` (node bench/B6-airgap/run.mjs)
+  # on every PR to detect outbound network regressions introduced by any change.
+  # Uses the pure-JS network interceptor (Option a) — no tcpdump/sudo needed.
+  # Platform: ubuntu-latest only. Windows runners are skipped with an explicit
+  # message (the JS interceptor works on Windows but the gate is Linux-anchored).
+  # B6b is NOT run in CI (requires ANTHROPIC_API_KEY; opt-in only).
+  # Timeout: 15 min — accommodates first-run pnpm install + build on cold cache.
+  # ---------------------------------------------------------------------------
+  airgap-bench:
+    name: B6a air-gap benchmark (zero outbound)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build all packages (required before bench)
+        run: pnpm build
+
+      - name: B6a — air-gap benchmark (zero outbound connections)
+        # Fail the PR if any outbound network connection is detected during the
+        # offline 7-step workload. The harness exits non-zero on any outbound hit.
+        run: pnpm bench:airgap
+
+      - name: Upload B6a results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b6a-results-${{ github.run_id }}
+          path: bench/B6-airgap/results-b6a-*.json
+          if-no-files-found: warn
