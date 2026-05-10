@@ -38,6 +38,7 @@ import { bootstrap } from "./commands/bootstrap.js";
 import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
+import { init } from "./commands/init.js";
 import { propose } from "./commands/propose.js";
 import { query } from "./commands/query.js";
 import { registryInit } from "./commands/registry-init.js";
@@ -121,6 +122,7 @@ USAGE
   yakcc <command> [options]
 
 COMMANDS
+  init [--target <dir>] [--peer <url>] Initialize yakcc in a project directory
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
   compile <entry> [--registry <p>]    Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
@@ -181,6 +183,12 @@ export async function runCli(
   const [command, subcommand, ...rest] = argv;
 
   switch (command) {
+    case "init": {
+      // `yakcc init [--target <dir>] [--peer <url>]`
+      const initArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return init(initArgv, logger);
+    }
+
     case "registry": {
       if (subcommand === "init") {
         return registryInit(rest, logger);
