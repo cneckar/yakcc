@@ -267,8 +267,8 @@ function scoreSecurity(canonical: SpecYak, candidate: SpecYak): number {
  * Both-empty → 1.0 (both declare no output guarantees; fully aligned).
  */
 function scoreBehavioral(canonical: SpecYak, candidate: SpecYak): number {
-  const a = new Set(canonical.postconditions.map(normalize));
-  const b = new Set(candidate.postconditions.map(normalize));
+  const a = new Set<string>(canonical.postconditions.map(normalize));
+  const b = new Set<string>(candidate.postconditions.map(normalize));
   return jaccard(a, b);
 }
 
@@ -296,15 +296,20 @@ function scoreErrorHandling(canonical: SpecYak, candidate: SpecYak): number {
   if (cErrs === undefined || cErrs.length === 0) return 0.0;
   if (dErrs === undefined || dErrs.length === 0) return 0.0;
 
-  const descA = new Set(cErrs.map((e) => normalize(e.description)));
-  const descB = new Set(dErrs.map((e) => normalize(e.description)));
+  type ErrorCond = { readonly description: string; readonly errorType?: string | undefined };
+  const descA = new Set<string>(cErrs.map((e: ErrorCond) => normalize(e.description)));
+  const descB = new Set<string>(dErrs.map((e: ErrorCond) => normalize(e.description)));
   const descScore = jaccard(descA, descB);
 
-  const typeA = new Set(
-    cErrs.filter((e) => e.errorType !== undefined).map((e) => normalize(e.errorType as string)),
+  const typeA = new Set<string>(
+    cErrs
+      .filter((e: ErrorCond) => e.errorType !== undefined)
+      .map((e: ErrorCond) => normalize(e.errorType as string)),
   );
-  const typeB = new Set(
-    dErrs.filter((e) => e.errorType !== undefined).map((e) => normalize(e.errorType as string)),
+  const typeB = new Set<string>(
+    dErrs
+      .filter((e: ErrorCond) => e.errorType !== undefined)
+      .map((e: ErrorCond) => normalize(e.errorType as string)),
   );
   const typeScore = jaccard(typeA, typeB);
 
@@ -363,10 +368,10 @@ function scoreInterface(canonical: SpecYak, candidate: SpecYak): number {
   const paramKey = (p: { readonly name: string; readonly type: string }) =>
     `${normalize(p.name)}::${normalize(p.type)}`;
 
-  const inA = new Set(canonical.inputs.map(paramKey));
-  const inB = new Set(candidate.inputs.map(paramKey));
-  const outA = new Set(canonical.outputs.map(paramKey));
-  const outB = new Set(candidate.outputs.map(paramKey));
+  const inA = new Set<string>(canonical.inputs.map(paramKey));
+  const inB = new Set<string>(candidate.inputs.map(paramKey));
+  const outA = new Set<string>(canonical.outputs.map(paramKey));
+  const outB = new Set<string>(candidate.outputs.map(paramKey));
 
   return 0.5 * jaccard(inA, inB) + 0.5 * jaccard(outA, outB);
 }
