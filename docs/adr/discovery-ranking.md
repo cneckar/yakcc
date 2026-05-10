@@ -300,11 +300,40 @@ per-dimension similarity transform is:
 similarity[d] = 1 - cosineDistance[d] / 2
 ```
 
-Where `cosineDistance[d]` is the raw `vec0` distance for dimension d. The sqlite-vec `vec0`
-distance for unit-sphere embeddings is in [0, 2] (lower = more similar; confirmed at
-`packages/registry/src/storage.ts` where the comment "cosineDistance is in [0, 2] on the unit
-sphere" appears at lines 629–633). Dividing by 2 maps the distance to [0, 1] (lower = lower
-similarity), then subtracting from 1 inverts direction so that 1 = identical and 0 = orthogonal.
+Where `cosineDistance[d]` is the **true cosine distance** (1 − cos_sim) ∈ [0, 2] for
+unit-sphere embeddings (lower = more similar). Dividing by 2 maps cosine distance to [0, 1];
+subtracting from 1 inverts direction so that 1 = identical direction, 0 = orthogonal.
+
+**AMENDMENT — DEC-V3-DISCOVERY-CALIBRATION-FIX-001 (WI #258, 2026-05-10):**
+
+sqlite-vec `vec0` returns **L2 Euclidean distance**, not cosine distance. For unit-normalized
+vectors the exact identity is `cosine_dist = L2_dist² / 2`. Applying the D3 formula to the
+actual L2 distance `d` returned by sqlite-vec:
+
+```
+// True cosine distance from L2 distance (unit vectors):
+cosine_dist = d² / 2
+
+// D3 similarity formula applied to true cosine distance:
+similarity[d] = 1 - cosine_dist / 2
+             = 1 - d² / 4
+             = (1 + cos_sim) / 2
+```
+
+The original implementation `1 − d/2` (treating L2 distance as if it were cosine distance)
+underestimated similarity by ~40–60% for typical semantic matches, causing M1 hit-rate = 0%
+even when M2 Precision@1 = 80%. The corrected implementation in
+`packages/registry/src/discovery-eval-helpers.ts → cosineDistanceToCombinedScore` uses
+`1 − d²/4`.
+
+**Boundary checks for the corrected formula:**
+- `d = 0` (identical vectors): similarity = 1.0
+- `d = √2` (orthogonal, cos_sim = 0): similarity = 0.5
+- `d = 2` (anti-parallel, cos_sim = −1): similarity = 0.0
+
+The score bands (0.85/0.70/0.50) are unchanged; the amendment affects only the distance→score
+mapping, not the band definitions. ADR row `DEC-V3-DISCOVERY-CALIBRATION-FIX-001` in
+`MASTER_PLAN.md` documents the full rationale and path choice.
 
 **Score interpretation bands** (calibrated empirically per D5; current values are design targets):
 

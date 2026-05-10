@@ -1,14 +1,14 @@
 {
   "version": 1,
   "date": "2026-05-10",
-  "head_sha": "2514529",
+  "head_sha": "c4dbfee",
   "provider": "yakcc/offline-blake3-stub",
   "corpus_source": "bootstrap-inline",
   "corpus_entries": 9,
   "metrics": {
-    "M1_hit_rate": 0,
+    "M1_hit_rate": 1,
     "M1_target": 0.8,
-    "M1_pass": false,
+    "M1_pass": true,
     "M2_precision_at_1": 0.4,
     "M2_target": 0.7,
     "M2_pass": false,
@@ -34,22 +34,22 @@
         "brier": null
       },
       "weak": {
-        "N": 0,
-        "correct": 0,
-        "P": null,
-        "midpoint": 0.6,
-        "brier": null
-      },
-      "poor": {
         "N": 9,
         "correct": 2,
         "P": 0.2222222222222222,
+        "midpoint": 0.6,
+        "brier": 0.14271604938271604
+      },
+      "poor": {
+        "N": 0,
+        "correct": 0,
+        "P": null,
         "midpoint": 0.25,
-        "brier": 0.0007716049382716057
+        "brier": null
       }
     },
     "M5_target": 0.1,
-    "M5_pass": true
+    "M5_pass": false
   },
   "worst_entries": {
     "M1": [

@@ -546,7 +546,8 @@ function emitArtifacts(
     providerNote,
   );
 
-  const baselineFile = join(outDir, "baseline-single-vector-2026-05-10.json");
+  // DEC-V3-DISCOVERY-CALIBRATION-FIX-001: emit as calibrated baseline (formula corrected 2026-05-10)
+  const baselineFile = join(outDir, "baseline-single-vector-calibrated-2026-05-10.json");
   writeFileSync(baselineFile, JSON.stringify(baseline, null, 2), "utf-8");
 
   // Reliability diagram (Q4 of D5 ADR)
@@ -914,9 +915,13 @@ describe("discovery quality — single-vector baseline (seed-derived corpus)", (
   });
 
   it.skipIf(!USE_LOCAL_PROVIDER)(
-    "M5 score calibration error < 0.10 per band (corpus: seed-derived)",
+    "M5 score calibration error < 0.10 per band (corpus: full — seed-derived + synthetic)",
     async () => {
-      const corpus = buildCorpus().filter((e) => e.source === "seed-derived");
+      // @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-001 (item 7): standardize M5 scope to full corpus.
+      // The previous test filtered to seed-derived (5 entries) while the JSON artifact used all 9.
+      // Full corpus ensures synthetic-tasks entries (including negative-space) contribute to M5,
+      // which is the same population the emitted baseline artifact uses.
+      const corpus = buildCorpus();
       const results = await runBenchmarkEntries(registry, corpus, 10);
       const errors = computeBrierPerBand(results);
 

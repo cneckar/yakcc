@@ -1,8 +1,8 @@
 # Measurement-First Decision — Single-Vector Baseline
 
 **WI-V3-DISCOVERY-D5-HARNESS** (issue #200)
-**Generated:** 2026-05-10T16:23:23.997Z
-**HEAD SHA:** 2514529
+**Generated:** 2026-05-10T18:27:30.636Z
+**HEAD SHA:** c4dbfee
 **Provider:** yakcc/offline-blake3-stub
 **Corpus:** bootstrap-inline (9 entries: 5 seed-derived + 4 synthetic)
 
@@ -35,33 +35,29 @@ well-formed. It does NOT answer the "should v3-implementation proceed?" question
 
 | Metric | Value | Target | Pass? |
 |--------|-------|--------|-------|
-| M1 Hit rate | 0.0% | >=80% | FAIL |
+| M1 Hit rate | 100.0% | >=80% | PASS |
 | M2 Precision@1 | 40.0% | >=70% | FAIL |
 | M3 Recall@10 | 100.0% | >=90% | PASS |
 | M4 MRR | 0.540 | >=0.70 | FAIL |
 | M5 Brier strong | N/A (no data) | <0.10 | N/A |
 | M5 Brier confident | N/A (no data) | <0.10 | N/A |
-| M5 Brier weak | N/A (no data) | <0.10 | N/A |
-| M5 Brier poor | 0.00077 | <0.10 | PASS |
+| M5 Brier weak | 0.14272 | <0.10 | FAIL |
+| M5 Brier poor | N/A (no data) | <0.10 | N/A |
 
 ---
 
 ## Operator Decision
 
-**M1 FAILS (0.0% < 80%)**
+**M1 PASSES (100.0% >= 80%)**
 
-Single-vector embedding does NOT meet the M1 target.
-v3-implementation MAY PROCEED with D1's multi-dimensional schema.
+OPERATOR DECISION: Single-vector embedding ALREADY meets the M1 target.
+The 5x storage cost committed to in D1 (1,920 floats/atom vs 384) is NOT empirically
+justified by retrieval quality. **v3-implementation SHOULD PAUSE pending re-spec.**
 
-Worst-performing entries (lowest top-1 score):
-  - synth-clamp-001: combinedScore=0.300
-  - synth-haversine-negative-001: combinedScore=0.302
-  - seed-comma-001: combinedScore=0.303
-
-These entries justify per-dimension embeddings in D1:
-- Entries failing M2 suggest top-1 retrieval is imprecise (wrong atom ranked first)
-- Entries failing M3 suggest the correct atom is not in the top-10 at all
-- Entries failing M4 suggest ranking quality is poor
+Before proceeding with D1's multi-dimensional schema, consider:
+1. Is 5x storage cost justified by other dimensions (error_conditions, guarantees, non_functional)?
+2. Do M2/M3/M4 failures (below) justify multi-dimensional embeddings?
+3. File a re-spec WI if the answer to (1) and (2) is no.
 
 ---
 

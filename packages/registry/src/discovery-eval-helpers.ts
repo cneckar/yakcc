@@ -46,15 +46,17 @@
  *        - M2, M4 (MRR): skip for null expectedAtom (no correct atom exists).
  *        - M3 (Recall@K): skip for null expectedAtom.
  *
- *   5. COSINE DISTANCE TO COMBINED SCORE MAPPING:
+ *   5. COSINE DISTANCE TO COMBINED SCORE MAPPING (amended DEC-V3-DISCOVERY-CALIBRATION-FIX-001):
  *      The existing `findCandidatesByIntent` path returns `cosineDistance` (lower = more similar).
  *      The D5 ADR's M1 threshold is based on D3's `combinedScore` (in [0, 1], higher = better).
- *      Linear mapping: combinedScore = max(0, 1 - cosineDistance/2). For unit-sphere vectors,
- *      cosineDistance in [0, 2] maps to combinedScore in [0, 1]. The D3 band boundaries translate:
- *        strong:    combinedScore >= 0.85
- *        confident: combinedScore >= 0.70
- *        weak:      combinedScore >= 0.50
- *        poor:      combinedScore <  0.50
+ *      sqlite-vec vec0 returns L2 Euclidean distance d (NOT cosine distance). The correct mapping
+ *      for unit-normalized vectors is: combinedScore = max(0, 1 - d²/4) = (1 + cos_sim) / 2.
+ *      For unit-sphere vectors, L2 distance d in [0, 2] maps to combinedScore in [0, 1].
+ *      The D3 band boundaries translate:
+ *        strong:    combinedScore >= 0.85  (d ≤ ~0.775)
+ *        confident: combinedScore >= 0.70  (d ≤ ~1.095)
+ *        weak:      combinedScore >= 0.50  (d ≤ √2 ≈ 1.414, i.e. cos_sim ≥ 0)
+ *        poor:      combinedScore <  0.50  (d > √2, i.e. cos_sim < 0)
  */
 
 import type { Registry } from "./index.js";
@@ -163,14 +165,26 @@ export interface PendingEntry {
 export type ScoreBand = "strong" | "confident" | "weak" | "poor";
 
 /**
- * Convert a cosineDistance from sqlite-vec to D3's combinedScore.
+ * Convert the L2 distance returned by sqlite-vec to D3's combinedScore.
  *
- * Linear mapping: combinedScore = max(0, 1 - cosineDistance/2).
- * For L2-normalized unit vectors, cosineDistance in [0, 2] maps to combinedScore in [0, 1].
- * This is consistent with the CandidateMatch.cosineDistance documentation.
+ * @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-001
+ * sqlite-vec vec0 returns L2 Euclidean distance d ∈ [0, 2] for unit-normalized FLOAT[384]
+ * columns — NOT cosine distance. The original formula `1 - d/2` incorrectly treated d as
+ * the true cosine distance, producing scores 40–60% lower than semantically justified and
+ * causing M1 hit-rate = 0% even when M2 Precision@1 = 80% (correct atoms found but scored
+ * below the 0.50 threshold).
+ *
+ * Correct derivation for unit vectors:
+ *   cos_sim       = 1 - d²/2          (exact identity for unit-sphere L2 distance)
+ *   cosine_dist   = 1 - cos_sim = d²/2 ∈ [0, 2]
+ *   D3 formula    = 1 - cosine_dist/2 = 1 - d²/4 = (1 + cos_sim) / 2 ∈ [0, 1]
+ *
+ * Boundary checks: d=0 → 1.0 (identical), d=√2 → 0.5 (orthogonal), d=2 → 0.0 (anti-parallel).
+ * Amended by WI-V3-DISCOVERY-CALIBRATION-FIX (#258). ADR: docs/adr/discovery-ranking.md Q5.
  */
-export function cosineDistanceToCombinedScore(cosineDistance: number): number {
-  return Math.max(0, Math.min(1, 1 - cosineDistance / 2));
+export function cosineDistanceToCombinedScore(l2Distance: number): number {
+  // @decision DEC-V3-DISCOVERY-CALIBRATION-FIX-001: l2Distance is sqlite-vec L2 dist, not cosine dist
+  return Math.max(0, Math.min(1, 1 - (l2Distance * l2Distance) / 4));
 }
 
 /**
