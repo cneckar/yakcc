@@ -30,8 +30,9 @@
 import { mkdir } from "node:fs/promises";
 import * as os from "node:os";
 import { join } from "node:path";
-import type { BlockMerkleRoot } from "@yakcc/contracts";
+import type { BlockMerkleRoot, EmbeddingProvider } from "@yakcc/contracts";
 import { canonicalAstHash } from "@yakcc/contracts";
+import { openRegistry } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeIntent } from "../cache/file-cache.js";
 import { keyFromIntentInputs, sourceHash } from "../cache/key.js";
@@ -42,6 +43,7 @@ import {
   INTENT_SCHEMA_VERSION,
 } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
+import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
 import type { ShaveRegistryView } from "../types.js";
 import { DidNotReachAtomError } from "./recursion.js";
 
@@ -295,5 +297,88 @@ describe("universalize() wiring — intentCard on root NovelGlueEntry", () => {
     expect(entry.kind).toBe("pointer");
     // PointerEntry type does not have intentCard — verify via discriminant.
     expect("intentCard" in entry).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 5 (WI-031 regression): single-leaf persist boundary
+//
+// This test exercises the production sequence:
+//   universalize() → slicePlan[0] (NovelGlueEntry with intentCard) →
+//   maybePersistNovelGlueAtom(entry, registry) → registry.getBlock()
+//
+// It crosses the universalize → slicer → persist component boundaries using
+// a real in-memory registry (openRegistry(":memory:")) so that the
+// parentBlockRoot column is exercised through actual SQLite persistence.
+//
+// The atom-persist.test.ts unit tests use hand-crafted makeEntry() fixtures;
+// this test starts from universalize() to prove the full chain is wired
+// correctly after WI-031 landed. It also guards against regressions that
+// would strip intentCard from the single-leaf path before persist.
+// ---------------------------------------------------------------------------
+
+/** Deterministic mock EmbeddingProvider — no ONNX/network required. */
+function mockEmbeddingProvider(): EmbeddingProvider {
+  return {
+    dimension: 384,
+    modelId: "mock/test-provider-wiring",
+    async embed(text: string): Promise<Float32Array> {
+      const vec = new Float32Array(384);
+      for (let i = 0; i < 384; i++) {
+        vec[i] = (text.charCodeAt(i % text.length) / 128) + i * 0.001;
+      }
+      let norm = 0;
+      for (const v of vec) norm += v * v;
+      const scale = norm > 0 ? 1 / Math.sqrt(norm) : 1;
+      for (let i = 0; i < vec.length; i++) {
+        const val = vec[i];
+        if (val !== undefined) vec[i] = val * scale;
+      }
+      return vec;
+    },
+  };
+}
+
+describe("universalize() + maybePersistNovelGlueAtom() — single-leaf persist regression (WI-031)", () => {
+  it("single-leaf entry from universalize() persists with defined merkleRoot and parentBlockRoot=null", async () => {
+    // ATOMIC_SOURCE is a single expression-body arrow fn (no CF boundaries) →
+    // one AtomLeaf, one NovelGlueEntry. Intent comes from the pre-seeded cache.
+    const seeded = await seedCache(ATOMIC_SOURCE);
+
+    const result = await universalize({ source: ATOMIC_SOURCE }, emptyRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+    });
+
+    // Guard: we need exactly one novel-glue entry with an intentCard before persisting.
+    expect(result.slicePlan.length).toBe(1);
+    const entry = result.slicePlan[0]!;
+    expect(entry.kind).toBe("novel-glue");
+    if (entry.kind !== "novel-glue") return; // narrow for TypeScript
+
+    expect(entry.intentCard).toBeDefined();
+    expect(entry.intentCard!.behavior).toBe(seeded.behavior);
+
+    // Persist through a real in-memory registry so parentBlockRoot hits SQLite.
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+    });
+    try {
+      const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
+        cacheDir,
+        parentBlockRoot: null,
+      });
+
+      // Single leaf with intentCard → must produce a defined merkleRoot.
+      expect(merkleRoot).toBeDefined();
+
+      // Read back and verify parentBlockRoot is null (root of its recursion tree).
+      const row = await registry.getBlock(merkleRoot!);
+      expect(row).not.toBeNull();
+      expect(row!.parentBlockRoot).toBeNull();
+    } finally {
+      await registry.close();
+    }
   });
 });

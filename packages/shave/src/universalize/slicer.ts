@@ -384,16 +384,16 @@ async function walkNodeStrict(
     }
 
     // Unmatched AtomLeaf with no foreign classification → NovelGlueEntry.
-    // intentCard is intentionally omitted: AtomLeaf in types.ts carries no
-    // intentCard field. WI-012-06 is expected to wire intent extraction and
-    // populate the optional intentCard field on NovelGlueEntry for each
-    // unmatched atom via a follow-up pass over the NovelGlueEntry array.
+    // intentCard is omitted here because intent wiring is NOT slicer's
+    // responsibility — slicer's job is tree-shaping. The intentCard field is
+    // attached post-slice in packages/shave/src/index.ts:universalize() (closed
+    // by WI-031, see DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001 in that file).
     const entry: NovelGlueEntry = {
       kind: "novel-glue",
       sourceRange: node.sourceRange,
       source: node.source,
       canonicalAstHash: node.canonicalAstHash,
-      // intentCard omitted — optional by design, wired in WI-012-06
+      // intentCard wired post-slice (see comment above and index.ts).
     };
     acc.entries.push(entry);
     acc.novelGlueBytes += node.sourceRange.end - node.sourceRange.start;
