@@ -440,15 +440,14 @@ describe("runCli error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("hooks claude-code install", () => {
-  it("exits 0, creates .claude/CLAUDE.md in target dir, and prints confirmation", async () => {
+  it("exits 0, creates .claude/settings.json with hook entry, and prints confirmation", async () => {
     const targetDir = mkdtempSync(join(tmpdir(), "yakcc-hooks-test-"));
     try {
       const logger = new CollectingLogger();
       const code = await runCli(["hooks", "claude-code", "install", "--target", targetDir], logger);
       expect(code).toBe(0);
-      expect(existsSync(join(targetDir, ".claude", "CLAUDE.md"))).toBe(true);
-      expect(logger.logLines.some((l) => l.includes("yakcc hooks installed"))).toBe(true);
-      expect(logger.logLines.some((l) => l.includes("/yakcc"))).toBe(true);
+      expect(existsSync(join(targetDir, ".claude", "settings.json"))).toBe(true);
+      expect(logger.logLines.some((l) => l.includes("installed"))).toBe(true);
     } finally {
       try {
         rmSync(targetDir, { recursive: true, force: true });
@@ -458,14 +457,16 @@ describe("hooks claude-code install", () => {
     }
   });
 
-  it("CLAUDE.md contains the stub response message", async () => {
+  it("settings.json contains a PreToolUse hook entry for Edit|Write|MultiEdit", async () => {
     const targetDir = mkdtempSync(join(tmpdir(), "yakcc-hooks-stub-"));
     try {
       const logger = new CollectingLogger();
       await runCli(["hooks", "claude-code", "install", "--target", targetDir], logger);
-      const content = readFileSync(join(targetDir, ".claude", "CLAUDE.md"), "utf-8");
-      expect(content).toContain("v0.5 feature");
-      expect(content).toContain("/yakcc");
+      const raw = readFileSync(join(targetDir, ".claude", "settings.json"), "utf-8");
+      const settings = JSON.parse(raw) as Record<string, unknown>;
+      const hooks = settings["hooks"] as Record<string, unknown[]>;
+      const preToolUse = hooks["PreToolUse"] as Array<{ matcher: string }>;
+      expect(preToolUse.some((e) => e.matcher === "Edit|Write|MultiEdit")).toBe(true);
     } finally {
       try {
         rmSync(targetDir, { recursive: true, force: true });

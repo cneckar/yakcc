@@ -446,6 +446,16 @@ Near-miss annotations with `failedAtLayer` and `failureReason` provide exactly t
 - **Stage 4 (property-test verification) activation:** DEC-VERIFY-010 ships with property-test
   execution infrastructure. File a D3 Stage 4 revision specifying the verification predicate,
   pass/fail semantics, and timeout budget.
+- **Store/query text symmetry gap (open — WI-V3-DISCOVERY-IMPL-QUERY):** `DEC-VECTOR-RETRIEVAL-002`
+  records the query-text derivation rule (`behavior + "\n" + params`), but `storeBlock` embeds
+  `canonicalizeText(spec)` — the full canonical JSON of the entire SpecYak. This asymmetry was
+  identified during D5 calibration work (WI-V3-DISCOVERY-CALIBRATION-FIX, issue #258) as the root
+  cause of all correct top-1 hits producing cosineDistance in [1.02, 1.16] instead of the
+  expected d < 0.5. The `1 - d/2` formula is correct; the distances are systematically above 1.0
+  because query and storage vectors live in different text-space regions. Resolution: align
+  `storeBlock`'s embedding text to match the query derivation in `WI-V3-DISCOVERY-IMPL-QUERY`.
+  After that WI ships, re-run D5 and re-calibrate `M1_HIT_THRESHOLD` (likely back to 0.50+).
+  See `DEC-V3-DISCOVERY-CALIBRATION-FIX-001` in `discovery-eval-helpers.ts`.
 
 ---
 

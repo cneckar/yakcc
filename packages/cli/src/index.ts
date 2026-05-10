@@ -137,8 +137,9 @@ COMMANDS
             [--report <p>]            Per-file report (default: bootstrap/report.json)
   shave <path> [--registry <p>]       Shave a TS source file into atoms via universalize
         [--offline]
-  hooks claude-code install           Install /yakcc slash command for Claude Code
+  hooks claude-code install           Wire yakcc tool-call interception for Claude Code
                 [--target <dir>]      Target project directory (default: .)
+                [--uninstall]         Remove the yakcc hook entry
   federation serve --registry <p>     Start a read-only HTTP registry server
                 [--port <n>] [--host <h>]
   federation mirror --remote <url>    Mirror all blocks from a remote registry peer

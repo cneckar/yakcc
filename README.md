@@ -1,5 +1,8 @@
 # Yakcc
 
+[![PR CI](https://github.com/cneckar/yakcc/actions/workflows/pr-ci.yml/badge.svg)](https://github.com/cneckar/yakcc/actions/workflows/pr-ci.yml)
+[![Nightly](https://github.com/cneckar/yakcc/actions/workflows/nightly.yml/badge.svg)](https://github.com/cneckar/yakcc/actions/workflows/nightly.yml)
+
 **Shave once, reuse forever.** Yakcc is a content-addressed block registry for assembling programs from verified, reusable building blocks.
 
 The core idea: instead of writing the same parsing logic, data transformation, or utility function over and over, you shave it once into an atomic, tested block and store it in a local registry. The next time you need it — in any project, on any machine — the registry serves the exact same bytes, with proof that it works.
@@ -73,21 +76,29 @@ yakcc bootstrap --verify
 
 ## IDE hook installation
 
-> **Status (2026-05-10):** the install commands listed below are **v0 facades**
-> — they write a documentation stub to `.claude/`, but do not yet wire the
-> production hook into Claude Code's integration surfaces (slash commands,
-> `.claude/settings.json` hooks, MCP server). Production wiring is in flight
-> under `WI-HOOK-LAYER` ([#194](https://github.com/cneckar/yakcc/issues/194))
-> with the CLI install replacement at [#203](https://github.com/cneckar/yakcc/issues/203),
-> a fresh-project `yakcc init` command at [#204](https://github.com/cneckar/yakcc/issues/204),
-> and an end-user walkthrough at [#205](https://github.com/cneckar/yakcc/issues/205).
-> Until those land, daily Claude-Code-with-yakcc local-dev usage is best-effort.
-
 ```sh
-yakcc hooks claude-code install   # Claude Code (v0 facade today; #203 retires it)
-yakcc hooks cursor install        # Cursor (v0 facade; WI-HOOK-LAYER Phase 4)
-yakcc hooks codex install         # Codex CLI (v0 facade; WI-HOOK-LAYER Phase 5 if justified)
+# Claude Code — writes a PreToolUse hook entry to .claude/settings.json
+# Intercepts Edit / Write / MultiEdit tool calls (DEC-HOOK-LAYER-001 D-HOOK-2)
+yakcc hooks claude-code install [--target <dir>]
+
+# Remove the hook from .claude/settings.json
+yakcc hooks claude-code install --uninstall [--target <dir>]
+
+# Cursor (WI-HOOK-LAYER Phase 4 — not yet implemented)
+# yakcc hooks cursor install
+
+# Codex CLI (WI-HOOK-LAYER Phase 5 — conditional on demand)
+# yakcc hooks codex install
 ```
+
+After installation, every `Edit`, `Write`, and `MultiEdit` tool call made by
+Claude Code will invoke `yakcc hook-intercept` before the code lands on disk.
+The hook queries the local registry for a matching atom and captures telemetry
+(local-only by default per DEC-HOOK-LAYER-001 D-HOOK-5).
+
+Re-running `install` is safe — it is idempotent and will not create duplicate
+entries. Running `--uninstall` cleanly removes the yakcc entry while leaving
+any other hook configuration untouched.
 
 ## Prerequisites
 

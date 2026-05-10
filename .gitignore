@@ -8,6 +8,10 @@ dist/
 .env.local
 .yakcc/
 tmp/
+# NOTE: tmp/discovery-eval/baseline-single-vector-2026-05-10.json and
+# tmp/discovery-eval/measurement-first-decision.md are committed via `git add --force`
+# (DEC-V3-DISCOVERY-D5-HARNESS-001: operator-facing decision input must survive reboots).
+# The `tmp/` rule above ignores them by default; git-add --force bypasses it for these files.
 .claude/
 .worktrees/
 

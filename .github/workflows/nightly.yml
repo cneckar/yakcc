@@ -1,0 +1,221 @@
+# @decision DEC-CI-FAST-PATH-PHASE-3-001
+# Title: Tier-2 nightly CI workflow (nightly.yml) — scheduled full-suite gate
+# Status: accepted
+# Rationale: Phase 1 (DEC-CI-FAST-PATH-PHASE-1-005) removed pull_request triggers
+# from bootstrap.yml, test.yml, wave-3-parity.yml and retained push:main for
+# post-merge correctness. Phase 3 adds a daily cron trigger via this workflow so
+# the full suite runs even on days with no pushes to main. The three Tier-2 jobs
+# here mirror the existing trio's logic exactly, preserving their cache-skip
+# mechanisms. A notify-failure job creates a GitHub issue on any job failure so
+# no nightly regression goes undetected.
+# Rejected: adding schedule: to the trio directly (fine technically, but this
+# single file is cleaner — the trio's on: blocks remain minimal and unambiguous).
+# Rejected: omitting cache-skip in nightly (nightly restores the same cache the
+# push:main run wrote; a cache hit proves byte-identical re-shave, so skipping is
+# correct even nightly).
+
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC daily
+  workflow_dispatch:
+
+# Never cancel a nightly run — let it finish and report.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # full-test — pnpm -r build + pnpm -r test (full suite, no numRuns reduction)
+  # Tier-2 counterpart to pr-ci.yml's affected-package build-and-test job.
+  # ---------------------------------------------------------------------------
+  full-test:
+    name: full test suite (pnpm -r build + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r test
+
+  # ---------------------------------------------------------------------------
+  # bootstrap-verify — content-addressed manifest byte-equality.
+  # Mirrors bootstrap.yml's logic (including cache-skip) on the nightly cadence.
+  # ---------------------------------------------------------------------------
+  bootstrap-verify:
+    name: yakcc bootstrap --verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute source hash
+        id: source-hash
+        run: |
+          HASH=$(
+            { find packages/*/src examples/*/src -name '*.ts' -type f -print0 \
+                  | sort -z \
+                  | xargs -0 sha256sum
+              sha256sum bootstrap/expected-roots.json pnpm-lock.yaml
+            } | sha256sum | awk '{print $1}'
+          )
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Restore verified-marker cache
+        id: verified-cache
+        uses: actions/cache@v4
+        with:
+          path: bootstrap/.verified-marker
+          key: bootstrap-verified-${{ steps.source-hash.outputs.hash }}
+
+      - name: Skip — already verified for this source state
+        if: steps.verified-cache.outputs.cache-hit == 'true'
+        run: cat bootstrap/.verified-marker
+
+      - uses: pnpm/action-setup@v4
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+
+      - run: pnpm -r build
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+
+      - name: Verify content-addressed manifest
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: node packages/cli/dist/bin.js bootstrap --verify
+
+      - name: Write verified-marker
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p bootstrap
+          {
+            echo "input-hash: ${{ steps.source-hash.outputs.hash }}"
+            echo "verified-at: $(date -u +%FT%TZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "ref: ${{ github.ref }}"
+          } > bootstrap/.verified-marker
+          cat bootstrap/.verified-marker
+
+  # ---------------------------------------------------------------------------
+  # wave-3-parity — wave-3 closer-parity test suite.
+  # Mirrors wave-3-parity.yml's logic (including cache-skip) on nightly cadence.
+  # ---------------------------------------------------------------------------
+  wave-3-parity:
+    name: wave-3 closer parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute source hash
+        id: source-hash
+        run: |
+          HASH=$(
+            { find packages/compile packages/shave packages/registry packages/contracts \
+                   examples/v1-wave-3-wasm-lower-demo \
+                   -name '*.ts' -type f -print0 \
+                  | sort -z \
+                  | xargs -0 sha256sum
+              sha256sum pnpm-lock.yaml
+            } | sha256sum | awk '{print $1}'
+          )
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Restore verified-marker cache
+        id: verified-cache
+        uses: actions/cache@v4
+        with:
+          path: tmp/wave-3-parity/.verified-marker
+          key: wave-3-parity-verified-${{ steps.source-hash.outputs.hash }}
+
+      - name: Skip — already verified for this source state
+        if: steps.verified-cache.outputs.cache-hit == 'true'
+        run: cat tmp/wave-3-parity/.verified-marker
+
+      - uses: pnpm/action-setup@v4
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+
+      - run: pnpm -r build
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+
+      - name: Run wave-3 parity tests
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter v1-wave-3-wasm-lower-demo test
+
+      - name: Write verified-marker
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tmp/wave-3-parity
+          {
+            echo "input-hash: ${{ steps.source-hash.outputs.hash }}"
+            echo "verified-at: $(date -u +%FT%TZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "ref: ${{ github.ref }}"
+          } > tmp/wave-3-parity/.verified-marker
+          cat tmp/wave-3-parity/.verified-marker
+
+  # ---------------------------------------------------------------------------
+  # notify-failure — create a GitHub issue if any nightly job fails.
+  # DEC-CI-FAST-PATH-PHASE-3-001: failure notification via actions/github-script.
+  # The issue is assigned to cneckar and labeled 'ci'. Runs only when at least
+  # one of the three jobs above fails; skipped on success or cancellation.
+  # ---------------------------------------------------------------------------
+  notify-failure:
+    name: notify on failure
+    runs-on: ubuntu-latest
+    needs: [full-test, bootstrap-verify, wave-3-parity]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    permissions:
+      issues: write
+    steps:
+      - name: Create failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().slice(0, 10);
+            const needs = ${{ toJSON(needs) }};
+            const failed = Object.entries(needs)
+              .filter(([, v]) => v.result === 'failure')
+              .map(([k]) => k)
+              .join(', ');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Nightly CI failure — ${date}`,
+              body: [
+                `## Nightly CI failure`,
+                ``,
+                `**Date:** ${date}`,
+                `**Commit:** ${context.sha}`,
+                `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                `**Failed jobs:** ${failed}`,
+                ``,
+                `Triage the linked run and fix or suppress before the next nightly.`,
+              ].join('\n'),
+              assignees: ['cneckar'],
+              labels: ['ci'],
+            });

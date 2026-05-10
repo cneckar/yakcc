@@ -47,6 +47,403 @@
 //   and avoids polluting the project tree. Temp files are cleaned up after each
 //   emit() call regardless of success/failure (finally block). A unique
 //   subdirectory per call (randomUUID) prevents concurrent-call collisions.
+//
+// @decision DEC-AS-JSON-STRATEGY-001
+// Title: AS-backend JSON support uses flat-memory manual integer parsers/writers
+//        (parseI32/writeI32/skipWS) rather than assemblyscript-json or native
+//        AS JSON stdlib, because both managed JSON libraries require --runtime
+//        minimal/full (GC heap, managed string type, JSON parsing internals) which
+//        are incompatible with the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2D-JSON, Issue #209, 2026-05-03)
+// Rationale:
+//   AS JSON library options evaluated:
+//
+//   (A) `assemblyscript-json` package (npm: assemblyscript-json):
+//       Requires AS managed types (string, GC allocation, object fields).
+//       Under --runtime stub: JSON.parse<T>() fails to compile because the stub
+//       runtime omits the GC heap and string internals. PROBE RESULT: COMPILE FAIL.
+//
+//   (B) Native AS JSON stdlib (JSON.parse / JSON.stringify built into asc):
+//       Also requires managed string type and GC allocation. Same failure mode
+//       as (A) under --runtime stub. PROBE RESULT: COMPILE FAIL.
+//       Evidence: J4/J5 probes in json-parity.test.ts confirm the compile failure.
+//
+//   (C) Flat-memory manual parsers (CHOSEN):
+//       parseI32(ptr, len): byte-by-byte ASCII decimal integer parser (atoi).
+//       writeI32(value, dstPtr): byte-by-byte ASCII decimal integer writer (itoa).
+//       skipWS(ptr, len, start): JSON whitespace-skip for token boundary detection.
+//       These use only WASM intrinsics (load<u8>, store<u8>, i32 arithmetic) with
+//       no GC dependency. Compatible with --runtime stub. PROBE RESULT: COMPILE OK.
+//
+//   Type-parameter inference at codegen time (for JSON.stringify<T>):
+//       Not applicable -- the flat-memory approach works on byte buffers, not typed
+//       AS values. The integer type (i32) is the only supported token type in v1
+//       (ASCII-ONLY CONSTRAINT per DEC-AS-JSON-LAYOUT-001). Type inference for
+//       broader JSON support (floats, strings, objects) is deferred to a future
+//       phase that adopts --runtime minimal/full.
+//
+//   JSON.parse destination type resolution:
+//       Not applicable in v1. The flat-memory parseI32 always returns i32.
+//       Destination type selection for polymorphic JSON.parse is deferred to the
+//       same future phase that enables AS managed JSON.
+//
+//   Decision: Use flat-memory approach (C) for v1. The assemblyscript-json package
+//   is NOT added as a dependency at this time -- it would only work with a GC
+//   runtime tier that is not yet adopted. A follow-up issue should track the GC
+//   runtime upgrade path and reassess JSON library adoption at that point.
+//
+// See also: DEC-AS-JSON-LAYOUT-001 in json-parity.test.ts for the byte-layout
+// specifics (JSON_BASE_PTR, DST_BASE_PTR, ASCII-ONLY CONSTRAINT).
+//
+// @decision DEC-AS-JSON-STRATEGY-001
+// Title: AS-backend JSON support uses flat-memory manual integer parsers/writers
+//        (parseI32/writeI32/skipWS) rather than assemblyscript-json or native
+//        AS JSON stdlib, because both managed JSON libraries require --runtime
+//        minimal/full (GC heap, managed string type, JSON parsing internals) which
+//        are incompatible with the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2D-JSON, Issue #209, 2026-05-03)
+// Rationale:
+//   AS JSON library options evaluated:
+//
+//   (A) `assemblyscript-json` package (npm: assemblyscript-json):
+//       Requires AS managed types (string, GC allocation, object fields).
+//       Under --runtime stub: JSON.parse<T>() fails to compile because the stub
+//       runtime omits the GC heap and string internals. PROBE RESULT: COMPILE FAIL.
+//
+//   (B) Native AS JSON stdlib (JSON.parse / JSON.stringify built into asc):
+//       Also requires managed string type and GC allocation. Same failure mode
+//       as (A) under --runtime stub. PROBE RESULT: COMPILE FAIL.
+//       Evidence: J4/J5 probes in json-parity.test.ts confirm the compile failure.
+//
+//   (C) Flat-memory manual parsers (CHOSEN):
+//       parseI32(ptr, len): byte-by-byte ASCII decimal integer parser (atoi).
+//       writeI32(value, dstPtr): byte-by-byte ASCII decimal integer writer (itoa).
+//       skipWS(ptr, len, start): JSON whitespace-skip for token boundary detection.
+//       These use only WASM intrinsics (load<u8>, store<u8>, i32 arithmetic) with
+//       no GC dependency. Compatible with --runtime stub. PROBE RESULT: COMPILE OK.
+//
+//   Type-parameter inference at codegen time (for JSON.stringify<T>):
+//       Not applicable -- the flat-memory approach works on byte buffers, not typed
+//       AS values. The integer type (i32) is the only supported token type in v1
+//       (ASCII-ONLY CONSTRAINT per DEC-AS-JSON-LAYOUT-001). Type inference for
+//       broader JSON support (floats, strings, objects) is deferred to a future
+//       phase that adopts --runtime minimal/full.
+//
+//   JSON.parse destination type resolution:
+//       Not applicable in v1. The flat-memory parseI32 always returns i32.
+//       Destination type selection for polymorphic JSON.parse is deferred to the
+//       same future phase that enables AS managed JSON.
+//
+//   Decision: Use flat-memory approach (C) for v1. The assemblyscript-json package
+//   is NOT added as a dependency at this time -- it would only work with a GC
+//   runtime tier that is not yet adopted. A follow-up issue should track the GC
+//   runtime upgrade path and reassess JSON library adoption at that point.
+//
+// See also: DEC-AS-JSON-LAYOUT-001 in json-parity.test.ts for the byte-layout
+// specifics (JSON_BASE_PTR, DST_BASE_PTR, ASCII-ONLY CONSTRAINT).
+//
+// @decision DEC-AS-EXCEPTIONS-STRATEGY-001
+// Title: AS-backend exception/error handling uses primitive abort(), flat-memory error
+//        codes (store<u8>(errPtr, code)), and sentinel return values rather than
+//        try/catch exception dispatch, because try/catch requires exception-table
+//        support absent from --runtime stub (asc 0.28.x). Bare throw new Error()
+//        (no enclosing try/catch) compiles under stub — an unexpected finding.
+// Status: decided (WI-AS-PHASE-2C-EXCEPTIONS, Issue #207, 2026-05-10)
+// Rationale:
+//   AS exception handling options evaluated:
+//
+//   (A) Managed try/catch exception dispatch:
+//       Requires exception-table support in the WASM binary — catch routing,
+//       finalizer calls, and stack unwinding to the matching catch block.
+//       Under --runtime stub, asc refuses to compile `try { throw } catch {}`.
+//       PROBE RESULT (E5): COMPILE FAIL. asc error: exception-table absent.
+//
+//   (B) Managed throw new Error("msg") with catch:
+//       Same failure mode as (A) when enclosed in a try/catch. The Error object
+//       constructor itself does not require GC under stub; it is the catch-dispatch
+//       mechanism that fails. PROBE RESULT: COMPILE FAIL (when try/catch present).
+//
+//   (C) Flat-memory error protocol (CHOSEN):
+//       Three complementary patterns, all WASM-intrinsic compatible:
+//         abort():           AS primitive; traps the WASM instance on error.
+//                            No GC or exception-table needed.
+//         errPtr (i32):      Caller passes a pointer into WASM linear memory.
+//                            store<u8>(errPtr, code) writes error code byte.
+//                            load<u8>(errPtr) lets host read error state.
+//                            ERR_BASE_PTR=512: above AS stub header,
+//                            below STR_BASE_PTR=1024 (strings-parity ABI).
+//         Sentinel values:   Return -1 (or other out-of-band integer) on error.
+//                            Mirrors S4/indexOfByte pattern from strings-parity.
+//       All three patterns use only load<u8>/store<u8>/i32 arithmetic — no GC.
+//       Compatible with --runtime stub. PROBE RESULT: COMPILE OK.
+//
+//   FINDING (E4 — UNEXPECTED): bare `throw new Error("msg")` with NO enclosing
+//   try/catch DOES compile under asc 0.28.x --runtime stub and passes
+//   WebAssembly.validate(). The Error constructor is more stub-permissive than
+//   initially assumed; it is the catch-dispatch that requires the exception-table.
+//   The non-negative pass-through path is verified at runtime (E4 probe test).
+//
+//   Decision: Use flat-memory approach (C) for v1. try/catch exception dispatch
+//   is deferred until a future phase adopts --runtime minimal/full (GC tier).
+//   A follow-up issue should track the GC runtime upgrade path and reassess
+//   native AS exception handling at that point.
+//
+// See also: DEC-AS-EXCEPTION-LAYOUT-001 in exceptions-parity.test.ts for the
+// full substrate inventory (E1-E5), ERR_BASE_PTR layout, and probe methodology.
+//
+// @decision DEC-AS-STRINGS-STRATEGY-001
+// Title: AS-backend string support uses flat-memory UTF-8 byte protocol
+//        (ptr: i32, len: i32) over WASM intrinsics (load<u8>, store<u8>,
+//        byte-level scanning) rather than AS managed string type, because
+//        AS managed strings require --runtime minimal/full (GC heap, UTF-16
+//        string header, charCodeAt/indexOf/slice GC internals) which are
+//        incompatible with the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2B-STRINGS, Issue #206, 2026-05-03)
+// Rationale:
+//   AS string support options evaluated:
+//
+//   (A) AS managed string type (string literals, s.length, s.charCodeAt,
+//       s.indexOf, s.slice):
+//       Requires the GC runtime for all managed string operations:
+//         - string.length reads the GC-managed string header (UTF-16 char count).
+//         - string.charCodeAt(i) is a bounds-checked GC read of a UTF-16 code unit.
+//         - string.indexOf(sub) performs a GC string search with managed allocation.
+//         - string.slice(start, end) allocates a new managed string via GC copy.
+//       Under --runtime stub, any managed-type operation that touches the GC
+//       either traps at runtime or fails to compile.
+//       PROBE RESULT (S-managed): COMPILE FAIL. asc 0.28.x --runtime stub does
+//       not support AS managed string type.
+//
+//   (B) assemblyscript-string-utils or similar npm packages:
+//       All evaluated packages wrap AS managed string internals and require the
+//       same GC heap and string runtime library as option (A).
+//       PROBE RESULT: COMPILE FAIL (same failure mode as managed strings).
+//
+//   (C) Flat-memory UTF-8 byte protocol (CHOSEN):
+//       strLen(ptr, len):       return len parameter (flat-memory length pass-through).
+//       byteAt(ptr, len, i):    load<u8>(ptr + i) — read byte at index i.
+//       strEq(pA, lA, pB, lB): byte-by-byte equality comparison (memcmp variant).
+//       indexOfByte(ptr, len, b): scan for first occurrence of byte b; return index or -1.
+//       copySlice(src, len, dst, start, end): copy bytes [start, end) via store<u8>;
+//                                             return byte count copied.
+//       These operations use only WASM intrinsics (load<u8>, store<u8>, i32
+//       arithmetic) with no GC dependency. Compatible with --runtime stub.
+//       PROBE RESULT: COMPILE OK.
+//
+//   ASCII-ONLY CONSTRAINT (v1): Substrates use ASCII-only inputs (single-byte
+//   UTF-8, code points 0x20-0x7E). Multi-byte UTF-8 sequences (2-4 bytes),
+//   the byte-count vs. char-count distinction, and surrogate-pair handling are
+//   deferred to a future phase when the GC runtime tier is adopted.
+//
+//   Memory layout: STR_BASE_PTR = 1024 (above AS stub runtime header region,
+//   above ERR_BASE_PTR = 512); DST_BASE_PTR = 4096 (separate output buffer for
+//   slice/copy operations). Layout is wire-compatible with wave-3 wasm-lowering's
+//   string ABI and with arrays-parity.test.ts conventions.
+//
+//   Decision: Use flat-memory approach (C) for v1. AS managed strings are NOT
+//   used at this time -- they only work with a GC runtime tier not yet adopted.
+//   A follow-up issue should track the GC runtime upgrade path and reassess
+//   managed-string support (char-count semantics, full Unicode, surrogate pairs)
+//   at that point.
+//
+// See also: DEC-AS-STRING-LAYOUT-001 in strings-parity.test.ts for the
+// full substrate inventory (S1-S5), STR_BASE_PTR/DST_BASE_PTR layout, and
+// ASCII-only constraint rationale.
+//
+// @decision DEC-AS-ARRAYS-STRATEGY-001
+// Title: AS-backend array support uses flat-memory (ptr: i32, len: i32) protocol
+//        over WASM intrinsics (load<i32>, store<i32>, byte-stride arithmetic) rather
+//        than managed AS Array<i32> or StaticArray<i32>, because managed arrays and
+//        StaticArray both require --runtime minimal/full (GC heap) or trap at runtime
+//        under the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2E-ARRAYS, Issue #210, 2026-05-10)
+// Rationale:
+//   AS array support options evaluated:
+//
+//   (A) Managed AS Array<i32> (i32[], Array<i32> with .length, .push, .map, .filter,
+//       .reduce):
+//       Requires the GC runtime for all managed array operations:
+//         - Array<i32>.length reads the GC-managed array header (element count).
+//         - Array<i32>[i] subscript is a bounds-checked GC heap read.
+//         - Array<i32>.push() triggers GC heap allocation / capacity doubling.
+//         - Array<i32>.map(fn) / .filter(fn) require closure allocation — also
+//           a GC feature (function table + closure context).
+//         - Array<i32>.reduce(fn, init) requires closure support for the accumulator.
+//       Under --runtime stub: .map() and .filter() fail to compile (closure
+//       allocation absent). .push() compiles syntactically but the resulting WASM
+//       traps at runtime because the stub does not implement the ArrayBuffer resize
+//       path (GC realloc absent). PROBE RESULT (A4 push): RUNTIME TRAP.
+//       PROBE RESULT (A5 map/closure): COMPILE FAIL.
+//
+//   (B) AS StaticArray<i32> (fixed-size, bounds-checked, no resize):
+//       Does not require GC allocation for reads (bounds-checked load<i32>).
+//       However, .length and subscript access for StaticArray are GC-managed
+//       metadata reads under asc 0.28.x even for stub runtime. The allocation
+//       itself (`new StaticArray<i32>(n)`) requires memory.grow plumbing absent
+//       from stub. PROBE RESULT: StaticArray allocation fails to compile or
+//       traps at runtime under --runtime stub. Rejected for the same root cause
+//       as managed arrays: depends on GC allocation infrastructure.
+//
+//   (C) Flat-memory ptr+len protocol (CHOSEN):
+//       Arrays are represented as:
+//         - ptr: i32 — pointer to first i32 element in WASM linear memory.
+//         - len: i32 — number of elements (not byte length).
+//         - Element at index i: byte offset = ptr + i * 4 (i32 = 4 bytes).
+//       Operations implemented using only WASM intrinsics (load<i32>, store<i32>,
+//       i32 arithmetic):
+//         A1 len:        return len parameter (flat-memory length pass-through).
+//         A2 get:        return load<i32>(ptr + i * 4) — index access.
+//         A3 sum/reduce: manual for-loop; accumulate load<i32> values.
+//         A4 pushLen:    write v at index len via store<i32>(ptr + len * 4, v);
+//                        return len + 1. (Caller manages buffer capacity.)
+//         A5 doubleAll:  manual for-loop; store<i32>(dstPtr + i * 4, 2 * load<i32>...)
+//                        Writes doubled values to a separate output buffer (dstPtr).
+//       All operations use no GC, no closures, no managed types.
+//       Compatible with --runtime stub. PROBE RESULT: COMPILE OK, RUNTIME OK.
+//
+//   ASCII-ONLY / i32-ONLY CONSTRAINT (v1): Array elements are i32 only. Arrays-of-
+//   strings (ptr+len pairs per element), arrays-of-records (struct ABI per element),
+//   and GC-managed dynamic arrays are deferred to a future phase that adopts
+//   --runtime minimal/full.
+//
+//   STRUCT_BASE_PTR = 64: same convention as records-parity.test.ts; avoids the AS
+//   stub runtime header region at low addresses. Wire-compatible with wave-3
+//   wasm-lowering's array ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//
+//   Decision: Use flat-memory approach (C) for v1. Managed Array<i32> and
+//   StaticArray<i32> are NOT used -- they require a GC runtime tier not yet adopted.
+//   A follow-up issue should track the GC runtime upgrade path and reassess
+//   native AS array types (Array<T>.push, .map, .filter, .reduce with closures)
+//   at that point. arrays-of-strings and arrays-of-records are deferred to #230
+//   (WI-AS-PHASE-2F).
+//
+// See also: DEC-AS-ARRAY-LAYOUT-001 in arrays-parity.test.ts for the
+// full substrate inventory (A1-A5), STRUCT_BASE_PTR layout, i32-stride protocol,
+// and the deferred Phase 2F items (arrays-of-strings, closure-based map/filter).
+//
+// @decision DEC-AS-CONTROL-FLOW-STRATEGY-001
+// Title: AS-backend control-flow constructs (if/else, while, for, do-while, switch)
+//        are supported by asc 0.28.x natively under --runtime stub without any
+//        workarounds in as-backend.ts, because they lower to standard WASM scalar
+//        instructions that have no GC or managed-type dependency.
+// Status: decided (WI-AS-PHASE-2G-CONTROL-FLOW, Issue #212, 2026-05-10)
+// Rationale:
+//   AS control-flow support options evaluated:
+//
+//   (A) Managed iterator protocol (for-of over AS managed string / Array<T>):
+//       for-of over AS managed types (string, Array<T>, custom iterables) requires
+//       GC-managed iterator objects and Symbol.iterator dispatch. Under --runtime
+//       stub the GC heap and Symbol internals are absent. PROBE RESULT: for-of over
+//       managed types COMPILE FAIL (or RUNTIME TRAP) under --runtime stub.
+//       Affected substrates: any for-of loop whose iterable is an AS managed type.
+//
+//   (B) for-of over AS managed types via alternative iteration (index-based):
+//       Replace for-of with a manual index-for loop (for(let i=0;i<len;i++)).
+//       Avoids the iterator protocol entirely; compatible with flat-memory arrays.
+//       PROBE RESULT: COMPILE OK under --runtime stub. However, this is a
+//       workaround for managed-type arrays, not a feature of the control-flow
+//       substrate itself. Considered as a future escalation path only.
+//
+//   (C) asc-native control-flow constructs (CHOSEN -- no workaround required):
+//       if/else, else-if chains, while, for (index-based), do-while, and switch
+//       (with explicit cases and default) all lower to standard WASM control
+//       instructions:
+//         if/else         => WASM if/else block (no GC needed)
+//         while           => WASM loop + br_if (no GC needed)
+//         for (index)     => WASM loop + br_if + i32 counter (no GC needed)
+//         do-while        => WASM loop + br_if at block end (min 1 iteration)
+//         switch/default  => WASM block + br_table or nested br_if (no GC needed)
+//         break/continue  => WASM br to enclosing block label (no GC needed)
+//       These constructs use only i32 arithmetic and WASM branch instructions.
+//       No GC allocation, no managed types, no exception-table needed.
+//       Compatible with --runtime stub. PROBE RESULT (CF1-CF5): COMPILE OK.
+//
+//   FINDING (CF1-CF5 -- CONFIRMED EXPECTED): All five control-flow substrates
+//   compile cleanly under asc 0.28.x --runtime stub and pass
+//   WebAssembly.validate(). Value parity vs TS reference oracle confirmed by
+//   20 fast-check runs per substrate. No changes to as-backend.ts were required
+//   for this WI -- the existing emit() pipeline handles control-flow atoms
+//   without modification.
+//
+//   Substrates verified (per eval contract T3, DEC-AS-CONTROL-FLOW-001):
+//     CF1: classify   -- if / else-if / else (3-branch sign classifier)
+//     CF2: sumToN     -- while loop (triangular sum 0..n-1)
+//     CF3: product    -- for loop (factorial, index-based, no managed array)
+//     CF4: countdown  -- do-while (count down, min 1 iteration guaranteed)
+//     CF5: dayName    -- switch with default (3 explicit cases + fallback)
+//
+//   Decision: Use asc-native path (C) for all scalar control-flow constructs in v1.
+//   No workaround layer in as-backend.ts is required. for-of over AS managed types
+//   (string, Array<T>) remains deferred to a future phase that adopts --runtime
+//   minimal/full (GC tier). A follow-up issue should track the GC runtime upgrade
+//   path and reassess managed-type iteration (for-of, Symbol.iterator, closures)
+//   at that point.
+//
+// See also: DEC-AS-CONTROL-FLOW-001 in control-flow-parity.test.ts for the
+// full substrate inventory (CF1-CF5), exportMemory: false convention, and the
+// 20-run fast-check parity methodology.
+//
+// @decision DEC-AS-CONTROL-FLOW-STRATEGY-001
+// Title: AS-backend control-flow constructs (if/else, while, for, do-while, switch)
+//        are supported by asc 0.28.x natively under --runtime stub without any
+//        workarounds in as-backend.ts, because they lower to standard WASM scalar
+//        instructions that have no GC or managed-type dependency.
+// Status: decided (WI-AS-PHASE-2G-CONTROL-FLOW, Issue #212, 2026-05-10)
+// Rationale:
+//   AS control-flow support options evaluated:
+//
+//   (A) Managed iterator protocol (for-of over AS managed string / Array<T>):
+//       for-of over AS managed types (string, Array<T>, custom iterables) requires
+//       GC-managed iterator objects and Symbol.iterator dispatch. Under --runtime
+//       stub the GC heap and Symbol internals are absent. PROBE RESULT: for-of over
+//       managed types COMPILE FAIL (or RUNTIME TRAP) under --runtime stub.
+//       Affected substrates: any for-of loop whose iterable is an AS managed type.
+//
+//   (B) for-of over AS managed types via alternative iteration (index-based):
+//       Replace for-of with a manual index-for loop (for(let i=0;i<len;i++)).
+//       Avoids the iterator protocol entirely; compatible with flat-memory arrays.
+//       PROBE RESULT: COMPILE OK under --runtime stub. However, this is a
+//       workaround for managed-type arrays, not a feature of the control-flow
+//       substrate itself. Considered as a future escalation path only.
+//
+//   (C) asc-native control-flow constructs (CHOSEN — no workaround required):
+//       if/else, else-if chains, while, for (index-based), do-while, and switch
+//       (with explicit cases and default) all lower to standard WASM control
+//       instructions:
+//         if/else         → WASM if/else block (no GC needed)
+//         while           → WASM loop + br_if (no GC needed)
+//         for (index)     → WASM loop + br_if + i32 counter (no GC needed)
+//         do-while        → WASM loop + br_if at block end (min 1 iteration)
+//         switch/default  → WASM block + br_table or nested br_if (no GC needed)
+//         break/continue  → WASM br to enclosing block label (no GC needed)
+//       These constructs use only i32 arithmetic and WASM branch instructions.
+//       No GC allocation, no managed types, no exception-table needed.
+//       Compatible with --runtime stub. PROBE RESULT (CF1-CF5): COMPILE OK.
+//
+//   FINDING (CF1-CF5 — CONFIRMED EXPECTED): All five control-flow substrates
+//   compile cleanly under asc 0.28.x --runtime stub and pass
+//   WebAssembly.validate(). Value parity vs TS reference oracle confirmed by
+//   20 fast-check runs per substrate. No changes to as-backend.ts were required
+//   for this WI — the existing emit() pipeline handles control-flow atoms
+//   without modification.
+//
+//   Substrates verified (per eval contract T3, DEC-AS-CONTROL-FLOW-001):
+//     CF1: classify   — if / else-if / else (3-branch sign classifier)
+//     CF2: sumToN     — while loop (triangular sum 0..n-1)
+//     CF3: product    — for loop (factorial, index-based, no managed array)
+//     CF4: countdown  — do-while (count down, min 1 iteration guaranteed)
+//     CF5: dayName    — switch with default (3 explicit cases + fallback)
+//
+//   Decision: Use asc-native path (C) for all scalar control-flow constructs in v1.
+//   No workaround layer in as-backend.ts is required. for-of over AS managed types
+//   (string, Array<T>) remains deferred to a future phase that adopts --runtime
+//   minimal/full (GC tier). A follow-up issue should track the GC runtime upgrade
+//   path and reassess managed-type iteration (for-of, Symbol.iterator, closures)
+//   at that point.
+//
+// See also: DEC-AS-CONTROL-FLOW-001 in control-flow-parity.test.ts for the
+// full substrate inventory (CF1-CF5), exportMemory: false convention, and the
+// 20-run fast-check parity methodology.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -319,13 +716,41 @@ export function prepareAsSource(source: string, domain: NumericDomain): string {
 // Exported factory
 // ---------------------------------------------------------------------------
 
+// @decision DEC-AS-BACKEND-OPTIONS-001
+// Title: assemblyScriptBackend() accepts optional AsBackendOptions for per-factory asc flags
+// Status: decided (WI-AS-PHASE-2A-MULTI-EXPORT-AND-RECORDS, 2026-05-10)
+// Rationale:
+//   Phase 1 compiled all atoms with --noExportMemory (pure function substrate).
+//   Phase 2A adds record substrate support (DEC-AS-RECORD-LAYOUT-001) where the
+//   test needs to write struct bytes into the WASM memory before calling the function.
+//   This requires omitting --noExportMemory (i.e. exporting memory). Rather than
+//   adding a second factory function (which would be a parallel mechanism per
+//   Sacred Practice #12), an options bag is passed to the factory. Default behaviour
+//   (exportMemory: false) is byte-identical to Phase 1.
+//
+//   Alternative considered: separate `assemblyScriptRecordBackend()` factory.
+//   Rejected: creates two nearly-identical factories that diverge over time. One
+//   factory with a documented option is the single-source-of-truth design.
+export interface AsBackendOptions {
+  /**
+   * When true, omit --noExportMemory from the asc invocation so the compiled
+   * module exports its linear memory. Required for record substrates where the
+   * test harness writes struct bytes directly into WASM memory before calling
+   * the entry function. Default: false (matches Phase 1 pure-numeric behaviour).
+   *
+   * @decision DEC-AS-BACKEND-OPTIONS-001
+   * @decision DEC-AS-RECORD-LAYOUT-001
+   */
+  readonly exportMemory?: boolean;
+}
+
 /**
  * Create the AssemblyScript WASM backend.
  *
- * The backend compiles yakcc numeric atoms to .wasm via AssemblyScript (asc).
- * MVP scope: numeric substrate (i32/i64/f64 arithmetic, bitops, Math.*).
- * Non-numeric atoms (strings, records, arrays, closures) are out of scope
- * for Phase 1 — those are covered in Phase 2 (#146) via a dialect adapter.
+ * The backend compiles yakcc atoms to .wasm via AssemblyScript (asc).
+ * Phase 1 scope: numeric substrate (i32/i64/f64 arithmetic, bitops, Math.*).
+ * Phase 2A extensions: multi-export modules (DEC-AS-MULTI-EXPORT-001),
+ * records via flat-struct linear-memory (DEC-AS-RECORD-LAYOUT-001).
  *
  * Workflow per emit() call:
  *   1. Extract the entry block's implSource from the ResolutionResult
@@ -334,10 +759,23 @@ export function prepareAsSource(source: string, domain: NumericDomain): string {
  *   4. Write source to a temp directory, invoke asc via Node child_process
  *   5. Read the .wasm bytes, clean up temp directory, return Uint8Array
  *
+ * Multi-export support (DEC-AS-MULTI-EXPORT-001):
+ *   asc natively emits exports for every `export function` in the source.
+ *   No change to the emitter is needed — prepareAsSource() already preserves
+ *   all `export function` declarations. The consumer (closer-parity-as.test.ts)
+ *   treats WASM with ≥1 export as covered (structural coverage for P-OTHER,
+ *   per-export value parity when an oracle exists).
+ *
+ * @param opts - Optional factory configuration (see AsBackendOptions)
  * @decision DEC-V1-LOWER-BACKEND-REUSE-001 (see file header)
  * @decision DEC-AS-BACKEND-TMPDIR-001 (see file header)
+ * @decision DEC-AS-MULTI-EXPORT-001 (multi-export: asc handles natively; no emitter change)
+ * @decision DEC-AS-RECORD-LAYOUT-001 (records: flat-struct linear-memory; exportMemory option)
+ * @decision DEC-AS-BACKEND-OPTIONS-001 (optional AsBackendOptions for per-factory asc flags)
  */
-export function assemblyScriptBackend(): WasmBackend {
+export function assemblyScriptBackend(opts?: AsBackendOptions): WasmBackend {
+  const exportMemory = opts?.exportMemory ?? false;
+
   return {
     name: "as",
     async emit(resolution: ResolutionResult): Promise<Uint8Array<ArrayBuffer>> {
@@ -373,9 +811,25 @@ export function assemblyScriptBackend(): WasmBackend {
           outPath,
           "--optimize",
           "--runtime",
-          "stub", // minimal AS runtime (no GC) — pure numeric
-          "--noExportMemory", // no memory export — pure function substrate
+          "stub", // minimal AS runtime (no GC) — numeric + struct substrates
         ];
+
+        // --noExportMemory: suppress memory export for pure numeric functions
+        // (Phase 1 default). Omit when exportMemory is requested (Phase 2A
+        // record substrates need to write struct bytes into WASM memory).
+        // @decision DEC-AS-BACKEND-OPTIONS-001
+        // @decision DEC-AS-RECORD-LAYOUT-001
+        if (!exportMemory) {
+          ascArgs.push("--noExportMemory");
+        } else {
+          // --initialMemory 1: guarantee ≥1 page (64 KiB) when memory is exported.
+          // The AS stub runtime does not allocate memory pages by default; without
+          // an initial page, DataView writes by the test harness throw RangeError.
+          // 1 page (64 KiB) is sufficient for all Phase 2A record substrates
+          // (struct pointers start at byte 64, struct data fits well within 64 KiB).
+          // @decision DEC-AS-RECORD-LAYOUT-001
+          ascArgs.push("--initialMemory", "1");
+        }
 
         execFileSync(process.execPath, ascArgs, {
           // Capture stderr to include in errors; stdio: pipe prevents terminal noise.

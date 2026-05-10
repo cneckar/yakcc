@@ -19,7 +19,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "biome check src/"
   },
-  "peerDependencies": {
+  "dependencies": {
     "@yakcc/contracts": "workspace:*"
   },
   "devDependencies": {
