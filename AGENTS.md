@@ -61,6 +61,22 @@ surface the conflict to the user. Do not proceed by relaxing a cornerstone
 - **Examples and demoable artifacts** → `examples/<name>/`. The v0 demo is
   `examples/parse-int-list/`.
 
+## Before picking up any WI
+
+**Check that the work isn't already done.** This is mandatory, not optional.
+
+1. `gh issue view <N>` — if state is `closed`, stop. Do not re-implement.
+2. `git fetch origin && git branch -r | grep <wi-number>` — if a branch
+   already exists, read it. If the work is on `main` already, close the issue
+   and stop. If the branch is open, coordinate rather than starting a parallel
+   branch.
+3. Search open PRs: `gh pr list --search "<wi-number>"` — if a PR is already
+   open for this work item, do not open a second one. Comment on the existing
+   PR instead.
+
+Skipping this check and doing a full implementation of work that already
+landed is the single most wasteful thing you can do on this project.
+
 ## Things explicitly not to do
 
 - **Do not introduce versioning.** No semver, no `latest`, no migration
