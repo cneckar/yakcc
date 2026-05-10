@@ -8,8 +8,8 @@
 //        does not support GC-managed types. Managed i32[] would require
 //        --runtime minimal or higher (which enables the AS GC), but stub is the
 //        established runtime for Phase 2 per DEC-AS-RECORD-LAYOUT-001.
-//        Flat-memory layout (ptr: i32, len: i32) mirrors wave-3 lower-layout
-//        and is directly comparable across backends.
+//        Flat-memory layout (ptr: i32, len: i32) mirrors the AS-backend flat-memory
+//        layout and is directly comparable across backends.
 // Status: decided (WI-AS-PHASE-2E-ARRAYS, 2026-05-10)
 // Rationale:
 //   AS managed arrays (i32[], Array<i32>) require the GC runtime for:
@@ -38,8 +38,8 @@
 //     - len is the number of elements (not byte length)
 //     - Element at index i is at byte offset (ptr + i * 4) (i32 = 4 bytes)
 //     - STRUCT_BASE_PTR = 64 (avoids AS stub runtime header region)
-//   This protocol is directly wire-compatible with wave-3 wasm-lowering's
-//   array ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//   This protocol defines the AS-backend flat-memory array ABI
+//   (formerly also described as wire-compatible with wave-3 wasm-lowering).
 //
 // Five substrates (per eval contract T4):
 //   A1: len      — read array length from explicit len parameter

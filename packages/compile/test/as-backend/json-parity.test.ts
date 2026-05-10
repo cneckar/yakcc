@@ -7,7 +7,7 @@
 //        writers (ptr + len, byte-by-byte ASCII) over managed JSON.parse() /
 //        JSON.stringify() because --runtime stub does not support the GC-managed
 //        string and parsing internals required by JSON.parse() and JSON.stringify().
-//        The flat-memory byte protocol mirrors wave-3 lower-layout ABI and is
+//        The flat-memory byte protocol mirrors the AS-backend flat-memory layout and is
 //        directly wire-comparable across backends.
 // Status: decided (WI-AS-PHASE-2D-JSON, 2026-05-10)
 // Rationale:
@@ -40,8 +40,8 @@
 //       to avoid collisions with any other test constants.
 //     - DST_BASE_PTR = 12288: separate output buffer for J2 writeI32.
 //     - Input/output byte buffers are in WASM linear memory (ptr: i32, len: i32).
-//   This protocol is directly wire-compatible with wave-3 wasm-lowering's
-//   flat-memory number ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//   This protocol defines the AS-backend flat-memory number ABI
+//   (formerly also described as wire-compatible with wave-3 wasm-lowering).
 //
 //   ASCII-ONLY CONSTRAINT (v1): All numeric strings are ASCII decimal digits plus
 //   optional leading '-'. No locale formatting, no float exponents, no hex.
@@ -738,7 +738,7 @@ export function stringifyI32(value: i32, dstPtr: i32): i32 {
 //   skipWS (find start of token) → parseI32 (read token) → writeI32 (emit token)
 //
 // These three patterns form the canonical JSON integer token read/write
-// protocol for flat-memory atoms in wave-3 wasm-lowering ABI.
+// protocol for flat-memory atoms in the AS-backend flat-memory ABI.
 //
 // @decision DEC-AS-JSON-LAYOUT-001
 // @decision DEC-AS-PARITY-TEST-NODE-WASM-001 (inherited from numeric-parity.test.ts)

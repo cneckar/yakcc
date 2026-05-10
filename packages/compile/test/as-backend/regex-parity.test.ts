@@ -49,8 +49,8 @@
 //       to avoid collisions with any other test constants.
 //     - All inputs are ASCII-encoded in WASM linear memory (ptr: i32, len: i32).
 //     - Byte at index i: load<u8>(ptr + i).
-//   This protocol is directly wire-compatible with wave-3 wasm-lowering's
-//   flat-memory string/number ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//   This protocol defines the AS-backend flat-memory string/number ABI
+//   (formerly also described as wire-compatible with wave-3 wasm-lowering).
 //
 //   ASCII-ONLY CONSTRAINT (v1): All inputs are ASCII bytes (0x00–0x7F).
 //   No Unicode or multi-byte UTF-8 complexity. This covers the common regex
@@ -687,7 +687,7 @@ export function matchDigits(ptr: i32, len: i32): i32 {
 //   → countDigits (full-scan digit count)
 //
 // These three patterns form the canonical char-class, anchored-literal, and
-// global-scan regex protocol for flat-memory atoms in wave-3 wasm-lowering ABI.
+// global-scan regex protocol for flat-memory atoms in the AS-backend flat-memory ABI.
 //
 // @decision DEC-AS-REGEX-LAYOUT-001
 // @decision DEC-AS-PARITY-TEST-NODE-WASM-001 (inherited from numeric-parity.test.ts)

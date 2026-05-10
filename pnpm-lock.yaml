@@ -181,6 +181,9 @@ importers:
       '@yakcc/shave':
         specifier: workspace:*
         version: link:../shave
+      assemblyscript:
+        specifier: ^0.28.17
+        version: 0.28.17
       ts-morph:
         specifier: ^24.0.0
         version: 24.0.0
@@ -191,9 +194,6 @@ importers:
       '@yakcc/seeds':
         specifier: workspace:*
         version: link:../seeds
-      assemblyscript:
-        specifier: ^0.28.17
-        version: 0.28.17
       fast-check:
         specifier: ^4.7.0
         version: 4.7.0

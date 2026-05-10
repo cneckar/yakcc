@@ -38,8 +38,8 @@
 //     - Byte at index i: load<u8>(ptr + i)
 //     - STR_BASE_PTR = 1024 (well above AS stub runtime header region)
 //     - DST_BASE_PTR = 4096 (separate output buffer for slice/copy operations)
-//   This protocol is directly wire-compatible with wave-3 wasm-lowering's
-//   string ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//   This protocol defines the AS-backend flat-memory string ABI
+//   (formerly also described as wire-compatible with wave-3 wasm-lowering).
 //
 // Five substrates (per eval contract T5):
 //   S1: strLen     — return len parameter (flat-memory length pass-through)
