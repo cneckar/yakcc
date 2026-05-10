@@ -8,6 +8,29 @@
 
 ---
 
+## ⚠️ STATUS NOTICE (WI-V3-DISCOVERY-D5-CORPUS-SEED, issue #269)
+
+**PR #267's "pause v3 IMPL" recommendation is EXPLICITLY RETRACTED per DEC-V3-INITIATIVE-002.**
+
+This document reflects the small 9-entry inline corpus (N=5 seed-derived).
+Per DEC-V3-INITIATIVE-002 (operator decision 2026-05-10), the N=5 measurement is
+contaminated by: (a) too-small corpus (single-observation problem); (b) store/query
+text-asymmetry bug (DEC-VECTOR-RETRIEVAL-002, not yet fixed).
+
+**The gate cannot fire on this measurement.** Two prereqs must land first:
+1. ✅ WI-V3-DISCOVERY-D5-CORPUS-SEED (issue #269) — stratified 50-entry corpus
+   on the full yakcc registry (~1,773+ atoms) — **landed on this PR**
+2. ⬜ WI-V3-DISCOVERY-IMPL-QUERY (issue #270) — fix the text-asymmetry bug
+
+After both land, re-run `DISCOVERY_EVAL_PROVIDER=local pnpm --filter @yakcc/registry test`
+against `bootstrap/yakcc.registry.sqlite`. The full-corpus per-category numbers in
+`baseline-single-vector-full-corpus-2026-05-10.json` are the actual gate input.
+
+See `tmp/discovery-eval/measurement-first-decision.md` (re-emitted by the full-corpus
+harness) for the per-category M1..M5 breakdown once the full-corpus test is run.
+
+---
+
 ## The Gate
 
 Per DEC-V3-INITIATIVE-001: if single-vector M1 hit-rate ALREADY meets >=80%, the 5x storage
@@ -21,7 +44,9 @@ Provider: transformers.js local (Xenova/all-MiniLM-L6-v2) — SEMANTIC embedding
 
 ---
 
-## Baseline Results (Xenova/all-MiniLM-L6-v2)
+## Baseline Results (Xenova/all-MiniLM-L6-v2) — INLINE 9-ENTRY CORPUS ONLY
+
+**⚠️ These numbers are from the small 9-entry inline corpus. See notice above.**
 
 | Metric | Value | Target | Pass? |
 |--------|-------|--------|-------|
@@ -36,22 +61,12 @@ Provider: transformers.js local (Xenova/all-MiniLM-L6-v2) — SEMANTIC embedding
 
 ---
 
-## Operator Decision
+## Operator Decision (INLINE CORPUS — SUPERSEDED)
 
-**M1 FAILS (55.6% < 80%)**
+**M1 FAILS (55.6% < 80%)** on the inline corpus.
 
-Single-vector embedding does NOT meet the M1 target.
-v3-implementation MAY PROCEED with D1's multi-dimensional schema.
-
-Worst-performing entries (lowest top-1 score):
-  - synth-haversine-negative-001: combinedScore=0.304
-  - synth-validate-email-001: combinedScore=0.358
-  - synth-clamp-001: combinedScore=0.364
-
-These entries justify per-dimension embeddings in D1:
-- Entries failing M2 suggest top-1 retrieval is imprecise (wrong atom ranked first)
-- Entries failing M3 suggest the correct atom is not in the top-10 at all
-- Entries failing M4 suggest ranking quality is poor
+This result is NOT actionable per DEC-V3-INITIATIVE-002. See status notice above.
+The full-corpus per-category breakdown is the required gate input.
 
 ---
 
@@ -72,6 +87,8 @@ These entries justify per-dimension embeddings in D1:
 
 ## Next Steps
 
-1. v3-implementation MAY PROCEED with D1 multi-dimensional schema.
-2. Use worst-performing entries above as justification per dimension for D1's 5-vector design.
-3. After D1 lands, re-run this harness to confirm multi-dimensional improves M1.
+1. Run the full-corpus harness after WI-V3-DISCOVERY-IMPL-QUERY (#270) lands:
+   `DISCOVERY_EVAL_PROVIDER=local pnpm --filter @yakcc/registry test`
+2. The per-category M1 numbers in `baseline-single-vector-full-corpus-*.json` are
+   the gate input per DEC-V3-INITIATIVE-002.
+3. PR #267's "pause v3 IMPL" recommendation is retracted; do not act on it.

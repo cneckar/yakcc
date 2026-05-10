@@ -1,0 +1,748 @@
+{
+  "version": 1,
+  "source": "stratified",
+  "lastUpdated": "2026-05-10",
+  "description": "Stratified benchmark corpus for WI-V3-DISCOVERY-D5-CORPUS-SEED (#269). Stored side: full yakcc self-shave registry (~1,773+ atoms). Query side: 50 queries across 5 categories designed to stress D1's multi-dimensional value proposition. Per-category M1..M5 numbers are the actual input for the DEC-V3-INITIATIVE-001 measurement-first gate.",
+  "categories": [
+    "behavior-only",
+    "guarantees-stressed",
+    "error-condition-stressed",
+    "non-functional-stressed",
+    "multi-aspect"
+  ],
+  "entries": [
+    {
+      "id": "cat1-ascii-char-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Return the single ASCII character at a zero-based position in a string"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-char",
+      "rationale": "Behavior-only query for ascii-char. No guarantees or error conditions mentioned. Tests whether behavior-only matching is sufficient for a simple positional read primitive."
+    },
+    {
+      "id": "cat1-digit-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Convert a single digit character to its numeric integer value"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "digit",
+      "rationale": "Behavior-only query for digit. Short, simple description with no side conditions."
+    },
+    {
+      "id": "cat1-eof-check-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Verify that a parse position has consumed all input with no trailing characters remaining"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "eof-check",
+      "rationale": "Behavior-only query for eof-check. Tests whether an end-of-input assertion atom can be found by behavior description alone."
+    },
+    {
+      "id": "cat1-peek-char-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Look at the character at the current parser position without consuming it"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "peek-char",
+      "rationale": "Behavior-only query for peek-char. The 'without consuming' phrasing is distinctive."
+    },
+    {
+      "id": "cat1-whitespace-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Skip past any space and tab characters at the current position in a string"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "whitespace",
+      "rationale": "Behavior-only query for whitespace. Both whitespace and optional-whitespace are acceptable matches since they have equivalent behavior descriptions."
+    },
+    {
+      "id": "cat1-integer-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse a run of decimal digit characters from a string into a numeric value"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "integer",
+      "rationale": "Behavior-only query for integer. Tests recall of a multi-digit parser atom."
+    },
+    {
+      "id": "cat1-comma-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Match and consume a comma character at the current parser position"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "comma",
+      "rationale": "Behavior-only query for comma. Short and specific."
+    },
+    {
+      "id": "cat1-string-slice-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Extract a substring between a start index and an end index from a string"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "string-from-position",
+      "rationale": "Behavior-only query for string-from-position. Uses 'substring' phrasing rather than the implementation name."
+    },
+    {
+      "id": "cat1-haversine-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compute the great-circle distance between two GPS coordinates in meters"
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space entry. No atom in the seed registry does Haversine distance calculation. Should produce a low-score non-hit, populating M5 poor band."
+    },
+    {
+      "id": "cat1-uuid-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Generate a random UUID version 4 identifier string"
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space entry. UUID generation is not in the registry. Behavior-only category control for the no-match path."
+    },
+    {
+      "id": "cat2-digit-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Parse a decimal digit character into a number",
+        "guarantees": [
+          "referentially transparent — same input always produces same output",
+          "no side effects of any kind"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "digit",
+      "rationale": "Guarantees-stressed query for digit. Mentions purity explicitly. Tests whether the guarantees dimension helps discriminate digit from other parsers."
+    },
+    {
+      "id": "cat2-ascii-char-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Get a character at a position in a string",
+        "guarantees": [
+          "pure — no mutation of input",
+          "returned string always has exactly length 1"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-char",
+      "rationale": "Guarantees-stressed query for ascii-char. The 'length-1' guarantee is distinctive and should differentiate this from char-code."
+    },
+    {
+      "id": "cat2-position-step-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Advance a parser position index by a fixed number of steps",
+        "guarantees": [
+          "monotonic — result is always >= input position",
+          "pure — no side effects"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "position-step",
+      "rationale": "Guarantees-stressed query for position-step. Monotonic advance is the key semantic guarantee for this atom."
+    },
+    {
+      "id": "cat2-ascii-digit-set-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Check whether a character is an ASCII digit",
+        "guarantees": [
+          "total function — always returns a value, never throws",
+          "consistent — same character always produces same result"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-digit-set",
+      "rationale": "Guarantees-stressed query for ascii-digit-set. Totality is the key differentiator from digit (which throws on non-digits)."
+    },
+    {
+      "id": "cat2-peek-char-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Read a character at a position without advancing the parser state",
+        "guarantees": [
+          "null at end of input rather than throwing",
+          "pure — position is unchanged after call"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "peek-char",
+      "rationale": "Guarantees-stressed query for peek-char. The null-at-EOF guarantee distinguishes peek-char from ascii-char which throws on OOB."
+    },
+    {
+      "id": "cat2-integer-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Parse digit characters from a string starting at a given position",
+        "guarantees": [
+          "greedy — always consumes as many digits as possible",
+          "result value is always non-negative"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "integer",
+      "rationale": "Guarantees-stressed query for integer. Greedy consumption and non-negative result are the key guarantees."
+    },
+    {
+      "id": "cat2-whitespace-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Skip whitespace characters in a string",
+        "guarantees": [
+          "idempotent — applying twice is equivalent to applying once",
+          "monotonic — returned position is always >= input position"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "whitespace",
+      "rationale": "Guarantees-stressed query for whitespace. Idempotency is the key guarantee that distinguishes whitespace from a one-shot skipper."
+    },
+    {
+      "id": "cat2-list-of-ints-guarantees-001",
+      "source": "seed-derived",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Parse a list of integers from a string",
+        "guarantees": [
+          "pure — no mutation of input string",
+          "composed from primitive parser blocks rather than a monolithic implementation"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "list-of-ints",
+      "rationale": "Guarantees-stressed query for list-of-ints. Composition guarantee differentiates this from a hand-rolled parser."
+    },
+    {
+      "id": "cat2-hash-guarantees-001",
+      "source": "synthetic-tasks",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Compute a fingerprint of a string",
+        "guarantees": [
+          "deterministic — same input always produces same fingerprint",
+          "no side effects"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space guarantees-stressed entry. No cryptographic hash atom in the seed registry. Tests that guarantees alone don't pull in wrong atoms."
+    },
+    {
+      "id": "cat2-sort-guarantees-001",
+      "source": "synthetic-tasks",
+      "category": "guarantees-stressed",
+      "query": {
+        "behavior": "Sort a list of numbers",
+        "guarantees": [
+          "pure — does not mutate the input array",
+          "stable sort — equal elements maintain their relative order"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space guarantees-stressed entry. Sorting is not in the seed registry. Tests that purity guarantee doesn't cause false hits."
+    },
+    {
+      "id": "cat3-ascii-char-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Get a character from a string at a given index",
+        "errorConditions": [
+          "throws RangeError if position is out of bounds",
+          "throws RangeError if the character code exceeds 127"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-char",
+      "rationale": "Error-stressed query for ascii-char. The non-ASCII rejection is the key distinguisher from char-code (which accepts all UTF-16 codes)."
+    },
+    {
+      "id": "cat3-comma-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Consume a comma character at a parser position",
+        "errorConditions": [
+          "throws SyntaxError if the character at position is not a comma"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "comma",
+      "rationale": "Error-stressed query for comma. SyntaxError on mismatch is the defining error for all literal-match atoms."
+    },
+    {
+      "id": "cat3-bracket-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Assert that a bracket character appears at the current parser position",
+        "errorConditions": [
+          "throws SyntaxError if the character does not match the expected bracket",
+          "throws RangeError if position is negative"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "bracket",
+      "rationale": "Error-stressed query for bracket. Two distinct error types (SyntaxError and RangeError) are mentioned."
+    },
+    {
+      "id": "cat3-eof-check-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Check that parsing has consumed all input",
+        "errorConditions": [
+          "throws SyntaxError if any characters remain after the given position"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "eof-check",
+      "rationale": "Error-stressed query for eof-check. SyntaxError on trailing input is the only error condition."
+    },
+    {
+      "id": "cat3-char-code-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Return the numeric char code of a character in a string",
+        "errorConditions": [
+          "throws RangeError if position is negative",
+          "throws RangeError if position is at or beyond the end of the string"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "char-code",
+      "rationale": "Error-stressed query for char-code. Both negative and past-end RangeError conditions are mentioned."
+    },
+    {
+      "id": "cat3-integer-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Parse decimal digits from a string starting at a position",
+        "errorConditions": [
+          "throws SyntaxError if no digit character is found at the starting position"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "integer",
+      "rationale": "Error-stressed query for integer. SyntaxError on missing digits distinguishes it from the total ascii-digit-set atom."
+    },
+    {
+      "id": "cat3-non-ascii-rejector-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Validate that a string contains only ASCII characters",
+        "errorConditions": [
+          "throws RangeError at the position of the first character with code above 127"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "non-ascii-rejector",
+      "rationale": "Error-stressed query for non-ascii-rejector. The error-on-first-violation pattern is the defining characteristic."
+    },
+    {
+      "id": "cat3-empty-list-content-error-001",
+      "source": "seed-derived",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Handle the case of an empty list in a parser",
+        "errorConditions": [
+          "throws SyntaxError if the next character is not a closing bracket"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "empty-list-content",
+      "rationale": "Error-stressed query for empty-list-content. SyntaxError on non-']' is the defining error path."
+    },
+    {
+      "id": "cat3-null-json-error-001",
+      "source": "synthetic-tasks",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Parse structured data from a string",
+        "errorConditions": [
+          "throws SyntaxError on malformed input",
+          "throws TypeError if input is null or undefined"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space error-stressed entry. General structured-data parsing is not in the registry. Tests that error conditions alone don't pull in wrong atoms."
+    },
+    {
+      "id": "cat3-null-divide-error-001",
+      "source": "synthetic-tasks",
+      "category": "error-condition-stressed",
+      "query": {
+        "behavior": "Divide one number by another",
+        "errorConditions": [
+          "throws RangeError if the divisor is zero"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space error-stressed entry. Integer division is not in the seed registry."
+    },
+    {
+      "id": "cat4-ascii-char-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Get a character at an index in a string",
+        "guarantees": [
+          "O(1) time complexity — constant time regardless of string length",
+          "O(1) space — no heap allocation",
+          "pure — side-effect-free"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-char",
+      "rationale": "Non-functional-stressed query for ascii-char. O(1) time/space + pure are all standard non-functional properties."
+    },
+    {
+      "id": "cat4-digit-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Convert a character to an integer digit value",
+        "guarantees": [
+          "constant time O(1) — single character operation",
+          "side-effect-free — no global state modified"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "digit",
+      "rationale": "Non-functional-stressed query for digit. Emphasizes constant time and no side effects."
+    },
+    {
+      "id": "cat4-integer-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Parse decimal digits from a string",
+        "guarantees": [
+          "O(n) time where n is the number of digits consumed",
+          "O(1) space — no dynamic allocation"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "integer",
+      "rationale": "Non-functional-stressed query for integer. O(n) time vs O(1) space is a key non-functional profile for this atom."
+    },
+    {
+      "id": "cat4-ascii-digit-set-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Test whether a character is a numeric digit",
+        "guarantees": [
+          "thread-safe — no shared mutable state",
+          "deterministic — same character always produces same result"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-digit-set",
+      "rationale": "Non-functional-stressed query for ascii-digit-set. Thread safety and determinism are the key non-functional attributes."
+    },
+    {
+      "id": "cat4-peek-char-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Inspect a character at the current position",
+        "guarantees": [
+          "pure — calling with same arguments multiple times returns same result",
+          "O(1) time — no string traversal"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "peek-char",
+      "rationale": "Non-functional-stressed query for peek-char. Referential transparency and O(1) are the defining non-functional properties."
+    },
+    {
+      "id": "cat4-whitespace-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Advance past whitespace characters in a string",
+        "guarantees": [
+          "O(n) worst-case where n is the length of the whitespace run",
+          "deterministic — same input always produces same output position"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "whitespace",
+      "rationale": "Non-functional-stressed query for whitespace. O(n) time bound is the key non-functional characteristic for a run-length skipper."
+    },
+    {
+      "id": "cat4-position-step-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Advance a position index by a fixed amount",
+        "guarantees": [
+          "O(1) time — no string traversal",
+          "pure — no mutation of any external state"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "position-step",
+      "rationale": "Non-functional-stressed query for position-step. Pure and O(1) are the defining non-functional properties for index arithmetic."
+    },
+    {
+      "id": "cat4-list-of-ints-nf-001",
+      "source": "seed-derived",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Parse a list structure from a string",
+        "guarantees": [
+          "O(n) time and space proportional to input length",
+          "pure — no I/O or global state"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "list-of-ints",
+      "rationale": "Non-functional-stressed query for list-of-ints. O(n) space is significant since it allocates the result array."
+    },
+    {
+      "id": "cat4-null-base64-nf-001",
+      "source": "synthetic-tasks",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Encode binary data as a text string",
+        "guarantees": [
+          "deterministic — same bytes always produce same encoding",
+          "output length is exactly ceil(input.length * 4 / 3)"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space non-functional entry. Base64 encoding is not in the registry. Tests that non-functional constraints don't cause false hits."
+    },
+    {
+      "id": "cat4-null-bigint-nf-001",
+      "source": "synthetic-tasks",
+      "category": "non-functional-stressed",
+      "query": {
+        "behavior": "Compute the factorial of a non-negative integer",
+        "guarantees": [
+          "pure — no side effects",
+          "O(n) time where n is the input value"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space non-functional entry. Factorial computation is not in the registry."
+    },
+    {
+      "id": "cat5-digit-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Convert a single decimal digit character to its integer value, rejecting any other input",
+        "guarantees": [
+          "pure — referentially transparent",
+          "result is always in the closed integer range [0, 9]",
+          "inverse property — digit(String.fromCharCode(48 + n)) === n for n in [0,9]"
+        ],
+        "errorConditions": [
+          "throws RangeError if input length is not exactly 1",
+          "throws RangeError if the single character is not in '0'-'9'"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "digit",
+      "rationale": "Multi-aspect query for digit. Combines behavior + guarantees (pure, range, inverse) + error conditions. The most demanding category for D1's multi-dimensional value proposition."
+    },
+    {
+      "id": "cat5-ascii-char-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Return the ASCII character at a zero-based index in a string",
+        "guarantees": [
+          "referentially transparent — no side effects",
+          "returned string always has length exactly 1",
+          "returned character has char code <= 127"
+        ],
+        "errorConditions": [
+          "throws RangeError if position is out of bounds",
+          "throws RangeError if the character at position has code > 127"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "ascii-char",
+      "rationale": "Multi-aspect query for ascii-char. All three guarantee IDs (pure, length-1, ascii) plus both error conditions are explicitly stated."
+    },
+    {
+      "id": "cat5-integer-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Parse a maximal sequence of ASCII decimal digit characters starting at a position in a string",
+        "guarantees": [
+          "pure — no mutation of input",
+          "greedy — always consumes as many consecutive digits as possible",
+          "result value is always non-negative"
+        ],
+        "errorConditions": [
+          "throws SyntaxError if no digit character is found at the starting position"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "integer",
+      "rationale": "Multi-aspect query for integer. Greedy guarantee plus SyntaxError on missing-digit are both distinctive."
+    },
+    {
+      "id": "cat5-peek-char-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Read the character at the current position without advancing the parser",
+        "guarantees": [
+          "pure — position is unchanged after call",
+          "returns null at end of input rather than throwing"
+        ],
+        "errorConditions": [
+          "throws RangeError if position is negative"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "peek-char",
+      "rationale": "Multi-aspect query for peek-char. The null-at-EOF guarantee and RangeError on negative position together fully characterize the atom."
+    },
+    {
+      "id": "cat5-whitespace-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Advance past zero or more ASCII space and tab characters at the current position",
+        "guarantees": [
+          "pure — no mutation",
+          "monotonic — returned position is always >= input position",
+          "idempotent — applying twice yields the same result as applying once"
+        ],
+        "errorConditions": [
+          "throws RangeError if initial position is negative"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "whitespace",
+      "rationale": "Multi-aspect query for whitespace. Three distinct guarantees (pure, monotonic, idempotent) plus a RangeError condition."
+    },
+    {
+      "id": "cat5-eof-check-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Assert that the parser has fully consumed the input string with no remaining characters",
+        "guarantees": [
+          "pure — O(1) time, no string traversal",
+          "exact — asserts position == input.length precisely"
+        ],
+        "errorConditions": [
+          "throws SyntaxError if any characters remain after position"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "eof-check",
+      "rationale": "Multi-aspect query for eof-check. Pure + O(1) + exact semantic + SyntaxError on trailing input."
+    },
+    {
+      "id": "cat5-signed-integer-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Parse an optional minus sign followed by one or more decimal digits into a signed integer value",
+        "guarantees": [
+          "pure — referentially transparent",
+          "greedy — consumes as many digit characters as possible after the sign"
+        ],
+        "errorConditions": [
+          "throws SyntaxError if a '-' sign is not followed by at least one digit",
+          "throws RangeError if initial position is out of bounds"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "signed-integer",
+      "rationale": "Multi-aspect query for signed-integer. The bare-minus SyntaxError is the key differentiator from unsigned integer."
+    },
+    {
+      "id": "cat5-non-ascii-rejector-multi-001",
+      "source": "seed-derived",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Scan an entire string and reject it if any character is not ASCII",
+        "guarantees": [
+          "pure — no mutation of input",
+          "reports the first violation rather than collecting all violations"
+        ],
+        "errorConditions": [
+          "throws RangeError at the index of the first character with code above 127"
+        ]
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "non-ascii-rejector",
+      "rationale": "Multi-aspect query for non-ascii-rejector. First-violation guarantee plus error on non-ASCII together fully specify the atom."
+    },
+    {
+      "id": "cat5-null-clamp-multi-001",
+      "source": "synthetic-tasks",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Restrict a number to lie within an inclusive lower and upper bound",
+        "guarantees": [
+          "pure — no side effects",
+          "result equals lo if x < lo; result equals hi if x > hi; result equals x otherwise"
+        ],
+        "errorConditions": [
+          "throws RangeError if lo is greater than hi"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space multi-aspect entry. Clamp is not in the seed registry. Tests that multi-dimensional queries don't produce false positives from partial matches."
+    },
+    {
+      "id": "cat5-null-csv-multi-001",
+      "source": "synthetic-tasks",
+      "category": "multi-aspect",
+      "query": {
+        "behavior": "Parse a single line of CSV into a list of field strings, handling quoted fields with embedded commas",
+        "guarantees": [
+          "pure — no mutation of input",
+          "handles RFC 4180 quoting rules"
+        ],
+        "errorConditions": [
+          "throws SyntaxError if a quoted field is not properly closed",
+          "throws TypeError if input is null"
+        ]
+      },
+      "expectedAtom": null,
+      "rationale": "Negative-space multi-aspect entry. RFC 4180 CSV parsing is not in the seed registry. The complex multi-aspect query should still produce a low score against all seed atoms."
+    }
+  ]
+}
