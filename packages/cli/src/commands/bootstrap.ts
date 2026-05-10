@@ -48,6 +48,57 @@ import { shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
 
 // ---------------------------------------------------------------------------
+// Expected-failures schema
+//
+// @decision DEC-V2-BOOT-EXPECTED-FAILURES-001
+// @title expected-failures.json documents intentional LicenseRefusedError cases
+// @status accepted
+// @rationale Some fixture files are intentionally GPL-licensed to exercise the
+//   license gate. These must not contribute to the bootstrap failure count.
+//   The expected-failures.json file (bootstrap/expected-failures.json) documents
+//   each such case with path + errorClass + rationale. Both path and errorClass
+//   must match for the reclassification to apply (path alone is insufficient —
+//   a file that fails for a different reason is a real failure). If an entry
+//   is never triggered, a WARNING is emitted: that either means the file was
+//   renamed/deleted or the underlying issue was fixed, both of which warrant
+//   removing the entry. Untriggered entries do NOT fail the bootstrap.
+// ---------------------------------------------------------------------------
+
+/** One entry in expected-failures.json. */
+interface ExpectedFailureEntry {
+  readonly path: string; // repo-relative, matches outcomes[].path
+  readonly errorClass: string; // constructor name, e.g. "LicenseRefusedError"
+  readonly rationale: string; // human-readable explanation
+}
+
+/** Top-level shape of bootstrap/expected-failures.json (schemaVersion: 1). */
+interface ExpectedFailuresFile {
+  readonly schemaVersion: 1;
+  readonly entries: readonly ExpectedFailureEntry[];
+}
+
+/**
+ * Load and parse expected-failures.json from the given path.
+ * Returns an empty entry list if the file does not exist.
+ * Throws if the file exists but is malformed (fast-fail: bad config is worse
+ * than a missed exemption).
+ */
+function loadExpectedFailures(filePath: string): readonly ExpectedFailureEntry[] {
+  if (!existsSync(filePath)) return [];
+  const raw = readFileSync(filePath, "utf-8");
+  const parsed = JSON.parse(raw) as ExpectedFailuresFile;
+  if (parsed.schemaVersion !== 1) {
+    throw new Error(
+      `expected-failures.json: unsupported schemaVersion ${String(parsed.schemaVersion)} (expected 1)`,
+    );
+  }
+  if (!Array.isArray(parsed.entries)) {
+    throw new Error("expected-failures.json: 'entries' must be an array");
+  }
+  return parsed.entries;
+}
+
+// ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
 
@@ -55,6 +106,7 @@ const BOOTSTRAP_PARSE_OPTIONS = {
   registry: { type: "string" as const },
   report: { type: "string" as const },
   manifest: { type: "string" as const },
+  "expected-failures": { type: "string" as const },
   verify: { type: "boolean" as const, default: false },
   help: { type: "boolean" as const, short: "h", default: false },
 } as const;
@@ -62,6 +114,7 @@ const BOOTSTRAP_PARSE_OPTIONS = {
 const DEFAULT_REGISTRY_PATH = join("bootstrap", "yakcc.registry.sqlite");
 const DEFAULT_MANIFEST_PATH = join("bootstrap", "expected-roots.json");
 const DEFAULT_REPORT_PATH = join("bootstrap", "report.json");
+const DEFAULT_EXPECTED_FAILURES_PATH = join("bootstrap", "expected-failures.json");
 
 // ---------------------------------------------------------------------------
 // File-walking helpers
@@ -187,7 +240,22 @@ interface FileOutcomeFailure {
   readonly errorMessage: string;
 }
 
-type FileOutcome = FileOutcomeSuccess | FileOutcomeFailure;
+/**
+ * A failure that was reclassified as an expected-failure because it matches an
+ * entry in expected-failures.json (path + errorClass both match).
+ * These are surfaced in the summary but do NOT count toward the failure total
+ * and do NOT cause a non-zero exit code.
+ */
+interface FileOutcomeExpectedFailure {
+  readonly path: string;
+  readonly outcome: "expected-failure";
+  readonly errorClass: string;
+  readonly errorMessage: string;
+  /** The rationale string from the matching expected-failures.json entry. */
+  readonly rationale: string;
+}
+
+type FileOutcome = FileOutcomeSuccess | FileOutcomeFailure | FileOutcomeExpectedFailure;
 
 // ---------------------------------------------------------------------------
 // VerifyDiff — structured diff result for --verify mode
@@ -407,13 +475,16 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         "  Walk packages/*/src/**/*.ts and examples/*/src/**/*.ts, shave each file",
         "  offline, and dump the deterministic block manifest.",
         "",
-        "  --registry <path>   Registry SQLite path (default: bootstrap/yakcc.registry.sqlite)",
-        "  --manifest <path>   Manifest path: output in normal mode, committed reference in --verify",
-        "                      (default: bootstrap/expected-roots.json)",
-        "  --report   <path>   Per-file outcome report (default: bootstrap/report.json)",
-        "  --verify            Shave into :memory: registry and byte-compare against committed manifest.",
-        "                      Exit 0 on byte-identical match; exit 1 with structured diff on mismatch.",
-        "  -h, --help          Print this help and exit",
+        "  --registry           <path>  Registry SQLite path (default: bootstrap/yakcc.registry.sqlite)",
+        "  --manifest           <path>  Manifest path: output in normal mode, committed reference in --verify",
+        "                               (default: bootstrap/expected-roots.json)",
+        "  --report             <path>  Per-file outcome report (default: bootstrap/report.json)",
+        "  --expected-failures  <path>  Expected-failures exemption list (default: bootstrap/expected-failures.json)",
+        "                               Entries with matching path+errorClass are reclassified as expected-failures",
+        "                               and do NOT count toward the failure total.",
+        "  --verify                     Shave into :memory: registry and byte-compare against committed manifest.",
+        "                               Exit 0 on byte-identical match; exit 1 with structured diff on mismatch.",
+        "  -h, --help                   Print this help and exit",
       ].join("\n"),
     );
     return 0;
@@ -431,6 +502,28 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
 
   const registryPath = resolve(parsed.values.registry ?? DEFAULT_REGISTRY_PATH);
   const reportPath = resolve(parsed.values.report ?? DEFAULT_REPORT_PATH);
+
+  // Load expected-failures exemption list (DEC-V2-BOOT-EXPECTED-FAILURES-001).
+  // Resolve relative to repoRoot so the default path works regardless of cwd.
+  const expectedFailuresPath = resolve(
+    repoRoot,
+    parsed.values["expected-failures"] ?? DEFAULT_EXPECTED_FAILURES_PATH,
+  );
+  let expectedFailures: readonly ExpectedFailureEntry[];
+  try {
+    expectedFailures = loadExpectedFailures(expectedFailuresPath);
+  } catch (err) {
+    logger.error(
+      `error: failed to load expected-failures file at ${expectedFailuresPath}: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  // Build a lookup set keyed by "path\0errorClass" for O(1) matching.
+  const expectedFailureKeys = new Map<string, ExpectedFailureEntry>();
+  for (const entry of expectedFailures) {
+    expectedFailureKeys.set(`${entry.path}\0${entry.errorClass}`, entry);
+  }
 
   // Collect source files (lexicographic, DEC-V2-BOOT-FILE-ORDER-001).
   const sourceFiles = collectSourceFiles(repoRoot);
@@ -471,7 +564,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   };
 
   // Process each file.
-  const outcomes: FileOutcome[] = [];
+  const rawOutcomes: FileOutcome[] = [];
 
   for (const absPath of sourceFiles) {
     const relPath = relative(repoRoot, absPath);
@@ -482,7 +575,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         offline: true,
         intentStrategy: "static",
       });
-      outcomes.push({
+      rawOutcomes.push({
         path: relPath,
         outcome: "success",
         atomCount: result.atoms.length,
@@ -490,12 +583,39 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       });
     } catch (err) {
       const e = err as Error;
-      outcomes.push({
+      rawOutcomes.push({
         path: relPath,
         outcome: "failure",
         errorClass: e.constructor.name,
         errorMessage: e.message,
       });
+    }
+  }
+
+  // Reclassify failures that match an expected-failures entry (DEC-V2-BOOT-EXPECTED-FAILURES-001).
+  // Track which expected-failure keys were actually triggered so we can warn about untriggered ones.
+  const triggeredKeys = new Set<string>();
+  const outcomes: FileOutcome[] = rawOutcomes.map((o) => {
+    if (o.outcome !== "failure") return o;
+    const key = `${o.path}\0${o.errorClass}`;
+    const entry = expectedFailureKeys.get(key);
+    if (entry === undefined) return o;
+    triggeredKeys.add(key);
+    return {
+      path: o.path,
+      outcome: "expected-failure" as const,
+      errorClass: o.errorClass,
+      errorMessage: o.errorMessage,
+      rationale: entry.rationale,
+    };
+  });
+
+  // Warn about untriggered expected-failure entries (they may have been fixed or renamed).
+  for (const [key, entry] of expectedFailureKeys) {
+    if (!triggeredKeys.has(key)) {
+      logger.log(
+        `warning: expected-failure entry was not triggered — either the file was fixed, renamed, or deleted. Remove or update this entry in expected-failures.json: ${entry.path} (${entry.errorClass})`,
+      );
     }
   }
 
@@ -518,14 +638,18 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
 
   // Summarise.
   const successCount = outcomes.filter((o) => o.outcome === "success").length;
+  const expectedFailureCount = outcomes.filter((o) => o.outcome === "expected-failure").length;
   const failureCount = outcomes.filter((o) => o.outcome === "failure").length;
 
   logger.log("Bootstrap complete:");
-  logger.log(`  files processed: ${outcomes.length}`);
-  logger.log(`  successful:      ${successCount}`);
-  logger.log(`  failed:          ${failureCount}`);
-  logger.log(`  manifest:        ${manifestPath} (${manifest.length} entries)`);
-  logger.log(`  report:          ${reportPath}`);
+  logger.log(`  files processed:   ${outcomes.length}`);
+  logger.log(`  successful:        ${successCount}`);
+  if (expectedFailureCount > 0) {
+    logger.log(`  expected-failures: ${expectedFailureCount} (license-refused, documented)`);
+  }
+  logger.log(`  failed:            ${failureCount}`);
+  logger.log(`  manifest:          ${manifestPath} (${manifest.length} entries)`);
+  logger.log(`  report:            ${reportPath}`);
 
   if (failureCount > 0) {
     logger.error(`error: ${failureCount} file(s) failed to shave:`);

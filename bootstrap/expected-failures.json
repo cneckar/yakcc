@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "path": "examples/v0.7-mri-demo/src/gpl-fixture.ts",
+      "errorClass": "LicenseRefusedError",
+      "rationale": "Intentional GPL-3.0-or-later fixture exercising the license gate; refusal is the test. See DESIGN.md §license-gate."
+    }
+  ]
+}
