@@ -1,0 +1,150 @@
+# @decision DEC-CI-FAST-PATH-PHASE-1-001
+# Title: Tier-1 PR CI workflow (pr-ci.yml) — fast-path for pull requests
+# Status: accepted
+# Rationale: The existing trio (bootstrap.yml, test.yml, wave-3-parity.yml) all
+# fire on every PR and take 30–90 min each. Phase 1 ships a separate Tier-1
+# workflow that gates PRs in ≤5 min on the median PR by running:
+#   1. lint + typecheck — full workspace, always (cheap, turbo-cached)
+#   2. build + test — affected packages only via pnpm --filter "...[origin/main]"
+#   3. branch hygiene — scripts/pre-pr-check.sh (stale-rebase damage detection)
+# The trio retains push:main triggers for post-merge correctness; pr-ci.yml is
+# the sole PR gate. No source files are touched; this is a CI configuration
+# change only.
+
+name: pr-ci
+
+on:
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs on the same ref when a new commit is pushed.
+# This is the right behavior for PR CI — we only care about the latest commit.
+# DEC-CI-FAST-PATH-PHASE-1-001: group keyed on github.ref so each PR branch
+# gets its own concurrency slot.
+concurrency:
+  group: pr-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # lint — full workspace, always
+  # DEC-CI-FAST-PATH-PHASE-1-003: lint runs over all packages because Biome is
+  # pure static analysis and cheap. Running only on affected packages risks
+  # missing a downstream lint error in a consumer that isn't in the diff.
+  # Turbo's local cache skips unchanged packages automatically.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint (full workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 is required so pnpm --filter "[origin/<base>]" can
+          # compare against the PR base branch. Without full history, the base
+          # ref is not available and the affected-package filter fails.
+          fetch-depth: 0
+
+      # pnpm/action-setup@v4 with NO `with: version:` — honors the single
+      # packageManager authority in package.json (DEC-CI-OFFLINE-004).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint (full workspace)
+        run: pnpm lint
+
+  # ---------------------------------------------------------------------------
+  # typecheck — full workspace, always
+  # DEC-CI-FAST-PATH-PHASE-1-003: same rationale as lint. A public type rename
+  # in @yakcc/contracts breaks @yakcc/registry's typecheck even if only
+  # contracts files are in the diff. Full-workspace typecheck catches this.
+  # ---------------------------------------------------------------------------
+  typecheck:
+    name: typecheck (full workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (full workspace)
+        run: pnpm typecheck
+
+  # ---------------------------------------------------------------------------
+  # build-and-test — affected packages only
+  # DEC-CI-FAST-PATH-PHASE-1-002: uses pnpm --filter "...[origin/<base-ref>]"
+  # via scripts/affected-packages.sh. The "..." prefix includes dependents
+  # (consumers), not just directly-changed packages.
+  # DEC-CI-FAST-PATH-PHASE-1-004: property tests run at their current hard-coded
+  # numRuns values — no FAST_CHECK_NUM_RUNS reduction in Phase 1. Runtime
+  # savings come from running tests for 1–3 affected packages out of 13.
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: build + test (affected packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build affected packages
+        # Resolve affected filter via wrapper script. In PR context,
+        # GITHUB_BASE_REF is automatically set by GitHub Actions to the PR's
+        # target branch (e.g. "main"). For local invocations, defaults to
+        # "origin/main". The leading "..." in the filter includes dependents.
+        run: |
+          FILTER=$(bash scripts/affected-packages.sh)
+          echo "Affected filter: $FILTER"
+          eval "pnpm $FILTER build"
+
+      - name: Test affected packages
+        run: |
+          FILTER=$(bash scripts/affected-packages.sh)
+          echo "Affected filter: $FILTER"
+          eval "pnpm $FILTER test"
+
+  # ---------------------------------------------------------------------------
+  # branch-hygiene — stale-rebase damage detection
+  # DEC-CI-FAST-PATH-PHASE-1-006: invokes scripts/pre-pr-check.sh which detects
+  # file deletions outside the WI's scope manifest (stale-rebase damage class).
+  # The script exits non-zero when deletions are detected, blocking the PR.
+  # Note: diff-stat warnings (size) remain soft/warn-only per the script's
+  # design; only deletion detection is a hard failure.
+  # ---------------------------------------------------------------------------
+  branch-hygiene:
+    name: branch hygiene check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Branch hygiene (pre-pr-check)
+        run: bash scripts/pre-pr-check.sh

@@ -3,8 +3,10 @@ name: bootstrap
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  # pull_request trigger removed per DEC-CI-FAST-PATH-PHASE-1-005.
+  # bootstrap.yml is Tier-2 (30–90 min); pr-ci.yml is the sole PR gate.
+  # This workflow retains push:main for post-merge correctness until Phase 2
+  # adds a proper nightly cron schedule.
 
 concurrency:
   group: bootstrap-${{ github.ref }}

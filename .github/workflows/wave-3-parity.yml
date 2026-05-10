@@ -3,14 +3,11 @@ name: wave-3-parity
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - "packages/compile/**"
-      - "packages/shave/**"
-      - "packages/registry/**"
-      - "packages/contracts/**"
-      - "examples/v1-wave-3-wasm-lower-demo/**"
-      - ".github/workflows/wave-3-parity.yml"
+  # pull_request trigger removed per DEC-CI-FAST-PATH-PHASE-1-005.
+  # wave-3-parity.yml is Tier-2 (30 min wave-3 corpus); pr-ci.yml's affected-
+  # package test step covers the same packages on PRs via pnpm --filter.
+  # This workflow retains push:main for post-merge correctness until Phase 2
+  # adds a proper nightly cron schedule.
 
 concurrency:
   group: wave-3-parity-${{ github.ref }}
