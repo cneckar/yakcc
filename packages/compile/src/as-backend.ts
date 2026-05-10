@@ -1,31 +1,27 @@
 // SPDX-License-Identifier: MIT
 //
 // @decision DEC-V1-LOWER-BACKEND-REUSE-001
-// Title: AssemblyScript backend reuses visitor's numeric-domain analysis; does NOT
-//        reuse the in-house WASM byte emitter (LoweringVisitor → WasmFunction bytecode).
-// Status: decided (WI-AS-PHASE-1-MVP, Issue #145)
+// Title: AssemblyScript backend re-implements numeric-domain analysis inline; the
+//        in-house WASM byte emitter (wasm-backend.ts / wasm-lowering/) is retired.
+// Status: retired (WI-AS-CLEANUP-WAVE3-LOWERER, #148) — originally decided WI-AS-PHASE-1-MVP (#145)
 // Rationale:
-//   The wave-3 wasm-backend (wasm-backend.ts) contains two distinct halves:
+//   The wave-3 wasm-backend (wasm-backend.ts, now deleted) contained two distinct halves:
 //
-//   ANALYSIS HALF (reused here):
-//     inferNumericDomain() in wasm-lowering/visitor.ts performs ts-morph AST
-//     heuristics to classify `number`-typed TS functions as i32, i64, or f64.
-//     That analysis is correct, well-tested, and domain-specific to yakcc's
-//     atom signature conventions. The AS backend reuses the same heuristic by
-//     re-implementing the lightweight text-scan version (rule -1, 0, 1-7) to
-//     avoid importing the entire ts-morph-heavy visitor in a path that already
-//     invokes an external compiler process. This re-implementation is validated
-//     by the numeric-parity.test.ts suite which uses the same TS function bodies
-//     as input. See Phase 0 spike findings (SPIKE_FINDINGS.md §6, Issue #144).
+//   ANALYSIS HALF (re-implemented here):
+//     inferNumericDomain() in the now-deleted wasm-lowering/visitor.ts performed ts-morph
+//     AST heuristics to classify `number`-typed TS functions as i32, i64, or f64.
+//     The AS backend re-implements the same heuristic as a lightweight text-scan
+//     (rules -1, 0, 1-7) to avoid importing the ts-morph-heavy visitor. This
+//     re-implementation is validated by the numeric-parity.test.ts suite.
+//     See Phase 0 spike findings (SPIKE_FINDINGS.md §6, Issue #144).
+//     This file is now the canonical authority for numeric domain inference.
 //
-//   EMISSION HALF (NOT reused):
+//   EMISSION HALF (deleted in Phase 3):
 //     The hand-rolled WASM binary emitter (WasmFunction IR, opcodes tables,
-//     uleb128 encoding) is the incumbent mechanism being superseded by the AS
-//     backend in Phase 1. Reusing it would defeat the purpose of this track.
-//     Operator adjudication (Issue #142 / Path A) mandates that AS-generated
-//     WASM replaces in-house emission as the production path. The in-house
-//     emitter continues to run as a differential oracle (wasmBackend()) until
-//     Phase 3 retires it.
+//     uleb128 encoding) was superseded by the AS backend per operator adjudication
+//     (Issue #142 / Path A). It served as a differential oracle through Phase 2
+//     and has been deleted in Phase 3 (#148). assemblyScriptBackend() is the sole
+//     production WASM path.
 //
 //   Per-atom module boundary (SPIKE_FINDINGS.md §4 / q3-boundary-choice.md):
 //     Each yakcc atom maps to one AS file → one .wasm output. This preserves
@@ -237,8 +233,8 @@
 //
 //   Memory layout: STR_BASE_PTR = 1024 (above AS stub runtime header region,
 //   above ERR_BASE_PTR = 512); DST_BASE_PTR = 4096 (separate output buffer for
-//   slice/copy operations). Layout is wire-compatible with wave-3 wasm-lowering's
-//   string ABI and with arrays-parity.test.ts conventions.
+//   slice/copy operations). Layout is wire-compatible with the
+//   arrays-parity.test.ts flat-memory conventions.
 //
 //   Decision: Use flat-memory approach (C) for v1. AS managed strings are NOT
 //   used at this time -- they only work with a GC runtime tier not yet adopted.
@@ -307,8 +303,8 @@
 //   --runtime minimal/full.
 //
 //   STRUCT_BASE_PTR = 64: same convention as records-parity.test.ts; avoids the AS
-//   stub runtime header region at low addresses. Wire-compatible with wave-3
-//   wasm-lowering's array ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//   stub runtime header region at low addresses. Wire-compatible with the
+//   arrays-parity.test.ts flat-memory ABI.
 //
 //   Decision: Use flat-memory approach (C) for v1. Managed Array<i32> and
 //   StaticArray<i32> are NOT used -- they require a GC runtime tier not yet adopted.
@@ -452,7 +448,29 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ResolutionResult } from "./resolve.js";
-import type { WasmBackend } from "./wasm-backend.js";
+
+// ---------------------------------------------------------------------------
+// WasmBackend — public interface for WASM compilation backends
+//
+// @decision DEC-AS-BACKEND-WASM-BACKEND-TYPE-001
+// Title: WasmBackend interface lives in as-backend.ts (sole WASM backend after
+//        Phase 3 retirement of wasm-backend.ts / wasm-lowering/)
+// Status: decided (WI-AS-CLEANUP-WAVE3-LOWERER, #148)
+// Rationale:
+//   wasm-backend.ts was the sole prior home of the WasmBackend interface. After
+//   its deletion, as-backend.ts is the only WASM backend in the codebase. Keeping
+//   the type here (a) avoids a separate types-only file, (b) mirrors how Backend
+//   lives in ts-backend.ts alongside tsBackend(), and (c) makes import.meta
+//   resolution unambiguous for downstream callers via index.ts re-export.
+// ---------------------------------------------------------------------------
+
+/**
+ * A WASM compilation backend: turns a ResolutionResult into a binary .wasm module.
+ */
+export interface WasmBackend {
+  readonly name: string;
+  emit(resolution: ResolutionResult): Promise<Uint8Array<ArrayBuffer>>;
+}
 
 // ---------------------------------------------------------------------------
 // asc binary resolution
@@ -539,16 +557,18 @@ type NumericDomain = "i32" | "i64" | "f64";
 //   Collect i64 indicators into boolean flags alongside f64/bitop/floor flags, then
 //   apply the canonical priority block. This makes the "identical decisions" claim
 //   literally true for the documented shapes.
-// Reference: packages/compile/src/wasm-lowering/visitor.ts inferNumericDomain (read-only consumer)
+// The inferNumericDomain() rules (-1 through 7) were originally developed in the
+// now-retired wasm-lowering/visitor.ts. This re-implementation is the canonical
+// authority for numeric domain inference since that file's deletion (#148).
 
 /**
  * Infer the numeric domain of a TypeScript atom source via text-level heuristics.
  *
- * Matches the policy of inferNumericDomain() in wasm-lowering/visitor.ts
- * (rules -1 through 7) using string scanning instead of ts-morph AST traversal.
- * This is appropriate here because: (1) the AS backend already shells out to asc,
- * so ts-morph's heaviness is not justified; (2) the numeric substrate functions
- * are guaranteed by the evaluation contract to be simple enough for text scanning.
+ * Implements numeric domain inference (rules -1 through 7) using string scanning
+ * instead of ts-morph AST traversal. This is appropriate here because: (1) the
+ * AS backend already shells out to asc, so ts-morph's heaviness is not justified;
+ * (2) the numeric substrate functions are guaranteed by the evaluation contract
+ * to be simple enough for text scanning.
  *
  * @decision DEC-V1-LOWER-BACKEND-REUSE-001 (analysis half reuse)
  * @decision DEC-V1-DOMAIN-INFER-PARITY-001 (priority order alignment)

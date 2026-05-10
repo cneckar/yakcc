@@ -466,9 +466,11 @@ v0 ships only the TS backend. WASM landed in v1 wave-2 and wave-3.
 (`packages/compile/src/wasm-backend.ts` + `wasm-lowering/`) was found
 to be chasing an impossible target; AssemblyScript replaced it as the
 production WASM path per `DEC-AS-BACKEND-PIVOT-001` in MASTER_PLAN. The
-hand-rolled emitter remains in-tree as a differential oracle pending
-`WI-AS-PHASE-3` retirement (#147). LLVM/JVM are v1+. The backend
-interface is real now so adding targets later is mechanical.
+hand-rolled emitter and `wasm-host.ts` / `WASM_HOST_CONTRACT.md` were
+fully retired in WI-AS-CLEANUP-WAVE3-LOWERER (#148, wi-148-cleanup,
+2026-05-09). `assemblyScriptBackend()` is now the sole WASM path.
+LLVM/JVM are v1+. The backend interface is real now so adding targets
+later is mechanical.
 
 ### `@yakcc/cli`
 

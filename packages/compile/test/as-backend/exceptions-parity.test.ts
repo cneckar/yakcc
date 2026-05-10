@@ -8,7 +8,7 @@
 //        dispatch is NOT supported under --runtime stub. Bare throw new Error()
 //        (without enclosing try/catch) DOES compile under asc 0.28.x --runtime stub.
 //        The flat-memory error-code protocol (errPtr: i32, store<u8>(errPtr, code))
-//        mirrors wave-3 lower-layout ABI and is directly wire-comparable across backends.
+//        mirrors the AS-backend flat-memory layout and is directly wire-comparable across backends.
 // Status: decided (WI-AS-PHASE-2C-EXCEPTIONS, 2026-05-10)
 // Rationale:
 //   AS try/catch exception dispatch requires the exception-table support:
@@ -37,8 +37,8 @@
 //     - Sentinel values (return -1) follow the same pattern as S4/indexOfByte
 //     - ERR_BASE_PTR = 512 (well above AS stub runtime header region,
 //       below STR_BASE_PTR=1024 from strings-parity to avoid collision)
-//   This protocol is directly wire-compatible with wave-3 wasm-lowering's
-//   error ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//   This protocol defines the AS-backend flat-memory error ABI
+//   (formerly also described as wire-compatible with wave-3 wasm-lowering).
 //
 // Five substrates (per eval contract T6):
 //   E1: checkNonNeg  — abort() on negative input (AS primitive intrinsic)
@@ -277,7 +277,7 @@ export function checkNonNeg(x: i32): i32 {
 //   Note: AS i32 division truncates toward zero (same as JS Math.trunc for int / int).
 //
 // This pattern mirrors the "error code out-parameter" convention used in
-// flat-memory error signaling in wave-3 wasm-lowering ABI.
+// flat-memory error signaling in the AS-backend flat-memory ABI.
 //
 // FINDING: store<u8>(errPtr, code) compiles cleanly under --runtime stub.
 //   No GC required. The flat-memory error-code protocol is a primitive operation.
@@ -633,8 +633,8 @@ export function safeWrap(x: i32): i32 {
 // --runtime stub to verify the complete exception-handling pathway from:
 //   abort() trap → error-code out-parameter → sentinel-value return
 //
-// These three patterns are the canonical error-signaling mechanisms in wave-3
-// wasm-lowering ABI for atoms that must communicate failure to callers without
+// These three patterns are the canonical error-signaling mechanisms in the
+// AS-backend flat-memory ABI for atoms that must communicate failure to callers without
 // managed GC exceptions.
 //
 // @decision DEC-AS-EXCEPTION-LAYOUT-001
