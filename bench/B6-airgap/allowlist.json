@@ -1,0 +1,13 @@
+{
+  "_comment": "B6b allowlist — expected outbound destinations for networked (Anthropic-API) mode.",
+  "_rationale": "B6a asserts ZERO outbound connections. B6b asserts ONLY the entries below are contacted. Any destination not on this list in B6b is a regression (potential telemetry leak).",
+  "_schema": "Each entry is 'hostname:port' or 'hostname' (matches any port). IPv4/IPv6 literals may appear if a hostname resolves to a stable IP.",
+  "allowedDestinations": [
+    "api.anthropic.com:443"
+  ],
+  "_notes": [
+    "api.anthropic.com:443 — Anthropic embeddings API; only contacted when YAKCC_EMBEDDING_PROVIDER=networked.",
+    "No other external destinations are expected. npm/pnpm registry traffic happens at install time, not at runtime.",
+    "HuggingFace model downloads (for local transformers.js provider) also happen on first embed() call only; they are not on this list because B6a uses the offline BLAKE3 provider which makes no network calls."
+  ]
+}

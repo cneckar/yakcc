@@ -10,7 +10,8 @@
     "test": "turbo run test",
     "lint": "turbo run lint",
     "strict-subset": "turbo run strict-subset",
-    "yakcc": "pnpm --filter @yakcc/cli exec yakcc"
+    "yakcc": "pnpm --filter @yakcc/cli exec yakcc",
+    "bench:airgap": "node bench/B6-airgap/run.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
