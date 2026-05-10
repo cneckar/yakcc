@@ -16,6 +16,7 @@
     "lint": "echo \"no lint yet\""
   },
   "dependencies": {
+    "@noble/hashes": "^2.2.0",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/registry": "workspace:*"
   },

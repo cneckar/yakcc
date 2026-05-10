@@ -165,6 +165,65 @@ export function writeMarkerCommand(markerDir: string, filename: string, payload:
 }
 
 /**
+ * Internal result shape returned by _executeRegistryQueryInternal().
+ *
+ * Carries both the public HookResponse and the candidate metadata needed by
+ * the telemetry wrapper. Never exported — callers use executeRegistryQuery()
+ * or executeRegistryQueryWithTelemetry().
+ */
+type RegistryQueryInternalResult = {
+  readonly response: HookResponse;
+  /** Number of candidates returned by findCandidatesByIntent (always 0 or 1 with k=1). */
+  readonly candidateCount: number;
+  /** Cosine distance of the top candidate, or null if none returned. */
+  readonly topScore: number | null;
+};
+
+/**
+ * Shared implementation of the registry query.
+ *
+ * Both executeRegistryQuery() and executeRegistryQueryWithTelemetry() delegate
+ * here so candidate metadata is available to the telemetry wrapper without
+ * duplicating the query logic.
+ */
+async function _executeRegistryQueryInternal(
+  registry: Registry,
+  ctx: EmissionContext,
+  options: { threshold: number },
+): Promise<RegistryQueryInternalResult> {
+  const query = buildIntentCardQuery(ctx);
+
+  try {
+    const candidates = await registry.findCandidatesByIntent(query, { k: 1, rerank: "structural" });
+
+    const best = candidates[0];
+    if (best !== undefined && best.cosineDistance < options.threshold) {
+      // Derive ContractId from the block's canonical spec bytes.
+      // The ContractId is the spec-level identity: all blocks satisfying
+      // the same spec share this id (DEC-IDENTITY-005).
+      const id = contractIdFromBytes(best.block.specCanonicalBytes);
+      return {
+        response: { kind: "registry-hit", id },
+        candidateCount: candidates.length,
+        topScore: best.cosineDistance,
+      };
+    }
+
+    return {
+      response: {
+        kind: "synthesis-required",
+        proposal: buildSkeletonSpec(ctx.intent),
+      },
+      candidateCount: candidates.length,
+      topScore: best !== undefined ? best.cosineDistance : null,
+    };
+  } catch {
+    // Registry error: fall through to passthrough so the IDE works normally.
+    return { response: { kind: "passthrough" }, candidateCount: 0, topScore: null };
+  }
+}
+
+/**
  * Execute the registry query and return the appropriate HookResponse.
  *
  * This is the load-bearing logic that was previously duplicated inside
@@ -187,27 +246,78 @@ export async function executeRegistryQuery(
   ctx: EmissionContext,
   options: { threshold: number },
 ): Promise<HookResponse> {
-  const query = buildIntentCardQuery(ctx);
+  const { response } = await _executeRegistryQueryInternal(registry, ctx, options);
+  return response;
+}
+
+/**
+ * Execute the registry query and capture telemetry for the emission event.
+ *
+ * @decision DEC-HOOK-PHASE-1-001
+ * @title Telemetry wrapper around executeRegistryQuery — observe-don't-mutate
+ * @status accepted
+ * @rationale
+ *   Phase 1 adds telemetry capture without altering the HookResponse shape.
+ *   This wrapper:
+ *   (1) times the full registry round-trip (D-HOOK-3 latency measurement),
+ *   (2) calls _executeRegistryQueryInternal() to obtain both the response and
+ *       candidate metadata needed by the D-HOOK-5 TelemetryEvent schema,
+ *   (3) writes one TelemetryEvent to ~/.yakcc/telemetry/<session-id>.jsonl
+ *       via captureTelemetry() (local-only, zero network I/O — B6 compliance),
+ *   (4) returns the HookResponse UNCHANGED — the caller sees exactly what it
+ *       would have seen from executeRegistryQuery().
+ *
+ *   toolName is required here (not in executeRegistryQuery) because D-HOOK-5
+ *   captures it per event, and it is only known by the IDE-specific adapter
+ *   that calls the wrapper.
+ *
+ *   Telemetry errors are swallowed: a disk-write failure must never degrade
+ *   the hook's primary function. The call is fire-and-forget.
+ *
+ * Cross-reference: DEC-HOOK-LAYER-001 Phase 1, D-HOOK-5.
+ *
+ * @param registry   - Registry instance to query.
+ * @param ctx        - Emission context from the IDE hook call.
+ * @param toolName   - Claude Code tool that triggered this intercept.
+ * @param options    - Must include threshold (resolved by the consumer factory).
+ *                     Optional sessionId / telemetryDir override for tests.
+ */
+export async function executeRegistryQueryWithTelemetry(
+  registry: Registry,
+  ctx: EmissionContext,
+  toolName: "Edit" | "Write" | "MultiEdit",
+  options: {
+    threshold: number;
+    sessionId?: string | undefined;
+    telemetryDir?: string | undefined;
+  },
+): Promise<HookResponse> {
+  const start = Date.now();
+  const { response, candidateCount, topScore } = await _executeRegistryQueryInternal(
+    registry,
+    ctx,
+    options,
+  );
+  const latencyMs = Date.now() - start;
 
   try {
-    const candidates = await registry.findCandidatesByIntent(query, { k: 1, rerank: "structural" });
-
-    const best = candidates[0];
-    if (best !== undefined && best.cosineDistance < options.threshold) {
-      // Derive ContractId from the block's canonical spec bytes.
-      // The ContractId is the spec-level identity: all blocks satisfying
-      // the same spec share this id (DEC-IDENTITY-005).
-      const id = contractIdFromBytes(best.block.specCanonicalBytes);
-      return { kind: "registry-hit", id };
-    }
+    // Import lazily to avoid circular references in tests that import only index.ts.
+    const { captureTelemetry } = await import("./telemetry.js");
+    // Spread only defined overrides — exactOptionalPropertyTypes rejects `key: undefined`
+    // assignments to `key?: string` properties.
+    captureTelemetry({
+      intent: ctx.intent,
+      toolName,
+      response,
+      candidateCount,
+      topScore,
+      latencyMs,
+      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      ...(options.telemetryDir !== undefined ? { telemetryDir: options.telemetryDir } : {}),
+    });
   } catch {
-    // Registry error: fall through to passthrough so the IDE works normally.
-    return { kind: "passthrough" };
+    // Telemetry write failure must NOT affect the hook outcome (observe-don't-mutate).
   }
 
-  // No close-enough registry match — propose synthesis of a new block.
-  return {
-    kind: "synthesis-required",
-    proposal: buildSkeletonSpec(ctx.intent),
-  };
+  return response;
 }

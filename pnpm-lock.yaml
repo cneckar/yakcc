@@ -250,6 +250,9 @@ importers:
 
   packages/hooks-base:
     dependencies:
+      '@noble/hashes':
+        specifier: ^2.2.0
+        version: 2.2.0
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
