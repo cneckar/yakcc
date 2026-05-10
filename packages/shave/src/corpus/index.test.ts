@@ -15,6 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { extractFromAiDerivedCached } from "./ai-derived.js";
 import { extractFromDocumentedUsage } from "./documented-usage.js";
 import {
   extractCorpus,
@@ -24,7 +25,6 @@ import {
 } from "./index.js";
 import type { CorpusAtomSpec, IntentCardInput } from "./types.js";
 import { extractFromUpstreamTest } from "./upstream-test.js";
-import { extractFromAiDerivedCached } from "./ai-derived.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -170,11 +170,11 @@ describe("extractFromAiDerivedCached()", () => {
     // Warm cache: must return a populated CorpusResult
     const warm = await extractFromAiDerivedCached(intentCard, PLAIN_SOURCE, cacheDir);
     expect(warm).not.toBeUndefined();
-    expect(warm!.source).toBe("ai-derived");
-    expect(warm!.bytes).toBeInstanceOf(Uint8Array);
-    expect(warm!.bytes.length).toBeGreaterThan(0);
-    expect(warm!.path.length).toBeGreaterThan(0);
-    expect(warm!.contentHash.length).toBeGreaterThan(0);
+    expect(warm?.source).toBe("ai-derived");
+    expect(warm?.bytes).toBeInstanceOf(Uint8Array);
+    expect(warm?.bytes.length).toBeGreaterThan(0);
+    expect(warm?.path.length).toBeGreaterThan(0);
+    expect(warm?.contentHash.length).toBeGreaterThan(0);
   });
 });
 
@@ -310,12 +310,12 @@ describe("extractFromPropsFile()", () => {
     const result = await extractFromPropsFile(propsFilePath, intentCard, PLAIN_SOURCE);
 
     expect(result).not.toBeUndefined();
-    expect(result!.source).toBe("props-file");
-    expect(result!.bytes.length).toBeGreaterThan(0);
-    expect(result!.path).toBe("parseIntList.props.ts");
-    expect(result!.contentHash.length).toBe(64); // BLAKE3-256 hex
+    expect(result?.source).toBe("props-file");
+    expect(result?.bytes.length).toBeGreaterThan(0);
+    expect(result?.path).toBe("parseIntList.props.ts");
+    expect(result?.contentHash.length).toBe(64); // BLAKE3-256 hex
     // Artifact bytes must contain the hand-authored content (not a sentinel stub)
-    const text = Buffer.from(result!.bytes).toString("utf-8");
+    const text = Buffer.from(result?.bytes).toString("utf-8");
     expect(text).toContain("prop_parseIntList_returns_array");
     expect(text).not.toContain("Auto-generated property-test corpus");
   });
@@ -342,7 +342,7 @@ describe("extractFromPropsFile()", () => {
     const propsFilePath = join(tmpDir, "anon.props.ts");
     writeFileSync(propsFilePath, "export const prop_foo_bar = true;\n", "utf-8");
     const intentCard = makeIntentCard();
-    const anonymousSource = `// no function declaration here\nconst x = 1;`;
+    const anonymousSource = "// no function declaration here\nconst x = 1;";
 
     const result = await extractFromPropsFile(propsFilePath, intentCard, anonymousSource);
     expect(result).toBeUndefined();

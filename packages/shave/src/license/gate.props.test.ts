@@ -11,20 +11,20 @@
  * against async property upgrades.
  */
 
-import { describe, it } from "vitest";
 import * as fc from "fast-check";
+import { describe, it } from "vitest";
 
 import {
-  prop_gate_licenseGate_alwaysReturnsGateResultShape,
-  prop_gate_unknown_alwaysRejected,
+  prop_gate_canonicalAccepted_yieldsTrueWithCanonicalLicense,
   prop_gate_copyleftPrefix_alwaysRejected,
   prop_gate_exactRejected_alwaysRejected,
-  prop_gate_canonicalAccepted_yieldsTrueWithCanonicalLicense,
-  prop_gate_normalization_whitespaceSeparatedVariants_accepted,
-  prop_gate_normalization_parenthesisWrappedVariants_accepted,
-  prop_gate_unrecognized_alwaysRejected,
-  prop_gate_rejected_alwaysCarriesOriginalDetection,
+  prop_gate_licenseGate_alwaysReturnsGateResultShape,
   prop_gate_licenseGate_isTotalFunction,
+  prop_gate_normalization_parenthesisWrappedVariants_accepted,
+  prop_gate_normalization_whitespaceSeparatedVariants_accepted,
+  prop_gate_rejected_alwaysCarriesOriginalDetection,
+  prop_gate_unknown_alwaysRejected,
+  prop_gate_unrecognized_alwaysRejected,
 } from "./gate.props.js";
 
 const opts: fc.Parameters<unknown> = { numRuns: 200, verbose: false };

@@ -6,14 +6,14 @@
 import * as fc from "fast-check";
 import { it } from "vitest";
 import {
-  prop_corpus_defaultModelIsClaudeHaiku45,
-  prop_corpus_promptVersionIsCorpus1,
-  prop_corpus_schemaVersionIsLiteral2,
   prop_corpusCacheKey_differsFromIntentKey,
   prop_corpusCacheKey_isDeterministicGivenSameInputs,
   prop_corpusCacheKey_isStringMatching64HexChars,
   prop_corpusCacheKey_modelDefaultIsCorpusDefaultModel,
   prop_corpusCacheKey_promptVersionDefaultIsCorpusPromptVersion,
+  prop_corpus_defaultModelIsClaudeHaiku45,
+  prop_corpus_promptVersionIsCorpus1,
+  prop_corpus_schemaVersionIsLiteral2,
   prop_extractFromAiDerivedCached_bytesEncodeCachedContent,
   prop_extractFromAiDerivedCached_contentHashMatchesBytes,
   prop_extractFromAiDerivedCached_intentCardIsIgnoredForReturnShape,

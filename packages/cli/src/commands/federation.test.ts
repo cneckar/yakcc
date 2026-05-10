@@ -38,15 +38,21 @@ import { join } from "node:path";
 import {
   blockMerkleRoot,
   canonicalize,
-  createOfflineEmbeddingProvider,
   specHash as computeSpecHash,
+  createOfflineEmbeddingProvider,
   validateProofManifestL0,
 } from "@yakcc/contracts";
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
+import type {
+  CatalogPage,
+  RemoteManifest,
+  RemotePeer,
+  Transport,
+  WireBlockTriplet,
+} from "@yakcc/federation";
+import { serializeWireBlockTriplet } from "@yakcc/federation";
 import { SCHEMA_VERSION, openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow } from "@yakcc/registry";
-import type { CatalogPage, RemoteManifest, RemotePeer, Transport, WireBlockTriplet } from "@yakcc/federation";
-import { serializeWireBlockTriplet } from "@yakcc/federation";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CollectingLogger, runCli } from "../index.js";
 import { runFederation, runFederationServe } from "./federation.js";
@@ -143,7 +149,11 @@ function makeStubTransport(opts: {
     fetchManifest(_remote: RemotePeer): Promise<RemoteManifest> {
       return Promise.reject(new Error("fetchManifest: not implemented in stub"));
     },
-    fetchCatalogPage(_remote: RemotePeer, _after: BlockMerkleRoot | null, _limit: number): Promise<CatalogPage> {
+    fetchCatalogPage(
+      _remote: RemotePeer,
+      _after: BlockMerkleRoot | null,
+      _limit: number,
+    ): Promise<CatalogPage> {
       return Promise.reject(new Error("fetchCatalogPage: not implemented in stub"));
     },
     fetchSpec(_remote: RemotePeer, _sh: SpecHash) {
@@ -343,14 +353,14 @@ describe("federation serve (noBlock smoke test)", () => {
     // For simplicity we use registryPath (already initialised in beforeAll).
 
     const logger = new CollectingLogger();
-    const result = await runFederationServe(
-      ["--registry", registryPath, "--port", "0"],
-      logger,
-      { noBlock: true, embeddings: offlineEmbeddings },
-    );
+    const result = await runFederationServe(["--registry", registryPath, "--port", "0"], logger, {
+      noBlock: true,
+      embeddings: offlineEmbeddings,
+    });
 
     expect(result.code).toBe(0);
     expect(result.handle).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: asserted not-null on the line above; ! is intentional in test context
     const handle = result.handle!;
     closeHandle = handle.close.bind(handle);
 
@@ -377,7 +387,9 @@ describe("federation unknown subcommand", () => {
     const code = await runFederation(["bogus"], logger);
     expect(code).toBe(1);
     expect(
-      logger.logLines.some((l) => l.includes("serve") || l.includes("mirror") || l.includes("pull")),
+      logger.logLines.some(
+        (l) => l.includes("serve") || l.includes("mirror") || l.includes("pull"),
+      ),
     ).toBe(true);
   });
 
@@ -509,7 +521,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -530,17 +550,17 @@ describe("federation pull --registry persist (WI-030)", () => {
     try {
       const stored = await reg.getBlock(row.blockMerkleRoot);
       expect(stored).not.toBeNull();
-      expect(stored!.blockMerkleRoot).toBe(row.blockMerkleRoot);
-      expect(stored!.specHash).toBe(row.specHash);
-      expect(stored!.implSource).toBe(row.implSource);
-      expect(stored!.proofManifestJson).toBe(row.proofManifestJson);
-      expect(stored!.level).toBe(row.level);
-      expect(stored!.canonicalAstHash).toBe(row.canonicalAstHash);
-      expect(stored!.parentBlockRoot ?? null).toBe(row.parentBlockRoot ?? null);
+      expect(stored?.blockMerkleRoot).toBe(row.blockMerkleRoot);
+      expect(stored?.specHash).toBe(row.specHash);
+      expect(stored?.implSource).toBe(row.implSource);
+      expect(stored?.proofManifestJson).toBe(row.proofManifestJson);
+      expect(stored?.level).toBe(row.level);
+      expect(stored?.canonicalAstHash).toBe(row.canonicalAstHash);
+      expect(stored?.parentBlockRoot ?? null).toBe(row.parentBlockRoot ?? null);
       // Artifacts bytes preserved (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
-      expect(stored!.artifacts.size).toBe(row.artifacts.size);
+      expect(stored?.artifacts.size).toBe(row.artifacts.size);
       for (const [path, bytes] of row.artifacts) {
-        const storedBytes = stored!.artifacts.get(path);
+        const storedBytes = stored?.artifacts.get(path);
         expect(storedBytes).toBeDefined();
         expect(storedBytes).toEqual(bytes);
       }
@@ -572,7 +592,15 @@ describe("federation pull --registry persist (WI-030)", () => {
     // First invocation — inserts the row.
     const logger1 = new CollectingLogger();
     const code1 = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath,
+      ],
       logger1,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -582,7 +610,15 @@ describe("federation pull --registry persist (WI-030)", () => {
     // Second invocation — storeBlock no-ops (DEC-STORAGE-IDEMPOTENT-001).
     const logger2 = new CollectingLogger();
     const code2 = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath,
+      ],
       logger2,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -666,7 +702,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -678,7 +722,7 @@ describe("federation pull --registry persist (WI-030)", () => {
     try {
       const after = await regAfter.getBlock(row.blockMerkleRoot);
       expect(after).not.toBeNull();
-      expect(after!.blockMerkleRoot).toBe(row.blockMerkleRoot);
+      expect(after?.blockMerkleRoot).toBe(row.blockMerkleRoot);
     } finally {
       await regAfter.close();
     }
@@ -713,7 +757,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -756,7 +808,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", "a".repeat(64), "--registry", badPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        "a".repeat(64),
+        "--registry",
+        badPath,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -786,7 +846,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", "a".repeat(64), "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        "a".repeat(64),
+        "--registry",
+        dbPath,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -798,7 +866,9 @@ describe("federation pull --registry persist (WI-030)", () => {
     // Post-condition: registry is unchanged (no row was inserted).
     const reg = await openRegistry(dbPath, { embeddings: offlineEmbeddings });
     try {
-      const allRoots = await reg.selectBlocks("a".repeat(64) as unknown as import("@yakcc/contracts").SpecHash);
+      const allRoots = await reg.selectBlocks(
+        "a".repeat(64) as unknown as import("@yakcc/contracts").SpecHash,
+      );
       expect(allRoots).toHaveLength(0);
     } finally {
       await reg.close();
@@ -853,7 +923,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath2],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath2,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );
@@ -861,7 +939,8 @@ describe("federation pull --registry persist (WI-030)", () => {
     expect(code).toBe(1);
     // Error message must name either open failure or persist failure (not "pull failed").
     const hasDistinctError = logger.errLines.some(
-      (l) => l.includes("failed to open registry") || l.includes("failed to persist block to registry"),
+      (l) =>
+        l.includes("failed to open registry") || l.includes("failed to persist block to registry"),
     );
     expect(hasDistinctError).toBe(true);
     // Must NOT report "pull failed" — that conflates persist failure with transport failure.
@@ -914,7 +993,15 @@ describe("federation pull --registry persist (WI-030)", () => {
 
     const logger = new CollectingLogger();
     const code = await runFederation(
-      ["pull", "--remote", "https://peer.example.com", "--root", row.blockMerkleRoot, "--registry", dbPath],
+      [
+        "pull",
+        "--remote",
+        "https://peer.example.com",
+        "--root",
+        row.blockMerkleRoot,
+        "--registry",
+        dbPath,
+      ],
       logger,
       { transport, embeddings: offlineEmbeddings },
     );

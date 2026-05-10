@@ -36,15 +36,9 @@ it("property: prop_CandidateNotResolvableError_is_instanceof_Error", () => {
   fc.assert(prop_CandidateNotResolvableError_is_instanceof_Error, opts);
 });
 
-it(
-  "property: prop_CandidateNotResolvableError_distinct_reasons_produce_distinct_messages",
-  () => {
-    fc.assert(
-      prop_CandidateNotResolvableError_distinct_reasons_produce_distinct_messages,
-      opts,
-    );
-  },
-);
+it("property: prop_CandidateNotResolvableError_distinct_reasons_produce_distinct_messages", () => {
+  fc.assert(prop_CandidateNotResolvableError_distinct_reasons_produce_distinct_messages, opts);
+});
 
 it("property: prop_toShaveRegistryView_null_coerces_to_undefined", async () => {
   await fc.assert(prop_toShaveRegistryView_null_coerces_to_undefined, opts);

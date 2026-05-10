@@ -3,21 +3,21 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling merkle.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
-  prop_specHash_deterministic,
-  prop_specHash_format_brand,
-  prop_specHash_field_order_invariant,
   prop_blockMerkleRoot_deterministic,
-  prop_blockMerkleRoot_format_brand,
   prop_blockMerkleRoot_field_sensitive,
-  prop_isLocalTriplet_total,
-  prop_isLocalTriplet_partition,
-  prop_isLocalTriplet_accepts_local,
-  prop_isForeignTriplet_total,
-  prop_isForeignTriplet_partition,
+  prop_blockMerkleRoot_format_brand,
   prop_isForeignTriplet_accepts_foreign,
+  prop_isForeignTriplet_partition,
+  prop_isForeignTriplet_total,
+  prop_isLocalTriplet_accepts_local,
+  prop_isLocalTriplet_partition,
+  prop_isLocalTriplet_total,
+  prop_specHash_deterministic,
+  prop_specHash_field_order_invariant,
+  prop_specHash_format_brand,
   prop_specHash_via_contractSpec_deterministic,
 } from "./merkle.props.js";
 

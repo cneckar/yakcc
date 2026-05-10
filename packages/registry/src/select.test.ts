@@ -16,10 +16,10 @@
  * filtering. The result is the block the assembler uses to resolve a spec.
  */
 
-import { describe, it, expect } from "vitest";
 import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
+import { describe, expect, it } from "vitest";
 import { select } from "./select.js";
-import type { SelectMatch, StrictnessEdge, CandidateProvenance } from "./select.js";
+import type { CandidateProvenance, SelectMatch, StrictnessEdge } from "./select.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -158,11 +158,7 @@ describe("select — three-way comparable chain", () => {
     const b = makeMatch("b");
     const c = makeMatch("c");
 
-    const result = select(
-      [a, b, c],
-      [edge("b", "a"), edge("c", "b"), edge("c", "a")],
-      [],
-    );
+    const result = select([a, b, c], [edge("b", "a"), edge("c", "b"), edge("c", "a")], []);
     expect(result?.block.root).toBe("c".repeat(64));
   });
 

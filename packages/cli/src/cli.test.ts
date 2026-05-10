@@ -93,7 +93,9 @@ beforeAll(async () => {
   // Seed it once — all subsequent command tests reuse this seeded state.
   // Inject the offline embedding provider so the seed command never hits huggingface.co.
   const seedLogger = new CollectingLogger();
-  const seedCode = await seed(["--registry", registryPath], seedLogger, { embeddings: offlineEmbeddings });
+  const seedCode = await seed(["--registry", registryPath], seedLogger, {
+    embeddings: offlineEmbeddings,
+  });
   if (seedCode !== 0) {
     throw new Error(`seed failed: ${seedLogger.errLines.join("\n")}`);
   }
@@ -111,9 +113,7 @@ beforeAll(async () => {
       found = merkleRoot;
       // Parse the SpecYak from the canonical bytes stored in the block row.
       try {
-        foundSpec = JSON.parse(
-          Buffer.from(row.specCanonicalBytes).toString("utf-8"),
-        ) as SpecYak;
+        foundSpec = JSON.parse(Buffer.from(row.specCanonicalBytes).toString("utf-8")) as SpecYak;
       } catch {
         // fall through — foundSpec stays null
       }
@@ -195,7 +195,9 @@ describe("seed", () => {
   it("ingested all 20 corpus blocks during beforeAll setup", async () => {
     // Re-run seed to verify idempotency and output format.
     const logger = new CollectingLogger();
-    const code = await seed(["--registry", registryPath], logger, { embeddings: offlineEmbeddings });
+    const code = await seed(["--registry", registryPath], logger, {
+      embeddings: offlineEmbeddings,
+    });
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.includes("seeded 20 contracts"))).toBe(true);
   });
@@ -206,11 +208,9 @@ describe("seed", () => {
     // seam works end-to-end: runCli receives the offline provider and threads it
     // through to the seed command, which opens the registry without network I/O.
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["seed", "--registry", registryPath],
-      logger,
-      { embeddings: offlineEmbeddings },
-    );
+    const code = await runCli(["seed", "--registry", registryPath], logger, {
+      embeddings: offlineEmbeddings,
+    });
     expect(code).toBe(0);
     expect(logger.logLines.some((l) => l.includes("seeded"))).toBe(true);
   });
@@ -296,7 +296,9 @@ describe("search", () => {
     writeFileSync(searchSpecPath, JSON.stringify(listOfIntsSpec), "utf-8");
 
     const logger = new CollectingLogger();
-    const code = await search([searchSpecPath, "--registry", registryPath], logger, { embeddings: offlineEmbeddings });
+    const code = await search([searchSpecPath, "--registry", registryPath], logger, {
+      embeddings: offlineEmbeddings,
+    });
     expect(code).toBe(0);
     const resultLines = logger.logLines.filter((l) => l.includes("score="));
     expect(resultLines.length).toBeGreaterThanOrEqual(1);
@@ -312,11 +314,7 @@ describe("search", () => {
   it("exits 0 with no results for an unmatchable query", async () => {
     const logger = new CollectingLogger();
     const code = await search(
-      [
-        "zzz extremely unlikely gibberish xyzzy quantum flux capacitor",
-        "--registry",
-        registryPath,
-      ],
+      ["zzz extremely unlikely gibberish xyzzy quantum flux capacitor", "--registry", registryPath],
       logger,
       { embeddings: offlineEmbeddings },
     );
@@ -373,11 +371,9 @@ describe("compile", () => {
   it("manifest.json has at least 7 entries (transitive closure of list-of-ints)", async () => {
     const outDir = join(suiteDir, "compile-manifest-check");
     const logger = new CollectingLogger();
-    await compile(
-      [listOfIntsRoot, "--registry", registryPath, "--out", outDir],
-      logger,
-      { embeddings: offlineEmbeddings },
-    );
+    await compile([listOfIntsRoot, "--registry", registryPath, "--out", outDir], logger, {
+      embeddings: offlineEmbeddings,
+    });
     const manifest = JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf-8")) as {
       entries: unknown[];
     };
@@ -504,9 +500,9 @@ describe("hooks claude-code install", () => {
     const logger = new CollectingLogger();
     const code = await runCli(["hooks", "claude-code", "notacommand"], logger);
     expect(code).toBe(1);
-    expect(
-      logger.errLines.some((l) => l.includes("unknown hooks claude-code subcommand")),
-    ).toBe(true);
+    expect(logger.errLines.some((l) => l.includes("unknown hooks claude-code subcommand"))).toBe(
+      true,
+    );
   });
 
   it("exits 1 for unknown hooks subcommand", async () => {

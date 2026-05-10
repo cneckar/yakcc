@@ -26,12 +26,7 @@ import * as irPublic from "./index.js";
 // Fixture directory resolution
 // ---------------------------------------------------------------------------
 
-const FIXTURE_BASE = join(
-  fileURLToPath(import.meta.url),
-  "..",
-  "__fixtures__",
-  "triplets",
-);
+const FIXTURE_BASE = join(fileURLToPath(import.meta.url), "..", "__fixtures__", "triplets");
 
 const DIGIT_OF_DIR = join(FIXTURE_BASE, "digit-of");
 const ALL_WHITESPACE_DIR = join(FIXTURE_BASE, "all-whitespace");
@@ -262,10 +257,7 @@ describe("EC-3: malformed proof/manifest.json produces a typed validation error"
         level: "L0",
       }),
     );
-    writeFileSync(
-      join(tmpDir, "proof", "manifest.json"),
-      JSON.stringify({ artifacts: [] }),
-    );
+    writeFileSync(join(tmpDir, "proof", "manifest.json"), JSON.stringify({ artifacts: [] }));
     expect(() => parseBlockTriplet(tmpDir)).toThrow(TypeError);
   });
 

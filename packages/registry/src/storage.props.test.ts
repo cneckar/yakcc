@@ -3,8 +3,8 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling storage.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
   prop_bytesToHex_blake3_output_is_64_chars,
   prop_bytesToHex_deterministic,

@@ -45,7 +45,11 @@ function isHex64(s: string): boolean {
  * @param logger - Output sink; defaults to console via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function compile(argv: readonly string[], logger: Logger, opts?: CompileOptions): Promise<number> {
+export async function compile(
+  argv: readonly string[],
+  logger: Logger,
+  opts?: CompileOptions,
+): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {

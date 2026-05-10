@@ -1,9 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { shave, LicenseRefusedError } from "./index.js";
+import { LicenseRefusedError, shave } from "./index.js";
 import type { ShaveRegistryView } from "./types.js";
 
 const mockRegistry: ShaveRegistryView = {

@@ -165,7 +165,6 @@ const BOOTSTRAP_EMBEDDING_OPTS: Pick<RegistryOptions, "embeddings"> = {
   embeddings: {
     dimension: 384,
     modelId: "bootstrap/null-zero",
-    // biome-ignore lint/suspicious/useAwait: interface requires async
     embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
   },
 };
@@ -332,14 +331,14 @@ async function runVerify(
       .map((r) => ({ merkleRoot: r })),
   };
 
-  logger.error(`bootstrap --verify: FAILED`);
-  logger.error(
-    `  committed: ${committedManifestPath} (${committedManifest.length} entries)`,
-  );
+  logger.error("bootstrap --verify: FAILED");
+  logger.error(`  committed: ${committedManifestPath} (${committedManifest.length} entries)`);
   logger.error(`  fresh:     ${freshManifest.length} entries`);
 
   if (diff.removedRoots.length > 0) {
-    logger.error(`\nRemoved merkle roots (${diff.removedRoots.length} — in committed, not in fresh):`);
+    logger.error(
+      `\nRemoved merkle roots (${diff.removedRoots.length} — in committed, not in fresh):`,
+    );
     for (const { merkleRoot } of diff.removedRoots) {
       logger.error(`  - ${merkleRoot}`);
     }

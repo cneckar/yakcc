@@ -34,7 +34,12 @@
  *   and reading string bytes from memory after the call.
  */
 
-import { type BlockMerkleRoot, type LocalTriplet, blockMerkleRoot, specHash } from "@yakcc/contracts";
+import {
+  type BlockMerkleRoot,
+  type LocalTriplet,
+  blockMerkleRoot,
+  specHash,
+} from "@yakcc/contracts";
 import type { SpecYak } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
@@ -102,7 +107,7 @@ function makeResolution(
 }
 
 // Synthetic add(a, b) substrate source used in fixtures.
-const ADD_IMPL_SOURCE = `export function add(a: number, b: number): number { return a + b; }`;
+const ADD_IMPL_SOURCE = "export function add(a: number, b: number): number { return a + b; }";
 
 // Build a resolution for the minimal add substrate.
 function makeAddResolution(): ResolutionResult {
@@ -156,7 +161,7 @@ describe("compileToWasm — function export (compound-interaction)", () => {
       bytes,
       host.importObject,
     )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-    expect(typeof instance.exports["__wasm_export_add"]).toBe("function");
+    expect(typeof instance.exports.__wasm_export_add).toBe("function");
   });
 
   it("add(2, 3) returns 5", async () => {
@@ -166,7 +171,7 @@ describe("compileToWasm — function export (compound-interaction)", () => {
       bytes,
       host.importObject,
     )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
+    const add = instance.exports.__wasm_export_add as (a: number, b: number) => number;
     expect(add(2, 3)).toBe(5);
   });
 
@@ -177,7 +182,7 @@ describe("compileToWasm — function export (compound-interaction)", () => {
       bytes,
       host.importObject,
     )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
+    const add = instance.exports.__wasm_export_add as (a: number, b: number) => number;
     expect(add(0, 0)).toBe(0);
   });
 
@@ -190,7 +195,7 @@ describe("compileToWasm — function export (compound-interaction)", () => {
       bytes,
       host.importObject,
     )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
+    const add = instance.exports.__wasm_export_add as (a: number, b: number) => number;
     expect(add(-1, -1)).toBe(-2);
   });
 
@@ -201,7 +206,7 @@ describe("compileToWasm — function export (compound-interaction)", () => {
       bytes,
       host.importObject,
     )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
+    const add = instance.exports.__wasm_export_add as (a: number, b: number) => number;
     expect(add(100, 200)).toBe(300);
   });
 });
@@ -249,7 +254,7 @@ describe("wasmBackend()", () => {
       bytes,
       host.importObject,
     )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
-    const add = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
+    const add = instance.exports.__wasm_export_add as (a: number, b: number) => number;
     expect(add(7, 8)).toBe(15);
   });
 });
@@ -303,7 +308,7 @@ function readUtf8(memory: WebAssembly.Memory, offset: number, len: number): stri
 // ---------------------------------------------------------------------------
 
 describe("WI-V1W2-WASM-02 parity — substrate 1: number → number", () => {
-  const SRC = `export function add(a: number, b: number): number { return a + b; }`;
+  const SRC = "export function add(a: number, b: number): number { return a + b; }";
   const tsRef = (a: number, b: number): number => (a + b) | 0;
 
   const corpus: ReadonlyArray<[number, number]> = [
@@ -316,12 +321,12 @@ describe("WI-V1W2-WASM-02 parity — substrate 1: number → number", () => {
 
   it("type-lowering emits __wasm_export_add with i32×i32→i32 signature", async () => {
     const { instance } = await instantiateSource(SRC);
-    expect(typeof instance.exports["__wasm_export_add"]).toBe("function");
+    expect(typeof instance.exports.__wasm_export_add).toBe("function");
   });
 
   it(`parity: ${corpus.length} corpus cases match TypeScript reference`, async () => {
     const { instance } = await instantiateSource(SRC);
-    const fn = instance.exports["__wasm_export_add"] as (a: number, b: number) => number;
+    const fn = instance.exports.__wasm_export_add as (a: number, b: number) => number;
     for (const [a, b] of corpus) {
       expect(fn(a, b), `add(${a}, ${b})`).toBe(tsRef(a, b));
     }
@@ -338,7 +343,7 @@ describe("WI-V1W2-WASM-02 parity — substrate 1: number → number", () => {
 // ---------------------------------------------------------------------------
 
 describe("WI-V1W2-WASM-02 parity — substrate 2: string → number", () => {
-  const SRC = `export function stringLen(s: string): number { return s.length; }`;
+  const SRC = "export function stringLen(s: string): number { return s.length; }";
   const tsRef = (s: string): number => s.length;
   const PTR = 64;
 
@@ -346,16 +351,16 @@ describe("WI-V1W2-WASM-02 parity — substrate 2: string → number", () => {
 
   it("type-lowering emits __wasm_export_stringLen with ptr+len→i32 signature", async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    expect(typeof instance.exports["__wasm_export_stringLen"]).toBe("function");
+    expect(typeof instance.exports.__wasm_export_stringLen).toBe("function");
     // Smoke: "hi" (2 bytes) → 2
     const byteLen = writeUtf8(memory, PTR, "hi");
-    const fn = instance.exports["__wasm_export_stringLen"] as (p: number, l: number) => number;
+    const fn = instance.exports.__wasm_export_stringLen as (p: number, l: number) => number;
     expect(fn(PTR, byteLen)).toBe(2);
   });
 
   it(`parity: ${corpus.length} corpus cases match TypeScript reference`, async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    const fn = instance.exports["__wasm_export_stringLen"] as (p: number, l: number) => number;
+    const fn = instance.exports.__wasm_export_stringLen as (p: number, l: number) => number;
     for (const s of corpus) {
       const byteLen = writeUtf8(memory, PTR, s);
       expect(fn(PTR, byteLen), `stringLen("${s}")`).toBe(tsRef(s));
@@ -373,7 +378,7 @@ describe("WI-V1W2-WASM-02 parity — substrate 2: string → number", () => {
 // ---------------------------------------------------------------------------
 
 describe("WI-V1W2-WASM-02 parity — substrate 3: number → string", () => {
-  const SRC = `export function formatI32(n: number): string { return String(n); }`;
+  const SRC = "export function formatI32(n: number): string { return String(n); }";
   const tsRef = (n: number): string => String(n);
   const OUT_PTR = 64;
 
@@ -381,8 +386,8 @@ describe("WI-V1W2-WASM-02 parity — substrate 3: number → string", () => {
 
   it("type-lowering emits __wasm_export_formatI32 with n+out_ptr→len signature", async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    expect(typeof instance.exports["__wasm_export_formatI32"]).toBe("function");
-    const fn = instance.exports["__wasm_export_formatI32"] as (n: number, out: number) => number;
+    expect(typeof instance.exports.__wasm_export_formatI32).toBe("function");
+    const fn = instance.exports.__wasm_export_formatI32 as (n: number, out: number) => number;
     const len = fn(5, OUT_PTR);
     expect(len).toBe(1);
     expect(readUtf8(memory, OUT_PTR, len)).toBe("5");
@@ -390,7 +395,7 @@ describe("WI-V1W2-WASM-02 parity — substrate 3: number → string", () => {
 
   it(`parity: ${corpus.length} corpus cases produce byte-equivalent decimal strings`, async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    const fn = instance.exports["__wasm_export_formatI32"] as (n: number, out: number) => number;
+    const fn = instance.exports.__wasm_export_formatI32 as (n: number, out: number) => number;
     for (const n of corpus) {
       const len = fn(n, OUT_PTR);
       const wasmStr = readUtf8(memory, OUT_PTR, len);
@@ -409,7 +414,7 @@ describe("WI-V1W2-WASM-02 parity — substrate 3: number → string", () => {
 // ---------------------------------------------------------------------------
 
 describe("WI-V1W2-WASM-02 parity — substrate 4: record → number", () => {
-  const SRC = `export function sumRecord(r: {a: number; b: number}): number { return r.a + r.b; }`;
+  const SRC = "export function sumRecord(r: {a: number; b: number}): number { return r.a + r.b; }";
   const tsRef = (a: number, b: number): number => (a + b) | 0;
   const PTR = 64;
 
@@ -423,16 +428,16 @@ describe("WI-V1W2-WASM-02 parity — substrate 4: record → number", () => {
 
   it("type-lowering emits __wasm_export_sumRecord with ptr→i32 signature", async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    expect(typeof instance.exports["__wasm_export_sumRecord"]).toBe("function");
+    expect(typeof instance.exports.__wasm_export_sumRecord).toBe("function");
     writeI32LE(memory, PTR, 4);
     writeI32LE(memory, PTR + 4, 6);
-    const fn = instance.exports["__wasm_export_sumRecord"] as (p: number) => number;
+    const fn = instance.exports.__wasm_export_sumRecord as (p: number) => number;
     expect(fn(PTR)).toBe(10);
   });
 
   it(`parity: ${corpus.length} corpus cases match TypeScript reference`, async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    const fn = instance.exports["__wasm_export_sumRecord"] as (p: number) => number;
+    const fn = instance.exports.__wasm_export_sumRecord as (p: number) => number;
     for (const [a, b] of corpus) {
       writeI32LE(memory, PTR, a);
       writeI32LE(memory, PTR + 4, b);
@@ -450,7 +455,8 @@ describe("WI-V1W2-WASM-02 parity — substrate 4: record → number", () => {
 // ---------------------------------------------------------------------------
 
 describe("WI-V1W2-WASM-02 parity — substrate 5: array<number> → number", () => {
-  const SRC = `export function sumArray(arr: number[]): number { return arr.reduce((s, x) => s + x, 0); }`;
+  const SRC =
+    "export function sumArray(arr: number[]): number { return arr.reduce((s, x) => s + x, 0); }";
   const tsRef = (arr: number[]): number => arr.reduce((s, x) => s + x, 0) | 0;
   const PTR = 64;
 
@@ -464,15 +470,15 @@ describe("WI-V1W2-WASM-02 parity — substrate 5: array<number> → number", () 
 
   it("type-lowering emits __wasm_export_sumArray with ptr+len→i32 signature", async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    expect(typeof instance.exports["__wasm_export_sumArray"]).toBe("function");
+    expect(typeof instance.exports.__wasm_export_sumArray).toBe("function");
     [1, 2, 3].forEach((v, i) => writeI32LE(memory, PTR + i * 4, v));
-    const fn = instance.exports["__wasm_export_sumArray"] as (p: number, l: number) => number;
+    const fn = instance.exports.__wasm_export_sumArray as (p: number, l: number) => number;
     expect(fn(PTR, 3)).toBe(6);
   });
 
   it(`parity: ${corpus.length} corpus cases match TypeScript reference`, async () => {
     const { instance, memory } = await instantiateSource(SRC);
-    const fn = instance.exports["__wasm_export_sumArray"] as (p: number, l: number) => number;
+    const fn = instance.exports.__wasm_export_sumArray as (p: number, l: number) => number;
     for (const arr of corpus) {
       arr.forEach((v, i) => writeI32LE(memory, PTR + i * 4, v));
       expect(fn(PTR, arr.length), `sumArray([${arr}])`).toBe(tsRef(arr));

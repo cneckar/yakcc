@@ -30,7 +30,6 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
 import {
   blockMerkleRoot,
   canonicalize,
@@ -40,6 +39,7 @@ import {
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
 import { createHttpTransport } from "./http-transport.js";
 import { mirrorRegistry } from "./mirror.js";
 import { serveRegistry } from "./serve.js";
@@ -87,7 +87,10 @@ const SPEC_B: SpecYak = {
 // A third spec variant for multi-triplet tests under SPEC_A
 const SPEC_C: SpecYak = {
   name: "roundTripSpecC",
-  inputs: [{ name: "x", type: "number" }, { name: "y", type: "number" }],
+  inputs: [
+    { name: "x", type: "number" },
+    { name: "y", type: "number" },
+  ],
   outputs: [{ name: "product", type: "number" }],
   preconditions: [],
   postconditions: ["product equals x * y"],
@@ -106,9 +109,9 @@ const PROOF_MANIFEST = validateProofManifestL0(JSON.parse(PROOF_MANIFEST_JSON));
 const ARTIFACT_PATH = "tests.fast-check.ts";
 
 // Distinct canonical AST hashes for each fixture variant.
-const HASH_A = "aabbccdd" + "a".repeat(56) as CanonicalAstHash;
-const HASH_B = "bbccddee" + "b".repeat(56) as CanonicalAstHash;
-const HASH_C = "ccddeeaa" + "c".repeat(56) as CanonicalAstHash;
+const HASH_A = `aabbccdd${"a".repeat(56)}` as CanonicalAstHash;
+const HASH_B = `bbccddee${"b".repeat(56)}` as CanonicalAstHash;
+const HASH_C = `ccddeeaa${"c".repeat(56)}` as CanonicalAstHash;
 
 // ---------------------------------------------------------------------------
 // Fixture builder
@@ -202,7 +205,11 @@ async function openTrackedRegistry(): Promise<TrackedRegistry> {
  * @decision DEC-ROUND-TRIP-020: byte-identical equality is the acceptance criterion.
  * Status: decided (WI-020 Dispatch F)
  */
-function assertRowsEqual(label: string, actual: BlockTripletRow | null, expected: BlockTripletRow): void {
+function assertRowsEqual(
+  label: string,
+  actual: BlockTripletRow | null,
+  expected: BlockTripletRow,
+): void {
   expect(actual, `${label}: row must be non-null in registryB`).not.toBeNull();
   if (actual === null) return; // type guard (assertion above would throw first)
 
@@ -213,7 +220,9 @@ function assertRowsEqual(label: string, actual: BlockTripletRow | null, expected
   expect(actual.level, `${label}: level`).toBe(expected.level);
   expect(actual.createdAt, `${label}: createdAt`).toBe(expected.createdAt);
   expect(actual.canonicalAstHash, `${label}: canonicalAstHash`).toBe(expected.canonicalAstHash);
-  expect(actual.parentBlockRoot, `${label}: parentBlockRoot`).toBe(expected.parentBlockRoot ?? null);
+  expect(actual.parentBlockRoot, `${label}: parentBlockRoot`).toBe(
+    expected.parentBlockRoot ?? null,
+  );
 
   // specCanonicalBytes — compare via base64 to avoid Uint8Array reference equality traps.
   const actualB64 = Buffer.from(actual.specCanonicalBytes).toString("base64");
@@ -224,6 +233,7 @@ function assertRowsEqual(label: string, actual: BlockTripletRow | null, expected
   expect(actual.artifacts.size, `${label}: artifacts.size`).toBe(expected.artifacts.size);
   for (const [path, expectedBytes] of expected.artifacts) {
     expect(actual.artifacts.has(path), `${label}: artifacts has key "${path}"`).toBe(true);
+    // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
     const actualBytes = actual.artifacts.get(path)!;
     const actualArtB64 = Buffer.from(actualBytes).toString("base64");
     const expectedArtB64 = Buffer.from(expectedBytes).toString("base64");
@@ -253,17 +263,17 @@ async function writeTranscript(
   const transcriptPath = join(evidenceDir, "round-trip-transcript.txt");
 
   const lines: string[] = [
-    `# WI-020 v2 Federation Round-Trip Transcript`,
-    ``,
-    `## Summary`,
+    "# WI-020 v2 Federation Round-Trip Transcript",
+    "",
+    "## Summary",
     `Triplets seeded into registryA: ${rows.length}`,
     `blocksInserted:   ${report.blocksInserted}`,
     `blocksSkipped:    ${report.blocksSkipped}`,
     `failures:         ${report.failures.length}`,
     `specsWalked:      ${report.specsWalked}`,
     `blocksConsidered: ${report.blocksConsidered}`,
-    ``,
-    `## Triplet Details`,
+    "",
+    "## Triplet Details",
   ];
 
   for (const row of rows) {
@@ -272,12 +282,12 @@ async function writeTranscript(
     lines.push(`  level:            ${row.level}`);
     lines.push(`  parentBlockRoot:  ${row.parentBlockRoot ?? "null"}`);
     lines.push(`  artifactCount:    ${row.artifacts.size}`);
-    lines.push(``);
+    lines.push("");
   }
 
-  lines.push(`## MirrorReport (JSON)`);
+  lines.push("## MirrorReport (JSON)");
   lines.push(JSON.stringify(report, null, 2));
-  lines.push(``);
+  lines.push("");
 
   await writeFile(transcriptPath, lines.join("\n"), "utf-8");
   return transcriptPath;
@@ -301,7 +311,12 @@ describe("federation round-trip — single-triplet (compound-interaction)", () =
 
     try {
       // Step 1: build one real BlockTripletRow and store it in registryA.
-      const row = makeRow(SPEC_A, "impl-v1", "// fast-check property test for single-triplet", HASH_A);
+      const row = makeRow(
+        SPEC_A,
+        "impl-v1",
+        "// fast-check property test for single-triplet",
+        HASH_A,
+      );
       await trackedA.store(row);
 
       // Step 2: start the HTTP server backed by registryA.

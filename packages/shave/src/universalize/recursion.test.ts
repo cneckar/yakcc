@@ -352,7 +352,8 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
    * `break` — this test exercises the canonical shape of that pattern.
    */
   it("a: continue inside for-of body → loop node is atom-leaf with reason loop-with-escaping-cf", async () => {
-    const source = `function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) continue; s += x; } return s; }`;
+    const source =
+      "function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) continue; s += x; } return s; }";
     const tree = await decompose(source, emptyRegistry);
 
     // Root: SourceFile. With default maxCF=1, the function body has multiple
@@ -377,7 +378,8 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
    * Test b: `break` inside while body → loop is AtomLeaf.
    */
   it("b: break inside while body → loop node is atom-leaf with reason loop-with-escaping-cf", async () => {
-    const source = `function search(xs: number[], target: number): number { let i = 0; while (i < xs.length) { if (xs[i] === target) break; i++; } return i; }`;
+    const source =
+      "function search(xs: number[], target: number): number { let i = 0; while (i < xs.length) { if (xs[i] === target) break; i++; } return i; }";
     const tree = await decompose(source, emptyRegistry);
 
     function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
@@ -398,7 +400,8 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
    * body has an escaping break → outer loop is the atom.
    */
   it("c: labeled break to outer loop → outer for-loop is atom-leaf with reason loop-with-escaping-cf", async () => {
-    const source = `function f() { outer: for (let i = 0; i < 10; i++) { for (let j = 0; j < 10; j++) { if (j === 5) break outer; } } }`;
+    const source =
+      "function f() { outer: for (let i = 0; i < 10; i++) { for (let j = 0; j < 10; j++) { if (j === 5) break outer; } } }";
     const tree = await decompose(source, emptyRegistry);
 
     function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
@@ -420,7 +423,8 @@ describe("decompose — loop with escaping continue/break (DEC-SLICER-LOOP-CONTR
   it("d: break inside switch inside for-of body does NOT mark loop as loop-with-escaping-cf", async () => {
     // 3 CF boundaries in the for-of body (for-of + switch + 2 case breaks)
     // but break binds to switch, not for-of
-    const source = `function f(xs: number[]) { for (const x of xs) { switch (x) { case 1: break; default: break; } } }`;
+    const source =
+      "function f(xs: number[]) { for (const x of xs) { switch (x) { case 1: break; default: break; } } }";
     const tree = await decompose(source, emptyRegistry);
 
     function findAtomWithReason(node: typeof tree.root, reason: string): boolean {
@@ -514,7 +518,7 @@ describe("decompose — non-leaf escaping return/await/yield (DEC-SLICER-FN-SCOP
    * `function __w__() { ... }` to hash it without TS1108.
    */
   it("1: if-statement with return decomposes without throw", async () => {
-    const source = `function f(x: number): number { if (x < 0) { return -1; } return x; }`;
+    const source = "function f(x: number): number { if (x < 0) { return -1; } return x; }";
     // Must not throw — previously: CanonicalAstParseError (TS1108 return outside function)
     const tree = await decompose(source, emptyRegistry);
 
@@ -539,7 +543,8 @@ describe("decompose — non-leaf escaping return/await/yield (DEC-SLICER-FN-SCOP
    * `return` escaping to the enclosing async function. Wrap flavor: function.
    */
   it("2: try-catch with return in catch decomposes without throw", async () => {
-    const source = `async function f(): Promise<number> { try { return await Promise.resolve(1); } catch { return -1; } }`;
+    const source =
+      "async function f(): Promise<number> { try { return await Promise.resolve(1); } catch { return -1; } }";
     const tree = await decompose(source, emptyRegistry);
 
     expect(tree.leafCount).toBeGreaterThan(0);
@@ -552,7 +557,8 @@ describe("decompose — non-leaf escaping return/await/yield (DEC-SLICER-FN-SCOP
    * async function is the enclosing `async function f`. Wrap flavor: async function.
    */
   it("3: block with await inside async function (for-of body) decomposes without throw", async () => {
-    const source = `async function f(xs: Promise<number>[]): Promise<number> { let s = 0; for (const x of xs) { s += await x; } return s; }`;
+    const source =
+      "async function f(xs: Promise<number>[]): Promise<number> { let s = 0; for (const x of xs) { s += await x; } return s; }";
     const tree = await decompose(source, emptyRegistry);
 
     expect(tree.leafCount).toBeGreaterThan(0);
@@ -565,7 +571,7 @@ describe("decompose — non-leaf escaping return/await/yield (DEC-SLICER-FN-SCOP
    * enclosing `function* gen`. Wrap flavor: function*.
    */
   it("4: generator with yield inside if decomposes without throw", async () => {
-    const source = `function* gen(xs: number[]) { for (const x of xs) { if (x > 0) yield x; } }`;
+    const source = "function* gen(xs: number[]) { for (const x of xs) { if (x > 0) yield x; } }";
     const tree = await decompose(source, emptyRegistry);
 
     expect(tree.leafCount).toBeGreaterThan(0);
@@ -692,7 +698,7 @@ describe("decompose — ClassDeclaration / ExpressionStatement / VariableStateme
    * and the ExpressionStatement decomposes to its wrapped expression.
    */
   it("2: expression-statement with arrow-fn-call decomposes without throw", async () => {
-    const src = `const f = () => 42; f();`;
+    const src = "const f = () => 42; f();";
     // Use alwaysMatchRegistry to force descent deep enough that ExpressionStatement
     // is encountered as non-atomic, triggering decomposableChildrenOf(ExprStmt).
     const tree = await decompose(src, alwaysMatchRegistry());
@@ -709,7 +715,7 @@ describe("decompose — ClassDeclaration / ExpressionStatement / VariableStateme
    * to the arrow, then into the arrow body.
    */
   it("3: variable-statement with arrow init decomposes without throw", async () => {
-    const src = `const handler = (x: number) => { if (x < 0) return -1; return x; };`;
+    const src = "const handler = (x: number) => { if (x < 0) return -1; return x; };";
     const tree = await decompose(src, alwaysMatchRegistry());
 
     expect(tree.leafCount).toBeGreaterThan(0);
@@ -729,7 +735,8 @@ describe("decompose — ClassDeclaration / ExpressionStatement / VariableStateme
    * previously caused await-outside-async in the survey (federation/pull.ts shape).
    */
   it("4: async arrow function with await body does not crash predicate (nodeIsAsync fix)", async () => {
-    const src = `const fetch = async (u: string): Promise<number> => { const r = await something(u); return r; };`;
+    const src =
+      "const fetch = async (u: string): Promise<number> => { const r = await something(u); return r; };";
     // Must not throw CanonicalAstParseError (TS1308 await-outside-async)
     const tree = await decompose(src, emptyRegistry);
 
@@ -809,7 +816,7 @@ describe("decompose — WI-037 expression-level decompose policies", () => {
    * Previously returned [] → DidNotReachAtomError. WI-037 adds the branch.
    */
   it("conditional expression decomposes without throw", async () => {
-    const src = `function f(x: number): number { return x > 0 ? x * 2 : -x; }`;
+    const src = "function f(x: number): number { return x > 0 ? x * 2 : -x; }";
     // With emptyRegistry: all nodes have CF-count 0 ≤ 1, so the whole function
     // is an atom (no decomposition needed). Confirm no throw.
     const tree = await decompose(src, emptyRegistry);
@@ -824,7 +831,8 @@ describe("decompose — WI-037 expression-level decompose policies", () => {
    * → DidNotReachAtomError. WI-037 adds BinaryExpression → [left, right].
    */
   it("binary expression decomposes without throw", async () => {
-    const src = `function f(a: number, b: number): number { const sum = a * 2 + b * 3; return sum; }`;
+    const src =
+      "function f(a: number, b: number): number { const sum = a * 2 + b * 3; return sum; }";
     const tree = await decompose(src, emptyRegistry);
     expect(tree.root).toBeDefined();
     expect(tree.leafCount).toBeGreaterThan(0);

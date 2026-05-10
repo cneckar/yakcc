@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   createLocalEmbeddingProvider,
   createOfflineEmbeddingProvider,
@@ -11,7 +11,9 @@ const SAMPLE_SPEC: ContractSpec = {
   outputs: [{ name: "result", type: "number[]" }],
   behavior: "Parse a JSON array of integers from a string.",
   guarantees: [{ id: "rejects-non-int", description: "Rejects non-integer values." }],
-  errorConditions: [{ description: "Throws SyntaxError on malformed input.", errorType: "SyntaxError" }],
+  errorConditions: [
+    { description: "Throws SyntaxError on malformed input.", errorType: "SyntaxError" },
+  ],
   nonFunctional: { purity: "pure", threadSafety: "safe" },
   propertyTests: [],
 };
@@ -48,20 +50,23 @@ describe("EmbeddingProvider (local) — static metadata", () => {
 // Skipped by default so CI and sandboxed runs stay offline-tolerant.
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!runNetworkTests)("EmbeddingProvider (local) — network smoke (YAKCC_NETWORK_TESTS=1)", () => {
-  it(
-    "embed returns a non-zero Float32Array of length 384",
-    { timeout: MODEL_TIMEOUT },
-    async () => {
-      const provider = createLocalEmbeddingProvider();
-      const vec = await provider.embed("hello world");
-      expect(vec).toBeInstanceOf(Float32Array);
-      expect(vec.length).toBe(384);
-      const allZero = Array.from(vec).every((v) => v === 0);
-      expect(allZero).toBe(false);
-    },
-  );
-});
+describe.skipIf(!runNetworkTests)(
+  "EmbeddingProvider (local) — network smoke (YAKCC_NETWORK_TESTS=1)",
+  () => {
+    it(
+      "embed returns a non-zero Float32Array of length 384",
+      { timeout: MODEL_TIMEOUT },
+      async () => {
+        const provider = createLocalEmbeddingProvider();
+        const vec = await provider.embed("hello world");
+        expect(vec).toBeInstanceOf(Float32Array);
+        expect(vec.length).toBe(384);
+        const allZero = Array.from(vec).every((v) => v === 0);
+        expect(allZero).toBe(false);
+      },
+    );
+  },
+);
 
 // ---------------------------------------------------------------------------
 // generateEmbedding integration — uses offline provider (no network I/O)

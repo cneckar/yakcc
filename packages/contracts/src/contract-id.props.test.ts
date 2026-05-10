@@ -3,19 +3,19 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling contract-id.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
+  prop_contractIdFromBytes_collision_resistance,
   prop_contractIdFromBytes_deterministic,
   prop_contractIdFromBytes_format_brand,
-  prop_contractIdFromBytes_collision_resistance,
   prop_contractIdFromBytes_pure,
   prop_contractId_equals_idFromBytesOfCanonicalize,
   prop_contractId_field_order_invariant,
   prop_isValidContractId_accepts_valid,
-  prop_isValidContractId_rejects_wrong_length,
-  prop_isValidContractId_rejects_uppercase,
   prop_isValidContractId_rejects_non_hex,
+  prop_isValidContractId_rejects_uppercase,
+  prop_isValidContractId_rejects_wrong_length,
   prop_isValidContractId_total,
 } from "./contract-id.props.js";
 

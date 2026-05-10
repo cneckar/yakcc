@@ -62,8 +62,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FOREIGN_POLICY_DEFAULT } from "@yakcc/shave";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CollectingLogger } from "../index.js";
 import { shave } from "./shave.js";
 
@@ -76,17 +76,7 @@ import { shave } from "./shave.js";
 // Four levels up lands at the repo root (worktree root).
 // Then descend into packages/shave/src/__fixtures__/.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURE_DIR = join(
-  HERE,
-  "..",
-  "..",
-  "..",
-  "..",
-  "packages",
-  "shave",
-  "src",
-  "__fixtures__",
-);
+const FIXTURE_DIR = join(HERE, "..", "..", "..", "..", "packages", "shave", "src", "__fixtures__");
 
 // ---------------------------------------------------------------------------
 // Suite lifecycle — temp directory for test fixtures
@@ -225,9 +215,7 @@ describe("--foreign-policy validation (WI-V2-04 L4)", () => {
     expect(logger.errLines.some((l) => l.includes("foreign-policy"))).toBe(true);
     // Error must mention valid choices so the user can correct their invocation.
     expect(
-      logger.errLines.some(
-        (l) => l.includes("allow") || l.includes("reject") || l.includes("tag"),
-      ),
+      logger.errLines.some((l) => l.includes("allow") || l.includes("reject") || l.includes("tag")),
     ).toBe(true);
     // No usage/help output should have been emitted — this is an error path.
     expect(logger.logLines).toHaveLength(0);

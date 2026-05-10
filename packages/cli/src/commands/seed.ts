@@ -34,7 +34,11 @@ export interface SeedOptions {
  * @param opts  - Internal options (embeddings for test injection).
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function seed(argv: readonly string[], logger: Logger, opts?: SeedOptions): Promise<number> {
+export async function seed(
+  argv: readonly string[],
+  logger: Logger,
+  opts?: SeedOptions,
+): Promise<number> {
   const { values } = parseArgs({
     args: [...argv],
     options: {

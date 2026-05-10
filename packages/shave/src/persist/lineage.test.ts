@@ -37,10 +37,10 @@
  *   entry beyond the first, parentBlockRoot = lastNovelMerkleRoot.
  */
 
-import { describe, expect, it } from "vitest";
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import { persistNovelGlueAtom } from "./atom-persist.js";
@@ -110,61 +110,59 @@ function makeRegistryStub(): {
 // ---------------------------------------------------------------------------
 
 describe("lineage: production-sequence postorder chain", () => {
-  it(
-    "outer atom has parentBlockRoot=null; inner atom has parentBlockRoot = outer's BlockMerkleRoot",
-    async () => {
-      // @decision DEC-REGISTRY-PARENT-BLOCK-004: parentBlockRoot is the literal
-      // BlockMerkleRoot returned by the prior persistNovelGlueAtom call — no
-      // re-derivation, no sidecar table, no in-memory map.
+  it("outer atom has parentBlockRoot=null; inner atom has parentBlockRoot = outer's BlockMerkleRoot", async () => {
+    // @decision DEC-REGISTRY-PARENT-BLOCK-004: parentBlockRoot is the literal
+    // BlockMerkleRoot returned by the prior persistNovelGlueAtom call — no
+    // re-derivation, no sidecar table, no in-memory map.
 
-      const { registry, calls } = makeRegistryStub();
+    const { registry, calls } = makeRegistryStub();
 
-      // Entry A — outer function (top-level, no parent in this shave call).
-      const outerSource =
-        "// SPDX-License-Identifier: MIT\nfunction outer(x: number): number { return x * 2; }";
-      const outerEntry = makeEntry(outerSource, HASH_A, "Doubles its input");
+    // Entry A — outer function (top-level, no parent in this shave call).
+    const outerSource =
+      "// SPDX-License-Identifier: MIT\nfunction outer(x: number): number { return x * 2; }";
+    const outerEntry = makeEntry(outerSource, HASH_A, "Doubles its input");
 
-      // Step 1: persist outer with no parentBlockRoot → null.
-      const outerMerkleRoot = await persistNovelGlueAtom(outerEntry, registry, {
-        parentBlockRoot: null,
-      });
-      expect(typeof outerMerkleRoot).toBe("string");
-      expect(outerMerkleRoot).toBeTruthy();
+    // Step 1: persist outer with no parentBlockRoot → null.
+    const outerMerkleRoot = await persistNovelGlueAtom(outerEntry, registry, {
+      parentBlockRoot: null,
+    });
+    expect(typeof outerMerkleRoot).toBe("string");
+    expect(outerMerkleRoot).toBeTruthy();
 
-      // The stored outer row must have parentBlockRoot=null.
-      expect(calls).toHaveLength(1);
-      expect(calls[0]!.parentBlockRoot).toBeNull();
+    // The stored outer row must have parentBlockRoot=null.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.parentBlockRoot).toBeNull();
 
-      // Entry B — inner function (nested, parent = outer's merkle root).
-      const innerSource =
-        "// SPDX-License-Identifier: MIT\nfunction inner(x: number): number { return x + 1; }";
-      const innerEntry = makeEntry(innerSource, HASH_B, "Increments its input by one");
+    // Entry B — inner function (nested, parent = outer's merkle root).
+    const innerSource =
+      "// SPDX-License-Identifier: MIT\nfunction inner(x: number): number { return x + 1; }";
+    const innerEntry = makeEntry(innerSource, HASH_B, "Increments its input by one");
 
-      // Step 2: persist inner with parentBlockRoot = outerMerkleRoot.
-      // This mirrors the shave() postorder loop: lastNovelMerkleRoot is forwarded.
-      const innerMerkleRoot = await persistNovelGlueAtom(innerEntry, registry, {
-        parentBlockRoot: outerMerkleRoot,
-      });
-      expect(typeof innerMerkleRoot).toBe("string");
-      expect(innerMerkleRoot).toBeTruthy();
+    // Step 2: persist inner with parentBlockRoot = outerMerkleRoot.
+    // This mirrors the shave() postorder loop: lastNovelMerkleRoot is forwarded.
+    const innerMerkleRoot = await persistNovelGlueAtom(innerEntry, registry, {
+      parentBlockRoot: outerMerkleRoot,
+    });
+    expect(typeof innerMerkleRoot).toBe("string");
+    expect(innerMerkleRoot).toBeTruthy();
 
-      // The stored inner row must have parentBlockRoot equal to outer's merkle root.
-      expect(calls).toHaveLength(2);
-      const innerRow = calls[1]!;
+    // The stored inner row must have parentBlockRoot equal to outer's merkle root.
+    expect(calls).toHaveLength(2);
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 2 above
+    const innerRow = calls[1]!;
 
-      // Critical assertion: inner's parentBlockRoot is the LITERAL merkle root
-      // returned by the outer persist call — byte-identical, no re-derivation.
-      expect(innerRow.parentBlockRoot).toBe(outerMerkleRoot);
+    // Critical assertion: inner's parentBlockRoot is the LITERAL merkle root
+    // returned by the outer persist call — byte-identical, no re-derivation.
+    expect(innerRow.parentBlockRoot).toBe(outerMerkleRoot);
 
-      // The two blocks have different content addresses (different source → different
-      // blockMerkleRoot). This confirms parentBlockRoot does NOT affect the
-      // content address computation (content-address purity, DEC-REGISTRY-PARENT-BLOCK-004).
-      expect(innerRow.blockMerkleRoot).not.toBe(outerMerkleRoot);
+    // The two blocks have different content addresses (different source → different
+    // blockMerkleRoot). This confirms parentBlockRoot does NOT affect the
+    // content address computation (content-address purity, DEC-REGISTRY-PARENT-BLOCK-004).
+    expect(innerRow.blockMerkleRoot).not.toBe(outerMerkleRoot);
 
-      // Sanity: inner's block merkle root was returned from the persist call.
-      expect(innerRow.blockMerkleRoot).toBe(innerMerkleRoot);
-    },
-  );
+    // Sanity: inner's block merkle root was returned from the persist call.
+    expect(innerRow.blockMerkleRoot).toBe(innerMerkleRoot);
+  });
 
   it("content-address purity: same source with different parentBlockRoot produces the same blockMerkleRoot", async () => {
     // @decision DEC-REGISTRY-PARENT-BLOCK-004: parentBlockRoot is METADATA, not
@@ -188,7 +186,7 @@ describe("lineage: production-sequence postorder chain", () => {
     expect(root1).toBe(root2);
 
     // The parentBlockRoot values in the rows differ — metadata is independent.
-    expect(c1[0]!.parentBlockRoot).toBeNull();
-    expect(c2[0]!.parentBlockRoot).toBe(fakeParent);
+    expect(c1[0]?.parentBlockRoot).toBeNull();
+    expect(c2[0]?.parentBlockRoot).toBe(fakeParent);
   });
 });

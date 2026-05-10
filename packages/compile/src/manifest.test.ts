@@ -16,11 +16,11 @@
  * Mocking is acceptable here: Registry is an external boundary to the compile package.
  */
 
-import { describe, expect, it } from "vitest";
 import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 import type { BlockTripletRow, ForeignRefRow, Provenance, Registry } from "@yakcc/registry";
-import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
+import { describe, expect, it } from "vitest";
 import { buildManifest } from "./manifest.js";
+import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -106,7 +106,7 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
         proofManifestJson: "{}",
         level: "L0",
         createdAt: 0,
-        canonicalAstHash: ("0".repeat(64)) as import("@yakcc/contracts").CanonicalAstHash,
+        canonicalAstHash: "0".repeat(64) as import("@yakcc/contracts").CanonicalAstHash,
         parentBlockRoot: rowMeta.parentBlockRoot,
         kind: rowMeta.kind ?? "local",
         foreignPkg: rowMeta.foreignPkg ?? null,
@@ -151,9 +151,7 @@ describe("buildManifest: recursionParent field", () => {
   it("sets recursionParent when the registry row has a non-null parentBlockRoot", async () => {
     const rootA = fakeRoot("a");
     const rootB = fakeRoot("b");
-    const resolution = makeResolution([
-      { root: rootA, specHash: fakeSpec("1"), subBlocks: [] },
-    ]);
+    const resolution = makeResolution([{ root: rootA, specHash: fakeSpec("1"), subBlocks: [] }]);
 
     const registryRows: Map<
       BlockMerkleRoot,
@@ -170,9 +168,7 @@ describe("buildManifest: recursionParent field", () => {
 
   it("omits recursionParent when the registry row has a null parentBlockRoot", async () => {
     const rootA = fakeRoot("a");
-    const resolution = makeResolution([
-      { root: rootA, specHash: fakeSpec("1"), subBlocks: [] },
-    ]);
+    const resolution = makeResolution([{ root: rootA, specHash: fakeSpec("1"), subBlocks: [] }]);
 
     const registryRows: Map<
       BlockMerkleRoot,
@@ -190,9 +186,7 @@ describe("buildManifest: recursionParent field", () => {
 
   it("omits recursionParent when getBlock returns null (missing row)", async () => {
     const rootA = fakeRoot("a");
-    const resolution = makeResolution([
-      { root: rootA, specHash: fakeSpec("1"), subBlocks: [] },
-    ]);
+    const resolution = makeResolution([{ root: rootA, specHash: fakeSpec("1"), subBlocks: [] }]);
 
     // Registry returns null from getBlock for this root.
     const registryRows: Map<
@@ -271,66 +265,63 @@ describe("buildManifest: verificationStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildManifest: compound shave→compile recursionParent chain", () => {
-  it(
-    "manifest recursionParent chain matches the parent_block_root chain set by shave() persistence",
-    async () => {
-      // @decision DEC-REGISTRY-PARENT-BLOCK-004
-      // This test simulates the full shave→compile lineage chain:
-      //   1. shave() persists outer atom with parentBlockRoot=null → outerRoot
-      //   2. shave() persists inner atom with parentBlockRoot=outerRoot → innerRoot
-      //   3. compile's buildManifest reads each row's parentBlockRoot via getBlock
-      //   4. The resulting manifest.entries carry recursionParent matching the chain
-      //
-      // In production, steps 1–2 are done by shave() in index.ts, and steps 3–4
-      // are done by buildManifest() in compile/manifest.ts. This test verifies
-      // the interface contract between the two packages at the registry boundary.
-      //
-      // The registry mock returns the parentBlockRoot values that shave() would have
-      // written via persistNovelGlueAtom — byte-identical BlockMerkleRoot values.
+  it("manifest recursionParent chain matches the parent_block_root chain set by shave() persistence", async () => {
+    // @decision DEC-REGISTRY-PARENT-BLOCK-004
+    // This test simulates the full shave→compile lineage chain:
+    //   1. shave() persists outer atom with parentBlockRoot=null → outerRoot
+    //   2. shave() persists inner atom with parentBlockRoot=outerRoot → innerRoot
+    //   3. compile's buildManifest reads each row's parentBlockRoot via getBlock
+    //   4. The resulting manifest.entries carry recursionParent matching the chain
+    //
+    // In production, steps 1–2 are done by shave() in index.ts, and steps 3–4
+    // are done by buildManifest() in compile/manifest.ts. This test verifies
+    // the interface contract between the two packages at the registry boundary.
+    //
+    // The registry mock returns the parentBlockRoot values that shave() would have
+    // written via persistNovelGlueAtom — byte-identical BlockMerkleRoot values.
 
-      const outerRoot = fakeRoot("A");
-      const innerRoot = fakeRoot("B");
+    const outerRoot = fakeRoot("A");
+    const innerRoot = fakeRoot("B");
 
-      // Resolution: inner block is the entry point, outer is a sub-block.
-      // (Using a simple two-block resolution — order mimics compile's topological walk.)
-      const resolution = makeResolution([
-        { root: innerRoot, specHash: fakeSpec("x"), subBlocks: [] },
-        { root: outerRoot, specHash: fakeSpec("y"), subBlocks: [innerRoot] },
-      ]);
+    // Resolution: inner block is the entry point, outer is a sub-block.
+    // (Using a simple two-block resolution — order mimics compile's topological walk.)
+    const resolution = makeResolution([
+      { root: innerRoot, specHash: fakeSpec("x"), subBlocks: [] },
+      { root: outerRoot, specHash: fakeSpec("y"), subBlocks: [innerRoot] },
+    ]);
 
-      // Registry mock reflecting what shave() would have written:
-      //   - outerRoot → parentBlockRoot=null (it was the first persist, the root atom)
-      //   - innerRoot → parentBlockRoot=outerRoot (persisted after outer, outer is its parent)
-      const registryRows: Map<
-        BlockMerkleRoot,
-        { parentBlockRoot: BlockMerkleRoot | null; hasPassing: boolean }
-      > = new Map([
-        [outerRoot, { parentBlockRoot: null, hasPassing: true }],
-        [innerRoot, { parentBlockRoot: outerRoot, hasPassing: false }],
-      ]);
+    // Registry mock reflecting what shave() would have written:
+    //   - outerRoot → parentBlockRoot=null (it was the first persist, the root atom)
+    //   - innerRoot → parentBlockRoot=outerRoot (persisted after outer, outer is its parent)
+    const registryRows: Map<
+      BlockMerkleRoot,
+      { parentBlockRoot: BlockMerkleRoot | null; hasPassing: boolean }
+    > = new Map([
+      [outerRoot, { parentBlockRoot: null, hasPassing: true }],
+      [innerRoot, { parentBlockRoot: outerRoot, hasPassing: false }],
+    ]);
 
-      const manifest = await buildManifest(resolution, makeRegistryMock(registryRows));
+    const manifest = await buildManifest(resolution, makeRegistryMock(registryRows));
 
-      // Two entries in the manifest (one per block).
-      expect(manifest.entries).toHaveLength(2);
+    // Two entries in the manifest (one per block).
+    expect(manifest.entries).toHaveLength(2);
 
-      const outerEntry = manifest.entries.find((e) => e.blockMerkleRoot === outerRoot);
-      const innerEntry = manifest.entries.find((e) => e.blockMerkleRoot === innerRoot);
+    const outerEntry = manifest.entries.find((e) => e.blockMerkleRoot === outerRoot);
+    const innerEntry = manifest.entries.find((e) => e.blockMerkleRoot === innerRoot);
 
-      expect(outerEntry).toBeDefined();
-      expect(innerEntry).toBeDefined();
+    expect(outerEntry).toBeDefined();
+    expect(innerEntry).toBeDefined();
 
-      // Outer atom: parentBlockRoot=null → recursionParent field must be absent.
-      expect(Object.prototype.hasOwnProperty.call(outerEntry, "recursionParent")).toBe(false);
-      expect(outerEntry?.verificationStatus).toBe("passing");
+    // Outer atom: parentBlockRoot=null → recursionParent field must be absent.
+    expect(Object.prototype.hasOwnProperty.call(outerEntry, "recursionParent")).toBe(false);
+    expect(outerEntry?.verificationStatus).toBe("passing");
 
-      // Inner atom: parentBlockRoot=outerRoot → recursionParent must equal outerRoot.
-      // This is the lineage chain: inner was shaved from outer, and the manifest
-      // exposes that lineage as recursionParent on the inner entry.
-      expect(innerEntry?.recursionParent).toBe(outerRoot);
-      expect(innerEntry?.verificationStatus).toBe("unverified");
-    },
-  );
+    // Inner atom: parentBlockRoot=outerRoot → recursionParent must equal outerRoot.
+    // This is the lineage chain: inner was shaved from outer, and the manifest
+    // exposes that lineage as recursionParent on the inner entry.
+    expect(innerEntry?.recursionParent).toBe(outerRoot);
+    expect(innerEntry?.verificationStatus).toBe("unverified");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -392,9 +383,7 @@ describe("buildManifest: referencedForeign field", () => {
   it("emits referencedForeign:[] for a non-foreign block with no foreign deps", async () => {
     // A plain local block with no entries in block_foreign_refs.
     const rootA = fakeRoot("a");
-    const resolution = makeResolution([
-      { root: rootA, specHash: fakeSpec("1"), subBlocks: [] },
-    ]);
+    const resolution = makeResolution([{ root: rootA, specHash: fakeSpec("1"), subBlocks: [] }]);
 
     // No foreignRefs for rootA → getForeignRefs returns [].
     const rows: Map<BlockMerkleRoot, MockRowMeta> = new Map([

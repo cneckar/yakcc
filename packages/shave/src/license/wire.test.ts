@@ -35,7 +35,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeIntent } from "../cache/file-cache.js";
 import { keyFromIntentInputs, sourceHash } from "../cache/key.js";
 import { LicenseRefusedError, universalize } from "../index.js";
-import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, INTENT_SCHEMA_VERSION } from "../intent/constants.js";
+import {
+  DEFAULT_MODEL,
+  INTENT_PROMPT_VERSION,
+  INTENT_SCHEMA_VERSION,
+} from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import type { ShaveRegistryView } from "../types.js";
 
@@ -112,30 +116,23 @@ async function seedCache(source: string): Promise<IntentCard> {
 // ---------------------------------------------------------------------------
 
 describe("universalize() license wiring — MIT-licensed source", () => {
-  it(
-    "accepts MIT source, returns licenseDetection.identifier === 'MIT', no license-gate in stubbed",
-    async () => {
-      const source = `// SPDX-License-Identifier: MIT\n${ATOM_BODY}`;
-      await seedCache(source);
+  it("accepts MIT source, returns licenseDetection.identifier === 'MIT', no license-gate in stubbed", async () => {
+    const source = `// SPDX-License-Identifier: MIT\n${ATOM_BODY}`;
+    await seedCache(source);
 
-      const result = await universalize(
-        { source },
-        emptyRegistry,
-        { cacheDir, offline: true },
-      );
+    const result = await universalize({ source }, emptyRegistry, { cacheDir, offline: true });
 
-      // License was accepted — result carries the detection.
-      expect(result.licenseDetection.identifier).toBe("MIT");
-      expect(result.licenseDetection.source).toBe("spdx-comment");
+    // License was accepted — result carries the detection.
+    expect(result.licenseDetection.identifier).toBe("MIT");
+    expect(result.licenseDetection.source).toBe("spdx-comment");
 
-      // "license-gate" is no longer in stubbed — it is live.
-      expect(result.diagnostics.stubbed).not.toContain("license-gate");
+    // "license-gate" is no longer in stubbed — it is live.
+    expect(result.diagnostics.stubbed).not.toContain("license-gate");
 
-      // Pipeline completed normally.
-      expect(result.intentCard.behavior).toBeTruthy();
-      expect(result.slicePlan.length).toBeGreaterThan(0);
-    },
-  );
+    // Pipeline completed normally.
+    expect(result.intentCard.behavior).toBeTruthy();
+    expect(result.slicePlan.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -143,35 +140,24 @@ describe("universalize() license wiring — MIT-licensed source", () => {
 // ---------------------------------------------------------------------------
 
 describe("universalize() license wiring — GPL-licensed source", () => {
-  it(
-    "throws LicenseRefusedError with copyleft reason for GPL-3.0-or-later source",
-    async () => {
-      const source = `// SPDX-License-Identifier: GPL-3.0-or-later\n${ATOM_BODY}`;
+  it("throws LicenseRefusedError with copyleft reason for GPL-3.0-or-later source", async () => {
+    const source = `// SPDX-License-Identifier: GPL-3.0-or-later\n${ATOM_BODY}`;
 
-      await expect(
-        universalize(
-          { source },
-          emptyRegistry,
-          { cacheDir, offline: true },
-        ),
-      ).rejects.toThrow(LicenseRefusedError);
+    await expect(
+      universalize({ source }, emptyRegistry, { cacheDir, offline: true }),
+    ).rejects.toThrow(LicenseRefusedError);
 
-      // Also verify the error message mentions "copyleft" and the detection
-      // carries the correct identifier.
-      try {
-        await universalize(
-          { source },
-          emptyRegistry,
-          { cacheDir, offline: true },
-        );
-      } catch (err) {
-        expect(err).toBeInstanceOf(LicenseRefusedError);
-        const lre = err as LicenseRefusedError;
-        expect(lre.detection.identifier).toBe("GPL-3.0-or-later");
-        expect(lre.message.toLowerCase()).toContain("copyleft");
-      }
-    },
-  );
+    // Also verify the error message mentions "copyleft" and the detection
+    // carries the correct identifier.
+    try {
+      await universalize({ source }, emptyRegistry, { cacheDir, offline: true });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LicenseRefusedError);
+      const lre = err as LicenseRefusedError;
+      expect(lre.detection.identifier).toBe("GPL-3.0-or-later");
+      expect(lre.message.toLowerCase()).toContain("copyleft");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -179,27 +165,20 @@ describe("universalize() license wiring — GPL-licensed source", () => {
 // ---------------------------------------------------------------------------
 
 describe("universalize() license wiring — Unlicense preamble", () => {
-  it(
-    "accepts Unlicense preamble, returns licenseDetection.identifier === 'Unlicense'",
-    async () => {
-      // Full Unlicense opening sentence triggers the 'dedication' signal path.
-      const unlicensePreamble =
-        "// This is free and unencumbered software released into the public domain.\n";
-      const source = `${unlicensePreamble}${ATOM_BODY}`;
-      await seedCache(source);
+  it("accepts Unlicense preamble, returns licenseDetection.identifier === 'Unlicense'", async () => {
+    // Full Unlicense opening sentence triggers the 'dedication' signal path.
+    const unlicensePreamble =
+      "// This is free and unencumbered software released into the public domain.\n";
+    const source = `${unlicensePreamble}${ATOM_BODY}`;
+    await seedCache(source);
 
-      const result = await universalize(
-        { source },
-        emptyRegistry,
-        { cacheDir, offline: true },
-      );
+    const result = await universalize({ source }, emptyRegistry, { cacheDir, offline: true });
 
-      expect(result.licenseDetection.identifier).toBe("Unlicense");
-      expect(result.licenseDetection.source).toBe("dedication");
-      expect(result.diagnostics.stubbed).not.toContain("license-gate");
-      expect(result.slicePlan.length).toBeGreaterThan(0);
-    },
-  );
+    expect(result.licenseDetection.identifier).toBe("Unlicense");
+    expect(result.licenseDetection.source).toBe("dedication");
+    expect(result.diagnostics.stubbed).not.toContain("license-gate");
+    expect(result.slicePlan.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -207,33 +186,22 @@ describe("universalize() license wiring — Unlicense preamble", () => {
 // ---------------------------------------------------------------------------
 
 describe("universalize() license wiring — no license signal", () => {
-  it(
-    "throws LicenseRefusedError with 'no recognizable' reason when source has no license comment",
-    async () => {
-      // Bare source: no SPDX comment, no Unlicense phrase, no header pattern.
-      const source = ATOM_BODY;
+  it("throws LicenseRefusedError with 'no recognizable' reason when source has no license comment", async () => {
+    // Bare source: no SPDX comment, no Unlicense phrase, no header pattern.
+    const source = ATOM_BODY;
 
-      await expect(
-        universalize(
-          { source },
-          emptyRegistry,
-          { cacheDir, offline: true },
-        ),
-      ).rejects.toThrow(LicenseRefusedError);
+    await expect(
+      universalize({ source }, emptyRegistry, { cacheDir, offline: true }),
+    ).rejects.toThrow(LicenseRefusedError);
 
-      try {
-        await universalize(
-          { source },
-          emptyRegistry,
-          { cacheDir, offline: true },
-        );
-      } catch (err) {
-        expect(err).toBeInstanceOf(LicenseRefusedError);
-        const lre = err as LicenseRefusedError;
-        expect(lre.message.toLowerCase()).toContain("no recognizable");
-      }
-    },
-  );
+    try {
+      await universalize({ source }, emptyRegistry, { cacheDir, offline: true });
+    } catch (err) {
+      expect(err).toBeInstanceOf(LicenseRefusedError);
+      const lre = err as LicenseRefusedError;
+      expect(lre.message.toLowerCase()).toContain("no recognizable");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -243,7 +211,10 @@ describe("universalize() license wiring — no license signal", () => {
 describe("LicenseRefusedError class", () => {
   it("is instanceof Error and carries detection", () => {
     const detection = { identifier: "GPL-2.0", source: "spdx-comment" as const };
-    const err = new LicenseRefusedError("copyleft/proprietary license detected: GPL-2.0", detection);
+    const err = new LicenseRefusedError(
+      "copyleft/proprietary license detected: GPL-2.0",
+      detection,
+    );
 
     expect(err).toBeInstanceOf(Error);
     expect(err).toBeInstanceOf(LicenseRefusedError);

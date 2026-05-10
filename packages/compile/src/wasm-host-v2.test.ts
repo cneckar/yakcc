@@ -731,6 +731,7 @@ describe("Integration — hand-rolled WASM module with host_fs_write + host_fs_r
       const out: number[] = [];
       do {
         let byte = n & 0x7f;
+        // biome-ignore lint/style/noParameterAssign: LEB128 encoding algorithm requires in-place shift of n
         n >>>= 7;
         if (n !== 0) byte |= 0x80;
         out.push(byte);

@@ -54,7 +54,11 @@ function truncate(s: string, max: number): string {
  * @param logger - Output sink; defaults to console via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function search(argv: readonly string[], logger: Logger, opts?: SearchOptions): Promise<number> {
+export async function search(
+  argv: readonly string[],
+  logger: Logger,
+  opts?: SearchOptions,
+): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {
@@ -110,10 +114,12 @@ export async function search(argv: readonly string[], logger: Logger, opts?: Sea
   }
 
   // Open the registry, seed it, then scan all corpus blocks for structural matches.
-  const registry = await openRegistry(registryPath, { embeddings: opts?.embeddings }).catch((err: unknown) => {
-    logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
-    return null;
-  });
+  const registry = await openRegistry(registryPath, { embeddings: opts?.embeddings }).catch(
+    (err: unknown) => {
+      logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
+      return null;
+    },
+  );
   if (registry === null) return 1;
 
   try {

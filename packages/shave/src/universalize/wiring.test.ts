@@ -325,7 +325,7 @@ function mockEmbeddingProvider(): EmbeddingProvider {
     async embed(text: string): Promise<Float32Array> {
       const vec = new Float32Array(384);
       for (let i = 0; i < 384; i++) {
-        vec[i] = (text.charCodeAt(i % text.length) / 128) + i * 0.001;
+        vec[i] = text.charCodeAt(i % text.length) / 128 + i * 0.001;
       }
       let norm = 0;
       for (const v of vec) norm += v * v;
@@ -353,12 +353,13 @@ describe("universalize() + maybePersistNovelGlueAtom() — single-leaf persist r
 
     // Guard: we need exactly one novel-glue entry with an intentCard before persisting.
     expect(result.slicePlan.length).toBe(1);
+    // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const entry = result.slicePlan[0]!;
     expect(entry.kind).toBe("novel-glue");
     if (entry.kind !== "novel-glue") return; // narrow for TypeScript
 
     expect(entry.intentCard).toBeDefined();
-    expect(entry.intentCard!.behavior).toBe(seeded.behavior);
+    expect(entry.intentCard?.behavior).toBe(seeded.behavior);
 
     // Persist through a real in-memory registry so parentBlockRoot hits SQLite.
     const registry = await openRegistry(":memory:", {
@@ -374,9 +375,10 @@ describe("universalize() + maybePersistNovelGlueAtom() — single-leaf persist r
       expect(merkleRoot).toBeDefined();
 
       // Read back and verify parentBlockRoot is null (root of its recursion tree).
+      // biome-ignore lint/style/noNonNullAssertion: merkleRoot asserted defined above
       const row = await registry.getBlock(merkleRoot!);
       expect(row).not.toBeNull();
-      expect(row!.parentBlockRoot).toBeNull();
+      expect(row?.parentBlockRoot).toBeNull();
     } finally {
       await registry.close();
     }

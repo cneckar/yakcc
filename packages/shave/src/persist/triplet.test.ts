@@ -4,11 +4,11 @@
 //   - Test 3: with-corpus-result manifest emits non-placeholder artifact.
 //   - Test 4: bootstrap-only path requires explicit flag.
 
-import { describe, expect, it } from "vitest";
 import type { CanonicalAstHash } from "@yakcc/contracts";
+import { describe, expect, it } from "vitest";
+import type { CorpusResult } from "../corpus/types.js";
 import type { IntentCard } from "../intent/types.js";
 import { buildTriplet, makeBootstrapArtifacts } from "./triplet.js";
-import type { CorpusResult } from "../corpus/types.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -103,8 +103,8 @@ describe("buildTriplet()", () => {
 
     expect(Array.isArray(manifest.artifacts)).toBe(true);
     expect(manifest.artifacts).toHaveLength(1);
-    expect(manifest.artifacts[0]!.kind).toBe("property_tests");
-    expect(manifest.artifacts[0]!.path).toBe("my-corpus.fast-check.ts");
+    expect(manifest.artifacts[0]?.kind).toBe("property_tests");
+    expect(manifest.artifacts[0]?.path).toBe("my-corpus.fast-check.ts");
   });
 
   it("merkleRoot is a non-empty string", () => {
@@ -173,9 +173,9 @@ describe("buildTriplet() — WI-016 Test 3: corpus-result manifest", () => {
 
     const triplet = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus);
 
-    expect(triplet.manifest.artifacts[0]!.path).toBe(corpusPath);
+    expect(triplet.manifest.artifacts[0]?.path).toBe(corpusPath);
     // The placeholder path "property-tests.ts" must NOT appear
-    expect(triplet.manifest.artifacts[0]!.path).not.toBe("property-tests.ts");
+    expect(triplet.manifest.artifacts[0]?.path).not.toBe("property-tests.ts");
   });
 
   it("corpus bytes affect the merkleRoot (content-dependent identity)", () => {
@@ -200,9 +200,7 @@ describe("buildTriplet() — WI-016 Test 3: corpus-result manifest", () => {
 describe("buildTriplet() — WI-016 Test 4: bootstrap explicit flag", () => {
   it("throws when corpusResult is undefined and bootstrap flag is absent", () => {
     const card = makeIntentCard();
-    expect(() => buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined)).toThrow(
-      /bootstrap/,
-    );
+    expect(() => buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, undefined)).toThrow(/bootstrap/);
   });
 
   it("throws when corpusResult is undefined and bootstrap is false", () => {
@@ -218,9 +216,9 @@ describe("buildTriplet() — WI-016 Test 4: bootstrap explicit flag", () => {
 
     // Bootstrap manifest has one property_tests artifact
     expect(triplet.manifest.artifacts).toHaveLength(1);
-    expect(triplet.manifest.artifacts[0]!.kind).toBe("property_tests");
+    expect(triplet.manifest.artifacts[0]?.kind).toBe("property_tests");
     // The bootstrap path is the well-known placeholder
-    expect(triplet.manifest.artifacts[0]!.path).toBe("property-tests.ts");
+    expect(triplet.manifest.artifacts[0]?.path).toBe("property-tests.ts");
     // merkleRoot is computable even with empty bytes
     expect(typeof triplet.merkleRoot).toBe("string");
     expect(triplet.merkleRoot.length).toBeGreaterThan(0);
@@ -267,6 +265,7 @@ describe("buildTriplet() — WI-022: artifacts Map threading", () => {
     expect(triplet.artifacts.has(corpus.path)).toBe(true);
 
     // The bytes stored under the corpus path must be byte-identical to corpusBytes.
+    // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
     const storedBytes = triplet.artifacts.get(corpus.path)!;
     expect(storedBytes).toBeInstanceOf(Uint8Array);
     expect(storedBytes.length).toBe(corpusBytes.length);
@@ -283,7 +282,7 @@ describe("buildTriplet() — WI-022: artifacts Map threading", () => {
     expect(triplet.artifacts.size).toBe(1);
     expect(triplet.artifacts.has("my-tests.ts")).toBe(true);
     // The manifest artifact path and the artifacts Map key must agree.
-    expect(triplet.manifest.artifacts[0]!.path).toBe("my-tests.ts");
+    expect(triplet.manifest.artifacts[0]?.path).toBe("my-tests.ts");
   });
 
   it("bootstrap path: returned triplet.artifacts is deep-equal to makeBootstrapArtifacts()", () => {
@@ -298,6 +297,7 @@ describe("buildTriplet() — WI-022: artifacts Map threading", () => {
     // Each key-value pair matches byte-for-byte.
     for (const [path, expectedBytes] of expected) {
       expect(triplet.artifacts.has(path)).toBe(true);
+      // biome-ignore lint/style/noNonNullAssertion: Map.get guarded by has() assertion above
       const actualBytes = triplet.artifacts.get(path)!;
       expect(Array.from(actualBytes)).toEqual(Array.from(expectedBytes));
     }
@@ -313,7 +313,9 @@ describe("buildTriplet() — WI-022: artifacts Map threading", () => {
     const triplet2 = buildTriplet(card, SAMPLE_SOURCE, FAKE_HASH, corpus2);
 
     // Different bytes in → different bytes out (no cross-call aliasing).
+    // biome-ignore lint/style/noNonNullAssertion: key "tests.ts" known present (added via corpus1/corpus2)
     const bytes1 = Array.from(triplet1.artifacts.get("tests.ts")!);
+    // biome-ignore lint/style/noNonNullAssertion: key "tests.ts" known present (added via corpus1/corpus2)
     const bytes2 = Array.from(triplet2.artifacts.get("tests.ts")!);
     expect(bytes1).not.toEqual(bytes2);
   });

@@ -12,9 +12,9 @@
  * vec0 candidate, then discards candidates where matches === false.
  */
 
-import { describe, it, expect } from "vitest";
-import * as fc from "fast-check";
 import type { SpecYak } from "@yakcc/contracts";
+import * as fc from "fast-check";
+import { describe, expect, it } from "vitest";
 import { structuralMatch } from "./search.js";
 
 // ---------------------------------------------------------------------------
@@ -173,18 +173,14 @@ describe("structuralMatch — errorConditions subset", () => {
       ],
     });
     const candidate = makeSpec({
-      errorConditions: [
-        { description: "Throws SyntaxError", errorType: "SyntaxError" },
-      ],
+      errorConditions: [{ description: "Throws SyntaxError", errorType: "SyntaxError" }],
     });
     expect(structuralMatch(caller, candidate).matches).toBe(true);
   });
 
   it("returns false when candidate declares an error the caller doesn't tolerate", () => {
     const caller = makeSpec({
-      errorConditions: [
-        { description: "Throws SyntaxError", errorType: "SyntaxError" },
-      ],
+      errorConditions: [{ description: "Throws SyntaxError", errorType: "SyntaxError" }],
     });
     const candidate = makeSpec({
       errorConditions: [
@@ -195,9 +191,7 @@ describe("structuralMatch — errorConditions subset", () => {
     const result = structuralMatch(caller, candidate);
     expect(result.matches).toBe(false);
     if (!result.matches) {
-      expect(
-        result.reasons.some((r) => r.includes("RangeError")),
-      ).toBe(true);
+      expect(result.reasons.some((r) => r.includes("RangeError"))).toBe(true);
     }
   });
 
@@ -208,9 +202,7 @@ describe("structuralMatch — errorConditions subset", () => {
 
   it("matches when candidate has no error conditions and caller tolerates some", () => {
     const caller = makeSpec({
-      errorConditions: [
-        { description: "Throws SyntaxError", errorType: "SyntaxError" },
-      ],
+      errorConditions: [{ description: "Throws SyntaxError", errorType: "SyntaxError" }],
     });
     const candidate = makeSpec({ errorConditions: [] });
     expect(structuralMatch(caller, candidate).matches).toBe(true);
@@ -219,9 +211,7 @@ describe("structuralMatch — errorConditions subset", () => {
   it("returns false when caller tolerates no errors but candidate declares one", () => {
     const caller = makeSpec({ errorConditions: [] });
     const candidate = makeSpec({
-      errorConditions: [
-        { description: "Throws SyntaxError", errorType: "SyntaxError" },
-      ],
+      errorConditions: [{ description: "Throws SyntaxError", errorType: "SyntaxError" }],
     });
     const result = structuralMatch(caller, candidate);
     expect(result.matches).toBe(false);
@@ -289,131 +279,123 @@ describe("structuralMatch — non-functional properties", () => {
 // still matches.
 
 describe("structuralMatch — monotonicity invariant", () => {
-  it(
-    "relaxing caller error-condition requirements never turns true → false",
-    () => {
-      fc.assert(
-        fc.property(
-          // Generate a SpecYak where caller and candidate share inputs/outputs
-          // and have a common set of error conditions.
-          fc.record({
-            behaviorCaller: fc.string({ minLength: 1, maxLength: 30 }),
-            behaviorCandidate: fc.string({ minLength: 1, maxLength: 30 }),
-            // Generate between 0 and 3 error condition errorTypes
-            candidateErrors: fc.array(
-              fc.string({ minLength: 1, maxLength: 10 }),
-              { minLength: 0, maxLength: 3 },
-            ),
-            // Caller tolerates extra errors beyond what candidate declares
-            extraCallerErrors: fc.array(
-              fc.string({ minLength: 1, maxLength: 10 }),
-              { minLength: 0, maxLength: 3 },
-            ),
+  it("relaxing caller error-condition requirements never turns true → false", () => {
+    fc.assert(
+      fc.property(
+        // Generate a SpecYak where caller and candidate share inputs/outputs
+        // and have a common set of error conditions.
+        fc.record({
+          behaviorCaller: fc.string({ minLength: 1, maxLength: 30 }),
+          behaviorCandidate: fc.string({ minLength: 1, maxLength: 30 }),
+          // Generate between 0 and 3 error condition errorTypes
+          candidateErrors: fc.array(fc.string({ minLength: 1, maxLength: 10 }), {
+            minLength: 0,
+            maxLength: 3,
           }),
-          ({ behaviorCaller, behaviorCandidate, candidateErrors, extraCallerErrors }) => {
-            // Deduplicate to avoid test noise from collision
-            const uniqueCandidateErrors = [...new Set(candidateErrors)];
-            const allCallerErrors = [
-              ...new Set([...uniqueCandidateErrors, ...extraCallerErrors]),
-            ];
+          // Caller tolerates extra errors beyond what candidate declares
+          extraCallerErrors: fc.array(fc.string({ minLength: 1, maxLength: 10 }), {
+            minLength: 0,
+            maxLength: 3,
+          }),
+        }),
+        ({ behaviorCaller, behaviorCandidate, candidateErrors, extraCallerErrors }) => {
+          // Deduplicate to avoid test noise from collision
+          const uniqueCandidateErrors = [...new Set(candidateErrors)];
+          const allCallerErrors = [...new Set([...uniqueCandidateErrors, ...extraCallerErrors])];
 
-            const candidateSpec = makeSpec({
-              behavior: behaviorCandidate,
-              errorConditions: uniqueCandidateErrors.map((e) => ({
+          const candidateSpec = makeSpec({
+            behavior: behaviorCandidate,
+            errorConditions: uniqueCandidateErrors.map((e) => ({
+              description: `Error ${e}`,
+              errorType: e,
+            })),
+          });
+
+          // Caller with ALL errors (superset of candidate) — must match.
+          const callerWithAll = makeSpec({
+            behavior: behaviorCaller,
+            errorConditions: allCallerErrors.map((e) => ({
+              description: `Error ${e}`,
+              errorType: e,
+            })),
+          });
+
+          const initialResult = structuralMatch(callerWithAll, candidateSpec);
+          // By construction (callerWithAll tolerates everything candidate declares)
+          // the error-condition check should never produce a failure here.
+          // Other checks (types) are identical since we use the same base spec.
+          expect(initialResult.matches).toBe(true);
+
+          // Now relax further: add one more tolerated error to the caller.
+          const callerRelaxed = makeSpec({
+            behavior: behaviorCaller,
+            errorConditions: [
+              ...allCallerErrors.map((e) => ({
                 description: `Error ${e}`,
                 errorType: e,
               })),
-            });
+              { description: "Extra tolerated error", errorType: "ExtraError" },
+            ],
+          });
 
-            // Caller with ALL errors (superset of candidate) — must match.
-            const callerWithAll = makeSpec({
-              behavior: behaviorCaller,
-              errorConditions: allCallerErrors.map((e) => ({
-                description: `Error ${e}`,
-                errorType: e,
-              })),
-            });
+          const relaxedResult = structuralMatch(callerRelaxed, candidateSpec);
+          // Relaxing must not turn true → false.
+          expect(relaxedResult.matches).toBe(true);
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
 
-            const initialResult = structuralMatch(callerWithAll, candidateSpec);
-            // By construction (callerWithAll tolerates everything candidate declares)
-            // the error-condition check should never produce a failure here.
-            // Other checks (types) are identical since we use the same base spec.
-            expect(initialResult.matches).toBe(true);
+  it("removing a constraint from caller nonFunctional never turns true → false", () => {
+    fc.assert(
+      fc.property(
+        fc.record({
+          // Generate candidate purity and thread-safety levels
+          candidatePurity: fc.constantFrom(
+            "pure" as const,
+            "io" as const,
+            "stateful" as const,
+            "nondeterministic" as const,
+          ),
+          candidateThread: fc.constantFrom(
+            "safe" as const,
+            "sequential" as const,
+            "unsafe" as const,
+          ),
+        }),
+        ({ candidatePurity, candidateThread }) => {
+          const candidate = makeSpec({
+            nonFunctional: {
+              purity: candidatePurity,
+              threadSafety: candidateThread,
+            },
+          });
 
-            // Now relax further: add one more tolerated error to the caller.
-            const callerRelaxed = makeSpec({
-              behavior: behaviorCaller,
-              errorConditions: [
-                ...allCallerErrors.map((e) => ({
-                  description: `Error ${e}`,
-                  errorType: e,
-                })),
-                { description: "Extra tolerated error", errorType: "ExtraError" },
-              ],
-            });
+          // Caller that matches candidate's exact purity/thread (same values).
+          const callerExact = makeSpec({
+            nonFunctional: {
+              purity: candidatePurity,
+              threadSafety: candidateThread,
+            },
+          });
+          const exactResult = structuralMatch(callerExact, candidate);
+          // Same nonFunctional: must match.
+          expect(exactResult.matches).toBe(true);
 
-            const relaxedResult = structuralMatch(callerRelaxed, candidateSpec);
-            // Relaxing must not turn true → false.
-            expect(relaxedResult.matches).toBe(true);
-          },
-        ),
-        { numRuns: 200 },
-      );
-    },
-  );
-
-  it(
-    "removing a constraint from caller nonFunctional never turns true → false",
-    () => {
-      fc.assert(
-        fc.property(
-          fc.record({
-            // Generate candidate purity and thread-safety levels
-            candidatePurity: fc.constantFrom(
-              "pure" as const,
-              "io" as const,
-              "stateful" as const,
-              "nondeterministic" as const,
-            ),
-            candidateThread: fc.constantFrom(
-              "safe" as const,
-              "sequential" as const,
-              "unsafe" as const,
-            ),
-          }),
-          ({ candidatePurity, candidateThread }) => {
-            const candidate = makeSpec({
-              nonFunctional: {
-                purity: candidatePurity,
-                threadSafety: candidateThread,
-              },
-            });
-
-            // Caller that matches candidate's exact purity/thread (same values).
-            const callerExact = makeSpec({
-              nonFunctional: {
-                purity: candidatePurity,
-                threadSafety: candidateThread,
-              },
-            });
-            const exactResult = structuralMatch(callerExact, candidate);
-            // Same nonFunctional: must match.
-            expect(exactResult.matches).toBe(true);
-
-            // Relax caller to nondeterministic + unsafe (weakest requirements).
-            const callerRelaxed = makeSpec({
-              nonFunctional: {
-                purity: "nondeterministic",
-                threadSafety: "unsafe",
-              },
-            });
-            const relaxedResult = structuralMatch(callerRelaxed, candidate);
-            // Weakening requirements cannot flip a passing match to failing.
-            expect(relaxedResult.matches).toBe(true);
-          },
-        ),
-        { numRuns: 200 },
-      );
-    },
-  );
+          // Relax caller to nondeterministic + unsafe (weakest requirements).
+          const callerRelaxed = makeSpec({
+            nonFunctional: {
+              purity: "nondeterministic",
+              threadSafety: "unsafe",
+            },
+          });
+          const relaxedResult = structuralMatch(callerRelaxed, candidate);
+          // Weakening requirements cannot flip a passing match to failing.
+          expect(relaxedResult.matches).toBe(true);
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
 });

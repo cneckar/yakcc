@@ -108,11 +108,7 @@ function emitEntry(entry: SlicePlanEntry): string | null {
 
     case "glue": {
       const shortHash = entry.canonicalAstHash.slice(0, 8);
-      return (
-        `\n// --- glue: ${shortHash} (not in registry) ---\n` +
-        entry.source +
-        `\n// --- end glue ---`
-      );
+      return `\n// --- glue: ${shortHash} (not in registry) ---\n${entry.source}\n// --- end glue ---`;
     }
 
     case "foreign-leaf":

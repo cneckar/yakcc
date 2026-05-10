@@ -3,15 +3,15 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling canonicalize.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
+  prop_canonicalizeText_deterministic,
+  prop_canonicalizeText_matches_canonicalize,
+  prop_canonicalize_array_order_sensitive,
   prop_canonicalize_deterministic,
   prop_canonicalize_field_order_invariant,
-  prop_canonicalize_array_order_sensitive,
   prop_canonicalize_utf8_decodable,
-  prop_canonicalizeText_matches_canonicalize,
-  prop_canonicalizeText_deterministic,
 } from "./canonicalize.props.js";
 
 // numRuns: 100 (fast-check default, explicitly documented per eval contract).

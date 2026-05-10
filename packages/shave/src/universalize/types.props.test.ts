@@ -9,9 +9,7 @@ import * as Props from "./types.props.js";
 describe("universalize/types.ts — Path A property corpus", () => {
   // AtomTestOptions (ATO1.1)
   it("property: AtomTestOptions — maxControlFlowBoundaries is non-negative or undefined", () => {
-    fc.assert(
-      Props.prop_AtomTestOptions_maxControlFlowBoundaries_is_non_negative_or_undefined,
-    );
+    fc.assert(Props.prop_AtomTestOptions_maxControlFlowBoundaries_is_non_negative_or_undefined);
   });
 
   // AtomTestReason (ATR1.1)
@@ -133,8 +131,6 @@ describe("universalize/types.ts — Path A property corpus", () => {
 
   // Compound interaction (AL1.1 + RT1.1)
   it("property: compound — AtomLeaf as root produces leafCount=1 and maxDepth=0", () => {
-    fc.assert(
-      Props.prop_compound_AtomLeaf_as_root_produces_leafCount_1_and_maxDepth_0,
-    );
+    fc.assert(Props.prop_compound_AtomLeaf_as_root_produces_leafCount_1_and_maxDepth_0);
   });
 });

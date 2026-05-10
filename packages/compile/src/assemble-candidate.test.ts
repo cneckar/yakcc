@@ -63,18 +63,22 @@ import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
 import {
   type IntentCard,
-  type SeedIntentSpec,
   LicenseRefusedError,
+  type SeedIntentSpec,
   seedIntentCache,
 } from "@yakcc/shave";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assembleCandidate, CandidateNotResolvableError } from "./assemble-candidate.js";
+import { CandidateNotResolvableError, assembleCandidate } from "./assemble-candidate.js";
 
 // WI-024: DEFAULT_MODEL, INTENT_PROMPT_VERSION, and sourceHash are now public
 // exports on @yakcc/shave (DEC-PUBLIC-CACHE-CONSTS-001). Import through the
 // workspace alias to avoid cross-package relative imports that cause tsc to
 // emit stray artifacts into packages/shave/src/ (TS6059/TS6307).
-import { DEFAULT_MODEL, INTENT_PROMPT_VERSION, sourceHash as computeSourceHash } from "@yakcc/shave";
+import {
+  DEFAULT_MODEL,
+  INTENT_PROMPT_VERSION,
+  sourceHash as computeSourceHash,
+} from "@yakcc/shave";
 
 // ---------------------------------------------------------------------------
 // Per-test isolation: cacheDir, registry, API key
@@ -213,21 +217,18 @@ function makeIntentCard(source: string, behavior: string): IntentCard {
 // ---------------------------------------------------------------------------
 
 describe("assembleCandidate — license-refused candidate", () => {
-  it(
-    "throws LicenseRefusedError for a GPL-licensed source before intent extraction",
-    async () => {
-      // The license gate in universalize() runs before extractIntent (cheap, fail-fast).
-      // No cache seed is needed — the gate fires before any API or cache access.
-      const gplSource = `// SPDX-License-Identifier: GPL-3.0-or-later
+  it("throws LicenseRefusedError for a GPL-licensed source before intent extraction", async () => {
+    // The license gate in universalize() runs before extractIntent (cheap, fail-fast).
+    // No cache seed is needed — the gate fires before any API or cache access.
+    const gplSource = `// SPDX-License-Identifier: GPL-3.0-or-later
 export function foo(x: number): number { return x + 1; }`;
 
-      await expect(
-        assembleCandidate(gplSource, registry, undefined, {
-          shaveOptions: { cacheDir, offline: true },
-        }),
-      ).rejects.toBeInstanceOf(LicenseRefusedError);
-    },
-  );
+    await expect(
+      assembleCandidate(gplSource, registry, undefined, {
+        shaveOptions: { cacheDir, offline: true },
+      }),
+    ).rejects.toBeInstanceOf(LicenseRefusedError);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -247,50 +248,47 @@ export function foo(x: number): number { return x + 1; }`;
 // ---------------------------------------------------------------------------
 
 describe("assembleCandidate — PointerEntry → assemble end-to-end (compound)", () => {
-  it(
-    "resolves PointerEntry to an Artifact via the full pipeline without API key",
-    async () => {
-      // Expression-body arrow function (no block body): VariableStatement has no
-      // decomposable children, avoiding the childMatchesRegistry bug described in
-      // DEC-COMPILE-AC-TEST-001. MIT license passes the license gate.
-      const source =
-        "// SPDX-License-Identifier: MIT\nexport const pointerTest = (n: number): number => n + 1;";
+  it("resolves PointerEntry to an Artifact via the full pipeline without API key", async () => {
+    // Expression-body arrow function (no block body): VariableStatement has no
+    // decomposable children, avoiding the childMatchesRegistry bug described in
+    // DEC-COMPILE-AC-TEST-001. MIT license passes the license gate.
+    const source =
+      "// SPDX-License-Identifier: MIT\nexport const pointerTest = (n: number): number => n + 1;";
 
-      // Store the block in the registry. implSource = source (with SPDX).
-      // canonicalAstHash(source) is used as the row's canonicalAstHash.
-      // Since ts-morph strips the SPDX comment as trivia when canonicalizing,
-      // canonicalAstHash(source) ≈ canonicalAstHash(source_without_comment).
-      // The slicer computes nodeHash = canonicalAstHash(nodeSource) for the atom.
-      // For the single-VariableStatement SourceFile, nodeSource = source → same hash.
-      const { merkleRoot } = await storeBlock(
-        registry,
-        "pointer-test",
-        "Increments an integer by 1",
-        source,
-      );
+    // Store the block in the registry. implSource = source (with SPDX).
+    // canonicalAstHash(source) is used as the row's canonicalAstHash.
+    // Since ts-morph strips the SPDX comment as trivia when canonicalizing,
+    // canonicalAstHash(source) ≈ canonicalAstHash(source_without_comment).
+    // The slicer computes nodeHash = canonicalAstHash(nodeSource) for the atom.
+    // For the single-VariableStatement SourceFile, nodeSource = source → same hash.
+    const { merkleRoot } = await storeBlock(
+      registry,
+      "pointer-test",
+      "Increments an integer by 1",
+      source,
+    );
 
-      // Seed intent cache via public API. seedIntentCache(spec, card) writes an
-      // IntentCard under the BLAKE3(source) → keyFromIntentInputs(...) cache key,
-      // which is the same key that extractIntent() will look up for the same source.
-      const card = makeIntentCard(source, "Increments an integer by 1");
-      const spec: SeedIntentSpec = { source, cacheDir };
-      await seedIntentCache(spec, card);
+    // Seed intent cache via public API. seedIntentCache(spec, card) writes an
+    // IntentCard under the BLAKE3(source) → keyFromIntentInputs(...) cache key,
+    // which is the same key that extractIntent() will look up for the same source.
+    const card = makeIntentCard(source, "Increments an integer by 1");
+    const spec: SeedIntentSpec = { source, cacheDir };
+    await seedIntentCache(spec, card);
 
-      // Full production pipeline — no API key, cache hit guaranteed.
-      const artifact = await assembleCandidate(source, registry, undefined, {
-        shaveOptions: { cacheDir, offline: true },
-      });
+    // Full production pipeline — no API key, cache hit guaranteed.
+    const artifact = await assembleCandidate(source, registry, undefined, {
+      shaveOptions: { cacheDir, offline: true },
+    });
 
-      // The artifact is produced by assemble() with the PointerEntry's merkleRoot.
-      expect(typeof artifact.source).toBe("string");
-      expect(artifact.source.length).toBeGreaterThan(0);
-      // The assembled source must contain the function name from implSource.
-      expect(artifact.source).toContain("pointerTest");
-      // Manifest must reference the stored block.
-      expect(artifact.manifest.entries.length).toBeGreaterThan(0);
-      expect(artifact.manifest.entries.some((e) => e.blockMerkleRoot === merkleRoot)).toBe(true);
-    },
-  );
+    // The artifact is produced by assemble() with the PointerEntry's merkleRoot.
+    expect(typeof artifact.source).toBe("string");
+    expect(artifact.source.length).toBeGreaterThan(0);
+    // The assembled source must contain the function name from implSource.
+    expect(artifact.source).toContain("pointerTest");
+    // Manifest must reference the stored block.
+    expect(artifact.manifest.entries.length).toBeGreaterThan(0);
+    expect(artifact.manifest.entries.some((e) => e.blockMerkleRoot === merkleRoot)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -310,40 +308,35 @@ describe("assembleCandidate — PointerEntry → assemble end-to-end (compound)"
 // ---------------------------------------------------------------------------
 
 describe("assembleCandidate — multi-leaf slice", () => {
-  it(
-    "throws CandidateNotResolvableError with 'multi-leaf' in the message",
-    async () => {
-      // Two const arrow functions. Each VariableStatement is an AtomLeaf.
-      // VS1 is stored in registry so childMatchesRegistry(SourceFile) returns true,
-      // causing the SourceFile to branch into [VS1, VS2].
-      // VS2 is NOT stored — it becomes a NovelGlueEntry.
-      // Result: two SlicePlan entries → "multi-leaf" error.
-      const f1Source =
-        "export const firstFn = (a: number): number => a + 1;";
-      const f2Source =
-        "export const secondFn = (b: number): number => b + 2;";
+  it("throws CandidateNotResolvableError with 'multi-leaf' in the message", async () => {
+    // Two const arrow functions. Each VariableStatement is an AtomLeaf.
+    // VS1 is stored in registry so childMatchesRegistry(SourceFile) returns true,
+    // causing the SourceFile to branch into [VS1, VS2].
+    // VS2 is NOT stored — it becomes a NovelGlueEntry.
+    // Result: two SlicePlan entries → "multi-leaf" error.
+    const f1Source = "export const firstFn = (a: number): number => a + 1;";
+    const f2Source = "export const secondFn = (b: number): number => b + 2;";
 
-      const candidateSource = `// SPDX-License-Identifier: MIT
+    const candidateSource = `// SPDX-License-Identifier: MIT
 ${f1Source}
 ${f2Source}`;
 
-      // Store only f1 in the registry so the SourceFile branches.
-      await storeBlock(registry, "first-fn", "Increments a by 1", f1Source);
+    // Store only f1 in the registry so the SourceFile branches.
+    await storeBlock(registry, "first-fn", "Increments a by 1", f1Source);
 
-      // Seed intent cache for the full two-function source.
-      const card = makeIntentCard(candidateSource, "Two-function multi-leaf test");
-      const spec: SeedIntentSpec = { source: candidateSource, cacheDir };
-      await seedIntentCache(spec, card);
+    // Seed intent cache for the full two-function source.
+    const card = makeIntentCard(candidateSource, "Two-function multi-leaf test");
+    const spec: SeedIntentSpec = { source: candidateSource, cacheDir };
+    await seedIntentCache(spec, card);
 
-      await expect(
-        assembleCandidate(candidateSource, registry, undefined, {
-          shaveOptions: { cacheDir, offline: true },
-        }),
-      ).rejects.toSatisfy(
-        (e) => e instanceof CandidateNotResolvableError && /multi-leaf/.test(e.message),
-      );
-    },
-  );
+    await expect(
+      assembleCandidate(candidateSource, registry, undefined, {
+        shaveOptions: { cacheDir, offline: true },
+      }),
+    ).rejects.toSatisfy(
+      (e) => e instanceof CandidateNotResolvableError && /multi-leaf/.test(e.message),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -361,29 +354,26 @@ ${f2Source}`;
 // ---------------------------------------------------------------------------
 
 describe("assembleCandidate — single novel-glue entry", () => {
-  it(
-    "throws CandidateNotResolvableError with 'atom persistence in universalize' in message",
-    async () => {
-      // A single const arrow function. No registry match → NovelGlueEntry.
-      // The empty in-memory registry has findByCanonicalAstHash returning []
-      // for all hashes, so SourceFile is AtomLeaf and becomes a NovelGlueEntry.
-      const source =
-        "// SPDX-License-Identifier: MIT\nexport const novelGlue = (n: number): number => n * 7;";
+  it("throws CandidateNotResolvableError with 'atom persistence in universalize' in message", async () => {
+    // A single const arrow function. No registry match → NovelGlueEntry.
+    // The empty in-memory registry has findByCanonicalAstHash returning []
+    // for all hashes, so SourceFile is AtomLeaf and becomes a NovelGlueEntry.
+    const source =
+      "// SPDX-License-Identifier: MIT\nexport const novelGlue = (n: number): number => n * 7;";
 
-      // Seed intent cache so extractIntent does not call the API.
-      const card = makeIntentCard(source, "Multiplies by 7 — novel glue test");
-      const spec: SeedIntentSpec = { source, cacheDir };
-      await seedIntentCache(spec, card);
+    // Seed intent cache so extractIntent does not call the API.
+    const card = makeIntentCard(source, "Multiplies by 7 — novel glue test");
+    const spec: SeedIntentSpec = { source, cacheDir };
+    await seedIntentCache(spec, card);
 
-      await expect(
-        assembleCandidate(source, registry, undefined, {
-          shaveOptions: { cacheDir, offline: true },
-        }),
-      ).rejects.toSatisfy(
-        (e) =>
-          e instanceof CandidateNotResolvableError &&
-          /atom persistence in universalize/i.test(e.message),
-      );
-    },
-  );
+    await expect(
+      assembleCandidate(source, registry, undefined, {
+        shaveOptions: { cacheDir, offline: true },
+      }),
+    ).rejects.toSatisfy(
+      (e) =>
+        e instanceof CandidateNotResolvableError &&
+        /atom persistence in universalize/i.test(e.message),
+    );
+  });
 });

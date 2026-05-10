@@ -3,8 +3,8 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling strict-subset.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
   prop_checkNoWith_detects_with_statements,
   prop_isAnyTypeNode_absent_in_clean_sources,

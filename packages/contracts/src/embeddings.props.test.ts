@@ -3,18 +3,18 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling embeddings.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
+  prop_generateEmbedding_default_provider_offline,
+  prop_generateEmbedding_explicit_provider_delegates,
   prop_localEmbeddingProvider_deterministic,
   prop_localEmbeddingProvider_dimension_constant,
-  prop_localEmbeddingProvider_normalized,
   prop_localEmbeddingProvider_distinct_inputs_distinct_outputs,
+  prop_localEmbeddingProvider_normalized,
   prop_offlineEmbeddingProvider_deterministic,
   prop_offlineEmbeddingProvider_dimension_constant,
   prop_offlineEmbeddingProvider_normalized,
-  prop_generateEmbedding_default_provider_offline,
-  prop_generateEmbedding_explicit_provider_delegates,
 } from "./embeddings.props.js";
 
 // numRuns: 100 (fast-check default, explicitly documented per eval contract).
@@ -59,41 +59,26 @@ it(
 // A1.9: createOfflineEmbeddingProvider — fully offline
 // ---------------------------------------------------------------------------
 
-it(
-  "property: prop_offlineEmbeddingProvider_deterministic",
-  async () => {
-    await fc.assert(prop_offlineEmbeddingProvider_deterministic, asyncOpts);
-  },
-);
+it("property: prop_offlineEmbeddingProvider_deterministic", async () => {
+  await fc.assert(prop_offlineEmbeddingProvider_deterministic, asyncOpts);
+});
 
-it(
-  "property: prop_offlineEmbeddingProvider_dimension_constant",
-  async () => {
-    await fc.assert(prop_offlineEmbeddingProvider_dimension_constant, asyncOpts);
-  },
-);
+it("property: prop_offlineEmbeddingProvider_dimension_constant", async () => {
+  await fc.assert(prop_offlineEmbeddingProvider_dimension_constant, asyncOpts);
+});
 
-it(
-  "property: prop_offlineEmbeddingProvider_normalized",
-  async () => {
-    await fc.assert(prop_offlineEmbeddingProvider_normalized, asyncOpts);
-  },
-);
+it("property: prop_offlineEmbeddingProvider_normalized", async () => {
+  await fc.assert(prop_offlineEmbeddingProvider_normalized, asyncOpts);
+});
 
 // ---------------------------------------------------------------------------
 // A1.10: generateEmbedding — composition
 // ---------------------------------------------------------------------------
 
-it(
-  "property: prop_generateEmbedding_default_provider_offline",
-  async () => {
-    await fc.assert(prop_generateEmbedding_default_provider_offline, asyncOpts);
-  },
-);
+it("property: prop_generateEmbedding_default_provider_offline", async () => {
+  await fc.assert(prop_generateEmbedding_default_provider_offline, asyncOpts);
+});
 
-it(
-  "property: prop_generateEmbedding_explicit_provider_delegates",
-  async () => {
-    await fc.assert(prop_generateEmbedding_explicit_provider_delegates, asyncOpts);
-  },
-);
+it("property: prop_generateEmbedding_explicit_provider_delegates", async () => {
+  await fc.assert(prop_generateEmbedding_explicit_provider_delegates, asyncOpts);
+});

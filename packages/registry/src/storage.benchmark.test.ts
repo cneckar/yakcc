@@ -35,20 +35,20 @@
  *   → 100× timed selectBlocks(specHash) → p99 assertion
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import * as fc from "fast-check";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs";
 import type { EmbeddingProvider, ProofManifest, SpecHash, SpecYak } from "@yakcc/contracts";
 import {
   blockMerkleRoot,
-  canonicalAstHash as deriveCanonicalAstHash,
   canonicalize,
+  canonicalAstHash as deriveCanonicalAstHash,
   specHash as deriveSpecHash,
 } from "@yakcc/contracts";
-import { openRegistry } from "./storage.js";
+import * as fc from "fast-check";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BlockTripletRow, Registry } from "./index.js";
+import { openRegistry } from "./storage.js";
 
 // ---------------------------------------------------------------------------
 // Fast deterministic embedding provider for the benchmark
@@ -91,52 +91,61 @@ function benchEmbeddingProvider(): EmbeddingProvider {
 // ---------------------------------------------------------------------------
 
 const typeArb = fc.constantFrom(
-  "string", "number", "boolean", "string[]", "number[]",
-  "Record<string,string>", "Uint8Array", "Buffer", "null", "undefined",
+  "string",
+  "number",
+  "boolean",
+  "string[]",
+  "number[]",
+  "Record<string,string>",
+  "Uint8Array",
+  "Buffer",
+  "null",
+  "undefined",
 );
 
 const purityArb = fc.constantFrom(
-  "pure" as const, "io" as const, "stateful" as const, "nondeterministic" as const,
+  "pure" as const,
+  "io" as const,
+  "stateful" as const,
+  "nondeterministic" as const,
 );
 
-const threadArb = fc.constantFrom(
-  "safe" as const, "sequential" as const, "unsafe" as const,
-);
+const threadArb = fc.constantFrom("safe" as const, "sequential" as const, "unsafe" as const);
 
 /**
  * Arbitrary that produces SpecYak-shaped objects (the WI-T03 spec type).
  * All required SpecYak fields are populated; v1-only optional fields are omitted.
  */
-const specArb = fc.record({
-  inputType: typeArb,
-  outputType: typeArb,
-  behavior: fc.string({ minLength: 8, maxLength: 60 }),
-  errorType: fc.constantFrom("SyntaxError", "RangeError", "TypeError", "Error", ""),
-  purity: purityArb,
-  threadSafety: threadArb,
-  time: fc.constantFrom("O(1)", "O(n)", "O(n log n)", "O(n^2)", "O(2^n)"),
-  name: fc.string({ minLength: 4, maxLength: 24 }),
-}).map(({ inputType, outputType, behavior, errorType, purity, threadSafety, time, name }) => {
-  const spec: SpecYak = {
-    name,
-    inputs: [{ name: "input", type: inputType }],
-    outputs: [{ name: "result", type: outputType }],
-    preconditions: [],
-    postconditions: ["result is defined"],
-    invariants: [],
-    effects: [],
-    level: "L0",
-    behavior,
-    guarantees: [{ id: "total", description: "Always terminates." }],
-    errorConditions:
-      errorType === ""
-        ? []
-        : [{ description: `Throws ${errorType} on bad input`, errorType }],
-    nonFunctional: { purity, threadSafety, time, space: "O(1)" },
-    propertyTests: [],
-  };
-  return spec;
-});
+const specArb = fc
+  .record({
+    inputType: typeArb,
+    outputType: typeArb,
+    behavior: fc.string({ minLength: 8, maxLength: 60 }),
+    errorType: fc.constantFrom("SyntaxError", "RangeError", "TypeError", "Error", ""),
+    purity: purityArb,
+    threadSafety: threadArb,
+    time: fc.constantFrom("O(1)", "O(n)", "O(n log n)", "O(n^2)", "O(2^n)"),
+    name: fc.string({ minLength: 4, maxLength: 24 }),
+  })
+  .map(({ inputType, outputType, behavior, errorType, purity, threadSafety, time, name }) => {
+    const spec: SpecYak = {
+      name,
+      inputs: [{ name: "input", type: inputType }],
+      outputs: [{ name: "result", type: outputType }],
+      preconditions: [],
+      postconditions: ["result is defined"],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      guarantees: [{ id: "total", description: "Always terminates." }],
+      errorConditions:
+        errorType === "" ? [] : [{ description: `Throws ${errorType} on bad input`, errorType }],
+      nonFunctional: { purity, threadSafety, time, space: "O(1)" },
+      propertyTests: [],
+    };
+    return spec;
+  });
 
 /**
  * Generate a fixed-size corpus of unique SpecYak values using fast-check's
@@ -261,10 +270,10 @@ afterAll(async () => {
 // Benchmark test
 // ---------------------------------------------------------------------------
 
-describe.skipIf(process.env.YAKCC_BENCHMARKS !== "1")("benchmark: 1000-block corpus — selectBlocks p99 < 100ms", () => {
-  it(
-    "p99 latency of selectBlocks(specHash) over 100 queries is under 100ms",
-    async () => {
+describe.skipIf(process.env.YAKCC_BENCHMARKS !== "1")(
+  "benchmark: 1000-block corpus — selectBlocks p99 < 100ms",
+  () => {
+    it("p99 latency of selectBlocks(specHash) over 100 queries is under 100ms", async () => {
       expect(querySpecHashes.length).toBe(100);
       expect(corpus.length).toBe(1000);
 
@@ -281,14 +290,16 @@ describe.skipIf(process.env.YAKCC_BENCHMARKS !== "1")("benchmark: 1000-block cor
 
       // p99: index at 98 (0-indexed) out of 100 samples.
       const p99Index = Math.ceil(latencies.length * 0.99) - 1;
-      const p99 = latencies[p99Index] ?? latencies[latencies.length - 1] ?? Infinity;
-      const p50 = latencies[Math.floor(latencies.length * 0.5)] ?? Infinity;
-      const max = latencies[latencies.length - 1] ?? Infinity;
+      const p99 =
+        latencies[p99Index] ?? latencies[latencies.length - 1] ?? Number.POSITIVE_INFINITY;
+      const p50 = latencies[Math.floor(latencies.length * 0.5)] ?? Number.POSITIVE_INFINITY;
+      const max = latencies[latencies.length - 1] ?? Number.POSITIVE_INFINITY;
 
-      console.log(`selectBlocks latency — p50=${p50.toFixed(2)}ms  p99=${p99.toFixed(2)}ms  max=${max.toFixed(2)}ms`);
+      console.log(
+        `selectBlocks latency — p50=${p50.toFixed(2)}ms  p99=${p99.toFixed(2)}ms  max=${max.toFixed(2)}ms`,
+      );
 
       expect(p99).toBeLessThan(100);
-    },
-    30_000, // 30-second per-test budget.
-  );
-});
+    }, 30_000); // 30-second per-test budget.
+  },
+);
