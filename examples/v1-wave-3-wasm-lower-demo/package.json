@@ -1,0 +1,22 @@
+{
+  "name": "v1-wave-3-wasm-lower-demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p .",
+    "test": "vitest run --reporter=verbose"
+  },
+  "dependencies": {
+    "@yakcc/compile": "workspace:*",
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/registry": "workspace:*",
+    "@yakcc/seeds": "workspace:*",
+    "@yakcc/shave": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "fast-check": "^4.7.0",
+    "vitest": "^4.1.5"
+  }
+}

@@ -1,0 +1,32 @@
+=== Q1 variation tests ===
+baseline (run-1): 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+asc version: 0.28.17
+date: Thu May  7 08:27:28 PM UTC 2026
+
+--- CWD variation ---
+cwd-a: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+cwd-b: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+result: IDENTICAL (same as baseline: yes)
+
+--- TZ variation ---
+TZ=America/Los_Angeles: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+TZ=UTC: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+result: IDENTICAL
+
+--- LANG variation ---
+LANG=C.UTF-8: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+LANG=ja_JP.UTF-8: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+result: IDENTICAL
+
+--- SOURCE_DATE_EPOCH variation ---
+SOURCE_DATE_EPOCH=0: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+SOURCE_DATE_EPOCH=1700000000: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+result: IDENTICAL
+
+--- Time delay (5s sleep) variation ---
+before-sleep: 4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+after-sleep:  4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7
+result: IDENTICAL
+
+=== SUMMARY ===
+All outputs match baseline (4a2dd136f5a6f6543efa628a33fce66e4e71c214656983b26f69552f308a18c7): true

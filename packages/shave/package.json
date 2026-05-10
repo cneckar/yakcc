@@ -26,6 +26,7 @@
   },
   "peerDependencies": {
     "@yakcc/contracts": "workspace:*",
+    "@yakcc/ir": "workspace:*",
     "@yakcc/registry": "workspace:*"
   },
   "devDependencies": {

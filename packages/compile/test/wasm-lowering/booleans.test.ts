@@ -853,3 +853,228 @@ export function condFn(a: number, b: number): number {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Substrate bool-5-nan: f64 NaN comparison semantics
+//
+// The existing bool-5 substrates use fc.float({noNaN: true}) so the NaN branch
+// of the f64 comparison opcodes is never exercised. This substrate fills that
+// gap with both deterministic and property-based tests.
+//
+// IEEE 754 / WASM f64 NaN comparison contract (DEC-V1-WAVE-3-WASM-LOWER-F64-NAN-CMP-001):
+//   NaN <  x  → 0 (false)   — f64.lt  returns 0 when either operand is NaN
+//   NaN >  x  → 0 (false)   — f64.gt  returns 0 when either operand is NaN
+//   NaN == x  → 0 (false)   — f64.eq  returns 0 when either operand is NaN
+//   NaN != x  → 1 (true)    — f64.ne  returns 1 when either operand is NaN
+//   Same results hold in mirror form (x op NaN).
+//
+// JavaScript implements the same IEEE 754 semantics, so `(NaN < 1.0) === false`
+// and `(NaN != 1.0) === true` in both JS and WASM. The comparison RESULT is
+// always 0 or 1 (i32); it is never NaN itself.
+//
+// Substrates:
+//   bool-5-nan-explicit: 8 deterministic cases (2 per op × 4 ops)
+//   bool-5-nan-property: 4 fast-check properties (1 per op, ~25% NaN injection)
+// ---------------------------------------------------------------------------
+
+describe("boolean lowering — bool-5-nan: f64 NaN comparison semantics", () => {
+  /**
+   * Lower a two-f64-param → i32-result comparison function.
+   * Mirrors the lowerF64Cmp helper from bool-5.
+   */
+  function lowerF64NanCmp(source: string): Uint8Array {
+    const visitor = new LoweringVisitor();
+    const result = visitor.lower(source);
+    // f64 params → i32 result (boolean)
+    return buildStandaloneWasm(result.wasmFn, "f64", 2, "i32");
+  }
+
+  // -------------------------------------------------------------------------
+  // bool-5-nan-explicit: 8 deterministic NaN cases
+  //
+  // For each op (<, >, ==, !=) × each NaN position (LHS, RHS):
+  //   - Compile the comparison function
+  //   - Run it with one NaN operand
+  //   - Assert WASM output matches the JS reference value
+  //
+  // All sources use true-division (/ 1.0) to force f64 domain inference,
+  // mirroring the existing bool-5 substrates.
+  // -------------------------------------------------------------------------
+
+  it("bool-5-nan-explicit-lt-lhs: NaN < finite → 0 (false)", async () => {
+    const src =
+      "export function ltF(a: number, b: number): boolean { return (a / 1.0) < (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    const jsRef = NaN < 1.0 ? 1 : 0; // 0 per IEEE 754
+    expect(jsRef).toBe(0);
+    expect(Number(await runWasm(wasmBytes, [NaN, 1.0]))).toBe(0);
+  });
+
+  it("bool-5-nan-explicit-lt-rhs: finite < NaN → 0 (false)", async () => {
+    const src =
+      "export function ltF(a: number, b: number): boolean { return (a / 1.0) < (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    const jsRef = 1.0 < NaN ? 1 : 0; // 0 per IEEE 754
+    expect(jsRef).toBe(0);
+    expect(Number(await runWasm(wasmBytes, [1.0, NaN]))).toBe(0);
+  });
+
+  it("bool-5-nan-explicit-gt-lhs: NaN > finite → 0 (false)", async () => {
+    const src =
+      "export function gtF(a: number, b: number): boolean { return (a / 1.0) > (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    const jsRef = NaN > 1.0 ? 1 : 0; // 0 per IEEE 754
+    expect(jsRef).toBe(0);
+    expect(Number(await runWasm(wasmBytes, [NaN, 1.0]))).toBe(0);
+  });
+
+  it("bool-5-nan-explicit-gt-rhs: finite > NaN → 0 (false)", async () => {
+    const src =
+      "export function gtF(a: number, b: number): boolean { return (a / 1.0) > (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    const jsRef = 1.0 > NaN ? 1 : 0; // 0 per IEEE 754
+    expect(jsRef).toBe(0);
+    expect(Number(await runWasm(wasmBytes, [1.0, NaN]))).toBe(0);
+  });
+
+  it("bool-5-nan-explicit-eq-lhs: NaN == finite → 0 (false)", async () => {
+    const src =
+      "export function eqF(a: number, b: number): boolean { return (a / 1.0) == (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    // biome-ignore lint/suspicious/noDoubleEquals: reference uses == to match WASM semantics
+    const jsRef = NaN == 1.0 ? 1 : 0; // 0 per IEEE 754
+    expect(jsRef).toBe(0);
+    expect(Number(await runWasm(wasmBytes, [NaN, 1.0]))).toBe(0);
+  });
+
+  it("bool-5-nan-explicit-eq-rhs: finite == NaN → 0 (false)", async () => {
+    const src =
+      "export function eqF(a: number, b: number): boolean { return (a / 1.0) == (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    // biome-ignore lint/suspicious/noDoubleEquals: reference uses == to match WASM semantics
+    const jsRef = 1.0 == NaN ? 1 : 0; // 0 per IEEE 754
+    expect(jsRef).toBe(0);
+    expect(Number(await runWasm(wasmBytes, [1.0, NaN]))).toBe(0);
+  });
+
+  it("bool-5-nan-explicit-ne-lhs: NaN != finite → 1 (true) — only NaN cmp that returns true", async () => {
+    const src =
+      "export function neF(a: number, b: number): boolean { return (a / 1.0) != (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    // biome-ignore lint/suspicious/noDoubleEquals: reference uses != to match WASM semantics
+    const jsRef = NaN != 1.0 ? 1 : 0; // 1 — NaN is not equal to anything
+    expect(jsRef).toBe(1);
+    expect(Number(await runWasm(wasmBytes, [NaN, 1.0]))).toBe(1);
+  });
+
+  it("bool-5-nan-explicit-ne-rhs: finite != NaN → 1 (true) — mirror form", async () => {
+    const src =
+      "export function neF(a: number, b: number): boolean { return (a / 1.0) != (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+    // biome-ignore lint/suspicious/noDoubleEquals: reference uses != to match WASM semantics
+    const jsRef = 1.0 != NaN ? 1 : 0; // 1 — NaN is not equal to anything
+    expect(jsRef).toBe(1);
+    expect(Number(await runWasm(wasmBytes, [1.0, NaN]))).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // bool-5-nan-property: 4 property-based NaN injection tests
+  //
+  // For each op, fc.option(fc.constant(NaN), { freq: 3 }) injects NaN in ~25%
+  // of runs (freq: 3 means NaN appears roughly 1 in 4 times). The property
+  // asserts WASM output equals the JS reference on every input pair.
+  //
+  // The comparison RESULT is always 0 or 1 (i32) — it is never NaN. The property
+  // uses Number.isNaN only to document which inputs are NaN; the actual assertion
+  // compares integer output values directly.
+  //
+  // Rationale for explicit NaN-result documentation: code reviewers must not
+  // mistake "the result is NaN" for "we got NaN" — the result is always 0 or 1.
+  // -------------------------------------------------------------------------
+
+  it("bool-5-nan-property-lt: a < b — 30+ runs with ~25% NaN injection, WASM matches JS", async () => {
+    const src =
+      "export function ltF(a: number, b: number): boolean { return (a / 1.0) < (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+
+    // fc.oneof with weight objects: NaN injected ~25% of runs (weight 1 vs 3)
+    const nanOrFinite = fc.oneof(
+      { weight: 1, arbitrary: fc.constant(NaN) },
+      { weight: 3, arbitrary: fc.float({ noNaN: true, noDefaultInfinity: true, min: -1e10, max: 1e10 }) },
+    );
+
+    await fc.assert(
+      fc.asyncProperty(nanOrFinite, nanOrFinite, async (a, b) => {
+        // JS reference: a < b returns false (0) when either operand is NaN
+        const jsRef = a < b ? 1 : 0;
+        // WASM result must be 0 or 1 (i32), never NaN
+        const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+        expect(wasmResult).toBe(jsRef);
+      }),
+      { numRuns: 30 },
+    );
+  });
+
+  it("bool-5-nan-property-gt: a > b — 30+ runs with ~25% NaN injection, WASM matches JS", async () => {
+    const src =
+      "export function gtF(a: number, b: number): boolean { return (a / 1.0) > (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+
+    const nanOrFinite = fc.oneof(
+      { weight: 1, arbitrary: fc.constant(NaN) },
+      { weight: 3, arbitrary: fc.float({ noNaN: true, noDefaultInfinity: true, min: -1e10, max: 1e10 }) },
+    );
+
+    await fc.assert(
+      fc.asyncProperty(nanOrFinite, nanOrFinite, async (a, b) => {
+        const jsRef = a > b ? 1 : 0;
+        const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+        expect(wasmResult).toBe(jsRef);
+      }),
+      { numRuns: 30 },
+    );
+  });
+
+  it("bool-5-nan-property-eq: a == b — 30+ runs with ~25% NaN injection, WASM matches JS", async () => {
+    const src =
+      "export function eqF(a: number, b: number): boolean { return (a / 1.0) == (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+
+    const nanOrFinite = fc.oneof(
+      { weight: 1, arbitrary: fc.constant(NaN) },
+      { weight: 3, arbitrary: fc.float({ noNaN: true, noDefaultInfinity: true, min: -1e10, max: 1e10 }) },
+    );
+
+    await fc.assert(
+      fc.asyncProperty(nanOrFinite, nanOrFinite, async (a, b) => {
+        // biome-ignore lint/suspicious/noDoubleEquals: reference uses == to match WASM semantics
+        const jsRef = a == b ? 1 : 0;
+        const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+        expect(wasmResult).toBe(jsRef);
+      }),
+      { numRuns: 30 },
+    );
+  });
+
+  it("bool-5-nan-property-ne: a != b — 30+ runs with ~25% NaN injection, WASM matches JS (NaN != x is always 1)", async () => {
+    const src =
+      "export function neF(a: number, b: number): boolean { return (a / 1.0) != (b / 1.0); }";
+    const wasmBytes = lowerF64NanCmp(src);
+
+    const nanOrFinite = fc.oneof(
+      { weight: 1, arbitrary: fc.constant(NaN) },
+      { weight: 3, arbitrary: fc.float({ noNaN: true, noDefaultInfinity: true, min: -1e10, max: 1e10 }) },
+    );
+
+    await fc.assert(
+      fc.asyncProperty(nanOrFinite, nanOrFinite, async (a, b) => {
+        // biome-ignore lint/suspicious/noDoubleEquals: reference uses != to match WASM semantics
+        const jsRef = a != b ? 1 : 0;
+        // When either operand is NaN: jsRef === 1 (NaN != anything is true)
+        const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+        expect(wasmResult).toBe(jsRef);
+      }),
+      { numRuns: 30 },
+    );
+  });
+});

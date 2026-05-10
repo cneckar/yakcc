@@ -10,6 +10,7 @@
   "exclude": ["src/**/*.test.ts", "dist/**"],
   "references": [
     { "path": "../contracts" },
+    { "path": "../ir" },
     { "path": "../registry" }
   ]
 }

@@ -41,11 +41,17 @@
  *   WASM's i32.add semantics (two's-complement, no overflow detection).
  */
 
-import { describe, expect, it } from "vitest";
-import { type BlockMerkleRoot, type LocalTriplet, blockMerkleRoot, specHash } from "@yakcc/contracts";
-import type { SpecYak } from "@yakcc/contracts";
-import { tsBackend, wasmBackend, instantiateAndRun, WasmTrap } from "@yakcc/compile";
+import { WasmTrap, createHost, instantiateAndRun, tsBackend, wasmBackend } from "@yakcc/compile";
+import { instantiateAndRunBigInt } from "./bigint-instantiate.js";
 import type { ResolutionResult, ResolvedBlock } from "@yakcc/compile";
+import {
+  type BlockMerkleRoot,
+  type LocalTriplet,
+  blockMerkleRoot,
+  specHash,
+} from "@yakcc/contracts";
+import type { SpecYak } from "@yakcc/contracts";
+import { describe, expect, it } from "vitest";
 
 // ---------------------------------------------------------------------------
 // TypeScript-backend reference function (DEC-V1W2-WASM-DEMO-TSREF-001)
@@ -113,7 +119,7 @@ function makeResolution(
 }
 
 // The add substrate source — must match src/add.ts (reference function above).
-const ADD_IMPL_SOURCE = `export function add(a: number, b: number): number { return a + b; }`;
+const ADD_IMPL_SOURCE = "export function add(a: number, b: number): number { return a + b; }";
 
 function makeAddResolution(): ResolutionResult {
   const id = makeMerkleRoot(
@@ -214,38 +220,261 @@ describe("WI-V1W2-WASM-04 parity — numeric substrate: add(a, b)", () => {
 // ---------------------------------------------------------------------------
 // SUBSTRATE 2: String-handling (linear-memory string view + host_alloc/free)
 //
-// Pending WI-V1W2-WASM-02 — general type-lowering for string substrates.
+// Activated by WI-V1W3-WASM-LOWER-05 — string type-lowering now lands.
 //
-// The WASM backend currently exports __wasm_export_string_len(ptr, len) → len
-// (a fixed-substrate function, not derived from the ResolutionResult's implSource).
-// A real string-handling parity test requires WI-V1W2-WASM-02 to lower a
-// TypeScript `(s: string) => number` substrate to the WASM string-interchange
-// calling convention (ptr+len in linear memory via host_alloc). Until that
-// type-lowering lands, the two backends operate on different calling conventions
-// and value-level parity cannot be asserted without manual bridging code that
-// would mask — not expose — the gap.
+// The WASM backend now lowers TypeScript string substrates via detectStringShape()
+// + emitStringModule(). The calling convention is (ptr: i32, len_bytes: i32) for
+// string arguments (UTF-8 in linear memory). The parity test uses the str-length
+// shape: `export function strLen(s: string): number { return s.length; }`.
+//
+// TS backend reference: JavaScript string.length (UTF-16 code-unit count).
+// WASM backend: ptr+len pair passed to __wasm_export_strLen, which calls
+//   host_string_length and returns the i32 result.
+//
+// Corpus: 10 cases covering ASCII, multi-byte UTF-8, empty, and surrogate pairs.
+//
+// Production sequence (matching strings.test.ts str-1 pattern):
+//   makeStringResolution(strLenSource)
+//   → wasmBackend().emit(resolution)               [Uint8Array]
+//   → WebAssembly.instantiate(bytes, importObject)  [with createHost()]
+//   → write string to memory via host_alloc + Uint8Array.set
+//   → call __wasm_export_strLen(ptr, byteLen) → i32
+//   → assert result === s.length
 // ---------------------------------------------------------------------------
 
-describe("WI-V1W2-WASM-04 parity — string substrate: pending WI-V1W2-WASM-02", () => {
-  it.todo(
-    "parity: string-handling substrate — ≥10 corpus cases (blocked: WI-V1W2-WASM-02 type-lowering for string not yet implemented)",
-  );
+// The str-length substrate source — the WASM backend lowering target.
+const STR_LEN_IMPL_SOURCE = "export function strLen(s: string): number { return s.length; }";
+
+function makeStringResolution(): ResolutionResult {
+  const id = makeMerkleRoot("strLen", "strLen substrate", STR_LEN_IMPL_SOURCE);
+  return makeResolution([{ id, source: STR_LEN_IMPL_SOURCE }]);
+}
+
+// Corpus: 10 cases spanning ASCII, multi-byte characters, empty, and emoji.
+//   JS string.length returns UTF-16 code-unit count; emoji with surrogate pairs count as 2.
+const STRING_CORPUS: ReadonlyArray<string> = [
+  "", // empty string — length 0
+  "a", // single ASCII char — length 1
+  "hello", // short ASCII — length 5
+  "hello world", // ASCII with space — length 11
+  "café", // 4 JS chars (é = 1 code unit) — length 4
+  "日本語", // 3 CJK chars (each = 1 JS code unit) — length 3
+  "abc123", // alphanumeric — length 6
+  "  leading", // leading spaces — length 9
+  "trailing  ", // trailing spaces — length 10
+  "😀", // emoji = 2 UTF-16 code units (surrogate pair) — length 2
+];
+
+describe("WI-V1W2-WASM-04 parity — string substrate: str-length (WI-V1W3-WASM-LOWER-05)", () => {
+  it("wasm-backend emits a valid .wasm binary for the str-length substrate", async () => {
+    const resolution = makeStringResolution();
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    expect(wasmBytes, "wasm-backend must return Uint8Array").toBeInstanceOf(Uint8Array);
+    expect(wasmBytes[0]).toBe(0x00);
+    expect(wasmBytes[1]).toBe(0x61);
+    expect(wasmBytes[2]).toBe(0x73);
+    expect(wasmBytes[3]).toBe(0x6d);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+  });
+
+  it("ts-backend emits non-empty TypeScript containing the 'strLen' function signature", async () => {
+    const resolution = makeStringResolution();
+    const tsSource = await tsBackend().emit(resolution);
+
+    expect(tsSource.length, "ts-backend output must be non-empty").toBeGreaterThan(0);
+    expect(tsSource, "ts-backend output must contain 'function strLen'").toContain(
+      "function strLen",
+    );
+  });
+
+  it(`parity: all ${STRING_CORPUS.length} corpus cases produce value-equivalent results`, async () => {
+    const resolution = makeStringResolution();
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    // Instantiate with full host (including string imports)
+    const host = createHost();
+    const { instance } = (await WebAssembly.instantiate(
+      wasmBytes,
+      host.importObject,
+    )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const allocate = yakccHost.host_alloc as (size: number) => number;
+
+    const fn = (instance.exports as Record<string, unknown>).__wasm_export_strLen as (
+      ptr: number,
+      len: number,
+    ) => number;
+
+    const enc = new TextEncoder();
+    for (const s of STRING_CORPUS) {
+      // TS reference: JavaScript string.length (UTF-16 code-unit count)
+      const tsResult = s.length;
+
+      // WASM: write UTF-8 bytes into linear memory, call with (ptr, byteLen)
+      const encoded = enc.encode(s);
+      const byteLen = encoded.length;
+      const ptr = allocate(byteLen > 0 ? byteLen : 1);
+      const view = new Uint8Array(host.memory.buffer);
+      view.set(encoded, ptr);
+      const wasmResult = fn(ptr, byteLen);
+
+      expect(
+        wasmResult,
+        `strLen("${s}"): WASM result (${wasmResult}) must equal TS reference (${tsResult})`,
+      ).toBe(tsResult);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
-// SUBSTRATE 3: Mixed (record-of-numbers, struct lowering + host bindings)
+// SUBSTRATE 3: Mixed (record-of-numbers, flat-struct linear-memory layout)
 //
-// Pending WI-V1W2-WASM-02 — record/struct type-lowering.
+// Activated by WI-V1W3-WASM-LOWER-06 — record type-lowering now lands.
 //
-// A mixed substrate exercises flat-struct lowering in linear memory with field
-// offsets. The WASM backend has no general IR-to-struct-layout pass until
-// WI-V1W2-WASM-02 lands; marking as pending per Sacred Practice #12.
+// The WASM backend lowers TypeScript record substrates via detectRecordShape()
+// + emitRecordModule(). The calling convention is (ptr: i32, _size: i32) for
+// record arguments (fields in linear memory at 8-byte aligned slots).
+//
+// Substrate: sumRecord3 — a record with 3 numeric fields; returns field sum.
+//   export function sumRecord3(r: { a: number; b: number; c: number }, _size: number): number {
+//     return (r.a + r.b + r.c) | 0;
+//   }
+//
+// Three fields are used to avoid the wave-2 sum_record fast-path, which only
+// matches `return r.field + r.field` (exactly 2 field accesses, no `| 0`).
+// With 3 fields + `| 0`, the general record lowering path is exercised.
+//
+// Field layout (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001):
+//   slot 0 (byte offset 0):  field r.a (i32)
+//   slot 1 (byte offset 8):  field r.b (i32)
+//   slot 2 (byte offset 16): field r.c (i32)
+//   struct size: 3 * 8 = 24 bytes
+//
+// TS backend reference: (r.a + r.b + r.c) | 0 evaluated directly in JS.
+// WASM: caller allocates struct in linear memory, writes fields at offsets,
+//   calls __wasm_export_sumRecord3(ptr, structSize) → i32.
+//
+// Corpus: 10 explicit cases + ≥10 fast-check property cases.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-PARITY-MIXED-001
+// @title Activate mixed substrate parity once WI-06 record lowering lands
+// @status accepted
+// @rationale
+//   The prior it.todo block was blocked on WI-V1W2-WASM-02 (record lowering).
+//   WI-V1W3-WASM-LOWER-06 implements the record lowering path via emitRecordModule()
+//   and detectRecordShape(). This test exercises the full pipeline end-to-end:
+//   makeSingleBlockResolution → wasmBackend().emit → WebAssembly.instantiate
+//   → write struct to memory → call __wasm_export_sumRecord3 → assert parity.
+//   Three fields + `| 0` ensures the general record path fires, not the wave-2
+//   sum_record fast-path (which matches only `return r.field + r.field` without `| 0`).
 // ---------------------------------------------------------------------------
 
-describe("WI-V1W2-WASM-04 parity — mixed substrate: pending WI-V1W2-WASM-02", () => {
-  it.todo(
-    "parity: mixed-substrate (record-of-numbers) — ≥10 corpus cases (blocked: WI-V1W2-WASM-02 record/struct lowering not yet implemented)",
-  );
+const SUM_RECORD3_SOURCE =
+  "export function sumRecord3(r: { a: number; b: number; c: number }, _size: number): number { return (r.a + r.b + r.c) | 0; }";
+
+const MIXED_CORPUS: ReadonlyArray<[number, number, number]> = [
+  [0, 0, 0],
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+  [5, 7, 3],
+  [-3, 3, 1],
+  [100, 200, 50],
+  [-100, -200, 300],
+  [1000, -1000, 500],
+  [42, 58, -100],
+];
+
+describe("WI-V1W2-WASM-04 parity — mixed substrate: record-of-numbers (WI-V1W3-WASM-LOWER-06)", () => {
+  it("wasm-backend emits a valid .wasm binary for the sumRecord3 substrate", async () => {
+    const resolution = makeSingleBlockResolution(SUM_RECORD3_SOURCE);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    expect(wasmBytes, "wasm-backend must return Uint8Array").toBeInstanceOf(Uint8Array);
+    expect(wasmBytes[0]).toBe(0x00);
+    expect(wasmBytes[1]).toBe(0x61);
+    expect(wasmBytes[2]).toBe(0x73);
+    expect(wasmBytes[3]).toBe(0x6d);
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+  });
+
+  it(`parity: ${MIXED_CORPUS.length} explicit corpus cases produce value-equivalent results`, async () => {
+    const resolution = makeSingleBlockResolution(SUM_RECORD3_SOURCE);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const STRUCT_SLOTS = 3;
+    const STRUCT_SIZE = STRUCT_SLOTS * 8;
+    const STRUCT_PTR = 64; // safe non-conflicting test address
+
+    for (const [a, b, c] of MIXED_CORPUS) {
+      const tsRef = (a + b + c) | 0;
+
+      const host = createHost();
+      const { instance } = (await WebAssembly.instantiate(
+        wasmBytes,
+        host.importObject,
+      )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+      const mem = host.memory;
+      const dv = new DataView(mem.buffer);
+      // Write r.a at slot 0 (offset 0), r.b at slot 1 (offset 8), r.c at slot 2 (offset 16)
+      dv.setInt32(STRUCT_PTR + 0, a, true);
+      dv.setInt32(STRUCT_PTR + 4, 0, true);
+      dv.setInt32(STRUCT_PTR + 8, b, true);
+      dv.setInt32(STRUCT_PTR + 12, 0, true);
+      dv.setInt32(STRUCT_PTR + 16, c, true);
+      dv.setInt32(STRUCT_PTR + 20, 0, true);
+
+      const fn = (instance.exports as Record<string, unknown>)
+        .__wasm_export_sumRecord3 as (ptr: number, size: number) => number;
+      const wasmResult = fn(STRUCT_PTR, STRUCT_SIZE);
+
+      expect(
+        wasmResult,
+        `sumRecord3({a:${a}, b:${b}, c:${c}}): WASM result (${wasmResult}) must equal TS reference (${tsRef})`,
+      ).toBe(tsRef);
+    }
+  });
+
+  it("parity: ≥10 fast-check property cases produce value-equivalent results", async () => {
+    const resolution = makeSingleBlockResolution(SUM_RECORD3_SOURCE);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const STRUCT_SLOTS = 3;
+    const STRUCT_SIZE = STRUCT_SLOTS * 8;
+    const STRUCT_PTR = 64;
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: -100000, max: 100000 }),
+        fc.integer({ min: -100000, max: 100000 }),
+        fc.integer({ min: -100000, max: 100000 }),
+        async (a, b, c) => {
+          const tsRef = (a + b + c) | 0;
+
+          const host = createHost();
+          const { instance } = (await WebAssembly.instantiate(
+            wasmBytes,
+            host.importObject,
+          )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+          const mem = host.memory;
+          const dv = new DataView(mem.buffer);
+          dv.setInt32(STRUCT_PTR + 0, a, true);
+          dv.setInt32(STRUCT_PTR + 4, 0, true);
+          dv.setInt32(STRUCT_PTR + 8, b, true);
+          dv.setInt32(STRUCT_PTR + 12, 0, true);
+          dv.setInt32(STRUCT_PTR + 16, c, true);
+          dv.setInt32(STRUCT_PTR + 20, 0, true);
+
+          const fn = (instance.exports as Record<string, unknown>)
+            .__wasm_export_sumRecord3 as (ptr: number, size: number) => number;
+          const wasmResult = fn(STRUCT_PTR, STRUCT_SIZE);
+          expect(wasmResult, `sumRecord3({a:${a}, b:${b}, c:${c}})`).toBe(tsRef);
+        },
+      ),
+      { numRuns: 15 },
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -381,6 +610,128 @@ describe("WI-V1W3-WASM-LOWER-02 demo extension — numeric domain parity", () =>
         },
       ),
       { numRuns: 20 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-FOLLOWUP-LOWER-02-WIDEADD — i64 boundary coverage (Issue #48)
+//
+// These tests address Issue #48: the existing i64 property test in the block
+// above uses a narrow range (-1M..1M) that never exceeds Number.MAX_SAFE_INTEGER
+// (2^53 - 1 = 9007199254740991). The precision loss introduced by the
+// `number` cast in `instantiateAndRun` was therefore never observable.
+//
+// This block exercises the i64 precision boundary using `instantiateAndRunBigInt`,
+// the test-local helper that returns JS `bigint` (no cast to number), confirming:
+//   1. WASM i64 results are preserved past 2^53 - 1 with full 64-bit precision.
+//   2. The lowering path correctly assembles the i64 binary for wideAdd.
+//   3. A hypothetical 32-bit truncation bug in the visitor would be caught.
+//
+// wideAdd source: `function wideAdd(a: number, b: number): number { return a + 3000000000 + b; }`
+//   — the baked-in constant 3_000_000_000 > 2^31-1 forces i64 inference (rule 5).
+//   — WASM export: __wasm_export_wideAdd(a: i64, b: i64) → i64
+//
+// @decision DEC-WI-FOLLOWUP-WIDEADD-001
+// (See bigint-instantiate.ts for full rationale.)
+// ---------------------------------------------------------------------------
+
+/**
+ * @sacred-practice-4 truncation-injection-walkthrough
+ *
+ * If the visitor's i64 + lowering had a hypothetical `& 0xFFFFFFFFn` truncation bug,
+ * `wideAdd(2n**53n, 1n)` would emit `(0x10000000000000n + 0xb2d05e00n + 0x1n) & 0xFFFFFFFFn`
+ * = `0xb2d05e01n` = `3000000001n`, NOT `9007202254740993n`. The deterministic boundary
+ * test would fail with: expected 9007202254740993n, got 3000000001n. This proves the
+ * test catches the synthetic 32-bit truncation regression class.
+ */
+describe("wideAdd — i64 boundary past Number.MAX_SAFE_INTEGER (Issue #48)", () => {
+  // The wideAdd source: constant 3_000_000_000 > 2^31-1 forces i64 domain inference.
+  const WIDE_ADD_SRC =
+    "export function wideAdd(a: number, b: number): number { return a + 3000000000 + b; }";
+
+  // -------------------------------------------------------------------------
+  // Substrate 1 — deterministic boundary cases
+  //
+  // 2^53 = 9007199254740992 (Number.MAX_SAFE_INTEGER + 1 = 9007199254740991 + 1)
+  // wideAdd(2^53, 1)   = 9007199254740992 + 3_000_000_000 + 1   = 9007202254740993
+  // wideAdd(-2^53, -1) = -9007199254740992 + 3_000_000_000 - 1  = -9007196254740993
+  // wideAdd(2^62, 1)   = 4611686018427387904 + 3_000_000_000 + 1 = 4611686021427387905
+  //
+  // All three results exceed Number.MAX_SAFE_INTEGER in magnitude and therefore
+  // cannot be represented faithfully as JS `number`. Only the bigint path captures
+  // them correctly.
+  // -------------------------------------------------------------------------
+
+  it("wideAdd(2n**53n, 1n) → 9007202254740993n (= 2^53 + 3_000_000_000 + 1, beyond Number.MAX_SAFE_INTEGER)", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const { result } = await instantiateAndRunBigInt(
+      wasmBytes,
+      "__wasm_export_wideAdd",
+      [2n ** 53n, 1n],
+    );
+    // 2^53 + 3_000_000_000 + 1 = 9007199254740992 + 3000000000 + 1 = 9007202254740993
+    expect(result).toEqual(9007202254740993n);
+  });
+
+  it("wideAdd(-(2n**53n), -1n) → -9007196254740993n (negative i64 boundary; -2^53 + 3_000_000_000 - 1)", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const { result } = await instantiateAndRunBigInt(
+      wasmBytes,
+      "__wasm_export_wideAdd",
+      [-(2n ** 53n), -1n],
+    );
+    // -2^53 + 3_000_000_000 + (-1) = -9007199254740992 + 2999999999 = -9007196254740993
+    expect(result).toEqual(-9007196254740993n);
+  });
+
+  it("wideAdd(2n**62n, 1n) → 4611686021427387905n (i64 near-max boundary; 2^62 + 3_000_000_000 + 1)", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    const { result } = await instantiateAndRunBigInt(
+      wasmBytes,
+      "__wasm_export_wideAdd",
+      [2n ** 62n, 1n],
+    );
+    // 2^62 + 3_000_000_000 + 1 = 4611686018427387904 + 3000000001 = 4611686021427387905
+    expect(result).toEqual(4611686021427387905n);
+  });
+
+  // -------------------------------------------------------------------------
+  // Substrate 2 — fast-check property
+  //
+  // Ranges chosen to avoid i64 signed overflow:
+  //   i64 signed max = 2^63 - 1 = 9223372036854775807
+  //   We need: a + 3_000_000_000 + b <= 2^63 - 1
+  //   Safe upper bound for a + b: 2^63 - 1 - 3_000_000_000 ≈ 9223372033854775807
+  //
+  //   a ∈ [2^52, 2^61]  — all values exceed Number.MAX_SAFE_INTEGER (2^53-1)
+  //   b ∈ [0,   2^61]   — non-negative; a + b + 3B stays well below 2^63
+  //
+  // JS reference: a + 3000000000n + b (pure bigint arithmetic, no precision loss)
+  // WASM result:  instantiateAndRunBigInt → bigint (no number cast)
+  // -------------------------------------------------------------------------
+  it("wideAdd over fc.bigInt — sums always match JS reference at any i64 magnitude", async () => {
+    const resolution = makeSingleBlockResolution(WIDE_ADD_SRC);
+    const wasmBytes = await wasmBackend().emit(resolution);
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.bigInt({ min: 2n ** 52n, max: 2n ** 61n }),
+        fc.bigInt({ min: 0n, max: 2n ** 61n }),
+        async (a, b) => {
+          const wasmResult = (
+            await instantiateAndRunBigInt(wasmBytes, "__wasm_export_wideAdd", [a, b])
+          ).result;
+          expect(wasmResult).toEqual(a + 3000000000n + b);
+        },
+      ),
+      { numRuns: 30 },
     );
   });
 });

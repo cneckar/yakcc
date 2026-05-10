@@ -92,6 +92,77 @@ surface the conflict to the user. Do not proceed by relaxing a cornerstone
   code shows the plan is wrong about *what* we are building, that is a
   replanning conversation. If the code shows the plan is wrong about *how*,
   the code wins and you record the rationale in the decision log.
+- **Do not resolve a closer/parity-WI gap by filtering the corpus.** When
+  a closer or parity harness surfaces a gap between corpus shape and
+  consumer capability (e.g. atoms unsupported by the wasm-backend, atoms
+  missing source bytes, atoms below an arbitrary threshold), the routing
+  default is *fix the consumer, not filter the corpus*. Filtering hides the
+  signal the closer was designed to surface. See `DEC-CLOSER-CONSUMER-FIX-001`
+  in `MASTER_PLAN.md` for the project-wide policy and precedents (#36,
+  #125). Any future closer/parity WI MUST cite this DEC in its
+  pre-assigned-decision section. Operator approval required for genuine
+  corpus-filter exceptions.
+
+## Before you open a PR — branch hygiene is load-bearing
+
+A recurring pattern has burned hours of orchestrator time: a branch authored
+before sibling work landed, "rebased" onto current main with conflicts
+resolved by `--ours` for files outside the WI's scope, opens a PR that
+silently deletes other sisters' landed work. The PR appears clean
+(base SHA = current main) but its diff vs main shows large deletions in
+files the WI never legitimately touched. Reviewers and orchestrators have
+caught these post-hoc; the cost compounds with sister parallelism.
+
+Every agent must run this check before clicking "ready for review":
+
+```
+git fetch origin main
+git diff --stat origin/main..HEAD | tail -1
+```
+
+Or use the helper: `bash scripts/pre-pr-check.sh`.
+
+**Two PR-stoppers:**
+
+1. The total deletion count exceeds your scope manifest's expected deletions
+   by more than ~10%.
+2. Files outside your scope manifest appear in the diff at all (additions
+   OR deletions).
+
+Either condition means the branch is in stale-rebase damage. Recover via:
+
+**Option A (recommended) — cherry-pick onto fresh:**
+
+```
+git fetch origin main
+git checkout -b feature/<your-wi>-redo origin/main
+git cherry-pick <your commits in order>
+# Resolve conflicts by INTEGRATING both sides; never --ours for files
+# outside scope.
+```
+
+**Option B — proper rebase:**
+
+```
+git fetch origin main
+git rebase origin/main
+# For files outside scope manifest, take --theirs (origin/main wins).
+```
+
+After either path, re-run the diff-stat check. Only when the diff matches
+your scope manifest do you run `pnpm install && pnpm -r build && pnpm -r test`
+locally. If both gates pass, open the PR.
+
+**Cross-track damage is non-negotiable.** A PR that deletes another sister's
+landed work — even if the rebase mechanically "resolved" the conflict — is
+a regression and will be rejected at reviewer time. The sister who authored
+the destroyed work has not approved its deletion; you do not have authority
+to remove it. The fact that your branch's history pre-dates the deletion
+target is not a defense.
+
+If you find yourself with `--force-with-lease` queued against a branch that
+has had multiple sibling tracks land underneath it, the answer is almost
+always "cherry-pick onto fresh," not "force the rebase through."
 
 ## Before you open a PR — branch hygiene is load-bearing
 

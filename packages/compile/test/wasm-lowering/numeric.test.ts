@@ -12,7 +12,7 @@
  * Domain coverage:
  *   i32 (4 substrates): arithmetic add/sub, bitwise ops, mixed compound, integer-divide
  *   i64 (3 substrates): wide-range add near i64 max, multiplication, bitwise ops
- *   f64 (3 substrates): division, Math.sqrt, Math.sin
+ *   f64 (4 substrates): division, Math.sqrt, Math.sin, f64 modulo with negative dividends
  *
  * f64 tolerance:
  *   f64 results are compared with an epsilon of 1e-9 (relative tolerance) or
@@ -515,6 +515,164 @@ describe("numeric lowering — f64 domain", () => {
       ),
       { numRuns: 25 },
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Substrate f64-4: f64 modulo with negative dividends
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-F64-MOD-001 (see visitor.ts)
+  // @title f64 modulo coverage — negative dividend and all sign quadrants
+  // @status accepted
+  // @rationale
+  //   The visitor emits f64 `%` as `x - trunc(x/y)*y` (truncated-division remainder),
+  //   matching the JS `%` operator semantics exactly. Prior to this substrate, the
+  //   lowering had ZERO test coverage. These tests cover all four sign quadrants of
+  //   (dividend, divisor) with emphasis on negative-dividend cases which exercise the
+  //   sign-preservation behaviour of the f64.trunc opcode (0x9d). Both explicit
+  //   deterministic cases (f64-4-mod-explicit) and a broad property test
+  //   (f64-4-mod-property) are provided to pin the lowering against regression.
+  // ---------------------------------------------------------------------------
+
+  // Substrate f64-4-mod-explicit: deterministic sign-quadrant coverage
+  //
+  // Eight deterministic cases spanning all four (dividend, divisor) sign quadrants
+  // with emphasis on negative-dividend inputs. Expected values computed as:
+  //   a % b = a - Math.trunc(a/b) * b   (JS `%` matches WASM lowering)
+  //
+  // Cases:
+  //   1. (-5.5,  2.0) → -1.5   negative dividend, positive divisor
+  //   2. (-7.0,  3.0) → -1.0   negative dividend, positive divisor (integer)
+  //   3. (-10.5, -2.5) → -0.5  negative dividend, negative divisor
+  //   4. (-3.0, -2.0) → -1.0   negative dividend, negative divisor (integer)
+  //   5. ( 5.5,  2.0) →  1.5   positive both (control)
+  //   6. ( 5.5, -2.0) →  1.5   positive dividend, negative divisor
+  //   7. ( 0.0,  3.0) →  0.0   zero dividend
+  //   8. (-9.0,  4.0) → -1.0   negative dividend, positive divisor (additional)
+  it("f64-4-mod-explicit: modOp(a, b) — 8 deterministic sign-quadrant cases including ≥4 negative dividends", async () => {
+    const src = "export function modOp(a: number, b: number): number { return a % b; }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    // `a % b` with no bitops or large literals → ambiguous → defaults to f64 (rule 8).
+    // Domain f64 routes `%` to the special f64-modulo emitter (DEC-V1-WAVE-3-WASM-LOWER-F64-MOD-001).
+    expect(domain).toBe("f64");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+
+    const cases: Array<[number, number, number]> = [
+      // [a, b, expected]
+      [-5.5, 2.0, -1.5],   // negative dividend, positive divisor
+      [-7.0, 3.0, -1.0],   // negative dividend, positive divisor (integer result)
+      [-10.5, -2.5, -0.5], // negative both
+      [-3.0, -2.0, -1.0],  // negative both (integer result)
+      [5.5, 2.0, 1.5],     // positive both (control case)
+      [5.5, -2.0, 1.5],    // positive dividend, negative divisor
+      [0.0, 3.0, 0.0],     // zero dividend
+      [-9.0, 4.0, -1.0],   // additional negative dividend
+    ];
+
+    for (const [a, b, expected] of cases) {
+      const wasmResult = Number(await runWasm(wasmBytes, [a, b]));
+      // Use exact equality for all cases here — these are clean IEEE 754 values
+      // that produce exact results under truncated-division remainder.
+      expect(wasmResult).toBe(expected);
+    }
+  });
+
+  // Substrate f64-4-mod-property: fast-check symmetric signed range
+  //
+  // Uses a symmetric signed range to guarantee negative dividend inputs appear
+  // in the random sample. Divisor is filtered to non-zero to avoid NaN/Infinity.
+  // Result is compared with f64Close (epsilon-based) consistent with f64-1..3.
+  it("f64-4-mod-property: modOp(a, b) — property: a % b matches JS reference for 30+ signed float pairs", async () => {
+    const src = "export function modOp(a: number, b: number): number { return a % b; }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    expect(domain).toBe("f64");
+    // Pre-compile once; instantiate a single instance and reuse the fn reference
+    // across all 30 property runs so we pay compilation cost once, not 30 times.
+    const module = new WebAssembly.Module(wasmBytes);
+    const instance = new WebAssembly.Instance(module, {});
+    const fn = instance.exports["fn"] as (a: number, b: number) => number;
+
+    await fc.assert(
+      fc.asyncProperty(
+        // Symmetric range guarantees negative dividends in the sample
+        fc.double({ min: -1e6, max: 1e6, noNaN: true }),
+        // Non-zero divisor: filter out exact 0 and values very close to 0
+        fc.double({ min: -1e6, max: 1e6, noNaN: true }).filter((b) => Math.abs(b) > 1e-10),
+        (a, b) => {
+          const tsRef = a % b;
+          const wasmResult = Number(fn(a, b));
+          expect(f64Close(wasmResult, tsRef)).toBe(true);
+        },
+      ),
+      { numRuns: 30 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: WI-V1W3-WASM-LOWER-08 — unary-negation multi-byte SLEB128
+//
+// Pre-fix: splice(length-2, 0, ...) assumed 1-byte SLEB128, corrupting the stream for
+// operands ≥ 64. Constant 999 encodes to [0xe7, 0x07] (2 bytes); the splice landed
+// mid-constant, misplacing 0xe7 at offset 76 of the module instead of the intended opcode.
+// Fix: emit zero-const BEFORE lowerExpression(operand). Ref: DEC-V1-WAVE-3-WASM-LOWER-NEGATE-FIX-001.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-NEGATE-SLEB128-REGRESSION-001
+// @title Regression strategy: execute multi-byte-SLEB128 negation + assert byte ordering
+// @status accepted
+// @rationale
+//   A future refactor re-introducing splice-after would produce a malformed WASM module
+//   or an incorrect execution result. The two-pronged test (execute result + byte-sequence
+//   order) catches both: the result check catches incorrect execution, and the byte check
+//   catches opcode-stream corruption even if the wrong result happens to pass by coincidence.
+//   Always emit zero-const BEFORE lowerExpression(operand) — never splice-after.
+// ---------------------------------------------------------------------------
+describe("unary-negation regression — multi-byte SLEB128 (WI-V1W3-WASM-LOWER-08)", () => {
+  // 999 encodes to 2-byte SLEB128 [0xe7, 0x07]. The pre-fix splice(length-2, 0, ...)
+  // assumed a 1-byte SLEB128 operand; for 999 it would corrupt the opcode stream.
+  it("i32: -999 via `| 0` domain hint evaluates to -999", async () => {
+    // | 0 forces i32 domain; unary - sees literal 999 as its direct operand (2-byte SLEB128)
+    const src = "export function negBig(): number { return -999 | 0; }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    expect(domain).toBe("i32");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+    const result = await runWasm(wasmBytes, []);
+    expect(Number(result)).toBe(-999);
+  });
+
+  // Byte-level check: i32.const 0 (0x41 0x00) must appear immediately before
+  // i32.const 999 (0x41 0xe7 0x07) in the function body. Splice-based re-introduction
+  // would either omit the leading zero or land it after the constant bytes.
+  it("i32 byte-sequence: i32.const 0 (0x41 0x00) precedes i32.const 999 (0x41 0xe7 0x07) in body", () => {
+    const src = "export function negBig(): number { return -999 | 0; }";
+    const visitor = new LoweringVisitor();
+    const { wasmFn } = visitor.lower(src);
+    const body = wasmFn.body;
+
+    // Locate i32.const 999: opcode 0x41 followed by SLEB128 bytes 0xe7 0x07
+    let idx = -1;
+    for (let i = 0; i <= body.length - 3; i++) {
+      if (body[i] === 0x41 && body[i + 1] === 0xe7 && body[i + 2] === 0x07) {
+        idx = i;
+        break;
+      }
+    }
+    expect(idx).toBeGreaterThan(1); // must be present and have ≥2 bytes before it
+    // The 2 bytes immediately before i32.const 999 must be i32.const 0 (0x41 0x00)
+    expect(body[idx - 2]).toBe(0x41); // i32.const opcode
+    expect(body[idx - 1]).toBe(0x00); // zero value in SLEB128
+  });
+
+  // i64 domain: 3000000000 > 2^31-1 forces i64; negate path uses i64.const 0 + i64.sub.
+  // The large operand encodes to ≥5 SLEB128 bytes — the same splice-length assumption
+  // would corrupt the i64 path as well.
+  it("i64: -(a + 3000000000) evaluates correctly for i64 negation path", async () => {
+    const src = "export function negBigI64(a: number): number { return -(a + 3000000000); }";
+    const { wasmBytes, domain } = lowerToWasm(src);
+    expect(domain).toBe("i64");
+    expect(() => new WebAssembly.Module(wasmBytes)).not.toThrow();
+    // -(0n + 3000000000n) = -3000000000n
+    const result = await runWasm(wasmBytes, [0n]);
+    expect(result).toBe(-3000000000n);
   });
 });
 

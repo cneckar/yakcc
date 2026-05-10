@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HOOK-BASE-001
 // title: Extract @yakcc/hooks-base: shared types and logic for IDE hook packages
 // status: decided (WI-V1W2-HOOKS-BASE)
@@ -101,16 +102,21 @@ export interface HookOptions {
 // ---------------------------------------------------------------------------
 
 /**
+ * Shape returned by buildIntentCardQuery() — the IntentQuery card fields derived from an EmissionContext.
+ *
+ * Named to give the return type a single-token representation; the static intent extractor uses the
+ * function's return-type annotation as the behavior fallback when no JSDoc summary is present in the
+ * leaf source. A named type avoids a multi-line object literal in that fallback string.
+ */
+export type IntentCardQuery = { behavior: string; inputs: never[]; outputs: never[] };
+
+/**
  * Build the behavior string for the intent query passed to findCandidatesByIntent().
  *
  * Concatenates intent and sourceContext when the latter is present, matching
  * the query construction that was previously inlined in all three consumer hooks.
  */
-export function buildIntentCardQuery(ctx: EmissionContext): {
-  behavior: string;
-  inputs: never[];
-  outputs: never[];
-} {
+export function buildIntentCardQuery(ctx: EmissionContext): IntentCardQuery {
   const behavior = ctx.sourceContext ? `${ctx.intent} ${ctx.sourceContext}` : ctx.intent;
   return { behavior, inputs: [], outputs: [] };
 }

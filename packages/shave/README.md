@@ -176,15 +176,11 @@ for (const atom of result.atoms) {
 await registry.close();
 ```
 
-## Cross-references
+## Related packages
 
-- `@yakcc/registry` — `ShaveRegistryView` is a structural subset of `Registry`
-- `@yakcc/contracts` — `BlockMerkleRoot`, `SpecHash`, `CanonicalAstHash`
-- `DEC-CONTINUOUS-SHAVE-022` — public API entry-point design decisions
-- `DEC-INTENT-STRATEGY-001` — static vs LLM strategy axis
-- `DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001` — per-leaf extractIntent for multi-leaf trees (WI-031)
-- `DEC-REGISTRY-PARENT-BLOCK-004` — postorder lineage threading in `shave()`
-- `DEC-SHAVE-SEED-001` — `seedIntentCache` design constraints
+- `@yakcc/registry` — registry interface consumed by `shave()` and `universalize()`
+- `@yakcc/contracts` — `BlockMerkleRoot`, `SpecHash`, `CanonicalAstHash` types
+- `@yakcc/ir` — `validateStrictSubset()` used by the atom-test predicate
 
 ## License
 

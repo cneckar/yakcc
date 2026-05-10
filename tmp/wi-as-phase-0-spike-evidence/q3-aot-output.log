@@ -1,0 +1,5 @@
+=== Q3 AOT compile ===
+date: Thu May  7 08:29:54 PM UTC 2026
+wasmtime: wasmtime 31.0.0 (7a9be587f 2025-03-20)
+
+--- wasmtime compile (AOT) ---

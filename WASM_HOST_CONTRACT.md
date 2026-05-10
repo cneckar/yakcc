@@ -1,4 +1,4 @@
-# WASM_HOST_CONTRACT.md — v1 Wave-2 WASM Host Interface Contract
+# WASM_HOST_CONTRACT.md — v1 Wave-3.1 WASM Host Interface Contract
 
 > The interface specification for the in-process host runtime that mediates
 > every yakcc-compiled WebAssembly module's interaction with the outside world.
@@ -102,7 +102,20 @@ Runtime version negotiation is a wave-3 surface (see §11).
 
 A module emitted by `compileToWasm` imports exactly the following symbols from
 the `yakcc_host` module namespace. The host's `importObject` MUST supply all
-five; supplying additional symbols under `yakcc_host` is permitted and ignored.
+twelve; supplying additional symbols under `yakcc_host` is permitted and ignored.
+
+Wave-2 imports (§3.1–3.5): `memory`, `host_log`, `host_alloc`, `host_free`,
+`host_panic` — present in every module.
+
+Wave-3 string imports (§3.6–3.10): `host_string_length`, `host_string_indexof`,
+`host_string_slice`, `host_string_concat`, `host_string_eq` — added by
+WI-V1W3-WASM-LOWER-05. Present in string-substrate modules (those whose compiled
+function has at least one `string` parameter or a `string` return type).
+
+Wave-3.1 codepoint iteration imports (§3.11–3.12): `host_string_codepoint_at`,
+`host_string_codepoint_next_offset` — added by WI-V1W3-WASM-LOWER-08 followup
+(closes #82). Present in control-flow modules that use `for (const ch of s)` or
+`switch` with string cases (`usesForOfString === true || usesStringSwitch === true`).
 
 ### 3.1 `memory` (memory import)
 
@@ -238,6 +251,236 @@ instruction (which traps). The host call itself MUST throw — returning from
 
 **host_panic MUST throw.** The return from `host_panic` is unreachable. Any
 host that returns normally from `host_panic` is non-conforming.
+
+### 3.6 `host_string_length` (UTF-16 code-unit count)
+
+```
+import: yakcc_host / host_string_length
+type:   (ptr: i32, len_bytes: i32) -> (i32)
+```
+
+The WASM module calls `host_string_length(ptr, len_bytes)` to obtain the
+JavaScript `string.length` value (UTF-16 code-unit count) for the UTF-8 string
+stored at `[ptr, ptr + len_bytes)` in linear memory.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + len_bytes <= 65536`
+- The bytes at `[ptr, ptr + len_bytes)` are valid UTF-8
+
+**Host behavior:**
+1. Read `len_bytes` bytes from the memory backing buffer starting at `ptr`.
+2. Decode as UTF-8 (replacement policy: ill-formed sequences → U+FFFD).
+3. Return `str.length` (UTF-16 code-unit count, not Unicode code-point count).
+
+**Rationale:** JavaScript `.length` returns UTF-16 code units, so surrogate pairs
+count as 2. To match TypeScript source semantics exactly, the host returns the JS
+`.length` value, not the byte count or code-point count (see `DEC-V1-WAVE-3-WASM-LOWER-STR-001`).
+
+**Return value range:** `[0, 65536)` — bounded by the linear-memory size.
+
+### 3.7 `host_string_indexof` (first-occurrence index)
+
+```
+import: yakcc_host / host_string_indexof
+type:   (h_ptr: i32, h_len: i32, n_ptr: i32, n_len: i32) -> (i32)
+```
+
+The WASM module calls `host_string_indexof(h_ptr, h_len, n_ptr, n_len)` to find
+the first occurrence of the needle string `[n_ptr, n_ptr+n_len)` within the
+haystack string `[h_ptr, h_ptr+h_len)`.
+
+**Preconditions (caller/module must ensure):**
+- `h_ptr + h_len <= 65536`
+- `n_ptr + n_len <= 65536`
+- Both byte ranges contain valid UTF-8
+
+**Host behavior:**
+1. Decode both byte ranges as UTF-8 strings (replacement policy for ill-formed sequences).
+2. Return `haystack.indexOf(needle)` — the UTF-16 code-unit index of the first
+   occurrence, or `-1` if not found.
+
+**Return value:** Signed i32. `-1` is `0xFFFFFFFF` in two's-complement, which
+is what the WASM module reads via `i32.load` after the call.
+
+**Rationale:** Char-index (UTF-16 code-unit offset) semantics match JavaScript
+and are consistent with `host_string_slice` arguments (see
+`DEC-V1-WAVE-3-WASM-LOWER-STR-INDEXOF-001`).
+
+### 3.8 `host_string_slice` (substring extraction)
+
+```
+import: yakcc_host / host_string_slice
+type:   (ptr: i32, len_bytes: i32, start: i32, end: i32, out_ptr: i32) -> ()
+```
+
+The WASM module calls `host_string_slice(ptr, len_bytes, start, end, out_ptr)`
+to extract the substring `s.slice(start, end)` and write the result at `out_ptr`.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + len_bytes <= 65536`
+- `out_ptr + 8 <= 65536` (out_ptr must have 8 bytes: two i32 fields)
+- The bytes at `[ptr, ptr + len_bytes)` are valid UTF-8
+
+**Host behavior:**
+1. Decode the UTF-8 bytes into a JS string `s`.
+2. Compute `result = s.slice(start, end)` (JS semantics: out-of-range indices are
+   clamped; negative indices count from the end).
+3. Call `host_alloc(result_byte_length)` to obtain `new_ptr`.
+4. Write the UTF-8 encoding of `result` into `[new_ptr, new_ptr + result_byte_length)`.
+5. Write `new_ptr` as little-endian i32 at `[out_ptr, out_ptr+4)`.
+6. Write `result_byte_length` as little-endian i32 at `[out_ptr+4, out_ptr+8)`.
+
+**Rationale:** WASM MVP functions return at most one value. String results need
+`(ptr, len)` — two i32 values. The `out_ptr` pattern is the standard C/WASM
+out-parameter idiom and requires no engine extensions (see
+`DEC-V1-WAVE-3-WASM-LOWER-STR-OUT-PTR-001`).
+
+**Two-argument form (`str-slice2`):** called with explicit `start` and `end`.  
+**One-argument form (`str-slice1`):** `end` is supplied as `Number.MAX_SAFE_INTEGER`
+(indicating "to end of string").
+
+### 3.9 `host_string_concat` (string concatenation)
+
+```
+import: yakcc_host / host_string_concat
+type:   (p1: i32, l1: i32, p2: i32, l2: i32, out_ptr: i32) -> ()
+```
+
+The WASM module calls `host_string_concat(p1, l1, p2, l2, out_ptr)` to
+concatenate two UTF-8 strings and write the result at `out_ptr`.
+
+**Preconditions (caller/module must ensure):**
+- `p1 + l1 <= 65536`, `p2 + l2 <= 65536`
+- `out_ptr + 8 <= 65536`
+- Both byte ranges contain valid UTF-8
+
+**Host behavior:**
+1. Decode both UTF-8 byte ranges into JS strings `s1` and `s2`.
+2. Compute `result = s1 + s2`.
+3. Call `host_alloc(result_byte_length)` to obtain `new_ptr`.
+4. Write the UTF-8 encoding of `result` into `[new_ptr, new_ptr + result_byte_length)`.
+5. Write `new_ptr` as little-endian i32 at `[out_ptr, out_ptr+4)`.
+6. Write `result_byte_length` as little-endian i32 at `[out_ptr+4, out_ptr+8)`.
+
+**Out_ptr format:** same as `host_string_slice` (§3.8) — 8 bytes, little-endian i32
+pair `(new_ptr, new_len_bytes)`.
+
+**Template literals:** A template literal with string parts uses this import
+iteratively. For `` `${prefix}${s}${suffix}` `` the module calls `host_string_concat`
+twice: once to prepend the prefix (with the prefix data segment pointer from the
+WASM data section) and once to append the suffix. See `str-template-parts` in
+`emitStringModule` (`wasm-backend.ts`).
+
+### 3.10 `host_string_eq` (equality test)
+
+```
+import: yakcc_host / host_string_eq
+type:   (p1: i32, l1: i32, p2: i32, l2: i32) -> (i32)
+```
+
+The WASM module calls `host_string_eq(p1, l1, p2, l2)` to test whether the two
+UTF-8 strings at `[p1, p1+l1)` and `[p2, p2+l2)` are equal under JavaScript
+`===` semantics.
+
+**Preconditions (caller/module must ensure):**
+- `p1 + l1 <= 65536`, `p2 + l2 <= 65536`
+- Both byte ranges contain valid UTF-8
+
+**Host behavior:**
+1. Decode both UTF-8 byte ranges into JS strings `s1` and `s2`.
+2. Return `s1 === s2 ? 1 : 0` as i32.
+
+**Usage in `str-neq`:** The `!==` operator reuses `host_string_eq` and negates
+the result with `i32.eqz` (opcode `0x45`). No separate `host_string_neq` import
+is needed.
+
+**Rationale:** Host-mediated equality avoids emitting an inline byte-compare loop
+at every `===` site, keeps the emitted module size small, and handles surrogate
+pairs correctly without a UTF-16 decode loop in WASM (see
+`DEC-V1-WAVE-3-WASM-LOWER-STR-EQ-001`).
+
+---
+
+### 3.11 `host_string_codepoint_at` (Unicode code point at byte offset)
+
+```
+import: yakcc_host / host_string_codepoint_at
+type:   (ptr: i32, lenBytes: i32, byteOffset: i32) -> (i32)
+```
+
+The WASM module calls `host_string_codepoint_at(ptr, lenBytes, byteOffset)` to
+retrieve the Unicode code point (scalar value) of the character whose UTF-8
+encoding starts at `byteOffset` within the string at `[ptr, ptr+lenBytes)`.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + lenBytes <= 65536`
+- `byteOffset >= 0`
+- The byte range `[ptr, ptr+lenBytes)` contains valid UTF-8.
+
+**Host behavior:**
+1. If `byteOffset >= lenBytes`, return **-1** (end-of-string sentinel).
+2. Read `lenBytes` bytes from linear memory starting at `ptr`.
+3. Decode the UTF-8 bytes to a JS string via `TextDecoder`.
+4. Walk the JS string's code points (using `for...of`) to find the code point
+   that begins at `byteOffset` in the UTF-8 encoding.
+5. Return the code point value (Unicode scalar value) as a signed i32.
+   For BMP characters, this is in [0, 0xFFFF]. For astral-plane characters
+   (e.g. emoji), this is in [0x10000, 0x10FFFF].
+
+**Sentinel:** Return value **-1** means "no code point at this offset"
+(byteOffset is past end). The WASM caller uses this to break out of the
+iteration loop.
+
+**Usage pattern in `for (const ch of s)`:**
+```
+// sentinel check:
+cp = host_string_codepoint_at(ptr, len, byteOffset)
+if cp == -1: break
+// loop variable:
+ch = host_string_codepoint_at(ptr, len, byteOffset)  // second call to bind ch
+// advance:
+byteOffset = host_string_codepoint_next_offset(ptr, len, byteOffset)
+```
+
+**Decision:** `DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001` — option (a) two scalar
+imports was chosen over (b) i64-packed result or (c) out-params. See `wasm-host.ts`.
+
+---
+
+### 3.12 `host_string_codepoint_next_offset` (next UTF-8 code point offset)
+
+```
+import: yakcc_host / host_string_codepoint_next_offset
+type:   (ptr: i32, lenBytes: i32, byteOffset: i32) -> (i32)
+```
+
+The WASM module calls `host_string_codepoint_next_offset(ptr, lenBytes, byteOffset)`
+to advance the byte cursor past the UTF-8 character starting at `byteOffset`.
+
+**Preconditions (caller/module must ensure):**
+- `ptr + lenBytes <= 65536`
+- `byteOffset >= 0`
+- The byte range `[ptr, ptr+lenBytes)` contains valid UTF-8.
+
+**Host behavior:**
+1. If `byteOffset >= lenBytes`, return **-1** (end-of-string sentinel).
+2. Read the first byte of the UTF-8 sequence at `byteOffset` to determine the
+   sequence length:
+   - `firstByte < 0x80` → 1 byte (ASCII)
+   - `firstByte < 0xE0` → 2 bytes
+   - `firstByte < 0xF0` → 3 bytes
+   - otherwise          → 4 bytes (astral-plane: emoji, mathematical symbols)
+3. Compute `nextOffset = byteOffset + sequenceLength`.
+4. If `nextOffset >= lenBytes`, return **-1** (this was the last character;
+   the WASM loop body will run for the current character but must not advance
+   further). The WASM caller MUST emit a sentinel check on the return value
+   AFTER the loop body (`br_if` on -1 comparison).
+5. Otherwise return `nextOffset`.
+
+**Sentinel:** Return value **-1** means "this was the last character; loop ends
+after processing the current character's loop body."
+
+**Decision:** `DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001`
 
 ---
 
@@ -493,8 +736,8 @@ Any host implementation claiming conformance with this document MUST pass the
 The conformance fixture covers (minimum required tests, numbered per the
 fixture file):
 
-1. `createHost()` exposes the documented `importObject` shape with all 5 keys
-   under `yakcc_host`.
+1. `createHost()` exposes the documented `importObject` shape with all 10 keys
+   under `yakcc_host` (5 wave-2 imports + 5 wave-3 string imports).
 2. `__wasm_export_add(2, 3) === 5` via `instantiateAndRun`.
 3. `__wasm_export_string_len` round-trips a UTF-8 string through `host_alloc`
    and length-passback.
@@ -507,11 +750,28 @@ fixture file):
 8. Acceptance: ts-backend parity for the `add` substrate — ≥ 5 input pairs
    produce identical results from WASM + reference implementation.
 
+### Additional conformance tests (wave-3 string imports, WI-V1W3-WASM-LOWER-05)
+
+The string substrate tests in `packages/compile/test/wasm-lowering/strings.test.ts`
+extend the conformance surface. A host claiming wave-3 conformance MUST additionally
+pass all six string substrate suites (str-1 through str-6) covering:
+
+9. `host_string_length`: UTF-16 code-unit count matches JS `s.length` for ≥15 inputs.
+10. `host_string_indexof`: char-index matches JS `s.indexOf(needle)` for ≥15 pairs.
+11. `host_string_slice`: two-argument and one-argument slice match JS `s.slice()` semantics.
+12. `host_string_concat`: concatenated result byte-for-byte matches JS `s1 + s2`.
+13. `host_string_eq` / `host_string_neq`: equality results match JS `===` / `!==`.
+14. Template-literal with prefix+suffix matches JS template result for ≥15 inputs.
+
 ### Conformance claim
 
-A host implementation that passes all 8 tests above may claim:
+A host implementation that passes all 8 wave-2 tests above may claim:
 
 > "Conformant with WASM_HOST_CONTRACT.md v1 wave-2"
+
+A host implementation that additionally passes wave-3 tests 9–14 may claim:
+
+> "Conformant with WASM_HOST_CONTRACT.md v1 wave-3 (WI-V1W3-WASM-LOWER-05)"
 
 ---
 
@@ -614,7 +874,388 @@ work item.
 
 ---
 
-## 13. Decision log
+## 13. Acceptance for WI-V1W3-WASM-LOWER-05
+
+This section records the acceptance criteria that close the WI-V1W3-WASM-LOWER-05
+work item (Strings — UTF-8 linear-memory + length, indexOf, slice, concat).
+
+### Required
+
+1. `WASM_HOST_CONTRACT.md` amended with version bump (Wave-2 → Wave-3) and
+   §3.6–3.10 documenting the five new string host imports — this document.
+2. `packages/compile/src/wasm-host.ts` extended with five new host functions:
+   `hostStringLength`, `hostStringIndexof`, `hostStringSlice`, `hostStringConcat`,
+   `hostStringEq` — all registered under `yakcc_host` in `importObject`.
+3. `packages/compile/src/wasm-lowering/visitor.ts` extended with:
+   - `StringShapeMeta` interface (9 shapes: `str-length`, `str-indexof`, `str-slice2`,
+     `str-slice1`, `str-concat`, `str-template-concat`, `str-template-parts`, `str-eq`,
+     `str-neq`).
+   - `detectStringShape(fn)` function that recognises string-substrate functions.
+   - `_lowerStringFunction` method returning a `LoweringResult` with `stringShape`.
+   - String shape detection runs BEFORE wave-2 fast-paths in `_lowerFunction`.
+4. `packages/compile/src/wasm-backend.ts` extended with:
+   - `emitStringModule(shape, fnName)` that builds a full WASM binary with:
+     - 9-type type section (T0–T8 covering all string-import and substrate signatures).
+     - Import section: `memory` + `host_alloc` + 5 string imports with correct type indices.
+     - Function, export, code sections for the substrate function.
+     - Optional data section (for `str-template-parts` with string literals at `DATA_SEG_BASE = 1024`).
+   - `compileToWasm` checks `result.stringShape !== undefined` before the wave-2 path.
+5. `packages/compile/test/wasm-lowering/strings.test.ts` with 6 describe blocks
+   (str-1 through str-6), ≥15 property-based cases each, all passing.
+6. `pnpm --filter @yakcc/compile test` passes (all 163 tests).
+7. `pnpm -r test` passes across all packages.
+8. `pnpm -r build` clean across all packages.
+
+---
+
+## 13.1 Acceptance for WI-V1W3-WASM-LOWER-08 followup (closes #82, closes #83)
+
+Wave-3.1 amendment: adds `host_string_codepoint_at` (§3.11) and
+`host_string_codepoint_next_offset` (§3.12) for correct for-of-string lowering in
+`emitCFStringModule`. Also fixes the dispatch bug where cf-5/cf-7 functions were
+routed to `emitTypeLoweredModule` (4-import section) instead of the extended
+11-import section.
+
+**Decision reference:** `DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001` (in `wasm-host.ts`
+and `wasm-backend.ts`).
+
+### Required
+
+1. `WASM_HOST_CONTRACT.md` amended with version bump (Wave-3 → Wave-3.1) and
+   §3.11–§3.12 documenting the two new codepoint iteration imports — this document.
+2. `packages/compile/src/wasm-host.ts` extended with:
+   - `hostStringCodepointAt(ptr, lenBytes, byteOffset)` — registered as
+     `host_string_codepoint_at` in `importObject`.
+   - `hostStringCodepointNextOffset(ptr, lenBytes, byteOffset)` — registered as
+     `host_string_codepoint_next_offset` in `importObject`.
+3. `packages/compile/src/wasm-backend.ts` extended with:
+   - `buildStringImportSection()` updated: 9 function imports → 11 (adds indices 9, 10).
+   - `emitStringModule()` updated: type section count 9 → 10 (adds T9), substrate funcidx 9 → 11.
+   - `emitCFStringModule(fnName, wasmFn, domain)` — new emitter for cf-5/cf-7 functions.
+   - `compileToWasm` dispatch: `usesForOfString` or `usesStringSwitch` → `emitCFStringModule`.
+4. `packages/compile/src/wasm-lowering/visitor.ts` updated:
+   - `LoweringContext`: removed `stringIterImportIdx`, added `codepointAtImportIdx: 9`,
+     `codepointNextOffsetImportIdx: 10`, `usesForOfString: boolean`, `usesStringSwitch: boolean`.
+   - `LoweringResult`: added `usesForOfString?: boolean`, `usesStringSwitch?: boolean`.
+   - For-of-string lowering: two-call-per-iteration pattern (sentinel check + variable bind).
+5. `packages/compile/src/wasm-host-v2.test.ts` updated: 24 → 26 keys in importObject shape test.
+6. `packages/compile/src/wasm-host.test.ts` extended: conformance tests for both new imports
+   (§9 conformance fixture, Test 9 and Test 10 describe blocks).
+7. `packages/compile/test/wasm-lowering/control-flow.test.ts` cf-5 tests converted from
+   structural-only to runtime tests: 9 cases (cf-5a through cf-5i) using `runCF5` helper
+   with `compileToWasm` + `createHost` + `WebAssembly.instantiate`. Tests verify:
+   - empty string → 0
+   - ASCII strings → correct count
+   - astral-plane codepoints (U+1F600) → count 1 per emoji
+   - mixed BMP + astral
+   - 15-input property-style spot-check against `jsCodePointCount` reference
+   - `LoweringResult.usesForOfString === true`
+8. `pnpm --filter @yakcc/compile test` passes (≥268 tests, excluding 1 pre-existing
+   f64-4-mod-property timeout flake).
+9. `pnpm -r build` clean across all packages.
+
+---
+
+## 14. v2 WASI-shaped Syscall Surface
+
+<!-- @decision DEC-V2-WASM-HOST-CONTRACT-WASI-001
+     @title v2 syscall surface is WASI-preview1-shaped
+     @status accepted
+     @rationale
+       Imports use `host_*` namespace — yakcc owns the namespace, not
+       `wasi_snapshot_preview1`. The host runtime maps `host_*` to the
+       underlying WASI/Node implementation. Yakcc-emitted modules MUST use
+       `host_*` imports. Errno values follow WASI's errno enum verbatim.
+       Ptr-and-length pairs in linear memory are consistent with wave-2/3
+       string convention.
+-->
+
+### 14.1 Overview
+
+The v2 syscall surface adds 14 host imports covering filesystem (8), process
+(3), time (2), and randomness (1) operations. These imports extend the existing
+`yakcc_host` import namespace alongside v1 imports (`host_log`, `host_alloc`,
+`host_free`, `host_panic`) and wave-3 string imports.
+
+**Design rule:** `host_*` is the import namespace; `wasi_snapshot_preview1` is
+not used. The host runtime maps `host_*` to the underlying WASI/Node
+implementation at runtime. This gives yakcc ownership of the syscall surface
+without being tied to a specific WASI snapshot.
+
+**Errno convention:** All errno values follow the WASI preview1 errno enum
+verbatim. Common values:
+
+| Value | Name      | Meaning                              |
+|-------|-----------|--------------------------------------|
+| 0     | SUCCESS   | No error                             |
+| 8     | BADF      | Bad file descriptor                  |
+| 9     | BADMSG    | Bad message                          |
+| 13    | ACCES     | Permission denied                    |
+| 17    | EXIST     | File exists                          |
+| 20    | INVAL     | Invalid argument                     |
+| 27    | ISDIR     | Is a directory                       |
+| 28    | MFILE     | Too many open files                  |
+| 44    | NOENT     | No such file or directory            |
+| 46    | NOSYS     | Function not supported               |
+| 63    | NFILE     | File table overflow                  |
+| 70    | PERM      | Permission denied (operation level)  |
+| 76    | ROFS      | Read-only file system                |
+
+**Memory layout:** pointer-and-length pairs identify byte ranges in linear
+memory (same convention as wave-2/3 strings). Fixed-size output structs use
+little-endian encoding written via `DataView.setUint32` / `setFloat64`.
+
+**Ptr validity:** the caller (WASM module) MUST ensure `ptr + len <= 65536`.
+The host does not validate bounds; violation produces undefined behavior.
+
+**Loud failure at instantiation:** if the host runtime cannot provide a syscall
+import (e.g., running outside Node.js without `node:fs`), `createHost()` MUST
+throw synchronously before yielding a `YakccHost`. Silent deferral to first-call
+failure is non-conforming.
+
+### 14.2 v1/v2 Coexistence
+
+v1 imports (`host_log`, `host_alloc`, `host_free`, `host_panic`) and wave-3
+string imports remain unchanged. v2 imports are additive: a module compiled
+with only v1/wave-3 substrates will not reference v2 imports; they are still
+present in the import object and do not interfere. A module that uses v2 syscall
+imports receives them from the same `yakcc_host` namespace.
+
+**Revised total key count:** 1 (memory) + 4 (v1) + 5 (wave-3) + 14 (v2) = 24.
+
+### 14.3 Filesystem imports (8)
+
+#### `host_fs_open`
+
+```
+import: yakcc_host / host_fs_open
+type:   (path_ptr: i32, path_len: i32, flags: i32, mode_out_fd_ptr: i32) -> (errno: i32)
+```
+
+Open a file at the UTF-8 path `[path_ptr, path_ptr+path_len)`.
+
+- `flags`: bitfield — bit 0 = O_RDONLY (0), bit 1 = O_WRONLY (1), bit 2 = O_RDWR
+  (2). bit 9 = O_CREAT (512), bit 10 = O_TRUNC (1024), bit 11 = O_APPEND (2048).
+- `mode_out_fd_ptr`: i32 pointer where the opened file descriptor (positive i32)
+  is written on SUCCESS as a little-endian i32.
+- Returns 0 (SUCCESS) on success; WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::path_open` (simplified — yakcc uses
+a flat `flags` i32 rather than WASI's split `oflags`/`fs_flags` pair; the host
+maps internally).
+
+#### `host_fs_close`
+
+```
+import: yakcc_host / host_fs_close
+type:   (fd: i32) -> (errno: i32)
+```
+
+Close the file descriptor `fd`. Returns 0 on success, WASI `BADF` (8) if `fd`
+is not a valid open descriptor.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_close`.
+
+#### `host_fs_read`
+
+```
+import: yakcc_host / host_fs_read
+type:   (fd: i32, buf_ptr: i32, buf_len: i32, bytes_read_out_ptr: i32) -> (errno: i32)
+```
+
+Read up to `buf_len` bytes from `fd` into linear memory at `[buf_ptr,
+buf_ptr+buf_len)`. Writes the actual byte count (i32 LE) at `bytes_read_out_ptr`.
+Returns 0 on success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_read` (single iovec equivalent).
+
+#### `host_fs_write`
+
+```
+import: yakcc_host / host_fs_write
+type:   (fd: i32, buf_ptr: i32, buf_len: i32, bytes_written_out_ptr: i32) -> (errno: i32)
+```
+
+Write `buf_len` bytes from linear memory `[buf_ptr, buf_ptr+buf_len)` to `fd`.
+Writes the actual byte count (i32 LE) at `bytes_written_out_ptr`. Returns 0 on
+success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_write` (single iovec equivalent).
+
+#### `host_fs_stat`
+
+```
+import: yakcc_host / host_fs_stat
+type:   (path_ptr: i32, path_len: i32, stat_out_ptr: i32) -> (errno: i32)
+```
+
+Stat the file at path `[path_ptr, path_ptr+path_len)`. Writes a 16-byte struct
+at `stat_out_ptr`:
+
+| Offset | Size | Field      | Encoding       |
+|--------|------|------------|----------------|
+| 0      | 8    | `mtime_ns` | i64 LE (ns)    |
+| 8      | 4    | `size`     | i32 LE (bytes) |
+| 12     | 4    | `filetype` | i32 LE (WASI)  |
+
+`filetype` values: 0 = unknown, 1 = block_device, 2 = char_device, 3 = dir,
+4 = regular_file, 5 = socket_dgram, 6 = socket_stream, 7 = symbolic_link.
+
+**WASI mapping:** `wasi_snapshot_preview1::path_filestat_get`.
+
+#### `host_fs_readdir`
+
+```
+import: yakcc_host / host_fs_readdir
+type:   (fd: i32, buf_ptr: i32, buf_len: i32, entries_out_ptr: i32) -> (errno: i32)
+```
+
+Read directory entries from `fd` into linear memory at `[buf_ptr,
+buf_ptr+buf_len)` in packed format. Writes the number of entries (i32 LE) at
+`entries_out_ptr`. Each entry is a null-terminated UTF-8 name with a preceding
+i32 LE length. Returns 0 on success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::fd_readdir` (simplified format).
+
+#### `host_fs_mkdir`
+
+```
+import: yakcc_host / host_fs_mkdir
+type:   (path_ptr: i32, path_len: i32, mode: i32) -> (errno: i32)
+```
+
+Create a directory at path `[path_ptr, path_ptr+path_len)`. `mode` is the
+POSIX creation mode (e.g. `0o755`). Returns 0 on success, WASI errno on
+failure (`EXIST` if already exists, `NOENT` if parent missing).
+
+**WASI mapping:** `wasi_snapshot_preview1::path_create_directory`.
+
+#### `host_fs_unlink`
+
+```
+import: yakcc_host / host_fs_unlink
+type:   (path_ptr: i32, path_len: i32) -> (errno: i32)
+```
+
+Unlink (delete) the file at path `[path_ptr, path_ptr+path_len)`. Returns 0 on
+success, `NOENT` (44) if not found, `ISDIR` (27) if path is a directory.
+
+**WASI mapping:** `wasi_snapshot_preview1::path_unlink_file`.
+
+### 14.4 Process imports (3)
+
+#### `host_proc_argv`
+
+```
+import: yakcc_host / host_proc_argv
+type:   (buf_ptr: i32, buf_len: i32, bytes_written_out_ptr: i32) -> (errno: i32)
+```
+
+Write the process argv into linear memory at `[buf_ptr, buf_ptr+buf_len)` as
+a sequence of null-terminated UTF-8 strings. Writes the total byte count (i32
+LE) at `bytes_written_out_ptr`. Returns 0 on success, WASI errno on failure.
+
+**WASI mapping:** `wasi_snapshot_preview1::args_get`.
+
+#### `host_proc_env_get`
+
+```
+import: yakcc_host / host_proc_env_get
+type:   (name_ptr: i32, name_len: i32, buf_ptr: i32, buf_len: i32, bytes_written_out_ptr: i32) -> (errno: i32)
+```
+
+Look up the environment variable named by `[name_ptr, name_ptr+name_len)`. If
+found, write the UTF-8 value into `[buf_ptr, buf_ptr+buf_len)` and write the
+byte count (i32 LE) at `bytes_written_out_ptr`. Returns 0 on success, `NOENT`
+(44) if the variable is not set, `INVAL` (20) if `buf_len` is too small.
+
+**WASI mapping:** `wasi_snapshot_preview1::environ_get` (single-variable form;
+yakcc simplifies WASI's bulk-copy model to a per-variable lookup).
+
+#### `host_proc_exit`
+
+```
+import: yakcc_host / host_proc_exit
+type:   (code: i32) -> [[noreturn]]
+```
+
+Terminate the process with exit code `code`. Does not return. In the reference
+Node.js implementation this calls `process.exit(code)` (or invokes a registered
+exit hook during testing). The WASM module MUST NOT execute any instruction
+after this import call.
+
+**WASI mapping:** `wasi_snapshot_preview1::proc_exit`.
+
+### 14.5 Time imports (2)
+
+#### `host_time_now_unix_ms`
+
+```
+import: yakcc_host / host_time_now_unix_ms
+type:   (out_ptr: i32) -> (errno: i32)
+```
+
+Write the current wall-clock time as milliseconds since the Unix epoch (i64 LE)
+at `out_ptr`. The value matches `Date.now()` within 1 millisecond. Returns 0
+on success.
+
+**WASI mapping:** `wasi_snapshot_preview1::clock_time_get` with
+`CLOCK_REALTIME`, result scaled from nanoseconds to milliseconds.
+
+#### `host_time_monotonic_ns`
+
+```
+import: yakcc_host / host_time_monotonic_ns
+type:   (out_ptr: i32) -> (errno: i32)
+```
+
+Write the current monotonic clock value in nanoseconds (i64 LE) at `out_ptr`.
+The value is derived from `performance.now()` scaled to nanoseconds and is
+strictly monotonically increasing across successive calls within a host
+instance. Returns 0 on success.
+
+**WASI mapping:** `wasi_snapshot_preview1::clock_time_get` with
+`CLOCK_MONOTONIC`.
+
+### 14.6 Randomness import (1)
+
+#### `host_random_bytes`
+
+```
+import: yakcc_host / host_random_bytes
+type:   (buf_ptr: i32, buf_len: i32) -> (errno: i32)
+```
+
+Fill linear memory `[buf_ptr, buf_ptr+buf_len)` with `buf_len` cryptographically
+random bytes. Uses `node:crypto`'s `randomFillSync`. Returns 0 on success.
+
+**WASI mapping:** `wasi_snapshot_preview1::random_get`.
+
+### 14.7 v2 Conformance
+
+A host claiming v2 conformance MUST pass all tests in
+`packages/compile/src/wasm-host-v2.test.ts`:
+
+- ≥4 fs happy-path tests (open+read+close round-trip; write+read round-trip;
+  mkdir+unlink; stat returns plausible mtime/size).
+- ≥2 fs negative-path tests (open non-existent → ENOENT; read closed fd → EBADF).
+- ≥3 process tests (argv length matches; env_get returns expected env var; exit
+  invokes a registered hook recording the code without process-killing).
+- ≥2 time tests (now_unix_ms within 1s of `Date.now()`; monotonic_ns is
+  increasing across two calls).
+- ≥1 randomness test (random_bytes(N) yields non-zero entropy; two calls return
+  different byte sequences).
+- ≥1 importObject shape test (all 24 keys: 1 memory + 4 v1 + 5 wave-3 + 14 v2).
+- ≥1 integration/parity test: a tiny WASM module that imports `host_fs_read` and
+  `host_fs_write` round-trips a temp file through `host_fs_*`.
+
+A host claiming v2 conformance may add to its claim:
+
+> "Conformant with WASM_HOST_CONTRACT.md v2 syscall surface (WI-WASM-HOST-CONTRACT-V2)"
+
+---
+
+## 15. Decision log
 
 ### DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001
 

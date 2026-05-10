@@ -50,14 +50,70 @@
  * here — L3 spec explicitly defers them (test 7 falls through to NovelGlueEntry).
  * The node: prefix and workspace prefix are defined as named constants to avoid
  * hardcoding the same string at multiple sites (forbidden shortcut in L3 scope).
+ *
+ * @decision DEC-V2-SLICER-SEARCH-001
+ * title: Glue-aware slicer search algorithm (L2)
+ * status: decided
+ * rationale:
+ *   Under shaveMode:'glue-aware', the slicer applies the IR strict-subset
+ *   predicate (validateStrictSubset from @yakcc/ir) per-subgraph instead of
+ *   per-file. Nodes that pass the predicate are emitted as shaveable atoms
+ *   (NovelGlueEntry or PointerEntry). Nodes that fail become GlueLeafEntry
+ *   (verbatim source, project-local, NOT stored in the registry).
+ *
+ *   Key design decisions:
+ *
+ *   1. TOP-DOWN TRAVERSAL: The search proceeds top-down. At each node, the
+ *      predicate is applied first. If it passes, the node is a maximal shaveable
+ *      subgraph — we do NOT recurse further into its children. If it fails, we
+ *      recurse into children to find the largest shaveable pieces within.
+ *      Rationale: top-down finds the LARGEST (maximal) shaveable units first.
+ *      Bottom-up would find many small atoms inside large shaveable functions,
+ *      producing over-fragmented output. Top-down is also deterministic and
+ *      O(n) in AST size (no backtracking needed).
+ *
+ *   2. MAXIMAL-SUBGRAPH DISCIPLINE — OPTION (A): When a BranchNode fails the
+ *      predicate, we recurse into its children rather than emitting a single
+ *      GlueLeafEntry for the whole branch (option b). This harvests the largest
+ *      shaveable pieces from within the un-shaveable parent. A GlueLeafEntry is
+ *      only emitted for AtomLeaf nodes that fail (we cannot recurse further).
+ *      Per DEC-V2-GLUE-AWARE-SHAVE-001, the parent does NOT emit a separate
+ *      GlueLeafEntry — that would overlap with its children's entries.
+ *      Rationale: option (a) maximizes the fraction of source that becomes
+ *      registry-eligible atoms. Option (b) (swallow everything) wastes shaveable
+ *      code inside un-shaveable functions.
+ *
+ *   3. DEFAULT MODE: shaveMode defaults to 'strict' for backward compatibility.
+ *      New callers should pass shaveMode:'glue-aware'. The rollout strategy is:
+ *      existing test suite passes unchanged (strict mode), new glue-aware tests
+ *      use the explicit option. When the compile pipeline is updated (L3), the
+ *      universalize() entry point will flip the default to 'glue-aware'.
+ *
+ *   4. DETERMINISM GUARANTEE: The slicer is deterministic because:
+ *      (a) validateStrictSubset is a pure function of source text (same input →
+ *          same ValidationResult);
+ *      (b) the RecursionTree is immutable and DFS traversal order is fixed;
+ *      (c) GlueLeafEntry.reason is derived from the first validation error
+ *          message, which is deterministic for a given source.
+ *      Re-running slice() on the same tree + same mode produces a byte-identical
+ *      SlicePlan.
+ *
+ *   5. SACRED PRACTICE #5 PRESERVED: GlueLeafEntry is for "shaveable in principle
+ *      but not by this IR subset" cases. Genuinely malformed AST (e.g. unparseable
+ *      source that makes ts-morph throw) still propagates as an error — glue-emit
+ *      is not a blanket exception handler.
+ *
+ * @see DEC-V2-GLUE-AWARE-SHAVE-001 (architectural decision)
  */
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
+import { validateStrictSubset } from "@yakcc/ir";
 import { Project, ScriptKind } from "ts-morph";
 import type { ShaveRegistryView } from "../types.js";
 import type {
   BranchNode,
   ForeignLeafEntry,
+  GlueLeafEntry,
   NovelGlueEntry,
   PointerEntry,
   RecursionNode,
@@ -217,6 +273,38 @@ export function classifyForeign(source: string): ForeignLeafEntry[] {
 }
 
 // ---------------------------------------------------------------------------
+// Slicer options
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for the slice() function.
+ *
+ * @see DEC-V2-SLICER-SEARCH-001 (mode flag rollout strategy)
+ */
+export interface SliceOptions {
+  /**
+   * Controls how the slicer handles nodes that are not in the registry.
+   *
+   * - `'strict'` (default): Legacy behavior. Unmatched atoms become NovelGlueEntry
+   *   regardless of whether they pass the IR strict-subset predicate. This is the
+   *   pre-L2 behavior; all existing callers implicitly use this mode.
+   *
+   * - `'glue-aware'`: New behavior introduced by L2. The slicer applies the IR
+   *   strict-subset predicate per-subgraph. Nodes that pass become NovelGlueEntry
+   *   (shaveable atoms); nodes that fail become GlueLeafEntry (verbatim, project-local).
+   *   BranchNodes that fail recurse into children to harvest maximal shaveable
+   *   sub-subgraphs (option a per DEC-V2-SLICER-SEARCH-001).
+   *
+   * The default is `'strict'` for backward compatibility. New callers (e.g. the
+   * compile pipeline after L3 lands) should use `'glue-aware'`.
+   *
+   * @see DEC-V2-SLICER-SEARCH-001
+   * @see DEC-V2-GLUE-AWARE-SHAVE-001
+   */
+  readonly shaveMode?: "strict" | "glue-aware";
+}
+
+// ---------------------------------------------------------------------------
 // Internal accumulator (mutable, local to one slice() call)
 // ---------------------------------------------------------------------------
 
@@ -229,20 +317,24 @@ interface SliceAccumulator {
   >;
   pointerBytes: number;
   novelGlueBytes: number;
+  /** Bytes in GlueLeafEntry regions. Non-zero under glue-aware mode. */
+  glueBytes: number;
 }
 
 // ---------------------------------------------------------------------------
-// Internal DFS walker
+// Internal DFS walker — strict mode
 // ---------------------------------------------------------------------------
 
 /**
- * Recursively walk `node` in DFS order, querying the registry and appending
- * entries to `acc`. BranchNodes that match the registry collapse their entire
- * subtree into one PointerEntry. AtomLeaves that match emit PointerEntry.
- * Unmatched AtomLeaves are checked for foreign imports (classifyForeign) before
- * falling through to NovelGlueEntry. Unmatched BranchNodes descend.
+ * Recursively walk `node` in DFS order (strict mode), querying the registry
+ * and appending entries to `acc`. Behavior is identical to the pre-L2 slicer:
+ * BranchNodes that match the registry collapse into PointerEntry; unmatched
+ * AtomLeaves are checked for foreign imports before falling through to
+ * NovelGlueEntry; unmatched BranchNodes descend into children.
+ *
+ * This function is the backward-compatible path; it never emits GlueLeafEntry.
  */
-async function walkNode(
+async function walkNodeStrict(
   node: RecursionNode,
   registry: Pick<ShaveRegistryView, "findByCanonicalAstHash">,
   acc: SliceAccumulator,
@@ -292,16 +384,16 @@ async function walkNode(
     }
 
     // Unmatched AtomLeaf with no foreign classification → NovelGlueEntry.
-    // intentCard is intentionally omitted: AtomLeaf in types.ts carries no
-    // intentCard field. WI-012-06 is expected to wire intent extraction and
-    // populate the optional intentCard field on NovelGlueEntry for each
-    // unmatched atom via a follow-up pass over the NovelGlueEntry array.
+    // intentCard is omitted here because intent wiring is NOT slicer's
+    // responsibility — slicer's job is tree-shaping. The intentCard field is
+    // attached post-slice in packages/shave/src/index.ts:universalize() (closed
+    // by WI-031, see DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001 in that file).
     const entry: NovelGlueEntry = {
       kind: "novel-glue",
       sourceRange: node.sourceRange,
       source: node.source,
       canonicalAstHash: node.canonicalAstHash,
-      // intentCard omitted — optional by design, wired in WI-012-06
+      // intentCard wired post-slice (see comment above and index.ts).
     };
     acc.entries.push(entry);
     acc.novelGlueBytes += node.sourceRange.end - node.sourceRange.start;
@@ -312,7 +404,147 @@ async function walkNode(
     // invariant for SlicePlan.entries.
     const branch = node as BranchNode;
     for (const child of branch.children) {
-      await walkNode(child, registry, acc);
+      await walkNodeStrict(child, registry, acc);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal DFS walker — glue-aware mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively walk `node` in DFS order (glue-aware mode). Applies the IR
+ * strict-subset predicate per-subgraph to find maximal shaveable subgraphs.
+ *
+ * Algorithm (DEC-V2-SLICER-SEARCH-001):
+ *   1. Check registry first (same as strict mode). Registry match → PointerEntry,
+ *      subtree collapsed. This preserves the "registry match takes priority" rule.
+ *   2. For unmatched nodes: apply validateStrictSubset to the node's source.
+ *      - If passes: the node is a maximal shaveable subgraph.
+ *        - AtomLeaf: foreign check → ForeignLeafEntry or NovelGlueEntry.
+ *        - BranchNode: emit NovelGlueEntry for the branch (don't recurse — the
+ *          whole branch is shaveable as a unit).
+ *      - If fails: the node is un-shaveable.
+ *        - AtomLeaf: emit GlueLeafEntry (verbatim, project-local).
+ *        - BranchNode: recurse into children (option a — find maximal pieces).
+ *          The branch itself does NOT emit a GlueLeafEntry; only leaf-level
+ *          un-shaveable nodes emit GlueLeafEntry to avoid overlapping entries.
+ *
+ * @see DEC-V2-SLICER-SEARCH-001
+ * @see DEC-V2-GLUE-AWARE-SHAVE-001
+ */
+async function walkNodeGlueAware(
+  node: RecursionNode,
+  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash">,
+  acc: SliceAccumulator,
+): Promise<void> {
+  // Step 1: Registry lookup (same priority as strict mode).
+  const matches = await registry.findByCanonicalAstHash?.(node.canonicalAstHash);
+  const firstMatch: BlockMerkleRoot | undefined =
+    matches !== undefined && matches.length > 0 ? matches[0] : undefined;
+
+  if (firstMatch !== undefined) {
+    const entry: PointerEntry = {
+      kind: "pointer",
+      sourceRange: node.sourceRange,
+      merkleRoot: firstMatch,
+      canonicalAstHash: node.canonicalAstHash,
+      matchedBy: "canonical_ast_hash",
+    };
+    acc.entries.push(entry);
+    acc.pointerBytes += node.sourceRange.end - node.sourceRange.start;
+
+    if (!acc.matchedPrimitivesMap.has(node.canonicalAstHash)) {
+      acc.matchedPrimitivesMap.set(node.canonicalAstHash, {
+        canonicalAstHash: node.canonicalAstHash,
+        merkleRoot: firstMatch,
+      });
+    }
+    return;
+  }
+
+  // Step 2a: Foreign-import classification for AtomLeaf nodes runs BEFORE the
+  // strict-subset predicate. This preserves the ordering: registry → foreign →
+  // strict-subset → glue. Foreign imports (e.g. `import { readFileSync } from
+  // 'node:fs'`) fail the strict-subset predicate (no-untyped-imports fires in
+  // the in-memory project context), so we must classify them as foreign first.
+  if (node.kind === "atom") {
+    const foreignEntries = classifyForeign(node.source);
+    if (foreignEntries.length > 0) {
+      for (const fe of foreignEntries) {
+        acc.entries.push(fe);
+      }
+      return;
+    }
+  }
+
+  // Step 2b: Strict-subset predicate — applied per-subgraph.
+  const validation = validateStrictSubset(node.source);
+
+  if (validation.ok) {
+    // Node passes the strict-subset predicate → maximal shaveable subgraph.
+    if (node.kind === "atom") {
+      // Shaveable atom → NovelGlueEntry.
+      const entry: NovelGlueEntry = {
+        kind: "novel-glue",
+        sourceRange: node.sourceRange,
+        source: node.source,
+        canonicalAstHash: node.canonicalAstHash,
+      };
+      acc.entries.push(entry);
+      acc.novelGlueBytes += node.sourceRange.end - node.sourceRange.start;
+    } else {
+      // Shaveable BranchNode: the whole branch is a maximal shaveable unit.
+      // Emit as NovelGlueEntry and do NOT recurse — recursing would fragment
+      // the shaveable tree into smaller pieces (violating maximal-subgraph discipline).
+      //
+      // NOTE: BranchNode.source is the full branch text. This branch passed
+      // the strict-subset predicate, so it's shaveable as a whole unit.
+      // We intentionally do not apply foreign-import classification here —
+      // branch nodes are composite and their import content is handled at the
+      // AtomLeaf level when we do recurse (which we're not doing here).
+      const branch = node as BranchNode;
+      const entry: NovelGlueEntry = {
+        kind: "novel-glue",
+        sourceRange: branch.sourceRange,
+        source: branch.source,
+        canonicalAstHash: branch.canonicalAstHash,
+      };
+      acc.entries.push(entry);
+      acc.novelGlueBytes += branch.sourceRange.end - branch.sourceRange.start;
+    }
+    return;
+  }
+
+  // Node fails the strict-subset predicate.
+  // Build a human-readable reason from the first validation error.
+  const firstError =
+    !validation.ok && validation.errors.length > 0 ? validation.errors[0] : undefined;
+  const reason =
+    firstError !== undefined
+      ? `${firstError.rule}: ${firstError.message}`
+      : "strict-subset-failure";
+
+  if (node.kind === "atom") {
+    // AtomLeaf fails → emit GlueLeafEntry (we cannot recurse further).
+    // Sacred Practice #5: source is preserved verbatim; we do NOT transform it.
+    const entry: GlueLeafEntry = {
+      kind: "glue",
+      source: node.source,
+      canonicalAstHash: node.canonicalAstHash,
+      reason,
+    };
+    acc.entries.push(entry);
+    acc.glueBytes += node.sourceRange.end - node.sourceRange.start;
+  } else {
+    // BranchNode fails → recurse into children (option a: find maximal shaveable pieces).
+    // The branch itself does NOT emit a GlueLeafEntry — that would create entries
+    // overlapping with its children's entries, violating the non-overlapping invariant.
+    // Instead, each child is visited independently and classified by its own predicate.
+    const branch = node as BranchNode;
+    for (const child of branch.children) {
+      await walkNodeGlueAware(child, registry, acc);
     }
   }
 }
@@ -331,32 +563,52 @@ async function walkNode(
  * one per imported binding. All other unmatched AtomLeaf nodes become
  * NovelGlueEntry records — source code that must be synthesized as novel glue.
  *
+ * Under `shaveMode: 'glue-aware'` (L2), the IR strict-subset predicate is
+ * additionally applied per-subgraph. Nodes that fail the predicate become
+ * GlueLeafEntry records (verbatim source, project-local, not in the registry).
+ * Shaveable children of un-shaveable BranchNodes are emitted as atoms (option a
+ * per DEC-V2-SLICER-SEARCH-001 — maximal-subgraph discipline).
+ *
  * The returned SlicePlan contains:
- *   - `entries`: PointerEntry | ForeignLeafEntry | NovelGlueEntry in DFS order.
+ *   - `entries`: PointerEntry | ForeignLeafEntry | NovelGlueEntry | GlueLeafEntry
+ *     in DFS order.
  *   - `matchedPrimitives`: deduplicated (canonicalAstHash, merkleRoot) pairs
  *     for every PointerEntry, in first-seen order.
- *   - `sourceBytesByKind`: byte sums for pointer vs. novel-glue regions.
- *     ForeignLeafEntry bytes are not counted in either bucket.
+ *   - `sourceBytesByKind`: byte sums for pointer vs. novel-glue vs. glue regions.
+ *     ForeignLeafEntry bytes are not counted in any bucket.
  *
  * When `registry.findByCanonicalAstHash` is undefined, all nodes are treated
  * as unmatched and foreign-import classification still runs — AtomLeaves that
- * are foreign imports emit ForeignLeafEntry; others emit NovelGlueEntry.
+ * are foreign imports emit ForeignLeafEntry; others emit NovelGlueEntry (strict)
+ * or NovelGlueEntry/GlueLeafEntry (glue-aware).
  *
  * @param tree     - The RecursionTree produced by decompose().
  * @param registry - Registry view; findByCanonicalAstHash is optional.
+ * @param options  - Optional slicer options; see SliceOptions.
+ *
+ * @see DEC-V2-SLICER-SEARCH-001
+ * @see DEC-V2-GLUE-AWARE-SHAVE-001
  */
 export async function slice(
   tree: RecursionTree,
   registry: Pick<ShaveRegistryView, "findByCanonicalAstHash">,
+  options?: SliceOptions,
 ): Promise<SlicePlan> {
   const acc: SliceAccumulator = {
     entries: [],
     matchedPrimitivesMap: new Map(),
     pointerBytes: 0,
     novelGlueBytes: 0,
+    glueBytes: 0,
   };
 
-  await walkNode(tree.root, registry, acc);
+  const mode = options?.shaveMode ?? "strict";
+
+  if (mode === "glue-aware") {
+    await walkNodeGlueAware(tree.root, registry, acc);
+  } else {
+    await walkNodeStrict(tree.root, registry, acc);
+  }
 
   return {
     entries: acc.entries,
@@ -364,6 +616,7 @@ export async function slice(
     sourceBytesByKind: {
       pointer: acc.pointerBytes,
       novelGlue: acc.novelGlueBytes,
+      glue: acc.glueBytes,
     },
   };
 }

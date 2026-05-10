@@ -1,0 +1,7 @@
+assemblyscript (asc): 0.28.17
+Node.js: v22.22.2
+npm: 10.9.7
+Platform: linux x86_64
+Kernel: 6.12.0-124.47.1.el10_1.x86_64
+Install date: 2026-05-05
+wasmtime: 31.0.0

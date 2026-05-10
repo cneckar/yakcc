@@ -26,7 +26,40 @@ import { Project } from "ts-morph";
 import { describe, expect, it } from "vitest";
 import type { ShaveRegistryView } from "../types.js";
 import { classifyForeign, slice } from "./slicer.js";
-import type { AtomLeaf, BranchNode, ForeignLeafEntry, RecursionTree } from "./types.js";
+import type {
+  AtomLeaf,
+  BranchNode,
+  ForeignLeafEntry,
+  GlueLeafEntry,
+  RecursionTree,
+} from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Test helpers used by L2 glue-aware tests
+// ---------------------------------------------------------------------------
+
+/**
+ * A TypeScript source snippet that PASSES all strict-subset rules.
+ * Used to verify that pure-shaveable sources do NOT get false-glue emissions.
+ */
+const PURE_SHAVEABLE_SOURCE =
+  `export function add(a: number, b: number): number { return a + b; }`;
+
+/**
+ * A TypeScript source snippet that FAILS the strict-subset `no-eval` rule.
+ * Used to verify glue-aware mode emits GlueLeafEntry for unsupported constructs.
+ */
+const EVAL_SOURCE = `function runUnsafe(code: string): unknown { return eval(code); }`;
+
+/**
+ * A TypeScript source that FAILS via `no-with`.
+ */
+const WITH_SOURCE = `function withUnsafe(obj: object, key: string): void { with (obj) { console.log(key); } }`;
+
+/**
+ * A TypeScript source that fails `no-any`.
+ */
+const ANY_SOURCE = `export function identity(x: any): any { return x; }`;
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -757,5 +790,408 @@ describe("classifyForeign — registry purity (L3-I2)", () => {
     const entries = classifyForeign(`import { readFileSync } from 'node:fs';`);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe("foreign-leaf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GlueLeafEntry schema (WI-V2-GLUE-LEAF-CONTRACT)
+//
+// These tests verify that:
+//   1. GlueLeafEntry round-trips through JSON (serialize/deserialize).
+//   2. SlicePlan.sourceBytesByKind.glue is present and equals 0 for plans
+//      produced by the current slicer (the search-algorithm slicer that emits
+//      GlueLeafEntry lives in WI-V2-SLICER-SEARCH-ALG; this slicer always
+//      emits 0 glue bytes).
+//   3. A manually-constructed SlicePlan containing a GlueLeafEntry is
+//      structurally valid and the entry fields are as specified.
+// ---------------------------------------------------------------------------
+
+describe("GlueLeafEntry — schema round-trip (WI-V2-GLUE-LEAF-CONTRACT)", () => {
+  it("GlueLeafEntry round-trips through JSON serialize/deserialize", () => {
+    const entry: GlueLeafEntry = {
+      kind: "glue",
+      source: "const unsupported = () => ({ [Symbol.iterator]: function* () {} });",
+      canonicalAstHash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+      reason: "unsupported-node: GeneratorFunction",
+    };
+
+    const serialized = JSON.stringify(entry);
+    const deserialized = JSON.parse(serialized) as GlueLeafEntry;
+
+    expect(deserialized.kind).toBe("glue");
+    expect(deserialized.source).toBe(entry.source);
+    expect(deserialized.canonicalAstHash).toBe(entry.canonicalAstHash);
+    expect(deserialized.reason).toBe(entry.reason);
+  });
+
+  it("SlicePlan.sourceBytesByKind.glue is 0 for plans without GlueLeafEntry", async () => {
+    const source = "const x = 1;";
+    const atom = makeAtom(source, "hash-glue-zero");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry);
+
+    expect(plan.sourceBytesByKind.glue).toBe(0);
+  });
+
+  it("SlicePlan with manually-constructed GlueLeafEntry has correct shape", () => {
+    const glueEntry: GlueLeafEntry = {
+      kind: "glue",
+      source: "function* gen() { yield 1; yield 2; }",
+      canonicalAstHash: "deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000",
+      reason: "unsupported-node: GeneratorDeclaration",
+    };
+
+    // A manually-constructed SlicePlan containing a GlueLeafEntry alongside a
+    // NovelGlueEntry — simulating a mixed shaveable + unshaveable source file.
+    // (The search-algorithm slicer that produces such plans lands in WI-V2-SLICER-SEARCH-ALG.)
+    const novelSource = "function add(a: number, b: number): number { return a + b; }";
+    const novelEntry = {
+      kind: "novel-glue" as const,
+      sourceRange: { start: 0, end: novelSource.length },
+      source: novelSource,
+      canonicalAstHash: "feedcafe00000000feedcafe00000000feedcafe00000000feedcafe00000000" as CanonicalAstHash,
+    };
+
+    const plan = {
+      entries: [novelEntry, glueEntry],
+      matchedPrimitives: [],
+      sourceBytesByKind: {
+        pointer: 0,
+        novelGlue: novelSource.length,
+        glue: glueEntry.source.length,
+      },
+    };
+
+    // Both entries are present.
+    expect(plan.entries).toHaveLength(2);
+    expect(plan.entries[0]?.kind).toBe("novel-glue");
+    expect(plan.entries[1]?.kind).toBe("glue");
+
+    // GlueLeafEntry fields are accessible.
+    const ge = plan.entries[1] as GlueLeafEntry;
+    expect(ge.source).toBe(glueEntry.source);
+    expect(ge.reason).toBe(glueEntry.reason);
+
+    // sourceBytesByKind includes the glue bucket.
+    expect(plan.sourceBytesByKind.glue).toBe(glueEntry.source.length);
+    expect(plan.sourceBytesByKind.novelGlue).toBe(novelSource.length);
+    expect(plan.sourceBytesByKind.pointer).toBe(0);
+  });
+});
+
+// ===========================================================================
+// L2 — Slicer search algorithm tests (DEC-V2-SLICER-SEARCH-001)
+//
+// These tests cover the glue-aware mode introduced by the L2 implementation.
+// All tests use shaveMode: 'glue-aware' explicitly. The backward-compat tests
+// at the top of this file continue to exercise 'strict' mode (default before L2).
+//
+// Test cases required by the L2 spec:
+//   GA-1: pure-shaveable file in glue-aware mode → only NovelGlueEntry (no false glue)
+//   GA-2: pure-foreign file → ForeignLeafEntry as today (mode-invariant)
+//   GA-3: single-glue-region file → GlueLeafEntry for eval, NovelGlueEntry for rest
+//   GA-4: multi-glue file → multiple GlueLeafEntries
+//   GA-5: maximal-subgraph discipline — un-shaveable parent with shaveable children
+//         → shaveable children become atoms; only leaf-level unshaveable emits glue
+//   GA-6: determinism — same source → byte-identical plans on two calls
+//   GA-7: backward-compat — strict mode unchanged (existing tests cover this;
+//         we add one explicit guard here)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// GA-1: Pure-shaveable AtomLeaf in glue-aware mode → NovelGlueEntry (no false glue)
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-1: pure-shaveable atom emits NovelGlueEntry only", () => {
+  /**
+   * A shaveable atom (passes all strict-subset rules) must produce NovelGlueEntry
+   * under glue-aware mode, NOT GlueLeafEntry. Verifies no false-glue regression.
+   */
+  it("pure-shaveable atom under glue-aware mode → NovelGlueEntry, not GlueLeafEntry", async () => {
+    const atom = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga1");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0]?.kind).toBe("novel-glue");
+    expect(plan.sourceBytesByKind.glue).toBe(0);
+    expect(plan.sourceBytesByKind.novelGlue).toBe(PURE_SHAVEABLE_SOURCE.length);
+  });
+
+  it("pure-shaveable BranchNode under glue-aware mode → children become novel-glue, no glue entries", async () => {
+    const atomA = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga1-a", 0);
+    const atomB = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga1-b", PURE_SHAVEABLE_SOURCE.length);
+    const branch = makeBranch(
+      PURE_SHAVEABLE_SOURCE + PURE_SHAVEABLE_SOURCE,
+      "hash-ga1-branch",
+      [atomA, atomB],
+      0,
+    );
+    const tree = makeTree(branch, 2, 1);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    // The branch itself may pass or fail (both children are shaveable).
+    // Either way, no GlueLeafEntry should appear.
+    const glueEntries = plan.entries.filter((e) => e.kind === "glue");
+    expect(glueEntries).toHaveLength(0);
+    expect(plan.sourceBytesByKind.glue).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA-2: Pure-foreign atom in glue-aware mode → ForeignLeafEntry (unchanged)
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-2: foreign atom classification is mode-invariant", () => {
+  /**
+   * Foreign import classification (ForeignLeafEntry) must behave identically
+   * in glue-aware mode as in strict mode. The foreign predicate runs before the
+   * strict-subset predicate.
+   */
+  it("foreign import atom emits ForeignLeafEntry in glue-aware mode", async () => {
+    const source = `import { readFileSync } from 'node:fs';`;
+    const atom = makeAtom(source, "hash-ga2-foreign");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0]?.kind).toBe("foreign-leaf");
+    expect(plan.sourceBytesByKind.glue).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA-3: Single-glue-region — one un-shaveable AtomLeaf (eval), others shaveable
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-3: single-glue-region file", () => {
+  /**
+   * A BranchNode with two children: one passes strict-subset, one uses eval.
+   * Expected: one NovelGlueEntry for the shaveable child, one GlueLeafEntry
+   * for the eval child.
+   */
+  it("shaveable + eval atoms in a branch → NovelGlueEntry + GlueLeafEntry", async () => {
+    const atomShaveable = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga3-ok", 0);
+    const atomEval = makeAtom(EVAL_SOURCE, "hash-ga3-eval", PURE_SHAVEABLE_SOURCE.length);
+    const branchSource = PURE_SHAVEABLE_SOURCE + EVAL_SOURCE;
+    const branch = makeBranch(branchSource, "hash-ga3-branch", [atomShaveable, atomEval], 0);
+    const tree = makeTree(branch, 2, 1);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    const novelEntries = plan.entries.filter((e) => e.kind === "novel-glue");
+    const glueEntries = plan.entries.filter((e) => e.kind === "glue");
+
+    expect(novelEntries).toHaveLength(1);
+    expect(glueEntries).toHaveLength(1);
+
+    // GlueLeafEntry carries verbatim source
+    const glue = glueEntries[0] as GlueLeafEntry;
+    expect(glue.source).toBe(EVAL_SOURCE);
+    expect(glue.reason).toMatch(/no-eval/);
+  });
+
+  it("GlueLeafEntry source is verbatim (not canonicalized)", async () => {
+    const atom = makeAtom(EVAL_SOURCE, "hash-ga3-verbatim");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    expect(plan.entries).toHaveLength(1);
+    const entry = plan.entries[0] as GlueLeafEntry;
+    expect(entry.kind).toBe("glue");
+    // Source must be the exact original bytes, not transformed
+    expect(entry.source).toBe(EVAL_SOURCE);
+  });
+
+  it("sourceBytesByKind.glue accounts for GlueLeafEntry bytes", async () => {
+    const atom = makeAtom(EVAL_SOURCE, "hash-ga3-bytes");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    expect(plan.sourceBytesByKind.glue).toBe(EVAL_SOURCE.length);
+    expect(plan.sourceBytesByKind.novelGlue).toBe(0);
+    expect(plan.sourceBytesByKind.pointer).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA-4: Multi-glue file — multiple un-shaveable subtrees
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-4: multi-glue file produces multiple GlueLeafEntries", () => {
+  /**
+   * A BranchNode with three AtomLeaf children: eval, with, eval again.
+   * Expected: three GlueLeafEntries.
+   */
+  it("three un-shaveable atoms → three GlueLeafEntries", async () => {
+    const atom1 = makeAtom(EVAL_SOURCE, "hash-ga4-a", 0);
+    const atom2 = makeAtom(WITH_SOURCE, "hash-ga4-b", EVAL_SOURCE.length);
+    const atom3 = makeAtom(ANY_SOURCE, "hash-ga4-c", EVAL_SOURCE.length + WITH_SOURCE.length);
+    const branchSource = EVAL_SOURCE + WITH_SOURCE + ANY_SOURCE;
+    const branch = makeBranch(branchSource, "hash-ga4-branch", [atom1, atom2, atom3], 0);
+    const tree = makeTree(branch, 3, 1);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    const glueEntries = plan.entries.filter((e) => e.kind === "glue");
+    expect(glueEntries).toHaveLength(3);
+    expect(plan.sourceBytesByKind.glue).toBe(
+      EVAL_SOURCE.length + WITH_SOURCE.length + ANY_SOURCE.length,
+    );
+    expect(plan.sourceBytesByKind.novelGlue).toBe(0);
+  });
+
+  it("mixed un-shaveable + shaveable → correct counts for each", async () => {
+    const atom1 = makeAtom(EVAL_SOURCE, "hash-ga4-mixed-a", 0);
+    const atom2 = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga4-mixed-b", EVAL_SOURCE.length);
+    const atom3 = makeAtom(WITH_SOURCE, "hash-ga4-mixed-c", EVAL_SOURCE.length + PURE_SHAVEABLE_SOURCE.length);
+    const branchSource = EVAL_SOURCE + PURE_SHAVEABLE_SOURCE + WITH_SOURCE;
+    const branch = makeBranch(branchSource, "hash-ga4-mixed-branch", [atom1, atom2, atom3], 0);
+    const tree = makeTree(branch, 3, 1);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    const glueEntries = plan.entries.filter((e) => e.kind === "glue");
+    const novelEntries = plan.entries.filter((e) => e.kind === "novel-glue");
+
+    expect(glueEntries).toHaveLength(2);
+    expect(novelEntries).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA-5: Maximal-subgraph discipline — un-shaveable parent with shaveable children
+// (DEC-V2-SLICER-SEARCH-001: Option (a) — parent is glue-container, children become atoms)
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-5: maximal-subgraph discipline", () => {
+  /**
+   * A BranchNode whose combined source fails the predicate (e.g. contains eval),
+   * but which has 4 shaveable children and 1 un-shaveable child.
+   *
+   * Per option (a): the 4 shaveable children become NovelGlueEntry atoms;
+   * the 1 un-shaveable child becomes a GlueLeafEntry.
+   * The parent itself does NOT emit a GlueLeafEntry (that would overlap with children).
+   */
+  it("branch with 4 shaveable + 1 eval child → 4 novel-glue + 1 glue (option a)", async () => {
+    const children = [
+      makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga5-ok1", 0),
+      makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga5-ok2", PURE_SHAVEABLE_SOURCE.length),
+      makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga5-ok3", PURE_SHAVEABLE_SOURCE.length * 2),
+      makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga5-ok4", PURE_SHAVEABLE_SOURCE.length * 3),
+      makeAtom(EVAL_SOURCE, "hash-ga5-eval", PURE_SHAVEABLE_SOURCE.length * 4),
+    ];
+    // Branch source contains eval → fails the predicate
+    const branchSource = PURE_SHAVEABLE_SOURCE.repeat(4) + EVAL_SOURCE;
+    const branch = makeBranch(branchSource, "hash-ga5-branch", children, 0);
+    const tree = makeTree(branch, 5, 1);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    const novelEntries = plan.entries.filter((e) => e.kind === "novel-glue");
+    const glueEntries = plan.entries.filter((e) => e.kind === "glue");
+
+    // Option (a): children harvested individually
+    expect(novelEntries).toHaveLength(4);
+    expect(glueEntries).toHaveLength(1);
+    // Total entries = 5 (not 1 parent glue swallowing everything)
+    expect(plan.entries).toHaveLength(5);
+  });
+
+  it("shaveable children of un-shaveable parent are not swallowed (option b rejected)", async () => {
+    // If option (b) were implemented, this would produce 1 entry (branch = glue).
+    // Under option (a) it produces 2 entries (1 novel-glue + 1 glue).
+    const atomOk = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga5-b-ok", 0);
+    const atomEval = makeAtom(EVAL_SOURCE, "hash-ga5-b-eval", PURE_SHAVEABLE_SOURCE.length);
+    const branchSource = PURE_SHAVEABLE_SOURCE + EVAL_SOURCE;
+    const branch = makeBranch(branchSource, "hash-ga5-b-branch", [atomOk, atomEval], 0);
+    const tree = makeTree(branch, 2, 1);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    // Option (a): 2 entries — NOT 1 (option b would produce 1 GlueLeafEntry)
+    expect(plan.entries).toHaveLength(2);
+    expect(plan.entries.some((e) => e.kind === "novel-glue")).toBe(true);
+    expect(plan.entries.some((e) => e.kind === "glue")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA-6: Determinism — same source twice → byte-identical plans
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-6: determinism", () => {
+  /**
+   * Re-running the slicer over the same source from a clean state must produce
+   * a byte-identical slice plan. Same atoms in same order, same glue boundaries.
+   */
+  it("two calls on identical input produce identical plans (glue-aware)", async () => {
+    const atomOk = makeAtom(PURE_SHAVEABLE_SOURCE, "hash-ga6-ok", 0);
+    const atomEval = makeAtom(EVAL_SOURCE, "hash-ga6-eval", PURE_SHAVEABLE_SOURCE.length);
+    const branchSource = PURE_SHAVEABLE_SOURCE + EVAL_SOURCE;
+    const branch = makeBranch(branchSource, "hash-ga6-branch", [atomOk, atomEval], 0);
+    const tree = makeTree(branch, 2, 1);
+
+    const plan1 = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+    const plan2 = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    // Structural identity
+    expect(plan1.entries).toHaveLength(plan2.entries.length);
+    for (let i = 0; i < plan1.entries.length; i++) {
+      expect(plan1.entries[i]?.kind).toBe(plan2.entries[i]?.kind);
+    }
+
+    // Byte accounting identity
+    expect(plan1.sourceBytesByKind).toEqual(plan2.sourceBytesByKind);
+  });
+
+  it("JSON-serialized plans are byte-identical on repeated calls", async () => {
+    const atom = makeAtom(EVAL_SOURCE, "hash-ga6-json");
+    const tree = makeTree(atom);
+
+    const plan1 = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+    const plan2 = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
+
+    expect(JSON.stringify(plan1)).toBe(JSON.stringify(plan2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GA-7: Backward compatibility — strict mode unchanged
+// ---------------------------------------------------------------------------
+
+describe("slice glue-aware — GA-7: strict mode produces NovelGlueEntry (backward compat)", () => {
+  /**
+   * Under strict mode, eval-containing source must NOT produce GlueLeafEntry —
+   * it produces NovelGlueEntry as before (or may throw in strict mode if the
+   * strict-mode path is different). The existing tests above this block verify
+   * strict-mode behavior comprehensively; this test is an explicit guard.
+   */
+  it("eval atom under strict mode produces NovelGlueEntry (not GlueLeafEntry)", async () => {
+    const atom = makeAtom(EVAL_SOURCE, "hash-ga7-strict");
+    const tree = makeTree(atom);
+
+    // Default mode is strict for backward compat
+    const plan = await slice(tree, emptyRegistry);
+
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0]?.kind).toBe("novel-glue");
+    expect(plan.sourceBytesByKind.glue).toBe(0);
+  });
+
+  it("shaveMode: 'strict' explicit also produces NovelGlueEntry for eval", async () => {
+    const atom = makeAtom(EVAL_SOURCE, "hash-ga7-strict-explicit");
+    const tree = makeTree(atom);
+
+    const plan = await slice(tree, emptyRegistry, { shaveMode: "strict" });
+
+    expect(plan.entries).toHaveLength(1);
+    expect(plan.entries[0]?.kind).toBe("novel-glue");
   });
 });

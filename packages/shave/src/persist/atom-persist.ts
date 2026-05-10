@@ -53,6 +53,19 @@ export interface PersistOptions {
    */
   readonly corpusOptions?: CorpusExtractionOptions | undefined;
 
+  /**
+   * Absolute path to the source file being processed.
+   *
+   * When provided, the props-file corpus extractor looks for a sibling
+   * `<stem>.props.ts` file (replacing the `.ts` extension). If found and it
+   * contains matching `prop_<atom>_*` exports, the props-file content is used
+   * as the corpus artifact (highest priority, WI-V2-07-L8).
+   *
+   * Forwarded from shave()'s `sourcePath` parameter. Omitting this disables
+   * the props-file source for this atom.
+   */
+  readonly sourceFilePath?: string | undefined;
+
   // @decision DEC-REGISTRY-PARENT-BLOCK-004
   // title: parentBlockRoot is the canonical lineage field on PersistOptions
   // status: decided (WI-017)
@@ -113,10 +126,17 @@ export async function persistNovelGlueAtom(
   // The corpus result carries the artifact bytes that become the "property_tests"
   // entry in the ProofManifest, making the BlockMerkleRoot content-dependent on
   // the actual test corpus (not empty bytes).
+  //
+  // WI-V2-07-L8: derive propsFilePath from sourceFilePath when provided.
+  // The props-file extractor (highest-priority source) will check for matching
+  // prop_<atom>_* exports in the sibling *.props.ts before falling through
+  // to upstream-test source-(a).
+  const propsFilePath = options?.sourceFilePath?.replace(/\.ts$/, ".props.ts");
   const atomSpec: CorpusAtomSpec = {
     source: entry.source,
     intentCard,
     cacheDir: options?.cacheDir,
+    propsFilePath,
   };
   const corpusResult = await extractCorpus(atomSpec, options?.corpusOptions);
 

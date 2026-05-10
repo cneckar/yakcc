@@ -34,7 +34,12 @@
  * Status: decided (WI-V1W2-WASM-03)
  */
 
-import { type BlockMerkleRoot, type LocalTriplet, blockMerkleRoot, specHash } from "@yakcc/contracts";
+import {
+  type BlockMerkleRoot,
+  type LocalTriplet,
+  blockMerkleRoot,
+  specHash,
+} from "@yakcc/contracts";
 import type { SpecYak } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import type { ResolutionResult, ResolvedBlock } from "./resolve.js";
@@ -101,7 +106,7 @@ function makeResolution(
   return { entry, blocks: blockMap, order };
 }
 
-const ADD_IMPL_SOURCE = `export function add(a: number, b: number): number { return a + b; }`;
+const ADD_IMPL_SOURCE = "export function add(a: number, b: number): number { return a + b; }";
 
 function makeAddResolution(): ResolutionResult {
   const id = makeMerkleRoot("add", "Return the sum of two integers", ADD_IMPL_SOURCE);
@@ -115,15 +120,15 @@ function makeAddResolution(): ResolutionResult {
 describe("createHost() — importObject shape", () => {
   it("exposes all 5 required yakcc_host keys", () => {
     const host = createHost();
-    const yh = host.importObject["yakcc_host"] as Record<string, unknown>;
+    const yh = host.importObject.yakcc_host as Record<string, unknown>;
     expect(yh).toBeDefined();
     // memory must be a WebAssembly.Memory
-    expect(yh["memory"]).toBeInstanceOf(WebAssembly.Memory);
+    expect(yh.memory).toBeInstanceOf(WebAssembly.Memory);
     // host_log, host_alloc, host_free, host_panic must be functions
-    expect(typeof yh["host_log"]).toBe("function");
-    expect(typeof yh["host_alloc"]).toBe("function");
-    expect(typeof yh["host_free"]).toBe("function");
-    expect(typeof yh["host_panic"]).toBe("function");
+    expect(typeof yh.host_log).toBe("function");
+    expect(typeof yh.host_alloc).toBe("function");
+    expect(typeof yh.host_free).toBe("function");
+    expect(typeof yh.host_panic).toBe("function");
     host.close();
   });
 
@@ -174,9 +179,9 @@ describe("instantiateAndRun — __wasm_export_string_len", () => {
     const byteLen = encoded.length; // 5
 
     // Allocate space for the string
-    const hostAlloc = (host.importObject["yakcc_host"] as Record<string, unknown>)[
-      "host_alloc"
-    ] as (size: number) => number;
+    const hostAlloc = (host.importObject.yakcc_host as Record<string, unknown>).host_alloc as (
+      size: number,
+    ) => number;
     const ptr = hostAlloc(byteLen);
 
     // Write the bytes into memory
@@ -184,7 +189,7 @@ describe("instantiateAndRun — __wasm_export_string_len", () => {
     memView.set(encoded, ptr);
 
     // Call __wasm_export_string_len(ptr, byteLen) — should return byteLen
-    const stringLen = instance.exports["__wasm_export_string_len"] as (
+    const stringLen = instance.exports.__wasm_export_string_len as (
       ptr: number,
       len: number,
     ) => number;
@@ -209,14 +214,14 @@ describe("instantiateAndRun — __wasm_export_string_len", () => {
     const encoded = new TextEncoder().encode(testString);
     const byteLen = encoded.length; // 5
 
-    const hostAlloc = (host.importObject["yakcc_host"] as Record<string, unknown>)[
-      "host_alloc"
-    ] as (size: number) => number;
+    const hostAlloc = (host.importObject.yakcc_host as Record<string, unknown>).host_alloc as (
+      size: number,
+    ) => number;
     const ptr = hostAlloc(byteLen);
     const memView = new Uint8Array(host.memory.buffer);
     memView.set(encoded, ptr);
 
-    const stringLen = instance.exports["__wasm_export_string_len"] as (
+    const stringLen = instance.exports.__wasm_export_string_len as (
       ptr: number,
       len: number,
     ) => number;
@@ -255,8 +260,8 @@ describe("instantiateAndRun — __wasm_export_panic_demo", () => {
 describe("createHost() — bump allocator", () => {
   it("3 sequential host_alloc(8) calls return strictly increasing non-overlapping pointers", () => {
     const host = createHost();
-    const yakccHost = host.importObject["yakcc_host"] as Record<string, unknown>;
-    const hostAlloc = yakccHost["host_alloc"] as (size: number) => number;
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const hostAlloc = yakccHost.host_alloc as (size: number) => number;
 
     const ptr1 = hostAlloc(8);
     const ptr2 = hostAlloc(8);
@@ -276,9 +281,9 @@ describe("createHost() — bump allocator", () => {
 
   it("host_free is a valid no-op (does not throw on any pointer value)", () => {
     const host = createHost();
-    const yakccHost = host.importObject["yakcc_host"] as Record<string, unknown>;
-    const hostAlloc = yakccHost["host_alloc"] as (size: number) => number;
-    const hostFree = yakccHost["host_free"] as (ptr: number) => void;
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const hostAlloc = yakccHost.host_alloc as (size: number) => number;
+    const hostFree = yakccHost.host_free as (ptr: number) => void;
 
     const ptr = hostAlloc(16);
     // host_free must not throw
@@ -297,8 +302,8 @@ describe("createHost() — bump allocator", () => {
 describe("createHost() — OOM handling", () => {
   it("host_alloc(70000) throws WasmTrap { kind:'oom' }", () => {
     const host = createHost();
-    const yakccHost = host.importObject["yakcc_host"] as Record<string, unknown>;
-    const hostAlloc = yakccHost["host_alloc"] as (size: number) => number;
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const hostAlloc = yakccHost.host_alloc as (size: number) => number;
 
     expect(() => hostAlloc(70000)).toThrow(WasmTrap);
     expect(() => {
@@ -317,8 +322,8 @@ describe("createHost() — OOM handling", () => {
 
   it("host_alloc that exhausts remaining space throws WasmTrap { kind:'oom' }", () => {
     const host = createHost();
-    const yakccHost = host.importObject["yakcc_host"] as Record<string, unknown>;
-    const hostAlloc = yakccHost["host_alloc"] as (size: number) => number;
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const hostAlloc = yakccHost.host_alloc as (size: number) => number;
 
     // Allocate most of the heap (64 KiB - 16 bytes reserved = 65520 usable)
     hostAlloc(65520); // fills the heap to the brim
@@ -338,7 +343,7 @@ describe("compileToWasm — _yakcc_table export", () => {
     const host = createHost();
     const { instance } = await WebAssembly.instantiate(bytes, host.importObject);
 
-    const table = instance.exports["_yakcc_table"];
+    const table = instance.exports._yakcc_table;
     expect(table).toBeInstanceOf(WebAssembly.Table);
     expect((table as WebAssembly.Table).length).toBe(0);
     host.close();
@@ -393,5 +398,183 @@ describe("Acceptance: ts-backend parity for add substrate", () => {
     expect(caught).toBeInstanceOf(Error);
     expect(caught).toBeInstanceOf(WasmTrap);
     expect((caught as WasmTrap).name).toBe("WasmTrap");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 9: host_string_codepoint_at and host_string_codepoint_next_offset
+//
+// Conformance tests for Wave-3.1 codepoint iteration imports (WI-V1W3-WASM-LOWER-08
+// followup, closes #82).  Calls both host functions directly on known inputs and
+// asserts outputs against the spec in WASM_HOST_CONTRACT.md §3.11–§3.12.
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001 (see wasm-host.ts)
+// ---------------------------------------------------------------------------
+
+describe("createHost() — host_string_codepoint_at conformance", () => {
+  /** Write UTF-8 bytes into host memory via host_alloc and return (ptr, len). */
+  function writeStr(host: ReturnType<typeof createHost>, s: string): { ptr: number; len: number } {
+    const enc = new TextEncoder().encode(s);
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const hostAlloc = yakccHost.host_alloc as (n: number) => number;
+    const ptr = hostAlloc(Math.max(enc.length, 1));
+    if (enc.length > 0) new Uint8Array(host.memory.buffer).set(enc, ptr);
+    return { ptr, len: enc.length };
+  }
+
+  it("'hello'[0] = 104 (h)", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr, len } = writeStr(host, "hello");
+    expect(cpAt(ptr, len, 0)).toBe(104); // 'h'
+    host.close();
+  });
+
+  it("'hello'[1..4] = e,l,l,o", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr, len } = writeStr(host, "hello");
+    expect(cpAt(ptr, len, 1)).toBe(101); // 'e'
+    expect(cpAt(ptr, len, 2)).toBe(108); // 'l'
+    expect(cpAt(ptr, len, 3)).toBe(108); // 'l'
+    expect(cpAt(ptr, len, 4)).toBe(111); // 'o'
+    host.close();
+  });
+
+  it("returns -1 (sentinel) when byteOffset >= len", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr, len } = writeStr(host, "hello");
+    expect(cpAt(ptr, len, 5)).toBe(-1); // past end
+    expect(cpAt(ptr, len, 100)).toBe(-1);
+    host.close();
+  });
+
+  it("'a😀b': codepoint at offset 0 = 97 (a)", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr, len } = writeStr(host, "a\u{1F600}b");
+    // 'a' is 1 byte: offset 0
+    expect(cpAt(ptr, len, 0)).toBe(97); // 'a'
+    host.close();
+  });
+
+  it("'a😀b': codepoint at offset 1 = 0x1F600 (😀, astral-plane)", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr, len } = writeStr(host, "a\u{1F600}b");
+    // 😀 is 4 bytes in UTF-8: starts at offset 1
+    expect(cpAt(ptr, len, 1)).toBe(0x1f600);
+    host.close();
+  });
+
+  it("'a😀b': codepoint at offset 5 = 98 (b)", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr, len } = writeStr(host, "a\u{1F600}b");
+    // 'b' is at offset 1+4=5
+    expect(cpAt(ptr, len, 5)).toBe(98); // 'b'
+    host.close();
+  });
+
+  it("empty string: offset 0 returns -1", () => {
+    const host = createHost();
+    const cpAt = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_at as (ptr: number, len: number, byteOffset: number) => number;
+    const { ptr } = writeStr(host, "");
+    expect(cpAt(ptr, 0, 0)).toBe(-1);
+    host.close();
+  });
+});
+
+describe("createHost() — host_string_codepoint_next_offset conformance", () => {
+  function writeStr(host: ReturnType<typeof createHost>, s: string): { ptr: number; len: number } {
+    const enc = new TextEncoder().encode(s);
+    const yakccHost = host.importObject.yakcc_host as Record<string, unknown>;
+    const hostAlloc = yakccHost.host_alloc as (n: number) => number;
+    const ptr = hostAlloc(Math.max(enc.length, 1));
+    if (enc.length > 0) new Uint8Array(host.memory.buffer).set(enc, ptr);
+    return { ptr, len: enc.length };
+  }
+
+  it("'hello': next offset after 'h' (offset 0) = 1", () => {
+    const host = createHost();
+    const cpNext = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_next_offset as (
+      ptr: number,
+      len: number,
+      byteOffset: number,
+    ) => number;
+    const { ptr, len } = writeStr(host, "hello");
+    expect(cpNext(ptr, len, 0)).toBe(1);
+    host.close();
+  });
+
+  it("'hello': offsets advance 0→1→2→3→4, last char returns -1 (sentinel)", () => {
+    const host = createHost();
+    const cpNext = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_next_offset as (
+      ptr: number,
+      len: number,
+      byteOffset: number,
+    ) => number;
+    const { ptr, len } = writeStr(host, "hello");
+    // Each call returns the next byte offset, except after the last char
+    // where nextOffset == lenBytes (5) → returns -1 (end-of-string sentinel)
+    expect(cpNext(ptr, len, 0)).toBe(1);
+    expect(cpNext(ptr, len, 1)).toBe(2);
+    expect(cpNext(ptr, len, 2)).toBe(3);
+    expect(cpNext(ptr, len, 3)).toBe(4);
+    expect(cpNext(ptr, len, 4)).toBe(-1); // last char: nextOffset = 5 = lenBytes → -1
+    host.close();
+  });
+
+  it("'hello': next offset past end returns -1", () => {
+    const host = createHost();
+    const cpNext = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_next_offset as (
+      ptr: number,
+      len: number,
+      byteOffset: number,
+    ) => number;
+    const { ptr, len } = writeStr(host, "hello");
+    expect(cpNext(ptr, len, 5)).toBe(-1); // offset >= len
+    host.close();
+  });
+
+  it("'a😀b': offset 0→1 (1-byte 'a'), 1→5 (4-byte emoji), 5→-1 (last char 'b'), 6→-1", () => {
+    const host = createHost();
+    const cpNext = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_next_offset as (
+      ptr: number,
+      len: number,
+      byteOffset: number,
+    ) => number;
+    const { ptr, len } = writeStr(host, "a\u{1F600}b");
+    // 'a' = 1 byte, '😀' = 4 bytes, 'b' = 1 byte → total 6 bytes (len=6)
+    expect(cpNext(ptr, len, 0)).toBe(1); // after 'a': nextOffset=1 < 6 → 1
+    expect(cpNext(ptr, len, 1)).toBe(5); // after '😀': nextOffset=1+4=5 < 6 → 5
+    expect(cpNext(ptr, len, 5)).toBe(-1); // after 'b': nextOffset=5+1=6 = lenBytes → -1 (sentinel)
+    expect(cpNext(ptr, len, 6)).toBe(-1); // already past end → -1
+    host.close();
+  });
+
+  it("empty string: next offset from offset 0 returns -1", () => {
+    const host = createHost();
+    const cpNext = (host.importObject.yakcc_host as Record<string, unknown>)
+      .host_string_codepoint_next_offset as (
+      ptr: number,
+      len: number,
+      byteOffset: number,
+    ) => number;
+    const { ptr } = writeStr(host, "");
+    expect(cpNext(ptr, 0, 0)).toBe(-1);
+    host.close();
   });
 });

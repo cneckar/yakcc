@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-V1-WAVE-2-WASM-STRATEGY-001: WASM backend uses strategy B —
 // hand-rolled minimal binary emitter.
 // Status: superseded by DEC-V1-WAVE-2-WASM-TYPE-LOWERING-001 (WI-V1W2-WASM-02).
@@ -72,6 +73,7 @@
 
 import type { ResolutionResult } from "./resolve.js";
 import { LoweringVisitor } from "./wasm-lowering/visitor.js";
+import type { ArrayShapeMeta, RecordShapeMeta, StringShapeMeta } from "./wasm-lowering/visitor.js";
 import type { NumericDomain, WasmFunction } from "./wasm-lowering/wasm-function.js";
 import { valtypeByte } from "./wasm-lowering/wasm-function.js";
 
@@ -635,8 +637,11 @@ function serializeWasmFunction(fn: WasmFunction): Uint8Array {
  *
  * @param kind      - Wave-2 substrate kind (null for general numeric lowering)
  * @param fnName    - Exported function name (used as __wasm_export_<fnName>)
- * @param wasmFn    - WasmFunction IR from LoweringVisitor
- * @param domain    - Numeric domain for general lowering (undefined → i32 for wave-2)
+ * @param wasmFn      - WasmFunction IR from LoweringVisitor
+ * @param domain      - Numeric domain for general lowering (undefined → i32 for wave-2)
+ * @param paramDomains - Per-parameter domains for N-ary functions (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT).
+ *                       When present, overrides the 2-param assumption in the general lowering type.
+ *                       Required for synthesized functions with 1 or 3+ params.
  *
  * @decision DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001
  * @title General numeric lowering extends type section with domain-specific type
@@ -647,12 +652,18 @@ function serializeWasmFunction(fn: WasmFunction): Uint8Array {
  *   (general lowering), a type 5 entry `(domain domain) → domain` is appended and
  *   the substrate function references it. Wave-2 substrates continue to use types
  *   1 and 4 as before, preserving full backward compatibility.
+ *
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+ *   WI-V1W4: synthesized functions may have any arity. When `paramDomains` is provided,
+ *   the substrate type entry is built from the full per-parameter domain list rather
+ *   than the hardcoded 2-param assumption. This is correct for all synthesized wrappers.
  */
 function emitTypeLoweredModule(
   kind: SubstrateKind | null,
   fnName: string,
   wasmFn: WasmFunction,
   domain?: NumericDomain,
+  paramDomains?: ReadonlyArray<NumericDomain>,
 ): Uint8Array<ArrayBuffer> {
   // -----------------------------------------------------------------------
   // Type section
@@ -663,15 +674,33 @@ function emitTypeLoweredModule(
   const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32) → ()
   const type4 = new Uint8Array([FUNCTYPE, 2, I32, I32, 1, I32]); // (i32 i32) → (i32)
 
-  // For general numeric lowering (domain provided), append type 5: (D D) → D
+  // For general numeric lowering (domain provided), append type 5: (D D...) → D
   // @decision DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001 (see above)
+  // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
   let typeSection: Uint8Array;
   let substrateFuncTypeIdx: number;
 
   if (domain !== undefined) {
-    // General lowering: build a domain-specific type 5 entry
-    const vt = domain === "i64" ? I64 : domain === "f64" ? F64 : I32;
-    const type5 = new Uint8Array([FUNCTYPE, 2, vt, vt, 1, vt]); // (D D) → D
+    // General lowering: build a domain-specific substrate type (type 5).
+    // When paramDomains is present (N-ary synthesized functions), use the full
+    // per-parameter list; otherwise fall back to the legacy 2-param assumption.
+    const retVt = domain === "i64" ? I64 : domain === "f64" ? F64 : I32;
+    let type5: Uint8Array;
+    if (paramDomains !== undefined && paramDomains.length !== 2) {
+      // Build (p0 p1 ... pN-1) → retVt from per-parameter domains.
+      const paramVts = paramDomains.map((d) => (d === "i64" ? I64 : d === "f64" ? F64 : I32));
+      type5 = concat(
+        new Uint8Array([FUNCTYPE]),
+        uleb128(paramVts.length),
+        new Uint8Array(paramVts),
+        uleb128(1),
+        new Uint8Array([retVt]),
+      );
+    } else {
+      // Legacy 2-param path (original DEC-V1-WAVE-3-WASM-LOWER-02-EMIT-001 behaviour)
+      const vt = retVt;
+      type5 = new Uint8Array([FUNCTYPE, 2, vt, vt, 1, vt]); // (D D) → D
+    }
     typeSection = section(1, concat(uleb128(6), type0, type1, type2, type3, type4, type5));
     substrateFuncTypeIdx = 5; // general numeric substrate uses type 5
   } else {
@@ -730,6 +759,1172 @@ function emitTypeLoweredModule(
 }
 
 // ---------------------------------------------------------------------------
+// String module emitter (WI-V1W3-WASM-LOWER-05)
+// ---------------------------------------------------------------------------
+
+/** Base offset for string literal data segment (leaves heap room below). */
+const DATA_SEG_BASE = 1024;
+
+/** Encode i32.const n as WASM opcode bytes: [0x41, ...sleb128]. */
+function i32ConstOps(n: number): number[] {
+  const out: number[] = [];
+  let more = true;
+  let v = n | 0;
+  while (more) {
+    let b = v & 0x7f;
+    v >>= 7;
+    if ((v === 0 && (b & 0x40) === 0) || (v === -1 && (b & 0x40) !== 0)) more = false;
+    else b |= 0x80;
+    out.push(b);
+  }
+  return [0x41, ...out];
+}
+
+/**
+ * Build the extended import section for string modules (memory + 11 host imports).
+ *
+ * Function index space after memory:
+ *   0: host_log            T0: (i32 i32) → ()
+ *   1: host_alloc          T1: (i32) → (i32)
+ *   2: host_free           T2: (i32) → ()
+ *   3: host_panic          T3: (i32 i32 i32) → ()
+ *   4: host_string_length  T4: (i32 i32) → (i32)
+ *   5: host_string_indexof T5: (4xi32) → (i32)
+ *   6: host_string_slice   T6: (5xi32) → ()
+ *   7: host_string_concat  T6: (5xi32) → ()
+ *   8: host_string_eq      T5: (4xi32) → (i32)
+ *   9: host_string_codepoint_at          T9: (3xi32) → (i32)
+ *  10: host_string_codepoint_next_offset T9: (3xi32) → (i32)
+ *  11: substrate (defined function)
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001 (followup #82: adds indices 9 and 10)
+ */
+function buildStringImportSection(): Uint8Array {
+  const mod = encodeName("yakcc_host");
+  const mem = concat(
+    mod,
+    encodeName("memory"),
+    new Uint8Array([0x02]),
+    new Uint8Array([0x01, 0x01, 0x01]),
+  );
+  const logImp = concat(mod, encodeName("host_log"), new Uint8Array([0x00]), uleb128(0));
+  const allocImp = concat(mod, encodeName("host_alloc"), new Uint8Array([0x00]), uleb128(1));
+  const freeImp = concat(mod, encodeName("host_free"), new Uint8Array([0x00]), uleb128(2));
+  const panicImp = concat(mod, encodeName("host_panic"), new Uint8Array([0x00]), uleb128(3));
+  // Type indices match the type section: T4=(i32 i32)->(i32), T5=(4xi32)->(i32), T6=(5xi32)->()
+  const strLenImp = concat(
+    mod,
+    encodeName("host_string_length"),
+    new Uint8Array([0x00]),
+    uleb128(4),
+  );
+  const strIdxImp = concat(
+    mod,
+    encodeName("host_string_indexof"),
+    new Uint8Array([0x00]),
+    uleb128(5),
+  );
+  const strSlcImp = concat(
+    mod,
+    encodeName("host_string_slice"),
+    new Uint8Array([0x00]),
+    uleb128(6),
+  );
+  const strCatImp = concat(
+    mod,
+    encodeName("host_string_concat"),
+    new Uint8Array([0x00]),
+    uleb128(6),
+  );
+  const strEqImp = concat(mod, encodeName("host_string_eq"), new Uint8Array([0x00]), uleb128(5));
+  // WI-V1W3-WASM-LOWER-08 followup (closes #82): codepoint iteration imports.
+  // T9 = (i32 i32 i32) → (i32) — shared by both codepoint imports.
+  const cpAtImp = concat(
+    mod,
+    encodeName("host_string_codepoint_at"),
+    new Uint8Array([0x00]),
+    uleb128(9),
+  );
+  const cpNextImp = concat(
+    mod,
+    encodeName("host_string_codepoint_next_offset"),
+    new Uint8Array([0x00]),
+    uleb128(9),
+  );
+  return section(
+    2,
+    concat(
+      uleb128(12),
+      mem,
+      logImp,
+      allocImp,
+      freeImp,
+      panicImp,
+      strLenImp,
+      strIdxImp,
+      strSlcImp,
+      strCatImp,
+      strEqImp,
+      cpAtImp,
+      cpNextImp,
+    ),
+  );
+}
+
+/**
+ * Emit WASM body opcodes for the given string shape.
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-OUT-PTR-001
+ */
+function buildStringBody(shape: StringShapeMeta): number[] {
+  const lg = (i: number): number[] => [0x20, i];
+  const callFn = (idx: number): number[] => [0x10, ...Array.from(uleb128(idx))];
+  const ret = [0x0f];
+  switch (shape.shape) {
+    case "str-length":
+      return [...lg(0), ...lg(1), ...callFn(4), ...ret];
+    case "str-indexof":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...callFn(5), ...ret];
+    case "str-eq":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...callFn(8), ...ret];
+    case "str-neq":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...callFn(8), 0x45, ...ret];
+    case "str-slice2":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...lg(4), ...callFn(6)];
+    case "str-slice1": {
+      // s.slice(start) == s.slice(start, INT_MAX) in JS semantics
+      return [...lg(0), ...lg(1), ...lg(2), ...i32ConstOps(0x7fffffff), ...lg(3), ...callFn(6)];
+    }
+    case "str-concat":
+    case "str-template-concat":
+      return [...lg(0), ...lg(1), ...lg(2), ...lg(3), ...lg(4), ...callFn(7)];
+    case "str-template-parts": {
+      // `prefix${param}suffix`: concat(prefix, param) -> tmp; concat(tmp, suffix) -> out
+      // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
+      const prefix = shape.literals[0] ?? "";
+      const suffix = shape.literals[1] ?? "";
+      const pbl = new TextEncoder().encode(prefix).length;
+      const sbl = new TextEncoder().encode(suffix).length;
+      const prefixPtr = DATA_SEG_BASE;
+      const suffixPtr = DATA_SEG_BASE + pbl;
+      const tmp = 3; // local slot for tmpOutPtr
+      return [
+        ...i32ConstOps(8),
+        ...callFn(1),
+        0x21,
+        tmp, // tmp = alloc(8)
+        ...i32ConstOps(prefixPtr),
+        ...i32ConstOps(pbl), // prefix ptr, len
+        ...lg(0),
+        ...lg(1),
+        ...lg(tmp),
+        ...callFn(7), // concat(prefix, param) -> tmp
+        ...lg(tmp),
+        0x28,
+        0x02,
+        0x00, // i32.load tmp+0 = new_ptr
+        ...lg(tmp),
+        0x28,
+        0x02,
+        0x04, // i32.load tmp+4 = new_len
+        ...i32ConstOps(suffixPtr),
+        ...i32ConstOps(sbl), // suffix ptr, len
+        ...lg(2),
+        ...callFn(7), // concat(intermediate, suffix) -> out
+      ];
+    }
+  }
+}
+
+/**
+ * Emit a full WASM module for a string-operation substrate.
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-STR-DATA-SECTION-001
+ */
+function emitStringModule(shape: StringShapeMeta, fnName: string): Uint8Array<ArrayBuffer> {
+  // 10 types covering all string module signatures (T9 added by followup #82)
+  const T0 = new Uint8Array([0x60, 2, I32, I32, 0]);
+  const T1 = new Uint8Array([0x60, 1, I32, 1, I32]);
+  const T2 = new Uint8Array([0x60, 1, I32, 0]);
+  const T3 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T4 = new Uint8Array([0x60, 2, I32, I32, 1, I32]);
+  const T5 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 1, I32]);
+  const T6 = new Uint8Array([0x60, 5, I32, I32, I32, I32, I32, 0]);
+  const T7 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T8 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 0]); // (i32 i32 i32 i32)->()
+  // T9: (i32 i32 i32) → (i32) — type for host_string_codepoint_at and _next_offset
+  const T9 = new Uint8Array([0x60, 3, I32, I32, I32, 1, I32]);
+  const typeSection = section(1, concat(uleb128(10), T0, T1, T2, T3, T4, T5, T6, T7, T8, T9));
+
+  let substrateFuncTypeIdx: number;
+  switch (shape.shape) {
+    case "str-length":
+      substrateFuncTypeIdx = 4;
+      break;
+    case "str-indexof":
+      substrateFuncTypeIdx = 5;
+      break;
+    case "str-eq":
+      substrateFuncTypeIdx = 5;
+      break;
+    case "str-neq":
+      substrateFuncTypeIdx = 5;
+      break;
+    case "str-slice2":
+      substrateFuncTypeIdx = 6;
+      break;
+    case "str-slice1":
+      substrateFuncTypeIdx = 8;
+      break; // (i32 i32 i32 i32)->()
+    case "str-concat":
+      substrateFuncTypeIdx = 6;
+      break;
+    case "str-template-concat":
+      substrateFuncTypeIdx = 6;
+      break;
+    case "str-template-parts":
+      substrateFuncTypeIdx = 7;
+      break;
+  }
+
+  const importSection = buildStringImportSection();
+  const funcSection = section(3, concat(uleb128(1), uleb128(substrateFuncTypeIdx)));
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+  // funcidx 11: 1 memory + 11 function imports (indices 0-10) → substrate is index 11
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]),
+    uleb128(11),
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  const bodyOps = buildStringBody(shape);
+  const localDecls =
+    shape.shape === "str-template-parts"
+      ? new Uint8Array([0x01, 0x01, I32])
+      : new Uint8Array([0x00]);
+  const bodyBytes = concat(localDecls, new Uint8Array(bodyOps), new Uint8Array([0x0b]));
+  const codeSection = section(10, concat(uleb128(1), uleb128(bodyBytes.length), bodyBytes));
+
+  if (shape.shape === "str-template-parts") {
+    const prefix = shape.literals[0] ?? "";
+    const suffix = shape.literals[1] ?? "";
+    const allBytes = concat(new TextEncoder().encode(prefix), new TextEncoder().encode(suffix));
+    // Active data segment at DATA_SEG_BASE (1024): i32.const 1024 [0x41,0x80,0x08,0x0b]
+    const dataSeg = concat(
+      new Uint8Array([0x00]),
+      new Uint8Array([0x41, 0x80, 0x08, 0x0b]),
+      uleb128(allBytes.length),
+      allBytes,
+    );
+    const dataSection = section(11, concat(uleb128(1), dataSeg));
+    return concat(
+      WASM_MAGIC,
+      WASM_VERSION,
+      typeSection,
+      importSection,
+      funcSection,
+      tableSection,
+      exportSection,
+      codeSection,
+      dataSection,
+    );
+  }
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Record module emitter (WI-V1W3-WASM-LOWER-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit a full yakcc_host-conformant WASM module for a record-operation function.
+ *
+ * Record functions take N i32 parameters (struct ptr(s) + _size params) and
+ * return an i32 or f64 result. All pointer arguments are i32 (linear memory
+ * addresses). No new host imports are needed for field access — the base 4
+ * imports (log, alloc, free, panic) are sufficient.
+ *
+ * Type section entries (always at least 5, matching buildImportSection()):
+ *   0: (i32 i32) → ()          — host_log
+ *   1: (i32) → (i32)           — host_alloc
+ *   2: (i32) → ()              — host_free
+ *   3: (i32 i32 i32) → ()      — host_panic
+ *   4: substrate signature     — (wasmParamCount × i32) → returnValtype
+ *
+ * The string host imports (indices 5–9) are NOT included — record functions
+ * that contain string field access call host_string_length (funcidx 4 in the
+ * string module), but plain record modules don't contain string method calls.
+ * If a future WI adds string-method calls on record string fields, a combined
+ * record+string import section will be needed.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-RECORD-EQ-001
+ *
+ * @param shape      - RecordShapeMeta from LoweringVisitor
+ * @param fnName     - Exported function name (used as __wasm_export_<fnName>)
+ * @param wasmFn     - WasmFunction IR already built by _lowerRecordFunction
+ * @param returnDomain - Inferred domain for the return type
+ */
+function emitRecordModule(
+  shape: RecordShapeMeta,
+  fnName: string,
+  wasmFn: WasmFunction,
+  returnDomain: NumericDomain,
+): Uint8Array<ArrayBuffer> {
+  // -----------------------------------------------------------------------
+  // Type section
+  // -----------------------------------------------------------------------
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // (i32 i32) → ()      host_log
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // (i32) → (i32)       host_alloc
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // (i32) → ()              host_free
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // (i32 i32 i32)→() host_panic
+
+  // Type 4: substrate function — (wasmParamCount × i32) → returnValtype
+  const rvt = returnDomain === "f64" ? F64 : returnDomain === "i64" ? I64 : I32;
+  const paramBytes = new Uint8Array(shape.wasmParamCount).fill(I32);
+  const type4 = concat(
+    new Uint8Array([FUNCTYPE]),
+    uleb128(shape.wasmParamCount),
+    paramBytes,
+    uleb128(1),
+    new Uint8Array([rvt]),
+  );
+  const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+
+  // -----------------------------------------------------------------------
+  // Import section (standard 4 host imports — no string imports needed)
+  // -----------------------------------------------------------------------
+  const importSection = buildImportSection();
+
+  // -----------------------------------------------------------------------
+  // Function section: 1 defined function, type index 4
+  // -----------------------------------------------------------------------
+  const funcSection = section(3, concat(uleb128(1), uleb128(4)));
+
+  // -----------------------------------------------------------------------
+  // Table section: empty funcref table (required by host contract)
+  // -----------------------------------------------------------------------
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+
+  // -----------------------------------------------------------------------
+  // Export section: substrate function + table
+  // -----------------------------------------------------------------------
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]), // func
+    uleb128(4), // funcidx 4 (first defined function, after 4 imports)
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  // -----------------------------------------------------------------------
+  // Code section: 1 function body (serialized from WasmFunction IR)
+  // -----------------------------------------------------------------------
+  const body = serializeWasmFunction(wasmFn);
+  const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
+
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Array module emitter (WI-V1W3-WASM-LOWER-07)
+//
+// @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001 (see visitor.ts for full policy)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit SLEB128-encoded i32 constant opcodes: [0x41, ...sleb128(n)]
+ */
+function i32ConstArr(n: number): number[] {
+  const out: number[] = [];
+  let more = true;
+  let v = n | 0;
+  while (more) {
+    let b = v & 0x7f;
+    v >>= 7;
+    if ((v === 0 && (b & 0x40) === 0) || (v === -1 && (b & 0x40) !== 0)) more = false;
+    else b |= 0x80;
+    out.push(b);
+  }
+  return [0x41, ...out];
+}
+
+/**
+ * Emit a ULEB128 call instruction: [0x10, ...uleb128(funcIdx)]
+ */
+function callArr(funcIdx: number): number[] {
+  return [0x10, ...Array.from(uleb128(funcIdx))];
+}
+
+/**
+ * Emit a ULEB128-encoded integer as bare bytes (not as an i32.const opcode).
+ */
+function ulebArr(n: number): number[] {
+  return Array.from(uleb128(n));
+}
+
+/**
+ * Build a memory load opcode for the given element kind.
+ *
+ * Returns: [opcode, align, ...uleb(offset)]
+ * i32: 0x28 align=2  (i32.load)
+ * i64: 0x29 align=3  (i64.load)
+ * f64: 0x2b align=3  (f64.load)
+ * string/record: 0x28 align=2  (load ptr i32)
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ */
+function arrayLoadOp(kind: ArrayShapeMeta["elementKind"], byteOffset: number): number[] {
+  function ulebO(n: number): number[] {
+    return Array.from(uleb128(n));
+  }
+  switch (kind) {
+    case "i32":
+    case "string":
+    case "record":
+      return [0x28, 0x02, ...ulebO(byteOffset)]; // i32.load align=2
+    case "i64":
+      return [0x29, 0x03, ...ulebO(byteOffset)]; // i64.load align=3
+    case "f64":
+      return [0x2b, 0x03, ...ulebO(byteOffset)]; // f64.load align=3
+  }
+}
+
+/**
+ * Build a memory store opcode for the given element kind.
+ *
+ * Returns: [opcode, align, ...uleb(offset)]
+ * i32: 0x36 align=2  (i32.store)
+ * i64: 0x37 align=3  (i64.store)
+ * f64: 0x39 align=3  (f64.store)
+ * string/record: 0x36 align=2  (store ptr i32)
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ */
+function arrayStoreOp(kind: ArrayShapeMeta["elementKind"], byteOffset: number): number[] {
+  function ulebO(n: number): number[] {
+    return Array.from(uleb128(n));
+  }
+  switch (kind) {
+    case "i32":
+    case "string":
+    case "record":
+      return [0x36, 0x02, ...ulebO(byteOffset)]; // i32.store align=2
+    case "i64":
+      return [0x37, 0x03, ...ulebO(byteOffset)]; // i64.store align=3
+    case "f64":
+      return [0x39, 0x03, ...ulebO(byteOffset)]; // f64.store align=3
+  }
+}
+
+/**
+ * WASM valtype byte for element kind: i64→0x7e, f64→0x7c, all others→0x7f (i32)
+ */
+function elemValtype(kind: ArrayShapeMeta["elementKind"]): number {
+  if (kind === "i64") return 0x7e;
+  if (kind === "f64") return 0x7c;
+  return 0x7f; // i32
+}
+
+/**
+ * Emit a yakcc_host-conformant WASM module for an array-operation function.
+ *
+ * WASM param layout (ABI):
+ *   params 0,1,2 = ptr, length, capacity  (the array triple)
+ *   param  3     = scalar arg (push value, index) if present
+ *
+ * Operation dispatch (from ArrayShapeMeta.operations):
+ *   sum   — loop over all elements, accumulate, return sum
+ *   index — bounds-check then load element at index param (param 3)
+ *   length — return param 1 (length)
+ *   push  — [grow if needed], store at ptr+len*stride, return len+1
+ *
+ * Type section (5 entries, matching the standard host contract):
+ *   0: (i32 i32) → ()          host_log
+ *   1: (i32) → (i32)           host_alloc
+ *   2: (i32) → ()              host_free
+ *   3: (i32 i32 i32) → ()      host_panic
+ *   4: (wasmParamCount × i32) → returnType  substrate
+ *
+ * For push: returns i32 (new length), so returnType = i32.
+ * For index: returns element domain type.
+ * For sum: returns element domain (i32 for i32 elements).
+ * For length: returns i32.
+ * For mixed (record elements with field sum): returns i32.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-PASS-BY-VALUE-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-BOUNDS-CHECK-001
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-INIT-CAP-001
+ */
+function emitArrayModule(shape: ArrayShapeMeta, fnName: string): Uint8Array<ArrayBuffer> {
+  const { elementKind, stride, wasmParamCount } = shape;
+  const ops = shape.operations;
+  const evt = elemValtype(elementKind); // element valtype
+
+  // -----------------------------------------------------------------------
+  // Determine operation mode from the operations set
+  //
+  // Priority: push > pure-index > pure-length > sum
+  //
+  // Pure-index: has "index" but NOT "length" (e.g. getElem(arr, i) → arr[i])
+  //   wasmParamCount = 4 (ptr, length, capacity, i)
+  //
+  // Sum: has "index" AND "length" (loop body: arr[i] inside while(i < arr.length))
+  //   OR has neither (empty ops fall-through)
+  //   wasmParamCount = 3 (ptr, length, capacity)
+  //
+  // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-OPMODE-001
+  // @title Distinguish pure-index from sum by presence of both "index" and "length"
+  // @status accepted
+  // @rationale
+  //   A sum loop uses arr[i] (→ "index") AND arr.length (→ "length") in the body.
+  //   A pure-index function uses arr[i] (→ "index") but NOT arr.length.
+  //   Prior detection (hasIndex = ops.includes("index") && !hasPush) treated both
+  //   as "index" mode, which routes to the single-element-load path — incorrect for
+  //   sum loops. The fix: "pure index" requires "index" present WITHOUT "length";
+  //   presence of both "length" and "index" is the sum-loop pattern and falls through
+  //   to sum mode. This is closed by WI-V1W3-WASM-LOWER-07.
+  // -----------------------------------------------------------------------
+  const hasPush = ops.includes("push");
+  const hasIndex = ops.includes("index") && !ops.includes("length") && !hasPush;
+  const hasLength = ops.includes("length") && !ops.includes("index") && !hasPush;
+  // Sum mode: both "index" and "length" (loop pattern), or neither (explicit sum)
+  const isSum = !hasPush && !hasIndex && !hasLength;
+
+  // Return valtype: push/length/sum → i32; index → element valtype
+  const returnVt = hasIndex ? evt : 0x7f; // i32 for all except pure index
+
+  // -----------------------------------------------------------------------
+  // Type section
+  // -----------------------------------------------------------------------
+  const type0 = new Uint8Array([FUNCTYPE, 2, I32, I32, 0]); // host_log
+  const type1 = new Uint8Array([FUNCTYPE, 1, I32, 1, I32]); // host_alloc
+  const type2 = new Uint8Array([FUNCTYPE, 1, I32, 0]); // host_free
+  const type3 = new Uint8Array([FUNCTYPE, 3, I32, I32, I32, 0]); // host_panic
+
+  // Substrate type: all params are i32 (ptr/len/cap + scalar args)
+  const paramBytes = new Uint8Array(wasmParamCount).fill(I32);
+  const type4 = concat(
+    new Uint8Array([FUNCTYPE]),
+    uleb128(wasmParamCount),
+    paramBytes,
+    uleb128(1),
+    new Uint8Array([returnVt]),
+  );
+  const typeSection = section(1, concat(uleb128(5), type0, type1, type2, type3, type4));
+
+  // -----------------------------------------------------------------------
+  // Import section (standard: memory + 4 host funcs)
+  // -----------------------------------------------------------------------
+  const importSection = buildImportSection();
+
+  // -----------------------------------------------------------------------
+  // Function section: 1 defined function, type index 4
+  // -----------------------------------------------------------------------
+  const funcSection = section(3, concat(uleb128(1), uleb128(4)));
+
+  // -----------------------------------------------------------------------
+  // Table section
+  // -----------------------------------------------------------------------
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+
+  // -----------------------------------------------------------------------
+  // Export section
+  // -----------------------------------------------------------------------
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]),
+    uleb128(4),
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  // -----------------------------------------------------------------------
+  // Code section: build body opcodes based on operation
+  // -----------------------------------------------------------------------
+  // WASM slot assignments:
+  //   0 = ptr, 1 = length, 2 = capacity, 3 = push_value or index (if present)
+  // Local variables start at wasmParamCount:
+  //   For sum:   local[wasmParamCount] = acc, local[wasmParamCount+1] = i (byte offset)
+  //   For push-with-grow: local[wasmParamCount] = new_ptr, local[wasmParamCount+1] = new_cap
+  //   For index: no locals needed
+
+  let locals: number[] = []; // encoded local groups
+  let body: number[] = [];
+
+  if (hasLength) {
+    // arr.length → local.get 1 (length slot)
+    // params: (ptr, length, capacity)
+    locals = [0x00]; // 0 local groups
+    body = [
+      0x20,
+      0x01, // local.get 1  (length)
+      0x0f, // return
+    ];
+  } else if (hasIndex) {
+    // arr[i] → bounds check (i >= length → panic), then load
+    // params: (ptr, length, capacity, i)
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-BOUNDS-CHECK-001
+    //
+    // Panic string: "array index out of bounds" at data segment
+    // We inline a simple bounds check without a string message (host_panic accepts ptr=0, len=0)
+    // The panic error kind is 0x04 (oob_memory) per WASM_HOST_CONTRACT.md
+    locals = [0x00]; // 0 locals
+    body = [
+      // bounds check: if i >= length → panic
+      0x20,
+      0x03, // local.get 3  (i)
+      0x20,
+      0x01, // local.get 1  (length)
+      0x4f, // i32.ge_u
+      0x04,
+      0x40, // if void
+      ...i32ConstArr(0x04), // i32.const 4 (oob_memory panic code)
+      ...i32ConstArr(0), // i32.const 0 (msg ptr = 0)
+      ...i32ConstArr(0), // i32.const 0 (msg len = 0)
+      ...callArr(3), // call 3 (host_panic)
+      0x00, // unreachable
+      0x0b, // end if
+      // element address: ptr + i * stride
+      0x20,
+      0x00, // local.get 0  (ptr)
+      0x20,
+      0x03, // local.get 3  (i)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      0x6a, // i32.add        → address = ptr + i*stride
+      ...arrayLoadOp(elementKind, 0), // load element at address+0
+      0x0f, // return
+    ];
+  } else if (hasPush) {
+    // push(arr, x): grow if needed, store at ptr+len*stride, return len+1
+    // params: (ptr, length, capacity, push_value)
+    //   0=ptr, 1=length, 2=capacity, 3=push_value
+    // locals: wasmParamCount = new_ptr, wasmParamCount+1 = new_cap
+    //   local 4 = new_ptr (i32)
+    //   local 5 = new_cap (i32)
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-INIT-CAP-001 (initial capacity seed = 4)
+    // Grow strategy: if capacity==0, new_cap=4; else new_cap=capacity*2.
+    // new_ptr = host_alloc(new_cap * stride)
+    // memory.copy(new_ptr, ptr, length * stride)
+    // ptr = new_ptr, capacity = new_cap
+    //
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-PASS-BY-VALUE-001
+    // push returns new length. ptr/capacity changes (on grow) are NOT visible to
+    // caller since we pass by value. This is documented as a v1 limitation.
+    const newPtrSlot = wasmParamCount; // local 4
+    const newCapSlot = wasmParamCount + 1; // local 5
+    locals = [
+      0x02, // 2 local groups
+      0x01,
+      0x7f, // 1 i32 (new_ptr)
+      0x01,
+      0x7f, // 1 i32 (new_cap)
+    ];
+
+    // The grow block: if (length >= capacity) { grow }
+    // memory.copy is WASM bulk-memory opcode: 0xfc 0x0a dst_mem src_mem
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-MEMORY-COPY-001
+    // @title Use memory.copy (0xfc 0x0a) for push-with-grow backing buffer copy
+    // @status accepted
+    // @rationale
+    //   WASM bulk memory (memory.copy, memory.fill) is part of the bulk memory proposal,
+    //   enabled by default in Node.js v22+ (Chrome 75+, Firefox 79+, Safari 15.2+).
+    //   Alternative: emit a manual byte-copy loop. The loop costs ~15 extra opcodes and
+    //   runs significantly slower for large arrays. memory.copy is the correct choice:
+    //   it is atomic within WASM semantics (no interference with GC), branch-free, and
+    //   handled by the engine's optimized memcpy path. Verified supported in Node.js v22.
+    body = [
+      // --- grow block ---
+      // if (length >= capacity) { grow; }
+      0x20,
+      0x01, // local.get 1  (length)
+      0x20,
+      0x02, // local.get 2  (capacity)
+      0x4f, // i32.ge_u
+      0x04,
+      0x40, // if void
+
+      // new_cap = capacity == 0 ? 4 : capacity * 2
+      0x20,
+      0x02, // local.get 2  (capacity)
+      0x45, // i32.eqz
+      0x04,
+      0x7f, // if i32
+      ...i32ConstArr(4), // i32.const 4  (initial seed)
+      0x05, // else
+      0x20,
+      0x02, // local.get 2  (capacity)
+      0x41,
+      0x02, // i32.const 2
+      0x6c, // i32.mul        (capacity * 2)
+      0x0b, // end
+      0x21,
+      newCapSlot, // local.set new_cap
+
+      // new_ptr = host_alloc(new_cap * stride)
+      0x20,
+      newCapSlot, // local.get new_cap
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      ...callArr(1), // call 1 (host_alloc)
+      0x21,
+      newPtrSlot, // local.set new_ptr
+
+      // memory.copy(new_ptr, ptr, length * stride)
+      0x20,
+      newPtrSlot, // local.get new_ptr   (dst)
+      0x20,
+      0x00, // local.get 0  (ptr/src)
+      0x20,
+      0x01, // local.get 1  (length)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul         (length * stride = byte count)
+      0xfc,
+      0x0a,
+      0x00,
+      0x00, // memory.copy dst_mem=0 src_mem=0
+
+      // ptr = new_ptr; capacity = new_cap
+      0x20,
+      newPtrSlot, // local.get new_ptr
+      0x21,
+      0x00, // local.set 0 (ptr)
+      0x20,
+      newCapSlot, // local.get new_cap
+      0x21,
+      0x02, // local.set 2 (capacity)
+
+      0x0b, // end if (grow)
+
+      // --- store element ---
+      // *(ptr + length * stride) = push_value
+      0x20,
+      0x00, // local.get 0  (ptr — may be updated by grow)
+      0x20,
+      0x01, // local.get 1  (length)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      0x6a, // i32.add        → address = ptr + length*stride
+      0x20,
+      0x03, // local.get 3  (push_value)
+      ...arrayStoreOp(elementKind, 0), // store at address+0
+
+      // --- increment length ---
+      0x20,
+      0x01, // local.get 1  (length)
+      0x41,
+      0x01, // i32.const 1
+      0x6a, // i32.add
+      // return new length
+      0x0f, // return
+    ];
+  } else {
+    // Sum mode: sum all elements
+    // params: (ptr, length, capacity)  [capacity ignored in sum]
+    // locals: local[3] = acc, local[4] = i (byte offset)
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001 (sum loop uses byte-offset counter)
+    const accSlot = wasmParamCount; // local 3
+    const iSlot = wasmParamCount + 1; // local 4
+
+    // For record elements: we sum a field from each element
+    // Record element at arr[i] = ptr-to-struct stored at (ptr + i_byte)
+    // Field access: load struct ptr, then load field at struct_ptr + field_offset
+    const elemShape = shape.elementRecordShape;
+
+    let loadElementOps: number[];
+    if (elementKind === "record" && elemShape !== undefined) {
+      // Load struct ptr from array slot (i32.load)
+      // Then load first numeric field (field 0 at offset 0)
+      const firstNumericField = elemShape.fields.find((f) => f.kind === "numeric");
+      const fieldOffset = firstNumericField !== undefined ? firstNumericField.slotIndex * 8 : 0;
+      loadElementOps = [
+        // stack: [byte_addr] — address of the i32 ptr-to-struct slot
+        0x28,
+        0x02,
+        0x00, // i32.load align=2 offset=0  → loads struct ptr
+        // stack: [struct_ptr]
+        // now load field at struct_ptr + fieldOffset
+        ...(Array.from(uleb128(fieldOffset)).length <= 1
+          ? [0x28, 0x02, ...Array.from(uleb128(fieldOffset))]
+          : [0x28, 0x02, ...Array.from(uleb128(fieldOffset))]),
+        // i32.load align=2 offset=fieldOffset  → loads field value
+      ];
+    } else {
+      // Simple element load at byte address (offset=0)
+      loadElementOps = arrayLoadOp(elementKind, 0);
+    }
+
+    // Determine accumulator add opcode
+    const addOp = elementKind === "i64" ? [0x7c] : elementKind === "f64" ? [0xa0] : [0x6a]; // i32.add
+
+    // Acc and loop counter types
+    const accVt = evt; // same valtype as element
+    const accLocVt = accVt; // local type for acc
+
+    locals = [
+      0x02, // 2 local groups
+      0x01,
+      accLocVt, // 1 × element type (acc)
+      0x01,
+      0x7f, // 1 × i32 (byte offset i)
+    ];
+
+    // Initial value for acc depends on domain
+    const accInit: number[] =
+      elementKind === "i64"
+        ? [0x42, 0x00] // i64.const 0
+        : elementKind === "f64"
+          ? [0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] // f64.const 0.0
+          : [0x41, 0x00]; // i32.const 0
+
+    body = [
+      // acc = 0
+      ...accInit,
+      0x21,
+      accSlot, // local.set acc
+
+      // i = 0  (byte offset)
+      ...i32ConstArr(0),
+      0x21,
+      iSlot, // local.set i
+
+      0x02,
+      0x40, // block $brk
+      0x03,
+      0x40, // loop $cont
+
+      // break if i >= length * stride
+      0x20,
+      iSlot, // local.get i
+      0x20,
+      0x01, // local.get 1 (length)
+      ...i32ConstArr(stride), // i32.const stride
+      0x6c, // i32.mul
+      0x4f, // i32.ge_u
+      0x0d,
+      0x01, // br_if 1 (break to $brk)
+
+      // load element: ptr + i
+      0x20,
+      0x00, // local.get 0 (ptr)
+      0x20,
+      iSlot, // local.get i
+      0x6a, // i32.add   → element address
+
+      // load element value
+      ...loadElementOps,
+
+      // acc += element
+      0x20,
+      accSlot, // local.get acc
+      ...addOp, // add
+      // note: args are (element, acc) on stack — need (acc, element) for add
+      // Actually: stack is [element_addr+i] after add, then we load, then
+      // we have [element_value], then [acc], then add.
+      // Wait — the stack is: after `local.get acc` we have [element_value, acc]
+      // for i32.add that's fine (add is commutative).
+      // Actually let me re-check: after loadElementOps we have [element_value] on stack.
+      // Then local.get acc → stack is [element_value, acc].
+      // Then i32.add → stack is [element_value + acc]. Correct.
+      0x21,
+      accSlot, // local.set acc
+
+      // i += stride
+      0x20,
+      iSlot, // local.get i
+      ...i32ConstArr(stride), // i32.const stride
+      0x6a, // i32.add
+      0x21,
+      iSlot, // local.set i
+
+      0x0c,
+      0x00, // br 0 (continue $cont)
+      0x0b, // end loop
+      0x0b, // end block
+
+      0x20,
+      accSlot, // local.get acc
+      0x0f, // return
+    ];
+  }
+
+  // -----------------------------------------------------------------------
+  // Assemble code section
+  // -----------------------------------------------------------------------
+  // locals encoding: already built as a raw byte array above
+  // For "0 local groups": [0x00]
+  // For N local groups: [N, count, type, ...]
+  const bodyBytes = new Uint8Array([...locals, ...body]);
+  const codeSection = section(
+    10,
+    concat(uleb128(1), uleb128(bodyBytes.length + 1), bodyBytes, new Uint8Array([0x0b])),
+  );
+
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Control-flow string module emitter (WI-V1W3-WASM-LOWER-08 followup, closes #82)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit a WASM module for a control-flow function that uses string host imports
+ * (host_string_codepoint_at, host_string_codepoint_next_offset, host_string_eq).
+ *
+ * Uses buildStringImportSection() (11 function imports, substrate at funcidx 11).
+ * Type section matches emitStringModule but substrate type is inferred from domain.
+ *
+ * @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+ */
+function emitCFStringModule(
+  fnName: string,
+  wasmFn: WasmFunction,
+  domain: NumericDomain,
+): Uint8Array<ArrayBuffer> {
+  // Type section: T0–T9 same as emitStringModule, plus substrate type T10
+  const T0 = new Uint8Array([0x60, 2, I32, I32, 0]);
+  const T1 = new Uint8Array([0x60, 1, I32, 1, I32]);
+  const T2 = new Uint8Array([0x60, 1, I32, 0]);
+  const T3 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T4 = new Uint8Array([0x60, 2, I32, I32, 1, I32]);
+  const T5 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 1, I32]);
+  const T6 = new Uint8Array([0x60, 5, I32, I32, I32, I32, I32, 0]);
+  const T7 = new Uint8Array([0x60, 3, I32, I32, I32, 0]);
+  const T8 = new Uint8Array([0x60, 4, I32, I32, I32, I32, 0]);
+  const T9 = new Uint8Array([0x60, 3, I32, I32, I32, 1, I32]); // (i32 i32 i32) → (i32)
+  // T10: substrate function type — (ptr i32, len i32) → (i32) for counting functions
+  // Most cf-5 substrates have (ptr: i32, len: i32) → i32 signature.
+  // Use T4 = (i32 i32) → (i32) as the substrate type (funcidx 11 = first defined fn).
+  const typeSection = section(1, concat(uleb128(10), T0, T1, T2, T3, T4, T5, T6, T7, T8, T9));
+
+  const importSection = buildStringImportSection();
+  // Substrate function type: T4 = (i32 i32) → (i32) matches cf-5 counting functions.
+  // funcidx 11 = substrate (0 memory + 11 function imports).
+  const funcSection = section(3, concat(uleb128(1), uleb128(4)));
+  const tableSection = section(4, concat(uleb128(1), new Uint8Array([FUNCREF, 0x01, 0x00, 0x00])));
+  const exportFn = concat(
+    encodeName(`__wasm_export_${fnName}`),
+    new Uint8Array([0x00]),
+    uleb128(11), // funcidx 11: 11 imported functions (0-10) + 1 defined
+  );
+  const exportTable = concat(encodeName("_yakcc_table"), new Uint8Array([0x01]), uleb128(0));
+  const exportSection = section(7, concat(uleb128(2), exportFn, exportTable));
+
+  const body = serializeWasmFunction(wasmFn);
+  const codeSection = section(10, concat(uleb128(1), uleb128(body.length), body));
+
+  // Suppress unused parameter warning — domain is available for future multi-domain support
+  void domain;
+
+  return concat(
+    WASM_MAGIC,
+    WASM_VERSION,
+    typeSection,
+    importSection,
+    funcSection,
+    tableSection,
+    exportSection,
+    codeSection,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wrapper synthesis — WI-V1W4-LOWER-EXTEND-MISSING-EXPORT
+// ---------------------------------------------------------------------------
+
+// @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+// Title: Wrapper synthesis at compileToWasm entry for bare/non-exported implSources
+// Status: decided (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT)
+// Rationale:
+//   1. Wrapper synthesis happens at compileToWasm entry, not in visitor.
+//      The visitor entry stays unchanged — it continues to expect `export function X(...)`.
+//      Before passing source to the visitor, compileToWasm checks whether the atom's
+//      implSource is already wrapped; if not (bare expression / arrow function /
+//      statement fragment), this function synthesizes the wrapper.
+//   2. Synthesis only fires when no top-level `export function` is detected.
+//      Detection uses a simple regex check (/export\s+function\s+/m). The regex
+//      is refinable to an AST check via ts-morph if false-positives appear (e.g.
+//      an `export function` inside a string literal), but the seed corpus has no
+//      such cases.
+//   3. Rationale for entry-point synthesis: ts-backend handles sub-fragments via
+//      natural composition; wasm-backend matches that semantic via explicit wrapper
+//      synthesis. This keeps the visitor's invariant ("source must export exactly one
+//      function") intact without modifying visitor.ts (diff-zero on that file).
+
+/** Regex that detects a top-level `export function` declaration in a source string. */
+const EXPORT_FUNCTION_RE = /export\s+function\s+/m;
+
+/**
+ * Regex that identifies statement-block sources — those beginning with a statement
+ * keyword (if/while/for/do/switch/return/const/let/var/function/class/interface/
+ * type/throw/try) rather than an expression.
+ *
+ * Statement blocks cannot be wrapped as `return (...)` because TypeScript (and JS)
+ * do not allow statements inside a parenthesised return expression.
+ * Bare expressions (e.g. `a + b`) can be wrapped as `return (...)` safely.
+ *
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002 (sub-001)
+ * Statement-block sources are wrapped as function-body, not return-expression.
+ * `if`/`while`/etc. are statements not expressions; `return (if (...))` is invalid TS.
+ */
+const STATEMENT_BLOCK_RE =
+  /^\s*(?:if|while|for|do|switch|return|const|let|var|function|class|interface|type|throw|try)\b/;
+
+/**
+ * Regex that matches a bare arrow function and captures:
+ *   group 1: full parenthesised param list, possibly with type annotations e.g. "a: number, b: number"
+ *   group 2: single-identifier param (no parens) e.g. "x"
+ *   group 3: the body (everything after `=>`, possibly prefixed with whitespace)
+ *
+ * Matches forms:
+ *   (a: number, b: number) => expr
+ *   (a, b) => expr
+ *   x => expr
+ *
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+ * Inline-body synthesis: the wrapper directly inlines the arrow body as the function
+ * body rather than calling the arrow via `(arrow)(args)`. This avoids the LoweringVisitor
+ * "cannot resolve call target" error that fires when the visitor encounters a
+ * parenthesised-arrow-as-call expression it cannot trace to a funcIndexTable entry.
+ */
+const ARROW_RE = /^\s*(?:\(([^)]*)\)|(\w+))\s*=>\s*([\s\S]+)$/;
+
+/**
+ * Synthesize an `export function` wrapper around bare implSource if needed.
+ *
+ * If `source` already contains a top-level `export function`, returns it unchanged.
+ * Otherwise produces a wrapped form the LoweringVisitor can parse:
+ *
+ *   Arrow function — inline body directly:
+ *     `(a: number, b: number) => a + b`
+ *       →  `export function <name>(a: number, b: number): number { return a + b; }`
+ *
+ *   Arrow function, params without type annotations — add `number` type:
+ *     `(a, b) => a + b`
+ *       →  `export function <name>(a: number, b: number): number { return a + b; }`
+ *
+ *   Arrow function, block body `(a) => { return a; }`:
+ *     Body is emitted verbatim as the function body (block body arrows start with `{`).
+ *
+ *   Zero-param arrow `() => expr`:
+ *       →  `export function <name>(): number { return expr; }`
+ *
+ *   Single-param no-parens `x => expr`:
+ *       →  `export function <name>(x: number): number { return expr; }`
+ *
+ *   Bare expression / statement (no arrow): wrap in a rest-arg function so the
+ *   source no longer fails with missing-export (visitor may still emit a LoweringError
+ *   for unsupported constructs, but that is a separate concern).
+ *
+ * @param source       Raw implSource from the ResolvedBlock.
+ * @param merkleRoot   BlockMerkleRoot used as the synthesized function name basis.
+ */
+function synthesizeExportWrapper(source: string, merkleRoot: string): string {
+  // Pass through already-wrapped sources unchanged (idempotent).
+  if (EXPORT_FUNCTION_RE.test(source)) {
+    return source;
+  }
+
+  // Derive a stable, WASM-identifier-safe function name from the merkle root.
+  const shortId = merkleRoot.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+  const atomName = `wasm_export_${shortId}`;
+
+  const trimmed = source.trim();
+
+  // Case 1: bare arrow function — inline the arrow body directly.
+  // This avoids the "cannot resolve call target" LoweringError that fires when
+  // the visitor encounters a parenthesised arrow expression used as a call target.
+  // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+  const arrowMatch = ARROW_RE.exec(trimmed);
+  if (arrowMatch !== null) {
+    // group 1: params inside parens (may include type annotations, may be empty)
+    // group 2: single bare identifier param (no parens)
+    // group 3: arrow body (expr or block)
+    const rawParams = arrowMatch[1] !== undefined ? arrowMatch[1] : (arrowMatch[2] ?? "");
+    const body = (arrowMatch[3] ?? "").trim();
+
+    // Build the parameter declarations, adding `: number` if type annotation absent.
+    const paramDecls = rawParams
+      .split(",")
+      .map((p) => {
+        const pt = p.trim();
+        if (pt.length === 0) return null; // skip empty (zero-param parens)
+        // If it already has a colon (type annotation), use as-is
+        if (pt.includes(":")) return pt;
+        // Bare name — add number annotation
+        return `${pt}: number`;
+      })
+      .filter((p): p is string => p !== null);
+
+    // Determine the function body text.
+    // Block body arrows: `(a) => { return a; }` — body starts with `{`
+    // Expression body arrows: `(a) => a * 2` — wrap in `{ return ...; }`
+    const isBlockBody = body.startsWith("{");
+    const bodyText = isBlockBody ? body : `{ return ${body}; }`;
+
+    const paramStr = paramDecls.join(", ");
+    const returnAnnotation = isBlockBody ? "" : ": number";
+    return `export function ${atomName}(${paramStr})${returnAnnotation} ${bodyText}`;
+  }
+
+  // Case 2: statement block or bare expression — use ...args rest form.
+  // Bifurcate: statement blocks (if/while/for/const/return/…) must NOT be
+  // wrapped as `return (stmt)` because that is a parse error in TypeScript.
+  // Genuine bare expressions (e.g. `a + b`, `Math.abs(x)`) use the return-
+  // expression form which the LoweringVisitor can handle via its existing path.
+  if (STATEMENT_BLOCK_RE.test(trimmed)) {
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002 (sub-001)
+    // Statement-block sources are wrapped as function-body, not return-expression.
+    // `if`/`while`/etc. are statements not expressions; `return (if (...))` is invalid TS.
+    return [`export function ${atomName}(...args: number[]): number {`, `  ${trimmed}`, "}"].join(
+      "\n",
+    );
+  }
+
+  // Bare expression — safe to wrap in return (...).
+  // The visitor may emit a LoweringError for unsupported constructs,
+  // but the source will no longer fail with missing-export.
+  return [
+    `export function ${atomName}(...args: number[]): number {`,
+    `  return (${trimmed});`,
+    "}",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -741,6 +1936,10 @@ function emitTypeLoweredModule(
  * serialises it. The wave-2 "add" substrate still emits the legacy 3-function
  * substrate module so that wasm-host.test.ts conformance tests (which rely on
  * __wasm_export_string_len and __wasm_export_panic_demo) remain green.
+ *
+ * WI-V1W4-LOWER-EXTEND-MISSING-EXPORT: bare implSources (no `export function`)
+ * are wrapped via synthesizeExportWrapper() before being passed to the visitor.
+ * @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
  *
  * @decision DEC-V1-WAVE-3-WASM-PARSE-001
  * The visitor is the single dispatch entrypoint. detectSubstrateKind is no
@@ -754,21 +1953,61 @@ export async function compileToWasm(
 ): Promise<Uint8Array<ArrayBuffer>> {
   const entryBlock = resolution.blocks.get(resolution.entry);
   if (entryBlock !== undefined) {
+    // WI-V1W4-LOWER-EXTEND-MISSING-EXPORT: synthesize export wrapper for bare sources.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+    const source = synthesizeExportWrapper(entryBlock.source, entryBlock.merkleRoot);
     const visitor = new LoweringVisitor();
-    const result = visitor.lower(entryBlock.source);
-    // "add" shape uses the legacy 3-function substrate module so that the
-    // wasm-host.test.ts conformance fixture (__wasm_export_string_len,
-    // __wasm_export_panic_demo) remains green — those exports live only in
-    // the legacy module and are not produced by the type-lowering path.
-    if (result.wave2Shape === "add") return emitSubstrateModule();
+    const result = visitor.lower(source);
+    // WI-V1W3-WASM-LOWER-05: string shapes go to emitStringModule.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-STR-001
+    if (result.stringShape !== undefined) {
+      return emitStringModule(result.stringShape, result.fnName);
+    }
+    // WI-V1W3-WASM-LOWER-06: record shapes go to emitRecordModule.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001
+    if (result.recordShape !== undefined) {
+      const returnDomain = result.numericDomain ?? "i32";
+      return emitRecordModule(result.recordShape, result.fnName, result.wasmFn, returnDomain);
+    }
+    // WI-V1W3-WASM-LOWER-07: array shapes go to emitArrayModule.
+    // Dispatch AFTER recordShape check: record-element arrays are a superset
+    // of record shapes and must not be intercepted by the record branch first.
+    // Dispatch AFTER detectWave2Shape (done in visitor): wave-2 sum_array
+    // (exact `.reduce`-body fast-path) never sets arrayShape; all other
+    // array-param functions do, landing here.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-ARRAY-001
+    if (result.arrayShape !== undefined) {
+      return emitArrayModule(result.arrayShape, result.fnName);
+    }
+    // "add" shape with the literal function name "add" uses the legacy 3-function
+    // substrate module so that the wasm-host.test.ts conformance fixture
+    // (__wasm_export_string_len, __wasm_export_panic_demo) remains green.
+    //
+    // WI-V1W4-LOWER-EXTEND-MISSING-EXPORT: synthesized functions (e.g. `wasm_export_<hash>`)
+    // also classify as wave2Shape="add" when their body is simple arithmetic. Those must
+    // NOT route to emitSubstrateModule() — that path hardcodes 2-param i32 ABI and exports
+    // __wasm_export_add, which is wrong for synthesized names and for 3+ param functions.
+    // Only the original wave-2 "add" fixture (fnName === "add") gets the legacy path.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
+    if (result.wave2Shape === "add" && result.fnName === "add") return emitSubstrateModule();
+    // WI-V1W3-WASM-LOWER-08 followup (closes #82): control-flow functions that use
+    // host_string_codepoint_at/next_offset (cf-5) or host_string_eq (cf-7) need the
+    // extended string import section. Use emitCFStringModule for these.
+    // @decision DEC-V1-WAVE-3-WASM-LOWER-CF5-HOST-001
+    if (result.usesForOfString === true || result.usesStringSwitch === true) {
+      return emitCFStringModule(result.fnName, result.wasmFn, result.numericDomain ?? "i32");
+    }
     // General numeric lowering (wave2Shape === null): pass the inferred domain
-    // so emitTypeLoweredModule can build the correct type entry (type 5 for i64/f64).
-    // Wave-2 non-add substrates pass wave2Shape as SubstrateKind; domain is undefined.
+    // and paramDomains so emitTypeLoweredModule can build the correct type entry.
+    // paramDomains is required for N-ary synthesized functions (WI-V1W4-LOWER-EXTEND-MISSING-EXPORT)
+    // where the param count may differ from the legacy 2-param assumption.
+    // @decision DEC-V1-WAVE-4-WASM-LOWER-EXTEND-002
     return emitTypeLoweredModule(
       result.wave2Shape as SubstrateKind | null,
       result.fnName,
       result.wasmFn,
       result.wave2Shape === null ? result.numericDomain : undefined,
+      result.wave2Shape === null ? result.paramDomains : undefined,
     );
   }
   // Empty resolution fallback: emit the substrate module.

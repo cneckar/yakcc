@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // @decision DEC-HOOK-CODEX-001
 // title: @yakcc/hooks-codex — Codex CLI hook: interface shape, registration stub, threshold
 // status: decided (WI-V1W2-HOOKS-03); shared logic extracted to DEC-HOOK-BASE-001

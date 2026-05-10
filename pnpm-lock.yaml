@@ -102,6 +102,34 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17))
 
+  examples/v1-wave-3-wasm-lower-demo:
+    dependencies:
+      '@yakcc/compile':
+        specifier: workspace:*
+        version: link:../../packages/compile
+      '@yakcc/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@yakcc/registry':
+        specifier: workspace:*
+        version: link:../../packages/registry
+      '@yakcc/seeds':
+        specifier: workspace:*
+        version: link:../../packages/seeds
+      '@yakcc/shave':
+        specifier: workspace:*
+        version: link:../../packages/shave
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      fast-check:
+        specifier: ^4.7.0
+        version: 4.7.0
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17))
+
   packages/cli:
     dependencies:
       '@yakcc/compile':
@@ -163,6 +191,9 @@ importers:
       '@yakcc/seeds':
         specifier: workspace:*
         version: link:../seeds
+      assemblyscript:
+        specifier: ^0.28.17
+        version: 0.28.17
       fast-check:
         specifier: ^4.7.0
         version: 4.7.0
@@ -207,6 +238,9 @@ importers:
       '@yakcc/shave':
         specifier: workspace:*
         version: link:../shave
+      fast-check:
+        specifier: ^4.7.0
+        version: 4.7.0
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -367,6 +401,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/ir':
+        specifier: workspace:*
+        version: link:../ir
       '@yakcc/registry':
         specifier: workspace:*
         version: link:../registry
@@ -762,6 +799,11 @@ packages:
     resolution: {integrity: sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ==}
     engines: {node: '>= 8.0.0'}
 
+  assemblyscript@0.28.17:
+    resolution: {integrity: sha512-+S0Y7pwLiJngik0bt63XAswcN3Mu0szjvl2aCRWJ9U+5214e93HIt1waTBGFq0yLa8LJBBziw95BaAs5FNfz5Q==}
+    engines: {node: '>=20', npm: '>=10'}
+    hasBin: true
+
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
@@ -834,6 +876,10 @@ packages:
   better-sqlite3@12.9.0:
     resolution: {integrity: sha512-wqUv4Gm3toFpHDQmaKD4QhZm3g1DjUBI0yzS4UBl6lElUmXFYdTQmmEDpAFa5o8FiFiymURypEnfVHzILKaxqQ==}
     engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x}
+
+  binaryen@129.0.0-nightly.20260428:
+    resolution: {integrity: sha512-RpjRVPZw8NOhkGzx3tTaKYdv4C+zO1VVI0VB9GSCNLM81flHOAZUwRJTLDM3Hqco3OmwB8hTLpkkpMSJjUfHXw==}
+    hasBin: true
 
   bindings@1.5.0:
     resolution: {integrity: sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==}
@@ -1133,6 +1179,9 @@ packages:
 
   long@4.0.0:
     resolution: {integrity: sha512-XsP+KhQif4bjX1kbuSiySJFNAehNxgLb6hPRGJ9QsUr8ajHkuXGdrHmFUTUUXhDwVX2R5bY4JNZEwbUiMhV+MA==}
+
+  long@5.3.2:
+    resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -1840,6 +1889,11 @@ snapshots:
     dependencies:
       humanize-ms: 1.2.1
 
+  assemblyscript@0.28.17:
+    dependencies:
+      binaryen: 129.0.0-nightly.20260428
+      long: 5.3.2
+
   assertion-error@2.0.1: {}
 
   ast-v8-to-istanbul@1.0.0:
@@ -1894,6 +1948,8 @@ snapshots:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
+
+  binaryen@129.0.0-nightly.20260428: {}
 
   bindings@1.5.0:
     dependencies:
@@ -2159,6 +2215,8 @@ snapshots:
       lightningcss-win32-x64-msvc: 1.32.0
 
   long@4.0.0: {}
+
+  long@5.3.2: {}
 
   magic-string@0.30.21:
     dependencies:

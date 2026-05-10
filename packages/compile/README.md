@@ -64,10 +64,11 @@ The assembler is pure over the registry: if the same blocks are registered,
 the same artifact is produced. Registry mutations (new implementations) may
 change the selected blocks, which changes the artifact and manifest.
 
-## What is not yet wired
+## WASM backend status
 
-- **WASM string/mixed substrates** — the WASM backend covers numeric (i32/i64/f64) substrates. String-handling (linear-memory string view + `host_alloc`/`host_free`) and record/array type-lowering are deferred to a follow-on wave (WI-V1W2-WASM-02). The parity demo marks these substrates as `todo` rather than skipping silently.
-- **No native binary backend** — deferred; WASM serves the portability goal without adding a native compilation dependency.
+The in-house WASM lowering visitor covers: numeric primitives (i32/i64/f64), booleans and comparisons, strings (UTF-8 linear memory), records (flat-struct layout), arrays (ptr/length/capacity), control flow (if/else, while, for, for-of, switch, try/catch), function calls (intra-module + host-mediated), and the WASI-shaped host contract (filesystem, proc, time, random).
+
+An AssemblyScript backend (`assemblyScriptBackend()`) is now available and covers the same numeric substrates with less hand-rolled lowering. The AssemblyScript path is the recommended direction for new WASM targets; the in-house lowering visitor is being retired incrementally.
 
 ## License
 
