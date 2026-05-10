@@ -1561,9 +1561,11 @@ This sequence is the **post-PoC track**. The v2 self-shave PoC (Serenity's chain
 
 ### Initiative: AS-backend WASM track (Phase 2 + Phase 3 retirement of hand-rolled emitter)
 
-Status: **active 2026-05-10.** Operator-adjudicated pivot at issue #142 (closed 2026-05-06): AssemblyScript replaces the hand-rolled WASM emitter as the production WASM compilation path. Phase 0 (#144) and Phase 1 (#145) + follow-up (#170) landed; Phase 2 + Phase 3 are filed here. See `DEC-AS-BACKEND-PIVOT-001` for the load-bearing decision and the supersede note on `DEC-V1-WAVE-3-WASM-STRATEGY-001`.
+Status: **active 2026-05-10.** Operator-adjudicated pivot at issue #142 (closed 2026-05-06): AssemblyScript replaces the hand-rolled WASM emitter as the production WASM compilation path. Phase 0 (#144) and Phase 1 (#145) + follow-up (#170) landed; Phase 2 + Phase 3 + cleanup are filed as **#146 / #147 / #148** under the parent initiative **#143**. See `DEC-AS-BACKEND-PIVOT-001` for the load-bearing decision and the supersede note on `DEC-V1-WAVE-3-WASM-STRATEGY-001`.
 
 **Why this initiative exists.** Phase 0/1 closed via GitHub issues only — no DEC entry, no MASTER_PLAN initiative, no superseding annotation on the wave-2/wave-3 strategy decisions. A new contributor reading the plan in good faith would still believe the hand-rolled emitter is the production path. Per AGENTS.md *"Do not paper over disagreement between the plan and reality"* — this initiative closes the gap.
+
+**Plan-state correction (2026-05-10).** During the 2026-05-10 PM review, I drafted Phase 2 / Phase 3 issues without first searching the existing backlog and filed #197 / #198 as duplicates of #146 / #147. Both have been closed as duplicates. **Use #146 / #147 / #148.** The corresponding issue audit is recorded in the Plan history milestones section.
 
 **Current code surface (2026-05-10).**
 - `packages/compile/src/as-backend.ts` (408 LoC) — production path going forward.
@@ -1571,12 +1573,19 @@ Status: **active 2026-05-10.** Operator-adjudicated pivot at issue #142 (closed 
 - `packages/compile/src/wasm-lowering/visitor.ts` (5,678 LoC) + sibling files — wave-3 lowering pass, oracle-only.
 - `assemblyscript@0.28.17` is currently in `packages/compile/package.json` `devDependencies`. Phase 3 promotes it to `dependencies`.
 
-| ID | Title | Description | Deps | Gate | State |
-|----|-------|-------------|------|------|-------|
-| WI-AS-PHASE-2 | Coverage parity: AS backend matches hand-rolled visitor's accept set | Drive `assemblyScriptBackend()` to byte-equivalent (or value-equivalent with documented tolerance) parity with `wasmBackend()` across **the entire IR-strict-subset accept set**, using the existing wave-3 lowering test corpus and the bootstrap self-shave atom set as the regression baseline. Concrete deliverables: (a) parity harness extended to run every wave-3 lowering fixture through both backends and assert byte/value equivalence; (b) closing the construct gaps surfaced by the harness — every node kind the hand-rolled visitor lowers must lower equivalently through `asc`; (c) extension of `WASM_HOST_CONTRACT.md` if AS's host-binding emission requires shape changes (operator-approved per `DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001`); (d) explicit list of any constructs the AS path cannot lower, filed as backlog with operator-approved scope decisions (matches the wave-3 `pending` pattern). **Acceptance:** every fixture in `packages/compile/test/wasm-lowering/` and `packages/compile/test/wasm-backend.test.ts` runs through `assemblyScriptBackend()` with parity green; `pnpm bootstrap --verify` against the AS path produces byte-identical `BlockMerkleRoot`s to the from-source build; the bootstrap self-shave atom corpus (118+ atoms) compiles through AS at ≥95% with the residual ≤5% explicitly listed `pending` per Sacred Practice #5. **Pre-assigned decision:** `DEC-AS-PHASE-2-COVERAGE-001` (closed by implementer's @decision annotation: which constructs ride glue, which ride AS, where the boundary lives). | (none — Phase 1 already landed; the in-tree differential oracle remains the parity reference) | approve | not started — file as new GH issue, dispatch when v2-08 reroute settles |
-| WI-AS-PHASE-3 | Retirement: delete hand-rolled WASM emitter + lowering pass | When Phase 2 closes with parity green, delete `packages/compile/src/wasm-backend.ts`, the entire `packages/compile/src/wasm-lowering/` directory, and any test fixtures that exclusively exercise the hand-rolled path. Promote `assemblyscript` from `devDependencies` to `dependencies` in `packages/compile/package.json`. Simplify `assemble.ts` dispatch (remove the `target: "ts" \| "wasm"` branching at the wave-2-vs-wave-3 layer; AS is the only WASM backend). Update `WASM_HOST_CONTRACT.md` to remove any wave-2-emitter-specific guarantees and confirm the document remains the single canonical authority for the host boundary. Update `DESIGN.md` to remove references to the hand-rolled emitter as a backend choice. **Acceptance:** ~7,700 LoC deleted from `packages/compile/`; `pnpm -r build` clean; `pnpm -r test` green; `pnpm bootstrap --verify` byte-identical to the pre-deletion run; no remaining import of `wasm-backend.ts` or `wasm-lowering/` anywhere in the repo (`grep -r "wasm-lowering\|from.*wasm-backend"` returns empty); `WASM_HOST_CONTRACT.md` updated; `DESIGN.md` updated. **Pre-assigned decisions:** `DEC-AS-PHASE-3-RETIREMENT-001` (closed by implementer's @decision annotation: was the deletion clean, or were any wave-3 invariants retained as comments / interfaces in the AS path). | WI-AS-PHASE-2 | approve | not started — file as new GH issue once Phase 2 lands |
+| ID | Title | GH Issue | State | Notes |
+|----|-------|----------|-------|-------|
+| Parent | WI-AS-BACKEND-INTEGRATION | [#143](https://github.com/cneckar/yakcc/issues/143) | active | Operator-approved per #142 / Path A |
+| Phase 0 | WI-AS-BACKEND-SPIKE-001 | [#144](https://github.com/cneckar/yakcc/issues/144) | landed | GO recommendation |
+| Phase 1 | WI-AS-PHASE-1-MVP | [#145](https://github.com/cneckar/yakcc/issues/145) | landed | `assemblyScriptBackend()` numeric-substrate parity |
+| Phase 1 follow-up | WI-AS-PHASE-1-MVP-DOMAIN-INFER-PARITY | [#170](https://github.com/cneckar/yakcc/issues/170) | landed | domain-inference alignment |
+| Phase 2 | WI-AS-PHASE-2-COVERAGE | [#146](https://github.com/cneckar/yakcc/issues/146) | blocked-on-Phase-1-closure | Drive AS-backend to ≥80% closer-parity threshold; rewires `closer-parity.test.ts` from `it.fails()` to live `it()`; coverage matrix includes records, arrays, strings, control-flow, calls, closures, throws, JSON, GC, regex |
+| Phase 3 | WI-AS-PHASE-3-RETIREMENT | [#147](https://github.com/cneckar/yakcc/issues/147) | blocked-on-Phase-2 | Procedural retirement: differential-oracle period (≥1 release cycle), `@deprecated` annotations, source moved to `legacy/` (not yet deleted), wave-4 followups closed |
+| Cleanup | WI-AS-CLEANUP-WAVE3-LOWERER | [#148](https://github.com/cneckar/yakcc/issues/148) | blocked-on-Phase-3 | Actual deletion of ~6,000+ LoC of in-house lowerer + tests |
 
-**Dispatch order:** WI-AS-PHASE-2 → WI-AS-PHASE-3. Critical path is single-threaded; no parallelism makes sense (Phase 3 cannot start until Phase 2 has demonstrated parity). The operator-approved sister for this track is FuckGoblin per `DEC-V2-DISPATCH-REROUTE-001` (spike-shaped integration work routes to FuckGoblin); reroute may shift if the v2-08 reroute consumes FuckGoblin's bandwidth.
+**Dispatch order:** #146 → #147 → #148. Critical path is single-threaded; Phase 3 cannot start until Phase 2 has demonstrated parity, and cleanup cannot start until the differential-oracle period closes. The operator-approved sister for this track is Wrath per the issue assignments; FuckGoblin is the alternative if Wrath bandwidth doesn't open.
+
+**Out of scope (explicit).** Re-litigating the hand-rolled-vs-AS choice (closed at #142). Adding a third WASM backend. Cross-language shave through the AS path (multi-language vision is the long-term initiative below; AS-as-frontend is not on it).
 
 **Out of scope (explicit).** Re-litigating the hand-rolled-vs-AS choice (closed at #142). Adding a third WASM backend. Cross-language shave through the AS path (multi-language vision is the long-term initiative below; AS-as-frontend is not on it).
 
@@ -1608,23 +1617,67 @@ Status: **design pass complete (D1..D6 ADRs landed); implementation gated on mea
 
 ### Initiative: v2 self-hosting closure (WI-V2-08/09/10 — final wave)
 
-Status: **active 2026-05-10 — re-routed per `DEC-V2-DISPATCH-REROUTE-001`.** v2 readiness arc (WI-V2-07 capability) closed at WI-038/`4767b7a` with self-shave at 100% (118/118). Residual property-test corpus work (mis-named `WI-V2-07-PREFLIGHT-L*`) is reframed as WI-V2-06 batched-by-package. The remaining critical path is WI-V2-08 (compile self-equivalence) → WI-V2-09 (two-pass bootstrap byte-equivalence) → WI-V2-10 (demo + CI gate). This initiative replaces the slice-by-subtree dispatch pattern with a three-slice spike pattern for WI-V2-08 and re-routes the dispatch per the productivity / sister-fit observation in the 2026-05-10 PM review.
+Status: **active 2026-05-10 — re-routed per `DEC-V2-DISPATCH-REROUTE-001`.** v2 readiness arc (WI-V2-07 capability) closed at WI-038/`4767b7a` with self-shave at 100% (118/118). Residual property-test corpus work + remaining v2 closure are tracked under existing GH issues — see table. This initiative section reframes the dispatch pattern (away from L*-micro-slicing) without re-filing the work.
+
+**Plan-state correction (2026-05-10).** During the 2026-05-10 PM review, I drafted v2 closure issues without first searching the existing backlog and filed #199 / #201 as duplicates of #59 / #87. Both have been closed as duplicates. **Use #87 / #59 / #61.**
 
 **Re-routing summary** (per `DEC-V2-DISPATCH-REROUTE-001`):
-- **Track A (FuckGoblin):** WI-V2-08 spike, three slices (harness skeleton → compile-then-test → diff harness against from-source build).
-- **Track B (Serenity):** finish residual WI-V2-06 corpus drops batched **one PR per package** (not 16 PRs by subtree); on completion, hand off to Track A as reviewer eyes.
-- WI-V2-09 / WI-V2-10 dispatch determined when Track A lands.
+- **Track A (FuckGoblin or Serenity, operator picks at dispatch):** WI-V2-08 (compile self-equivalence) — currently rolled-up into #59 alongside corpus generation. The 3-slice spike pattern (harness → test-equivalence → diff harness) is recommended *internal* decomposition for the implementer; the GH issue stays single since #59 is already operator-approved as rolled-up.
+- **Track B (Serenity):** finish #87 preflight (drives bootstrap to clean shave + closes V2-06 coverage gap), then pick up #59. Sister-routing is per existing issue assignments; the dispatch-reroute DEC stops the L*-micro-slice pattern but does not require re-routing #59 away from Serenity.
+- WI-V2-09 / WI-V2-10 land via #61 (rolled-up closer pair).
 
-| ID | Title | Description | Deps | Gate | State |
-|----|-------|-------------|------|------|-------|
-| WI-V2-08-A | Harness skeleton: re-shave + re-compile yakcc from registry | One slice. Add `tools/v2-self-equivalence/` (or equivalent — implementer's choice at dispatch). The harness: (1) opens a fresh registry, (2) runs `yakcc shave` over every yakcc package in dependency order (contracts → ir → registry → compile/shave → federation → cli → hooks-claude-code → variance), (3) runs `yakcc compile <yakcc-entry>` against the shaved registry to produce a recomposed yakcc TS bundle. **Acceptance:** the harness runs to completion against `main`'s code; the recomposed bundle is a single TS file (or a small directory) that can be loaded into a fresh Node process. No equivalence assertion yet — that's WI-V2-08-B. **Pre-assigned decision:** `DEC-V2-08-HARNESS-001` (closed by implementer's @decision annotation: harness lives in `tools/`, in `examples/`, or as a new package). | WI-V2-07 (landed at `4767b7a`) | review | not started — **next dispatch to FuckGoblin** |
-| WI-V2-08-B | Compile-then-run-tests against the shaved registry | One slice. Take the recomposed yakcc bundle from WI-V2-08-A and run yakcc's existing `pnpm test` suite against **the recomposed code** instead of the from-source code. Functional equivalence is the assertion: every test that passes against from-source must pass against recomposed (modulo documented `pending` cases per Sacred Practice #5). The glue-aware framing (`DEC-V2-GLUE-AWARE-SHAVE-001`) covers any constructs that don't shave cleanly — they ride as `GlueLeafEntry` and emit verbatim per `DEC-V2-GLUE-LEAF-TS-EMIT-001`, so functional equivalence is the gate, not byte-identity. **Acceptance:** recomposed yakcc passes `pnpm test` with the same green/red counts as from-source build, OR all delta is recorded as `pending` with a backlog item per case. | WI-V2-08-A | review | gated |
-| WI-V2-08-C | Differential harness: shaved-build vs from-source-build | One slice. Wire the harness to run **both** builds and diff their behavior on the test suite + the v0/v0.7/v1 demos (parse-int-list, mri, federation). Difference categories: byte-identical (best), value-identical (acceptable), divergent (backlog). The output is a structured report at `tmp/v2-self-equivalence/diff-report.json` summarizing the comparison. **Acceptance:** the diff harness runs to completion; the diff report exists and shows zero divergent cases (or all divergent cases are recorded as `pending` with backlog items). This closes WI-V2-08. | WI-V2-08-B | approve | gated |
-| WI-V2-09 | Two-pass bootstrap byte-equivalence | The crown jewel. Take the recomposed yakcc from WI-V2-08, use IT to re-shave the original yakcc source. The resulting block tree must be byte-identical at the `BlockMerkleRoot` level to the WI-V2-07 first-pass blocks. Fixed-point self-hosting: yakcc-N produces yakcc-N+1 produces yakcc-N+1 (no further drift). Any divergence is a non-determinism bug somewhere in the canonicalizer or hashing path — the most valuable test the project can have. Glue regions are byte-identical by construction (verbatim-preserved). Pre-assigned decision: `DEC-V2-BOOTSTRAP-EQUIV-001`. | WI-V2-08-C | approve | gated |
-| WI-V2-10 | v2 demo + CI gate | Document the self-hosting flow at `docs/V2_SELF_HOSTING_DEMO.md`. Wire CI to run the WI-V2-09 two-pass equivalence check on every commit. The demo claim sharpens to "yakcc shaves the meaningfully-reusable parts of arbitrary TS source, including itself — glue regions are preserved verbatim and are byte-identical by construction." README updates accordingly. | WI-V2-09 | approve | gated |
-| WI-V2-06-BATCHED | Batched property-test corpus completion (Track B) | The residual `WI-V2-07-PREFLIGHT-L*` work, reframed: one PR per yakcc package covering all atoms in that package with property-test corpora. Replaces the L3a..L3i pattern (16 PRs by subtree). Packages remaining (per `WI-V2-07-PREFLIGHT` ledger inspection): identify the per-package gap from existing `*.props.ts` coverage; close it one package at a time. **Acceptance:** every yakcc atom in the bootstrap corpus has a non-placeholder `property_tests` artifact in its `proof/manifest.json`. | WI-V2-07 (landed) | review | active — **dispatched to Serenity, batched-by-package** |
+| ID | Title | GH Issue | State | Notes |
+|----|-------|----------|-------|-------|
+| WI-V2-07-PREFLIGHT | Drive bootstrap to clean shave + close V2-06 coverage gap | [#87](https://github.com/cneckar/yakcc/issues/87) | active (Serenity) | Subsumes V2-06 property-test corpus work; replaces the abandoned 16-slice L*-pattern. Sequenced before #59. |
+| WI-V2-CORPUS-AND-COMPILE-SELF-EQ | Generate canonical corpus + compile self-equivalence (Phase F+G, rolled-up) | [#59](https://github.com/cneckar/yakcc/issues/59) | blocked on #87 (Serenity) | Subsumes WI-V2-07 + WI-V2-08. Implementer SHOULD internally decompose into the 3-slice harness/test-eq/diff pattern even though the GH issue is single. |
+| WI-V2-PoC-CLOSER | Two-pass bootstrap byte-equivalence + demo + CI gate (Phase H+I, rolled-up) | [#61](https://github.com/cneckar/yakcc/issues/61) | blocked on #59 (Serenity) | Subsumes WI-V2-09 + WI-V2-10. Crown-jewel demo. |
 
-**Out of scope (explicit).** Re-litigating the v2 thesis. Adding new yakcc packages between now and WI-V2-10. Combining v2 closure with v3 work (the dispatch-reroute decision keeps these tracks parallel-orthogonal).
+**Dispatch sequence:** #87 → #59 → #61. Track A vs Track B framing applies if FuckGoblin opens up bandwidth and operator wants to parallel-route #59 to her — but the existing assignment is Serenity for all three.
+
+**Sister-routing reminder (per `DEC-V2-DISPATCH-REROUTE-001`):** the dispatch-reroute DEC's load-bearing change is **the end of the 16-slice L*-pattern**, not the routing of #59 to a different sister. If Serenity finishes #87 cleanly, she should continue with #59 in rolled-up form (one issue, three internal slices). If Serenity stalls on #59, the operator may re-route to FuckGoblin via comment on #59 — Sacred Practice #12 is preserved by keeping the issue numbering stable.
+
+**Out of scope (explicit).** Re-litigating the v2 thesis. Adding new yakcc packages between now and #61. Combining v2 closure with v3 work (the dispatch-reroute decision keeps these tracks parallel-orthogonal).
+
+### Initiative: WI-HOOK-LAYER (v0.5 GTM surface — local-dev usability)
+
+Status: **active 2026-05-10.** Parent initiative at [#194](https://github.com/cneckar/yakcc/issues/194) (filed by orchestrator 2026-05-10, ~2 hours before the PM review that surfaced the v0.5 facade gap). Closes "yakcc is a registry without a consumer" by wiring the production hook (already shipped per `DEC-HOOK-CLAUDE-CODE-PROD-001`) into a real Claude Code integration surface. This is the load-bearing user-facing surface — without it, yakcc is research-grade and not locally usable.
+
+**Why this initiative exists.** Discovered during the 2026-05-10 PM review: `yakcc hooks claude-code install` is still the v0 facade (writes `.claude/CLAUDE.md` documenting the v0 stub message); the production hook in `packages/hooks-claude-code/src/index.ts` is real but writes a marker file because "the Claude Code CLI extension API does not expose a Node.js-callable slash-command registration surface." Issue #194 is the design-pass parent. This MASTER_PLAN section is the substrate-level container so the work is visible alongside v2 / v3 / AS-track in the active initiatives ledger.
+
+**Phase plan** (per #194 body):
+- **Phase 0** — design pass (orchestrator-driven, ~1 session). Resolves D-HOOK-1 through D-HOOK-6 (first IDE target, interception layer, sync vs async, contract surfacing, telemetry shape, discovery-v3 integration shape). Output: `docs/adr/hook-layer-architecture.md`.
+- **Phase 1** — telemetry-only MVP. Tool-call interception + telemetry capture, no substitution yet. Estimate: ~3 weeks once D1 (#151) lands.
+- **Phase 2** — smart substitution via discovery v3 (D4 #154 lands). Estimate: ~4 weeks after Phase 1.
+- **Phase 3** — contract surfacing per D-HOOK-4 (B5 prereq). Estimate: ~2 weeks after Phase 2.
+- **Phase 4** — Cursor adapter (independent of benchmarks). Estimate: ~3 weeks.
+- **Phase 5** — agnostic / proxy mode (conditional, only if demand surfaces).
+
+**Sub-ticket cascade landed during the 2026-05-10 PM review** (gap-fillers not covered by #194's phase decomposition):
+
+| ID | Title | GH Issue | State | Notes |
+|----|-------|----------|-------|-------|
+| Parent | WI-HOOK-LAYER (initiative) | [#194](https://github.com/cneckar/yakcc/issues/194) | active | Phase-0 design-pass parent |
+| Sub | WI-V05-CLI-INSTALL-RETIRE-FACADE | [#203](https://github.com/cneckar/yakcc/issues/203) | blocked on #194 Phase 0 | Replaces the v0 facade in `packages/cli/src/commands/hooks-install.ts` with real wiring (settings.json hook / MCP server / both per #194's chosen surface). |
+| Sub | WI-V05-INIT-COMMAND | [#204](https://github.com/cneckar/yakcc/issues/204) | blocked on #203 | New `yakcc init` CLI command for fresh-project setup. The "first 30 seconds" surface. |
+| Sub | WI-V05-USER-WALKTHROUGH | [#205](https://github.com/cneckar/yakcc/issues/205) | blocked on #194 Phase 1+, #203, #204 | `docs/USING_YAKCC.md` end-user walkthrough. |
+| Benchmark | WI-BENCHMARK-B3 | [#187](https://github.com/cneckar/yakcc/issues/187) | gated on hook + discovery v3 | Cache hit rate on 3-day human-engineer sprint |
+| Benchmark | WI-BENCHMARK-B4 | [#188](https://github.com/cneckar/yakcc/issues/188) | gated on hook | Token expenditure reduction (single-point A/B) |
+| Benchmark | WI-BENCHMARK-B5 | [#189](https://github.com/cneckar/yakcc/issues/189) | gated on hook + contract-surfacing | Hallucination rebound / multi-turn coherence |
+| Benchmark | WI-BENCHMARK-B7 | [#191](https://github.com/cneckar/yakcc/issues/191) | gated on novel-glue verification path | Time-to-commit for novel glue |
+| Benchmark | WI-BENCHMARK-B8-CURVE | [#193](https://github.com/cneckar/yakcc/issues/193) | gated on hook + discovery v3 | Production scaling curve — savings vs intent hit rate |
+
+**Cornerstone alignment** (per #194 body — restated for the substrate-level record):
+- **No ownership** preserved. Hook telemetry is hard-coded local-only by default; opt-in upload requires explicit operator config; zero personally-identifying data ever collected.
+- **Content-addressed** preserved. Atom resolution returns BlockMerkleRoot hashes; the hook never invents identifiers.
+- **No versioning** preserved. Hook protocol designed for additive evolution.
+- **Composition from minimal blocks** preserved. Decomposed into `@yakcc/hooks-base` + `@yakcc/hooks-claude-code` + `@yakcc/hooks-cursor` + `@yakcc/hooks-codex` (per existing v0 package layout) plus the `@yakcc/cli` install-side WI #203.
+- **Embedding-as-index-only** preserved. Substitution requires structural + property-test validation, never cosine alone (D-HOOK-3 + D-HOOK-4 enforce this).
+
+**Dispatch order:** #194 Phase 0 (design ADR) first. Then #203 → #204 (CLI surface lands fast once design is locked). Phase 1 telemetry MVP can run in parallel with #203/#204. Phase 2/3/4 sequence per #194's plan. #205 (walkthrough doc) lands last, after Phase 1 ships and the install + init commands work.
+
+**Out of scope.** Web-IDE integration (browser hosts, Replit, Codespaces) — separate initiative if demand surfaces. Non-coding agent integration (research / analysis agents) — outside GTM thesis. Multi-user / shared-team telemetry — not in v0.5 (no-ownership cornerstone preserved).
+
+**Why this matters for "can I use yakcc for local dev":** the answer to that question lives entirely in this initiative. v0/v0.6/v0.7 / v1 / v2 / v3 are all infrastructure for the hook layer. Without WI-HOOK-LAYER closure, yakcc is a registry plus a CLI; with it, yakcc is the substrate the MANIFESTO promises.
 
 ---
 
@@ -1640,11 +1693,56 @@ Status: **active 2026-05-10 — re-routed per `DEC-V2-DISPATCH-REROUTE-001`.** v
 
 ---
 
+## Cornerstone audit (2026-05-10 — sweep of last 30 days / 221 commits)
+
+Pinpoint sweep across `packages/**/*.ts` and recent git log for cornerstone-violation shapes. **Result: cornerstones are intact.** Findings:
+
+**Cornerstone #2 (no ownership) — clean.**
+- `packages/registry/src/storage.test.ts` carries explicit negative tests asserting `blocks` table has no `author / author_email / signature / owner / signer` columns (DEC-NO-OWNERSHIP-011 invariant test).
+- `packages/federation/src/wire.test.ts` carries negative tests asserting the wire format has no `signer / signature` fields.
+- No production-code occurrences of `author_email`, `author_id`, `signer`, or `owner_*` columns or fields.
+
+**Cornerstone #3 (content-addressed) — clean.**
+- `BlockMerkleRoot` derivation is centralized in `@yakcc/contracts` per `DEC-IDENTITY-005` / `DEC-TRIPLET-IDENTITY-020` / `DEC-V1-FEDERATION-WIRE-ARTIFACTS-002`.
+- Federation wire format consumes the contracts-package formula directly (no parallel helper).
+
+**Cornerstone #4 (embedding is just an index) — clean with one note.**
+- Selection logic in `packages/registry/src/select.ts` reads structural-match results and declared strictness, not cosine distance.
+- **Note:** `packages/hooks-base/src/index.ts` uses `cosineDistance < threshold` as the *registry-hit suggestion* gate. This is **not** a correctness gate — `registry-hit` means "consider this block," not "this block is correct" — but the structural-match gate that v3 D3 specifies (`DEC-V3-DISCOVERY-D3-001`) is not yet wired into the hook path. Until `WI-V3-DISCOVERY-IMPL-QUERY` lands, cosine alone gates the suggestion. This is a known-temporary state, not a cornerstone violation, but worth flagging so it doesn't drift into permanence. **Action:** when WI-V3-DISCOVERY-IMPL-QUERY lands, the hook path MUST gate registry-hit on structural match before returning the candidate.
+
+**Cornerstone #6 (monotonic registry) — clean.**
+- No `DELETE FROM blocks` anywhere in production code.
+- Schema migrations are atomic clean re-creates of `contract_embeddings` only (the index, not the source-of-truth `blocks` table) per `DEC-SCHEMA-MIGRATION-002`.
+
+**Sacred Practice #12 (no parallel mechanisms) — one bounded violation, scheduled for retirement.**
+- The hand-rolled WASM emitter (`packages/compile/src/wasm-backend.ts` + `wasm-lowering/`, ~7,700 LoC) coexists today with `as-backend.ts` (the production WASM path). This is bounded: per `DEC-AS-BACKEND-PIVOT-001`, the hand-rolled emitter is a differential oracle pending Phase 3 retirement (#147). Sacred Practice #12 is honored over time, not in steady state.
+- No other parallel-mechanism violations surfaced in the sweep.
+
+**No-versioning cornerstone — clean.**
+- No occurrences of `semver` / `version.latest` / `breaking-change` semantics in production code. The only "version" usage is `SCHEMA_VERSION` (the registry-internal migration marker, not block-level versioning) and `package.json#version` (the npm-publish version, mechanical).
+
+**Sweep scope.** 221 commits across last 30 days, all `packages/**/*.ts` non-test source files, plus a targeted regex sweep for known violation shapes. Test files were inspected for *negative* assertions (which are guards, not violations). This audit should run on a 30-day cadence; setting that up is a follow-up for the orchestrator.
+
+## Plan compaction (deferred; needs explicit operator approval)
+
+`MASTER_PLAN.md` is now ~360 KB / 1,950+ lines. It contains five distinct surfaces interleaved:
+1. **Permanent record** (Original Intent, Identity, Cornerstone, Repo Conventions, Architecture, Stages, Trust/Scale Axis, Hard problems we are deferring).
+2. **Live work surface** (Active Initiatives table — currently 12 initiatives).
+3. **Decision Log** (107+ DEC entries).
+4. **Plan history milestones** (append-only milestone log).
+5. **Riskiest Assumptions** (some entries 12+ months old).
+
+Recommendation (deferred): split into `MASTER_PLAN.md` (live state, surfaces 1+2 + a thin pointer to current decisions) + `PLAN_HISTORY.md` (closed initiatives, retired DECs, plan milestones, riskiest-assumptions archive). Reduces cognitive load on contributors; preserves audit trail.
+
+This split is **not** done in the 2026-05-10 PM-review pass because it changes file structure and tooling that depends on `MASTER_PLAN.md` paths (e.g., `cc-policy workflow`, AGENTS.md references, sister-session prompts). It needs an explicit operator decision and a single dedicated WI to land.
+
 ## Plan history milestones
 
 Append-only log of substrate-level milestones. Each entry names what
 shipped, the SHA on `main`, and what it unblocks downstream. New entries
 are added at the top; older entries are not edited.
+
+- **2026-05-10 — PM-review documentation drift closure (`3cf9e19`).** Plan corrections landing as PR #202: AS-backend pivot recorded as `DEC-AS-BACKEND-PIVOT-001` (supersedes `DEC-V1-WAVE-3-WASM-STRATEGY-001`); v3 discovery stage opened as `DEC-V3-INITIATIVE-001` with measurement-first guardrail; v2 dispatch reroute recorded as `DEC-V2-DISPATCH-REROUTE-001`. **Follow-up sweep (this commit):** v0.5 hook-layer integration gap surfaced; existing GH issue #194 identified as the design-pass parent; sub-issues #203 / #204 / #205 filed for the gap-fillers (CLI install facade replacement, `yakcc init`, `docs/USING_YAKCC.md`); WI-HOOK-LAYER initiative section added. Duplicate issues #197 / #198 / #199 / #201 closed as duplicates of existing #146 / #147 / #59 / #87 after the PM-review backlog audit. DESIGN.md and README.md synced to reality (v0 facade caveat on `yakcc hooks claude-code install`; AS-backend pivot note on the WASM track). Cornerstone audit (this section, above) confirms cornerstones intact across 221-commit sweep with one bounded Sacred-Practice-#12 deviation (hand-rolled WASM emitter) scheduled for retirement under #147/#148. Plan-compaction (split MASTER_PLAN.md into live + history) flagged as deferred follow-up.
 
 - **2026-05-01 — WI-020 v2 landed; v1 wave-1 last work item unblocked.**
   `@yakcc/federation` package shipped via `wi-020-federation-mirror-v2`
