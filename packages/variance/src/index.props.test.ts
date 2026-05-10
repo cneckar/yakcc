@@ -3,8 +3,8 @@
 // Two-file pattern: this file is the thin vitest wrapper; the corpus lives in
 // the sibling index.props.ts (vitest-free, hashable as a manifest artifact).
 
-import { it } from "vitest";
 import * as fc from "fast-check";
+import { it } from "vitest";
 import {
   prop_compareDimensions_result_shape,
   prop_compareDimensions_scores_in_range,
