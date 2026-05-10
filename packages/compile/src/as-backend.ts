@@ -47,6 +47,100 @@
 //   and avoids polluting the project tree. Temp files are cleaned up after each
 //   emit() call regardless of success/failure (finally block). A unique
 //   subdirectory per call (randomUUID) prevents concurrent-call collisions.
+//
+// @decision DEC-AS-JSON-STRATEGY-001
+// Title: AS-backend JSON support uses flat-memory manual integer parsers/writers
+//        (parseI32/writeI32/skipWS) rather than assemblyscript-json or native
+//        AS JSON stdlib, because both managed JSON libraries require --runtime
+//        minimal/full (GC heap, managed string type, JSON parsing internals) which
+//        are incompatible with the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2D-JSON, Issue #209, 2026-05-03)
+// Rationale:
+//   AS JSON library options evaluated:
+//
+//   (A) `assemblyscript-json` package (npm: assemblyscript-json):
+//       Requires AS managed types (string, GC allocation, object fields).
+//       Under --runtime stub: JSON.parse<T>() fails to compile because the stub
+//       runtime omits the GC heap and string internals. PROBE RESULT: COMPILE FAIL.
+//
+//   (B) Native AS JSON stdlib (JSON.parse / JSON.stringify built into asc):
+//       Also requires managed string type and GC allocation. Same failure mode
+//       as (A) under --runtime stub. PROBE RESULT: COMPILE FAIL.
+//       Evidence: J4/J5 probes in json-parity.test.ts confirm the compile failure.
+//
+//   (C) Flat-memory manual parsers (CHOSEN):
+//       parseI32(ptr, len): byte-by-byte ASCII decimal integer parser (atoi).
+//       writeI32(value, dstPtr): byte-by-byte ASCII decimal integer writer (itoa).
+//       skipWS(ptr, len, start): JSON whitespace-skip for token boundary detection.
+//       These use only WASM intrinsics (load<u8>, store<u8>, i32 arithmetic) with
+//       no GC dependency. Compatible with --runtime stub. PROBE RESULT: COMPILE OK.
+//
+//   Type-parameter inference at codegen time (for JSON.stringify<T>):
+//       Not applicable -- the flat-memory approach works on byte buffers, not typed
+//       AS values. The integer type (i32) is the only supported token type in v1
+//       (ASCII-ONLY CONSTRAINT per DEC-AS-JSON-LAYOUT-001). Type inference for
+//       broader JSON support (floats, strings, objects) is deferred to a future
+//       phase that adopts --runtime minimal/full.
+//
+//   JSON.parse destination type resolution:
+//       Not applicable in v1. The flat-memory parseI32 always returns i32.
+//       Destination type selection for polymorphic JSON.parse is deferred to the
+//       same future phase that enables AS managed JSON.
+//
+//   Decision: Use flat-memory approach (C) for v1. The assemblyscript-json package
+//   is NOT added as a dependency at this time -- it would only work with a GC
+//   runtime tier that is not yet adopted. A follow-up issue should track the GC
+//   runtime upgrade path and reassess JSON library adoption at that point.
+//
+// See also: DEC-AS-JSON-LAYOUT-001 in json-parity.test.ts for the byte-layout
+// specifics (JSON_BASE_PTR, DST_BASE_PTR, ASCII-ONLY CONSTRAINT).
+//
+// @decision DEC-AS-JSON-STRATEGY-001
+// Title: AS-backend JSON support uses flat-memory manual integer parsers/writers
+//        (parseI32/writeI32/skipWS) rather than assemblyscript-json or native
+//        AS JSON stdlib, because both managed JSON libraries require --runtime
+//        minimal/full (GC heap, managed string type, JSON parsing internals) which
+//        are incompatible with the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2D-JSON, Issue #209, 2026-05-03)
+// Rationale:
+//   AS JSON library options evaluated:
+//
+//   (A) `assemblyscript-json` package (npm: assemblyscript-json):
+//       Requires AS managed types (string, GC allocation, object fields).
+//       Under --runtime stub: JSON.parse<T>() fails to compile because the stub
+//       runtime omits the GC heap and string internals. PROBE RESULT: COMPILE FAIL.
+//
+//   (B) Native AS JSON stdlib (JSON.parse / JSON.stringify built into asc):
+//       Also requires managed string type and GC allocation. Same failure mode
+//       as (A) under --runtime stub. PROBE RESULT: COMPILE FAIL.
+//       Evidence: J4/J5 probes in json-parity.test.ts confirm the compile failure.
+//
+//   (C) Flat-memory manual parsers (CHOSEN):
+//       parseI32(ptr, len): byte-by-byte ASCII decimal integer parser (atoi).
+//       writeI32(value, dstPtr): byte-by-byte ASCII decimal integer writer (itoa).
+//       skipWS(ptr, len, start): JSON whitespace-skip for token boundary detection.
+//       These use only WASM intrinsics (load<u8>, store<u8>, i32 arithmetic) with
+//       no GC dependency. Compatible with --runtime stub. PROBE RESULT: COMPILE OK.
+//
+//   Type-parameter inference at codegen time (for JSON.stringify<T>):
+//       Not applicable -- the flat-memory approach works on byte buffers, not typed
+//       AS values. The integer type (i32) is the only supported token type in v1
+//       (ASCII-ONLY CONSTRAINT per DEC-AS-JSON-LAYOUT-001). Type inference for
+//       broader JSON support (floats, strings, objects) is deferred to a future
+//       phase that adopts --runtime minimal/full.
+//
+//   JSON.parse destination type resolution:
+//       Not applicable in v1. The flat-memory parseI32 always returns i32.
+//       Destination type selection for polymorphic JSON.parse is deferred to the
+//       same future phase that enables AS managed JSON.
+//
+//   Decision: Use flat-memory approach (C) for v1. The assemblyscript-json package
+//   is NOT added as a dependency at this time -- it would only work with a GC
+//   runtime tier that is not yet adopted. A follow-up issue should track the GC
+//   runtime upgrade path and reassess JSON library adoption at that point.
+//
+// See also: DEC-AS-JSON-LAYOUT-001 in json-parity.test.ts for the byte-layout
+// specifics (JSON_BASE_PTR, DST_BASE_PTR, ASCII-ONLY CONSTRAINT).
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
