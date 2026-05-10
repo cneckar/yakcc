@@ -455,6 +455,11 @@ describe("AS backend parity — f64 domain", () => {
 // ---------------------------------------------------------------------------
 
 describe("AS backend byte-determinism", () => {
+  // Per-test timeout raised to 15 s: 3 sequential asc invocations × ~1–3 s each
+  // on loaded hardware can exceed the default 5 s vitest budget.
+  // Root cause of REGR-PHASE1-DETERM-001 (reviewer finding): this test ran at
+  // 5430ms on the reviewer's host, exceeding the 5000ms default.
+  // @decision DEC-AS-BACKEND-TMPDIR-001 (per-call unique tmpdir; no shared state)
   it("3 sequential emit() calls on the same i32 atom produce identical sha256 hashes", async () => {
     const src = "export function add(a: number, b: number): number { return (a + b) | 0; }";
     const backend = assemblyScriptBackend();
@@ -485,7 +490,10 @@ describe("AS backend byte-determinism", () => {
         "",
       ].join("\n"),
     );
-  });
+  // 15 s per-test budget: vitest default is 5 s; 3 sequential asc invocations
+  // on loaded hardware observed at 5430ms (REGR-PHASE1-DETERM-001), exceeding
+  // the default. 15 s leaves headroom for slow CI while still catching hangs.
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------
