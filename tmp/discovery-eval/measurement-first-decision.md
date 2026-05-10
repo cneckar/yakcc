@@ -1,9 +1,9 @@
 # Measurement-First Decision — Single-Vector Baseline
 
 **WI-V3-DISCOVERY-D5-HARNESS** (issue #200)
-**Generated:** 2026-05-10T16:23:23.997Z
-**HEAD SHA:** 2514529
-**Provider:** yakcc/offline-blake3-stub
+**Generated:** 2026-05-10T18:02:02.841Z
+**HEAD SHA:** 31192ca
+**Provider:** Xenova/all-MiniLM-L6-v2
 **Corpus:** bootstrap-inline (9 entries: 5 seed-derived + 4 synthetic)
 
 ---
@@ -17,46 +17,36 @@ cost in D1 (1,920 floats/atom) is unjustified. This file is the operator-facing 
 
 ## Provider Note
 
-**WARNING: OFFLINE PROVIDER (BLAKE3 hashes)**
-
-The numbers below were produced with the offline BLAKE3 embedding provider (DEC-CI-OFFLINE-001),
-which produces deterministic but NON-SEMANTIC vectors. Similar behavior strings do NOT produce
-nearby vectors. M1..M4 numbers DO NOT reflect real retrieval quality.
-
-To produce the operator-meaningful baseline, re-run with:
-  DISCOVERY_EVAL_PROVIDER=local pnpm --filter @yakcc/registry test
-
-The offline-provider run validates that the harness code is correct and the corpus schema is
-well-formed. It does NOT answer the "should v3-implementation proceed?" question.
+Provider: transformers.js local (Xenova/all-MiniLM-L6-v2) — SEMANTIC embeddings. These numbers are the operator-meaningful baseline.
 
 ---
 
-## Baseline Results (yakcc/offline-blake3-stub)
+## Baseline Results (Xenova/all-MiniLM-L6-v2)
 
 | Metric | Value | Target | Pass? |
 |--------|-------|--------|-------|
-| M1 Hit rate | 0.0% | >=80% | FAIL |
-| M2 Precision@1 | 40.0% | >=70% | FAIL |
+| M1 Hit rate | 55.6% | >=80% | FAIL |
+| M2 Precision@1 | 80.0% | >=70% | PASS |
 | M3 Recall@10 | 100.0% | >=90% | PASS |
-| M4 MRR | 0.540 | >=0.70 | FAIL |
+| M4 MRR | 0.850 | >=0.70 | PASS |
 | M5 Brier strong | N/A (no data) | <0.10 | N/A |
 | M5 Brier confident | N/A (no data) | <0.10 | N/A |
 | M5 Brier weak | N/A (no data) | <0.10 | N/A |
-| M5 Brier poor | 0.00077 | <0.10 | PASS |
+| M5 Brier poor | 0.03781 | <0.10 | PASS |
 
 ---
 
 ## Operator Decision
 
-**M1 FAILS (0.0% < 80%)**
+**M1 FAILS (55.6% < 80%)**
 
 Single-vector embedding does NOT meet the M1 target.
 v3-implementation MAY PROCEED with D1's multi-dimensional schema.
 
 Worst-performing entries (lowest top-1 score):
-  - synth-clamp-001: combinedScore=0.300
-  - synth-haversine-negative-001: combinedScore=0.302
-  - seed-comma-001: combinedScore=0.303
+  - synth-haversine-negative-001: combinedScore=0.304
+  - synth-validate-email-001: combinedScore=0.358
+  - synth-clamp-001: combinedScore=0.364
 
 These entries justify per-dimension embeddings in D1:
 - Entries failing M2 suggest top-1 retrieval is imprecise (wrong atom ranked first)
@@ -68,22 +58,20 @@ These entries justify per-dimension embeddings in D1:
 ## Worst-Performing Entries
 
 **M2 (Precision@1 failures):**
-  - seed-ascii-char-001: top1=02aa7b492ff9fcbb5a47cc8d664abb10fa1891b016674e98f32c7c0747d0f108 expected=5eeef96b255b42fdb4c8e7b51b335053f30c0a43d18e80e6f3ae51905028532f
-  - seed-integer-001: top1=02aa7b492ff9fcbb5a47cc8d664abb10fa1891b016674e98f32c7c0747d0f108 expected=ceb61944a0ee78407db73e8523ee40525c3f526047baa159a91705c54eeeed96
-  - seed-digit-001: top1=70f2615e70db2be0d9566faf06048794bc08831e13d6e432f0c92e7e9ed1eb0a expected=02aa7b492ff9fcbb5a47cc8d664abb10fa1891b016674e98f32c7c0747d0f108
+  - seed-bracket-001: top1=ceb61944a0ee78407db73e8523ee40525c3f526047baa159a91705c54eeeed96 expected=081b337edc82be91038fee7cd8cc528f85ea9387240744af465da3e3cfb2753a
 
 **M3 (Recall@10 failures):**
   (none — all eligible entries found in top-10)
 
 **M4 (MRR failures):**
-  - seed-digit-001: rank=5
-  - seed-ascii-char-001: rank=4
-  - seed-integer-001: rank=4
+  - seed-bracket-001: rank=4
+  - seed-ascii-char-001: rank=1
+  - seed-digit-001: rank=1
 
 ---
 
 ## Next Steps
 
-1. Re-run with DISCOVERY_EVAL_PROVIDER=local to produce the semantic baseline.
-2. The CI run (offline provider) only validates harness correctness, not retrieval quality.
-3. Commit the local-provider output as the authoritative baseline.
+1. v3-implementation MAY PROCEED with D1 multi-dimensional schema.
+2. Use worst-performing entries above as justification per dimension for D1's 5-vector design.
+3. After D1 lands, re-run this harness to confirm multi-dimensional improves M1.

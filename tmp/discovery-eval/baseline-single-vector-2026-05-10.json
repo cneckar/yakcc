@@ -1,23 +1,24 @@
 {
   "version": 1,
   "date": "2026-05-10",
-  "head_sha": "2514529",
-  "provider": "yakcc/offline-blake3-stub",
+  "head_sha": "31192ca",
+  "provider": "Xenova/all-MiniLM-L6-v2",
   "corpus_source": "bootstrap-inline",
   "corpus_entries": 9,
+  "m5_corpus": "full",
   "metrics": {
-    "M1_hit_rate": 0,
+    "M1_hit_rate": 0.5555555555555556,
     "M1_target": 0.8,
     "M1_pass": false,
-    "M2_precision_at_1": 0.4,
+    "M2_precision_at_1": 0.8,
     "M2_target": 0.7,
-    "M2_pass": false,
+    "M2_pass": true,
     "M3_recall_at_10": 1,
     "M3_target": 0.9,
     "M3_pass": true,
-    "M4_mrr": 0.54,
+    "M4_mrr": 0.85,
     "M4_target": 0.7,
-    "M4_pass": false,
+    "M4_pass": true,
     "M5_brier_per_band": {
       "strong": {
         "N": 0,
@@ -42,10 +43,10 @@
       },
       "poor": {
         "N": 9,
-        "correct": 2,
-        "P": 0.2222222222222222,
+        "correct": 4,
+        "P": 0.4444444444444444,
         "midpoint": 0.25,
-        "brier": 0.0007716049382716057
+        "brier": 0.03780864197530863
       }
     },
     "M5_target": 0.1,
@@ -53,21 +54,18 @@
   },
   "worst_entries": {
     "M1": [
-      "synth-clamp-001",
       "synth-haversine-negative-001",
-      "seed-comma-001"
+      "synth-validate-email-001",
+      "synth-clamp-001"
     ],
     "M2": [
-      "seed-ascii-char-001",
-      "seed-integer-001",
-      "seed-digit-001"
+      "seed-bracket-001"
     ],
     "M3": [],
     "M4": [
-      "seed-digit-001",
+      "seed-bracket-001",
       "seed-ascii-char-001",
-      "seed-integer-001"
+      "seed-digit-001"
     ]
-  },
-  "provider_note": "OFFLINE PROVIDER (BLAKE3 hashes — NOT semantic). M1..M4 numbers reflect hash-space proximity, not semantic quality. Re-run with DISCOVERY_EVAL_PROVIDER=local for operator-facing baseline."
+  }
 }
