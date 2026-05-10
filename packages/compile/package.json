@@ -20,12 +20,12 @@
     "@yakcc/ir": "workspace:*",
     "@yakcc/registry": "workspace:*",
     "@yakcc/shave": "workspace:*",
+    "assemblyscript": "^0.28.17",
     "ts-morph": "^24.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@yakcc/seeds": "workspace:*",
-    "assemblyscript": "^0.28.17",
     "fast-check": "^4.7.0",
     "vitest": "^4.1.5"
   }

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-INDEX-002: @yakcc/compile barrel re-exports all public types
 // and functions updated for the triplet substrate (WI-T04).
-// Status: implemented (WI-T04); supersedes DEC-COMPILE-INDEX-001 (ContractId-based,
+// Status: updated (WI-AS-CLEANUP-WAVE3-LOWERER, #148) — wasm-backend.ts / wasm-host.ts
+// deleted in Phase 3; wasmBackend/compileToWasm/WasmTrap/createHost/instantiateAndRun
+// removed from public surface. WasmBackend type now lives in as-backend.ts.
+// Originally implemented WI-T04; supersedes DEC-COMPILE-INDEX-001 (ContractId-based,
 // WI-005). The ContractId re-export is removed; BlockMerkleRoot and SpecHash are
 // the new identity types. AssembleOptions.knownContractIds → knownMerkleRoots.
-// Rationale: The public API surface is: assemble(), tsBackend(), wasmBackend(), and
-// the associated types Artifact, ProvenanceManifest, ProvenanceEntry,
+// Rationale: The public API surface is: assemble(), tsBackend(), assemblyScriptBackend(),
+// and the associated types Artifact, ProvenanceManifest, ProvenanceEntry,
 // VerificationStatus, Backend, WasmBackend.
 // BlockMerkleRoot and SpecHash are re-exported for callers who need them without
 // importing @yakcc/contracts directly.
@@ -18,15 +21,10 @@ export type { VerificationStatus, ProvenanceEntry, ProvenanceManifest } from "./
 // Backend types and factories
 export type { Backend } from "./ts-backend.js";
 export { tsBackend } from "./ts-backend.js";
-export type { WasmBackend } from "./wasm-backend.js";
-export { wasmBackend, compileToWasm } from "./wasm-backend.js";
-// AssemblyScript backend (WI-AS-PHASE-1-MVP — Phase 1 of AS-backend integration #143/#145)
+// AssemblyScript backend + WasmBackend type (sole WASM path after Phase 3 retirement of
+// in-house wasm-backend.ts — WI-AS-CLEANUP-WAVE3-LOWERER #148, DEC-AS-BACKEND-PIVOT-001)
+export type { WasmBackend } from "./as-backend.js";
 export { assemblyScriptBackend } from "./as-backend.js";
-
-// WASM host runtime (WI-V1W2-WASM-03 — DEC-V1-WAVE-2-WASM-HOST-CONTRACT-001)
-// v2 syscall surface (WI-WASM-HOST-CONTRACT-V2 — DEC-V2-WASM-HOST-CONTRACT-WASI-001)
-export type { WasmTrapKind, WasiErrnoValue, YakccHost, CreateHostOptions } from "./wasm-host.js";
-export { WasmTrap, WasiErrno, createHost, instantiateAndRun } from "./wasm-host.js";
 
 // Artifact type and assembly entry point
 export type { Artifact, AssembleOptions } from "./assemble.js";
