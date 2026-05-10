@@ -948,6 +948,8 @@ addressing is not "solved"; it is "moved to documents that own the design
 surface for the solution." The DEC-V-* and DEC-F-* logs in those documents
 carry the load-bearing decisions.
 
+> **Defensive publication.** The substrate's novel-combination mechanisms (triplet content-addressing, strictness-monotonic registry, universalize-with-glue pipeline, atom-test reviewer gate, canonicalizer for structural equivalence, multi-dim embedding query, hook triad, F0..F4 with slashing-as-deprecation, verification ladder L0..L3, cross-axis orthogonality) are consolidated in [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) as a claim-style defensive publication. The substrate's no-ownership cornerstone (#2) is durable only if the underlying mechanisms are protected against third-party IP capture. See `DEC-PRIOR-ART-001` in that document.
+
 The residual hard problems v0 still defers:
 
 | Problem | v0 stance | Future work |

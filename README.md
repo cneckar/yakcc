@@ -144,6 +144,7 @@ examples/
 - [`VERIFICATION.md`](VERIFICATION.md) — verification ladder, triplet identity, TCB
 - [`FEDERATION.md`](FEDERATION.md) — F0..F4 federation trust/scale axis
 - [`MANIFESTO.md`](MANIFESTO.md) — the project's voice and intent
+- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — defensive publication consolidating the substrate's novel mechanisms as prior art for the public commons
 
 ## v2 self-hosting demo
 
