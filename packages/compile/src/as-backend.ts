@@ -190,6 +190,65 @@
 //
 // See also: DEC-AS-EXCEPTION-LAYOUT-001 in exceptions-parity.test.ts for the
 // full substrate inventory (E1-E5), ERR_BASE_PTR layout, and probe methodology.
+//
+// @decision DEC-AS-STRINGS-STRATEGY-001
+// Title: AS-backend string support uses flat-memory UTF-8 byte protocol
+//        (ptr: i32, len: i32) over WASM intrinsics (load<u8>, store<u8>,
+//        byte-level scanning) rather than AS managed string type, because
+//        AS managed strings require --runtime minimal/full (GC heap, UTF-16
+//        string header, charCodeAt/indexOf/slice GC internals) which are
+//        incompatible with the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2B-STRINGS, Issue #206, 2026-05-03)
+// Rationale:
+//   AS string support options evaluated:
+//
+//   (A) AS managed string type (string literals, s.length, s.charCodeAt,
+//       s.indexOf, s.slice):
+//       Requires the GC runtime for all managed string operations:
+//         - string.length reads the GC-managed string header (UTF-16 char count).
+//         - string.charCodeAt(i) is a bounds-checked GC read of a UTF-16 code unit.
+//         - string.indexOf(sub) performs a GC string search with managed allocation.
+//         - string.slice(start, end) allocates a new managed string via GC copy.
+//       Under --runtime stub, any managed-type operation that touches the GC
+//       either traps at runtime or fails to compile.
+//       PROBE RESULT (S-managed): COMPILE FAIL. asc 0.28.x --runtime stub does
+//       not support AS managed string type.
+//
+//   (B) assemblyscript-string-utils or similar npm packages:
+//       All evaluated packages wrap AS managed string internals and require the
+//       same GC heap and string runtime library as option (A).
+//       PROBE RESULT: COMPILE FAIL (same failure mode as managed strings).
+//
+//   (C) Flat-memory UTF-8 byte protocol (CHOSEN):
+//       strLen(ptr, len):       return len parameter (flat-memory length pass-through).
+//       byteAt(ptr, len, i):    load<u8>(ptr + i) — read byte at index i.
+//       strEq(pA, lA, pB, lB): byte-by-byte equality comparison (memcmp variant).
+//       indexOfByte(ptr, len, b): scan for first occurrence of byte b; return index or -1.
+//       copySlice(src, len, dst, start, end): copy bytes [start, end) via store<u8>;
+//                                             return byte count copied.
+//       These operations use only WASM intrinsics (load<u8>, store<u8>, i32
+//       arithmetic) with no GC dependency. Compatible with --runtime stub.
+//       PROBE RESULT: COMPILE OK.
+//
+//   ASCII-ONLY CONSTRAINT (v1): Substrates use ASCII-only inputs (single-byte
+//   UTF-8, code points 0x20-0x7E). Multi-byte UTF-8 sequences (2-4 bytes),
+//   the byte-count vs. char-count distinction, and surrogate-pair handling are
+//   deferred to a future phase when the GC runtime tier is adopted.
+//
+//   Memory layout: STR_BASE_PTR = 1024 (above AS stub runtime header region,
+//   above ERR_BASE_PTR = 512); DST_BASE_PTR = 4096 (separate output buffer for
+//   slice/copy operations). Layout is wire-compatible with wave-3 wasm-lowering's
+//   string ABI and with arrays-parity.test.ts conventions.
+//
+//   Decision: Use flat-memory approach (C) for v1. AS managed strings are NOT
+//   used at this time -- they only work with a GC runtime tier not yet adopted.
+//   A follow-up issue should track the GC runtime upgrade path and reassess
+//   managed-string support (char-count semantics, full Unicode, surrogate pairs)
+//   at that point.
+//
+// See also: DEC-AS-STRING-LAYOUT-001 in strings-parity.test.ts for the
+// full substrate inventory (S1-S5), STR_BASE_PTR/DST_BASE_PTR layout, and
+// ASCII-only constraint rationale.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
