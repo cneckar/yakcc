@@ -249,6 +249,77 @@
 // See also: DEC-AS-STRING-LAYOUT-001 in strings-parity.test.ts for the
 // full substrate inventory (S1-S5), STR_BASE_PTR/DST_BASE_PTR layout, and
 // ASCII-only constraint rationale.
+//
+// @decision DEC-AS-ARRAYS-STRATEGY-001
+// Title: AS-backend array support uses flat-memory (ptr: i32, len: i32) protocol
+//        over WASM intrinsics (load<i32>, store<i32>, byte-stride arithmetic) rather
+//        than managed AS Array<i32> or StaticArray<i32>, because managed arrays and
+//        StaticArray both require --runtime minimal/full (GC heap) or trap at runtime
+//        under the --runtime stub constraint used by this backend.
+// Status: decided (WI-AS-PHASE-2E-ARRAYS, Issue #210, 2026-05-10)
+// Rationale:
+//   AS array support options evaluated:
+//
+//   (A) Managed AS Array<i32> (i32[], Array<i32> with .length, .push, .map, .filter,
+//       .reduce):
+//       Requires the GC runtime for all managed array operations:
+//         - Array<i32>.length reads the GC-managed array header (element count).
+//         - Array<i32>[i] subscript is a bounds-checked GC heap read.
+//         - Array<i32>.push() triggers GC heap allocation / capacity doubling.
+//         - Array<i32>.map(fn) / .filter(fn) require closure allocation — also
+//           a GC feature (function table + closure context).
+//         - Array<i32>.reduce(fn, init) requires closure support for the accumulator.
+//       Under --runtime stub: .map() and .filter() fail to compile (closure
+//       allocation absent). .push() compiles syntactically but the resulting WASM
+//       traps at runtime because the stub does not implement the ArrayBuffer resize
+//       path (GC realloc absent). PROBE RESULT (A4 push): RUNTIME TRAP.
+//       PROBE RESULT (A5 map/closure): COMPILE FAIL.
+//
+//   (B) AS StaticArray<i32> (fixed-size, bounds-checked, no resize):
+//       Does not require GC allocation for reads (bounds-checked load<i32>).
+//       However, .length and subscript access for StaticArray are GC-managed
+//       metadata reads under asc 0.28.x even for stub runtime. The allocation
+//       itself (`new StaticArray<i32>(n)`) requires memory.grow plumbing absent
+//       from stub. PROBE RESULT: StaticArray allocation fails to compile or
+//       traps at runtime under --runtime stub. Rejected for the same root cause
+//       as managed arrays: depends on GC allocation infrastructure.
+//
+//   (C) Flat-memory ptr+len protocol (CHOSEN):
+//       Arrays are represented as:
+//         - ptr: i32 — pointer to first i32 element in WASM linear memory.
+//         - len: i32 — number of elements (not byte length).
+//         - Element at index i: byte offset = ptr + i * 4 (i32 = 4 bytes).
+//       Operations implemented using only WASM intrinsics (load<i32>, store<i32>,
+//       i32 arithmetic):
+//         A1 len:        return len parameter (flat-memory length pass-through).
+//         A2 get:        return load<i32>(ptr + i * 4) — index access.
+//         A3 sum/reduce: manual for-loop; accumulate load<i32> values.
+//         A4 pushLen:    write v at index len via store<i32>(ptr + len * 4, v);
+//                        return len + 1. (Caller manages buffer capacity.)
+//         A5 doubleAll:  manual for-loop; store<i32>(dstPtr + i * 4, 2 * load<i32>...)
+//                        Writes doubled values to a separate output buffer (dstPtr).
+//       All operations use no GC, no closures, no managed types.
+//       Compatible with --runtime stub. PROBE RESULT: COMPILE OK, RUNTIME OK.
+//
+//   ASCII-ONLY / i32-ONLY CONSTRAINT (v1): Array elements are i32 only. Arrays-of-
+//   strings (ptr+len pairs per element), arrays-of-records (struct ABI per element),
+//   and GC-managed dynamic arrays are deferred to a future phase that adopts
+//   --runtime minimal/full.
+//
+//   STRUCT_BASE_PTR = 64: same convention as records-parity.test.ts; avoids the AS
+//   stub runtime header region at low addresses. Wire-compatible with wave-3
+//   wasm-lowering's array ABI (DEC-V1-WAVE-3-WASM-LOWER-LAYOUT-001).
+//
+//   Decision: Use flat-memory approach (C) for v1. Managed Array<i32> and
+//   StaticArray<i32> are NOT used -- they require a GC runtime tier not yet adopted.
+//   A follow-up issue should track the GC runtime upgrade path and reassess
+//   native AS array types (Array<T>.push, .map, .filter, .reduce with closures)
+//   at that point. arrays-of-strings and arrays-of-records are deferred to #230
+//   (WI-AS-PHASE-2F).
+//
+// See also: DEC-AS-ARRAY-LAYOUT-001 in arrays-parity.test.ts for the
+// full substrate inventory (A1-A5), STRUCT_BASE_PTR layout, i32-stride protocol,
+// and the deferred Phase 2F items (arrays-of-strings, closure-based map/filter).
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
