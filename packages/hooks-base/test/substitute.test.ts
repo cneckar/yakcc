@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: MIT
 /**
- * substitute.test.ts — Tests for decideToSubstitute() and renderSubstitution().
+ * substitute.test.ts — Tests for decideToSubstitute(), renderContractComment(),
+ * and renderSubstitution() (Phase 2 + Phase 3 contract comment extension).
  *
  * Production sequence exercised:
  *   findCandidatesByIntent() returns CandidateMatch[] →
  *   decideToSubstitute(candidates) → { substitute: true, atomHash } or { substitute: false } →
- *   renderSubstitution(atomHash, originalCode, bindingShape) → substituted source text
+ *   renderSubstitution(atomHash, originalCode, bindingShape, spec?) → substituted source text
+ *     where spec present → contract comment prepended above import
  *
  * Test-first: these tests define the contract; substitute.ts must satisfy them.
  */
 
+import type { SpecYak } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import {
   AUTO_ACCEPT_GAP_THRESHOLD,
   AUTO_ACCEPT_SCORE_THRESHOLD,
   candidatesToCombinedScores,
   decideToSubstitute,
+  renderContractComment,
   renderSubstitution,
 } from "../src/substitute.js";
 
@@ -225,5 +229,189 @@ describe("renderSubstitution", () => {
       { name: "out", args: ["a", "b", "c"], atomName: "merge" },
     );
     expect(result).toContain("a, b, c");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderContractComment — Phase 3 D-HOOK-4 contract comment generation
+// ---------------------------------------------------------------------------
+
+/** Minimal SpecYak factory for contract-comment tests. */
+function makeSpec(overrides: Partial<SpecYak> = {}): SpecYak {
+  return {
+    name: "testAtom",
+    inputs: [{ name: "input", type: "string" }],
+    outputs: [{ name: "result", type: "number" }],
+    preconditions: [],
+    postconditions: [],
+    invariants: [],
+    effects: [],
+    level: "L0",
+    guarantees: [{ id: "G1", description: "rejects non-int" }],
+    ...overrides,
+  };
+}
+
+describe("renderContractComment", () => {
+  it("simple: 1-arg fn with 1 guarantee → exact comment match", () => {
+    const spec = makeSpec({
+      name: "listOfInts",
+      inputs: [{ name: "text", type: "string" }],
+      outputs: [{ name: "result", type: "number[]" }],
+      guarantees: [{ id: "G1", description: "rejects non-int" }],
+    });
+    const comment = renderContractComment("listOfInts", "abc12345deadbeef", spec);
+    expect(comment).toBe("// @atom listOfInts (string => number[]; rejects non-int) — yakcc:abc12345");
+  });
+
+  it("multi-arg: 2 inputs render as (a, b) => out", () => {
+    const spec = makeSpec({
+      name: "merge",
+      inputs: [
+        { name: "a", type: "string[]" },
+        { name: "b", type: "string[]" },
+      ],
+      outputs: [{ name: "result", type: "string[]" }],
+      guarantees: [{ id: "G1", description: "preserves order" }],
+    });
+    const comment = renderContractComment("merge", "cafebabe12345678", spec);
+    expect(comment).toBe("// @atom merge (string[], string[] => string[]; preserves order) — yakcc:cafebabe");
+  });
+
+  it("3 inputs render as (a, b, c) => out", () => {
+    const spec = makeSpec({
+      name: "combine",
+      inputs: [
+        { name: "x", type: "number" },
+        { name: "y", type: "number" },
+        { name: "z", type: "number" },
+      ],
+      outputs: [{ name: "result", type: "number" }],
+      guarantees: [{ id: "G1", description: "associative" }],
+    });
+    const comment = renderContractComment("combine", "deadbeef00000000", spec);
+    expect(comment).toBe("// @atom combine (number, number, number => number; associative) — yakcc:deadbeef");
+  });
+
+  it("no guarantees: parenthetical omitted cleanly — no trailing semicolon", () => {
+    const spec = makeSpec({
+      name: "getTimestamp",
+      inputs: [],
+      outputs: [{ name: "result", type: "number" }],
+      guarantees: [],
+    });
+    const comment = renderContractComment("getTimestamp", "aabbccdd11223344", spec);
+    // Must not contain '; )' or trailing semicolon artifact
+    expect(comment).not.toContain("; )");
+    expect(comment).not.toContain(";)");
+    // Must end with hash[:8]
+    expect(comment).toBe("// @atom getTimestamp (() => number) — yakcc:aabbccdd");
+  });
+
+  it("no guarantees and undefined guarantees field: omit parenthetical cleanly", () => {
+    const spec = makeSpec({
+      name: "pureOp",
+      inputs: [{ name: "x", type: "boolean" }],
+      outputs: [{ name: "result", type: "boolean" }],
+      guarantees: undefined,
+    });
+    const comment = renderContractComment("pureOp", "1234567890abcdef", spec);
+    expect(comment).toBe("// @atom pureOp (boolean => boolean) — yakcc:12345678");
+  });
+
+  it("BlockMerkleRoot truncation: hash[:8] match", () => {
+    const spec = makeSpec();
+    const fullHash = "fedcba9876543210abcdef0123456789";
+    const comment = renderContractComment("testAtom", fullHash, spec);
+    expect(comment).toContain("yakcc:fedcba98");
+    expect(comment).not.toContain("yakcc:fedcba9876543210");
+  });
+
+  it("only FIRST guarantee is used (not all guarantees)", () => {
+    const spec = makeSpec({
+      name: "multiGuarantee",
+      inputs: [{ name: "x", type: "string" }],
+      outputs: [{ name: "result", type: "string" }],
+      guarantees: [
+        { id: "G1", description: "first guarantee" },
+        { id: "G2", description: "second guarantee" },
+        { id: "G3", description: "third guarantee" },
+      ],
+    });
+    const comment = renderContractComment("multiGuarantee", "abcdef0123456789", spec);
+    expect(comment).toContain("first guarantee");
+    expect(comment).not.toContain("second guarantee");
+    expect(comment).not.toContain("third guarantee");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderSubstitution — Phase 3: contract comment prepended when spec provided
+// ---------------------------------------------------------------------------
+
+describe("renderSubstitution with spec (Phase 3 contract comment)", () => {
+  it("when spec provided: contract comment appears above import line", () => {
+    const spec = makeSpec({
+      name: "listOfInts",
+      inputs: [{ name: "text", type: "string" }],
+      outputs: [{ name: "result", type: "number[]" }],
+      guarantees: [{ id: "G1", description: "rejects non-int" }],
+    });
+    const result = renderSubstitution(
+      "abc12345deadbeef",
+      "const result = listOfInts(input);",
+      { name: "result", args: ["input"], atomName: "listOfInts" },
+      spec,
+    );
+
+    const lines = result.split("\n");
+    // First line: contract comment
+    expect(lines[0]).toBe("// @atom listOfInts (string => number[]; rejects non-int) — yakcc:abc12345");
+    // Second line: import
+    expect(lines[1]).toContain("import { listOfInts }");
+    expect(lines[1]).toContain("@yakcc/atoms/listOfInts");
+    // Third line: binding
+    expect(lines[2]).toContain("const result = listOfInts(input)");
+  });
+
+  it("when spec NOT provided: no contract comment — output is 2 lines (import + binding)", () => {
+    const result = renderSubstitution(
+      "deadbeef",
+      "const x = fn(a);",
+      { name: "x", args: ["a"], atomName: "fn" },
+      // no spec
+    );
+    const lines = result.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("import");
+    expect(lines[1]).toContain("const x");
+  });
+
+  it("when spec has no guarantees: comment omits semicolon parenthetical", () => {
+    const spec = makeSpec({
+      name: "getTime",
+      inputs: [],
+      outputs: [{ name: "result", type: "number" }],
+      guarantees: [],
+    });
+    const result = renderSubstitution(
+      "11223344aabbccdd",
+      "const t = getTime();",
+      { name: "t", args: [], atomName: "getTime" },
+      spec,
+    );
+    const firstLine = result.split("\n")[0];
+    expect(firstLine).not.toContain("; )");
+    expect(firstLine).toContain("// @atom getTime");
+  });
+
+  it("existing tests still pass when spec=undefined: backward compatible", () => {
+    const result = renderSubstitution(
+      "abc123",
+      'const x = computeHash(data, "sha256");',
+      { name: "x", args: ["data", '"sha256"'], atomName: "computeHash" },
+    );
+    expect(result).toContain("@yakcc/atoms/computeHash");
+    expect(result).not.toContain("@atom");
   });
 });
