@@ -320,6 +320,130 @@
 // See also: DEC-AS-ARRAY-LAYOUT-001 in arrays-parity.test.ts for the
 // full substrate inventory (A1-A5), STRUCT_BASE_PTR layout, i32-stride protocol,
 // and the deferred Phase 2F items (arrays-of-strings, closure-based map/filter).
+//
+// @decision DEC-AS-CONTROL-FLOW-STRATEGY-001
+// Title: AS-backend control-flow constructs (if/else, while, for, do-while, switch)
+//        are supported by asc 0.28.x natively under --runtime stub without any
+//        workarounds in as-backend.ts, because they lower to standard WASM scalar
+//        instructions that have no GC or managed-type dependency.
+// Status: decided (WI-AS-PHASE-2G-CONTROL-FLOW, Issue #212, 2026-05-10)
+// Rationale:
+//   AS control-flow support options evaluated:
+//
+//   (A) Managed iterator protocol (for-of over AS managed string / Array<T>):
+//       for-of over AS managed types (string, Array<T>, custom iterables) requires
+//       GC-managed iterator objects and Symbol.iterator dispatch. Under --runtime
+//       stub the GC heap and Symbol internals are absent. PROBE RESULT: for-of over
+//       managed types COMPILE FAIL (or RUNTIME TRAP) under --runtime stub.
+//       Affected substrates: any for-of loop whose iterable is an AS managed type.
+//
+//   (B) for-of over AS managed types via alternative iteration (index-based):
+//       Replace for-of with a manual index-for loop (for(let i=0;i<len;i++)).
+//       Avoids the iterator protocol entirely; compatible with flat-memory arrays.
+//       PROBE RESULT: COMPILE OK under --runtime stub. However, this is a
+//       workaround for managed-type arrays, not a feature of the control-flow
+//       substrate itself. Considered as a future escalation path only.
+//
+//   (C) asc-native control-flow constructs (CHOSEN -- no workaround required):
+//       if/else, else-if chains, while, for (index-based), do-while, and switch
+//       (with explicit cases and default) all lower to standard WASM control
+//       instructions:
+//         if/else         => WASM if/else block (no GC needed)
+//         while           => WASM loop + br_if (no GC needed)
+//         for (index)     => WASM loop + br_if + i32 counter (no GC needed)
+//         do-while        => WASM loop + br_if at block end (min 1 iteration)
+//         switch/default  => WASM block + br_table or nested br_if (no GC needed)
+//         break/continue  => WASM br to enclosing block label (no GC needed)
+//       These constructs use only i32 arithmetic and WASM branch instructions.
+//       No GC allocation, no managed types, no exception-table needed.
+//       Compatible with --runtime stub. PROBE RESULT (CF1-CF5): COMPILE OK.
+//
+//   FINDING (CF1-CF5 -- CONFIRMED EXPECTED): All five control-flow substrates
+//   compile cleanly under asc 0.28.x --runtime stub and pass
+//   WebAssembly.validate(). Value parity vs TS reference oracle confirmed by
+//   20 fast-check runs per substrate. No changes to as-backend.ts were required
+//   for this WI -- the existing emit() pipeline handles control-flow atoms
+//   without modification.
+//
+//   Substrates verified (per eval contract T3, DEC-AS-CONTROL-FLOW-001):
+//     CF1: classify   -- if / else-if / else (3-branch sign classifier)
+//     CF2: sumToN     -- while loop (triangular sum 0..n-1)
+//     CF3: product    -- for loop (factorial, index-based, no managed array)
+//     CF4: countdown  -- do-while (count down, min 1 iteration guaranteed)
+//     CF5: dayName    -- switch with default (3 explicit cases + fallback)
+//
+//   Decision: Use asc-native path (C) for all scalar control-flow constructs in v1.
+//   No workaround layer in as-backend.ts is required. for-of over AS managed types
+//   (string, Array<T>) remains deferred to a future phase that adopts --runtime
+//   minimal/full (GC tier). A follow-up issue should track the GC runtime upgrade
+//   path and reassess managed-type iteration (for-of, Symbol.iterator, closures)
+//   at that point.
+//
+// See also: DEC-AS-CONTROL-FLOW-001 in control-flow-parity.test.ts for the
+// full substrate inventory (CF1-CF5), exportMemory: false convention, and the
+// 20-run fast-check parity methodology.
+//
+// @decision DEC-AS-CONTROL-FLOW-STRATEGY-001
+// Title: AS-backend control-flow constructs (if/else, while, for, do-while, switch)
+//        are supported by asc 0.28.x natively under --runtime stub without any
+//        workarounds in as-backend.ts, because they lower to standard WASM scalar
+//        instructions that have no GC or managed-type dependency.
+// Status: decided (WI-AS-PHASE-2G-CONTROL-FLOW, Issue #212, 2026-05-10)
+// Rationale:
+//   AS control-flow support options evaluated:
+//
+//   (A) Managed iterator protocol (for-of over AS managed string / Array<T>):
+//       for-of over AS managed types (string, Array<T>, custom iterables) requires
+//       GC-managed iterator objects and Symbol.iterator dispatch. Under --runtime
+//       stub the GC heap and Symbol internals are absent. PROBE RESULT: for-of over
+//       managed types COMPILE FAIL (or RUNTIME TRAP) under --runtime stub.
+//       Affected substrates: any for-of loop whose iterable is an AS managed type.
+//
+//   (B) for-of over AS managed types via alternative iteration (index-based):
+//       Replace for-of with a manual index-for loop (for(let i=0;i<len;i++)).
+//       Avoids the iterator protocol entirely; compatible with flat-memory arrays.
+//       PROBE RESULT: COMPILE OK under --runtime stub. However, this is a
+//       workaround for managed-type arrays, not a feature of the control-flow
+//       substrate itself. Considered as a future escalation path only.
+//
+//   (C) asc-native control-flow constructs (CHOSEN — no workaround required):
+//       if/else, else-if chains, while, for (index-based), do-while, and switch
+//       (with explicit cases and default) all lower to standard WASM control
+//       instructions:
+//         if/else         → WASM if/else block (no GC needed)
+//         while           → WASM loop + br_if (no GC needed)
+//         for (index)     → WASM loop + br_if + i32 counter (no GC needed)
+//         do-while        → WASM loop + br_if at block end (min 1 iteration)
+//         switch/default  → WASM block + br_table or nested br_if (no GC needed)
+//         break/continue  → WASM br to enclosing block label (no GC needed)
+//       These constructs use only i32 arithmetic and WASM branch instructions.
+//       No GC allocation, no managed types, no exception-table needed.
+//       Compatible with --runtime stub. PROBE RESULT (CF1-CF5): COMPILE OK.
+//
+//   FINDING (CF1-CF5 — CONFIRMED EXPECTED): All five control-flow substrates
+//   compile cleanly under asc 0.28.x --runtime stub and pass
+//   WebAssembly.validate(). Value parity vs TS reference oracle confirmed by
+//   20 fast-check runs per substrate. No changes to as-backend.ts were required
+//   for this WI — the existing emit() pipeline handles control-flow atoms
+//   without modification.
+//
+//   Substrates verified (per eval contract T3, DEC-AS-CONTROL-FLOW-001):
+//     CF1: classify   — if / else-if / else (3-branch sign classifier)
+//     CF2: sumToN     — while loop (triangular sum 0..n-1)
+//     CF3: product    — for loop (factorial, index-based, no managed array)
+//     CF4: countdown  — do-while (count down, min 1 iteration guaranteed)
+//     CF5: dayName    — switch with default (3 explicit cases + fallback)
+//
+//   Decision: Use asc-native path (C) for all scalar control-flow constructs in v1.
+//   No workaround layer in as-backend.ts is required. for-of over AS managed types
+//   (string, Array<T>) remains deferred to a future phase that adopts --runtime
+//   minimal/full (GC tier). A follow-up issue should track the GC runtime upgrade
+//   path and reassess managed-type iteration (for-of, Symbol.iterator, closures)
+//   at that point.
+//
+// See also: DEC-AS-CONTROL-FLOW-001 in control-flow-parity.test.ts for the
+// full substrate inventory (CF1-CF5), exportMemory: false convention, and the
+// 20-run fast-check parity methodology.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
