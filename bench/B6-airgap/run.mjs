@@ -43,15 +43,55 @@
 //   future B6b full run.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, "../..");
+
+// Resolve REPO_ROOT: the directory that contains packages/cli/dist/.
+// In a git worktree, __dirname is under .worktrees/<name>/bench/B6-airgap/.
+// The dist files are built under the main worktree root (where `pnpm build` ran),
+// which is the parent of the .git directory (i.e. git common-dir's parent).
+// Strategy: walk up from __dirname looking for packages/cli/dist/index.js.
+// Fall back to the git --git-common-dir parent if walking fails.
+function resolveRepoRoot() {
+  // Env override for CI or unusual layouts
+  if (process.env.YAKCC_REPO_ROOT) return process.env.YAKCC_REPO_ROOT;
+
+  // Walk upward from bench/B6-airgap looking for packages/cli/dist/index.js
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    const candidate = join(dir, "packages/cli/dist/index.js");
+    if (existsSync(candidate)) return dir;
+    const parent = resolve(dir, "..");
+    if (parent === dir) break; // filesystem root
+    dir = parent;
+  }
+
+  // Fallback: git --git-common-dir gives .git inside the main worktree.
+  // Its parent is the main worktree root.
+  try {
+    const gitCommonDirResult = spawnSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: __dirname, encoding: "utf8",
+    });
+    if (gitCommonDirResult.status === 0) {
+      const gitCommonDir = gitCommonDirResult.stdout.trim();
+      // --git-common-dir returns an absolute path like C:/src/yakcc/.git
+      // or a relative path like .git (when already in the main worktree).
+      const absGitDir = resolve(__dirname, gitCommonDir);
+      const mainRoot = dirname(absGitDir);
+      if (existsSync(join(mainRoot, "packages/cli/dist/index.js"))) return mainRoot;
+    }
+  } catch (_) {}
+
+  // Last resort: two levels up from bench/B6-airgap (worktree root)
+  return resolve(__dirname, "../..");
+}
+
+const REPO_ROOT = resolveRepoRoot();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,16 +127,19 @@ function step(n, desc) {
 // We spawn a fresh Node process per step so that each step is isolated and
 // the interceptor file-write (on process.exit) fires cleanly.
 // Uses `node --require <interceptor> --input-type=module` to load ESM runCli.
+//
+// IMPORTANT (Windows): ESM dynamic imports require file:// URLs — bare Windows
+// paths like "C:/..." are rejected with ERR_UNSUPPORTED_ESM_URL_SCHEME.
+// pathToFileURL() converts platform paths to proper file:// URLs.
 function runYakcc(args, { cwd, interceptOut, env = {} } = {}) {
   // Build the inline ESM wrapper that imports runCli and calls it.
   // We resolve to the dist/index.js of @yakcc/cli in the workspace.
-  const cliDist = resolve(REPO_ROOT, "packages/cli/dist/index.js");
+  const cliDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/cli/dist/index.js")).href;
+  const contractsDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/contracts/dist/embeddings.js")).href;
   const argsJson = JSON.stringify(args);
   const esmWrapper = `
-import { runCli, createOfflineEmbeddingProvider as _unused } from ${JSON.stringify(cliDist)};
-import { createOfflineEmbeddingProvider } from ${JSON.stringify(
-    resolve(REPO_ROOT, "packages/contracts/dist/embeddings.js")
-  )};
+import { runCli } from ${JSON.stringify(cliDistUrl)};
+import { createOfflineEmbeddingProvider } from ${JSON.stringify(contractsDistUrl)};
 const code = await runCli(${argsJson}, undefined, { embeddings: createOfflineEmbeddingProvider() });
 process.exit(code);
 `;
@@ -230,10 +273,12 @@ async function runB6a() {
   // Step 1: yakcc init --target <workdir>
   runStep(1, "yakcc init --target <workdir>", ["init", "--target", workdir]);
 
-  // Step 2: Write sample .ts source file
-  step(2, "Write sample TypeScript source file (substrate-able + novel-glue mix)");
+  // Step 2: Write sample .ts source file + spec.yak for compile
+  step(2, "Write sample TypeScript source file (substrate-able + novel-glue mix) + spec.yak");
   const srcDir = join(workdir, "src");
+  const specDir = join(workdir, "spec");
   mkdirSync(srcDir, { recursive: true });
+  mkdirSync(specDir, { recursive: true });
   writeFileSync(
     join(srcDir, "example.ts"),
     `// SPDX-License-Identifier: MIT
@@ -274,7 +319,16 @@ export function formatResults(nums: number[]): string {
 `,
     "utf8"
   );
-  pass("Step 2 completed — src/example.ts written");
+
+  // Write the spec.yak for the compile step.
+  // We copy the parse-int-list example spec.yak which is known to the seed corpus.
+  // compile resolves this spec's hash via selectBlocks() against seed corpus blocks —
+  // it requires the seed corpus to be loaded first (done in step 4 via yakcc seed).
+  // Using the documented example spec ensures B6 exercises the real compile path.
+  const parseIntListSpecPath = resolve(REPO_ROOT, "examples/parse-int-list/spec.yak");
+  const parseIntListSpec = readFileSync(parseIntListSpecPath, "utf8");
+  writeFileSync(join(specDir, "spec.yak"), parseIntListSpec, "utf8");
+  pass("Step 2 completed — src/example.ts + spec/spec.yak (parse-int-list) written");
 
   // Step 3: yakcc shave src/example.ts --offline
   runStep(3, "yakcc shave src/example.ts --offline", [
@@ -284,23 +338,36 @@ export function formatResults(nums: number[]): string {
     "--offline",
   ]);
 
-  // Step 4: Register novel glue — seed the registry with the shaved atoms
-  // (yakcc does not have a separate "register novel glue" CLI command;
-  //  the shave step in step 3 writes atoms to the registry. We verify
-  //  the registry file exists as the registration assertion.)
-  step(4, "Verify novel-glue registration (registry.sqlite populated after shave)");
+  // Step 4: Register novel glue — the shave step in step 3 writes atoms to the registry.
+  // We verify the registry file exists, then seed the full seed corpus so that the
+  // compile step (step 5) can find a matching BlockMerkleRoot via selectBlocks().
+  // yakcc seed is idempotent and network-free (reads bundled TypeScript source files).
+  step(4, "Verify novel-glue registration + seed corpus (yakcc seed --offline)");
   const registryPath = join(workdir, ".yakcc/registry.sqlite");
-  if (existsSync(registryPath)) {
-    pass("Step 4 — registry.sqlite exists (atoms registered by shave)");
-  } else {
+  if (!existsSync(registryPath)) {
     fail("Step 4 — registry.sqlite not found after shave");
     stepsFailed++;
+  } else {
+    pass("Step 4a — registry.sqlite exists (novel atoms registered by shave)");
+    // Seed the corpus so compile can find seed-corpus blocks by spec hash.
+    // Seed is offline: reads bundled TS files, no network I/O.
+    const seedOk = runStep(4, "yakcc seed --registry <registry> (populates compile's block lookup)", [
+      "seed",
+      "--registry", registryPath,
+    ]);
+    if (!seedOk) {
+      // seed failure is not a B6a kill criterion — compile may still work if
+      // the spec matches a previously-shaved atom. Document and continue.
+      info("Step 4 seed failed; compile (step 5) may fail if no matching block exists.");
+    }
   }
 
-  // Step 5: yakcc compile src/example.ts (compile the shaved result)
-  runStep(5, "yakcc compile src/example.ts --out dist", [
+  // Step 5: yakcc compile spec/ (directory containing spec.yak → resolves atoms → emits output)
+  // compile takes a directory with spec.yak, resolves the spec to a BlockMerkleRoot via
+  // specHash lookup in the registry (populated by seed in step 4), and assembles the module.
+  runStep(5, "yakcc compile spec/ --registry <registry> --out dist", [
     "compile",
-    join(srcDir, "example.ts"),
+    specDir,
     "--registry", join(workdir, ".yakcc/registry.sqlite"),
     "--out", join(workdir, "dist"),
   ]);
@@ -458,10 +525,11 @@ async function runB6b() {
     const interceptOut = join(workdir, `step${n}-intercept.json`);
 
     // Networked mode: do NOT inject createOfflineEmbeddingProvider
-    const cliDistLocal = resolve(REPO_ROOT, "packages/cli/dist/index.js");
+    // Use pathToFileURL for Windows compatibility (ERR_UNSUPPORTED_ESM_URL_SCHEME)
+    const cliDistUrlLocal = pathToFileURL(resolve(REPO_ROOT, "packages/cli/dist/index.js")).href;
     const argsJson = JSON.stringify(args);
     const esmWrapper = `
-import { runCli } from ${JSON.stringify(cliDistLocal)};
+import { runCli } from ${JSON.stringify(cliDistUrlLocal)};
 const code = await runCli(${argsJson});
 process.exit(code);
 `;

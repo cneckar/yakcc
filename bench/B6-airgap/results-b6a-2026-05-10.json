@@ -1,0 +1,15 @@
+{
+  "benchmark": "B6a",
+  "runAt": "2026-05-10T19:19:10.889Z",
+  "wallMs": 7847,
+  "stepsFailed": 0,
+  "outboundConnections": [],
+  "outboundCount": 0,
+  "pass": true,
+  "b6aPass": true,
+  "notes": [
+    "step7: 'registry list' CLI command does not exist; used 'query' for read-back",
+    "platform: win32",
+    "node: v22.14.0"
+  ]
+}
