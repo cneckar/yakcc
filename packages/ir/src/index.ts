@@ -29,3 +29,7 @@ export { parseBlockTriplet } from "./block-parser.js";
 // Project-mode strict-subset validator (WI-V2-01)
 export type { ProjectValidationResult } from "./strict-subset-project.js";
 export { validateStrictSubsetProject } from "./strict-subset-project.js";
+
+// Binding-shape extraction for Phase 2 substitution (WI-HOOK-PHASE-2-SUBSTITUTION)
+export type { BindingShape } from "./ast-binding.js";
+export { extractBindingShape } from "./ast-binding.js";

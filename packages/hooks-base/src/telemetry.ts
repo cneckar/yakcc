@@ -57,6 +57,36 @@ export type TelemetryEvent = {
   readonly latencyMs: number;
   /** Outcome of the hook decision. */
   readonly outcome: "registry-hit" | "synthesis-required" | "passthrough";
+  // ---------------------------------------------------------------------------
+  // Phase 2 additions — additive fields (backwards-compatible per #217 spec).
+  // Old telemetry consumers see these as optional (undefined in Phase 1 events).
+  // Phase 2 events always populate all four fields.
+  // ---------------------------------------------------------------------------
+  /**
+   * Time spent in the substitution pipeline (AST extraction + rendering) in ms.
+   * Null when substitution was not attempted or was disabled.
+   * Phase 1 events: undefined (not present).
+   */
+  readonly substitutionLatencyMs?: number | null;
+  /**
+   * D3 combinedScore of the top-1 candidate (1 - d²/4, per DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
+   * Null when no candidates were returned.
+   * Phase 1 events: undefined (not present).
+   */
+  readonly top1Score?: number | null;
+  /**
+   * Gap between top-1 and top-2 combinedScore.
+   * 0 when fewer than 2 candidates were returned.
+   * Null when no candidates were returned.
+   * Phase 1 events: undefined (not present).
+   */
+  readonly top1Gap?: number | null;
+  /**
+   * Whether the D-HOOK-3 latency budget (200ms) was exceeded.
+   * True triggers a LATENCY_BUDGET_EXCEEDED event in the telemetry stream.
+   * Phase 1 events: undefined (not present).
+   */
+  readonly latencyBudgetExceeded?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -186,14 +216,20 @@ export function appendTelemetryEvent(event: TelemetryEvent, sessionId: string, d
  * returns. It computes all derived fields, builds the TelemetryEvent, and
  * appends it to the session file.
  *
- * @param opts.intent         - Raw intent text (will be hashed, never stored as-is).
- * @param opts.toolName       - Tool that triggered the intercept.
- * @param opts.response       - The HookResponse from executeRegistryQuery().
- * @param opts.candidateCount - Number of raw candidates the registry returned.
- * @param opts.topScore       - Cosine distance of the top candidate, or null.
- * @param opts.latencyMs      - Elapsed ms from intercept start to now.
- * @param opts.sessionId      - Resolved session ID (default: resolveSessionId()).
- * @param opts.telemetryDir   - Resolved telemetry dir (default: resolveTelemetryDir()).
+ * @param opts.intent                - Raw intent text (will be hashed, never stored as-is).
+ * @param opts.toolName              - Tool that triggered the intercept.
+ * @param opts.response              - The HookResponse from executeRegistryQuery().
+ * @param opts.candidateCount        - Number of raw candidates the registry returned.
+ * @param opts.topScore              - Cosine distance of the top candidate, or null.
+ * @param opts.latencyMs             - Elapsed ms from intercept start to now.
+ * @param opts.substituted           - Whether Phase 2 substitution occurred (default: false).
+ * @param opts.substitutedAtomHash   - BlockMerkleRoot of substituted atom, or null.
+ * @param opts.substitutionLatencyMs - Time spent in substitution pipeline, or null.
+ * @param opts.top1Score             - combinedScore of top-1 candidate, or null.
+ * @param opts.top1Gap               - Gap to top-2 combinedScore, or null.
+ * @param opts.latencyBudgetExceeded - Whether the 200ms D-HOOK-3 budget was exceeded.
+ * @param opts.sessionId             - Resolved session ID (default: resolveSessionId()).
+ * @param opts.telemetryDir          - Resolved telemetry dir (default: resolveTelemetryDir()).
  */
 export function captureTelemetry(opts: {
   intent: string;
@@ -202,6 +238,13 @@ export function captureTelemetry(opts: {
   candidateCount: number;
   topScore: number | null;
   latencyMs: number;
+  // Phase 2 additions — all optional so Phase 1 callers need no changes.
+  substituted?: boolean;
+  substitutedAtomHash?: string | null;
+  substitutionLatencyMs?: number | null;
+  top1Score?: number | null;
+  top1Gap?: number | null;
+  latencyBudgetExceeded?: boolean;
   sessionId?: string;
   telemetryDir?: string;
 }): void {
@@ -214,10 +257,19 @@ export function captureTelemetry(opts: {
     toolName: opts.toolName,
     candidateCount: opts.candidateCount,
     topScore: opts.topScore,
-    substituted: false, // Phase 1: observe-only; Phase 2 will set this.
-    substitutedAtomHash: null, // Phase 1: never substituted.
+    substituted: opts.substituted ?? false,
+    substitutedAtomHash: opts.substitutedAtomHash ?? null,
     latencyMs: opts.latencyMs,
     outcome: outcomeFromResponse(opts.response),
+    // Phase 2 fields — spread only when defined so Phase 1 JSONL lines stay lean.
+    ...(opts.substitutionLatencyMs !== undefined
+      ? { substitutionLatencyMs: opts.substitutionLatencyMs }
+      : {}),
+    ...(opts.top1Score !== undefined ? { top1Score: opts.top1Score } : {}),
+    ...(opts.top1Gap !== undefined ? { top1Gap: opts.top1Gap } : {}),
+    ...(opts.latencyBudgetExceeded !== undefined
+      ? { latencyBudgetExceeded: opts.latencyBudgetExceeded }
+      : {}),
   };
 
   appendTelemetryEvent(event, sessionId, dir);

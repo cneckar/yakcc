@@ -256,6 +256,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/ir':
+        specifier: workspace:*
+        version: link:../ir
       '@yakcc/registry':
         specifier: workspace:*
         version: link:../registry

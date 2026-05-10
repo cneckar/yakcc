@@ -9,6 +9,7 @@
   "include": ["src"],
   "references": [
     { "path": "../contracts" },
+    { "path": "../ir" },
     { "path": "../registry" }
   ]
 }
