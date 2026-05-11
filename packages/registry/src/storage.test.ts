@@ -2193,10 +2193,9 @@ describe("findCandidatesByQuery — T2: symmetric round-trip via canonicalizeQue
     // combinedScore formula: 1 - d²/4 (DEC-V3-IMPL-QUERY-007 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
     // vec0 returns L2 distance; for unit-normalized vectors: combinedScore = 1 - L2²/4.
     // biome-ignore lint/style/noNonNullAssertion: asserted defined above
-    const expectedScoreA = Math.max(
-      0,
-      1 - (candidateA?.cosineDistance * candidateA?.cosineDistance) / 4,
-    );
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined at line 2184
+    const distA = candidateA!.cosineDistance;
+    const expectedScoreA = Math.max(0, 1 - (distA * distA) / 4);
     // biome-ignore lint/style/noNonNullAssertion: asserted defined above
     expect(candidateA!.combinedScore).toBeCloseTo(expectedScoreA, 10);
   });
