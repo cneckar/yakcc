@@ -1,53 +1,63 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 //
 // bench/B5-coherence/rubric-eval.mjs
-// B5 coherence rubric evaluator — programmatic offline classifier
+// B5 coherence rubric evaluator — Tier-1 offline classifier + Tier-2 LLM judge
 //
-// @decision DEC-BENCH-B5-SLICE1-001
-// @title B5 Slice 1: offline programmatic rubric classifier
+// @decision DEC-BENCH-B5-SLICE2-001
+// @title B5 Slice 2: Tier-1 offline classifier + Tier-2 LLM-judge integration
 // @status accepted
 // @rationale
-//   This file implements the B5 rubric mechanically using deterministic pattern
-//   matching. It does NOT use an LLM judge (Slice 2 adds that). The classifier is
-//   intentionally conservative:
+//   Slice 2 extends the Slice 1 offline classifier with an LLM-as-judge tier for
+//   ambiguous cases. The two-tier architecture:
 //
-//   - Score 5 (correct): atom name present AND atom body NOT re-emitted
-//   - Score 4 (minor-slip): atom name present, body not re-emitted, but a parameter
-//     ordering mismatch is detected (heuristic)
-//   - Score 3 (opaque-hash): yakcc:hash or @yakcc/atoms import present, but no
-//     semantic usage detected
-//   - Score 2 (hallucinated): atom name present but emission contradicts spec
-//     (detected via registered behavior description in transcript metadata)
-//   - Score 1 (re-emission): atom body verbatim in emission (normalized whitespace)
-//   - Score 0 (catastrophic): vacuous output (<10 chars) or no topic continuity
+//   Tier-1 (this file): programmatic pattern-matching classifier.
+//   - Reliable for: score 1 (re-emission), score 3 (opaque-hash)
+//   - Unreliable for: score 2 (hallucinated), score 4 (minor-slip)
 //
-//   The classifier has KNOWN LIMITATIONS:
-//     - Score 4 detection is heuristic (parameter ordering is not reliably detectable
-//       from text alone). The LLM-judge in Slice 2 is authoritative for score-4 cases.
-//     - Score 2 detection compares prose claims against atom behavior strings; natural
-//       language contradictions are not reliably detectable offline. LLM-judge is
-//       authoritative for score-2 cases.
-//     - Score 0 detection catches vacuous outputs and obvious topic departures but
-//       misses subtle derailments.
+//   Tier-2 (llm-judge.mjs): Claude Opus 4.7 judge.
+//   - Invoked ONLY for Tier-1 score-2 and score-4 results (ambiguous cases)
+//   - Gated on ANTHROPIC_API_KEY — absent key produces judge_status: "skipped_no_api_key"
+//   - Temperature 0, exponential backoff retry (1s → 2s)
 //
-//   These limitations are intentional and documented. Slice 2's LLM-judge is designed
-//   to handle the ambiguous cases this classifier returns. Slice 1's goal is to verify
-//   the infrastructure produces non-trivial output, not to produce the final verdict.
+//   Blind discipline:
+//   - Arm letters (A/B) are randomized per run. arm-mapping.json records which
+//     letter corresponds to which condition. The judge receives only arm letters,
+//     never condition labels (hook-enabled/hook-disabled).
 //
 //   Output contract:
-//     - Writes tmp/B5-coherence/slice1-scores.json
-//     - Format: { conversations: [...], aggregate: { mean, subsequentTurnRate, catastrophicRate, ... } }
-//     - The aggregate.hookEnabled and aggregate.hookDisabled sub-objects contain
-//       the per-arm metrics needed for the Slice 1 sanity check.
+//   - Writes tmp/B5-coherence/slice2-scores.json
+//   - Format: {
+//       benchmark, slice, runAt, totalConversations,
+//       judge_status: "judged" | "skipped_no_api_key",
+//       corpus_hash: <sha256 from corpus-spec.json>,
+//       conversations: [
+//         {
+//           id, category, expectedAtoms,
+//           arms: {
+//             "arm-A": { condition, turnScores: [{ ..., tier1_used, tier2_used }], failureModes, ... },
+//             "arm-B": { ... }
+//           }
+//         }
+//       ],
+//       aggregate: {
+//         hookEnabled: { mean, subsequentTurnRate, catastrophicRate, totalTurns, ..., assessment },
+//         hookDisabled: { ... }
+//       }
+//     }
 //
 //   Cross-reference:
 //     RUBRIC.md (authoritative scoring spec)
-//     DEC-BENCH-B5-SLICE1-001 (this decision)
+//     llm-judge.mjs (Tier-2 implementation)
+//     judge-prompt.md (frozen judge prompt template)
+//     corpus-spec.json (SHA-256 corpus fingerprint)
+//     DEC-BENCH-B5-SLICE2-001 (this decision)
 //     #189 (B5 parent issue)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { scoreTranscriptWithLLMJudge } from "./llm-judge.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -67,7 +77,7 @@ function kill(msg) { process.stdout.write(`${RED}KILL${RESET} ${msg}\n`); }
 function warn(msg) { process.stdout.write(`${YELLOW}WARN${RESET} ${msg}\n`); }
 
 // ---------------------------------------------------------------------------
-// Rubric classifier
+// Rubric classifier — Tier-1
 // ---------------------------------------------------------------------------
 
 /**
@@ -160,7 +170,7 @@ function detectParameterMismatch(emission, atomName) {
 }
 
 /**
- * Score a single assistant emission turn.
+ * Score a single assistant emission turn (Tier-1 programmatic classifier).
  *
  * Returns: { score, failureMode, details }
  * failureMode: null | "opaque-hash" | "hallucinated" | "re-emission" | "context-collapse"
@@ -170,7 +180,7 @@ function detectParameterMismatch(emission, atomName) {
  * @param {object[]} atomBodies - Array of {name, implSource} for re-emission detection
  * @returns {{ score: number, failureMode: string|null, details: string }}
  */
-function scoreTurn(emission, atomNames, atomBodies) {
+function scoreTurnTier1(emission, atomNames, atomBodies) {
   // Score 0: catastrophic — vacuous or completely off-topic
   if (emission.trim().length < 10) {
     return { score: 0, failureMode: "context-collapse", details: "emission too short (vacuous)" };
@@ -203,12 +213,8 @@ function scoreTurn(emission, atomNames, atomBodies) {
     const hasSemanticUsage = detectSemanticUsage(emission, atomName);
 
     if (!hasHash && !hasImport && !hasSemanticUsage) {
-      // Atom not referenced at all in this turn — could be intentional (not every
-      // turn needs to reference every atom). Score this as 3 (opaque-hash equivalent:
-      // atom ignored) only if the atom was recently introduced (within prior 2 turns).
-      // For now: if this is a turn that should reference the atom (based on context),
-      // classify as opaque. The classifier is conservative — treats absence as opaque.
-      // Note: this is a known limitation; LLM-judge handles context-sensitivity.
+      // Atom not referenced at all — conservative: treat as opaque
+      // Note: known limitation; LLM-judge handles context-sensitivity
       if (worstScore > 3) {
         worstScore = 3;
         worstFailureMode = "opaque-hash";
@@ -239,7 +245,6 @@ function scoreTurn(emission, atomNames, atomBodies) {
     }
 
     // Score 5: correct
-    // (worst case stays at 5 for this atom; overall score is minimum across atoms)
   }
 
   return { score: worstScore, failureMode: worstFailureMode, details: worstDetails };
@@ -278,31 +283,13 @@ function loadTranscript(path) {
 /**
  * Build atom body records for re-emission detection.
  *
- * Re-emission (score 1) means a SUBSEQUENT turn re-emits the atom's own implementation
- * body verbatim — the "body" here is the YAKCC ATOM'S IMPLEMENTATION (what was stored
- * in the registry and substituted out by the hook), NOT wrapper/extending code built
- * on top of the atom in later turns.
- *
- * In Slice 1, the synthetic registry atoms are constructed in the harness with a known
- * implSource: `export function <atomName>(input: string): unknown { return input; }`
- * (plus surrounding comment). We reconstruct the same implSource here to match.
- *
- * This avoids false-positive re-emission detection from:
- * - Shared import lines (`import { parseIntList }`) which appear in ALL turns correctly
- * - Function wrappers that evolve across turns (turn 3 builds on turn 1, turn 5 on turn 3)
- *   — these are correct compositions, not re-emissions
- *
- * The real re-emission failure case (Slice 2) is when the LLM emits:
- *   export function parseIntList(input: string): number[] { ...full implementation... }
- * instead of:
- *   import { parseIntList } from "@yakcc/atoms/parseIntList";
+ * Mirror the synthetic registry construction from the harness:
+ * run-conversation.mjs builds: `// ${atomName} implementation\nexport function ${atomName}(input: string): unknown { return input; }`
  *
  * @param {string[]} atomNames - Expected atoms for the conversation
  * @returns {{ name: string, implSource: string }[]}
  */
 function buildAtomBodies(atomNames) {
-  // Mirror the synthetic registry construction from the harness:
-  // run-conversation.mjs builds: `// ${atomName} implementation\nexport function ${atomName}(input: string): unknown { return input; }`
   return atomNames.map(name => ({
     name,
     implSource: `// ${name} implementation\nexport function ${name}(input: string): unknown { return input; }`,
@@ -310,18 +297,23 @@ function buildAtomBodies(atomNames) {
 }
 
 // ---------------------------------------------------------------------------
-// Score a full transcript
+// Score a full transcript — Tier-1 + optional Tier-2 judge
 // ---------------------------------------------------------------------------
 
 /**
- * Score all assistant turns in a transcript.
+ * Score all assistant turns in a transcript using Tier-1 + optional Tier-2.
+ *
+ * Tier-2 is invoked for Tier-1 score-2 (hallucinated) and score-4 (minor-slip)
+ * results when ANTHROPIC_API_KEY is available.
  *
  * @param {object[]} transcript - Array of turn objects from loadTranscript()
  * @param {string[]} atomNames - Expected atoms for the conversation
  * @param {{ name: string, implSource: string }[]} atomBodies - For re-emission detection
- * @returns {{ turnScores: object[], failureModes: object }}
+ * @param {string} armLabel - "arm_A" or "arm_B" (blind label)
+ * @param {string} category - conversation category
+ * @returns {Promise<{ turnScores: object[], failureModes: object, tier1Used: number, tier2Used: number }>}
  */
-function scoreTranscript(transcript, atomNames, atomBodies) {
+async function scoreTranscriptFull(transcript, atomNames, atomBodies, armLabel, category) {
   const turnScores = [];
   const failureModes = {
     "opaque-hash": 0,
@@ -329,31 +321,70 @@ function scoreTranscript(transcript, atomNames, atomBodies) {
     "re-emission": 0,
     "context-collapse": 0,
   };
+  let tier1Used = 0;
+  let tier2Used = 0;
 
   // Score only assistant turns beyond the first (turnIndex >= 1)
   for (const turn of transcript) {
     if (turn.role !== "assistant") continue;
-    if (turn.turnIndex < 1) continue; // Turn 0 = first user turn; turn 1 = first assistant turn
+    if (turn.turnIndex < 1) continue;
 
-    // For the hook-enabled arm, the scored content is what the hook produced
     const emission = turn.content;
-    const result = scoreTurn(emission, atomNames, atomBodies);
+    const tier1Result = scoreTurnTier1(emission, atomNames, atomBodies);
 
-    if (result.failureMode !== null) {
-      failureModes[result.failureMode] = (failureModes[result.failureMode] || 0) + 1;
+    let finalScore = tier1Result.score;
+    let finalFailureMode = tier1Result.failureMode;
+    let judgeResult = null;
+
+    // Tier-2: invoke LLM judge for ambiguous Tier-1 cases (score 2 or 4)
+    if (tier1Result.score === 2 || tier1Result.score === 4) {
+      judgeResult = await scoreTranscriptWithLLMJudge({
+        armLabel,
+        category,
+        atomNames,
+        transcript,
+        tier1Score: tier1Result.score,
+        tier1FailureMode: tier1Result.failureMode,
+        tier1Details: tier1Result.details,
+        turnIndex: turn.turnIndex,
+      });
+
+      if (judgeResult.status === "judged" || judgeResult.status === "tier1_fallback") {
+        // Use judge score if available (even fallback tracks the attempt)
+        if (judgeResult.status === "judged") {
+          finalScore = judgeResult.score;
+          finalFailureMode = judgeResult.failureMode;
+          tier2Used++;
+        } else {
+          // tier1_fallback: keep tier1 score
+          tier1Used++;
+        }
+      } else {
+        // skipped_no_api_key or other non-judge status
+        tier1Used++;
+      }
+    } else {
+      tier1Used++;
+    }
+
+    if (finalFailureMode !== null) {
+      failureModes[finalFailureMode] = (failureModes[finalFailureMode] || 0) + 1;
     }
 
     turnScores.push({
       turnIndex: turn.turnIndex,
       condition: turn.condition,
-      score: result.score,
-      failureMode: result.failureMode,
-      details: result.details,
+      score: finalScore,
+      failureMode: finalFailureMode,
+      details: tier1Result.details,
+      tier1_used: judgeResult === null || judgeResult.status !== "judged",
+      tier2_used: judgeResult !== null && judgeResult.status === "judged",
       substitutionApplied: turn.substitutionApplied ?? false,
+      judgeResult: judgeResult ?? null,
     });
   }
 
-  return { turnScores, failureModes };
+  return { turnScores, failureModes, tier1Used, tier2Used };
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +484,20 @@ function assessPassKill(agg) {
 }
 
 // ---------------------------------------------------------------------------
+// Compute corpus SHA-256
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute SHA-256 of a file's raw bytes.
+ * @param {string} filePath
+ * @returns {string} hex digest
+ */
+function computeFileSha256(filePath) {
+  const bytes = readFileSync(filePath);
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -473,7 +518,7 @@ async function main() {
   const scoreDir = join(repoRoot, "tmp/B5-coherence");
   const armMappingPath = join(scoreDir, "arm-mapping.json");
   const conversationsPath = join(__dirname, "conversations.jsonl");
-  const scoresOutputPath = join(scoreDir, "slice1-scores.json");
+  const scoresOutputPath = join(scoreDir, "slice2-scores.json");
 
   if (!existsSync(armMappingPath)) {
     process.stderr.write(`ERROR: arm-mapping.json not found. Run the harness first.\n  Expected: ${armMappingPath}\n`);
@@ -485,6 +530,19 @@ async function main() {
     process.exit(1);
   }
 
+  // Determine judge status up front
+  const judgeEnabled = !!process.env.ANTHROPIC_API_KEY;
+  const judgeStatus = judgeEnabled ? "judged" : "skipped_no_api_key";
+
+  if (!judgeEnabled) {
+    warn("ANTHROPIC_API_KEY not set — Tier-2 LLM judge will be skipped. Tier-1 scores only.");
+  } else {
+    info("ANTHROPIC_API_KEY present — Tier-2 LLM judge enabled for score-2/4 cases.");
+  }
+
+  // Compute corpus SHA-256
+  const corpusHash = computeFileSha256(conversationsPath);
+
   // Load arm mapping and conversations
   const armMapping = JSON.parse(readFileSync(armMappingPath, "utf8"));
   const conversations = readFileSync(conversationsPath, "utf8")
@@ -492,7 +550,7 @@ async function main() {
     .split("\n")
     .map(l => JSON.parse(l));
 
-  info(`Scoring ${conversations.length} conversations...`);
+  info(`Scoring ${conversations.length} conversations (slice2, N=50)...`);
 
   const conversationResults = [];
   const allHookEnabledTurns = [];
@@ -515,6 +573,8 @@ async function main() {
 
     for (const armLetter of ["arm-A", "arm-B"]) {
       const condition = mapping[armLetter];
+      // Blind label: "arm_A" or "arm_B" (underscores, for judge prompt consistency)
+      const armLabel = armLetter.replace("-", "_");
       const transcriptPath = join(transcriptDir, `${conv.id}-${armLetter}.jsonl`);
 
       if (!existsSync(transcriptPath)) {
@@ -523,10 +583,12 @@ async function main() {
       }
 
       const transcript = loadTranscript(transcriptPath);
-      const { turnScores, failureModes } = scoreTranscript(
+      const { turnScores, failureModes, tier1Used, tier2Used } = await scoreTranscriptFull(
         transcript,
         conv.expected_atoms_referenced,
         atomBodies,
+        armLabel,
+        conv.category,
       );
 
       const aggregates = computeAggregates(turnScores);
@@ -534,6 +596,8 @@ async function main() {
         condition,
         turnScores,
         failureModes,
+        tier1_used: tier1Used,
+        tier2_used: tier2Used,
         ...aggregates,
       };
 
@@ -557,12 +621,14 @@ async function main() {
   const hookEnabledAssessment = assessPassKill(hookEnabledAgg);
   const hookDisabledAssessment = assessPassKill(hookDisabledAgg);
 
-  // Build output
+  // Build output — slice2-scores.json schema
   const output = {
     benchmark: "B5-coherence",
-    slice: "slice1",
+    slice: "slice2",
     runAt: new Date().toISOString(),
     totalConversations: conversations.length,
+    judge_status: judgeStatus,
+    corpus_hash: corpusHash,
     conversations: conversationResults,
     aggregate: {
       hookEnabled: {
@@ -575,10 +641,12 @@ async function main() {
       },
     },
     notes: [
-      "Slice 1: offline simulation using assistant_emission_target as simulated LLM output",
-      "Programmatic classifier only — no LLM judge (Slice 2)",
-      "Score 4 (minor-slip) detection is heuristic; LLM-judge is authoritative",
-      "Score 2 (hallucinated) detection compares prose claims vs atom names; LLM-judge is authoritative",
+      "Slice 2: N=50 corpus (5 categories x 10 seeds each)",
+      judgeEnabled
+        ? "Tier-2 LLM judge (claude-opus-4-7) applied to score-2 and score-4 Tier-1 cases"
+        : "Tier-2 LLM judge skipped (ANTHROPIC_API_KEY not set) — Tier-1 programmatic scores only",
+      "Tier-1: offline programmatic classifier (reliable for score 1, 3; unreliable for 2, 4)",
+      "Blind discipline: arm letters randomized per run; judge received only arm_A/arm_B labels",
       "platform: " + process.platform,
       "node: " + process.version,
     ],
@@ -589,19 +657,21 @@ async function main() {
 
   // Print summary
   console.log(`\n${"=".repeat(60)}`);
-  console.log(`${BOLD}B5 COHERENCE — SLICE 1 RESULTS${RESET}`);
+  console.log(`${BOLD}B5 COHERENCE — SLICE 2 RESULTS${RESET}`);
   console.log(`${"=".repeat(60)}`);
+  info(`Judge status: ${judgeStatus}`);
+  info(`Corpus hash: ${corpusHash}`);
 
   console.log(`\n${BOLD}Hook-ENABLED arm:${RESET}`);
-  info(`  Mean coherence: ${hookEnabledAgg.mean ?? "N/A"} (pass bar: ≥ 4.0)`);
-  info(`  Subsequent-turn rate: ${hookEnabledAgg.subsequentTurnRate !== null ? (hookEnabledAgg.subsequentTurnRate * 100).toFixed(1) + "%" : "N/A"} (pass bar: ≥ 90%)`);
-  info(`  Catastrophic rate: ${hookEnabledAgg.catastrophicRate !== null ? (hookEnabledAgg.catastrophicRate * 100).toFixed(1) + "%" : "N/A"} (pass bar: ≤ 5%; KILL: > 15%)`);
+  info(`  Mean coherence: ${hookEnabledAgg.mean ?? "N/A"} (pass bar: >= 4.0)`);
+  info(`  Subsequent-turn rate: ${hookEnabledAgg.subsequentTurnRate !== null ? (hookEnabledAgg.subsequentTurnRate * 100).toFixed(1) + "%" : "N/A"} (pass bar: >= 90%)`);
+  info(`  Catastrophic rate: ${hookEnabledAgg.catastrophicRate !== null ? (hookEnabledAgg.catastrophicRate * 100).toFixed(1) + "%" : "N/A"} (pass bar: <= 5%; KILL: > 15%)`);
   info(`  Total turns scored: ${hookEnabledAgg.totalTurns}`);
   info(`  Failure modes: ${JSON.stringify(hookEnabledAgg.failureModeCounts)}`);
   if (hookEnabledAssessment.kill) {
     kill(`  KILL CRITERION MET`);
   } else if (hookEnabledAssessment.pass) {
-    pass(`  PASS — all bars met`);
+    pass(`  PASS -- all bars met`);
   } else {
     warn(`  BELOW-BAR (not KILL): ${hookEnabledAssessment.reasons.join("; ")}`);
   }
@@ -613,7 +683,7 @@ async function main() {
   if (hookDisabledAssessment.pass) {
     pass(`  Baseline arm PASS`);
   } else {
-    warn(`  Baseline arm below-bar (expected for Slice 1 offline sim): ${hookDisabledAssessment.reasons.join("; ")}`);
+    warn(`  Baseline arm below-bar (expected for Slice 2 offline sim): ${hookDisabledAssessment.reasons.join("; ")}`);
   }
 
   console.log(`\n${"=".repeat(60)}`);

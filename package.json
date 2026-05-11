@@ -16,7 +16,8 @@
     "bench:latency:json": "node bench/B1-latency/json-transformer/run.mjs",
     "bench:latency:http": "node bench/B1-latency/http-routing/run.mjs",
     "bench:latency:all": "node bench/B1-latency/integer-math/run.mjs && node bench/B1-latency/json-transformer/run.mjs && node bench/B1-latency/http-routing/run.mjs",
-    "bench:coherence:slice1": "node bench/B5-coherence/harness/run-conversation.mjs && node bench/B5-coherence/rubric-eval.mjs"
+    "bench:coherence:slice1": "node bench/B5-coherence/harness/run-conversation.mjs && node bench/B5-coherence/rubric-eval.mjs",
+    "bench:coherence:slice2": "node bench/B5-coherence/harness/run-conversation.mjs && node bench/B5-coherence/rubric-eval.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
