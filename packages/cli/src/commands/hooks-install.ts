@@ -78,7 +78,7 @@ function readSettings(settingsPath: string): ClaudeSettings {
 }
 
 function writeSettings(settingsPath: string, settings: ClaudeSettings): void {
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
 }
 
 function buildYakccHookObject(): YakccHookObject {
@@ -93,7 +93,10 @@ function isYakccEntry(entry: HookEntry): boolean {
 // Install / uninstall logic
 // ---------------------------------------------------------------------------
 
-function applyInstall(settings: ClaudeSettings): { settings: ClaudeSettings; alreadyInstalled: boolean } {
+function applyInstall(settings: ClaudeSettings): {
+  settings: ClaudeSettings;
+  alreadyInstalled: boolean;
+} {
   const hooks = settings.hooks ?? {};
   const eventHooks: HookEntry[] = hooks[HOOK_EVENT] ?? [];
 
@@ -111,7 +114,10 @@ function applyInstall(settings: ClaudeSettings): { settings: ClaudeSettings; alr
   };
 }
 
-function applyUninstall(settings: ClaudeSettings): { settings: ClaudeSettings; wasInstalled: boolean } {
+function applyUninstall(settings: ClaudeSettings): {
+  settings: ClaudeSettings;
+  wasInstalled: boolean;
+} {
   const hooks = settings.hooks ?? {};
   const eventHooks: HookEntry[] = hooks[HOOK_EVENT] ?? [];
   const filtered = eventHooks.filter((e) => !isYakccEntry(e));

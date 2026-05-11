@@ -239,19 +239,21 @@ export const prop_decompose_root_canonicalAstHash_is_64_char_hex: fc.IAsyncPrope
  * precedes the throw. Therefore depth > maxDepth is always true at throw time.
  * An error with depth <= maxDepth indicates the guard condition was not respected.
  */
-export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth =
-  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
-  // TWO_IF_SOURCE has SourceFile with 2 CF → not atomic with maxCF=1.
-  // maxDepth=0 forces the throw immediately when the recursion tries depth 1.
-  let caught: RecursionDepthExceededError | undefined;
-  try {
-    await decompose(TWO_IF_SOURCE, emptyRegistry, { maxDepth: 0 });
-  } catch (e) {
-    if (e instanceof RecursionDepthExceededError) caught = e;
-  }
-  if (caught === undefined) return false; // must throw
-  return caught.depth > caught.maxDepth;
-});
+export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth = fc.asyncProperty(
+  fc.constant<undefined>(undefined),
+  async () => {
+    // TWO_IF_SOURCE has SourceFile with 2 CF → not atomic with maxCF=1.
+    // maxDepth=0 forces the throw immediately when the recursion tries depth 1.
+    let caught: RecursionDepthExceededError | undefined;
+    try {
+      await decompose(TWO_IF_SOURCE, emptyRegistry, { maxDepth: 0 });
+    } catch (e) {
+      if (e instanceof RecursionDepthExceededError) caught = e;
+    }
+    if (caught === undefined) return false; // must throw
+    return caught.depth > caught.maxDepth;
+  },
+);
 
 // ---------------------------------------------------------------------------
 // DEC-REC-P7: DidNotReachAtomError.node.range is a valid non-empty interval
@@ -271,8 +273,9 @@ export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth =
  * where start >= end would indicate a phantom or zero-width node, which is not
  * a valid AST node kind.
  */
-export const prop_DidNotReachAtomError_node_range_is_valid =
-  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
+export const prop_DidNotReachAtomError_node_range_is_valid = fc.asyncProperty(
+  fc.constant<undefined>(undefined),
+  async () => {
     // maxControlFlowBoundaries: -1 makes every node non-atomic (CF count 0 > -1).
     // ExpressionStatement has no decomposable children → DidNotReachAtomError.
     let caught: DidNotReachAtomError | undefined;
@@ -290,7 +293,8 @@ export const prop_DidNotReachAtomError_node_range_is_valid =
       caught.node.range.start >= 0 &&
       caught.node.range.end > caught.node.range.start
     );
-  });
+  },
+);
 
 // ---------------------------------------------------------------------------
 // DEC-REC-P8: empty registry + 0-CF source → always atom root for all maxCF
@@ -352,36 +356,38 @@ export const prop_decompose_zero_cf_always_produces_atom_root: fc.IAsyncProperty
  * invariants must hold jointly for any successful decompose() call that produces
  * a branch tree.
  */
-export const prop_compound_decompose_real_parse_branch_and_atom_invariants =
-  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
-  // TWO_IF_SOURCE: 2 CF boundaries at SourceFile level → branch root.
-  const tree: RecursionTree = await decompose(TWO_IF_SOURCE, emptyRegistry);
+export const prop_compound_decompose_real_parse_branch_and_atom_invariants = fc.asyncProperty(
+  fc.constant<undefined>(undefined),
+  async () => {
+    // TWO_IF_SOURCE: 2 CF boundaries at SourceFile level → branch root.
+    const tree: RecursionTree = await decompose(TWO_IF_SOURCE, emptyRegistry);
 
-  // P3: root.kind is "atom" or "branch"
-  if (tree.root.kind !== "atom" && tree.root.kind !== "branch") return false;
+    // P3: root.kind is "atom" or "branch"
+    if (tree.root.kind !== "atom" && tree.root.kind !== "branch") return false;
 
-  // For this source the root must be a branch (2 CF > default maxCF=1).
-  if (tree.root.kind !== "branch") return false;
+    // For this source the root must be a branch (2 CF > default maxCF=1).
+    if (tree.root.kind !== "branch") return false;
 
-  // P1: leafCount >= 1
-  if (tree.leafCount < 1) return false;
+    // P1: leafCount >= 1
+    if (tree.leafCount < 1) return false;
 
-  // P2: maxDepth >= 0; for a branch tree it must be >= 1
-  if (tree.maxDepth < 1) return false;
+    // P2: maxDepth >= 0; for a branch tree it must be >= 1
+    if (tree.maxDepth < 1) return false;
 
-  // Internal consistency: count leaves matches declared leafCount.
-  if (countLeaves(tree.root) !== tree.leafCount) return false;
+    // Internal consistency: count leaves matches declared leafCount.
+    if (countLeaves(tree.root) !== tree.leafCount) return false;
 
-  // Internal consistency: computed maxDepth matches declared maxDepth.
-  if (computeMaxDepth(tree.root) !== tree.maxDepth) return false;
+    // Internal consistency: computed maxDepth matches declared maxDepth.
+    if (computeMaxDepth(tree.root) !== tree.maxDepth) return false;
 
-  // P5: root.canonicalAstHash is 64-char lowercase hex
-  const h = tree.root.canonicalAstHash;
-  if (typeof h !== "string" || h.length !== 64 || !/^[0-9a-f]+$/.test(h)) return false;
+    // P5: root.canonicalAstHash is 64-char lowercase hex
+    const h = tree.root.canonicalAstHash;
+    if (typeof h !== "string" || h.length !== 64 || !/^[0-9a-f]+$/.test(h)) return false;
 
-  // All joint invariants satisfied.
-  return true;
-});
+    // All joint invariants satisfied.
+    return true;
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Additional: canonicalAstHash stability across two calls
@@ -401,9 +407,11 @@ export const prop_compound_decompose_real_parse_branch_and_atom_invariants =
  * bytes and same AST normalization → same hash on every call. Hash instability
  * would break registry lookups and cross-session provenance manifests.
  */
-export const prop_decompose_canonicalAstHash_is_stable_across_calls =
-  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
-  const tree1 = await decompose(ONE_CF_SOURCE, emptyRegistry);
-  const tree2 = await decompose(ONE_CF_SOURCE, emptyRegistry);
-  return tree1.root.canonicalAstHash === tree2.root.canonicalAstHash;
-});
+export const prop_decompose_canonicalAstHash_is_stable_across_calls = fc.asyncProperty(
+  fc.constant<undefined>(undefined),
+  async () => {
+    const tree1 = await decompose(ONE_CF_SOURCE, emptyRegistry);
+    const tree2 = await decompose(ONE_CF_SOURCE, emptyRegistry);
+    return tree1.root.canonicalAstHash === tree2.root.canonicalAstHash;
+  },
+);

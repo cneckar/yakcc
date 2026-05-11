@@ -76,11 +76,15 @@ describe("install — fresh directory", () => {
     expect(settings).not.toBeNull();
     const hooks = settings.hooks as Record<string, unknown>;
     expect(hooks).toBeDefined();
-    const preToolUse = hooks["PreToolUse"] as Array<{ matcher: string; hooks: unknown[] }>;
+    const preToolUse = hooks.PreToolUse as Array<{ matcher: string; hooks: unknown[] }>;
     expect(Array.isArray(preToolUse)).toBe(true);
     expect(preToolUse.length).toBeGreaterThan(0);
     expect(preToolUse[0]?.matcher).toBe("Edit|Write|MultiEdit");
-    const innerHooks = preToolUse[0]?.hooks as Array<{ type: string; command: string; _yakcc: string }>;
+    const innerHooks = preToolUse[0]?.hooks as Array<{
+      type: string;
+      command: string;
+      _yakcc: string;
+    }>;
     expect(innerHooks[0]?.type).toBe("command");
     expect(innerHooks[0]?.command).toBe("yakcc hook-intercept");
     expect(innerHooks[0]?._yakcc).toBe("yakcc-hook-v1");
@@ -106,7 +110,7 @@ describe("install — idempotent re-install", () => {
 
     const settingsAfterFirst = readSettings(tmpDir) as Record<string, unknown>;
     const countAfterFirst = (
-      (settingsAfterFirst.hooks as Record<string, unknown[]>)["PreToolUse"] ?? []
+      (settingsAfterFirst.hooks as Record<string, unknown[]>).PreToolUse ?? []
     ).length;
 
     const logger2 = new CollectingLogger();
@@ -115,7 +119,7 @@ describe("install — idempotent re-install", () => {
     expect(code).toBe(0);
     const settingsAfterSecond = readSettings(tmpDir) as Record<string, unknown>;
     const countAfterSecond = (
-      (settingsAfterSecond.hooks as Record<string, unknown[]>)["PreToolUse"] ?? []
+      (settingsAfterSecond.hooks as Record<string, unknown[]>).PreToolUse ?? []
     ).length;
 
     expect(countAfterSecond).toBe(countAfterFirst);
@@ -179,9 +183,9 @@ describe("install — preserves existing settings.json", () => {
 
     expect(code).toBe(0);
     const result = readSettings(tmpDir) as Record<string, unknown>;
-    expect(result["theme"]).toBe("dark");
-    expect(Array.isArray(result["keybindings"])).toBe(true);
-    expect(result["hooks"]).toBeDefined();
+    expect(result.theme).toBe("dark");
+    expect(Array.isArray(result.keybindings)).toBe(true);
+    expect(result.hooks).toBeDefined();
   });
 
   it("appends to existing non-yakcc PreToolUse entries", async () => {
@@ -197,7 +201,7 @@ describe("install — preserves existing settings.json", () => {
     await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
 
     const result = readSettings(tmpDir) as Record<string, unknown>;
-    const preToolUse = (result["hooks"] as Record<string, unknown[]>)["PreToolUse"] as unknown[];
+    const preToolUse = (result.hooks as Record<string, unknown[]>).PreToolUse as unknown[];
     expect(preToolUse.length).toBe(2);
   });
 });
@@ -218,7 +222,7 @@ describe("--uninstall", () => {
 
     const settings = readSettings(tmpDir) as Record<string, unknown>;
     const hooks = settings?.hooks as Record<string, unknown[]> | undefined;
-    const entries = hooks?.["PreToolUse"] ?? [];
+    const entries = hooks?.PreToolUse ?? [];
     expect(entries.length).toBe(0);
   });
 
@@ -236,9 +240,9 @@ describe("--uninstall", () => {
     await hooksClaudeCodeInstall(["--target", tmpDir, "--uninstall"], new CollectingLogger());
 
     const result = readSettings(tmpDir) as Record<string, unknown>;
-    const preToolUse = (result["hooks"] as Record<string, unknown[]>)["PreToolUse"] as unknown[];
+    const preToolUse = (result.hooks as Record<string, unknown[]>).PreToolUse as unknown[];
     expect(preToolUse.length).toBe(1);
-    expect((preToolUse[0] as Record<string, unknown>)["matcher"]).toBe("Bash");
+    expect((preToolUse[0] as Record<string, unknown>).matcher).toBe("Bash");
   });
 });
 
@@ -285,10 +289,10 @@ describe("round trip", () => {
 
     expect(code).toBe(0);
     const settings = readSettings(tmpDir) as Record<string, unknown>;
-    const preToolUse = (
-      (settings.hooks as Record<string, unknown[]>)["PreToolUse"] ?? []
-    ) as Array<Record<string, unknown>>;
-    expect(preToolUse.filter((e) => e["matcher"] === "Edit|Write|MultiEdit").length).toBe(1);
+    const preToolUse = ((settings.hooks as Record<string, unknown[]>).PreToolUse ?? []) as Array<
+      Record<string, unknown>
+    >;
+    expect(preToolUse.filter((e) => e.matcher === "Edit|Write|MultiEdit").length).toBe(1);
   });
 });
 
