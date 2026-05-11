@@ -862,15 +862,27 @@ class SqliteRegistry implements Registry {
         const reasons: string[] = [];
         const candidateNF = item.specYak.nonFunctional;
 
+        // Graceful-skip semantics per DEC-V3-DISCOVERY-D3-FILTER-STRICTNESS-FIX
+        // (issue #314, follow-up to DEC-V3-INITIATIVE-002-DISPOSITION):
+        //   - If candidate has no nonFunctional declaration, the strictness
+        //     dimension is SKIPPED for this candidate (not a rejection).
+        //   - Rejection only applies when BOTH query and candidate declare the
+        //     field AND candidate is strictly weaker.
+        // Rationale: corpus + registry have sparse nonFunctional coverage
+        // (0/50 in stratified corpus; rare in source-shaved atoms). Treating
+        // missing-on-candidate as rejection gave intent-mode A/B +42.5pts M2
+        // / +20pts M3 / +0.364 M4 vs query-mode in #289/#309. Graceful-skip is
+        // the correct semantics: a candidate that doesn't declare the field is
+        // no worse than one that declared it and matched.
         if (candidateNF !== undefined) {
-          if (queryNF.purity !== undefined) {
+          if (queryNF.purity !== undefined && candidateNF.purity !== undefined) {
             const qRank = PURITY_RANK[queryNF.purity] ?? 0;
             const cRank = PURITY_RANK[candidateNF.purity] ?? 0;
             if (cRank < qRank) {
               reasons.push(`purity=${candidateNF.purity} but query requires ${queryNF.purity}`);
             }
           }
-          if (queryNF.threadSafety !== undefined) {
+          if (queryNF.threadSafety !== undefined && candidateNF.threadSafety !== undefined) {
             const qRank = THREAD_RANK[queryNF.threadSafety] ?? 0;
             const cRank = THREAD_RANK[candidateNF.threadSafety] ?? 0;
             if (cRank < qRank) {
@@ -879,10 +891,8 @@ class SqliteRegistry implements Registry {
               );
             }
           }
-        } else if (queryNF.purity !== undefined || queryNF.threadSafety !== undefined) {
-          // Candidate has no NF declaration — treat as failing when query requires one.
-          reasons.push("candidate has no nonFunctional declaration");
         }
+        // candidateNF === undefined → graceful skip, no reasons pushed.
 
         if (reasons.length > 0) {
           stage3Failed.push({ item, reason: reasons.join("; ") });

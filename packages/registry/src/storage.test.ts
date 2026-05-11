@@ -2193,10 +2193,9 @@ describe("findCandidatesByQuery — T2: symmetric round-trip via canonicalizeQue
     // combinedScore formula: 1 - d²/4 (DEC-V3-IMPL-QUERY-007 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
     // vec0 returns L2 distance; for unit-normalized vectors: combinedScore = 1 - L2²/4.
     // biome-ignore lint/style/noNonNullAssertion: asserted defined above
-    const expectedScoreA = Math.max(
-      0,
-      1 - (candidateA!.cosineDistance * candidateA!.cosineDistance) / 4,
-    );
+    // biome-ignore lint/style/noNonNullAssertion: asserted defined at line 2184
+    const distA = candidateA!.cosineDistance;
+    const expectedScoreA = Math.max(0, 1 - (distA * distA) / 4);
     // biome-ignore lint/style/noNonNullAssertion: asserted defined above
     expect(candidateA!.combinedScore).toBeCloseTo(expectedScoreA, 10);
   });
@@ -2640,6 +2639,146 @@ describe("findCandidatesByQuery — T7: Stage 3 strictness filter removes purity
     const found = result.candidates.some((c) => c.block.blockMerkleRoot === row.blockMerkleRoot);
     expect(found).toBe(true);
     expect(result.nearMisses).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // T7-GRACEFUL — DEC-V3-DISCOVERY-D3-FILTER-STRICTNESS-FIX coverage
+  // -------------------------------------------------------------------------
+  // Per DEC-V3-INITIATIVE-002-DISPOSITION + #314: when candidate's spec does
+  // NOT declare nonFunctional, the Stage 3 strictness dimension is gracefully
+  // SKIPPED for that candidate. Rejection only applies when BOTH query and
+  // candidate declare the field AND candidate is strictly weaker.
+  //
+  // Empirical: #309 intent-mode A/B showed +42.5pts M2 / +20pts M3 / +0.364
+  // M4 vs query-mode (filter ON). Single-vector + corrected D3 is the
+  // production path; D1 multi-vector is paused (PR #315).
+  // -------------------------------------------------------------------------
+
+  it("graceful-skip: candidate with NO nonFunctional passes when query specifies purity", async () => {
+    const behavior = "Compute the absolute value of an integer";
+    const spec: SpecYak = {
+      name: "abs",
+      inputs: [{ name: "n", type: "number" }],
+      outputs: [{ name: "result", type: "number" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      // nonFunctional intentionally omitted — sparse-corpus shape.
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior,
+      nonFunctional: { purity: "pure" },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    // Graceful-skip: candidate without NF declaration should NOT be rejected
+    // for missing nonFunctional. It should appear in candidates.
+    const found = result.candidates.some((c) => c.block.blockMerkleRoot === row.blockMerkleRoot);
+    expect(found).toBe(true);
+    // Should not surface as a strictness near-miss either.
+    const strictnessNearMiss = result.nearMisses.find(
+      (nm) => nm.failedAtLayer === "strictness" && nm.block.blockMerkleRoot === row.blockMerkleRoot,
+    );
+    expect(strictnessNearMiss).toBeUndefined();
+  });
+
+  it("graceful-skip: candidate with NO nonFunctional passes when query specifies threadSafety", async () => {
+    const behavior = "Reverse the characters of a string";
+    const spec: SpecYak = {
+      name: "reverse-string",
+      inputs: [{ name: "s", type: "string" }],
+      outputs: [{ name: "reversed", type: "string" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      // nonFunctional intentionally omitted.
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior,
+      nonFunctional: { threadSafety: "safe" },
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    const found = result.candidates.some((c) => c.block.blockMerkleRoot === row.blockMerkleRoot);
+    expect(found).toBe(true);
+  });
+
+  it("graceful-skip: candidate with partial NF (purity only) passes when query specifies threadSafety", async () => {
+    // declared-on-candidate-but-not-on-the-specific-dimension case
+    const behavior = "Concatenate two strings";
+    const spec: SpecYak = {
+      name: "concat",
+      inputs: [
+        { name: "a", type: "string" },
+        { name: "b", type: "string" },
+      ],
+      outputs: [{ name: "result", type: "string" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      // Partial NF — purity declared, threadSafety NOT declared.
+      nonFunctional: { purity: "pure" } as unknown as SpecYak["nonFunctional"],
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior,
+      nonFunctional: { threadSafety: "safe" }, // candidate doesn't declare this — should skip
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    const found = result.candidates.some((c) => c.block.blockMerkleRoot === row.blockMerkleRoot);
+    expect(found).toBe(true);
+  });
+
+  it("strict-reject: both declared and candidate strictly weaker still rejects (regression guard)", async () => {
+    // This case MUST still reject — the fix is graceful-skip on missing, NOT
+    // graceful-skip on declared-but-weaker. The strictness check is still meaningful
+    // when both query and candidate declare the field.
+    const behavior = "Hash a string using SHA-256";
+    const spec: SpecYak = {
+      name: "sha256",
+      inputs: [{ name: "input", type: "string" }],
+      outputs: [{ name: "hash", type: "string" }],
+      preconditions: [],
+      postconditions: [],
+      invariants: [],
+      effects: [],
+      level: "L0",
+      behavior,
+      nonFunctional: { purity: "io", threadSafety: "safe" }, // io < pure
+    };
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const card: QueryIntentCard = {
+      behavior,
+      nonFunctional: { purity: "pure" }, // candidate purity=io < pure → strict reject
+    };
+    const result = await registry.findCandidatesByQuery(card);
+
+    const found = result.candidates.some((c) => c.block.blockMerkleRoot === row.blockMerkleRoot);
+    expect(found).toBe(false);
+    const strictnessNearMiss = result.nearMisses.find(
+      (nm) => nm.failedAtLayer === "strictness" && nm.block.blockMerkleRoot === row.blockMerkleRoot,
+    );
+    expect(strictnessNearMiss).toBeDefined();
   });
 });
 
