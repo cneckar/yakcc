@@ -282,8 +282,8 @@ export const prop_slice_strict_mode_never_emits_glue_entries: fc.IAsyncProperty<
  * VariableDeclarations, and other statement kinds must not be mistaken for
  * foreign imports.
  */
-export const prop_classifyForeign_non_import_source_returns_empty: fc.IProperty<[undefined]> =
-  fc.property(fc.constant(undefined), () => {
+export const prop_classifyForeign_non_import_source_returns_empty =
+  fc.property(fc.constant<undefined>(undefined), () => {
     // Pure function with no imports — no ImportDeclaration nodes.
     const source = "function f(x: number): number { return x * 2; }";
     const entries = classifyForeign(source);
@@ -309,8 +309,8 @@ export const prop_classifyForeign_non_import_source_returns_empty: fc.IProperty<
  * are used by the provenance manifest and --foreign-policy CLI flag (L4).
  * Incorrect or missing entries would corrupt the foreign-import catalog.
  */
-export const prop_classifyForeign_foreign_named_import_returns_entry: fc.IProperty<[undefined]> =
-  fc.property(fc.constant(undefined), () => {
+export const prop_classifyForeign_foreign_named_import_returns_entry =
+  fc.property(fc.constant<undefined>(undefined), () => {
     const source = `import { readFileSync } from 'node:fs';`;
     const entries = classifyForeign(source);
     if (entries.length !== 1) return false;
@@ -341,8 +341,8 @@ export const prop_classifyForeign_foreign_named_import_returns_entry: fc.IProper
  * carry no runtime dependency. Classifying them as foreign would inject
  * spurious dependencies into the provenance manifest.
  */
-export const prop_classifyForeign_type_only_import_returns_empty: fc.IProperty<[undefined]> =
-  fc.property(fc.constant(undefined), () => {
+export const prop_classifyForeign_type_only_import_returns_empty =
+  fc.property(fc.constant<undefined>(undefined), () => {
     const source = `import type { PathLike } from 'node:fs';`;
     const entries = classifyForeign(source);
     return entries.length === 0;
@@ -366,8 +366,8 @@ export const prop_classifyForeign_type_only_import_returns_empty: fc.IProperty<[
  * break the workspace boundary assumption that drives the slicer's
  * no-synthesis-needed rule for local source.
  */
-export const prop_classifyForeign_relative_import_returns_empty: fc.IProperty<[undefined]> =
-  fc.property(fc.constant(undefined), () => {
+export const prop_classifyForeign_relative_import_returns_empty =
+  fc.property(fc.constant<undefined>(undefined), () => {
     const source = `import { helper } from './local.js';`;
     const entries = classifyForeign(source);
     return entries.length === 0;
@@ -391,8 +391,8 @@ export const prop_classifyForeign_relative_import_returns_empty: fc.IProperty<[u
  * guard. Classifying them as foreign would make all workspace consumers
  * appear as external dependencies.
  */
-export const prop_classifyForeign_workspace_import_returns_empty: fc.IProperty<[undefined]> =
-  fc.property(fc.constant(undefined), () => {
+export const prop_classifyForeign_workspace_import_returns_empty =
+  fc.property(fc.constant<undefined>(undefined), () => {
     const source = `import { slice } from '@yakcc/shave';`;
     const entries = classifyForeign(source);
     return entries.length === 0;
@@ -434,8 +434,8 @@ export const prop_classifyForeign_workspace_import_returns_empty: fc.IProperty<[
  * All six invariants must hold jointly for any valid slice call on a two-atom
  * branch tree with one matched and one unmatched atom.
  */
-export const prop_compound_slice_real_tree_joint_invariants: fc.IAsyncProperty<[undefined]> =
-  fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_compound_slice_real_tree_joint_invariants =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
     const sourceX = "function add(a: number, b: number): number { return a + b; }";
     const sourceY = "function mul(a: number, b: number): number { return a * b; }";
     const hashX = "hash-compound-X";

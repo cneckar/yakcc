@@ -239,9 +239,8 @@ export const prop_decompose_root_canonicalAstHash_is_64_char_hex: fc.IAsyncPrope
  * precedes the throw. Therefore depth > maxDepth is always true at throw time.
  * An error with depth <= maxDepth indicates the guard condition was not respected.
  */
-export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth: fc.IAsyncProperty<
-  [undefined]
-> = fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
   // TWO_IF_SOURCE has SourceFile with 2 CF → not atomic with maxCF=1.
   // maxDepth=0 forces the throw immediately when the recursion tries depth 1.
   let caught: RecursionDepthExceededError | undefined;
@@ -272,8 +271,8 @@ export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth: fc.IAsyncP
  * where start >= end would indicate a phantom or zero-width node, which is not
  * a valid AST node kind.
  */
-export const prop_DidNotReachAtomError_node_range_is_valid: fc.IAsyncProperty<[undefined]> =
-  fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_DidNotReachAtomError_node_range_is_valid =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
     // maxControlFlowBoundaries: -1 makes every node non-atomic (CF count 0 > -1).
     // ExpressionStatement has no decomposable children → DidNotReachAtomError.
     let caught: DidNotReachAtomError | undefined;
@@ -353,9 +352,8 @@ export const prop_decompose_zero_cf_always_produces_atom_root: fc.IAsyncProperty
  * invariants must hold jointly for any successful decompose() call that produces
  * a branch tree.
  */
-export const prop_compound_decompose_real_parse_branch_and_atom_invariants: fc.IAsyncProperty<
-  [undefined]
-> = fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_compound_decompose_real_parse_branch_and_atom_invariants =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
   // TWO_IF_SOURCE: 2 CF boundaries at SourceFile level → branch root.
   const tree: RecursionTree = await decompose(TWO_IF_SOURCE, emptyRegistry);
 
@@ -403,9 +401,8 @@ export const prop_compound_decompose_real_parse_branch_and_atom_invariants: fc.I
  * bytes and same AST normalization → same hash on every call. Hash instability
  * would break registry lookups and cross-session provenance manifests.
  */
-export const prop_decompose_canonicalAstHash_is_stable_across_calls: fc.IAsyncProperty<
-  [undefined]
-> = fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_decompose_canonicalAstHash_is_stable_across_calls =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
   const tree1 = await decompose(ONE_CF_SOURCE, emptyRegistry);
   const tree2 = await decompose(ONE_CF_SOURCE, emptyRegistry);
   return tree1.root.canonicalAstHash === tree2.root.canonicalAstHash;

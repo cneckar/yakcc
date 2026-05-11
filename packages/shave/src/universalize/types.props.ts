@@ -97,9 +97,10 @@ const natArb: fc.Arbitrary<number> = fc.nat({ max: 1_000 });
 // ---------------------------------------------------------------------------
 
 /** Optional non-negative integer for maxControlFlowBoundaries. */
-const atomTestOptionsArb: fc.Arbitrary<AtomTestOptions> = fc.record({
-  maxControlFlowBoundaries: fc.option(fc.nat({ max: 20 }), { nil: undefined }),
-});
+const atomTestOptionsArb: fc.Arbitrary<AtomTestOptions> = fc.record(
+  { maxControlFlowBoundaries: fc.nat({ max: 20 }) },
+  { requiredKeys: [] },
+);
 
 // ---------------------------------------------------------------------------
 // AtomTestReason arbitrary
@@ -181,10 +182,13 @@ const recursionTreeArb: fc.Arbitrary<RecursionTree> = fc
 // ---------------------------------------------------------------------------
 
 /** Arbitrary RecursionOptions. */
-const recursionOptionsArb: fc.Arbitrary<RecursionOptions> = fc.record({
-  maxControlFlowBoundaries: fc.option(fc.nat({ max: 20 }), { nil: undefined }),
-  maxDepth: fc.option(fc.integer({ min: 1, max: 64 }), { nil: undefined }),
-});
+const recursionOptionsArb: fc.Arbitrary<RecursionOptions> = fc.record(
+  {
+    maxControlFlowBoundaries: fc.nat({ max: 20 }),
+    maxDepth: fc.integer({ min: 1, max: 64 }),
+  },
+  { requiredKeys: [] },
+);
 
 // ---------------------------------------------------------------------------
 // Slicer entry arbitraries
