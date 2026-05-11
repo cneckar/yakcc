@@ -31,6 +31,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { join } from "node:path";
+import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 import type { BootstrapManifestEntry } from "@yakcc/registry";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bootstrap } from "./commands/bootstrap.js";
@@ -800,8 +801,8 @@ describe("bootstrap expected-failures exemption", () => {
  */
 function fakeEntry(merkleRoot: string): BootstrapManifestEntry {
   return {
-    blockMerkleRoot: merkleRoot,
-    specHash: "a".repeat(64),
+    blockMerkleRoot: merkleRoot as unknown as BlockMerkleRoot,
+    specHash: "a".repeat(64) as unknown as SpecHash,
     canonicalAstHash: "b".repeat(64),
     parentBlockRoot: null,
     implSourceHash: "c".repeat(64),
@@ -960,7 +961,7 @@ describe("bootstrap additive merge — manifest accumulates prior entries", () =
 
     // The archived root must still be present.
     const finalRoots = new Set(finalManifest.map((e) => e.blockMerkleRoot));
-    expect(finalRoots.has(archivedRoot)).toBe(true);
+    expect(finalRoots.has(archivedRoot as unknown as BlockMerkleRoot)).toBe(true);
   }, 120_000);
 });
 
