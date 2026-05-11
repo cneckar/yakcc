@@ -495,3 +495,22 @@ export type HookResponseWithSubstitution = HookResponse & (
   | { readonly substituted: true; readonly substitutedCode: string; readonly atomHash: string }
 );
 
+// ---------------------------------------------------------------------------
+// Phase 3 L3 — yakccResolve MCP tool surface (D-HOOK-6 embedded library call)
+// ---------------------------------------------------------------------------
+
+export {
+  yakccResolve,
+  type ResolveResult,
+  type EvidenceProjection,
+  type DisambiguationHint,
+  type HashLookup,
+  STRONG_THRESHOLD,
+  CONFIDENT_THRESHOLD,
+  WEAK_THRESHOLD,
+  HYBRID_AUTO_ACCEPT_THRESHOLD,
+  AUTO_ACCEPT_GAP_THRESHOLD,
+  DISAMBIGUATION_MIN_TIES,
+  TIEBREAKER_EPSILON,
+} from "./yakcc-resolve.js";
+

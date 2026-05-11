@@ -226,3 +226,17 @@ export function createHook(registry: Registry, options?: ClaudeCodeHookOptions):
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 L3 — yakcc_resolve MCP tool surface
+// ---------------------------------------------------------------------------
+
+export {
+  createYakccResolveTool,
+  type YakccResolveTool,
+  type YakccResolveToolArgs,
+  type CreateYakccResolveToolOptions,
+  RESOLVE_TOOL_MARKER_FILENAME,
+  DEFAULT_REGISTRY_PATH,
+  SYSTEM_PROMPT_PATH,
+} from "./yakcc-resolve-tool.js";
