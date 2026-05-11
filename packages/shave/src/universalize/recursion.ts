@@ -637,6 +637,69 @@ function detectEscapingFunctionScopedConstructs(node: Node): {
 }
 
 // ---------------------------------------------------------------------------
+// Callee unwrapper helper (DEC-SLICER-CALLEE-OBJ-LITERAL-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Unwrap the callee of a CallExpression to find the first node that
+ * `decomposableChildrenOf` can usefully recurse into. Returns `undefined`
+ * when the callee chain contains nothing worth descending into.
+ *
+ * Handles three shapes in priority order:
+ *
+ * 1. **IIFE** — `(() => { ... })()` or `(function() { ... })()`:
+ *    callee is `ParenthesizedExpression(ArrowFunction | FunctionExpression)`.
+ *    We unwrap the parentheses and return the inner function-like.
+ *
+ * 2. **Method chain** — `a.b(fn).c()`:
+ *    callee is `PropertyAccessExpression(expression=CallExpression(...))`.
+ *    We return the inner CallExpression so that `decomposableChildrenOf`
+ *    recurses into it and finds the function-like argument (the comparator,
+ *    predicate, etc.) one level down.
+ *
+ * 3. **Bare function-like callee** — rare but possible:
+ *    callee is `ArrowFunction` or `FunctionExpression` directly.
+ *    Return it for direct decomposition.
+ *
+ * Other callee kinds (Identifier, PropertyAccessExpression without a
+ * CallExpression receiver, etc.) return `undefined` — they have no
+ * decomposable internal structure.
+ *
+ * @decision DEC-SLICER-CALLEE-OBJ-LITERAL-001 (see CallExpression branch below)
+ */
+function unwrapCalleeToDecomposable(callee: Node): Node | undefined {
+  const ck = callee.getKind();
+
+  // Shape 1: ParenthesizedExpression — unwrap and check the inner expression.
+  if (ck === SyntaxKind.ParenthesizedExpression) {
+    const inner = (callee as Node & { getExpression(): Node }).getExpression();
+    const ik = inner.getKind();
+    if (ik === SyntaxKind.ArrowFunction || ik === SyntaxKind.FunctionExpression) {
+      return inner; // IIFE: the real function-like
+    }
+    // Nested parens or other — don't recurse further; unusual shape
+    return undefined;
+  }
+
+  // Shape 2: PropertyAccessExpression — follow the expression (receiver) to
+  // find an inner CallExpression in a method chain.
+  if (ck === SyntaxKind.PropertyAccessExpression) {
+    const expr = (callee as Node & { getExpression(): Node }).getExpression();
+    if (expr.getKind() === SyntaxKind.CallExpression) {
+      return expr; // inner CallExpression in the chain
+    }
+    return undefined;
+  }
+
+  // Shape 3: Bare function-like callee (unusual but defensively handled).
+  if (ck === SyntaxKind.ArrowFunction || ck === SyntaxKind.FunctionExpression) {
+    return callee;
+  }
+
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // decomposableChildrenOf
 // ---------------------------------------------------------------------------
 
@@ -831,16 +894,74 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     return result;
   }
 
-  // CallExpression: descend into function-like arguments (ArrowFunction,
-  // FunctionExpression) whose body may be decomposable. Other arguments
-  // (literals, identifiers) are not further decomposable.
-  // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)
+  // CallExpression: descend into (a) the callee when it is or wraps a
+  // function-like or another CallExpression, and (b) ObjectLiteralExpression
+  // arguments that may carry conditional spreads.
+  //
+  // @decision DEC-SLICER-CALLEE-OBJ-LITERAL-001
+  // title: Extend CallExpression descent to callee and ObjectLiteralExpression args
+  // status: decided
+  // rationale:
+  //   Three previously-unhandled AST shapes produced DidNotReachAtomError on
+  //   real yakcc source (issue #350):
+  //
+  //   1. IIFE shape: `(() => { ... })()` — the ArrowFunction is the CALLEE
+  //      (inside a ParenthesizedExpression), not an argument. The old branch
+  //      iterated arguments only, found none that were function-like, and
+  //      returned [].
+  //
+  //   2. Method-chain shape: `arr.filter(fn).sort(cmp).slice(0, n)` — the
+  //      outermost CallExpression's callee is a PropertyAccessExpression whose
+  //      receiver is itself a CallExpression (.sort(cmp)). The sort's argument
+  //      is an ArrowFunction containing the decomposable behaviour. Without
+  //      callee descent the slicer saw only `0` and `n` as args → returned [].
+  //
+  //   3. ObjectLiteralExpression arg with conditional spreads:
+  //      `fn({ ...cond ? {a} : {} })` — the single arg is an
+  //      ObjectLiteralExpression. The existing ObjectLiteralExpression handler
+  //      already exposes PropertyAssignment initializers; adding the OLE to the
+  //      descent set lets the slicer reach ConditionalExpression spreads.
+  //
+  //   The extension is strictly additive: previously-passing files are
+  //   unaffected. New branches only fire on AST shapes that previously
+  //   returned []. (#350, files 1-4)
+  // alternatives:
+  //   A (refactor call sites): forces contributors to memorise anti-patterns;
+  //     violates the invariant "every shaveable file shaves".
+  //   C (expected-failures.json): documents fixable gaps; drifts atom registry.
+  // consequences:
+  //   - IIFEs, method chains, and conditional-spread call shapes now decompose.
+  //   - Atom granularity unchanged for previously-passing files.
+  //   - Compatible with WI-V2-09 byte-identical bootstrap (deterministic descent).
+  // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001 prior art)
   if (kind === SyntaxKind.CallExpression) {
-    const call = node as Node & { getArguments(): readonly Node[] };
+    const call = node as Node & {
+      getExpression(): Node;
+      getArguments(): readonly Node[];
+    };
     const result: Node[] = [];
+
+    // ---- Callee descent ----
+    // Unwrap the callee through ParenthesizedExpression to find the real
+    // function-like or nested CallExpression, then include it for further
+    // decomposition (IIFE and method-chain shapes, files 2 and 4 in #350).
+    const calleeDescendant = unwrapCalleeToDecomposable(call.getExpression());
+    if (calleeDescendant !== undefined) {
+      result.push(calleeDescendant);
+    }
+
+    // ---- Argument descent ----
     for (const arg of call.getArguments()) {
       const ak = arg.getKind();
       if (ak === SyntaxKind.ArrowFunction || ak === SyntaxKind.FunctionExpression) {
+        // Function-like arg: directly decomposable (unchanged from prior logic).
+        result.push(arg);
+      } else if (ak === SyntaxKind.ObjectLiteralExpression) {
+        // ObjectLiteralExpression arg: delegate to the OLE handler by including
+        // it here. decomposableChildrenOf(OLE) exposes PropertyAssignment
+        // initializers, SpreadAssignments, and method members, reaching the
+        // ConditionalExpressions buried in `fn({...cond ? {a} : {}})`.
+        // (files 1 and 3 in #350)
         result.push(arg);
       }
     }
@@ -908,10 +1029,21 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
   //     ObjectLiteralExpression inside a CallExpression arg; the inner objects
   //     are plain data and should resolve as atoms.
   //
-  // Policy: expose MethodDeclaration/GetAccessor/SetAccessor (always function-like)
-  // and ALL PropertyAssignment initializers (whether function-like or plain data).
-  // Plain-data initializers will be classified as atoms by isAtom() and terminate
-  // the recursion naturally; function-like initializers will be decomposed further.
+  // Policy: expose MethodDeclaration/GetAccessor/SetAccessor (always function-like),
+  // ALL PropertyAssignment initializers, AND SpreadAssignment expressions.
+  //
+  // SpreadAssignment handles the conditional-spread shape `...(cond ? {a} : {})`:
+  // the `SpreadAssignment` node wraps a `ConditionalExpression` that contains the
+  // CF boundaries causing the OLE to be non-atomic. Without this branch, the OLE
+  // handler found no decomposable children and threw DidNotReachAtomError even
+  // though the SpreadAssignment's ConditionalExpression is reachable.
+  // This is the completing fix for DEC-SLICER-CALLEE-OBJ-LITERAL-001 gap 3:
+  // adding OLE to the CallExpression arg descent (above) gets the slicer INTO the
+  // OLE, and this SpreadAssignment branch gets it through the OLE to the ternary.
+  // (#350 files 1 and 3)
+  //
+  // ShorthandPropertyAssignment entries (simple identifiers like `toolName`) do not
+  // carry initializers and classify as atoms via isAtom() → terminate naturally.
   // (DEC-SLICER-CHILDREN-EXPR-LEVEL-001)
   if (kind === SyntaxKind.ObjectLiteralExpression) {
     const obj = node as Node & { getProperties(): readonly Node[] };
@@ -929,6 +1061,14 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
         const init = pa.getInitializer?.();
         if (init !== undefined) {
           result.push(init);
+        }
+      } else if (pk === SyntaxKind.SpreadAssignment) {
+        // `...(expression)` — the expression carries the CF boundaries (commonly
+        // a ConditionalExpression). Include the expression for further decomposition.
+        const sa = prop as Node & { getExpression?(): Node | undefined };
+        const expr = sa.getExpression?.();
+        if (expr !== undefined) {
+          result.push(expr);
         }
       }
     }
