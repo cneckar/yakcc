@@ -21,7 +21,7 @@ import {
   prop_buildSkeletonSpec_total,
   prop_defaultThreshold_in_valid_range,
   prop_defaultThreshold_is_0_30,
-} from "./index.props.js";
+} from "../src/index.props.js";
 
 // DEFAULT_REGISTRY_HIT_THRESHOLD constant invariants
 it("property: prop_defaultThreshold_is_0_30", () => {
