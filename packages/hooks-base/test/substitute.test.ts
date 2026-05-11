@@ -164,6 +164,26 @@ describe("decideToSubstitute", () => {
 });
 
 // ---------------------------------------------------------------------------
+// decideToSubstitute — gap boundary semantics (IEEE 754 regression)
+// ---------------------------------------------------------------------------
+
+describe("decideToSubstitute — gap boundary semantics", () => {
+  it("rejects substitution when top1-top2 gap is exactly at threshold (IEEE 754 boundary)", () => {
+    // top-1 = 0.90, top-2 = 0.75 → mathematical gap = 0.15 exactly.
+    // IEEE 754 produces 0.15000000000000002 for (0.90 - 0.75). The float-tolerance buffer
+    // (DEC-HOOKS-BASE-SUBSTITUTE-SMALL-GAP-001) must reject this as if it were 0.15.
+    // combinedScore = 1 - d²/4  →  d = sqrt((1 - score) * 4)
+    const d1 = Math.sqrt((1 - 0.90) * 4); // → combinedScore 0.90
+    const d2 = Math.sqrt((1 - 0.75) * 4); // → combinedScore 0.75
+    const result = decideToSubstitute([
+      makeCandidate(d1, "top"),
+      makeCandidate(d2, "second"),
+    ]);
+    expect(result.substitute).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // renderSubstitution
 // ---------------------------------------------------------------------------
 

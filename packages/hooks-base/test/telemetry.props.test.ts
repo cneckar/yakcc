@@ -17,7 +17,7 @@ import {
   prop_outcomeFromResponse_registry_hit,
   prop_outcomeFromResponse_synthesis_required,
   prop_outcomeFromResponse_total,
-} from "./telemetry.props.js";
+} from "../src/telemetry.props.js";
 
 // hashIntent properties — BLAKE3 intent hashing
 it("property: prop_hashIntent_total", () => {

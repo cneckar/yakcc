@@ -27,7 +27,7 @@ import {
   prop_renderSubstitution_no_spec_two_lines,
   prop_renderSubstitution_total,
   prop_renderSubstitution_with_spec_three_lines,
-} from "./substitute.props.js";
+} from "../src/substitute.props.js";
 
 // candidatesToCombinedScores properties — pure score conversion
 it("property: prop_candidatesToCombinedScores_total", () => {
