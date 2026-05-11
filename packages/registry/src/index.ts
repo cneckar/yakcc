@@ -847,3 +847,17 @@ export {
   type CandidateProvenance,
 } from "./select.js";
 export { applyMigrations, SCHEMA_VERSION, type MigrationsDb } from "./schema.js";
+
+// @decision DEC-EMBED-MODEL-MIGRATION-001
+// title: rebuildRegistry public surface exported from @yakcc/registry
+// status: accepted (issue #338, WI-EMBED-MODEL-MIGRATION-PATH)
+// rationale: Lifted from the private test helper at discovery-eval-full-corpus.test.ts:375
+//   (DEC-V3-DISCOVERY-EVAL-FIX-001 H4). CLI consumers (registry-rebuild.ts) and
+//   programmatic callers (openRegistry autoRebuild path) import from this public surface.
+//   Exported alongside RegistryOptions so the type-export discipline established by
+//   openRegistry is preserved: callers import everything from @yakcc/registry.
+export {
+  rebuildRegistry,
+  type RebuildRegistryOptions,
+  type RebuildResult,
+} from "./rebuild.js";

@@ -167,11 +167,13 @@ interface BlockArtifactRow {
 class SqliteRegistry implements Registry {
   private readonly db: Database.Database;
   private readonly embeddings: EmbeddingProvider;
+  private readonly autoRebuild: boolean;
   private closed = false;
 
-  constructor(db: Database.Database, embeddings: EmbeddingProvider) {
+  constructor(db: Database.Database, embeddings: EmbeddingProvider, autoRebuild = false) {
     this.db = db;
     this.embeddings = embeddings;
+    this.autoRebuild = autoRebuild;
   }
 
   // -------------------------------------------------------------------------
@@ -750,6 +752,15 @@ class SqliteRegistry implements Registry {
   ): Promise<FindCandidatesByQueryResult> {
     this.assertOpen();
 
+    // @decision DEC-EMBED-MODEL-MIGRATION-001
+    // title: Enriched cross-provider rejection error with remediation command
+    // status: accepted (issue #338, WI-EMBED-MODEL-MIGRATION-PATH)
+    // rationale: When the bge-small-en-v1.5 swap (DEC-EMBED-MODEL-DEFAULT-002, PR #336)
+    //   causes a model mismatch at query time, the user needs to know (a) what model is
+    //   stored, (b) what model is current, and (c) exactly what command to run to fix it.
+    //   This enriches DEC-V3-IMPL-QUERY-002 with the remediation path.
+    //   DEC-EMBED-010 is PRESERVED: we add a remediation path, not a bypass.
+
     // Cross-provider rejection (DEC-V3-IMPL-QUERY-002):
     // Verify model ID before any KNN call. Throw loud error on mismatch.
     // TRUST DOMAIN NOTE: This gate is correct only within a same-process trust domain.
@@ -759,11 +770,32 @@ class SqliteRegistry implements Registry {
     const registryModelId = this.embeddings.modelId;
     const callerModelId = options?.queryEmbeddings?.modelId;
     if (callerModelId !== undefined && callerModelId !== registryModelId) {
-      const err = new Error(
-        `query-time embedding provider "${callerModelId}" does not match registry provider "${registryModelId}"; aborting`,
-      );
-      (err as Error & { reason: string }).reason = "cross_provider_rejected";
-      throw err;
+      const registryPath = this.db.name;
+
+      // @decision DEC-EMBED-MODEL-MIGRATION-001 (autoRebuild escape valve)
+      // When autoRebuild is true (explicit opt-in), trigger a full re-embed of all
+      // stored blocks using the current provider, then retry the query. This is
+      // intended for CI / clean-rebuild workflows — NOT for interactive use.
+      // DEC-EMBED-010 is PRESERVED: the rebuild restores consistency; it does not
+      // bypass the check. Default (false) is always fail-loud.
+      if (this.autoRebuild) {
+        // Dynamic import to avoid circular module initialization:
+        // storage.ts → rebuild.ts → index.ts → storage.ts.
+        // ESM handles live bindings, but dynamic import defers resolution safely.
+        const { rebuildRegistry } = await import("./rebuild.js");
+        await rebuildRegistry(this, this.embeddings);
+        // After rebuild, the registry's embeddings are consistent with the current
+        // provider. The cross-provider check will pass on the retry below because
+        // all vectors now match this.embeddings.modelId.
+        // Fall through to the rest of findCandidatesByQuery — do NOT recurse to
+        // avoid infinite rebuild loops if something is wrong.
+      } else {
+        const err = new Error(
+          `ERROR: registry at ${registryPath} was embedded with model "${registryModelId}", but the current query provider uses "${callerModelId}". Embeddings are not portable across models. To migrate: run \`yakcc registry rebuild --path ${registryPath}\` (or \`yakcc bootstrap\` to regenerate the bootstrap-managed registry).`,
+        );
+        (err as Error & { reason: string }).reason = "cross_provider_rejected";
+        throw err;
+      }
     }
 
     const topK = query.topK ?? 10;
@@ -1500,9 +1532,31 @@ function bytesToHex(bytes: Uint8Array): string {
 export interface RegistryOptions {
   /**
    * Embedding provider to use. Defaults to the local transformers.js provider
-   * (Xenova/all-MiniLM-L6-v2, 384 dimensions).
+   * (Xenova/bge-small-en-v1.5, 384 dimensions).
    */
   embeddings?: EmbeddingProvider | undefined;
+
+  /**
+   * When true, automatically trigger a full registry rebuild (re-embed all blocks)
+   * if a cross-provider model mismatch is detected at query time.
+   *
+   * @decision DEC-EMBED-MODEL-MIGRATION-001
+   * @title autoRebuild is explicit opt-in only; default is fail-loud
+   * @status accepted (issue #338, WI-EMBED-MODEL-MIGRATION-PATH)
+   * @rationale Sacred Practice #5 (loud failure): silent auto-rebuild could mask
+   *   stale-vector issues and corrupt user state. This option is intended for CI
+   *   and clean-rebuild workflows only — not for interactive use. The default
+   *   behavior (false) preserves the loud-failure invariant: a mismatch throws
+   *   with the enriched error message naming the stored model, current model, and
+   *   exact remediation command. DEC-EMBED-010 is PRESERVED even when autoRebuild
+   *   is true: the rebuild replaces stale vectors with correct ones for the current
+   *   provider, restoring consistency rather than bypassing the check.
+   *
+   * NOT added to CliOptions or registry-init — this is programmatic API only.
+   *
+   * @default false
+   */
+  autoRebuild?: boolean | undefined;
 }
 
 /**
@@ -1578,7 +1632,7 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
     embeddingProvider = createLocalEmbeddingProvider();
   }
 
-  return new SqliteRegistry(db, embeddingProvider);
+  return new SqliteRegistry(db, embeddingProvider, options?.autoRebuild ?? false);
 }
 
 // ---------------------------------------------------------------------------
