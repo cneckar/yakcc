@@ -29,10 +29,11 @@
 //     → getSourceFiles() → filter externals → runAllRules(sf, path)
 //     → ProjectValidationResult
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { validateStrictSubsetProject } from "./strict-subset-project.js";
 import { validateStrictSubset, validateStrictSubsetFile } from "./strict-subset.js";
 
@@ -415,6 +416,33 @@ describe("project mode — test-file exclusion (WI-V2-03)", () => {
     for (const v of result.violations) {
       expect(v.file.endsWith(".test.ts")).toBe(false);
       expect(v.file.endsWith(".spec.ts")).toBe(false);
+    }
+  });
+
+  // @decision DEC-V2-IR-SELF-VALIDATION-DIST-PREREQ-001 — strict-subset-project's
+  // type-resolution walks ir's source files and follows @yakcc/contracts imports
+  // via package.json "types" → ./dist/index.d.ts. Without that .d.ts file existing
+  // (e.g., in a fresh checkout where contracts hasn't been built), every contracts
+  // import flags `no-untyped-imports`. The vitest workspace aliases at the source
+  // level (DEC-VITEST-WORKSPACE-ALIASES-001) fix vitest's runtime resolution but
+  // NOT TypeScript's compile-time resolution that runs inside this test.
+  // beforeAll ensures dist/index.d.ts exists by building contracts on-demand.
+  // No-op when dist is already present (CI build job pre-built it).
+  beforeAll(() => {
+    const contractsDtsPath = join(REPO_ROOT, "packages", "contracts", "dist", "index.d.ts");
+    if (!existsSync(contractsDtsPath)) {
+      // TypeScript's incremental cache (tsconfig.tsbuildinfo) can wrongly believe
+      // dist is already up-to-date when dist/ has been deleted. Force a clean
+      // rebuild by clearing tsbuildinfo first.
+      const tsBuildInfo = join(REPO_ROOT, "packages", "contracts", "tsconfig.tsbuildinfo");
+      if (existsSync(tsBuildInfo)) {
+        const { unlinkSync } = require("node:fs") as typeof import("node:fs");
+        unlinkSync(tsBuildInfo);
+      }
+      execSync("pnpm --filter @yakcc/contracts build", {
+        cwd: REPO_ROOT,
+        stdio: "inherit",
+      });
     }
   });
 

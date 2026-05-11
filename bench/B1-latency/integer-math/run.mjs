@@ -143,7 +143,15 @@ function runComparator(name, cmd, args, opts = {}) {
   console.log(`\n${BOLD}[${name}]${RESET} running ${MEASURED_NOTE}...`);
   const result = spawnSync(cmd, args, {
     encoding: "utf8",
-    timeout: 600000, // 10 min max (1000 iters × SHA-256 × 100MB)
+    // @decision DEC-BENCH-B1-CI-TIMEOUT-001
+    // ubuntu-latest runners are dramatically slower at pure-software CPU work than
+    // typical developer machines (~2.2× factor observed on rust-software SHA-256).
+    // The 600s default timeout was sufficient on Windows but not in CI. 30 minutes
+    // is a generous ceiling that should accommodate even the slowest comparator on
+    // the slowest runner; runs that approach this cap should be investigated as a
+    // separate perf regression, not as a timeout bug. CI job timeout is independent
+    // at 60 minutes (workflow level), so a runaway is still bounded.
+    timeout: 1800000, // 30 min — covers ubuntu-latest ~2.2× slowdown vs Windows
     ...opts,
   });
 

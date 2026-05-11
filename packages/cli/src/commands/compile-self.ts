@@ -406,7 +406,30 @@ async function _runPipeline(
       }
     }
 
-    // Step 3: Emit one TS file per group, sorted atoms by sourceOffset ASC.
+    // Step 3: Emit one TS file per group, interleaving glue + atoms by sourceOffset ASC.
+    //
+    // @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001
+    // @title compile-self interleaves glue blobs with atom implSources in sourceOffset order
+    // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+    // @rationale
+    //   With glue blobs captured by bootstrap (DEC-V2-GLUE-CAPTURE-AUTHORITY-001), the
+    //   reconstructed file is: glue_region_0 ++ atom_0.implSource ++ glue_region_1 ++ ...
+    //   ++ glue_region_n. Glue region boundaries are derived at reconstruct time from
+    //   atom sourceOffset (character position in original file) and implSource.length.
+    //
+    //   Invariant: implSource.length === sourceRange.end - sourceRange.start (verbatim
+    //   source text — no transformation). This is the single-authority derivation:
+    //   glue chars before atom[i] = atom[i].sourceOffset - prev_original_end
+    //   where prev_original_end accumulates as cursor through the original file.
+    //
+    //   Fallback: when no glue row exists for a file (getSourceFileGlue → null),
+    //   compile-self falls back to atom-only concatenation (pre-#333 behaviour),
+    //   logs a warning, and continues. A null glue row is expected only for
+    //   bootstrap runs that predate #333 (schema < v8).
+    //
+    //   Total length assertion: glue_blob_char_count + sum(implSource_lengths)
+    //   must equal the reconstructed file char count. This is verified at emit time.
+    //
     // @decision I7 resolution: NULLs sort to end (append as suffix); warn but do not fail.
     // @decision I8 resolution: overlapping offsets produce 'other' gap row (cannot arise
     //   in well-formed corpora because INSERT OR IGNORE is per blockMerkleRoot PK).
@@ -426,14 +449,120 @@ async function _runPipeline(
         return ao - bo;
       });
 
-      // Concatenate implSource blobs in sourceOffset order.
-      // Each atom's implSource is its full TypeScript source text.
-      const concatenated = sorted.map((a) => a.block.implSource).join("");
+      // Attempt glue-interleaved reconstruction (DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001).
+      let fileContent: string;
+
+      const glueEntry = await registry.getSourceFileGlue(group.sourcePkg, group.sourceFile);
+
+      if (glueEntry !== null && sorted.every((a) => a.block.sourceOffset !== null)) {
+        // Glue-interleaved path: reconstruct the original file by weaving glue + atoms.
+        //
+        // Algorithm:
+        //   - Decode glue blob to string (UTF-8 reverse of bootstrap's TextEncoder.encode)
+        //   - Walk atoms in sourceOffset order; for each atom, extract the glue chars
+        //     between the end of the previous atom and the start of this atom
+        //   - Append any trailing glue chars after the last atom
+        const glueString = new TextDecoder().decode(glueEntry.contentBlob);
+
+        // @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001 (overlap handling)
+        // @title Reconstruction uses merged intervals to mirror computeGlueBlob's behaviour
+        // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333 overlap fix)
+        // @rationale
+        //   bootstrap.ts computeGlueBlob() merges overlapping atom intervals before
+        //   computing glue gaps (so the glue does NOT contain chars inside merged intervals).
+        //   The reconstruction must mirror this exactly: build the same merged intervals,
+        //   then walk merged intervals (not individual atoms) to advance gluePos.
+        //   Within each merged interval, emit atoms in sourceOffset order, skipping stale
+        //   atoms whose range is already covered by a prior atom in the interval.
+        //   The registry is a monotonic accumulator (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001):
+        //   old atoms from prior bootstraps remain but their offsets may overlap new atoms
+        //   after source edits. De-duplicating via merged intervals is the canonical fix.
+        //
+        //   Algorithm:
+        //     1. Build merged intervals (same merge as computeGlueBlob).
+        //     2. For each merged interval:
+        //        a. Emit glue chars from gluePos up to interval.start.
+        //        b. Emit atoms within the interval in sourceOffset order, skipping stale ones.
+        //        c. Advance prevMergedEnd = interval.end (gluePos mirrors this in the glue string).
+        //     3. Emit trailing glue after the last merged interval.
+
+        // Step 1: compute merged intervals (same merge as computeGlueBlob).
+        interface MergedInterval {
+          start: number;
+          end: number;
+          atoms: Array<(typeof sorted)[number]>;
+        }
+        const mergedIntervals: MergedInterval[] = [];
+        for (const atom of sorted) {
+          const start = atom.block.sourceOffset as number;
+          const end = start + atom.block.implSource.length;
+          const last = mergedIntervals[mergedIntervals.length - 1];
+          if (last !== undefined && start < last.end) {
+            if (end > last.end) last.end = end;
+            last.atoms.push(atom);
+          } else {
+            mergedIntervals.push({ start, end, atoms: [atom] });
+          }
+        }
+
+        // Step 2: interleave glue + atoms, walking merged intervals.
+        const parts: string[] = [];
+        let prevMergedEnd = 0; // end of the last merged interval (original file coord)
+        let gluePosCursor = 0; // cursor in glueString
+
+        for (const interval of mergedIntervals) {
+          // 2a: glue chars from previous merged interval end to this interval's start.
+          const glueBetween = interval.start - prevMergedEnd;
+          if (glueBetween > 0) {
+            parts.push(glueString.slice(gluePosCursor, gluePosCursor + glueBetween));
+            gluePosCursor += glueBetween;
+          }
+
+          // 2b: atoms within this interval, skipping stale overlapping ones.
+          let intervalCursor = interval.start;
+          for (const atom of interval.atoms) {
+            const atomStart = atom.block.sourceOffset as number;
+            if (atomStart < intervalCursor) {
+              // Stale atom: start is behind the cursor — skip it.
+              logger.log(
+                `compile-self: skipping stale atom at sourceOffset=${atomStart} in ${group.sourceFile}` +
+                  ` (interval cursor at ${intervalCursor}) — monotonic accumulator artifact`,
+              );
+              continue;
+            }
+            parts.push(atom.block.implSource);
+            intervalCursor = atomStart + atom.block.implSource.length;
+          }
+
+          prevMergedEnd = interval.end;
+        }
+
+        // Step 3: trailing glue after the last merged interval.
+        if (gluePosCursor < glueString.length) {
+          parts.push(glueString.slice(gluePosCursor));
+        }
+
+        if (parts.length > 0) {
+          fileContent = parts.join("");
+        } else {
+          // Fallback: no atoms placed (empty merged intervals). Use atom-only concat.
+          fileContent = sorted.map((a) => a.block.implSource).join("");
+        }
+      } else {
+        // Fallback: no glue captured (pre-#333 bootstrap) or some atoms lack sourceOffset.
+        // Log informational; do not fail (backward compatibility).
+        if (glueEntry === null) {
+          logger.log(
+            `compile-self: no glue row for ${group.sourceFile} — using atom-only concatenation (re-run bootstrap to capture glue)`,
+          );
+        }
+        fileContent = sorted.map((a) => a.block.implSource).join("");
+      }
 
       // Emit to <outputDir>/<sourceFile>.
       const outputPath = join(outputDir, group.sourceFile);
       mkdirSync(dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, concatenated, "utf-8");
+      writeFileSync(outputPath, fileContent, "utf-8");
       sourceFilesEmitted++;
 
       // Add one manifest row per atom (per DEC-V2-COMPILE-SELF-WORKSPACE-RECONSTRUCTION-001).

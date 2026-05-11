@@ -61,6 +61,7 @@ import type {
   Provenance,
   QueryCandidate,
   Registry,
+  SourceFileGlueEntry,
   WorkspacePlumbingEntry,
 } from "./index.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
@@ -1409,6 +1410,202 @@ class SqliteRegistry implements Registry {
       contentHash: r.content_hash,
       createdAt: r.created_at,
     }));
+  }
+
+  // -------------------------------------------------------------------------
+  // storeSourceFileGlue — insert or replace a glue row (#333)
+  //
+  // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+  // title: source_file_glue is the single authority for per-file glue bytes;
+  //   INSERT OR REPLACE for re-bootstrap idempotency (atoms change → glue changes)
+  // status: decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+  // rationale: Unlike storeBlock (INSERT OR IGNORE) and storeWorkspacePlumbing
+  //   (INSERT OR IGNORE), glue rows use INSERT OR REPLACE because a re-bootstrap
+  //   may produce a different glue blob for the same (source_pkg, source_file) if
+  //   the shaver extracts different atoms in a new run. The glue must always
+  //   reflect the most recent bootstrap's per-file atom decomposition.
+  //   Content-hash verification enforces blob integrity at write time.
+  // -------------------------------------------------------------------------
+
+  async storeSourceFileGlue(entry: SourceFileGlueEntry): Promise<void> {
+    this.assertOpen();
+
+    // Validate inputs.
+    if (!entry.sourcePkg || !entry.sourceFile) {
+      throw new Error(
+        `storeSourceFileGlue: sourcePkg and sourceFile must be non-empty: sourcePkg=${entry.sourcePkg}, sourceFile=${entry.sourceFile}`,
+      );
+    }
+    if (entry.sourceFile.startsWith("/") || entry.sourceFile.includes("..")) {
+      throw new Error(
+        `storeSourceFileGlue: sourceFile must be workspace-relative and must not contain '..': ${entry.sourceFile}`,
+      );
+    }
+
+    // Verify content integrity: BLAKE3-256(contentBlob) must equal contentHash.
+    const actualHash = bytesToHex(blake3(entry.contentBlob));
+    if (actualHash !== entry.contentHash) {
+      throw new Error(
+        `storeSourceFileGlue: contentHash mismatch for ${entry.sourceFile}: ` +
+          `stored=${entry.contentHash}, computed=${actualHash}`,
+      );
+    }
+
+    this.db
+      .prepare<[string, string, string, Buffer, number]>(
+        "INSERT OR REPLACE INTO source_file_glue(source_pkg, source_file, content_hash, content_blob, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        entry.sourcePkg,
+        entry.sourceFile,
+        entry.contentHash,
+        Buffer.from(entry.contentBlob),
+        entry.createdAt > 0 ? entry.createdAt : Date.now(),
+      );
+  }
+
+  // -------------------------------------------------------------------------
+  // getSourceFileGlue — retrieve glue row by (sourcePkg, sourceFile) (#333)
+  //
+  // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+  // -------------------------------------------------------------------------
+
+  async getSourceFileGlue(
+    sourcePkg: string,
+    sourceFile: string,
+  ): Promise<SourceFileGlueEntry | null> {
+    this.assertOpen();
+
+    interface GlueRow {
+      source_pkg: string;
+      source_file: string;
+      content_hash: string;
+      content_blob: Buffer;
+      created_at: number;
+    }
+
+    const row = this.db
+      .prepare<[string, string], GlueRow>(
+        "SELECT source_pkg, source_file, content_hash, content_blob, created_at FROM source_file_glue WHERE source_pkg = ? AND source_file = ?",
+      )
+      .get(sourcePkg, sourceFile);
+
+    if (row === undefined) return null;
+
+    return {
+      sourcePkg: row.source_pkg,
+      sourceFile: row.source_file,
+      contentHash: row.content_hash,
+      contentBlob: new Uint8Array(row.content_blob),
+      createdAt: row.created_at,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // listSourceFileGlue — enumerate all glue rows sorted by (source_pkg, source_file) (#333)
+  //
+  // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+  // -------------------------------------------------------------------------
+
+  async listSourceFileGlue(): Promise<readonly SourceFileGlueEntry[]> {
+    this.assertOpen();
+
+    interface GlueRow {
+      source_pkg: string;
+      source_file: string;
+      content_hash: string;
+      content_blob: Buffer;
+      created_at: number;
+    }
+
+    const rows = this.db
+      .prepare<[], GlueRow>(
+        "SELECT source_pkg, source_file, content_hash, content_blob, created_at FROM source_file_glue ORDER BY source_pkg ASC, source_file ASC",
+      )
+      .all();
+
+    return rows.map((r) => ({
+      sourcePkg: r.source_pkg,
+      sourceFile: r.source_file,
+      contentHash: r.content_hash,
+      contentBlob: new Uint8Array(r.content_blob),
+      createdAt: r.created_at,
+    }));
+  }
+
+  // -------------------------------------------------------------------------
+  // getAtomRangesBySourceFile (#333 — glue capture authority)
+  // -------------------------------------------------------------------------
+  //
+  // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+  // @title getAtomRangesBySourceFile is the authoritative query for glue computation
+  // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+  // @rationale
+  //   computeGlueBlob must compute the complement of atoms that are STORED with
+  //   sourceFile = THIS_FILE in the DB — not the complement of all live shave
+  //   stubs. Using live shave stubs incorrectly excludes PointerEntry atoms that
+  //   belong to other files, leaving those regions missing from both glue and
+  //   atom reconstruction lists. Querying the DB after Pass A ensures the glue
+  //   blob is consistent with what the reconstruction algorithm will find.
+  //   Only rows with source_offset IS NOT NULL are returned (rows without an
+  //   offset cannot be positioned in the file and must not influence glue spans).
+  //   Rows are sorted ascending by source_offset.
+
+  async getAtomRangesBySourceFile(
+    sourceFile: string,
+  ): Promise<readonly { readonly sourceOffset: number; readonly implSourceLength: number }[]> {
+    this.assertOpen();
+
+    type AtomRangeRow = { source_offset: number; impl_len: number };
+
+    const rows = this.db
+      .prepare<[string], AtomRangeRow>(
+        "SELECT source_offset, length(impl_source) AS impl_len FROM blocks WHERE source_file = ? AND source_offset IS NOT NULL ORDER BY source_offset ASC",
+      )
+      .all(sourceFile);
+
+    // De-overlap intervals before returning.
+    //
+    // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001 (de-overlap addendum)
+    // @title getAtomRangesBySourceFile merges overlapping intervals from the monotonic accumulator
+    // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333 overlap fix)
+    // @rationale
+    //   The registry is a monotonic accumulator (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
+    //   When source files are modified and re-bootstrapped, new atoms are added at their
+    //   new offsets while old atoms (from the prior bootstrap) remain in the DB with their
+    //   old offsets. This produces overlapping intervals (e.g. old atom at offset=65606
+    //   overlapping new atom at 65382-65630). If computeGlueBlob uses overlapping intervals,
+    //   it cuts out the stale-atom region from the glue even though those chars are actually
+    //   covered by the newer atom. The glue then lacks those chars, and reconstruction that
+    //   skips the stale atoms cannot recover them.
+    //
+    //   Solution: merge overlapping intervals (standard interval-merge algorithm) before
+    //   returning. The merged intervals represent the EFFECTIVE char coverage of atoms in
+    //   the file. computeGlueBlob uses these merged ranges to correctly identify glue chars.
+    //   The compile-self reconstruction uses the same sorted-atom-with-skip logic, which
+    //   naturally produces the same non-overlapping coverage (DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001).
+    //
+    //   Invariant: merged intervals are non-overlapping and sorted by sourceOffset ASC.
+    const merged: Array<{ sourceOffset: number; implSourceLength: number }> = [];
+    for (const r of rows) {
+      const start = r.source_offset;
+      const end = start + r.impl_len;
+      const last = merged[merged.length - 1];
+      if (last !== undefined && start < last.sourceOffset + last.implSourceLength) {
+        // Overlaps previous interval: extend it to cover both (union).
+        const prevEnd = last.sourceOffset + last.implSourceLength;
+        if (end > prevEnd) {
+          merged[merged.length - 1] = {
+            sourceOffset: last.sourceOffset,
+            implSourceLength: end - last.sourceOffset,
+          };
+        }
+        // else: entirely contained in previous — skip.
+      } else {
+        merged.push({ sourceOffset: start, implSourceLength: r.impl_len });
+      }
+    }
+    return merged;
   }
 
   // -------------------------------------------------------------------------

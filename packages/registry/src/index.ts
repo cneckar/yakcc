@@ -326,6 +326,60 @@ export interface WorkspacePlumbingEntry {
 }
 
 // ---------------------------------------------------------------------------
+// WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE: SourceFileGlueEntry — one row from source_file_glue
+// (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row from the `source_file_glue` table.
+ *
+ * Captures all non-atom byte regions of a single source file as a single
+ * concatenated blob. The blob is the byte content of the file minus the byte
+ * ranges of each atom's implSource (in source order), concatenated in the order
+ * they appear in the source file:
+ *
+ *   glue_blob = F[0..A1.start) ++ F[A1.end..A2.start) ++ ... ++ F[An.end..fileLen)
+ *
+ * The consumer (compile-self) reconstructs the original file by interleaving
+ * atom implSources with slices of this blob, using blocks.source_offset as the
+ * single authority for atom byte positions.
+ *
+ * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+ * @title Per-file glue lives in source_file_glue; single concatenated blob per
+ *   (source_pkg, source_file); boundaries derived from blocks.source_offset at
+ *   consume time — no dual-authority with blocks.source_offset column.
+ * @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+ *
+ * No ownership-shaped fields — DEC-NO-OWNERSHIP-011.
+ * No merkle-root field — glue is workspace-reconstruction metadata, not a
+ *   registry citizen. contentHash is BLAKE3-256 for integrity/dedup only.
+ */
+export interface SourceFileGlueEntry {
+  /**
+   * Workspace package directory (e.g. 'packages/cli').
+   * Must match the sourcePkg on the corresponding blocks rows.
+   */
+  readonly sourcePkg: string;
+  /**
+   * Workspace-relative path of the source file (e.g. 'packages/cli/src/commands/foo.ts').
+   * Must match the sourceFile on the corresponding blocks rows.
+   */
+  readonly sourceFile: string;
+  /**
+   * BLAKE3-256 hex digest of contentBlob.
+   * Verified at write time; callers must supply a matching hash.
+   */
+  readonly contentHash: string;
+  /**
+   * Concatenated bytes of all non-atom regions in source order.
+   * Length: fileLength - sum(atom.implSource.length for atoms in this file).
+   */
+  readonly contentBlob: Uint8Array;
+  /** Unix epoch milliseconds of first insertion. */
+  readonly createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
 // WI-V2-04 L2: ForeignRefRow — one entry from block_foreign_refs
 // (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 / WI-V2-04 L2)
 // ---------------------------------------------------------------------------
@@ -829,6 +883,73 @@ export interface Registry {
    * @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
    */
   listWorkspacePlumbing(): Promise<readonly WorkspacePlumbingEntry[]>;
+
+  // ---------------------------------------------------------------------------
+  // #333: source_file_glue accessors
+  // (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Insert or replace a glue row for `(sourcePkg, sourceFile)`.
+   *
+   * Idempotent via PRIMARY KEY (source_pkg, source_file) + INSERT OR REPLACE.
+   * Re-bootstrap overwrites a prior glue row with refreshed content — this is
+   * intentional (unlike storeBlock which is INSERT OR IGNORE). Glue is derived
+   * at bootstrap time from the live shave output; a re-run may produce a
+   * different glue blob if atoms change. INSERT OR REPLACE ensures the registry
+   * reflects the most recent bootstrap run.
+   *
+   * Throws if:
+   *   - `entry.contentHash` does not equal BLAKE3-256(contentBlob)
+   *   - `entry.sourcePkg` or `entry.sourceFile` is empty
+   *   - `entry.sourceFile` is an absolute path or contains '..'
+   *
+   * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+   */
+  storeSourceFileGlue(entry: SourceFileGlueEntry): Promise<void>;
+
+  /**
+   * Retrieve the glue row for `(sourcePkg, sourceFile)`.
+   *
+   * Returns null when no glue row exists for the given key — the consumer
+   * must treat null as "glue not captured" and emit a `null-glue` gap row
+   * rather than assuming the file has no glue.
+   *
+   * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+   */
+  getSourceFileGlue(sourcePkg: string, sourceFile: string): Promise<SourceFileGlueEntry | null>;
+
+  /**
+   * Enumerate every glue row, sorted ascending by (source_pkg, source_file).
+   *
+   * Deterministic — two calls on the same DB state produce identical results.
+   * Returns an empty array when the source_file_glue table is empty.
+   *
+   * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+   */
+  listSourceFileGlue(): Promise<readonly SourceFileGlueEntry[]>;
+
+  /**
+   * Return the source-offset and implSource length for every block stored with
+   * the given `sourceFile`, sorted ascending by `sourceOffset`.
+   *
+   * This is the authoritative atom-position query for glue-blob computation
+   * (#333). Using the DB state (not live shave stubs) ensures the glue blob
+   * is consistent with what the reconstruction algorithm will find: it also
+   * queries by sourceFile when interleaving atoms and glue.
+   *
+   * Only rows where source_offset IS NOT NULL are returned.
+   * Rows from prior bootstrap runs (different sourceFile) are intentionally
+   * excluded — INSERT OR IGNORE keeps the first-observed sourceFile, so a
+   * PointerEntry encountered in a subsequent file's shave will NOT overwrite
+   * the original sourceFile, and therefore will NOT appear in this list for
+   * the later file.
+   *
+   * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+   */
+  getAtomRangesBySourceFile(
+    sourceFile: string,
+  ): Promise<readonly { readonly sourceOffset: number; readonly implSourceLength: number }[]>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;

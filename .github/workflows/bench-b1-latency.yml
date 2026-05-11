@@ -1,0 +1,102 @@
+# bench-b1-latency.yml — Nightly B1 latency benchmark CI
+#
+# @decision DEC-BENCH-B1-CI-001
+# @title Nightly B1 latency workflow: ubuntu-latest authoritative measurement gate
+# @status accepted
+# @rationale
+#   Windows development machine results are informational only (different JIT
+#   characteristics, different CPU microarchitecture). The authoritative verdict
+#   for issue #185 requires ubuntu-latest on GitHub-hosted runners for reproducible
+#   cross-PR comparison. Key design choices:
+#
+#   Schedule: 09:00 UTC daily — fires after the business day's merges have landed
+#   on main, giving a stable baseline. Early morning UTC avoids peak runner queue.
+#
+#   Concurrency: cancel-in-progress=true — a nightly supersedes the prior run.
+#   Safe to cancel because each run is an independent measurement; no state is
+#   accumulated across runs. Artifacts are retained 90 days for trend analysis.
+#
+#   Build isolation: @yakcc/shave is pre-existing broken (DEC-SHAVE-SKIP-001).
+#   We build only the packages that bench scripts depend on. pnpm --filter with
+#   explicit package names avoids the broken shave package.
+#
+#   Comment posting: gh issue comment on #185 after each nightly run gives the
+#   operator a live verdict feed without needing to download artifacts. If the
+#   GITHUB_TOKEN scope doesn't allow issue comments (org repo permission), the
+#   step is non-fatal — artifacts are always uploaded regardless.
+#
+#   Retention: 90 days. Each artifact is named b1-latency-<run_number> so trend
+#   queries can be answered by downloading the series and plotting mean_ms over time.
+#
+# Triggers:
+#   - Scheduled: 09:00 UTC daily
+#   - workflow_dispatch: manual ad-hoc runs (e.g., after a large perf change)
+#
+# To read results without downloading artifacts:
+#   Navigate to https://github.com/cneckar/yakcc/issues/185 — each nightly
+#   run posts a markdown comment with the verdict for all three slices.
+
+name: bench-b1-latency
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 09:00 UTC daily — picks up prior day's merged commits
+  workflow_dispatch:        # manual trigger for ad-hoc runs
+
+concurrency:
+  group: bench-b1-latency
+  cancel-in-progress: true  # safe to cancel — each measurement is independent
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build required packages (skip @yakcc/shave — pre-existing broken)
+        run: |
+          pnpm --filter @yakcc/contracts build || true
+          pnpm --filter @yakcc/registry build || true
+          pnpm --filter @yakcc/hooks-base build || true
+
+      - name: Run Slice 1 — integer-math SHA-256
+        run: pnpm bench:latency:integer-math
+
+      - name: Run Slice 2 — json-transformer DFS
+        run: pnpm bench:latency:json
+
+      - name: Run Slice 3 — http-routing trie
+        run: pnpm bench:latency:http
+
+      - name: Post results to issue #185
+        # Non-fatal: if token scope doesn't allow issue comments, artifacts still upload.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node bench/B1-latency/post-nightly-comment.mjs || echo "Warning: comment posting failed (non-fatal)"
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: b1-latency-${{ github.run_number }}
+          path: tmp/B1-latency/*.json
+          retention-days: 90

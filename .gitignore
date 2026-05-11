@@ -32,6 +32,14 @@ bench/B1-latency/integer-math/corpus/
 # B1-latency Rust baseline build artifacts
 bench/B1-latency/integer-math/rust-baseline/target/
 
+# Slice 2: json-transformer corpus + Rust build artifacts
+bench/B1-latency/json-transformer/corpus/
+bench/B1-latency/json-transformer/rust-baseline/target/
+
+# Slice 3: http-routing corpus + Rust build artifacts
+bench/B1-latency/http-routing/corpus/
+bench/B1-latency/http-routing/rust-baseline/target/
+
 # compile-self recompiled output — generated artifact, never committed.
 # Reproducible from `yakcc compile-self` (DEC-V2-CORPUS-DISTRIBUTION-001, A2 slice).
 dist-recompiled/
@@ -42,3 +50,9 @@ dist-recompiled/
 packages/*/src/**/*.d.ts
 packages/*/src/**/*.d.ts.map
 packages/*/src/**/*.js.map
+
+# B5-coherence: transcripts and arm-mapping are transient; slice1-scores.json is committed.
+# (DEC-BENCH-B5-SLICE1-001: per-run transcripts are ephemeral; the score JSON is operator
+# decision input and must survive reboots. Committed via `git add --force`.)
+tmp/B5-coherence/transcripts/
+tmp/B5-coherence/arm-mapping.json

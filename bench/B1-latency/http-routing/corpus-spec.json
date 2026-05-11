@@ -1,0 +1,30 @@
+{
+  "note": "Corpus files are generated on first run by generate-corpus.mjs and gitignored. This spec provides the SHA-256 content address for verification.",
+  "routing_table": {
+    "filename": "routing-table-10k.json",
+    "description": "10,000 HTTP routing rules (static, single-param, multi-param, wildcard)",
+    "rule_count": 10000,
+    "distribution": {
+      "static": 5000,
+      "single_param": 3000,
+      "multi_param": 1500,
+      "wildcard": 500
+    },
+    "seed": "0xF00DCAFE",
+    "sha256": "bc0ff2e1d2a5d9ec76abb3741ec518c1be080bb7b95bee687ac64242cf7ed463",
+    "actual_rule_count": 10000
+  },
+  "query_set": {
+    "filename": "query-set-100k.json",
+    "description": "100,000 incoming paths to match against the routing table",
+    "query_count": 100000,
+    "distribution": {
+      "static_hit_pct": 70,
+      "param_hit_pct": 25,
+      "miss_pct": 5
+    },
+    "seed": "0xBEEFF00D",
+    "sha256": "f2a3f43a8b1d8c6fd243e852e1e45b187468308dec00c2f80aa724e9dc1ce47d",
+    "actual_query_count": 100000
+  }
+}

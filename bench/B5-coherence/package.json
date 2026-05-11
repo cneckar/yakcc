@@ -1,0 +1,16 @@
+{
+  "name": "@yakcc-bench/b5-coherence",
+  "version": "0.0.1",
+  "private": true,
+  "description": "B5 coherence benchmark — bench-local dependencies",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3"
+  },
+  "notes": [
+    "This package.json is NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is a bench-local dep per DEC-BENCH-B5-SLICE2-001 — it MUST NOT appear in the root package.json.",
+    "Install bench deps: pnpm --dir bench/B5-coherence install",
+    "The SDK is loaded via dynamic import() in llm-judge.mjs, gated on ANTHROPIC_API_KEY."
+  ]
+}
