@@ -63,8 +63,8 @@
  *   for harness-correctness verification; this test provides the operator-facing measurement.
  */
 
-import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -75,8 +75,8 @@ import {
   canonicalize,
   createLocalEmbeddingProvider,
   createOfflineEmbeddingProvider,
-  specHash as deriveSpecHash,
   canonicalAstHash as deriveCanonicalAstHash,
+  specHash as deriveSpecHash,
 } from "@yakcc/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BenchmarkEntry } from "./discovery-eval-helpers.js";
@@ -110,6 +110,25 @@ import { openRegistry } from "./storage.js";
 
 const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === "local";
 const EMIT_REPORT = process.env.DISCOVERY_EVAL_REPORT === "1" || USE_LOCAL_PROVIDER;
+
+// DISCOVERY_EVAL_QUERY_MODE toggle — see DEC-V3-INITIATIVE-002-DISPOSITION + #309.
+// Default "query" reproduces the canonical post-#305 baseline (D3 5-stage pipeline ON).
+// Setting "intent" exercises the legacy findCandidatesByIntent path (pipeline OFF) — used
+// for A/B measurements that surface pipeline-strictness regressions. Per the operator
+// disposition, the dominant quality signal lives in the pipeline strictness, not the
+// embedding schema; this knob gives every future D5 measurement a built-in A/B without
+// requiring source edits. Validation: any value other than "query" or "intent" falls
+// back to "query" with a console warning (loud failure on typo, no silent fallback).
+const QUERY_MODE_RAW = process.env.DISCOVERY_EVAL_QUERY_MODE;
+const QUERY_MODE: "query" | "intent" = (() => {
+  if (QUERY_MODE_RAW === undefined || QUERY_MODE_RAW === "" || QUERY_MODE_RAW === "query")
+    return "query";
+  if (QUERY_MODE_RAW === "intent") return "intent";
+  console.warn(
+    `[discovery-eval] DISCOVERY_EVAL_QUERY_MODE="${QUERY_MODE_RAW}" not recognized; falling back to "query". Valid values: "query" | "intent".`,
+  );
+  return "query";
+})();
 
 // ---------------------------------------------------------------------------
 // Corpus schema (extends BenchmarkEntry with stratification fields)
@@ -148,7 +167,10 @@ interface StratifiedCorpusFile {
 
 const REPO_ROOT = join(process.cwd(), "../..");
 const BOOTSTRAP_REGISTRY_PATH = join(REPO_ROOT, "bootstrap/yakcc.registry.sqlite");
-const CORPUS_PATH = join(process.cwd(), "../../packages/registry/test/discovery-benchmark/corpus.json");
+const CORPUS_PATH = join(
+  process.cwd(),
+  "../../packages/registry/test/discovery-benchmark/corpus.json",
+);
 const SEEDS_BLOCKS_DIR = join(REPO_ROOT, "packages/seeds/src/blocks");
 const OUT_DIR = join(REPO_ROOT, "tmp/discovery-eval");
 
@@ -343,7 +365,9 @@ async function reembedRegistry(registry: Registry, embeddings: EmbeddingProvider
       reembedded++;
     }
   }
-  console.log(`[full-corpus] Re-embedded ${reembedded} blocks with provider: ${embeddings.modelId}`);
+  console.log(
+    `[full-corpus] Re-embedded ${reembedded} blocks with provider: ${embeddings.modelId}`,
+  );
 }
 
 /**
@@ -351,9 +375,7 @@ async function reembedRegistry(registry: Registry, embeddings: EmbeddingProvider
  * Only computes roots for blocks that appear as expectedAtomName in at least one entry.
  */
 function buildSeedRootMap(entries: readonly StratifiedEntry[]): Map<string, string> {
-  const needed = new Set(
-    entries.flatMap((e) => (e.expectedAtomName ? [e.expectedAtomName] : [])),
-  );
+  const needed = new Set(entries.flatMap((e) => (e.expectedAtomName ? [e.expectedAtomName] : [])));
   const map = new Map<string, string>();
   for (const name of needed) {
     try {
@@ -651,10 +673,10 @@ M1=80% on the seed-derived N=5 subset. That recommendation was **explicitly retr
 by DEC-V3-INITIATIVE-002 as premature (corpus too small; text-asymmetry bug not fixed).
 
 This full-corpus run ${
-  USE_LOCAL_PROVIDER
-    ? `provides the updated gate input. See operator decision above for the current recommendation.`
-    : `was produced with the OFFLINE provider and is NOT the definitive gate input. Run with the local provider first.`
-}
+    USE_LOCAL_PROVIDER
+      ? "provides the updated gate input. See operator decision above for the current recommendation."
+      : "was produced with the OFFLINE provider and is NOT the definitive gate input. Run with the local provider first."
+  }
 
 ---
 
@@ -686,7 +708,7 @@ ${
   console.log("\n=== DISCOVERY EVAL (FULL CORPUS) ===");
   console.log(`Provider: ${provider} (${USE_LOCAL_PROVIDER ? "SEMANTIC" : "OFFLINE/HASH"})`);
   console.log(`Corpus: stratified-full-corpus-${cHash} (${entries.length} entries)`);
-  console.log(`Registry: bootstrap/yakcc.registry.sqlite`);
+  console.log("Registry: bootstrap/yakcc.registry.sqlite");
   console.log("--- Per-category ---");
   for (const c of perCategoryMetrics) {
     const mark = c.M1 >= 0.8 ? "✓" : "✗";
@@ -694,7 +716,7 @@ ${
       `  ${mark} ${c.category}: M1=${(c.M1 * 100).toFixed(1)}% M2=${(c.M2 * 100).toFixed(1)}% M3=${(c.M3 * 100).toFixed(1)}% M4=${c.M4.toFixed(3)} (${c.entries} queries)`,
     );
   }
-  console.log(`--- Overall ---`);
+  console.log("--- Overall ---");
   console.log(`M1 Hit rate:    ${(M1overall * 100).toFixed(1)}% (target >=80%)`);
   console.log(`M2 Precision@1: ${(M2overall * 100).toFixed(1)}% (target >=70%)`);
   console.log(`M3 Recall@10:   ${(M3overall * 100).toFixed(1)}% (target >=90%)`);
@@ -746,7 +768,9 @@ beforeAll(async () => {
       rawEntries.flatMap((e) => (e.expectedAtomName ? [e.expectedAtomName] : [])),
     );
     if (seedNamesNeeded.size > 0) {
-      console.log(`[full-corpus] Loading ${seedNamesNeeded.size} seed block atoms into registry...`);
+      console.log(
+        `[full-corpus] Loading ${seedNamesNeeded.size} seed block atoms into registry...`,
+      );
       await loadSeedBlocksIntoRegistry(registry, seedNamesNeeded);
     }
   }
@@ -882,46 +906,40 @@ describe("discovery-eval-full-corpus — seed root resolution", () => {
 // ---------------------------------------------------------------------------
 
 describe("discovery-eval-full-corpus — full registry benchmark", () => {
-  it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)(
-    "bootstrap registry opens successfully",
-    async () => {
-      expect(registry).not.toBeNull();
-    },
-  );
+  it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)("bootstrap registry opens successfully", async () => {
+    expect(registry).not.toBeNull();
+  });
 
   it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)(
     "runBenchmarkEntries returns one result per corpus entry",
     async () => {
       if (!registry) return;
-      const results = await runBenchmarkEntries(registry, resolvedEntries, 10);
+      const results = await runBenchmarkEntries(registry, resolvedEntries, 10, QUERY_MODE);
       expect(results).toHaveLength(resolvedEntries.length);
     },
   );
 
-  it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)(
-    "per-category M1 values are in [0, 1]",
-    async () => {
-      if (!registry) return;
-      const results = await runBenchmarkEntries(registry, resolvedEntries, 10);
-      const perCategory = computePerCategoryMetrics(resolvedEntries, results);
-      for (const c of perCategory) {
-        expect(c.M1).toBeGreaterThanOrEqual(0);
-        expect(c.M1).toBeLessThanOrEqual(1);
-      }
-    },
-  );
+  it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)("per-category M1 values are in [0, 1]", async () => {
+    if (!registry) return;
+    const results = await runBenchmarkEntries(registry, resolvedEntries, 10, QUERY_MODE);
+    const perCategory = computePerCategoryMetrics(resolvedEntries, results);
+    for (const c of perCategory) {
+      expect(c.M1).toBeGreaterThanOrEqual(0);
+      expect(c.M1).toBeLessThanOrEqual(1);
+    }
+  });
 
   it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)(
     "all 5 categories have results in the per-category breakdown",
     async () => {
       if (!registry) return;
-      const results = await runBenchmarkEntries(registry, resolvedEntries, 10);
+      const results = await runBenchmarkEntries(registry, resolvedEntries, 10, QUERY_MODE);
       const perCategory = computePerCategoryMetrics(resolvedEntries, results);
       expect(perCategory).toHaveLength(CATEGORIES.length);
       for (const cat of CATEGORIES) {
         const found = perCategory.find((c) => c.category === cat);
         expect(found).toBeDefined();
-        expect(found!.entries).toBeGreaterThan(0);
+        expect(found?.entries).toBeGreaterThan(0);
       }
     },
   );
@@ -937,7 +955,7 @@ describe("discovery quality — full corpus stratified (local provider + bootstr
     async () => {
       if (!registry) return;
       const cat1 = resolvedEntries.filter((e) => e.category === "behavior-only");
-      const results = await runBenchmarkEntries(registry, cat1, 10);
+      const results = await runBenchmarkEntries(registry, cat1, 10, QUERY_MODE);
       const m1 = computeHitRate(results);
       console.log(`behavior-only M1: ${(m1 * 100).toFixed(1)}% (target >=80%)`);
       // Informational only — this category is the single-vector baseline
@@ -950,9 +968,11 @@ describe("discovery quality — full corpus stratified (local provider + bootstr
     async () => {
       if (!registry) return;
       const cat5 = resolvedEntries.filter((e) => e.category === "multi-aspect");
-      const results = await runBenchmarkEntries(registry, cat5, 10);
+      const results = await runBenchmarkEntries(registry, cat5, 10, QUERY_MODE);
       const m1 = computeHitRate(results);
-      console.log(`multi-aspect M1: ${(m1 * 100).toFixed(1)}% (informational — compare to behavior-only)`);
+      console.log(
+        `multi-aspect M1: ${(m1 * 100).toFixed(1)}% (informational — compare to behavior-only)`,
+      );
       expect(m1).toBeGreaterThanOrEqual(0);
     },
   );
@@ -961,7 +981,7 @@ describe("discovery quality — full corpus stratified (local provider + bootstr
     "M5 score calibration — full corpus has entries in at least 2 score bands",
     async () => {
       if (!registry) return;
-      const results = await runBenchmarkEntries(registry, resolvedEntries, 10);
+      const results = await runBenchmarkEntries(registry, resolvedEntries, 10, QUERY_MODE);
       const brier = computeBrierPerBand(results);
       // Informational — report per-band Brier scores. The <0.10 calibration target
       // is aspirational; the bootstrap registry (with mostly source-fragment atoms
@@ -994,7 +1014,7 @@ describe("discovery-eval-full-corpus — artifact emission", () => {
     "emits baseline JSON and measurement-first-decision.md when EMIT_REPORT is set",
     async () => {
       if (!registry) return;
-      const results = await runBenchmarkEntries(registry, resolvedEntries, 10);
+      const results = await runBenchmarkEntries(registry, resolvedEntries, 10, QUERY_MODE);
       const perCategoryMetrics = computePerCategoryMetrics(resolvedEntries, results);
       const provider = embeddingProvider.modelId;
 
@@ -1050,9 +1070,7 @@ describe("discovery-eval-full-corpus — regression R1: seed BMRs match registry
         const block = await registry.getBlock(localBmr as import("./index.js").BlockMerkleRoot);
         expect(
           block,
-          `Seed atom '${name}' with BMR=${localBmr} not found in registry after beforeAll. ` +
-            `This means either CRLF normalization produced a different hash than was stored, ` +
-            `or loadSeedBlocksIntoRegistry failed to load this atom.`,
+          `Seed atom '${name}' with BMR=${localBmr} not found in registry after beforeAll. This means either CRLF normalization produced a different hash than was stored, or loadSeedBlocksIntoRegistry failed to load this atom.`,
         ).not.toBeNull();
 
         console.log(`[R1] ${name}: BMR=${localBmr.slice(0, 16)}... ✓ in registry`);
