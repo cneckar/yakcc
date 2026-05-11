@@ -68,6 +68,14 @@ jobs:
         run: pnpm -r build
 
       - name: Run additive bootstrap
+        continue-on-error: true
+        # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-CONTINUE-ON-ERROR (#348)
+        # The accumulator is best-effort per the eventual-invariant design.
+        # Shave-failures (e.g. DidNotReachAtomError on individual files) must
+        # NOT block the push of partial manifest progress. Step 6's
+        # `git diff --quiet && exit 0` guard already noops on no-change, so
+        # this is safe: if bootstrap fully failed, no diff to push.
+        # Follow-up to WI-BOOTSTRAP-ACCUMULATE-FIX (#339).
         # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-FIX (#339)
         # FIXED: `pnpm yakcc bootstrap` was broken since 7e68860 (2026-05-11).
         # Root-package.json defines `yakcc` as `pnpm --filter @yakcc/cli exec yakcc`.
