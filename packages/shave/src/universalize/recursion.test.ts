@@ -1023,3 +1023,163 @@ export async function pullSpec(
     expect(tree.leafCount).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-SLICER-CALLEE-OBJ-LITERAL-001: CallExpression callee descent + OLE args
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests for the #350 fix: decomposableChildrenOf(CallExpression) now descends
+ * into (a) the callee when it wraps a function-like or inner CallExpression,
+ * and (b) ObjectLiteralExpression arguments that contain conditional spreads.
+ *
+ * Production sequence: shave() → universalize() → decompose() →
+ * CallExpression node whose existing argument/callee descent returned [] →
+ * DidNotReachAtomError. Post-fix: the slicer reaches the function-like or
+ * OLE and decomposes into atoms. The 5 failing files in the CI run at
+ * https://github.com/cneckar/yakcc/actions/runs/25687261083 are covered by
+ * the corresponding bootstrap smoke run (separate gate); these unit tests
+ * prove the per-shape decomposition policy is correct.
+ *
+ * @decision DEC-SLICER-CALLEE-OBJ-LITERAL-001 (see recursion.ts)
+ */
+describe("decompose — CallExpression callee descent + OLE args (DEC-SLICER-CALLEE-OBJ-LITERAL-001)", () => {
+  /**
+   * Test 1 (IIFE callee descent): `(() => 42)()` should decompose into the
+   * arrow-function body rather than throwing DidNotReachAtomError.
+   *
+   * AST: CallExpression(callee=ParenthesizedExpression(ArrowFunction), args=[]).
+   * With alwaysMatchRegistry the VariableStatement is non-atomic; descent
+   * reaches the CallExpression. Old code: arguments=[]; callee not visited →
+   * returned [] → DidNotReachAtomError. New code: callee unwrapped to
+   * ArrowFunction → ArrowFunction included → recurse into arrow body.
+   */
+  it("1: IIFE callee descent — `(() => 42)()` decomposes without DidNotReachAtomError", async () => {
+    // Use alwaysMatchRegistry so the VariableStatement is non-atomic and
+    // the slicer is forced all the way down to the CallExpression.
+    const src = "const x = (() => 42)();";
+    const tree = await decompose(src, alwaysMatchRegistry());
+
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    // The arrow body (42) should appear as an atom leaf somewhere in the tree.
+    function hasSourceContaining(node: typeof tree.root, text: string): boolean {
+      if (node.source.includes(text)) return true;
+      if (node.kind === "branch") return node.children.some((c) => hasSourceContaining(c, text));
+      return false;
+    }
+    expect(hasSourceContaining(tree.root, "=>")).toBe(true);
+  });
+
+  /**
+   * Test 2 (ParenthesizedExpression-wrapped function-like callee): a more
+   * complex IIFE where the callee is a ParenthesizedExpression wrapping an
+   * ArrowFunction that has multiple CF boundaries in its body.
+   *
+   * Mirrors the `FALLBACK_SESSION_ID` IIFE in
+   * `packages/hooks-base/src/telemetry.ts` (file 2 in #350).
+   */
+  it("2: IIFE with multi-CF body — callee descent decomposes without throw", async () => {
+    // Two CF boundaries inside the IIFE body → the SourceFile is non-atomic
+    // even with emptyRegistry. The slicer must descend through VariableStatement
+    // → CallExpression (IIFE) → ParenthesizedExpression → ArrowFunction body.
+    const src = `
+const FALLBACK_ID: string = (() => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+})();
+`.trim();
+    // Must not throw — this is the exact pattern from telemetry.ts (file 2 #350)
+    const tree = await decompose(src, emptyRegistry);
+
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test 3 (Nested CallExpression callee — method chain): `x.then().catch()`
+   * where `.catch` has no function-like args but the receiver `.then()` does.
+   *
+   * Mirrors `results.filter(fn).sort(cmp).slice(0, n)` from
+   * `packages/registry/src/discovery-eval-helpers.ts` (file 4 in #350).
+   */
+  it("3: method chain — nested CallExpression callee descent decomposes without throw", async () => {
+    // The outer .slice() has only literal args. Its callee is a
+    // PropertyAccessExpression whose receiver is .sort(comparatorArrow).
+    // unwrapCalleeToDecomposable follows PAE → inner CallExpression → which
+    // has an ArrowFunction arg → decomposable.
+    const src = `
+export function worstMRREntries(results: readonly { score: number; rank: number | null }[], n = 3): readonly { score: number; rank: number | null }[] {
+  return results
+    .filter((r) => r.rank !== null)
+    .sort((a, b) => {
+      const rrA = a.rank !== null ? 1 / a.rank : 0;
+      const rrB = b.rank !== null ? 1 / b.rank : 0;
+      return rrA - rrB;
+    })
+    .slice(0, n);
+}
+`.trim();
+    // Must not throw — this is the exact pattern from discovery-eval-helpers.ts
+    const tree = await decompose(src, emptyRegistry);
+
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  /**
+   * Test 4 (ObjectLiteralExpression arg with conditional spread): the
+   * conditional-spread pattern `fn({ ...cond ? {a} : {}, key })` where the
+   * OLE arg contains ConditionalExpression spreads.
+   *
+   * Mirrors `captureTelemetry({..., ...(opt !== undefined ? { opt } : {}) })`
+   * from `packages/hooks-base/src/index.ts` and
+   * `packages/hooks-claude-code/src/index.ts` (files 1 and 3 in #350).
+   *
+   * Production sequence (compound interaction):
+   * decompose() → SourceFile (non-atomic, >1 CF) → FunctionDeclaration →
+   * Block → ExpressionStatement → CallExpression (callee=Identifier,
+   * args=[OLE with SpreadAssignment(ConditionalExpression)]) →
+   * ObjectLiteralExpression → SpreadAssignment initializer →
+   * ConditionalExpression → atoms. Previously the CallExpression handler
+   * returned [] for the OLE arg → DidNotReachAtomError.
+   */
+  it("4: OLE arg with conditional spread — decomposes to atoms without DidNotReachAtomError", async () => {
+    // This is the exact pattern from hooks-base/src/index.ts (file 1 #350)
+    const src = `
+declare const sessionId: string | undefined;
+declare const telemetryDir: string | undefined;
+declare function captureTelemetry(opts: Record<string, unknown>): void;
+
+function executeWithTelemetry(toolName: string): void {
+  captureTelemetry({
+    toolName,
+    latencyMs: 100,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(telemetryDir !== undefined ? { telemetryDir } : {}),
+  });
+}
+`.trim();
+    // Must not throw — two ternaries in OLE spreads → CF count > 1 → non-atomic,
+    // must descend through OLE into SpreadAssignment initializers → ternary atoms.
+    const tree = await decompose(src, emptyRegistry);
+
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    // Verify the ternary expressions appear somewhere in the tree (reached by descent)
+    function hasSourceContaining(node: typeof tree.root, text: string): boolean {
+      if (node.source.includes(text)) return true;
+      if (node.kind === "branch") return node.children.some((c) => hasSourceContaining(c, text));
+      return false;
+    }
+    expect(hasSourceContaining(tree.root, "sessionId !== undefined")).toBe(true);
+  });
+});

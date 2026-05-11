@@ -403,4 +403,53 @@ function weird(x: number) { return x; }
     const card = extract(source);
     expect(card.behavior.length).toBeLessThanOrEqual(200);
   });
+
+  // -------------------------------------------------------------------------
+  // DEC-INTENT-STATIC-BEHAVIOR-COLLAPSE-001: multi-line return-type annotations
+  // must not produce newlines in the behavior field (issue #350, file 5)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Regression test for IntentCardSchemaError: field "behavior" must not
+   * contain newline characters.
+   *
+   * Reproduces the exact failure from `packages/cli/src/commands/hooks-install.ts`
+   * (file 5 in #350): functions without JSDoc that have a multi-line inline
+   * return-type annotation (e.g. `function f(): {\n  settings: T;\n  flag: B\n}`)
+   * fall back to buildSignatureString(), which calls extractReturnType() →
+   * rtNode.getText() verbatim — carrying the literal `\n` from the source.
+   *
+   * The fix (DEC-INTENT-STATIC-BEHAVIOR-COLLAPSE-001): buildSignatureString()
+   * now passes its output through collapseWhitespace() before returning, so
+   * the signature string is guaranteed newline-free regardless of the return-
+   * type annotation's formatting.
+   *
+   * Production sequence (compound interaction):
+   * shave() → universalize() → extractIntent() → staticExtract() →
+   * buildSignatureString() → collapseWhitespace() → validateIntentCard() passes.
+   * Previously: buildSignatureString() returned a string with `\n` →
+   * validateIntentCard() threw IntentCardSchemaError.
+   */
+  it("multi-line return-type annotation: behavior does not contain newlines (DEC-INTENT-STATIC-BEHAVIOR-COLLAPSE-001)", () => {
+    // This is the exact shape from hooks-install.ts that caused #350 file 5:
+    // a function with NO JSDoc and a multi-line inline return-type literal.
+    const source = `
+function applyInstall(settings: unknown): {
+  settings: unknown;
+  alreadyInstalled: boolean;
+} {
+  return { settings, alreadyInstalled: false };
+}
+`.trim();
+    // Must not throw IntentCardSchemaError
+    expect(() => extract(source)).not.toThrow();
+
+    const card = extract(source);
+    // The behavior field must not contain newlines
+    expect(card.behavior).not.toMatch(/[\n\r]/);
+    // The behavior should still contain the function name and type info
+    expect(card.behavior).toContain("applyInstall");
+    // Collapsed whitespace: multi-line type literal becomes single-line
+    expect(card.behavior).toMatch(/\{[^}]+alreadyInstalled[^}]+\}/);
+  });
 });

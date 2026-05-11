@@ -316,19 +316,57 @@ function extractFromMethod(method: Node): SignatureInfo {
  * Format: "<async? > <kind> <name>(<paramNames>) -> <returnTypeText>"
  * e.g. "function add(a, b) -> number"
  *      "async arrow const fetch(url) -> Promise<Response>"
+ *
+ * @decision DEC-INTENT-STATIC-BEHAVIOR-COLLAPSE-001
+ * title: Collapse whitespace in buildSignatureString to prevent newlines in behavior
+ * status: decided
+ * rationale:
+ *   The IntentCard schema invariant requires that the `behavior` field contains
+ *   no newline characters (validateIntentCard line 142). When a function has a
+ *   multi-line inline return-type annotation (e.g. `function f(): {\n  settings:
+ *   ClaudeSettings;\n  alreadyInstalled: boolean;\n}`), extractReturnType()
+ *   returns rtNode.getText() verbatim — including the literal newlines from the
+ *   source. This propagates a `\n` into the behavior fallback string, causing
+ *   IntentCardSchemaError at bootstrap time (issue #350, file 5).
+ *
+ *   Fix: pass the assembled signature string through collapseWhitespace() before
+ *   returning. This is the single chokepoint: all branches (FunctionDeclaration,
+ *   VariableStatement, FunctionExpression, ArrowFunction, anonymous) feed through
+ *   one return site per branch, and wrapping the whole output makes it impossible
+ *   for any future branch to introduce a newline accidentally.
+ *
+ *   collapseWhitespace() replaces all whitespace sequences (including \n, \r,
+ *   \t, multiple spaces) with a single space and trims. A multi-line type like
+ *   `{\n  settings: ClaudeSettings;\n  alreadyInstalled: boolean;\n}` becomes
+ *   `{ settings: ClaudeSettings; alreadyInstalled: boolean; }` — schema-valid
+ *   and human-readable.
+ * alternatives:
+ *   A (refactor source to named type aliases): producer-side fix is
+ *     invariant-preserving by construction; source refactors would only fix
+ *     specific call sites and leave the schema violation latent for future
+ *     multi-line annotations.
+ *   B (wrap only extractReturnType output): fixes today's case but misses
+ *     newlines that could appear via getParamTypeHint in future.
+ * consequences:
+ *   - behavior fallback strings from multi-line type annotations now pass
+ *     validateIntentCard; the schema invariant is producer-side enforced.
+ *   - Collapse is lossy for formatting but lossless for information content;
+ *     the 200-char truncation downstream is unchanged.
+ *   - Compatible with WI-V2-09 byte-identical bootstrap (deterministic output).
+ *   (#350, file 5)
  */
 function buildSignatureString(node: Node, params: ParamInfo[], returnTypeHint: string): string {
   const paramNames = params.map((p) => p.name).join(", ");
 
   // Determine kind string and name
+  let raw: string;
+
   if (Node.isFunctionDeclaration(node)) {
     const isAsync = node.isAsync();
     const name = node.getName() ?? "anonymous";
     const asyncPfx = isAsync ? "async " : "";
-    return `${asyncPfx}function ${name}(${paramNames}) -> ${returnTypeHint}`;
-  }
-
-  if (Node.isVariableStatement(node)) {
+    raw = `${asyncPfx}function ${name}(${paramNames}) -> ${returnTypeHint}`;
+  } else if (Node.isVariableStatement(node)) {
     // Resolve the arrow/function initializer for async detection
     const decls = node.getDeclarationList().getDeclarations();
     const firstDecl = decls[0];
@@ -343,23 +381,24 @@ function buildSignatureString(node: Node, params: ParamInfo[], returnTypeHint: s
 
     const kindStr =
       init !== undefined && Node.isArrowFunction(init) ? "arrow const" : "function const";
-    return `${asyncPfx}${kindStr} ${varName}(${paramNames}) -> ${returnTypeHint}`;
-  }
-
-  if (Node.isFunctionExpression(node)) {
+    raw = `${asyncPfx}${kindStr} ${varName}(${paramNames}) -> ${returnTypeHint}`;
+  } else if (Node.isFunctionExpression(node)) {
     const isAsync = node.isAsync();
     const name = node.getName() ?? "anonymous";
     const asyncPfx = isAsync ? "async " : "";
-    return `${asyncPfx}function ${name}(${paramNames}) -> ${returnTypeHint}`;
-  }
-
-  if (Node.isArrowFunction(node)) {
+    raw = `${asyncPfx}function ${name}(${paramNames}) -> ${returnTypeHint}`;
+  } else if (Node.isArrowFunction(node)) {
     const isAsync = node.isAsync();
     const asyncPfx = isAsync ? "async " : "";
-    return `${asyncPfx}arrow(${paramNames}) -> ${returnTypeHint}`;
+    raw = `${asyncPfx}arrow(${paramNames}) -> ${returnTypeHint}`;
+  } else {
+    raw = `anonymous(${paramNames}) -> ${returnTypeHint}`;
   }
 
-  return `anonymous(${paramNames}) -> ${returnTypeHint}`;
+  // DEC-INTENT-STATIC-BEHAVIOR-COLLAPSE-001: collapse whitespace so that
+  // multi-line return-type annotations (e.g. `{ settings: T;\n  flag: boolean }`)
+  // never introduce newlines into the behavior field.
+  return collapseWhitespace(raw);
 }
 
 /** Fragment fallback behavior string when there's no declaration. */
