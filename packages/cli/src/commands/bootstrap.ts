@@ -57,25 +57,13 @@
 //       are NOT a failure. New atoms NOT in committed ARE a failure (named in output).
 //   (c) CI is the sole writer of manifest updates going forward.
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { contractIdFromBytes } from "@yakcc/contracts";
 import type { BootstrapManifestEntry, Registry, RegistryOptions } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
 import { shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
-import {
-  PLUMBING_INCLUDE_GLOBS,
-  plumbingPathAllowed,
-} from "./plumbing-globs.js";
 
 // ---------------------------------------------------------------------------
 // Expected-failures schema
@@ -508,155 +496,6 @@ async function runVerify(
 }
 
 // ---------------------------------------------------------------------------
-// captureWorkspacePlumbing — bootstrap plumbing capture pass (P2)
-//
-// @decision DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001
-// @title Bootstrap captures plumbing files via a single named glob set
-// @status decided (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
-// @rationale The glob constant lives in plumbing-globs.ts (single authority).
-//   This function performs the matching and calls registry.storeWorkspacePlumbing
-//   for each matching file. Errors are reported loudly — never silently dropped
-//   (Sacred Practice #5). Idempotent: re-running bootstrap on an existing registry
-//   is a no-op for rows already present (INSERT OR IGNORE semantics).
-// ---------------------------------------------------------------------------
-
-/**
- * Expand a workspace-plumbing glob pattern to matching file paths.
- *
- * Uses simple manual expansion: splits the glob on '/' and matches
- * directory segments that contain '*' (single-segment wildcard only —
- * sufficient for the PLUMBING_INCLUDE_GLOBS patterns).
- *
- * Returns workspace-relative forward-slash paths.
- */
-function expandPlumbingGlob(pattern: string, repoRoot: string): string[] {
-  const segments = pattern.split("/");
-  const results: string[] = [];
-
-  function walk(segIdx: number, currentDir: string, currentRel: string): void {
-    if (segIdx === segments.length) {
-      // Base case: check the file exists.
-      if (existsSync(currentDir) && statSync(currentDir).isFile()) {
-        results.push(currentRel);
-      }
-      return;
-    }
-
-    const seg = segments[segIdx];
-    if (seg === undefined) return;
-
-    if (seg.includes("*")) {
-      // Wildcard segment: enumerate the current directory.
-      if (!existsSync(currentDir)) return;
-      let entries;
-      try {
-        entries = readdirSync(currentDir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      // Build a simple regex from the glob segment (* = any non-slash chars).
-      const regexSrc = `^${seg.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`;
-      const re = new RegExp(regexSrc);
-      for (const entry of entries) {
-        if (re.test(entry.name)) {
-          const childAbs = join(currentDir, entry.name);
-          const childRel = currentRel ? `${currentRel}/${entry.name}` : entry.name;
-          walk(segIdx + 1, childAbs, childRel);
-        }
-      }
-    } else {
-      // Literal segment.
-      const childAbs = join(currentDir, seg);
-      const childRel = currentRel ? `${currentRel}/${seg}` : seg;
-      walk(segIdx + 1, childAbs, childRel);
-    }
-  }
-
-  walk(0, repoRoot, "");
-  return results;
-}
-
-/**
- * Capture workspace plumbing files into the registry.
- *
- * Uses PLUMBING_INCLUDE_GLOBS from plumbing-globs.ts as the single authority
- * for which files constitute "workspace plumbing". Each matched file is
- * content-hashed (BLAKE3-256) and stored via registry.storeWorkspacePlumbing.
- *
- * Idempotent: INSERT OR IGNORE semantics in the registry mean re-running
- * bootstrap against an existing registry is a no-op for already-captured rows.
- *
- * @decision DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001
- *
- * @param registry  - Open registry instance (storeWorkspacePlumbing will be called).
- * @param repoRoot  - Absolute path to the workspace root.
- * @param logger    - Output sink.
- * @returns Number of plumbing files captured (new rows inserted, not no-ops).
- */
-async function captureWorkspacePlumbing(
-  registry: Registry,
-  repoRoot: string,
-  logger: Logger,
-): Promise<number> {
-  // Expand all inclusion globs to concrete file paths.
-  const seen = new Set<string>(); // deduplicate across globs
-  const candidates: string[] = [];
-  for (const glob of PLUMBING_INCLUDE_GLOBS) {
-    const expanded = expandPlumbingGlob(glob, repoRoot);
-    for (const relPath of expanded) {
-      if (!seen.has(relPath)) {
-        seen.add(relPath);
-        candidates.push(relPath);
-      }
-    }
-  }
-
-  // Filter by exclusion rules (single authority in plumbing-globs.ts).
-  const toCapture = candidates.filter((p) => plumbingPathAllowed(p));
-
-  let capturedCount = 0;
-  for (const relPath of toCapture) {
-    const absPath = join(repoRoot, relPath);
-    let bytes: Buffer;
-    try {
-      bytes = readFileSync(absPath);
-    } catch (err) {
-      // File exists (was expanded) but cannot be read — loud failure.
-      logger.error(
-        `warning: bootstrap plumbing: cannot read ${relPath}: ${(err as Error).message}`,
-      );
-      continue;
-    }
-
-    const contentBytes = new Uint8Array(bytes);
-    // contractIdFromBytes(bytes) = BLAKE3-256(bytes) → hex, same hash used by
-    // storage.ts to verify contentHash. No direct @noble/hashes dep in @yakcc/cli
-    // (sacred-practice #12: single dependency path via @yakcc/contracts).
-    const contentHash: string = contractIdFromBytes(contentBytes);
-
-    try {
-      await registry.storeWorkspacePlumbing({
-        workspacePath: relPath,
-        contentBytes,
-        contentHash,
-        createdAt: Date.now(),
-      });
-      capturedCount++;
-    } catch (err) {
-      // storeWorkspacePlumbing only throws on integrity failure — loud failure.
-      logger.error(
-        `error: bootstrap plumbing: failed to store ${relPath}: ${(err as Error).message}`,
-      );
-    }
-  }
-
-  logger.log(
-    `bootstrap: workspace plumbing captured — ${toCapture.length} candidates, ${capturedCount} stored`,
-  );
-  return capturedCount;
-}
-
-// ---------------------------------------------------------------------------
 // bootstrap() — public command handler
 // ---------------------------------------------------------------------------
 
@@ -807,9 +646,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       // relPath format: "packages/<pkg>/src/..." or "examples/<pkg>/src/..."
       // sourcePkg is the first two segments (e.g. "packages/cli").
       const sourcePkg =
-        relSegments.length >= 2
-          ? `${relSegments[0]}/${relSegments[1]}`
-          : (relSegments[0] ?? "");
+        relSegments.length >= 2 ? `${relSegments[0]}/${relSegments[1]}` : (relSegments[0] ?? "");
 
       // Force offline: true to disable AI-corpus extraction (DEC-V2-BOOT-NO-AI-CORPUS-001).
       // TODO: when ShaveOptions gains corpusOptions.disableSourceC, use that instead.
@@ -867,20 +704,6 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         `warning: expected-failure entry was not triggered — either the file was fixed, renamed, or deleted. Remove or update this entry in expected-failures.json: ${entry.path} (${entry.errorClass})`,
       );
     }
-  }
-
-  // Capture workspace plumbing files into the registry.
-  // This is the P2 addition (DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001).
-  // Runs after the shave loop so the shave atoms are already persisted before
-  // we add plumbing rows (ordering is not required, but mirrors logical dependency).
-  try {
-    await captureWorkspacePlumbing(registry, repoRoot, logger);
-  } catch (err) {
-    logger.error(
-      `error: workspace plumbing capture failed: ${(err as Error).message}`,
-    );
-    await registry.close();
-    return 1;
   }
 
   // Export the deterministic manifest from the :memory: shave run.
