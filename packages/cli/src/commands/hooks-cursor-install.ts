@@ -68,9 +68,9 @@ function writeCursorSettings(settingsPath: string, settings: CursorSettings): vo
 function isYakccInstalled(settings: CursorSettings): boolean {
   const hooks = settings.hooks;
   if (hooks == null || typeof hooks !== "object") return false;
-  const yakccEntry = hooks["yakcc"];
+  const yakccEntry = hooks.yakcc;
   if (yakccEntry == null || typeof yakccEntry !== "object") return false;
-  return (yakccEntry as Record<string, unknown>)["_yakcc"] === YAKCC_CURSOR_MARKER;
+  return (yakccEntry as Record<string, unknown>)._yakcc === YAKCC_CURSOR_MARKER;
 }
 
 function applyInstall(settings: CursorSettings): {
@@ -104,10 +104,7 @@ function applyUninstall(settings: CursorSettings): {
   if (!isYakccInstalled(settings)) {
     return { settings, wasInstalled: false };
   }
-  const { yakcc: _removed, ...remainingHooks } = (settings.hooks ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const { yakcc: _removed, ...remainingHooks } = (settings.hooks ?? {}) as Record<string, unknown>;
   const hasRemainingHooks = Object.keys(remainingHooks).length > 0;
   const newSettings: CursorSettings = hasRemainingHooks
     ? { ...settings, hooks: remainingHooks }
@@ -190,20 +187,21 @@ export async function hooksCursorInstall(argv: readonly string[], logger: Logger
   try {
     writeFileSync(
       markerPath,
-      JSON.stringify(
+      `${JSON.stringify(
         {
           command: HOOK_COMMAND,
           description: "yakcc tool-call interception hook for Cursor",
           sessionEnvVar: "CURSOR_SESSION_ID",
           telemetryPrefix: "cursor",
           installedAt: new Date().toISOString(),
-          note: "Cursor does not yet expose synchronous tool-call interception via a stable Node.js API. " +
+          note:
+            "Cursor does not yet expose synchronous tool-call interception via a stable Node.js API. " +
             "This marker documents the intended wiring (DEC-CLI-HOOKS-CURSOR-INSTALL-001). " +
             "When the Cursor extension API stabilises, hook activation requires no reinstall.",
         },
         null,
         2,
-      ) + "\n",
+      )}\n`,
       "utf-8",
     );
   } catch (err) {
@@ -216,9 +214,9 @@ export async function hooksCursorInstall(argv: readonly string[], logger: Logger
   } else {
     logger.log(`yakcc cursor hook installed at ${settingsPath}`);
     logger.log(`hook command: ${HOOK_COMMAND}`);
-    logger.log(`session env var: CURSOR_SESSION_ID`);
+    logger.log("session env var: CURSOR_SESSION_ID");
     logger.log(`marker: ${markerPath}`);
-    logger.log(`note: Cursor tool-call interception API not yet stable — see marker for details.`);
+    logger.log("note: Cursor tool-call interception API not yet stable — see marker for details.");
   }
   return 0;
 }
