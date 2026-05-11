@@ -16,10 +16,15 @@
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { openRegistry } from "@yakcc/registry";
+import { type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { IntentQuery } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
+
+/** Internal options for query — not exposed in CLI args. */
+export interface QueryOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
 
 /**
  * Truncate a string to at most `max` characters, appending "..." if truncated.
@@ -39,7 +44,11 @@ function truncate(s: string, max: number): string {
  * @param logger - Output sink; defaults to CONSOLE_LOGGER via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function query(argv: readonly string[], logger: Logger): Promise<number> {
+export async function query(
+  argv: readonly string[],
+  logger: Logger,
+  opts?: QueryOptions,
+): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {
@@ -110,10 +119,12 @@ export async function query(argv: readonly string[], logger: Logger): Promise<nu
   }
 
   // Open the registry and run the vector search.
-  const registry = await openRegistry(registryPath).catch((err: unknown) => {
-    logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
-    return null;
-  });
+  const registry = await openRegistry(registryPath, { embeddings: opts?.embeddings }).catch(
+    (err: unknown) => {
+      logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
+      return null;
+    },
+  );
   if (registry === null) return 1;
 
   try {

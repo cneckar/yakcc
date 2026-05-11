@@ -26,9 +26,9 @@
 //   C1.1h — composition specHashRef is always null at parse time (L0 invariant)
 // ---------------------------------------------------------------------------
 
-import * as fc from "fast-check";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as fc from "fast-check";
 import {
   type BlockTripletParseResult,
   type SubBlockRef,

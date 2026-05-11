@@ -41,7 +41,7 @@ import { CollectingLogger, runCli } from "./index.js";
  */
 export const prop_collecting_logger_log_goes_to_logLines = fc.property(
   fc.string({ maxLength: 200 }),
-  (msg) => {
+  (msg: string) => {
     const logger = new CollectingLogger();
     logger.log(msg);
     return (
@@ -59,7 +59,7 @@ export const prop_collecting_logger_log_goes_to_logLines = fc.property(
  */
 export const prop_collecting_logger_error_goes_to_errLines = fc.property(
   fc.string({ maxLength: 200 }),
-  (msg) => {
+  (msg: string) => {
     const logger = new CollectingLogger();
     logger.error(msg);
     return (
@@ -79,7 +79,7 @@ export const prop_collecting_logger_error_goes_to_errLines = fc.property(
 export const prop_collecting_logger_accumulates_multiple_lines = fc.property(
   fc.array(fc.string({ maxLength: 100 }), { minLength: 1, maxLength: 10 }),
   fc.array(fc.string({ maxLength: 100 }), { minLength: 1, maxLength: 10 }),
-  (logMsgs, errMsgs) => {
+  (logMsgs: string[], errMsgs: string[]) => {
     const logger = new CollectingLogger();
     for (const m of logMsgs) logger.log(m);
     for (const m of errMsgs) logger.error(m);
@@ -114,7 +114,7 @@ const unknownCommandArb: fc.Arbitrary<string> = fc.oneof(
   // Strings starting with "__" — namespace reserved, never a valid command
   fc
     .string({ minLength: 1, maxLength: 12 })
-    .map((s) => `__${s}`),
+    .map((s: string) => `__${s}`),
   // Known invalid literals
   fc.constantFrom("bogus", "xyz", "notacommand", "INIT", "SEARCH", "foobar"),
 );
@@ -129,7 +129,7 @@ const unknownCommandArb: fc.Arbitrary<string> = fc.oneof(
  */
 export const prop_runCli_unknown_command_exits_1 = fc.asyncProperty(
   unknownCommandArb,
-  async (cmd) => {
+  async (cmd: string) => {
     const logger = new CollectingLogger();
     const code = await runCli([cmd], logger);
     return code === 1;
@@ -147,7 +147,7 @@ export const prop_runCli_unknown_command_exits_1 = fc.asyncProperty(
  */
 export const prop_runCli_unknown_command_emits_error_message = fc.asyncProperty(
   unknownCommandArb,
-  async (cmd) => {
+  async (cmd: string) => {
     const logger = new CollectingLogger();
     await runCli([cmd], logger);
     // Must have at least one error line
@@ -167,7 +167,7 @@ export const prop_runCli_unknown_command_emits_error_message = fc.asyncProperty(
  */
 export const prop_runCli_help_flag_exits_0 = fc.asyncProperty(
   fc.constantFrom(["--help"], ["-h"], []),
-  async (argv) => {
+  async (argv: readonly string[]) => {
     const logger = new CollectingLogger();
     const code = await runCli(argv, logger);
     return code === 0;
@@ -185,7 +185,7 @@ export const prop_runCli_help_flag_exits_0 = fc.asyncProperty(
  */
 export const prop_runCli_help_writes_to_logLines_not_errLines = fc.asyncProperty(
   fc.constantFrom(["--help"], ["-h"]),
-  async (argv) => {
+  async (argv: readonly string[]) => {
     const logger = new CollectingLogger();
     await runCli(argv, logger);
     return logger.logLines.length > 0 && logger.errLines.length === 0;

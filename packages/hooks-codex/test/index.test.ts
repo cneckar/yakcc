@@ -292,6 +292,9 @@ describe("onCodeEmissionIntent — passthrough (error) path", () => {
         findCandidatesByIntent: async () => {
           throw new Error("simulated DB failure");
         },
+        findCandidatesByQuery: registry.findCandidatesByQuery.bind(registry),
+        exportManifest: registry.exportManifest.bind(registry),
+        getForeignRefs: registry.getForeignRefs.bind(registry),
       };
 
       const hook = createHook(brokenRegistry);
