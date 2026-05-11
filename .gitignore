@@ -26,6 +26,10 @@ bootstrap/yakcc.registry.sqlite-wal
 bootstrap/yakcc.registry.sqlite-shm
 bootstrap/report.json
 
+# compile-self recompiled output — generated artifact, never committed.
+# Reproducible from `yakcc compile-self` (DEC-V2-CORPUS-DISTRIBUTION-001, A2 slice).
+dist-recompiled/
+
 # Stray TS build artifacts that escape into src/ when cross-package imports
 # trigger out-of-tree compilation. If this pattern reappears, find the offending
 # import chain rather than relying on this catch-all.

@@ -135,6 +135,9 @@ importers:
       '@yakcc/cli':
         specifier: workspace:*
         version: link:../../packages/cli
+      '@yakcc/compile':
+        specifier: workspace:*
+        version: link:../../packages/compile
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

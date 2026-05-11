@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@yakcc/cli": "workspace:*",
+    "@yakcc/compile": "workspace:*",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/registry": "workspace:*"
   },

@@ -35,8 +35,8 @@
 
 import type { RegistryOptions } from "@yakcc/registry";
 import { bootstrap } from "./commands/bootstrap.js";
-import { compile } from "./commands/compile.js";
 import { compileSelf } from "./commands/compile-self.js";
+import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { init } from "./commands/init.js";
@@ -135,7 +135,8 @@ COMMANDS
   search <query> [--registry <p>]     Search registry by spec file or free text (structural)
          [--top <k>]                  Max results (default: 10)
   seed [--registry <p>]               Ingest the seed corpus into the registry
-  compile-self                        Recompile the yakcc corpus (A2/A3; A1=scaffold stub, exit 2)
+  compile-self [--output <dir>]       Recompile yakcc corpus atoms to TS (A2 implemented; A3=byte-eq stretch)
+              [--registry <p>]        Registry path (default: bootstrap/yakcc.registry.sqlite)
   bootstrap [--registry <p>]          Shave all source files, write manifest + report
             [--manifest <p>]          Manifest path (default: bootstrap/expected-roots.json)
             [--report <p>]            Per-file report (default: bootstrap/report.json)
