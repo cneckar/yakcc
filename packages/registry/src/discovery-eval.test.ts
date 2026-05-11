@@ -747,13 +747,13 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("runBenchmarkEntries returns one result per entry", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     expect(results).toHaveLength(corpus.length);
   });
 
   it("computeHitRate returns value in [0, 1]", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const rate = computeHitRate(results);
     expect(rate).toBeGreaterThanOrEqual(0);
     expect(rate).toBeLessThanOrEqual(1);
@@ -761,7 +761,7 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("computePrecisionAt1 skips null-expectedAtom entries", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const p1 = computePrecisionAt1(results);
     expect(p1).toBeGreaterThanOrEqual(0);
     expect(p1).toBeLessThanOrEqual(1);
@@ -769,7 +769,7 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("computeRecallAtK returns value in [0, 1]", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const r = computeRecallAtK(results);
     expect(r).toBeGreaterThanOrEqual(0);
     expect(r).toBeLessThanOrEqual(1);
@@ -777,7 +777,7 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("computeMRR returns value in [0, 1]", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const mrr = computeMRR(results);
     expect(mrr).toBeGreaterThanOrEqual(0);
     expect(mrr).toBeLessThanOrEqual(1);
@@ -785,7 +785,7 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("computeBrierPerBand returns all 4 bands with correct structure", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const brier = computeBrierPerBand(results);
     expect(brier.strong).toBeDefined();
     expect(brier.confident).toBeDefined();
@@ -801,7 +801,7 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("brier values are null for empty bands, non-negative for populated bands", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const brier = computeBrierPerBand(results);
     for (const band of [brier.strong, brier.confident, brier.weak, brier.poor]) {
       if (band.N === 0) {
@@ -817,7 +817,7 @@ describe("discovery-eval harness — infrastructure correctness", () => {
 
   it("computeBaseline produces a well-formed artifact with all required fields", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const baseline = computeBaseline(
       "bootstrap-inline",
       corpus,
@@ -852,7 +852,7 @@ describe("discovery quality — single-vector baseline (seed-derived corpus)", (
     `M1 hit rate >= 0.80 (top-1 combinedScore >= ${M1_HIT_THRESHOLD}) (corpus: seed-derived)`,
     async () => {
       const corpus = buildCorpus().filter((e) => e.source === "seed-derived");
-      const results = await runBenchmarkEntries(registry, corpus, 10);
+      const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
       const rate = computeHitRate(results);
       const worst = worstHitRateEntries(results, 3);
       if (rate < 0.8) {
@@ -872,7 +872,7 @@ describe("discovery quality — single-vector baseline (seed-derived corpus)", (
     "M2 precision@1 >= 0.70 (top-1 hash matches expectedAtom) (corpus: seed-derived)",
     async () => {
       const corpus = buildCorpus().filter((e) => e.source === "seed-derived");
-      const results = await runBenchmarkEntries(registry, corpus, 10);
+      const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
       const rate = computePrecisionAt1(results);
       const worst = worstPrecisionAt1Entries(results, 3);
       if (rate < 0.7) {
@@ -890,7 +890,7 @@ describe("discovery quality — single-vector baseline (seed-derived corpus)", (
     "M3 recall@10 >= 0.90 (expectedAtom in top-10) (corpus: seed-derived)",
     async () => {
       const corpus = buildCorpus().filter((e) => e.source === "seed-derived");
-      const results = await runBenchmarkEntries(registry, corpus, 10);
+      const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
       const rate = computeRecallAtK(results);
       const worst = worstRecallEntries(results, 3);
       if (rate < 0.9) {
@@ -903,7 +903,7 @@ describe("discovery quality — single-vector baseline (seed-derived corpus)", (
 
   it.skipIf(!USE_LOCAL_PROVIDER)("M4 MRR >= 0.70 (corpus: seed-derived)", async () => {
     const corpus = buildCorpus().filter((e) => e.source === "seed-derived");
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const mrr = computeMRR(results);
     const worst = worstMRREntries(results, 3);
     if (mrr < 0.7) {
@@ -925,7 +925,7 @@ describe("discovery quality — single-vector baseline (seed-derived corpus)", (
       // used all 9, producing M5=0.30 vs M5=0.04 for the same metric. Standardized to
       // full corpus everywhere so the live test and the JSON artifact agree.
       const corpus = buildCorpus(); // full corpus — all 9 entries
-      const results = await runBenchmarkEntries(registry, corpus, 10);
+      const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
       const errors = computeBrierPerBand(results);
 
       for (const [band, data] of Object.entries(errors)) {
@@ -949,7 +949,7 @@ describe("discovery quality — single-vector baseline (synthetic-tasks corpus)"
     "M1 hit rate for synthetic tasks (informational — expects mostly poor/no_match) (corpus: synthetic-tasks)",
     async () => {
       const corpus = buildCorpus().filter((e) => e.source === "synthetic-tasks");
-      const results = await runBenchmarkEntries(registry, corpus, 10);
+      const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
       const rate = computeHitRate(results);
       console.log(`Synthetic tasks M1 hit rate: ${(rate * 100).toFixed(1)}% (informational only)`);
       expect(rate).toBeGreaterThanOrEqual(0);
@@ -960,7 +960,7 @@ describe("discovery quality — single-vector baseline (synthetic-tasks corpus)"
     "M5 calibration on synthetic tasks: poor band should have N > 0 (covers no_match path) (corpus: synthetic-tasks)",
     async () => {
       const corpus = buildCorpus().filter((e) => e.source === "synthetic-tasks");
-      const results = await runBenchmarkEntries(registry, corpus, 10);
+      const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
       const brier = computeBrierPerBand(results);
       console.log(
         `Synthetic tasks poor-band N=${brier.poor.N} (should be > 0 for negative-space coverage)`,
@@ -977,7 +977,7 @@ describe("discovery quality — single-vector baseline (synthetic-tasks corpus)"
 describe("discovery-eval artifact emission", () => {
   it("emits baseline JSON and measurement-first-decision.md on full corpus", async () => {
     const corpus = buildCorpus();
-    const results = await runBenchmarkEntries(registry, corpus, 10);
+    const results = await runBenchmarkEntries(registry, corpus, 10, "intent");
     const provider = embeddingProvider.modelId;
 
     if (EMIT_REPORT) {
