@@ -1,0 +1,34 @@
+{
+  "description": "B8-SYNTHETIC Slice 1 — canonical transcript corpus (N=10 tasks, 3 tiers)",
+  "version": "slice1",
+  "files": [
+    "bench/B8-synthetic/transcripts/substrate-001.jsonl",
+    "bench/B8-synthetic/transcripts/glue-001.jsonl",
+    "bench/B8-synthetic/transcripts/application-001.jsonl"
+  ],
+  "sha256": "40788cc0403036ea7b562eccfa1c2be73bc812ac8dffb0fbe5c8fb355a4477a3",
+  "n": 10,
+  "tiers": {
+    "substrate": 4,
+    "glue": 3,
+    "application": 3
+  },
+  "task_ids": [
+    "substrate-001-sort-integers",
+    "substrate-002-parse-int",
+    "substrate-003-hash-map",
+    "substrate-004-string-ops",
+    "glue-001-http-router",
+    "glue-002-error-mapper",
+    "glue-003-config-loader",
+    "application-001-crud-endpoint",
+    "application-002-cli-subcommand",
+    "application-003-event-emitter"
+  ],
+  "notes": [
+    "SHA-256 computed over the raw bytes of all three JSONL files concatenated in the order listed in 'files'.",
+    "Recompute: node -e \"const {createHash}=require('crypto'),{readFileSync}=require('fs'); const files=['bench/B8-synthetic/transcripts/substrate-001.jsonl','bench/B8-synthetic/transcripts/glue-001.jsonl','bench/B8-synthetic/transcripts/application-001.jsonl']; console.log(createHash('sha256').update(Buffer.concat(files.map(f=>readFileSync(f)))).digest('hex'))\"",
+    "Slice 1 uses f=1.0 only (full corpus). Slice 2 adds f-sweep with stratified sampling.",
+    "Emission blocks are authored as a competent engineer would write them — hit/miss is measured, not pre-determined."
+  ]
+}
