@@ -109,7 +109,7 @@
  *       to WI-V3-DISCOVERY-IMPL-QUERY.
  */
 
-import type { Registry } from "./index.js";
+import type { QueryIntentCard, Registry } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // D5 ADR corpus schema types (Q2 — verbatim from the ADR)
@@ -359,7 +359,55 @@ function benchmarkQueryToIntentQuery(q: BenchmarkQueryCard): {
 }
 
 /**
+ * Convert a BenchmarkEntry's query to a QueryIntentCard for findCandidatesByQuery.
+ *
+ * @decision DEC-V3-DISCOVERY-EVAL-FIX-001
+ * @title Symmetric query derivation in benchmark harness (H2 fix)
+ * @status accepted
+ * @rationale runBenchmarkEntries previously used findCandidatesByIntent which derives
+ *   query text as `behavior + "\n" + params`. findCandidatesByQuery uses
+ *   canonicalizeQueryText() which produces SpecYak-shaped canonical JSON — the same
+ *   text-space as storeBlock's generateEmbedding(). Switching to findCandidatesByQuery
+ *   eliminates the store/query text asymmetry (H2 from issue #299). All BenchmarkQueryCard
+ *   fields (behavior, signature, guarantees, errorConditions) are mapped to the
+ *   corresponding QueryIntentCard dimensions.
+ */
+function benchmarkQueryToQueryIntentCard(q: BenchmarkQueryCard, topK: number): QueryIntentCard {
+  return {
+    behavior: q.behavior,
+    ...(q.signature !== undefined
+      ? {
+          signature: {
+            inputs: q.signature.inputs?.map((p) => ({ name: p.name, type: p.type })),
+            outputs: q.signature.outputs?.map((p) => ({ name: p.name, type: p.type })),
+          },
+        }
+      : {}),
+    ...(q.guarantees !== undefined && q.guarantees.length > 0
+      ? { guarantees: q.guarantees as string[] }
+      : {}),
+    ...(q.errorConditions !== undefined && q.errorConditions.length > 0
+      ? { errorConditions: q.errorConditions as string[] }
+      : {}),
+    topK,
+  };
+}
+
+/**
  * Run all benchmark entries against the registry and return per-entry results.
+ *
+ * Uses findCandidatesByQuery (symmetric canonical text derivation) when available,
+ * falling back to findCandidatesByIntent for backward compat with registries
+ * opened without the v3 query pipeline.
+ *
+ * @decision DEC-V3-DISCOVERY-EVAL-FIX-001
+ * @title Switch benchmark harness from findCandidatesByIntent to findCandidatesByQuery
+ * @status accepted
+ * @rationale findCandidatesByQuery uses canonicalizeQueryText() for symmetric embedding
+ *   (same text-space as storeBlock), while findCandidatesByIntent uses the asymmetric
+ *   behavior+params derivation. For the full-corpus semantic eval with a re-embedded
+ *   registry, findCandidatesByQuery produces correct M2/M3/M4 measurements.
+ *   findCandidatesByIntent is kept for the CI offline-provider path and existing tests.
  *
  * @param registry - The open Registry instance to query.
  * @param entries  - The benchmark corpus entries.
@@ -373,13 +421,18 @@ export async function runBenchmarkEntries(
   const results: QueryResult[] = [];
 
   for (const entry of entries) {
-    const intentQuery = benchmarkQueryToIntentQuery(entry.query);
-    const candidates = await registry.findCandidatesByIntent(intentQuery, { k: topK });
+    // Use findCandidatesByQuery (symmetric) when the registry supports it.
+    // findCandidatesByQuery returns QueryCandidate[] with combinedScore already computed
+    // (same 1-d²/4 formula as cosineDistanceToCombinedScore, computed inside storage.ts).
+    const card = benchmarkQueryToQueryIntentCard(entry.query, topK);
+    const queryResult = await registry.findCandidatesByQuery(card);
+    const candidates = queryResult.candidates;
 
     const allAtoms = candidates.map((c) => c.block.blockMerkleRoot as string);
     const top1 = candidates[0];
 
-    const top1Score = top1 !== undefined ? cosineDistanceToCombinedScore(top1.cosineDistance) : 0;
+    // QueryCandidate already has combinedScore; use it directly (avoids double-conversion).
+    const top1Score = top1 !== undefined ? top1.combinedScore : 0;
     const top1Atom = top1 !== undefined ? (top1.block.blockMerkleRoot as string) : null;
     const top1Band = assignScoreBand(top1Score);
 
