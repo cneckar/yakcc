@@ -38,15 +38,18 @@ describe("EmbeddingProvider (local) — static metadata", () => {
   });
 
   it("modelId is non-empty and matches expected model", () => {
+    // Per DEC-EMBED-MODEL-DEFAULT-002 (PR #336, 2026-05-11): default swapped
+    // from all-MiniLM-L6-v2 to bge-small-en-v1.5 based on operator-run
+    // benchmark hitting M2=70% target. Update assertion when default changes.
     const provider = createLocalEmbeddingProvider();
-    expect(provider.modelId).toBe("Xenova/all-MiniLM-L6-v2");
+    expect(provider.modelId).toBe("Xenova/bge-small-en-v1.5");
   });
 });
 
 // ---------------------------------------------------------------------------
 // Local provider — network smoke (opt-in: YAKCC_NETWORK_TESTS=1)
 //
-// Loads the Xenova/all-MiniLM-L6-v2 ONNX model (~25 MB on cold cache).
+// Loads the Xenova/bge-small-en-v1.5 ONNX model (~25 MB on cold cache).
 // Skipped by default so CI and sandboxed runs stay offline-tolerant.
 // ---------------------------------------------------------------------------
 
