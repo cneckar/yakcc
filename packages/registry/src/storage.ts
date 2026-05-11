@@ -61,6 +61,7 @@ import type {
   Provenance,
   QueryCandidate,
   Registry,
+  WorkspacePlumbingEntry,
 } from "./index.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
 import { structuralMatch } from "./search.js";
@@ -1295,6 +1296,87 @@ class SqliteRegistry implements Registry {
         manifestJsonHash: hashes.manifestJsonHash,
       };
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // storeWorkspacePlumbing — insert a plumbing-file row (P2)
+  //
+  // @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
+  // title: workspace_plumbing is the single authority for non-atom bootable files
+  // status: accepted (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
+  // rationale: INSERT OR IGNORE + primary-key-on-workspace_path gives first-
+  //   observed-wins semantics matching storeBlock. Content-hash verification is
+  //   enforced here (not deferred to callers) so every row in the table is
+  //   provably integrity-checked. Workspace-relative path validation prevents
+  //   absolute-path or path-traversal rows from entering the table.
+  // -------------------------------------------------------------------------
+
+  async storeWorkspacePlumbing(entry: WorkspacePlumbingEntry): Promise<void> {
+    this.assertOpen();
+
+    // Validate workspace-relative path.
+    if (entry.workspacePath.startsWith("/") || entry.workspacePath.includes("..")) {
+      throw new Error(
+        `storeWorkspacePlumbing: workspacePath must be workspace-relative and must not contain '..': ${entry.workspacePath}`,
+      );
+    }
+
+    // Verify content integrity: BLAKE3-256(contentBytes) must equal contentHash.
+    const actualHash = bytesToHex(blake3(entry.contentBytes));
+    if (actualHash !== entry.contentHash) {
+      throw new Error(
+        `storeWorkspacePlumbing: contentHash mismatch for ${entry.workspacePath}: ` +
+          `stored=${entry.contentHash}, computed=${actualHash}`,
+      );
+    }
+
+    const insertPlumbing = this.db.prepare<[string, Buffer, string, number]>(
+      "INSERT OR IGNORE INTO workspace_plumbing(workspace_path, content_bytes, content_hash, created_at) VALUES (?, ?, ?, ?)",
+    );
+
+    insertPlumbing.run(
+      entry.workspacePath,
+      Buffer.from(entry.contentBytes),
+      entry.contentHash,
+      entry.createdAt > 0 ? entry.createdAt : Date.now(),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // listWorkspacePlumbing — enumerate all plumbing rows (P2)
+  //
+  // @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
+  // title: deterministic enumeration sorted by workspace_path ASC
+  // status: accepted (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
+  // rationale: The ORDER BY workspace_path ASC is the load-bearing determinism
+  //   contract — two calls on the same DB state produce identical results
+  //   (mirrors exportManifest()'s ORDER BY blockMerkleRoot ASC contract).
+  //   Callers may materialise files in any order; the canonical sort allows
+  //   test assertions and diff-stable tooling output.
+  // -------------------------------------------------------------------------
+
+  async listWorkspacePlumbing(): Promise<readonly WorkspacePlumbingEntry[]> {
+    this.assertOpen();
+
+    interface PlumbingRow {
+      workspace_path: string;
+      content_bytes: Buffer;
+      content_hash: string;
+      created_at: number;
+    }
+
+    const rows = this.db
+      .prepare<[], PlumbingRow>(
+        "SELECT workspace_path, content_bytes, content_hash, created_at FROM workspace_plumbing ORDER BY workspace_path ASC",
+      )
+      .all();
+
+    return rows.map((r) => ({
+      workspacePath: r.workspace_path,
+      contentBytes: new Uint8Array(r.content_bytes),
+      contentHash: r.content_hash,
+      createdAt: r.created_at,
+    }));
   }
 
   // -------------------------------------------------------------------------
