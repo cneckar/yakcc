@@ -1,0 +1,1052 @@
+{
+  "benchmark": "B5-coherence",
+  "slice": "slice1",
+  "runAt": "2026-05-11T20:06:46.936Z",
+  "totalConversations": 10,
+  "conversations": [
+    {
+      "id": "conv-iter-001",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "parseIntList"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-002",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "sortAscending"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": true
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-001",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "isValidEmail"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-002",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "tokenizeString",
+        "countWordFrequency"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom countWordFrequency hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom countWordFrequency hash/import present but no semantic usage",
+              "substitutionApplied": true
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": true
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-debug-001",
+      "category": "debugging",
+      "expectedAtoms": [
+        "getNestedField"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": true
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-002",
+      "category": "debugging",
+      "expectedAtoms": [
+        "binarySearch"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-001",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "computeBlake3Hash"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-002",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "sanitizeSqlLike",
+        "parsePaginationPage"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom sanitizeSqlLike hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom sanitizeSqlLike hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-001",
+      "category": "composition",
+      "expectedAtoms": [
+        "celsiusToFahrenheit",
+        "fahrenheitToKelvin"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fahrenheitToKelvin hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom celsiusToFahrenheit hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4,
+          "subsequentTurnRate": 0.5,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fahrenheitToKelvin hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom celsiusToFahrenheit hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4,
+          "subsequentTurnRate": 0.5,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-002",
+      "category": "composition",
+      "expectedAtoms": [
+        "normalizeString",
+        "deduplicate"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom deduplicate hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom normalizeString hash/import present but no semantic usage",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4,
+          "subsequentTurnRate": 0.5,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom deduplicate hash/import present but no semantic usage",
+              "substitutionApplied": true
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": true
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "substitutionApplied": false
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "mean": 4.5,
+          "subsequentTurnRate": 0.75,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "hookEnabled": {
+      "mean": 4.697,
+      "subsequentTurnRate": 0.848,
+      "catastrophicRate": 0,
+      "totalTurns": 33,
+      "coherentTurns": 28,
+      "catastrophicTurns": 0,
+      "failureModeCounts": {
+        "opaque-hash": 5
+      },
+      "assessment": {
+        "pass": false,
+        "kill": false,
+        "reasons": [
+          "BELOW-BAR: subsequent-turn coherence 84.8% < 90%"
+        ]
+      }
+    },
+    "hookDisabled": {
+      "mean": 4.636,
+      "subsequentTurnRate": 0.818,
+      "catastrophicRate": 0,
+      "totalTurns": 33,
+      "coherentTurns": 27,
+      "catastrophicTurns": 0,
+      "failureModeCounts": {
+        "opaque-hash": 6
+      },
+      "assessment": {
+        "pass": false,
+        "kill": false,
+        "reasons": [
+          "BELOW-BAR: subsequent-turn coherence 81.8% < 90%"
+        ]
+      }
+    }
+  },
+  "notes": [
+    "Slice 1: offline simulation using assistant_emission_target as simulated LLM output",
+    "Programmatic classifier only — no LLM judge (Slice 2)",
+    "Score 4 (minor-slip) detection is heuristic; LLM-judge is authoritative",
+    "Score 2 (hallucinated) detection compares prose claims vs atom names; LLM-judge is authoritative",
+    "platform: win32",
+    "node: v22.14.0"
+  ]
+}

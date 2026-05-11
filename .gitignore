@@ -50,3 +50,9 @@ dist-recompiled/
 packages/*/src/**/*.d.ts
 packages/*/src/**/*.d.ts.map
 packages/*/src/**/*.js.map
+
+# B5-coherence: transcripts and arm-mapping are transient; slice1-scores.json is committed.
+# (DEC-BENCH-B5-SLICE1-001: per-run transcripts are ephemeral; the score JSON is operator
+# decision input and must survive reboots. Committed via `git add --force`.)
+tmp/B5-coherence/transcripts/
+tmp/B5-coherence/arm-mapping.json
