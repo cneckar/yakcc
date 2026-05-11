@@ -24,28 +24,6 @@
       "run_status": "baseline (from post-#322 measurement)"
     },
     {
-      "model_id": "Xenova/all-MiniLM-L12-v2",
-      "dimension": 384,
-      "license": "MIT",
-      "family": "all-MiniLM",
-      "notes": "12-layer variant of current model; same 384-dim output; generally +1-3pt over L6 on semantic similarity tasks.",
-      "m2": null,
-      "m3": null,
-      "m4": null,
-      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
-    },
-    {
-      "model_id": "Xenova/paraphrase-MiniLM-L6-v2",
-      "dimension": 384,
-      "license": "MIT",
-      "family": "paraphrase-MiniLM",
-      "notes": "Trained for paraphrase detection. May not outperform all-MiniLM for code-spec retrieval. Lower priority.",
-      "m2": null,
-      "m3": null,
-      "m4": null,
-      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
-    },
-    {
       "model_id": "Xenova/bge-small-en-v1.5",
       "dimension": 384,
       "license": "MIT",
@@ -68,6 +46,28 @@
       "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
     },
     {
+      "model_id": "Xenova/all-MiniLM-L12-v2",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "all-MiniLM",
+      "notes": "12-layer variant of current model; same 384-dim output; generally +1-3pt over L6 on semantic similarity tasks.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+    },
+    {
+      "model_id": "Xenova/paraphrase-MiniLM-L6-v2",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "paraphrase-MiniLM",
+      "notes": "Trained for paraphrase detection. May not outperform all-MiniLM for code-spec retrieval. Lower priority.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+    },
+    {
       "model_id": "Xenova/all-mpnet-base-v2",
       "dimension": 768,
       "license": "MIT",
@@ -83,8 +83,9 @@
     "factory_param": "createLocalEmbeddingProvider(modelId?, dimension?) now accepts optional params",
     "env_var_model": "DISCOVERY_EMBED_MODEL=<model-id>",
     "env_var_dim": "DISCOVERY_EMBED_DIM=<dimension>",
+    "local_known_models": "LOCAL_KNOWN_MODELS exported from @yakcc/contracts — validated registry of offline-capable MIT/Apache models",
     "usage_example": "DISCOVERY_EVAL_PROVIDER=local DISCOVERY_EMBED_MODEL=Xenova/bge-small-en-v1.5 DISCOVERY_EMBED_DIM=384 pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts"
   },
-  "recommendation": "Run bge-small-en-v1.5 first (most promising for retrieval tasks). If M2 ≥ 70%: swap default in packages/contracts/src/embeddings.ts. If M2 < 70% across all 384-dim candidates: file WI-V3-CORPUS-FIELD-COVERAGE-EXPAND.",
+  "recommendation": "Run bge-small-en-v1.5 first (most promising for retrieval tasks). If M2 >= 70%: swap default in packages/contracts/src/embeddings.ts. If M2 < 70% across all 384-dim candidates: file WI-V3-CORPUS-FIELD-COVERAGE-EXPAND.",
   "decision": "PENDING_RUNS"
 }

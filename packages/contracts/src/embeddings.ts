@@ -38,10 +38,37 @@ export interface EmbeddingProvider {
 // Local provider (transformers.js)
 // ---------------------------------------------------------------------------
 
-/** Model identifier used by the local provider. */
+// @decision DEC-EMBED-MODEL-SELECTION-001
+// @title DISCOVERY_EMBED_MODEL env-var for D5 embedding-model experiment (#326)
+// @status accepted
+// @rationale WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT requires running the full-corpus
+//   harness against alternative embedding models without source edits. DISCOVERY_EMBED_MODEL
+//   allows runtime model selection. The knob is intentionally experiment-scoped (not a
+//   production config surface) — production always uses the committed LOCAL_MODEL_ID default.
+//   If the experiment surfaces a better model, LOCAL_MODEL_ID and LOCAL_DIMENSION are updated
+//   and DISCOVERY_EMBED_MODEL is no longer needed for that path.
+//   DEC-CI-OFFLINE-001 preserved: all listed models are @xenova/transformers–compatible.
+//   DEC-EMBED-010 preserved: model must be MIT or Apache 2.0 licensed.
+
+/** Default production model: all-MiniLM-L6-v2 (384 dims, MIT, ~25MB quantized). */
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
-/** Expected output dimension for all-MiniLM-L6-v2. */
+/** Output dimension for the default production model. */
 const LOCAL_DIMENSION = 384;
+
+/**
+ * Known offline-capable, MIT/Apache-2.0 licensed models and their output dimensions.
+ * Used for default dimension lookup when `createLocalEmbeddingProvider` is called with
+ * a model ID but no explicit dimension. Adding a model here is the canonical gate:
+ * license check + offline verification must pass first.
+ */
+export const LOCAL_KNOWN_MODELS: ReadonlyMap<string, number> = new Map([
+  ["Xenova/all-MiniLM-L6-v2", 384],        // default; MIT; ~25MB quantized
+  ["Xenova/all-MiniLM-L12-v2", 384],       // 12-layer same-family; Apache 2.0; ~34MB quantized
+  ["Xenova/paraphrase-MiniLM-L6-v2", 384], // paraphrase-tuned; Apache 2.0; ~25MB quantized
+  ["Xenova/bge-small-en-v1.5", 384],       // BGE retrieval model; MIT; ~25MB quantized; top pick
+  ["Xenova/e5-small-v2", 384],             // E5 retrieval model; MIT; ~25MB quantized; second pick
+  ["Xenova/all-mpnet-base-v2", 768],       // larger model; Apache 2.0; ~86MB quantized; requires FLOAT[768] schema
+]);
 
 // @decision DEC-EMBED-SINGLETON-CLOSURE-001: Pipeline singleton via closure, not module-level let.
 // Status: decided (WI-V2-02)
@@ -99,14 +126,24 @@ interface TransformerOutput {
  * Default: Xenova/all-MiniLM-L6-v2, 384 dimensions, MIT license.
  *
  * Custom model support (DEC-EMBED-CUSTOM-MODEL-001): pass a different modelId
- * and the corresponding dimension to benchmark alternative models via the
- * DISCOVERY_EMBED_MODEL env var. The schema is currently fixed at FLOAT[384];
- * 768-dim models require a schema migration before they can be benchmarked.
- * Per-instance pipeline closures are used for non-default models.
+ * and optionally the corresponding dimension to benchmark alternative models.
+ * If `dimension` is omitted, it is looked up from LOCAL_KNOWN_MODELS.
+ * The schema is currently fixed at FLOAT[384]; 768-dim models require a schema
+ * migration before they can be benchmarked against the bootstrap registry.
+ *
+ * Model selection when `modelId` is omitted (in priority order):
+ *   1. `DISCOVERY_EMBED_MODEL` env var (experiment use)
+ *   2. LOCAL_MODEL_ID default (`Xenova/all-MiniLM-L6-v2`)
  */
 export function createLocalEmbeddingProvider(
-  modelId: string = LOCAL_MODEL_ID,
-  dimension: number = LOCAL_DIMENSION,
+  modelId: string = (typeof process !== "undefined"
+    ? (process.env.DISCOVERY_EMBED_MODEL ?? LOCAL_MODEL_ID)
+    : LOCAL_MODEL_ID),
+  dimension: number = LOCAL_KNOWN_MODELS.get(
+    typeof process !== "undefined"
+      ? (process.env.DISCOVERY_EMBED_MODEL ?? LOCAL_MODEL_ID)
+      : LOCAL_MODEL_ID,
+  ) ?? LOCAL_DIMENSION,
 ): EmbeddingProvider {
   // Default model reuses the module-level singleton (DEC-EMBED-SINGLETON-CLOSURE-001).
   // Custom models get a fresh per-instance closure so they don't share pipeline state.

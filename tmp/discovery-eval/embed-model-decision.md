@@ -32,7 +32,7 @@ a `vec0` drop-and-recreate migration.
 
 **Implication:** The scope of this WI is limited to **384-dim models only**. Larger
 models such as `Xenova/all-mpnet-base-v2` (768-dim) require a separate schema
-migration WI (see `DEC-V3-DISCOVERY-D6-001` migration protocol).
+migration WI (`WI-V3-DISCOVERY-D6-DIM-MIGRATION`).
 
 ---
 
@@ -49,13 +49,21 @@ The following code changes were landed in this WI:
 - Custom models use per-instance pipeline closures (DEC-EMBED-CUSTOM-MODEL-001)
 - Module-level singleton preserved for default model (DEC-EMBED-SINGLETON-CLOSURE-001)
 
-### 2. `DISCOVERY_EMBED_MODEL` / `DISCOVERY_EMBED_DIM` env vars
+### 2. `LOCAL_KNOWN_MODELS` export
+
+`packages/contracts/src/embeddings.ts` + re-exported from `packages/contracts/src/index.ts`:
+- `ReadonlyMap<string, number>` mapping model IDs to output dimensions
+- Validated gate: license check (MIT/Apache-2.0 only) + offline-capable verification
+- All 6 registered models: all-MiniLM-L6-v2, all-MiniLM-L12-v2, paraphrase-MiniLM-L6-v2,
+  bge-small-en-v1.5, e5-small-v2, all-mpnet-base-v2
+
+### 3. `DISCOVERY_EMBED_MODEL` / `DISCOVERY_EMBED_DIM` env vars
 
 `packages/registry/src/discovery-eval-full-corpus.test.ts`:
 - `DISCOVERY_EMBED_MODEL=<model-id>` selects the model (default: `Xenova/all-MiniLM-L6-v2`)
 - `DISCOVERY_EMBED_DIM=<dim>` sets the expected dimension (default: 384, warns on invalid)
 - Model flows through `createLocalEmbeddingProvider()` and into `embeddingProvider.modelId`
-- Artifact output already uses `embeddingProvider.modelId` for the provider field
+- Artifact output uses `embeddingProvider.modelId` for the provider field
 
 **Usage:**
 ```sh
