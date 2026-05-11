@@ -40,9 +40,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CollectingLogger, runCli } from "../index.js";
 import { init } from "./init.js";
 
@@ -99,9 +99,9 @@ describe("init — fresh directory", () => {
     expect(code).toBe(0);
     const settings = readSettings(tmpDir);
     expect(settings).not.toBeNull();
-    const hooks = settings!["hooks"] as Record<string, unknown[]>;
+    const hooks = settings?.hooks as Record<string, unknown[]>;
     expect(hooks).toBeDefined();
-    const preToolUse = hooks["PreToolUse"] as Array<Record<string, unknown>>;
+    const preToolUse = hooks.PreToolUse as Array<Record<string, unknown>>;
     expect(Array.isArray(preToolUse)).toBe(true);
     expect(preToolUse.length).toBeGreaterThan(0);
   });
@@ -132,19 +132,19 @@ describe(".yakccrc.json content", () => {
     await init(["--target", tmpDir], new CollectingLogger());
     const rc = readRc(tmpDir);
     expect(rc).not.toBeNull();
-    expect(rc!["version"]).toBe(1);
+    expect(rc?.version).toBe(1);
   });
 
   it("registry.path matches default registry subpath", async () => {
     await init(["--target", tmpDir], new CollectingLogger());
     const rc = readRc(tmpDir);
-    expect(rc!["registry"]).toEqual({ path: ".yakcc/registry.sqlite" });
+    expect(rc?.registry).toEqual({ path: ".yakcc/registry.sqlite" });
   });
 
   it("no federation key when --peer is not provided", async () => {
     await init(["--target", tmpDir], new CollectingLogger());
     const rc = readRc(tmpDir);
-    expect(rc!["federation"]).toBeUndefined();
+    expect(rc?.federation).toBeUndefined();
   });
 });
 
@@ -186,13 +186,13 @@ describe("init — idempotent re-run", () => {
     await init(["--target", tmpDir], new CollectingLogger());
 
     const settings = readSettings(tmpDir);
-    const hooks = settings!["hooks"] as Record<string, unknown[]>;
-    const preToolUse = hooks["PreToolUse"] as unknown[];
+    const hooks = settings?.hooks as Record<string, unknown[]>;
+    const preToolUse = hooks.PreToolUse as unknown[];
     // Should still have exactly 1 yakcc entry (idempotent hook install)
     expect(
-      preToolUse.filter(
-        (e) => ((e as Record<string, unknown[]>)["hooks"] ?? []).some(
-          (h) => (h as Record<string, unknown>)["_yakcc"] === "yakcc-hook-v1",
+      preToolUse.filter((e) =>
+        ((e as Record<string, unknown[]>).hooks ?? []).some(
+          (h) => (h as Record<string, unknown>)._yakcc === "yakcc-hook-v1",
         ),
       ).length,
     ).toBe(1);
@@ -204,8 +204,8 @@ describe("init — idempotent re-run", () => {
 
     const rc = readRc(tmpDir);
     expect(rc).not.toBeNull();
-    expect(rc!["version"]).toBe(1);
-    expect((rc!["registry"] as Record<string, unknown>)["path"]).toBe(".yakcc/registry.sqlite");
+    expect(rc?.version).toBe(1);
+    expect((rc?.registry as Record<string, unknown>).path).toBe(".yakcc/registry.sqlite");
   });
 });
 
@@ -218,19 +218,16 @@ describe("init — --peer <url>", () => {
     // The mirror will fail (no real HTTP server), but init should still succeed
     // because mirror failure is non-fatal per DEC-CLI-INIT-001.
     const logger = new CollectingLogger();
-    const code = await init(
-      ["--target", tmpDir, "--peer", "http://localhost:19999"],
-      logger,
-    );
+    const code = await init(["--target", tmpDir, "--peer", "http://localhost:19999"], logger);
 
     // Exit 0 — mirror failure is a warning, not a fatal error
     expect(code).toBe(0);
     const rc = readRc(tmpDir);
     expect(rc).not.toBeNull();
-    const fed = rc!["federation"] as Record<string, unknown>;
+    const fed = rc?.federation as Record<string, unknown>;
     expect(fed).toBeDefined();
-    expect(Array.isArray(fed["peers"])).toBe(true);
-    expect((fed["peers"] as string[]).includes("http://localhost:19999")).toBe(true);
+    expect(Array.isArray(fed.peers)).toBe(true);
+    expect((fed.peers as string[]).includes("http://localhost:19999")).toBe(true);
   });
 
   it("re-run with same peer URL does not duplicate peer entry", async () => {
@@ -239,8 +236,8 @@ describe("init — --peer <url>", () => {
     await init(["--target", tmpDir, "--peer", peerUrl], new CollectingLogger());
 
     const rc = readRc(tmpDir);
-    const fed = rc!["federation"] as Record<string, unknown>;
-    const peers = fed["peers"] as string[];
+    const fed = rc?.federation as Record<string, unknown>;
+    const peers = fed.peers as string[];
     expect(peers.filter((p) => p === peerUrl).length).toBe(1);
   });
 
@@ -251,8 +248,8 @@ describe("init — --peer <url>", () => {
     await init(["--target", tmpDir, "--peer", peer2], new CollectingLogger());
 
     const rc = readRc(tmpDir);
-    const fed = rc!["federation"] as Record<string, unknown>;
-    const peers = fed["peers"] as string[];
+    const fed = rc?.federation as Record<string, unknown>;
+    const peers = fed.peers as string[];
     expect(peers.includes(peer1)).toBe(true);
     expect(peers.includes(peer2)).toBe(true);
   });

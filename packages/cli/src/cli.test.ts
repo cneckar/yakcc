@@ -460,8 +460,8 @@ describe("hooks claude-code install", () => {
       await runCli(["hooks", "claude-code", "install", "--target", targetDir], logger);
       const raw = readFileSync(join(targetDir, ".claude", "settings.json"), "utf-8");
       const settings = JSON.parse(raw) as Record<string, unknown>;
-      const hooks = settings["hooks"] as Record<string, unknown[]>;
-      const preToolUse = hooks["PreToolUse"] as Array<{ matcher: string }>;
+      const hooks = settings.hooks as Record<string, unknown[]>;
+      const preToolUse = hooks.PreToolUse as Array<{ matcher: string }>;
       expect(preToolUse.some((e) => e.matcher === "Edit|Write|MultiEdit")).toBe(true);
     } finally {
       try {
