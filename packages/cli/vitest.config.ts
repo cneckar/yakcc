@@ -1,28 +1,28 @@
-// @decision DEC-CLI-VITEST-CONFIG-001: vitest.config.ts mirrors the compile package's
-// alias pattern, redirecting @yakcc/seeds to its source tree so that import.meta.url
-// in seed.ts resolves to src/seed.ts (where src/blocks/ exists) and not dist/seed.js.
-// Status: implemented (WI-007)
-// Rationale: CLI integration tests call seedRegistry() via the seed command and compile
-// command paths. Without this alias, vitest resolves @yakcc/seeds to dist/seed.js where
-// src/blocks/ is absent, causing ENOENT at runtime. The include pattern prevents vitest
-// from picking up any compiled output in dist/ (double-discovery bug seen in WI-002/WI-006).
+// @decision DEC-CLI-VITEST-CONFIG-002 — workspace-source aliases.
+// Original -001 covered @yakcc/seeds; -002 extends to all workspace deps per
+// #352 follow-up. See packages/registry/vitest.config.ts DEC-REGISTRY-VITEST-CONFIG-001
+// for full rationale on @yakcc/contracts.
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
     alias: {
-      // Redirect @yakcc/seeds to its source so that import.meta.url in seed.ts
-      // resolves to src/seed.ts (where src/blocks/ exists) not dist/seed.js.
+      "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
+      "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
+      "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
+      "@yakcc/compile": resolve(__dirname, "../compile/src/index.ts"),
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),
+      "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
+      "@yakcc/federation": resolve(__dirname, "../federation/src/index.ts"),
+      "@yakcc/hooks-base": resolve(__dirname, "../hooks-base/src/index.ts"),
+      "@yakcc/hooks-claude-code": resolve(__dirname, "../hooks-claude-code/src/index.ts"),
     },
   },
   test: {
     include: ["src/**/*.test.ts"],
-    // forks isolation: better-sqlite3 uses native bindings; isolation avoids
-    // SQLite handle conflicts between test files.
     pool: "forks",
-    testTimeout: 60_000, // 60s — accommodates canonicalAstHash compute under turbo concurrency
-    hookTimeout: 60_000, // 60s — same; seeded corpora invoke ts-morph for every block
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

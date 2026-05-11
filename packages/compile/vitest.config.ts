@@ -1,58 +1,24 @@
-// @decision DEC-COMPILE-VITEST-CONFIG-001: vitest.config.ts sets resolve.alias for
-// @yakcc/seeds to point at the seeds package's source tree rather than its dist/
-// directory. This is required because seed.ts reads block .ts source files from
-// disk at runtime using import.meta.url — when invoked via the compiled dist/seed.js,
-// the path resolves to dist/blocks/ which contains only .js files (no .ts).
-// Pointing vitest at the source src/index.ts means import.meta.url resolves to
-// src/seed.ts and the correct src/blocks/ directory is found.
-// Status: implemented (WI-005)
-// Rationale: The seeds package is a devDependency of compile. Modifying seeds
-// is out of scope (packages/seeds/** is forbidden). The vitest alias is the
-// minimal, compile-scoped fix. It does not affect the runtime or production build.
-//
-// @decision DEC-COMPILE-VITEST-CONFIG-002
-// title: vitest alias for @yakcc/shave source entry (WI-018)
-// status: decided (WI-018)
-// rationale:
-//   @yakcc/shave's package.json exports field points to dist/index.js, but the
-//   shave package is not pre-built in the workspace (no dist/ directory). The
-//   compile package's tests resolve @yakcc/shave through a pnpm workspace symlink
-//   pointing at the source tree. Without this alias, vitest fails to resolve the
-//   "." export and assemble-candidate.test.ts cannot load.
-//   Same pattern as @yakcc/seeds (DEC-COMPILE-VITEST-CONFIG-001). Does not affect
-//   production builds.
+// @decision DEC-COMPILE-VITEST-CONFIG-001/002 — workspace-source aliases.
+// Original -001 (seeds), -002 (shave); -003 extends to other workspace packages
+// per #352 follow-up. See packages/registry/vitest.config.ts DEC-REGISTRY-VITEST-CONFIG-001
+// for full rationale on @yakcc/contracts.
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
     alias: {
-      // Redirect @yakcc/seeds to its source so that import.meta.url in seed.ts
-      // resolves to src/seed.ts (where src/blocks/ exists) not dist/seed.js.
+      "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
+      "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
+      "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),
-      // Redirect @yakcc/shave to its source entry point (no dist/ in the workspace).
-      // See DEC-COMPILE-VITEST-CONFIG-002 above.
       "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
     },
   },
   test: {
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
-    // forks isolation: better-sqlite3 uses native bindings; isolation avoids
-    // SQLite handle conflicts between test files.
     pool: "forks",
-    // @decision DEC-INFRA-VITEST-FORK-CAP-001
-    // @title Cap vitest workers at 2 (matches CI 2-vCPU baseline)
-    // @status accepted
-    // @rationale Vitest 4.x default spawns one worker per CPU. On 10+ core
-    //   dispatcher hardware the pool bootstrap races and stalls one worker,
-    //   cascading to ~6000s timeouts on full-suite runs (vs ~40s with the cap).
-    //   CI's ubuntu-latest is 2-vCPU and dodges the problem; matching that
-    //   baseline locally + agent-side aligns posture and prevents
-    //   "works on CI, hangs on dev hardware" platform-divergent flakes.
-    //   Per-package config (Sacred Practice #12) is the canonical authority;
-    //   CLI flags or env vars would silently drift.
-    //   Uses vitest 4.x top-level maxWorkers/minWorkers (the pool-agnostic
-    //   surface that replaced the removed `poolOptions` shape).
+    // @decision DEC-INFRA-VITEST-FORK-CAP-001 — cap workers at 2 to match CI baseline.
     maxWorkers: 2,
     minWorkers: 1,
   },
