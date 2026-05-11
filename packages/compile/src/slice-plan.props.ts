@@ -7,6 +7,19 @@
 // Rationale: See tmp/wi-v2-07-preflight-layer-plan.md — the corpus file must
 // be runtime-independent so L10 can hash it as a manifest artifact.
 //
+// @decision DEC-CI-MERGE-GATE-ENFORCE-003
+// title: branded-type fixture pattern — named inline cast helpers for fast-check arbitraries
+// status: accepted (WI-CI-MERGE-GATE-ENFORCEMENT slice A1, closes #294)
+// rationale: PointerEntry.merkleRoot and PointerEntry/NovelGlueEntry.canonicalAstHash
+//   are branded types (BlockMerkleRoot, CanonicalAstHash) enforced by
+//   exactOptionalPropertyTypes:true in tsconfig. fast-check's stringMatching()
+//   produces fc.Arbitrary<string>, not the brand. The canonical fix (Sacred Practice #12)
+//   is to map through named inline helpers asBlockMerkleRoot/asCanonicalAstHash using
+//   the `as unknown as <Brand>` structural-typing escape — the same pattern used
+//   throughout the workspace (federation/src/pull.test.ts, registry/src/storage.test.ts,
+//   etc.). No new exported brand-helper module is added; the helpers are local to
+//   this file. The branded-type definitions in @yakcc/contracts remain unchanged.
+//
 // Atoms covered (3 named):
 //   SP1.1 — GlueLeafInWasmModeError: construction and field contract
 //   SP1.2 — compileToTypeScript: entry-kind emit rules and output shape
@@ -33,19 +46,41 @@
 //   prop_assert_throws_on_first_glue_entry
 // ---------------------------------------------------------------------------
 
+import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import type { GlueLeafEntry, SlicePlan, SlicePlanEntry } from "@yakcc/shave";
 import * as fc from "fast-check";
 import { GlueLeafInWasmModeError, assertNoGlueLeaf, compileToTypeScript } from "./slice-plan.js";
 
 // ---------------------------------------------------------------------------
+// Named inline brand-cast helpers (DEC-CI-MERGE-GATE-ENFORCE-003)
+//
+// These helpers use `as unknown as <Brand>` — the canonical structural-typing
+// escape for branded primitives in fast-check fixtures (see pattern at
+// federation/src/pull.test.ts, manifest.test.ts fakeRoot/fakeSpec). No new
+// exported module is created; authority stays in @yakcc/contracts.
+// ---------------------------------------------------------------------------
+
+/** Cast a hex string from a fast-check arbitrary to BlockMerkleRoot brand. */
+const asBlockMerkleRoot = (s: string): BlockMerkleRoot => s as unknown as BlockMerkleRoot;
+
+/** Cast a hex string from a fast-check arbitrary to CanonicalAstHash brand. */
+const asCanonicalAstHash = (s: string): CanonicalAstHash => s as unknown as CanonicalAstHash;
+
+// ---------------------------------------------------------------------------
 // Shared arbitraries
 // ---------------------------------------------------------------------------
 
-/** An 8-40 character hex string simulating a canonicalAstHash. */
+/** An 8-40 character hex string simulating a canonicalAstHash (unbranded). */
 const hashArb: fc.Arbitrary<string> = fc.stringMatching(/^[0-9a-f]{8,40}$/);
 
-/** An 8-40 character hex string simulating a merkleRoot. */
+/** An 8-40 character hex string simulating a merkleRoot (unbranded). */
 const merkleRootArb: fc.Arbitrary<string> = fc.stringMatching(/^[0-9a-f]{8,40}$/);
+
+/** Branded CanonicalAstHash arbitrary — required for PointerEntry/NovelGlueEntry fields. */
+const canonicalAstHashArb: fc.Arbitrary<CanonicalAstHash> = hashArb.map(asCanonicalAstHash);
+
+/** Branded BlockMerkleRoot arbitrary — required for PointerEntry.merkleRoot. */
+const blockMerkleRootArb: fc.Arbitrary<BlockMerkleRoot> = merkleRootArb.map(asBlockMerkleRoot);
 
 /** A short human-readable reason string. */
 const reasonArb: fc.Arbitrary<string> = fc
@@ -72,8 +107,8 @@ const pointerEntryArb: fc.Arbitrary<SlicePlanEntry> = fc.record({
     start: fc.integer({ min: 0, max: 500 }),
     end: fc.integer({ min: 501, max: 1000 }),
   }),
-  merkleRoot: merkleRootArb,
-  canonicalAstHash: hashArb,
+  merkleRoot: blockMerkleRootArb,
+  canonicalAstHash: canonicalAstHashArb,
   matchedBy: fc.constant("canonical_ast_hash" as const),
 });
 
@@ -85,7 +120,7 @@ const novelGlueEntryArb: fc.Arbitrary<SlicePlanEntry> = fc.record({
     end: fc.integer({ min: 501, max: 1000 }),
   }),
   source: sourceArb,
-  canonicalAstHash: hashArb,
+  canonicalAstHash: canonicalAstHashArb,
 });
 
 /** A ForeignLeafEntry arbitrary. */
@@ -265,8 +300,8 @@ export const prop_ts_output_contains_header_comment = fc.property(glueFreeSliceP
  */
 export const prop_ts_pointer_entry_emits_merkle_root = fc.property(
   fc.record({
-    merkleRoot: merkleRootArb,
-    canonicalAstHash: hashArb,
+    merkleRoot: blockMerkleRootArb,
+    canonicalAstHash: canonicalAstHashArb,
   }),
   ({ merkleRoot, canonicalAstHash }) => {
     const entry: SlicePlanEntry = {
@@ -296,8 +331,8 @@ export const prop_ts_pointer_entry_emits_merkle_root = fc.property(
  */
 export const prop_ts_pointer_entry_emits_hash_prefix = fc.property(
   fc.record({
-    merkleRoot: merkleRootArb,
-    canonicalAstHash: hashArb,
+    merkleRoot: blockMerkleRootArb,
+    canonicalAstHash: canonicalAstHashArb,
   }),
   ({ merkleRoot, canonicalAstHash }) => {
     const entry: SlicePlanEntry = {
@@ -328,7 +363,7 @@ export const prop_ts_pointer_entry_emits_hash_prefix = fc.property(
 export const prop_ts_novel_glue_entry_emits_source = fc.property(
   fc.record({
     source: sourceArb,
-    canonicalAstHash: hashArb,
+    canonicalAstHash: canonicalAstHashArb,
   }),
   ({ source, canonicalAstHash }) => {
     const entry: SlicePlanEntry = {
@@ -358,7 +393,7 @@ export const prop_ts_novel_glue_entry_emits_source = fc.property(
 export const prop_ts_novel_glue_entry_emits_hash_prefix = fc.property(
   fc.record({
     source: sourceArb,
-    canonicalAstHash: hashArb,
+    canonicalAstHash: canonicalAstHashArb,
   }),
   ({ source, canonicalAstHash }) => {
     const entry: SlicePlanEntry = {

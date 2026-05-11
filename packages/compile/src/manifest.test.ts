@@ -119,6 +119,11 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     ): Promise<readonly BlockMerkleRoot[]> {
       return [];
     },
+    async findCandidatesByQuery(
+      _query: import("@yakcc/contracts").QueryIntentCard,
+    ): Promise<import("@yakcc/registry").FindCandidatesByQueryResult> {
+      return { candidates: [], nearMisses: [] };
+    },
     async findCandidatesByIntent(): Promise<readonly import("@yakcc/registry").CandidateMatch[]> {
       return [];
     },
