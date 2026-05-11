@@ -36,7 +36,7 @@ import {
   type EvidenceProjection,
   type ResolveResult,
   yakccResolve,
-} from "./yakcc-resolve.js";
+} from "../src/yakcc-resolve.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers

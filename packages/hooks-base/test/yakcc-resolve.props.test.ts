@@ -11,7 +11,7 @@ import {
   prop_resolveResult_matched_has_at_least_one_candidate,
   prop_resolveResult_no_match_has_empty_candidates,
   prop_resolveResult_status_is_one_of_three_values,
-} from "./yakcc-resolve.props.js";
+} from "../src/yakcc-resolve.props.js";
 
 // ResolveResult status invariants
 it("property: prop_resolveResult_status_is_one_of_three_values", () => {
