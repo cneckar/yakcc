@@ -133,6 +133,18 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     async exportManifest(): Promise<readonly import("@yakcc/registry").BootstrapManifestEntry[]> {
       return [];
     },
+    // P2: workspace_plumbing stubs (DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001).
+    // This mock never uses these methods; stubs satisfy the Registry interface.
+    async storeWorkspacePlumbing(
+      _entry: import("@yakcc/registry").WorkspacePlumbingEntry,
+    ): Promise<void> {
+      throw new Error("not implemented in mock");
+    },
+    async listWorkspacePlumbing(): Promise<
+      readonly import("@yakcc/registry").WorkspacePlumbingEntry[]
+    > {
+      return [];
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing

@@ -751,10 +751,27 @@ export async function shave(
       // For subsequent novel-glue entries the preceding novel-glue's merkle root
       // is the structural parent — it is the outer function that was just persisted.
       const parentBlockRoot: BlockMerkleRoot | null = lastNovelMerkleRoot ?? null;
+      // @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+      // sourceContext: when ShaveOptions.sourceContext is present (bootstrap mode),
+      // forward it with the per-atom sourceOffset derived from the slice plan entry's
+      // sourceRange.start. This is the byte offset within the source file at which
+      // the atom begins — used by compile-self (P2) to sort atoms back into file order.
+      // When sourceContext is absent (interactive shave), atoms are stored with null
+      // provenance, which is correct for non-bootstrap corpus production.
+      const baseSourceContext = options?.sourceContext;
+      const perAtomSourceContext =
+        baseSourceContext !== undefined
+          ? {
+              sourcePkg: baseSourceContext.sourcePkg,
+              sourceFile: baseSourceContext.sourceFile,
+              sourceOffset: entry.sourceRange.start,
+            }
+          : undefined;
       const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
         ...options,
         parentBlockRoot,
         sourceFilePath: sourcePath,
+        sourceContext: perAtomSourceContext,
       });
       merkleRoots.push(merkleRoot);
       if (merkleRoot !== undefined) {

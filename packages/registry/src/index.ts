@@ -140,6 +140,48 @@ export interface BlockTripletRow {
    * Null / absent when not snapshotted or for local blocks.
    */
   readonly foreignDtsHash?: string | null;
+
+  // ---------------------------------------------------------------------------
+  // Migration-7 fields (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / P1)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Workspace package directory from which this atom was shaved
+   * (e.g. `"packages/cli"`). Non-null only for local blocks produced by
+   * `yakcc bootstrap`. Null / absent for foreign atoms, seed blocks, and
+   * compose-time atoms (any caller that does not supply source context).
+   *
+   * Optional (not required) so all pre-v7 callers — federation.ts, seed.ts,
+   * assemble-candidate.ts — compile without changes (T11 invariant).
+   * First-observed-wins via INSERT OR IGNORE in storeBlock; a second store with
+   * null does not overwrite an existing non-null value.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   */
+  readonly sourcePkg?: string | null;
+
+  /**
+   * Workspace-relative path of the originating .ts source file
+   * (e.g. `"packages/cli/src/commands/compile.ts"`). Non-null only for local
+   * blocks produced by `yakcc bootstrap`. Null / absent otherwise.
+   *
+   * sourcePkg is always a prefix of sourceFile when both are non-null.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   */
+  readonly sourceFile?: string | null;
+
+  /**
+   * Byte offset of the atom's `implSource` within `sourceFile`. Used to sort
+   * multiple atoms from the same file when reconstructing source order during
+   * compile-self (P2). Null when unknown (all pre-v7 rows, foreign atoms,
+   * seed blocks).
+   *
+   * NOT folded into blockMerkleRoot — provenance is metadata only.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   */
+  readonly sourceOffset?: number | null;
 }
 
 /**
@@ -242,6 +284,45 @@ export interface BootstrapManifestEntry {
    * block_artifacts WHERE path = 'proof/manifest.json'). Sentinel when absent.
    */
   readonly manifestJsonHash: string;
+}
+
+// ---------------------------------------------------------------------------
+// P2: WorkspacePlumbingEntry — one row from workspace_plumbing
+// (DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001 / WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row from the `workspace_plumbing` table.
+ *
+ * Captures non-atom workspace files (package.json, tsconfig*.json,
+ * pnpm-workspace.yaml, etc.) needed to make a recompiled workspace
+ * pnpm-installable and buildable. Populated by `yakcc bootstrap`.
+ *
+ * @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
+ * @title workspace_plumbing is the single authority for non-atom bootable files
+ * @status accepted (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
+ * @rationale Compile-self must reconstruct a pnpm workspace from the registry
+ *   alone. Reading plumbing files from the live filesystem at compile-self time
+ *   would be a parallel authority (Sacred Practice #12). The workspace_plumbing
+ *   table is populated during bootstrap and read at compile-self time; no
+ *   filesystem fallback is permitted at compile-self time.
+ */
+export interface WorkspacePlumbingEntry {
+  /**
+   * Workspace-relative path of the captured file
+   * (e.g. 'package.json', 'packages/cli/package.json').
+   * Must not start with '/' or contain '..'.
+   */
+  readonly workspacePath: string;
+  /** Raw file bytes, byte-faithful (no normalization). */
+  readonly contentBytes: Uint8Array;
+  /**
+   * BLAKE3-256 hex digest of contentBytes.
+   * Verified by storeWorkspacePlumbing at write time.
+   */
+  readonly contentHash: string;
+  /** Unix epoch milliseconds of first insertion. */
+  readonly createdAt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +796,39 @@ export interface Registry {
    * @param merkleRoot - The parent block's BlockMerkleRoot.
    */
   getForeignRefs(merkleRoot: BlockMerkleRoot): Promise<readonly ForeignRefRow[]>;
+
+  // ---------------------------------------------------------------------------
+  // P2: workspace_plumbing accessors
+  // (DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001 / WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Insert a plumbing-file row into `workspace_plumbing`.
+   *
+   * Idempotent via PRIMARY KEY (workspace_path) + INSERT OR IGNORE.
+   * First-observed-wins matches the storeBlock pattern — a second call with
+   * the same workspacePath is a silent no-op.
+   *
+   * Throws if:
+   *   - `entry.contentHash` does not equal BLAKE3-256(contentBytes) — content
+   *     integrity must be verified by the caller before insertion.
+   *   - `entry.workspacePath` is an absolute path (starts with '/') or
+   *     contains '..' — workspace-relative paths only.
+   *
+   * @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
+   */
+  storeWorkspacePlumbing(entry: WorkspacePlumbingEntry): Promise<void>;
+
+  /**
+   * Enumerate every plumbing-file row, sorted ascending by workspace_path.
+   *
+   * Deterministic — two calls on the same DB state produce identical results
+   * (same load-bearing invariant as exportManifest()). Returns an empty array
+   * for an empty workspace_plumbing table.
+   *
+   * @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
+   */
+  listWorkspacePlumbing(): Promise<readonly WorkspacePlumbingEntry[]>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;
