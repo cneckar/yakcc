@@ -109,7 +109,7 @@
  *       to WI-V3-DISCOVERY-IMPL-QUERY.
  */
 
-import type { Registry } from "./index.js";
+import type { QueryIntentCard, Registry } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // D5 ADR corpus schema types (Q2 — verbatim from the ADR)
@@ -359,28 +359,113 @@ function benchmarkQueryToIntentQuery(q: BenchmarkQueryCard): {
 }
 
 /**
+ * Convert a BenchmarkEntry's query to a QueryIntentCard for findCandidatesByQuery.
+ *
+ * @decision DEC-V3-DISCOVERY-EVAL-FIX-001
+ * @title Symmetric query derivation in benchmark harness (H2 fix)
+ * @status accepted
+ * @rationale runBenchmarkEntries previously used findCandidatesByIntent which derives
+ *   query text as `behavior + "\n" + params`. findCandidatesByQuery uses
+ *   canonicalizeQueryText() which produces SpecYak-shaped canonical JSON — the same
+ *   text-space as storeBlock's generateEmbedding(). Switching to findCandidatesByQuery
+ *   eliminates the store/query text asymmetry (H2 from issue #299). All BenchmarkQueryCard
+ *   fields (behavior, signature, guarantees, errorConditions) are mapped to the
+ *   corresponding QueryIntentCard dimensions.
+ */
+function benchmarkQueryToQueryIntentCard(q: BenchmarkQueryCard, topK: number): QueryIntentCard {
+  return {
+    behavior: q.behavior,
+    ...(q.signature !== undefined
+      ? {
+          signature: {
+            inputs: q.signature.inputs?.map((p) => ({ name: p.name, type: p.type })),
+            outputs: q.signature.outputs?.map((p) => ({ name: p.name, type: p.type })),
+          },
+        }
+      : {}),
+    ...(q.guarantees !== undefined && q.guarantees.length > 0
+      ? { guarantees: q.guarantees as string[] }
+      : {}),
+    ...(q.errorConditions !== undefined && q.errorConditions.length > 0
+      ? { errorConditions: q.errorConditions as string[] }
+      : {}),
+    topK,
+  };
+}
+
+/**
  * Run all benchmark entries against the registry and return per-entry results.
  *
- * @param registry - The open Registry instance to query.
- * @param entries  - The benchmark corpus entries.
- * @param topK     - How many candidates to retrieve (default 10, matching D2 default).
+ * @decision DEC-V3-DISCOVERY-EVAL-FIX-001
+ * @title queryMode parameter: "query" (default) uses findCandidatesByQuery; "intent" uses findCandidatesByIntent
+ * @status accepted
+ * @rationale
+ *   The default queryMode="query" uses findCandidatesByQuery (symmetric canonical text
+ *   derivation, same text-space as storeBlock). This is correct for the full-corpus eval
+ *   (discovery-eval-full-corpus.test.ts) where the registry has many atoms and the D3
+ *   5-stage pipeline (structural + strictness filters) operates as intended.
+ *
+ *   The 9-entry inline harness (discovery-eval.test.ts) uses queryMode="intent" to preserve
+ *   its function as a smoke test of the findCandidatesByIntent path. Why? The 9-entry corpus
+ *   was calibrated against a 5-atom registry where the D3 structural filter eliminates most
+ *   candidates: corpus query cards specify signatures but omit errorConditions, so Stage 2
+ *   rejects all atoms that declare errorConditions (see structuralMatch rule 3). The result
+ *   is M1/M2/M3/M4 near-zero — correct pipeline behavior, but degenerate for a 5-atom corpus.
+ *   queryMode="intent" bypasses the pipeline filters, making the 9-entry test measure
+ *   embedding quality in isolation (DEC-V3-DISCOVERY-EVAL-FIX-001 Fix 4 — symmetric query
+ *   path applies to the full-corpus eval, not the bootstrap inline corpus).
+ *
+ *   When queryMode="intent":
+ *     - Calls findCandidatesByIntent (asymmetric behavior+params text derivation).
+ *     - combinedScore is derived from cosineDistance via cosineDistanceToCombinedScore.
+ *     - allAtoms / top1Atom / top1Score are computed from CandidateMatch[].
+ *   When queryMode="query" (default):
+ *     - Calls findCandidatesByQuery (symmetric canonical text, D3 5-stage pipeline).
+ *     - combinedScore comes directly from QueryCandidate.combinedScore.
+ *     - Candidates that fail structural/strictness filters land in nearMisses (not candidates).
+ *
+ * @param registry  - The open Registry instance to query.
+ * @param entries   - The benchmark corpus entries.
+ * @param topK      - How many candidates to retrieve (default 10, matching D2 default).
+ * @param queryMode - "query" (default, symmetric path) | "intent" (legacy intent path).
  */
 export async function runBenchmarkEntries(
   registry: Registry,
   entries: readonly BenchmarkEntry[],
   topK = 10,
+  queryMode: "query" | "intent" = "query",
 ): Promise<readonly QueryResult[]> {
   const results: QueryResult[] = [];
 
   for (const entry of entries) {
-    const intentQuery = benchmarkQueryToIntentQuery(entry.query);
-    const candidates = await registry.findCandidatesByIntent(intentQuery, { k: topK });
+    let allAtoms: string[];
+    let top1Score: number;
+    let top1Atom: string | null;
 
-    const allAtoms = candidates.map((c) => c.block.blockMerkleRoot as string);
-    const top1 = candidates[0];
+    if (queryMode === "intent") {
+      // Legacy path: findCandidatesByIntent (asymmetric text derivation, no pipeline filters).
+      // Used by the 9-entry inline harness (discovery-eval.test.ts) as a smoke test of the
+      // findCandidatesByIntent code path. Score derived from cosineDistance.
+      const intentQuery = benchmarkQueryToIntentQuery(entry.query);
+      const intentCandidates = await registry.findCandidatesByIntent(intentQuery, { k: topK });
+      allAtoms = intentCandidates.map((c) => c.block.blockMerkleRoot as string);
+      const top1Intent = intentCandidates[0];
+      top1Score =
+        top1Intent !== undefined ? cosineDistanceToCombinedScore(top1Intent.cosineDistance) : 0;
+      top1Atom = top1Intent !== undefined ? (top1Intent.block.blockMerkleRoot as string) : null;
+    } else {
+      // Default path: findCandidatesByQuery (symmetric canonical text, D3 5-stage pipeline).
+      // findCandidatesByQuery returns QueryCandidate[] with combinedScore already computed
+      // (same 1-d²/4 formula as cosineDistanceToCombinedScore, computed inside storage.ts).
+      const card = benchmarkQueryToQueryIntentCard(entry.query, topK);
+      const queryResult = await registry.findCandidatesByQuery(card);
+      const candidates = queryResult.candidates;
+      allAtoms = candidates.map((c) => c.block.blockMerkleRoot as string);
+      const top1 = candidates[0];
+      top1Score = top1 !== undefined ? top1.combinedScore : 0;
+      top1Atom = top1 !== undefined ? (top1.block.blockMerkleRoot as string) : null;
+    }
 
-    const top1Score = top1 !== undefined ? cosineDistanceToCombinedScore(top1.cosineDistance) : 0;
-    const top1Atom = top1 !== undefined ? (top1.block.blockMerkleRoot as string) : null;
     const top1Band = assignScoreBand(top1Score);
 
     const acceptableAtoms = entry.acceptableAtoms ?? [];

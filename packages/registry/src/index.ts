@@ -25,7 +25,18 @@
 // No dual-table coexistence; no fallback path (Sacred Practice #12).
 // Status: decided (MASTER_PLAN.md WI-T03 Evaluation Contract)
 
+// Internal import: used by BlockTripletRow, Registry, and related interface
+// definitions throughout this file.
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
+
+// Re-export core content-address types so consumers can import from a single
+// package. BlockMerkleRoot, CanonicalAstHash, and SpecHash appear in the public
+// surface of BlockTripletRow, Registry, and related interfaces — callers need
+// these types to construct and type-check registry calls without a direct
+// @yakcc/contracts dependency. (export type re-export is separate from the
+// import type above: the import brings names into scope locally; the export
+// makes them available to consumers of this module.)
+export type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
 
 // Re-export query surface types from @yakcc/contracts so consumers can import
 // from a single package (DEC-V3-IMPL-QUERY-005 coexistence contract).

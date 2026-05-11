@@ -702,11 +702,11 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   // --- Additive merge (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 part (a)) ---
   // Load prior entries from the committed manifest (if it exists) and merge
   // with the shaved entries. Prior entries absent from this shave are RETAINED.
-  let priorEntries: ReadonlyArray<Record<string, unknown>> = [];
+  let priorEntries: ReadonlyArray<BootstrapManifestEntry> = [];
   if (existsSync(manifestPath)) {
     try {
       const priorText = readFileSync(manifestPath, "utf-8");
-      priorEntries = JSON.parse(priorText) as Array<Record<string, unknown>>;
+      priorEntries = JSON.parse(priorText) as Array<BootstrapManifestEntry>;
     } catch (err) {
       logger.error(
         `error: failed to read prior manifest at ${manifestPath}: ${(err as Error).message}`,
@@ -715,7 +715,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     }
   }
 
-  const shavedEntries = shavedManifest as unknown as Array<Record<string, unknown>>;
+  const shavedEntries = shavedManifest as unknown as Array<BootstrapManifestEntry>;
   const mergedManifest = mergeManifestEntries(priorEntries, shavedEntries);
 
   const priorCount = priorEntries.length;
