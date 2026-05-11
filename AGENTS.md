@@ -241,6 +241,71 @@ If you find yourself with `--force-with-lease` queued against a branch that
 has had multiple sibling tracks land underneath it, the answer is almost
 always "cherry-pick onto fresh," not "force the rebase through."
 
+## CI merge gate
+
+Branch protection on `main` mechanically enforces the operator merge-gate
+policy from `DEC-CI-MERGE-GATE-ENFORCE-001`: **`pnpm -r build` success is
+THE merge gate**. Anything that takes >5 min (`pnpm -r test`, `bootstrap
+--verify`, wave-3 parity, B6a air-gap) runs as advisory or post-merge and
+does NOT gate merges.
+
+### Required status checks
+
+The following four `pr-ci.yml` jobs MUST pass before main accepts a merge:
+
+- `lint (full workspace)` — Biome `useLiteralKeys`, `noNonNullAssertion`,
+  format. Workspace-wide.
+- `typecheck (full workspace)` — `tsc --noEmit` across all packages.
+- `build (full workspace)` — `pnpm -r build`. Per `DEC-CI-MERGE-GATE-ENFORCE-002`
+  amended 2026-05-11 (#320), the build step is the load-bearing gate;
+  tests are advisory only.
+- `branch hygiene check` — `scripts/pre-pr-check.sh` for stale-rebase
+  damage detection (cross-track deletion guard).
+
+### Explicitly NOT gating
+
+- `test (affected packages, advisory)` — runs `pnpm $FILTER test` with
+  `continue-on-error: true` at the job level. Failure surfaces in the PR
+  UI for fast feedback but does NOT block the merge button.
+- `B6a air-gap benchmark` — runs separately; not in required-checks list
+  (legitimate B6a issues are tracked separately at #190).
+- `bootstrap --verify`, wave-3-parity — async via push:main on their own
+  workflow files.
+
+### Knob choices (`DEC-CI-MERGE-GATE-ENFORCE-004`)
+
+- `enforce_admins=false` — retains `gh pr merge --admin` as operator
+  escape valve for the failure mode where the gate itself is broken.
+- `required_pull_request_reviews=null` — the canonical reviewer agent is
+  the technical-readiness authority per the canonical chain in CLAUDE.md;
+  no human PR review required on top.
+- `allow_force_pushes=false` — Sacred Practice #2 (Main is Sacred).
+- `allow_deletions=false` — history-preservation invariant.
+
+### Operator-decision boundary (`DEC-CI-MERGE-GATE-ENFORCE-005`)
+
+The `gh api -X PUT repos/cneckar/yakcc/branches/main/protection` call is a
+state-of-repository change beyond a normal source commit. The orchestrator
+MUST surface the proposed JSON to the operator for confirmation BEFORE
+the API call is issued. This applies to:
+
+- Initial protection turn-on
+- Adding a new required-status-check name (e.g., when B6a stabilizes)
+- Removing or relaxing any knob
+
+The orchestrator surfaces the proposed JSON via a comment on the WI issue;
+operator runs the command themselves after confirming. The proposed JSON
+for the initial turn-on lives at `tmp/wi-297-planning/wi-297-branch-protection-proposed.json`.
+
+### Inspect current state
+
+```bash
+gh api repos/cneckar/yakcc/branches/main/protection --jq '.required_status_checks'
+```
+
+Returns 404 "Branch not protected" if no protection is configured.
+Returns the contexts JSON if protection is on.
+
 ## When stuck
 
 Surface the blocker. Do not guess.
