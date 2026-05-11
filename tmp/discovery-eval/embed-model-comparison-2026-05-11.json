@@ -1,91 +1,98 @@
 {
-  "version": 1,
+  "version": 2,
   "date": "2026-05-11",
-  "wi": "WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT",
-  "issue": "#326",
+  "wi": "WI-V3-DISCOVERY-D5-EMBED-MODEL-RUN",
+  "issue": "#335",
+  "closes": "DEC-V3-INITIATIVE-002 measurement gate",
+  "runs_executed_by": "operator (local Windows, HuggingFace access) — documented from PR #336",
   "baseline_model": "Xenova/all-MiniLM-L6-v2",
   "baseline_m2": 0.625,
   "baseline_m3": 0.925,
   "baseline_m4": 0.742,
   "target_m2": 0.70,
   "schema_dim_constraint": 384,
-  "schema_constraint_note": "vec0 schema hardcoded to FLOAT[384] (packages/registry/src/schema.ts:218). 768-dim models require a schema migration before benchmarking. Out of scope for this WI.",
-  "run_environment": "FuckGoblin cloud sandbox — HuggingFace network blocked; model downloads not possible",
+  "decision": "WINNER: Xenova/bge-small-en-v1.5 — M2=70.0% (target met); default swapped in PR #336",
   "candidates": [
     {
       "model_id": "Xenova/all-MiniLM-L6-v2",
       "dimension": 384,
       "license": "MIT",
       "family": "all-MiniLM",
-      "notes": "Current default. General-purpose sentence embedding. SBERT score ~58.8 on MTEB.",
+      "notes": "Prior default. General-purpose sentence embedding. SBERT score ~58.8 on MTEB.",
       "m2": 0.625,
       "m3": 0.925,
       "m4": 0.742,
-      "run_status": "baseline (from post-#322 measurement)"
+      "strong_band": null,
+      "run_status": "baseline (from post-#322 measurement)",
+      "verdict": "below M2 target"
     },
     {
       "model_id": "Xenova/bge-small-en-v1.5",
       "dimension": 384,
       "license": "MIT",
       "family": "BGE",
-      "notes": "BGE (BAAI General Embeddings) retrieval model. Designed for dense retrieval (similar to yakcc's use case). Outperforms MiniLM on MTEB retrieval tasks. Top recommended candidate.",
-      "m2": null,
-      "m3": null,
-      "m4": null,
-      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+      "notes": "BGE (BAAI General Embeddings) dense-retrieval specialist. MTEB retrieval > MiniLM. Auto-accept gate fires on 72% of queries (36/50 strong-band). D2 gate active.",
+      "m2": 0.700,
+      "m3": 1.000,
+      "m4": 0.823,
+      "strong_band": "36/50",
+      "per_category": {
+        "behavior-only":           { "m2": 0.750, "m3": 1.000, "m4": 0.854 },
+        "guarantees-stressed":     { "m2": 0.625, "m3": 1.000, "m4": 0.771 },
+        "error-condition-stressed": { "m2": 0.500, "m3": 1.000, "m4": 0.698 },
+        "non-functional-stressed": { "m2": 0.750, "m3": 1.000, "m4": 0.875 },
+        "multi-aspect":            { "m2": 0.875, "m3": 1.000, "m4": 0.917 }
+      },
+      "run_status": "RAN",
+      "idempotency": "confirmed (pnpm --filter @yakcc/registry test clean; bge-small now default via PR #336)",
+      "verdict": "WINNER — M2 target met; default swapped"
     },
     {
       "model_id": "Xenova/e5-small-v2",
       "dimension": 384,
       "license": "MIT",
       "family": "E5",
-      "notes": "Microsoft E5 embedding model. Strong on MTEB retrieval benchmarks. Requires instruction prefix 'query: ' for queries (special preprocessing needed). Second recommended candidate.",
-      "m2": null,
-      "m3": null,
-      "m4": null,
-      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+      "notes": "Microsoft E5 model. Mis-calibrated without 'query: ' prefix. Tested without prefix per plan (baseline gap check first). Results confirm reject.",
+      "m2": 0.525,
+      "m3": 0.875,
+      "m4": 0.653,
+      "strong_band": "mis-calibrated",
+      "run_status": "RAN",
+      "verdict": "Reject — below baseline on all metrics; prefix-wrapper work deferred"
     },
     {
       "model_id": "Xenova/all-MiniLM-L12-v2",
       "dimension": 384,
       "license": "MIT",
       "family": "all-MiniLM",
-      "notes": "12-layer variant of current model; same 384-dim output; generally +1-3pt over L6 on semantic similarity tasks.",
-      "m2": null,
-      "m3": null,
-      "m4": null,
-      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
-    },
-    {
-      "model_id": "Xenova/paraphrase-MiniLM-L6-v2",
-      "dimension": 384,
-      "license": "MIT",
-      "family": "paraphrase-MiniLM",
-      "notes": "Trained for paraphrase detection. May not outperform all-MiniLM for code-spec retrieval. Lower priority.",
-      "m2": null,
-      "m3": null,
-      "m4": null,
-      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+      "notes": "12-layer variant. Marginally higher M2 (72.5%) than bge-small but 0/50 strong-band — entire corpus collapses to weak band. D2 auto-accept gate never fires; discovery would always surface 'weak match, choose' defeating D-HOOK-4 inline-substitution contract.",
+      "m2": 0.725,
+      "m3": 0.975,
+      "m4": 0.824,
+      "strong_band": "0/50 (collapse)",
+      "run_status": "RAN",
+      "verdict": "Reject — strong-band collapse; D2 auto-accept never fires despite higher M2"
     },
     {
       "model_id": "Xenova/all-mpnet-base-v2",
       "dimension": 768,
       "license": "MIT",
       "family": "all-mpnet",
-      "notes": "768-dim model; requires schema migration (FLOAT[384] → FLOAT[768]). OUT OF SCOPE for this WI. File WI-V3-DISCOVERY-D6-DIM-MIGRATION if this WI's 384-dim results don't close the gap.",
+      "notes": "768-dim; requires schema migration (FLOAT[384] → FLOAT[768]). Out of scope for this WI.",
       "m2": null,
       "m3": null,
       "m4": null,
-      "run_status": "OUT_OF_SCOPE — requires schema dimension migration"
+      "run_status": "OUT_OF_SCOPE — requires schema dimension migration",
+      "verdict": "Out of scope"
     }
   ],
-  "infrastructure_delivered": {
-    "factory_param": "createLocalEmbeddingProvider(modelId?, dimension?) now accepts optional params",
-    "env_var_model": "DISCOVERY_EMBED_MODEL=<model-id>",
-    "env_var_dim": "DISCOVERY_EMBED_DIM=<dimension>",
-    "local_known_models": "LOCAL_KNOWN_MODELS exported from @yakcc/contracts — validated registry of offline-capable MIT/Apache models",
-    "usage_example": "DISCOVERY_EVAL_PROVIDER=local DISCOVERY_EMBED_MODEL=Xenova/bge-small-en-v1.5 DISCOVERY_EMBED_DIM=384 pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts"
-  },
-  "recommendation": "Run bge-small-en-v1.5 first (most promising for retrieval tasks). If M2 >= 70%: swap default in packages/contracts/src/embeddings.ts. If M2 < 70% across all 384-dim candidates: file WI-V3-CORPUS-FIELD-COVERAGE-EXPAND.",
-  "decision": "PENDING_RUNS"
+  "outcome": {
+    "decision_branch": "M2 >= 70% — swap default",
+    "winner": "Xenova/bge-small-en-v1.5",
+    "winner_m2": 0.700,
+    "winner_m3": 1.000,
+    "winner_m4": 0.823,
+    "action_taken": "Default swapped in packages/contracts/src/embeddings.ts (PR #336); DEC-EMBED-MODEL-DEFAULT-002 recorded in MASTER_PLAN; DEC-V3-INITIATIVE-002 closed",
+    "follow_up_wis": "none required — target met; D1 multi-vector definitively unjustified (multi-aspect is bge-small's best category)"
+  }
 }
