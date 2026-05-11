@@ -140,6 +140,48 @@ export interface BlockTripletRow {
    * Null / absent when not snapshotted or for local blocks.
    */
   readonly foreignDtsHash?: string | null;
+
+  // ---------------------------------------------------------------------------
+  // Migration-7 fields (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / P1)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Workspace package directory from which this atom was shaved
+   * (e.g. `"packages/cli"`). Non-null only for local blocks produced by
+   * `yakcc bootstrap`. Null / absent for foreign atoms, seed blocks, and
+   * compose-time atoms (any caller that does not supply source context).
+   *
+   * Optional (not required) so all pre-v7 callers — federation.ts, seed.ts,
+   * assemble-candidate.ts — compile without changes (T11 invariant).
+   * First-observed-wins via INSERT OR IGNORE in storeBlock; a second store with
+   * null does not overwrite an existing non-null value.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   */
+  readonly sourcePkg?: string | null;
+
+  /**
+   * Workspace-relative path of the originating .ts source file
+   * (e.g. `"packages/cli/src/commands/compile.ts"`). Non-null only for local
+   * blocks produced by `yakcc bootstrap`. Null / absent otherwise.
+   *
+   * sourcePkg is always a prefix of sourceFile when both are non-null.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   */
+  readonly sourceFile?: string | null;
+
+  /**
+   * Byte offset of the atom's `implSource` within `sourceFile`. Used to sort
+   * multiple atoms from the same file when reconstructing source order during
+   * compile-self (P2). Null when unknown (all pre-v7 rows, foreign atoms,
+   * seed blocks).
+   *
+   * NOT folded into blockMerkleRoot — provenance is metadata only.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   */
+  readonly sourceOffset?: number | null;
 }
 
 /**

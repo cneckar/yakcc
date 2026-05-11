@@ -109,6 +109,31 @@ interface BlockRow {
    * Only meaningful when kind='foreign'.
    */
   foreign_dts_hash: string | null;
+
+  // ---------------------------------------------------------------------------
+  // Migration-7 fields (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / P1)
+  // NULL for all pre-v7 rows (no backfill UPDATE — forbidden shortcut #4).
+  // Provenance is populated by re-running `yakcc bootstrap`.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Workspace package directory (e.g. 'packages/cli'). NULL for foreign atoms,
+   * seed blocks, and all pre-v7 rows. First-observed-wins via INSERT OR IGNORE.
+   */
+  source_pkg: string | null;
+
+  /**
+   * Workspace-relative path of the originating .ts source file
+   * (e.g. 'packages/cli/src/commands/compile.ts'). NULL for foreign atoms,
+   * seed blocks, and all pre-v7 rows.
+   */
+  source_file: string | null;
+
+  /**
+   * Byte offset of the atom's implSource within source_file. NULL when unknown.
+   * NOT folded into blockMerkleRoot — provenance is metadata only.
+   */
+  source_offset: number | null;
 }
 
 interface TestHistoryRow {
@@ -251,6 +276,14 @@ class SqliteRegistry implements Registry {
     // rows arrive without the field populated.
     const implAstHash = row.canonicalAstHash;
 
+    // @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+    // INSERT OR IGNORE is the load-bearing first-observed-wins mechanism.
+    // A second storeBlock call for the same blockMerkleRoot with null provenance
+    // does NOT overwrite the existing non-null provenance — the entire row is
+    // ignored on conflict (UNIQUE constraint on block_merkle_root PRIMARY KEY).
+    // This is correct: the registry is monotonic; provenance is set at first-write
+    // and never changed. Callers that need to update provenance must not assume
+    // a second storeBlock will succeed — it will silently no-op per this design.
     const insertBlock = this.db.prepare<
       [
         string,
@@ -266,9 +299,12 @@ class SqliteRegistry implements Registry {
         string | null,
         string | null,
         string | null,
+        string | null,
+        string | null,
+        number | null,
       ]
     >(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -310,6 +346,15 @@ class SqliteRegistry implements Registry {
         row.foreignPkg ?? null,
         row.foreignExport ?? null,
         row.foreignDtsHash ?? null,
+        // Migration-7 columns (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / P1).
+        // Optional fields: callers that omit them (federation.ts, seed.ts,
+        // assemble-candidate.ts) pass null — correct for non-bootstrap atoms.
+        // Bootstrap walker sets real values for local atoms via ShaveOptions.
+        // INSERT OR IGNORE means first-observed-wins: if the row already exists
+        // with non-null provenance, this second store is a silent no-op.
+        row.sourcePkg ?? null,
+        row.sourceFile ?? null,
+        row.sourceOffset ?? null,
       );
       // Only write the embedding if the spec_hash doesn't already have one.
       // Check by attempting DELETE (no-op if absent) then INSERT.
@@ -1312,6 +1357,13 @@ function hydrateBlock(row: BlockRow, artifactRows: readonly BlockArtifactRow[]):
     foreignPkg: row.foreign_pkg ?? null,
     foreignExport: row.foreign_export ?? null,
     foreignDtsHash: row.foreign_dts_hash ?? null,
+    // Migration-7 fields (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / P1).
+    // Pre-v7 rows return null for all three fields — the correct sentinel for
+    // atoms that predate provenance tracking. Callers must treat null as
+    // "unknown provenance", not as "no source file exists".
+    sourcePkg: row.source_pkg ?? null,
+    sourceFile: row.source_file ?? null,
+    sourceOffset: row.source_offset ?? null,
   };
 }
 
