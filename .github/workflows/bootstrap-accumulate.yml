@@ -61,13 +61,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build all packages (required before bootstrap shave)
-        run: pnpm build
+        # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-FIX (#339)
+        # Use `pnpm -r build` (full workspace recursive) to match bootstrap.yml exactly.
+        # `pnpm build` is turbo-routed and works in principle, but mirroring the sibling
+        # workflow eliminates a two-implementations-of-the-same-thing divergence risk.
+        run: pnpm -r build
 
       - name: Run additive bootstrap
-        # bootstrap is now additive (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001):
+        # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-FIX (#339)
+        # FIXED: `pnpm yakcc bootstrap` was broken since 7e68860 (2026-05-11).
+        # Root-package.json defines `yakcc` as `pnpm --filter @yakcc/cli exec yakcc`.
+        # `pnpm exec` only adds DEPENDENCY bins to PATH; it does NOT add the filtered
+        # package's OWN bin. `yakcc` is declared BY @yakcc/cli itself, so the shim
+        # cannot find it — resulting in ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL on every run.
+        # Fix mirrors the working pattern from bootstrap.yml (line 100): invoke the built
+        # CLI binary directly, bypassing pnpm exec entirely.
+        # bootstrap is additive (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001):
         # prior entries are retained; new entries from this shave are merged in.
         # Output: "bootstrap: prior=N, shaved=M, added=K, total=N+K"
-        run: pnpm yakcc bootstrap
+        run: node packages/cli/dist/bin.js bootstrap
 
       - name: Push updated manifest to main if changed
         run: |
