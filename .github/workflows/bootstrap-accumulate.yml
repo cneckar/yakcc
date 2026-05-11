@@ -90,10 +90,28 @@ jobs:
         run: node packages/cli/dist/bin.js bootstrap
 
       - name: Push updated manifest to main if changed
+        # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-PUSH-RACE (#364)
+        # Wraps push in retry-with-rebase so non-fast-forward races against sister
+        # merges resolve cleanly. The accumulator is monotonically additive per
+        # DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001, so rebasing on top of sister merges
+        # produces the correct final state. NO --force-with-lease (could overwrite
+        # sister merges per issue body Option C rejection). Follow-up to WI-339,
+        # WI-348 in the bootstrap-accumulate triage chain.
         run: |
           git diff --quiet bootstrap/expected-roots.json && echo "No new atoms — manifest unchanged." && exit 0
           git config user.name  "ci-bootstrap"
           git config user.email "ci-bootstrap@yakcc"
           git add bootstrap/expected-roots.json
           git commit -m "ci: accumulate atoms from ${{ github.event_name }} ${{ github.ref }}"
-          git push origin main
+
+          # Retry up to 3 times with pull-rebase between attempts (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
+          for i in 1 2 3; do
+            if git push origin main; then
+              echo "Pushed on attempt $i"
+              exit 0
+            fi
+            echo "Push attempt $i failed; pulling and rebasing..."
+            git pull --rebase origin main || { echo "Rebase conflict on attempt $i; bailing"; exit 1; }
+          done
+          echo "All 3 push attempts failed"
+          exit 1
