@@ -28,10 +28,13 @@
 //   P1.1g — violations from own-package tsconfig are zero (own source is strict-clean)
 // ---------------------------------------------------------------------------
 
-import * as fc from "fast-check";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ProjectValidationResult, validateStrictSubsetProject } from "./strict-subset-project.js";
+import * as fc from "fast-check";
+import {
+  type ProjectValidationResult,
+  validateStrictSubsetProject,
+} from "./strict-subset-project.js";
 
 // ---------------------------------------------------------------------------
 // Fixture: @yakcc/ir package tsconfig.json

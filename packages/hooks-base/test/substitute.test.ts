@@ -31,14 +31,14 @@ import {
 function makeCandidate(cosineDistance: number, blockMerkleRoot = "deadbeef") {
   return {
     block: {
-      blockMerkleRoot,
-      specHash: "aabbcc" as import("@yakcc/contracts").SpecHash,
+      blockMerkleRoot: blockMerkleRoot as unknown as import("@yakcc/contracts").BlockMerkleRoot,
+      specHash: "aabbcc" as unknown as import("@yakcc/contracts").SpecHash,
       specCanonicalBytes: new Uint8Array(0),
       implSource: `export function stub(): void {}`,
       proofManifestJson: "{}",
       level: "L0" as const,
       createdAt: 0,
-      canonicalAstHash: "00112233" as import("@yakcc/contracts").CanonicalAstHash,
+      canonicalAstHash: "00112233" as unknown as import("@yakcc/contracts").CanonicalAstHash,
       artifacts: new Map<string, Uint8Array>(),
     },
     cosineDistance,

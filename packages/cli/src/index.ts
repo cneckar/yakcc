@@ -212,7 +212,7 @@ export async function runCli(
 
     case "query": {
       const queryArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return query(queryArgv, logger);
+      return query(queryArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "search": {

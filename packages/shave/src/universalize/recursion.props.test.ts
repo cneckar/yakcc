@@ -8,28 +8,30 @@ import * as Props from "./recursion.props.js";
 
 describe("universalize/recursion.ts — property corpus", () => {
   // DEC-REC-P1: leafCount is always a positive integer
+  // Each iteration runs decompose() (real ts-morph parse + IR validate ≈ 0.8s);
+  // cap numRuns to stay within the 30s testTimeout (10 × 0.8s ≈ 8s budget).
   it("property: decompose — leafCount is a positive integer for any non-throwing call", async () => {
-    await fc.assert(Props.prop_decompose_leafCount_is_positive_integer);
+    await fc.assert(Props.prop_decompose_leafCount_is_positive_integer, { numRuns: 10 });
   });
 
   // DEC-REC-P2: maxDepth is always a non-negative integer
   it("property: decompose — maxDepth is a non-negative integer", async () => {
-    await fc.assert(Props.prop_decompose_maxDepth_is_non_negative);
+    await fc.assert(Props.prop_decompose_maxDepth_is_non_negative, { numRuns: 10 });
   });
 
   // DEC-REC-P3: root.kind is "atom" or "branch"
   it("property: decompose — root.kind is always atom or branch", async () => {
-    await fc.assert(Props.prop_decompose_root_kind_is_atom_or_branch);
+    await fc.assert(Props.prop_decompose_root_kind_is_atom_or_branch, { numRuns: 10 });
   });
 
   // DEC-REC-P4: atom root implies leafCount=1 and maxDepth=0
   it("property: decompose — atom root implies leafCount=1 and maxDepth=0", async () => {
-    await fc.assert(Props.prop_decompose_atom_root_implies_leafCount_1_maxDepth_0);
+    await fc.assert(Props.prop_decompose_atom_root_implies_leafCount_1_maxDepth_0, { numRuns: 10 });
   });
 
   // DEC-REC-P5: root.canonicalAstHash is a 64-char lowercase hex string
   it("property: decompose — root.canonicalAstHash is a 64-char lowercase hex string", async () => {
-    await fc.assert(Props.prop_decompose_root_canonicalAstHash_is_64_char_hex);
+    await fc.assert(Props.prop_decompose_root_canonicalAstHash_is_64_char_hex, { numRuns: 10 });
   });
 
   // DEC-REC-P6: RecursionDepthExceededError.depth > .maxDepth
@@ -44,7 +46,7 @@ describe("universalize/recursion.ts — property corpus", () => {
 
   // DEC-REC-P8: empty registry + 0-CF source always produces atom root
   it("property: decompose — 0-CF source with empty registry always produces atom root", async () => {
-    await fc.assert(Props.prop_decompose_zero_cf_always_produces_atom_root);
+    await fc.assert(Props.prop_decompose_zero_cf_always_produces_atom_root, { numRuns: 10 });
   });
 
   // Compound: real parse sequence → branch + atom invariants.
