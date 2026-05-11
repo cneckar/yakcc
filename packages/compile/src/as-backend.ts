@@ -509,6 +509,110 @@
 //
 // See also: DEC-AS-GC-LAYOUT-001 and DEC-AS-GC-ORACLE-001 in gc-parity.test.ts
 // for flat-memory layout constants (GC_BASE_PTR = 24576) and oracle details.
+//
+// @decision DEC-AS-CLOSURE-STRATEGY-001
+// Title: assemblyScriptBackend() closure-capture support is exercised by per-substrate
+//        probes that document COMPILE OK / COMPILE FAIL / RUNTIME TRAP under the
+//        existing --runtime stub baseline; the static-function + dispatch-table
+//        substrate (top-level functions indexed by integer, no captures) is the
+//        production-supported "closure opt-out" equivalent for callback-style use
+//        cases in v1; full closure capture (arrow functions with primitive or managed
+//        captures, Array.map/filter/reduce with arrow predicates, bound class methods)
+//        is deferred to a future phase that adopts --runtime minimal/full.
+// Status: decided (WI-AS-PHASE-2F-CLOSURES, Issue #230, 2026-05-10)
+// Rationale:
+//   AssemblyScript closures under --runtime stub are constrained by the absence of
+//   a GC heap. Closure context allocation (the object that captures variables from
+//   an enclosing scope) is a GC feature: the context object must be pinned and
+//   tracked across function returns. Under --runtime stub there is no GC, so asc
+//   0.28.x rejects closure forms that require a capture context at compile time.
+//
+//   The forms probed in closures-parity.test.ts (C1-C5), observed 2026-05-10:
+//
+//   (C1) Array.map(x => x * 2) closure passed to managed Array.map():
+//        COMPILE FAIL — anchored by arrays-parity.test.ts A5 finding (lines 525-533).
+//        asc 0.28.x rejects arrow-function closures in managed Array.map() under
+//        --runtime stub: managed Array requires a GC heap, and passing an arrow
+//        function as a callback requires a function-typed variable which asc also
+//        rejects under stub for the same closure-context reason.
+//        Cross-sibling anchor: this finding mirrors arrays-parity A5 exactly.
+//        If C1 compiles OK on a future asc build, it contradicts arrays-parity A5
+//        — surface inconsistency to user; do NOT silently update either finding.
+//
+//   (C2) No-capture arrow function stored in a typed variable:
+//        `const f: (x: i32) => i32 = (x: i32): i32 => x * 2;`
+//        COMPILE FAIL — asc 0.28.x rejects function-typed variables holding arrow
+//        functions under --runtime stub. Even with no captured variables, the
+//        function-as-value form requires a closure context object (the AS function
+//        pointer + optional environment). asc emits "Not yet supported: Closures"
+//        for this form. Boundary probe: reveals that the closure rejection is not
+//        about capture presence but about the function-as-value type itself.
+//
+//   (C3) Primitive-capture closure `let n: i32 = 5; (x: i32) => x + n`:
+//        COMPILE FAIL — as expected. Closure capturing an i32 requires a context
+//        object to hold `n`. Context allocation is GC-managed. --runtime stub has
+//        no GC heap, so asc 0.28.x rejects the form at compile time with the
+//        same "Not yet supported: Closures" error as C2.
+//
+//   (C4) Capture of an @unmanaged class pointer reference:
+//        COMPILE FAIL — as expected. Anchored by GC-parity G3 boundary precedent
+//        (nullable managed reference fields COMPILE FAIL). Closures capturing any
+//        reference-type variable (managed or unmanaged pointer) are still rejected
+//        because the closure context itself must be GC-managed regardless of the
+//        captured value's type.
+//
+//   (C5) Static-function + dispatch-table (positive baseline):
+//        COMPILE OK + value parity — top-level `function double(x: i32): i32`
+//        and `function addOne(x: i32): i32` invoked through an exported integer-
+//        indexed dispatch switch. No closure context, no captures: this is pure
+//        static dispatch through named functions, equivalent to C function pointers.
+//        This is the production-supported "closure opt-out" for callback-style APIs
+//        in v1. 5 fixed cases + 20 fast-check runs confirm value parity vs TS ref.
+//
+//   Summary (asc 0.28.x --runtime stub, observed 2026-05-10):
+//     C1: COMPILE FAIL (.map(x=>x*2) — closure passed to managed Array)
+//     C2: COMPILE FAIL (no-capture lambda stored in typed variable)
+//     C3: COMPILE FAIL (primitive-capture closure)
+//     C4: COMPILE FAIL (reference-type-capture closure)
+//     C5: COMPILE OK + parity (static-function dispatch table, no captures)
+//
+//   Key finding: ALL closure forms (C1-C4) COMPILE FAIL under --runtime stub,
+//   regardless of capture kind (zero, primitive, or reference). The rejection is
+//   not about the captured value's GC-ness — it is about the closure form itself.
+//   asc 0.28.x reserves closure support for --runtime minimal/full (the GC tiers).
+//
+//   Alternatives rejected:
+//
+//   (Alt B) Flip --runtime to minimal/incremental/full for the closures test only:
+//       Rejected. Same rationale as DEC-AS-GC-STRATEGY-001 Alt B: requires either
+//       (a) a per-call runtime override field in AsBackendOptions (new emit mode —
+//       parallel mechanism, Sacred Practice #12) or (b) a parallel factory
+//       assemblyScriptBackendClosures() (explicit dual-authority). Both diverge
+//       from the sibling-established invariant. Documented; not done.
+//
+//   (Alt C) Skip closures entirely; mark #230 as impossible:
+//       Rejected. Operator's 2026-05-10 unblock comment explicitly approved Option
+//       (a) and said "you can start implementation NOW". The probe pattern used by
+//       every Phase 2 sibling is the correct shape — it documents reality.
+//
+//   (Alt E) Defer until --runtime minimal is adopted:
+//       Rejected per operator's explicit guidance. Documenting the closure boundary
+//       IS the differentiating value of the AS pivot vs wave-3 (which never lowered
+//       closures at all). This slice closes #230 by mapping the boundary exactly.
+//
+//   Decision: Probe-and-static-dispatch-table pattern for v1. ALL four closure
+//   probe forms (C1-C4) COMPILE FAIL under --runtime stub. The C5 static-function
+//   dispatch table COMPILE OK + parity path is the production-supported equivalent
+//   for callback-style use cases. Full closure capture is deferred to a future
+//   phase that adopts --runtime minimal/full.
+//
+//   Cross-links: #230 (this WI), #232 (GC slice — DEC-AS-GC-STRATEGY-001),
+//   arrays-parity.test.ts A5 (C1 cross-sibling anchor),
+//   DEC-AS-MULTI-EXPORT-001 (parent Phase 2A.0).
+//
+// See also: DEC-AS-CLOSURE-LAYOUT-001 and DEC-AS-CLOSURE-ORACLE-001 in
+// closures-parity.test.ts for flat-memory layout constants
+// (CLO_BASE_PTR = 32768) and oracle details.
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
