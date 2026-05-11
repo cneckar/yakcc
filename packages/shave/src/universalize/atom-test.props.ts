@@ -183,8 +183,8 @@ export const prop_isAtom_zero_cf_empty_registry_is_always_atomic: fc.IAsyncPrope
  * the registry is consulted. A result with a different reason indicates the
  * short-circuit is broken.
  */
-export const prop_isAtom_excess_cf_returns_too_many_cf_boundaries: fc.IAsyncProperty<[undefined]> =
-  fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_isAtom_excess_cf_returns_too_many_cf_boundaries =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
     // Source with exactly 2 CF boundaries (if + for): exceeds maxCF=0.
     const source =
       "function f(x: number) { if (x > 0) { for (let i = 0; i < 10; i++) {} } return 0; }";
@@ -212,8 +212,8 @@ export const prop_isAtom_excess_cf_returns_too_many_cf_boundaries: fc.IAsyncProp
  * in atom-test.ts. If this default ever changed silently, previously-atomic
  * nodes would be reclassified as non-atomic, breaking the decompose tree.
  */
-export const prop_isAtom_undefined_options_uses_default_max_cf_1: fc.IAsyncProperty<[undefined]> =
-  fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_isAtom_undefined_options_uses_default_max_cf_1 =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
     // Exactly 1 CF boundary (single if) → atomic with default maxCF=1.
     const source = "function f(x: number) { if (x > 0) return x; return 0; }";
     const { file } = parseSource(source);
@@ -239,12 +239,8 @@ export const prop_isAtom_undefined_options_uses_default_max_cf_1: fc.IAsyncPrope
  * Invariant (AT-REG-1, DEC-ATOM-TEST-003): criteria 1 and 2 both pass for
  * 0-CF nodes with an empty registry. Any non-atomic result indicates a bug.
  */
-export const prop_isAtom_empty_registry_zero_cf_options_sweep_always_atomic: fc.IAsyncProperty<
-  [AtomTestOptions]
-> = fc.asyncProperty(
-  fc.record({
-    maxControlFlowBoundaries: fc.option(fc.nat({ max: 10 }), { nil: undefined }),
-  }),
+export const prop_isAtom_empty_registry_zero_cf_options_sweep_always_atomic = fc.asyncProperty(
+  fc.record({ maxControlFlowBoundaries: fc.nat({ max: 10 }) }, { requiredKeys: [] }),
   async (opts) => {
     const source = "function g(a: string): string { return a.trim(); }";
     const { file } = parseSource(source);
@@ -306,9 +302,8 @@ export const prop_isAtom_matchedPrimitive_absent_for_non_contains_reason: fc.IAs
  * Invariant (AT-REG-2, DEC-ATOM-TEST-003): criterion 2 is reachable. Without
  * this property a bug where the registry is never consulted could go unnoticed.
  */
-export const prop_isAtom_always_match_registry_triggers_contains_known_primitive: fc.IAsyncProperty<
-  [undefined]
-> = fc.asyncProperty(fc.constant(undefined), async () => {
+export const prop_isAtom_always_match_registry_triggers_contains_known_primitive =
+  fc.asyncProperty(fc.constant<undefined>(undefined), async () => {
   // Two-statement function body: first statement can match the always-match registry.
   const source = "function f(x: number) { const y = x * 2; return y + 1; }";
   const { file } = parseSource(source);
