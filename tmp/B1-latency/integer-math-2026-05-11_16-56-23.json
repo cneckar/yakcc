@@ -1,0 +1,51 @@
+{
+  "slice": "integer-math",
+  "timestamp": "2026-05-11T16:56:23.369Z",
+  "corpus": {
+    "sha256": "8751f00ea8b4ed625888fb5a89a96e584eb0a941d452879f642c6b3d98b8569f",
+    "size_bytes": 104857600
+  },
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 9 9950X 16-Core Processor            ",
+    "cpu_count": 32,
+    "total_mem_gb": 125.7,
+    "node": "v22.14.0",
+    "rust": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "yakcc_head": "774f4fc"
+  },
+  "results": [
+    {
+      "comparator": "rust",
+      "p50_ms": 37.9159,
+      "p95_ms": 38.7005,
+      "p99_ms": 39.2726,
+      "mean_ms": 38.055311,
+      "throughput_mb_per_sec": 2627.75,
+      "iterations": 1000
+    },
+    {
+      "comparator": "ts-node",
+      "p50_ms": 38.392399999997,
+      "p95_ms": 38.992200000000594,
+      "p99_ms": 39.41829999999936,
+      "mean_ms": 38.35711960000005,
+      "throughput_mb_per_sec": 2607.077930846504,
+      "iterations": 1000
+    },
+    {
+      "comparator": "yakcc-as",
+      "p50_ms": 273.8752000000095,
+      "p95_ms": 290.0195999999996,
+      "p99_ms": 303.19779999999446,
+      "mean_ms": 272.80475339999975,
+      "throughput_mb_per_sec": 366.56252779208387,
+      "iterations": 1000
+    }
+  ],
+  "verdict": {
+    "yakcc_vs_rust_degradation_pct": 616.86,
+    "vs_pass_bar_15pct": "kill"
+  }
+}

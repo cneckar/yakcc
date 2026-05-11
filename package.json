@@ -11,7 +11,8 @@
     "lint": "turbo run lint",
     "strict-subset": "turbo run strict-subset",
     "yakcc": "pnpm --filter @yakcc/cli exec yakcc",
-    "bench:airgap": "node bench/B6-airgap/run.mjs"
+    "bench:airgap": "node bench/B6-airgap/run.mjs",
+    "bench:latency:integer-math": "node bench/B1-latency/integer-math/run.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

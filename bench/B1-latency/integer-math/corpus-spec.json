@@ -1,0 +1,9 @@
+{
+  "algorithm": "xorshift32",
+  "seed": "0xDEADBEEF",
+  "seed_decimal": 3735928559,
+  "size_bytes": 104857600,
+  "sha256": "8751f00ea8b4ed625888fb5a89a96e584eb0a941d452879f642c6b3d98b8569f",
+  "generated_at": "2026-05-11T16:27:19.822Z",
+  "note": "Deterministic: regenerating with same algorithm+seed always produces the same buffer and hash."
+}
