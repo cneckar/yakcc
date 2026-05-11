@@ -2152,7 +2152,8 @@ describe("findCandidatesByQuery — T2: symmetric round-trip via canonicalizeQue
    */
   it("behavior-matched spec ranks above unrelated spec via canonicalizeQueryText alignment", async () => {
     // specA behavior textually close to the query; specB behavior unrelated.
-    const queryBehavior = "Compute the modular inverse of an integer using the extended Euclidean algorithm";
+    const queryBehavior =
+      "Compute the modular inverse of an integer using the extended Euclidean algorithm";
     const specA = makeSymmetricSpecYak(queryBehavior);
     // Unrelated behavior — semantically very different text for the mock embedder.
     const specB = makeSymmetricSpecYak("Render a 3D scene using ray marching");
@@ -2174,8 +2175,12 @@ describe("findCandidatesByQuery — T2: symmetric round-trip via canonicalizeQue
     expect(foundA).toBe(true);
 
     // Retrieve both candidates for ranking assertion.
-    const candidateA = result.candidates.find((c) => c.block.blockMerkleRoot === rowA.blockMerkleRoot);
-    const candidateB = result.candidates.find((c) => c.block.blockMerkleRoot === rowB.blockMerkleRoot);
+    const candidateA = result.candidates.find(
+      (c) => c.block.blockMerkleRoot === rowA.blockMerkleRoot,
+    );
+    const candidateB = result.candidates.find(
+      (c) => c.block.blockMerkleRoot === rowB.blockMerkleRoot,
+    );
     expect(candidateA).toBeDefined();
     expect(candidateB).toBeDefined();
 
@@ -2188,7 +2193,10 @@ describe("findCandidatesByQuery — T2: symmetric round-trip via canonicalizeQue
     // combinedScore formula: 1 - d²/4 (DEC-V3-IMPL-QUERY-007 / DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
     // vec0 returns L2 distance; for unit-normalized vectors: combinedScore = 1 - L2²/4.
     // biome-ignore lint/style/noNonNullAssertion: asserted defined above
-    const expectedScoreA = Math.max(0, 1 - (candidateA!.cosineDistance * candidateA!.cosineDistance) / 4);
+    const expectedScoreA = Math.max(
+      0,
+      1 - (candidateA!.cosineDistance * candidateA!.cosineDistance) / 4,
+    );
     // biome-ignore lint/style/noNonNullAssertion: asserted defined above
     expect(candidateA!.combinedScore).toBeCloseTo(expectedScoreA, 10);
   });
@@ -2296,7 +2304,8 @@ describe("findCandidatesByQuery — T4: autoAccepted boundary conditions", () =>
     // autoAccepted requires: top1Score > 0.85 AND (top1Score - top2Score) > 0.15.
     // With only 1 candidate, top2Score = 0, so the gap condition reduces to top1Score > 0.15,
     // which is trivially true. autoAccepted therefore equals (top1Score > 0.85).
-    const behavior = "Compute the modular inverse of an integer using the extended Euclidean algorithm";
+    const behavior =
+      "Compute the modular inverse of an integer using the extended Euclidean algorithm";
     const spec = makeSymmetricSpecYak(behavior);
     const row = makeBlockRow(spec);
     await registry.storeBlock(row);
@@ -2514,8 +2523,8 @@ describe("findCandidatesByQuery — T6: Stage 2 structural filter removes signat
     const card: QueryIntentCard = {
       behavior,
       signature: {
-        inputs: [{ type: "string" }],   // stored spec has number input → mismatch
-        outputs: [{ type: "number" }],  // stored spec has string output → mismatch
+        inputs: [{ type: "string" }], // stored spec has number input → mismatch
+        outputs: [{ type: "number" }], // stored spec has string output → mismatch
       },
     };
     const result = await registry.findCandidatesByQuery(card);
@@ -2586,7 +2595,7 @@ describe("findCandidatesByQuery — T7: Stage 3 strictness filter removes purity
 
     const card: QueryIntentCard = {
       behavior,
-      nonFunctional: { purity: "pure" },  // requires pure; candidate is io → fail
+      nonFunctional: { purity: "pure" }, // requires pure; candidate is io → fail
     };
     const result = await registry.findCandidatesByQuery(card);
 
@@ -2605,7 +2614,10 @@ describe("findCandidatesByQuery — T7: Stage 3 strictness filter removes purity
     const behavior = "Compute the GCD of two non-negative integers";
     const spec: SpecYak = {
       name: "gcd",
-      inputs: [{ name: "a", type: "number" }, { name: "b", type: "number" }],
+      inputs: [
+        { name: "a", type: "number" },
+        { name: "b", type: "number" },
+      ],
       outputs: [{ name: "result", type: "number" }],
       preconditions: [],
       postconditions: [],
@@ -2653,8 +2665,8 @@ describe("findCandidatesByQuery — T8: Stage 5 minScore filter removes low-scor
 
     // Query with a slightly different behavior text → non-trivial cosineDistance.
     const card: QueryIntentCard = {
-      behavior: "Encode bytes as URL-safe base64",  // different text → higher distance
-      minScore: 0.999,  // extremely tight threshold — will reject non-identical embeddings
+      behavior: "Encode bytes as URL-safe base64", // different text → higher distance
+      minScore: 0.999, // extremely tight threshold — will reject non-identical embeddings
     };
     const result = await registry.findCandidatesByQuery(card);
 
@@ -2684,7 +2696,7 @@ describe("findCandidatesByQuery — T8: Stage 5 minScore filter removes low-scor
     await registry.storeBlock(row);
 
     const card: QueryIntentCard = {
-      behavior: "Decode hex to bytes variant",  // slightly different — will have some distance
+      behavior: "Decode hex to bytes variant", // slightly different — will have some distance
       minScore: 0,
     };
     const result = await registry.findCandidatesByQuery(card);
@@ -2715,7 +2727,11 @@ describe("findCandidatesByQuery — T9: Stage 5 ranking + ε=0.02 lex tiebreaker
     const behavior = "Compute the modular exponentiation a^b mod n";
     const specA: SpecYak = {
       name: "modexp-v1",
-      inputs: [{ name: "a", type: "number" }, { name: "b", type: "number" }, { name: "n", type: "number" }],
+      inputs: [
+        { name: "a", type: "number" },
+        { name: "b", type: "number" },
+        { name: "n", type: "number" },
+      ],
       outputs: [{ name: "result", type: "number" }],
       preconditions: [],
       postconditions: [],
@@ -2726,18 +2742,30 @@ describe("findCandidatesByQuery — T9: Stage 5 ranking + ε=0.02 lex tiebreaker
     };
     const specB: SpecYak = {
       name: "modexp-v2",
-      inputs: [{ name: "base", type: "number" }, { name: "exp", type: "number" }, { name: "mod", type: "number" }],
+      inputs: [
+        { name: "base", type: "number" },
+        { name: "exp", type: "number" },
+        { name: "mod", type: "number" },
+      ],
       outputs: [{ name: "result", type: "number" }],
       preconditions: [],
       postconditions: [],
       invariants: [],
       effects: [],
       level: "L0",
-      behavior,  // Same behavior text → same embedding
+      behavior, // Same behavior text → same embedding
     };
 
-    const rowA = makeBlockRow(specA, "export function modexpV1(a: number, b: number, n: number): number { return 0; }", "// v1");
-    const rowB = makeBlockRow(specB, "export function modexpV2(base: number, exp: number, mod: number): number { return 0; }", "// v2");
+    const rowA = makeBlockRow(
+      specA,
+      "export function modexpV1(a: number, b: number, n: number): number { return 0; }",
+      "// v1",
+    );
+    const rowB = makeBlockRow(
+      specB,
+      "export function modexpV2(base: number, exp: number, mod: number): number { return 0; }",
+      "// v2",
+    );
 
     await registry.storeBlock(rowA);
     await registry.storeBlock(rowB);
@@ -2835,8 +2863,9 @@ describe("findCandidatesByQuery — T10: K' = max(topK*5, 50) Stage 1 retrieval 
     const reg = await openIsolatedRegistry();
 
     // Store 11 blocks with distinct but related behaviors.
-    const behaviors = Array.from({ length: 11 }, (_, i) =>
-      `Sort a collection of items by field key variant ${i}`,
+    const behaviors = Array.from(
+      { length: 11 },
+      (_, i) => `Sort a collection of items by field key variant ${i}`,
     );
     for (const b of behaviors) {
       const spec = makeSymmetricSpecYak(b);
@@ -2924,8 +2953,8 @@ describe("findCandidatesByQuery — T11: empty negative-space envelope when 0 su
     const card: QueryIntentCard = {
       behavior,
       signature: {
-        inputs: [{ type: "Buffer" }],    // stored has string[] → structural fail
-        outputs: [{ type: "boolean" }],  // stored has number → structural fail
+        inputs: [{ type: "Buffer" }], // stored has string[] → structural fail
+        outputs: [{ type: "boolean" }], // stored has number → structural fail
       },
       nonFunctional: { purity: "pure" }, // stored is io → strictness fail
     };
