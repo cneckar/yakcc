@@ -145,6 +145,27 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     > {
       return [];
     },
+    // #333: source_file_glue stubs (DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
+    // This mock never uses these methods; stubs satisfy the Registry interface.
+    async storeSourceFileGlue(
+      _entry: import("@yakcc/registry").SourceFileGlueEntry,
+    ): Promise<void> {
+      throw new Error("not implemented in mock");
+    },
+    async getSourceFileGlue(
+      _sourcePkg: string,
+      _sourceFile: string,
+    ): Promise<import("@yakcc/registry").SourceFileGlueEntry | null> {
+      return null;
+    },
+    async listSourceFileGlue(): Promise<readonly import("@yakcc/registry").SourceFileGlueEntry[]> {
+      return [];
+    },
+    async getAtomRangesBySourceFile(
+      _sourceFile: string,
+    ): Promise<readonly { readonly sourceOffset: number; readonly implSourceLength: number }[]> {
+      return [];
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing

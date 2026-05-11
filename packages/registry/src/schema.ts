@@ -56,10 +56,10 @@
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  *
  * L2-I2 invariant: this constant must equal the highest MIGRATION_N_DDL number
- * (currently 7 after the v6 → v7 migration for source-file provenance and
- * workspace-plumbing schema).
+ * (currently 8 after the v7 → v8 migration for per-file glue storage;
+ * DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001 / WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE).
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -554,6 +554,75 @@ const MIGRATION_7_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 7 → 8: add source_file_glue table
+// (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001 /
+//  WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+ * @title Per-file glue lives in a new source_file_glue table (option b); single
+ *   concatenated blob per (source_pkg, source_file); boundaries derived from
+ *   blocks.source_offset at consume time
+ * @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+ * @rationale
+ *   Glue is the byte content of every source file that is NOT covered by any atom's
+ *   implSource. It is stored as a single concatenated blob (not per-region rows)
+ *   because the atom offsets are already authoritative in blocks.source_offset —
+ *   storing region boundaries again would create a dual-authority violation
+ *   (Sacred Practice #12). The consumer (compile-self) derives glue region boundaries
+ *   from blocks.source_offset at reconstruction time.
+ *
+ *   Options rejected:
+ *   (a) Extend workspace_plumbing — would create dual-authority for source .ts files
+ *       (both plumbing whole-file row and atom rows). Sacred Practice #12 violation.
+ *   (c) Promote glue to atoms — glue has no contract (no spec.yak); cannot be
+ *       content-addressed in the BlockMerkleRoot formula. DEC-V2-GLUE-AWARE-SHAVE-001
+ *       explicitly keeps glue project-local.
+ *
+ *   No ownership columns — DEC-NO-OWNERSHIP-011.
+ *   No merkle-root column — glue is workspace-reconstruction metadata, not a
+ *   registry citizen. content_hash is for dedup/integrity only (not a merkle root).
+ *
+ * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001
+ * @title SCHEMA_VERSION 7 → 8; single-phase additive migration matching the
+ *   MIGRATION_7 pattern (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS)
+ * @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+ * @rationale Pure DDL addition; no backfill required (new table starts empty;
+ *   bootstrap re-run populates it). Same idempotent pattern as every prior migration.
+ *   Existing tables and columns are unchanged. Schema bumped from 7 to 8.
+ */
+const MIGRATION_8_DDL: readonly string[] = [
+  // source_file_glue: one row per source file, capturing all non-atom byte regions
+  // as a single concatenated blob.
+  //
+  // source_pkg:    workspace package directory (e.g. 'packages/cli'). Part of PK.
+  // source_file:   workspace-relative path (e.g. 'packages/cli/src/commands/foo.ts'). Part of PK.
+  // content_hash:  BLAKE3-256 hex of content_blob — for integrity checks and dedup.
+  // content_blob:  concatenated bytes of all non-atom regions in source order.
+  //                Byte-spans (glue regions) are: [0, A1.start) ++ [A1.end, A2.start) ++ ...
+  //                ++ [An.end, fileLen). The consumer reconstructs the original file by
+  //                interleaving this blob with atom implSources using blocks.source_offset.
+  // created_at:    Unix epoch milliseconds of first insertion.
+  //
+  // PRIMARY KEY (source_pkg, source_file): one row per source file.
+  // INSERT OR REPLACE semantics for idempotent re-bootstrap.
+  // No ownership columns — DEC-NO-OWNERSHIP-011.
+  // No merkle-root column — DEC-V2-GLUE-AWARE-SHAVE-001 glue-stays-local invariant.
+  `CREATE TABLE IF NOT EXISTS source_file_glue (
+    source_pkg    TEXT    NOT NULL,
+    source_file   TEXT    NOT NULL,
+    content_hash  TEXT    NOT NULL,
+    content_blob  BLOB    NOT NULL,
+    created_at    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source_pkg, source_file)
+  )`,
+
+  // Non-unique index on content_hash for deduplication checks and integrity scans.
+  "CREATE INDEX IF NOT EXISTS idx_source_file_glue_hash ON source_file_glue(content_hash)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -589,6 +658,8 @@ export interface MigrationsDb {
  *   5 → 6: add kind/foreign_* columns + block_foreign_refs table (DEC-V2-FOREIGN-BLOCK-SCHEMA-001).
  *   6 → 7: add source_pkg/source_file/source_offset columns + workspace_plumbing table
  *           (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001).
+ *   7 → 8: add source_file_glue table + hash index
+ *           (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -792,5 +863,22 @@ export function applyMigrations(db: MigrationsDb): void {
       }
     }
     db.prepare("UPDATE schema_version SET version = ?").run(7);
+  }
+
+  // Migration 7 → 8: add source_file_glue table + index
+  // (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001 /
+  //  WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333).
+  //
+  // Pure DDL — CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS are both
+  // naturally idempotent. No ADD COLUMN statements, no try/catch needed.
+  // No backfill: the new table starts empty; `yakcc bootstrap` populates it.
+  // A crash between the first DDL statement and the version bump leaves the table
+  // present at version=7; re-entry runs CREATE TABLE IF NOT EXISTS as a no-op
+  // and bumps to 8 normally.
+  if (currentVersion < 8) {
+    for (const sql of MIGRATION_8_DDL) {
+      db.exec(sql);
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(8);
   }
 }

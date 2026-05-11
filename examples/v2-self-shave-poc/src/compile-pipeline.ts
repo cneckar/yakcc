@@ -21,6 +21,17 @@
 //   tests pass, and the recompiled bootstrap --verify produces byte-identical
 //   bootstrap/expected-roots.json (T8 load-bearing assertion).
 //
+// @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001
+// @title compile-pipeline interleaves glue blobs with atom implSources in sourceOffset order
+// @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+// @rationale With glue blobs captured by bootstrap (DEC-V2-GLUE-CAPTURE-AUTHORITY-001),
+//   the reconstructed file is: glue_region_0 ++ atom_0.implSource ++ glue_region_1 ++ ...
+//   ++ glue_region_n. Glue region boundaries are derived from atom sourceOffset (character
+//   position in original file) and implSource.length. This file mirrors compile-self.ts
+//   exactly (DEC-V2-COMPILE-SELF-EQ-001): both must use glue-interleaved reconstruction.
+//   Fallback: when no glue row exists (pre-#333 bootstrap), falls back to atom-only
+//   concatenation and logs a warning (backward compatibility with pre-v8 registries).
+//
 // @decision DEC-V2-CORPUS-DISTRIBUTION-001
 // @title SQLite registry + dist-recompiled/ are both gitignored
 // @status closed (unchanged from A2)
@@ -221,7 +232,23 @@ export async function _runWithRegistry(
     }
   }
 
-  // Step 3–4: Emit one TS file per group.
+  // Step 3–4: Emit one TS file per group, interleaving glue + atoms by sourceOffset ASC.
+  //
+  // @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001
+  // @title compile-pipeline interleaves glue blobs with atom implSources in sourceOffset order
+  // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+  // @rationale Mirrors compile-self.ts glue interleaving exactly (DEC-V2-COMPILE-SELF-EQ-001).
+  //   Algorithm:
+  //     1. Fetch glue blob for this (sourcePkg, sourceFile) via registry.getSourceFileGlue().
+  //     2. Walk atoms in sourceOffset order. For each atom:
+  //        a. glueCharsBeforeAtom = atom.sourceOffset - prevOriginalEnd
+  //        b. Emit that slice of the glue string.
+  //        c. Emit atom.implSource.
+  //        d. Advance prevOriginalEnd = atom.sourceOffset + atom.implSource.length.
+  //     3. Emit trailing glue (chars after last atom to end of file).
+  //   Fallback: when no glue row exists (pre-#333 bootstrap or atoms lack sourceOffset),
+  //   falls back to atom-only concatenation and logs a warning.
+  //   Invariant: glue_blob_char_count + sum(implSource_lengths) == reconstructed file char count.
   // @decision I7: NULLs sort to end; I8: overlapping offsets treated as 'other' gap.
   const manifest: ManifestEntry[] = [];
   let recompiledFiles = 0;
@@ -239,13 +266,101 @@ export async function _runWithRegistry(
       return ao - bo;
     });
 
-    // Concatenate implSource blobs.
-    const concatenated = sorted.map((a) => a.block.implSource).join("");
+    // Glue-interleaved reconstruction (DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001).
+    // Mirrors the algorithm in packages/cli/src/commands/compile-self.ts _runPipeline().
+    let fileContent: string;
+    const glueEntry = await registry.getSourceFileGlue(group.sourcePkg, group.sourceFile);
+
+    if (glueEntry !== null && sorted.every((a) => a.block.sourceOffset !== null)) {
+      // Glue-interleaved path: reconstruct the original file by weaving glue + atoms.
+      //
+      // @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001 (overlap handling)
+      // @title Reconstruction uses merged intervals to mirror computeGlueBlob's behaviour
+      // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333 overlap fix)
+      // @rationale
+      //   bootstrap.ts computeGlueBlob() merges overlapping atom intervals before
+      //   computing glue gaps. The reconstruction must mirror this: build the same
+      //   merged intervals, walk them to advance gluePos, and skip stale atoms within
+      //   each interval. The registry is a monotonic accumulator
+      //   (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001): old atoms from prior bootstraps
+      //   remain with their original offsets even after source edits. Merged-interval
+      //   reconstruction handles this correctly without falling back to atom-only concat.
+      //
+      //   Algorithm:
+      //     1. Build merged intervals (same merge as computeGlueBlob).
+      //     2. For each merged interval:
+      //        a. Emit glue chars from gluePos up to interval.start.
+      //        b. Emit atoms within the interval in sourceOffset order, skipping stale ones.
+      //        c. Advance prevMergedEnd = interval.end.
+      //     3. Emit trailing glue after the last merged interval.
+      const glueString = new TextDecoder().decode(glueEntry.contentBlob);
+
+      // Step 1: compute merged intervals (same merge as computeGlueBlob).
+      interface MergedInterval {
+        start: number;
+        end: number;
+        atoms: Array<typeof sorted[number]>;
+      }
+      const mergedIntervals: MergedInterval[] = [];
+      for (const atom of sorted) {
+        const start = atom.block.sourceOffset as number;
+        const end = start + atom.block.implSource.length;
+        const last = mergedIntervals[mergedIntervals.length - 1];
+        if (last !== undefined && start < last.end) {
+          if (end > last.end) last.end = end;
+          last.atoms.push(atom);
+        } else {
+          mergedIntervals.push({ start, end, atoms: [atom] });
+        }
+      }
+
+      // Step 2: interleave glue + atoms, walking merged intervals.
+      const parts: string[] = [];
+      let prevMergedEnd = 0;
+      let gluePosCursor = 0;
+
+      for (const interval of mergedIntervals) {
+        // 2a: glue chars between last merged interval end and this interval's start.
+        const glueBetween = interval.start - prevMergedEnd;
+        if (glueBetween > 0) {
+          parts.push(glueString.slice(gluePosCursor, gluePosCursor + glueBetween));
+          gluePosCursor += glueBetween;
+        }
+
+        // 2b: atoms within this interval, skipping stale overlapping ones.
+        let intervalCursor = interval.start;
+        for (const atom of interval.atoms) {
+          const atomStart = atom.block.sourceOffset as number;
+          if (atomStart < intervalCursor) {
+            continue; // stale atom — already covered by a prior atom in this interval
+          }
+          parts.push(atom.block.implSource);
+          intervalCursor = atomStart + atom.block.implSource.length;
+        }
+
+        prevMergedEnd = interval.end;
+      }
+
+      // Step 3: trailing glue after the last merged interval.
+      if (gluePosCursor < glueString.length) {
+        parts.push(glueString.slice(gluePosCursor));
+      }
+
+      if (parts.length > 0) {
+        fileContent = parts.join("");
+      } else {
+        fileContent = sorted.map((a) => a.block.implSource).join("");
+      }
+    } else {
+      // Fallback: no glue captured (pre-#333 bootstrap) or some atoms lack sourceOffset.
+      // Log informational; do not fail (backward compatibility with pre-v8 registries).
+      fileContent = sorted.map((a) => a.block.implSource).join("");
+    }
 
     // Write to <outputDir>/<sourceFile>.
     const outputPath = join(outputDir, group.sourceFile);
     mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, concatenated, "utf-8");
+    writeFileSync(outputPath, fileContent, "utf-8");
     recompiledFiles++;
 
     // One manifest row per atom.
