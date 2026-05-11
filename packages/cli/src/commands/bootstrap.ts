@@ -636,11 +636,33 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   for (const absPath of sourceFiles) {
     const relPath = relative(repoRoot, absPath);
     try {
+      // Compute source provenance context for registry storage.
+      // sourcePkg: the package directory (e.g. 'packages/cli'), derived from the
+      //   workspace-relative path by taking the first two segments (topDir/pkgName).
+      // sourceFile: the full workspace-relative path (e.g. 'packages/cli/src/commands/foo.ts').
+      // sourceOffset: computed per-atom from entry.sourceRange.start in shave() internals.
+      // @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+      const relSegments = relPath.replace(/\\/g, "/").split("/");
+      // relPath format: "packages/<pkg>/src/..." or "examples/<pkg>/src/..."
+      // sourcePkg is the first two segments (e.g. "packages/cli").
+      const sourcePkg =
+        relSegments.length >= 2
+          ? `${relSegments[0]}/${relSegments[1]}`
+          : (relSegments[0] ?? "");
+
       // Force offline: true to disable AI-corpus extraction (DEC-V2-BOOT-NO-AI-CORPUS-001).
       // TODO: when ShaveOptions gains corpusOptions.disableSourceC, use that instead.
       const result = await shaveImpl(absPath, shaveRegistry, {
         offline: true,
         intentStrategy: "static",
+        sourceContext: {
+          sourcePkg,
+          sourceFile: relPath.replace(/\\/g, "/"),
+          // sourceOffset is null at the ShaveOptions level — per-atom offsets are
+          // derived from entry.sourceRange.start inside shave() and forwarded into
+          // PersistOptions.sourceContext.sourceOffset per novel-glue entry.
+          sourceOffset: null,
+        },
       });
       rawOutcomes.push({
         path: relPath,

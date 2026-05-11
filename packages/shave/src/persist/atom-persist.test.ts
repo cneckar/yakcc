@@ -571,3 +571,81 @@ describe("WI-022 artifact threading — real-registry round-trip", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// T7 — sourceContext forwarded to storeBlock
+// (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1)
+// ---------------------------------------------------------------------------
+
+describe("T7: persistNovelGlueAtom forwards sourceContext to storeBlock (P1 provenance)", () => {
+  /**
+   * T7a: sourceContext is forwarded when provided.
+   * The BlockTripletRow that reaches storeBlock carries the sourceContext fields.
+   */
+  it("T7a: non-null sourceContext is forwarded to the BlockTripletRow passed to storeBlock", async () => {
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    await persistNovelGlueAtom(entry, registry, {
+      sourceContext: {
+        sourcePkg: "packages/cli",
+        sourceFile: "packages/cli/src/commands/bootstrap.ts",
+        sourceOffset: 42,
+      },
+    });
+
+    expect(calls.length).toBe(1);
+    const row = calls[0];
+    expect(row).toBeDefined();
+    expect(row?.sourcePkg).toBe("packages/cli");
+    expect(row?.sourceFile).toBe("packages/cli/src/commands/bootstrap.ts");
+    expect(row?.sourceOffset).toBe(42);
+  });
+
+  /**
+   * T7b: sourceContext is null/undefined when not provided.
+   * Callers that do not pass sourceContext (federation.ts, seed.ts, interactive shave)
+   * store rows with null provenance — correct for non-bootstrap atoms.
+   */
+  it("T7b: absent sourceContext produces null provenance on the BlockTripletRow", async () => {
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    await persistNovelGlueAtom(entry, registry, {
+      // No sourceContext provided — simulates interactive shave / federation.ts path.
+    });
+
+    expect(calls.length).toBe(1);
+    const row = calls[0];
+    expect(row).toBeDefined();
+    expect(row?.sourcePkg).toBeNull();
+    expect(row?.sourceFile).toBeNull();
+    expect(row?.sourceOffset).toBeNull();
+  });
+
+  /**
+   * T7c: sourceContext.sourceOffset=null is forwarded as null.
+   * The ShaveOptions.sourceContext carries sourceOffset=null (per-atom offsets are
+   * computed inside shave() from entry.sourceRange.start and replace this null).
+   * When called directly via persistNovelGlueAtom with sourceOffset=null,
+   * the stored row has null sourceOffset.
+   */
+  it("T7c: sourceContext with sourceOffset=null stores null sourceOffset", async () => {
+    const { registry, calls } = makeRegistryStub();
+    const entry = makeEntry();
+
+    await persistNovelGlueAtom(entry, registry, {
+      sourceContext: {
+        sourcePkg: "packages/shave",
+        sourceFile: "packages/shave/src/index.ts",
+        sourceOffset: null,
+      },
+    });
+
+    expect(calls.length).toBe(1);
+    const row = calls[0];
+    expect(row?.sourcePkg).toBe("packages/shave");
+    expect(row?.sourceFile).toBe("packages/shave/src/index.ts");
+    expect(row?.sourceOffset).toBeNull();
+  });
+});

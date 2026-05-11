@@ -106,6 +106,32 @@ export interface ShaveOptions {
    * FOREIGN_POLICY_DEFAULT from this module; no inline 'tag' literals elsewhere.
    */
   readonly foreignPolicy?: ForeignPolicy | undefined;
+
+  /**
+   * Source-file provenance context for registry storage.
+   *
+   * When provided, the shave pipeline forwards these values into each persisted
+   * BlockTripletRow so the registry can record which workspace file and byte
+   * offset produced the atom. Callers that shave a specific source file should
+   * populate this from the walker's knowledge of the file being processed.
+   *
+   * Absent for interactive shaves (yakcc shave CLI) and non-bootstrap runners —
+   * those atoms are stored with null provenance, which is correct because they
+   * are not part of the canonical bootstrap corpus.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   * @scope WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1
+   */
+  readonly sourceContext?:
+    | {
+        /** Workspace package directory (e.g. 'packages/cli'). */
+        readonly sourcePkg: string;
+        /** Workspace-relative path of the source file (e.g. 'packages/cli/src/commands/foo.ts'). */
+        readonly sourceFile: string;
+        /** Byte offset of the atom within the source file. Null when not computable. */
+        readonly sourceOffset: number | null;
+      }
+    | undefined;
 }
 
 // ---------------------------------------------------------------------------

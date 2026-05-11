@@ -89,6 +89,28 @@ export interface PersistOptions {
    * part of the block's content address — it is registry row metadata only.
    */
   readonly parentBlockRoot?: BlockMerkleRoot | null | undefined;
+
+  /**
+   * Source-file provenance context forwarded from ShaveOptions.sourceContext.
+   *
+   * When provided, the persisted BlockTripletRow carries sourcePkg, sourceFile,
+   * and sourceOffset so the registry can record where the atom was shaved from.
+   * When absent (undefined), the row is stored with null provenance — correct for
+   * interactive shaves and non-bootstrap runners.
+   *
+   * Forwarded from ShaveOptions.sourceContext via shave() → maybePersistNovelGlueAtom
+   * → persistNovelGlueAtom without modification.
+   *
+   * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+   * @scope WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1
+   */
+  readonly sourceContext?:
+    | {
+        readonly sourcePkg: string;
+        readonly sourceFile: string;
+        readonly sourceOffset: number | null;
+      }
+    | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +171,14 @@ export async function persistNovelGlueAtom(
   //
   // DEC-V1-FEDERATION-WIRE-ARTIFACTS-002: artifacts is the SAME Map that buildTriplet
   // passed to blockMerkleRoot() — forwarded here unchanged, no copy or re-derivation.
+  //
+  // DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001: sourceContext fields are forwarded
+  // from PersistOptions.sourceContext when provided by the bootstrap walker.
+  // When absent (undefined), all three provenance fields default to null — correct
+  // for interactive shaves and non-bootstrap runners. INSERT OR IGNORE in storeBlock
+  // ensures first-observed-wins: a second store with null does not clobber existing
+  // non-null provenance.
+  const sc = options?.sourceContext;
   const row: BlockTripletRow = {
     blockMerkleRoot: triplet.merkleRoot,
     specHash: triplet.specHash,
@@ -160,6 +190,10 @@ export async function persistNovelGlueAtom(
     createdAt: Date.now(),
     canonicalAstHash: entry.canonicalAstHash,
     parentBlockRoot: options?.parentBlockRoot ?? null,
+    // Provenance fields — null when not supplied by the caller.
+    sourcePkg: sc?.sourcePkg ?? null,
+    sourceFile: sc?.sourceFile ?? null,
+    sourceOffset: sc?.sourceOffset ?? null,
   };
 
   // Persist to registry. storeBlock is idempotent: storing the same

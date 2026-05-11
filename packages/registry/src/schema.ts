@@ -39,14 +39,27 @@
  */
 
 /**
+ * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-001
+ * @title SCHEMA_VERSION 6 → 7 for source-file provenance and workspace-plumbing table
+ * @status decided (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1)
+ * @rationale P1 adds three nullable provenance columns to the blocks table
+ *   (source_pkg, source_file, source_offset) and a new workspace_plumbing table.
+ *   Migration is single-phase pure DDL (no business-logic backfill): new columns
+ *   default to NULL for all pre-v7 rows; canonical-corpus provenance is populated
+ *   by the bootstrap re-run, not an in-migration UPDATE statement.
+ *   `openRegistry()` runs the migration on schema-version-bump (existing pattern).
+ */
+
+/**
  * Current schema version. Increment by 1 whenever a migration is added.
  * The `schema_version` table stores the applied version; `applyMigrations`
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  *
  * L2-I2 invariant: this constant must equal the highest MIGRATION_N_DDL number
- * (currently 6 after the v5 → v6 migration for foreign-block primitives).
+ * (currently 7 after the v6 → v7 migration for source-file provenance and
+ * workspace-plumbing schema).
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -477,6 +490,70 @@ const MIGRATION_6_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 6 → 7: add source-file provenance columns + workspace_plumbing table
+// (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001 /
+//  DEC-V2-REGISTRY-SCHEMA-BUMP-001 / WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
+ * @title Three nullable provenance columns on blocks — source_pkg, source_file, source_offset
+ * @status decided (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1)
+ * @rationale Provenance is 1:1 with the FIRST observed atom occurrence. Nullable columns on
+ *   the keyed row (not a side table) are consistent with the foreign-block pattern
+ *   (DEC-V2-FOREIGN-BLOCK-SCHEMA-001 sub-A). First-observed-wins via the existing
+ *   INSERT OR IGNORE path in storeBlock — no UPDATE on conflict (forbidden shortcut per
+ *   evaluation contract). NULL is correct for foreign atoms (kind='foreign') and for
+ *   seed blocks, which have no workspace source. source_pkg is the workspace package dir
+ *   (e.g. 'packages/cli'). source_file is the workspace-relative path of the originating
+ *   .ts file. source_offset is the byte offset of the atom's implSource within source_file.
+ *   These fields are NOT folded into blockMerkleRoot — provenance is metadata only.
+ *
+ * @decision DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001
+ * @title Registry owns workspace_plumbing storage (option a)
+ * @status decided (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1)
+ * @rationale The registry is already the canonical authority for everything reproducible
+ *   from `yakcc bootstrap` (Sacred Practice #12). A workspace_plumbing table makes the
+ *   full workspace shape recoverable from the registry alone, preserving the
+ *   "compile-self is content-addressed" property. P1 CREATES the table empty;
+ *   P2 populates and consumes it. Options (b) copy-from-canonical and (c)
+ *   commit-fixtures were rejected as parallel-authority violations.
+ */
+const MIGRATION_7_DDL: readonly string[] = [
+  // Column 1: source package directory (e.g. 'packages/cli'). NULL for foreign atoms
+  // and seed blocks. Non-NULL only for local blocks shaved during bootstrap.
+  "ALTER TABLE blocks ADD COLUMN source_pkg TEXT",
+
+  // Column 2: workspace-relative path of the originating .ts file
+  // (e.g. 'packages/cli/src/commands/compile.ts'). NULL for foreign atoms and seed blocks.
+  "ALTER TABLE blocks ADD COLUMN source_file TEXT",
+
+  // Column 3: byte offset of the atom's implSource within source_file.
+  // NULL when unknown. Used to order multiple atoms from the same file when
+  // reconstructing source. NOT folded into blockMerkleRoot.
+  "ALTER TABLE blocks ADD COLUMN source_offset INTEGER",
+
+  // Table: workspace_plumbing — records files needed to make a compiled output bootable.
+  // workspace_path: workspace-relative path, PRIMARY KEY (e.g. 'package.json').
+  // content_bytes:  raw file bytes, BLOB.
+  // content_hash:   BLAKE3(content_bytes), hex — indexed for dedup/integrity checks.
+  // created_at:     Unix epoch milliseconds of insertion.
+  //
+  // P1 CREATES the table empty. P2 populates it during bootstrap and consumes it
+  // in compile-self to materialise the workspace shape in the output directory.
+  // No ownership columns — DEC-NO-OWNERSHIP-011.
+  `CREATE TABLE IF NOT EXISTS workspace_plumbing (
+    workspace_path TEXT    PRIMARY KEY,
+    content_bytes  BLOB    NOT NULL,
+    content_hash   TEXT    NOT NULL,
+    created_at     INTEGER NOT NULL DEFAULT 0
+  )`,
+
+  // Non-unique index on content_hash for deduplication checks.
+  "CREATE INDEX IF NOT EXISTS idx_workspace_plumbing_hash ON workspace_plumbing(content_hash)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -510,6 +587,8 @@ export interface MigrationsDb {
  *   3 → 4: add parent_block_root column + non-unique index (DEC-REGISTRY-PARENT-BLOCK-004).
  *   4 → 5: add block_artifacts table + index (DEC-V1-FEDERATION-WIRE-ARTIFACTS-002).
  *   5 → 6: add kind/foreign_* columns + block_foreign_refs table (DEC-V2-FOREIGN-BLOCK-SCHEMA-001).
+ *   6 → 7: add source_pkg/source_file/source_offset columns + workspace_plumbing table
+ *           (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -679,5 +758,39 @@ export function applyMigrations(db: MigrationsDb): void {
       }
     }
     db.prepare("UPDATE schema_version SET version = ?").run(6);
+  }
+
+  // Migration 6 → 7: add source-file provenance columns + workspace_plumbing table
+  // (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001 /
+  //  DEC-V2-REGISTRY-SCHEMA-BUMP-001 / WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P1).
+  //
+  // Three ADD COLUMN statements for source_pkg, source_file, source_offset — all nullable,
+  // so no backfill is required. Provenance for existing rows is populated by re-running
+  // `yakcc bootstrap`, not by an in-migration UPDATE (forbidden shortcut #4 in evaluation
+  // contract). NULL is the correct sentinel for pre-v7 rows that predate provenance tracking.
+  //
+  // workspace_plumbing table: CREATE TABLE IF NOT EXISTS is naturally idempotent.
+  // P1 creates the table empty; P2 populates it during bootstrap.
+  //
+  // Idempotency: the three ADD COLUMN statements use try/catch to absorb
+  // "duplicate column name" errors — matching the MIGRATION_3/4/6 pattern.
+  // CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS are naturally idempotent.
+  if (currentVersion < 7) {
+    for (const sql of MIGRATION_7_DDL) {
+      try {
+        db.exec(sql);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Absorb duplicate-column-name errors (partial migration recovery for
+        // ADD COLUMN statements). CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+        // never throw on re-entry, so those statements do not reach this branch.
+        // All other errors are re-thrown.
+        if (!/duplicate column name:/i.test(msg)) {
+          throw err;
+        }
+        // Column already exists (partial migration recovery) — continue normally.
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(7);
   }
 }
