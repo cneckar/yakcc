@@ -4,7 +4,29 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sha2 = "0.10"
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+
+[features]
+# Default: hardware-accelerated path (SHA-NI on x86-64 where available).
+# sha2's asm feature enables an additional assembly-based SHA-NI backend, but
+# requires a GNU assembler (.S files) and does not compile on Windows/MSVC.
+# The cpufeatures crate (sha2's default) provides runtime SHA-NI dispatch
+# without assembly files — this is the portable hardware-accelerated path.
+default = ["asm"]
+asm = ["sha2/asm"]
+# force-soft: disables cpufeatures-based SHA-NI dispatch and forces the portable
+# pure-Rust SHA-256 path. Used for the rust-baseline-software binary so that
+# it implements the same algorithm path as yakcc-as WASM (apples-to-apples gate).
+# Build with: cargo build --release --no-default-features --features force-soft
+force-soft = ["sha2/force-soft"]
+
+[[bin]]
+name = "rust-baseline-accelerated"
+path = "src/main.rs"
+
+[[bin]]
+name = "rust-baseline-software"
+path = "src/main-software.rs"
 
 [profile.release]
 opt-level = 3

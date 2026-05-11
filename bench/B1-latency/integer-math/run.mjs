@@ -3,21 +3,42 @@
 // bench/B1-latency/integer-math/run.mjs — B1 integer-math benchmark orchestrator
 //
 // @decision DEC-BENCH-B1-INTEGER-001
-// @title B1 integer-math benchmark: 3-comparator SHA-256 substrate measurement
+// @title B1 integer-math benchmark: 4-comparator SHA-256 substrate measurement
 // @status accepted
 // @rationale
 //   Pass/kill bars (per issue #185):
-//     PASS:  yakcc-as degradation vs native Rust ≤ 15%
+//     PASS:  yakcc-as degradation vs rust-software ≤ 15%
 //     WARN:  degradation 15%–40% (concerning but not a kill)
 //     KILL:  degradation > 40% (triggers re-plan of #143 AS initiative)
 //
-//   Three comparators measure SHA-256 throughput on a fixed 100MB corpus:
-//     1. rust:      native Rust (sha2 crate, SHA-NI hardware acceleration where available)
-//                   Strongest possible baseline — intentionally adversarial.
-//     2. ts-node:   Node.js crypto.createHash("sha256") (OpenSSL-backed, also hardware-accelerated)
-//                   Provides a second reference point: pure-software WASM vs Node's C binding.
-//     3. yakcc-as:  AssemblyScript-compiled WASM SHA-256 (flat-memory, --runtime stub)
-//                   The unit under test. Pure-software SHA-256 in WASM linear memory.
+//   Four comparators measure SHA-256 throughput on a fixed 100MB corpus:
+//     1. rust-accelerated: native Rust (sha2 crate, cpufeatures SHA-NI runtime dispatch)
+//                          Ceiling reference — informational only, NOT the verdict gate.
+//     2. rust-software:    native Rust (sha2 crate, force-soft feature, pure-Rust implementation)
+//                          Apples-to-apples gate: same algorithm path as WASM, no SHA-NI.
+//     3. ts-node:          Node.js crypto.createHash("sha256") (OpenSSL-backed, hardware-accelerated)
+//                          Provides a second reference point: pure-software WASM vs Node's C binding.
+//     4. yakcc-as:         AssemblyScript-compiled WASM SHA-256 (flat-memory, --runtime stub)
+//                          The unit under test. Pure-software SHA-256 in WASM linear memory.
+//
+//   Why two Rust comparators:
+//     Cargo features apply at the whole-crate build level, not per-binary. The accelerated
+//     binary is built without --no-default-features (sha2 uses cpufeatures crate for SHA-NI
+//     runtime dispatch without requiring assembly files). The software binary is built with
+//     --no-default-features --features force-soft (pure-Rust path, same as WASM). Both are
+//     produced from the same crate — separate cargo invocations produce separate
+//     feature-compiled artifacts in target/release/<bin-name>.
+//
+//   Windows/MSVC note: sha2's "asm" feature requires a GNU assembler for .S files and
+//     does not compile on MSVC. The accelerated binary instead relies on sha2's cpufeatures
+//     crate which performs runtime SHA-NI dispatch without assembly files. This still produces
+//     a meaningfully faster binary on x86-64 hardware with SHA-NI support.
+//
+//   Apples-to-apples discipline:
+//     yakcc-as runs pure-software SHA-256 in WASM linear memory — it cannot access SHA-NI.
+//     Comparing against hardware-accelerated Rust produces a misleading KILL verdict because
+//     the hardware gap is not a property of yakcc-as's WASM JIT overhead. rust-software
+//     uses the same RFC 6234 pure-Rust algorithm path, making it the correct gate comparator.
 //
 //   Methodology:
 //     - Corpus: 100MB deterministic xorshift32 buffer (content-addressed via SHA-256)
@@ -27,9 +48,8 @@
 //     - Statistics: p50, p95, p99, mean, throughput_mb_per_sec
 //     - Process isolation: each comparator runs as a fresh subprocess
 //
-//   Degradation is computed as: (yakcc_mean - rust_mean) / rust_mean * 100
+//   Degradation is computed as: (yakcc_mean - rust_software_mean) / rust_software_mean * 100
 //   using mean_ms (arithmetic mean of 1000 measurements) as the primary metric.
-//   p50 is the secondary metric for robustness against outlier tails.
 //
 //   Hardware note: GitHub Actions ubuntu-latest is the reference target.
 //   Results on Windows (development machine) are informational — SHA-NI availability
@@ -166,10 +186,11 @@ const MEASURED_NOTE = "100 warm-up + 1000 measured iterations";
 // Verdict computation
 // ---------------------------------------------------------------------------
 
-function computeVerdict(rustResult, yakccResult) {
-  if (!rustResult || !yakccResult || yakccResult._blocker) {
+function computeVerdict(rustAcceleratedResult, rustSoftwareResult, yakccResult) {
+  if (!rustSoftwareResult || !yakccResult || yakccResult._blocker) {
     return {
-      yakcc_vs_rust_degradation_pct: null,
+      primary_comparison: "yakcc-as vs rust-software",
+      yakcc_vs_rust_software_degradation_pct: null,
       vs_pass_bar_15pct: yakccResult?._blocker ? "blocker" : "error",
       note: yakccResult?._blocker
         ? "yakcc-as hit a SCOPE-BLOCKER: asc cannot compile the SHA-256 kernel"
@@ -177,21 +198,36 @@ function computeVerdict(rustResult, yakccResult) {
     };
   }
 
-  const degradation = (yakccResult.mean_ms - rustResult.mean_ms) / rustResult.mean_ms * 100;
+  const yakccMean = yakccResult.mean_ms;
+  const rustSoftwareMean = rustSoftwareResult.mean_ms;
+  const degradationPct = (yakccMean - rustSoftwareMean) / rustSoftwareMean * 100;
 
   let verdict;
-  if (degradation <= 15) {
+  if (degradationPct <= 15) {
     verdict = "pass";
-  } else if (degradation <= 40) {
+  } else if (degradationPct <= 40) {
     verdict = "warn";
   } else {
     verdict = "kill";
   }
 
-  return {
-    yakcc_vs_rust_degradation_pct: parseFloat(degradation.toFixed(2)),
+  const result = {
+    primary_comparison: "yakcc-as vs rust-software",
+    yakcc_vs_rust_software_degradation_pct: parseFloat(degradationPct.toFixed(2)),
     vs_pass_bar_15pct: verdict,
   };
+
+  // Add ceiling reference info if accelerated result is available
+  if (rustAcceleratedResult) {
+    const speedupPct = (rustSoftwareMean - rustAcceleratedResult.mean_ms) / rustAcceleratedResult.mean_ms * 100;
+    result.ceiling_reference = {
+      rust_accelerated_throughput_mb_per_sec: rustAcceleratedResult.throughput_mb_per_sec,
+      speedup_vs_software_pct: parseFloat(speedupPct.toFixed(2)),
+      note: "SHA-NI hardware acceleration — informational only, not the verdict gate",
+    };
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,29 +265,60 @@ function captureEnvironment() {
 
 console.log(`\n${"=".repeat(60)}`);
 console.log(`${BOLD}B1-latency / integer-math benchmark${RESET}`);
-console.log(`SHA-256 over 100MB corpus — 3 comparators`);
+console.log(`SHA-256 over 100MB corpus — 4 comparators`);
 console.log(`${"=".repeat(60)}\n`);
 
 const spec = await ensureCorpus();
 
-// Build Rust binary (release)
-console.log(`\n${BOLD}[build]${RESET} cargo build --release (rust-baseline)...`);
-const cargoResult = spawnSync("cargo", ["build", "--release"], {
-  cwd: join(__dirname, "rust-baseline"),
+const rustBaselineDir = join(__dirname, "rust-baseline");
+
+// Build accelerated binary (sha2 cpufeatures SHA-NI runtime dispatch).
+// Note: sha2's "asm" feature requires a GNU assembler (.S files) and fails on
+// Windows MSVC builds. We use --no-default-features here to avoid triggering
+// the asm feature's assembler requirement while still getting sha2's default
+// cpufeatures-based hardware dispatch (sha2 uses the cpufeatures crate to
+// detect and use SHA-NI at runtime without any assembly files).
+console.log(`\n${BOLD}[build]${RESET} cargo build --release --bin rust-baseline-accelerated (SHA-NI cpufeatures dispatch)...`);
+const cargoAcceleratedResult = spawnSync("cargo", [
+  "build", "--release",
+  "--bin", "rust-baseline-accelerated",
+  "--no-default-features",
+], {
+  cwd: rustBaselineDir,
   stdio: "inherit",
   encoding: "utf8",
   timeout: 300000,
 });
-if (cargoResult.status !== 0) {
-  process.stderr.write("ERROR: cargo build failed\n");
+if (cargoAcceleratedResult.status !== 0) {
+  process.stderr.write("ERROR: cargo build (accelerated) failed\n");
   process.exit(1);
 }
-console.log(`${GREEN}PASS${RESET} rust-baseline built`);
+console.log(`${GREEN}PASS${RESET} rust-baseline-accelerated built`);
 
-// Locate rust binary
-const rustBin = process.platform === "win32"
-  ? join(__dirname, "rust-baseline", "target", "release", "rust-baseline.exe")
-  : join(__dirname, "rust-baseline", "target", "release", "rust-baseline");
+// Build software-only binary (force-soft path, no SHA-NI)
+// --no-default-features prevents default=["asm"] from re-enabling SHA-NI
+console.log(`\n${BOLD}[build]${RESET} cargo build --release --bin rust-baseline-software --no-default-features --features force-soft...`);
+const cargoSoftwareResult = spawnSync("cargo", [
+  "build", "--release",
+  "--bin", "rust-baseline-software",
+  "--no-default-features",
+  "--features", "force-soft",
+], {
+  cwd: rustBaselineDir,
+  stdio: "inherit",
+  encoding: "utf8",
+  timeout: 300000,
+});
+if (cargoSoftwareResult.status !== 0) {
+  process.stderr.write("ERROR: cargo build (software) failed\n");
+  process.exit(1);
+}
+console.log(`${GREEN}PASS${RESET} rust-baseline-software built`);
+
+// Locate Rust binaries (Cargo puts them in target/release/<bin-name>)
+const ext = process.platform === "win32" ? ".exe" : "";
+const rustAcceleratedBin = join(rustBaselineDir, "target", "release", `rust-baseline-accelerated${ext}`);
+const rustSoftwareBin    = join(rustBaselineDir, "target", "release", `rust-baseline-software${ext}`);
 
 // ts-baseline is run via Node's built-in TypeScript stripping (--experimental-strip-types),
 // available in Node v22+. This avoids a tsx/ts-node dependency while still running
@@ -260,13 +327,18 @@ const rustBin = process.platform === "win32"
 const tsNodeCmd = process.execPath;
 const tsNodeArgs = ["--experimental-strip-types", "--no-warnings"];
 
-// Run comparators
-const rustResult   = runComparator("rust",     rustBin,                [CORPUS_PATH]);
-const tsNodeResult = runComparator("ts-node",  tsNodeCmd, [...tsNodeArgs, join(__dirname, "ts-baseline", "run.ts"), CORPUS_PATH]);
-const yakccResult  = runComparator("yakcc-as", process.execPath,       [join(__dirname, "yakcc-as", "run.mjs"), CORPUS_PATH]);
+// Run comparators in order:
+//   1. rust-accelerated — ceiling reference (SHA-NI)
+//   2. rust-software    — apples-to-apples gate (pure-Rust, same path as WASM)
+//   3. ts-node          — second reference (OpenSSL, hardware-accelerated)
+//   4. yakcc-as         — unit under test
+const rustAcceleratedResult = runComparator("rust-accelerated", rustAcceleratedBin, [CORPUS_PATH]);
+const rustSoftwareResult    = runComparator("rust-software",    rustSoftwareBin,    [CORPUS_PATH]);
+const tsNodeResult          = runComparator("ts-node",          tsNodeCmd,          [...tsNodeArgs, join(__dirname, "ts-baseline", "run.ts"), CORPUS_PATH]);
+const yakccResult           = runComparator("yakcc-as",         process.execPath,   [join(__dirname, "yakcc-as", "run.mjs"), CORPUS_PATH]);
 
-// Compute verdict
-const verdict = computeVerdict(rustResult, yakccResult);
+// Compute verdict (gate: yakcc-as vs rust-software)
+const verdict = computeVerdict(rustAcceleratedResult, rustSoftwareResult, yakccResult);
 
 // Build result artifact
 const timestamp = new Date().toISOString();
@@ -275,7 +347,7 @@ const artifact = {
   timestamp,
   corpus: { sha256: spec.sha256, size_bytes: spec.size_bytes },
   environment: captureEnvironment(),
-  results: [rustResult, tsNodeResult, yakccResult].filter(Boolean),
+  results: [rustAcceleratedResult, rustSoftwareResult, tsNodeResult, yakccResult].filter(Boolean),
   verdict,
 };
 
@@ -290,24 +362,31 @@ writeFileSync(artifactPath, JSON.stringify(artifact, null, 2) + "\n", "utf8");
 console.log(`\n${"=".repeat(60)}`);
 console.log(`${BOLD}RESULTS${RESET}`);
 console.log(`${"=".repeat(60)}`);
-if (rustResult) {
-  console.log(`  rust     p50=${rustResult.p50_ms?.toFixed(2)}ms  mean=${rustResult.mean_ms?.toFixed(2)}ms  tp=${rustResult.throughput_mb_per_sec?.toFixed(0)}MB/s`);
+if (rustAcceleratedResult) {
+  console.log(`  rust-accelerated  p50=${rustAcceleratedResult.p50_ms?.toFixed(2)}ms  mean=${rustAcceleratedResult.mean_ms?.toFixed(2)}ms  tp=${rustAcceleratedResult.throughput_mb_per_sec?.toFixed(0)}MB/s  [ceiling reference]`);
+}
+if (rustSoftwareResult) {
+  console.log(`  rust-software     p50=${rustSoftwareResult.p50_ms?.toFixed(2)}ms  mean=${rustSoftwareResult.mean_ms?.toFixed(2)}ms  tp=${rustSoftwareResult.throughput_mb_per_sec?.toFixed(0)}MB/s  [apples-to-apples gate]`);
 }
 if (tsNodeResult) {
-  console.log(`  ts-node  p50=${tsNodeResult.p50_ms?.toFixed(2)}ms  mean=${tsNodeResult.mean_ms?.toFixed(2)}ms  tp=${tsNodeResult.throughput_mb_per_sec?.toFixed(0)}MB/s`);
+  console.log(`  ts-node           p50=${tsNodeResult.p50_ms?.toFixed(2)}ms  mean=${tsNodeResult.mean_ms?.toFixed(2)}ms  tp=${tsNodeResult.throughput_mb_per_sec?.toFixed(0)}MB/s`);
 }
 if (yakccResult && !yakccResult._blocker) {
-  console.log(`  yakcc-as p50=${yakccResult.p50_ms?.toFixed(2)}ms  mean=${yakccResult.mean_ms?.toFixed(2)}ms  tp=${yakccResult.throughput_mb_per_sec?.toFixed(0)}MB/s`);
+  console.log(`  yakcc-as          p50=${yakccResult.p50_ms?.toFixed(2)}ms  mean=${yakccResult.mean_ms?.toFixed(2)}ms  tp=${yakccResult.throughput_mb_per_sec?.toFixed(0)}MB/s  [unit under test]`);
 }
 
 console.log(`\n${"=".repeat(60)}`);
 console.log(`${BOLD}VERDICT${RESET}`);
 console.log(`${"=".repeat(60)}`);
 
-const deg = verdict.yakcc_vs_rust_degradation_pct;
+const deg = verdict.yakcc_vs_rust_software_degradation_pct;
 if (deg !== null) {
   const degStr = deg >= 0 ? `+${deg.toFixed(1)}%` : `${deg.toFixed(1)}%`;
-  console.log(`  yakcc-as vs rust degradation: ${degStr}`);
+  console.log(`  yakcc-as vs rust-software degradation: ${degStr}`);
+  if (verdict.ceiling_reference) {
+    const cr = verdict.ceiling_reference;
+    console.log(`  rust-accelerated vs rust-software speedup: +${cr.speedup_vs_software_pct?.toFixed(1)}% (ceiling reference, SHA-NI)`);
+  }
 }
 
 const bar = verdict.vs_pass_bar_15pct;

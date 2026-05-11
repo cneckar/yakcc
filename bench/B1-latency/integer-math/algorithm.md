@@ -9,11 +9,15 @@ SHA-256 is chosen as the integer-math kernel for the following reasons:
    This isolates the measurement to the u32/i32 computation substrate — the exact
    capability being tested in the yakcc AS-backend.
 
-2. **Adversarial framing for Yakcc.** The Rust comparator uses the `sha2` crate, which
-   is hardware-accelerated on x86-64 (SHA-NI extensions via CPU feature detection).
-   This makes Rust the strongest possible baseline: yakcc-as WASM must compete against
-   hardware-accelerated native code. If WASM can stay within 15% of that bar, the
-   AS-backend is viable as a substrate execution path.
+2. **Controlled framing with two Rust comparators.** The benchmark uses two Rust binaries:
+   - `rust-accelerated`: sha2 with cpufeatures runtime SHA-NI dispatch — the ceiling reference,
+     showing how far WASM is from the CPU's peak throughput.
+   - `rust-software`: sha2 compiled with `--features force-soft` — the apples-to-apples gate,
+     implementing the same pure-software RFC 6234 path as yakcc-as WASM.
+
+   yakcc-as WASM cannot access SHA-NI CPU instructions. The correct verdict gate is therefore
+   `rust-software`, not `rust-accelerated`. Comparing WASM against SHA-NI-accelerated native
+   code conflates JIT overhead with hardware acceleration gap — two orthogonal questions.
 
 3. **No hidden overhead.** SHA-256 has no I/O, no allocations (after initial setup),
    and no branching complexity that varies per input. The per-iteration cost is
@@ -40,10 +44,26 @@ SHA-256 is chosen as the integer-math kernel for the following reasons:
 - Per-iteration metric: wall-clock latency in milliseconds
 - Statistics reported: p50, p95, p99, mean, throughput_mb_per_sec
 
+## Apples-to-Apples Discipline
+
+The verdict gate is **yakcc-as vs rust-software**, not yakcc-as vs rust-accelerated.
+
+| Path | SHA-NI | Verdict role |
+|------|--------|-------------|
+| `rust-accelerated` | Yes (cpufeatures runtime dispatch) | Ceiling reference — informational |
+| `rust-software` | No (sha2 `force-soft` feature) | Verdict gate — apples-to-apples |
+| `ts-node` | Yes (OpenSSL) | Second reference point |
+| `yakcc-as` | No (WASM linear memory) | Unit under test |
+
+The 15%/40% bars measure the WASM JIT overhead — the cost of running the same algorithm
+in a sandboxed runtime vs native Rust. Hardware acceleration is irrelevant to this question.
+
 ## Pass/Kill Bars (from issue #185)
 
 | Result | Verdict |
 |--------|---------|
-| yakcc-as degradation vs Rust ≤ 15% | PASS |
+| yakcc-as degradation vs rust-software ≤ 15% | PASS |
 | degradation 15%–40% | WARN |
 | degradation > 40% | KILL (triggers re-plan of #143 AS initiative) |
+
+Degradation = `(yakcc_mean_ms - rust_software_mean_ms) / rust_software_mean_ms * 100`.

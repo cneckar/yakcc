@@ -1,20 +1,27 @@
 // SPDX-License-Identifier: MIT
 //
-// bench/B1-latency/integer-math/rust-baseline/src/main.rs
+// bench/B1-latency/integer-math/rust-baseline/src/main-software.rs
 //
-// @decision DEC-BENCH-B1-RUST-001
-// @title Native Rust SHA-256 baseline — hardware-accelerated path (SHA-NI)
+// @decision DEC-BENCH-B1-RUST-002
+// @title Software-only Rust SHA-256 baseline — apples-to-apples gate vs yakcc-as WASM
 // @status accepted
 // @rationale
-//   The sha2 crate uses SHA-NI CPU instructions on x86-64 where available,
-//   making it the strongest possible native baseline. This is used as a
-//   ceiling reference — informational only, NOT the gate for the verdict.
-//   The apples-to-apples gate compares yakcc-as against rust-software
-//   (see main-software.rs), which uses the same pure-Rust implementation
-//   path as WASM. Hardware-accelerated results show how far WASM is from
-//   the CPU's peak throughput.
-//   Release profile: opt-level=3, lto=fat, codegen-units=1 for maximum native
-//   throughput — matching the conditions a production deployment would use.
+//   yakcc-as runs a pure-software SHA-256 in WASM linear memory — it cannot access
+//   SHA-NI CPU instructions. Comparing it against hardware-accelerated Rust (main.rs)
+//   produces a misleading KILL verdict because the hardware-acceleration gap is
+//   irrelevant to the question of whether WASM's JIT overhead is acceptable.
+//
+//   This binary uses sha2 compiled with the `force-soft` feature, which disables
+//   the SHA-NI asm backend and forces the portable pure-Rust implementation.
+//   Both yakcc-as and this binary implement the same RFC 6234 SHA-256 algorithm
+//   in software — making this the correct apples-to-apples comparator for the
+//   15%/40% pass/kill verdict.
+//
+//   The hardware-accelerated binary (main.rs / rust-baseline-accelerated) is kept
+//   as a ceiling reference to show how far WASM is from the CPU's peak throughput.
+//
+//   Release profile: opt-level=3, lto=fat, codegen-units=1 — maximum optimization
+//   that does NOT involve hardware SHA extensions.
 //
 // Reads the corpus file from argv[1], runs SHA-256 over the 100MB buffer
 // 1100 times (100 warm-up + 1000 measured), then prints a JSON result
@@ -31,7 +38,7 @@ const MEASURED: usize = 1000;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: rust-baseline <corpus-path>");
+        eprintln!("Usage: rust-baseline-software <corpus-path>");
         std::process::exit(1);
     }
     let corpus_path = &args[1];
@@ -69,7 +76,7 @@ fn main() {
     let throughput_mb_per_sec = size_mb / (mean_ms / 1000.0);
 
     println!(
-        "{{\"comparator\":\"rust-accelerated\",\"p50_ms\":{p50:.6},\"p95_ms\":{p95:.6},\"p99_ms\":{p99:.6},\"mean_ms\":{mean:.6},\"throughput_mb_per_sec\":{tp:.2},\"iterations\":{iters}}}",
+        "{{\"comparator\":\"rust-software\",\"p50_ms\":{p50:.6},\"p95_ms\":{p95:.6},\"p99_ms\":{p99:.6},\"mean_ms\":{mean:.6},\"throughput_mb_per_sec\":{tp:.2},\"iterations\":{iters}}}",
         p50 = p50_ms,
         p95 = p95_ms,
         p99 = p99_ms,
