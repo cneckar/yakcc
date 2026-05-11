@@ -1,15 +1,15 @@
 {
   "version": 1,
-  "date": "2026-05-10",
-  "head_sha": "31192ca",
+  "date": "2026-05-11",
+  "head_sha": "d2da492",
   "provider": "Xenova/all-MiniLM-L6-v2",
   "corpus_source": "bootstrap-inline",
   "corpus_entries": 9,
   "m5_corpus": "full",
   "metrics": {
-    "M1_hit_rate": 0.5555555555555556,
+    "M1_hit_rate": 1,
     "M1_target": 0.8,
-    "M1_pass": false,
+    "M1_pass": true,
     "M2_precision_at_1": 0.8,
     "M2_target": 0.7,
     "M2_pass": true,
@@ -28,25 +28,25 @@
         "brier": null
       },
       "confident": {
-        "N": 0,
-        "correct": 0,
-        "P": null,
+        "N": 2,
+        "correct": 2,
+        "P": 1,
         "midpoint": 0.775,
-        "brier": null
+        "brier": 0.05062499999999999
       },
       "weak": {
+        "N": 7,
+        "correct": 2,
+        "P": 0.2857142857142857,
+        "midpoint": 0.6,
+        "brier": 0.09877551020408162
+      },
+      "poor": {
         "N": 0,
         "correct": 0,
         "P": null,
-        "midpoint": 0.6,
-        "brier": null
-      },
-      "poor": {
-        "N": 9,
-        "correct": 4,
-        "P": 0.4444444444444444,
         "midpoint": 0.25,
-        "brier": 0.03780864197530863
+        "brier": null
       }
     },
     "M5_target": 0.1,

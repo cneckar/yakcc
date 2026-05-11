@@ -673,14 +673,26 @@ ${
   writeFileSync(decisionFile, decision, "utf-8");
 
   // Console summary
+  //
+  // @decision DEC-V3-DISCOVERY-EVAL-FIX-001
+  // Sub-decision (Blocker 3 fix): Per-category breakdown emits M1/M2/M3/M4 for all 5 categories.
+  //
+  // With non-degenerate embeddings and a registry of >=~2k atoms, M1 (score-threshold >= 0.50)
+  // saturates at 100% across categories because any semantic embedding produces at least one
+  // above-threshold match. The operator-meaningful per-category quality signal lives in
+  // M2 (precision@1), M3 (recall@10), and M4 (MRR), which are now emitted per-category in the
+  // JSON artifact and the operator-facing decision document. M1 should be treated as a
+  // "did retrieval return anything?" signal, not a quality signal.
   console.log("\n=== DISCOVERY EVAL (FULL CORPUS) ===");
   console.log(`Provider: ${provider} (${USE_LOCAL_PROVIDER ? "SEMANTIC" : "OFFLINE/HASH"})`);
   console.log(`Corpus: stratified-full-corpus-${cHash} (${entries.length} entries)`);
   console.log(`Registry: bootstrap/yakcc.registry.sqlite`);
-  console.log("--- Per-category M1 ---");
+  console.log("--- Per-category ---");
   for (const c of perCategoryMetrics) {
     const mark = c.M1 >= 0.8 ? "✓" : "✗";
-    console.log(`  ${mark} ${c.category}: M1=${(c.M1 * 100).toFixed(1)}% (${c.entries} queries)`);
+    console.log(
+      `  ${mark} ${c.category}: M1=${(c.M1 * 100).toFixed(1)}% M2=${(c.M2 * 100).toFixed(1)}% M3=${(c.M3 * 100).toFixed(1)}% M4=${c.M4.toFixed(3)} (${c.entries} queries)`,
+    );
   }
   console.log(`--- Overall ---`);
   console.log(`M1 Hit rate:    ${(M1overall * 100).toFixed(1)}% (target >=80%)`);
