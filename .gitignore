@@ -26,6 +26,12 @@ bootstrap/yakcc.registry.sqlite-wal
 bootstrap/yakcc.registry.sqlite-shm
 bootstrap/report.json
 
+# B1-latency corpus — 100MB binary, content-addressed; regenerated on demand.
+# corpus-spec.json (the hash) IS committed; the binary is NOT.
+bench/B1-latency/integer-math/corpus/
+# B1-latency Rust baseline build artifacts
+bench/B1-latency/integer-math/rust-baseline/target/
+
 # compile-self recompiled output — generated artifact, never committed.
 # Reproducible from `yakcc compile-self` (DEC-V2-CORPUS-DISTRIBUTION-001, A2 slice).
 dist-recompiled/
