@@ -1,4 +1,4 @@
-# B5 — Hallucination Rebound / Multi-Turn Coherence Benchmark
+﻿# B5 — Hallucination Rebound / Multi-Turn Coherence Benchmark
 
 **Issue:** [#189](https://github.com/cneckar/yakcc/issues/189)
 **Parent:** WI-BENCHMARK-SUITE (#167)
@@ -33,18 +33,28 @@ B5 verifies that yakcc's hook interception does not break the LLM's coherence ac
 
 **Slice 1's scores are NOT the verdict.** They verify the infrastructure produces non-trivial output and the classifier logic is correct.
 
-### Slice 2 — LLM-judge integration + N=50 corpus
+### Slice 2 (this slice) — LLM-judge + N=50 corpus
 
-**Goal:** Replace offline simulation with real LLM emission; add LLM-as-judge for ambiguous cases.
+**Goal:** Add LLM-as-judge for ambiguous Tier-1 cases; expand corpus to N=50.
 
-**What gets added:**
-- Real LLM API integration (Anthropic Claude) replacing `assistant_emission_target` simulation
-- LLM-as-judge for score-4 (minor-slip) and score-2 (hallucinated) cases where the programmatic classifier is unreliable
-- Corpus expansion to N=50 conversations (5 per category × 5 categories × 2)
+**What's implemented:**
+- `conversations.jsonl` — expanded from N=10 to N=50 (5 categories x 10 seeds each; new seeds conv-iter-003..010, conv-xref-003..010, conv-debug-003..010, conv-refactor-003..010, conv-compose-003..010)
+- `llm-judge.mjs` — Tier-2 LLM judge (claude-opus-4-7, temperature 0, exponential backoff). Gated on `ANTHROPIC_API_KEY`; returns `{ status: "skipped_no_api_key" }` when absent.
+- `judge-prompt.md` — frozen judge prompt template (do not modify without updating DEC-BENCH-B5-SLICE2-001)
+- `rubric-eval.mjs` — updated for Tier-1+Tier-2 flow; emits `tmp/B5-coherence/slice2-scores.json`
+- `corpus-spec.json` — updated SHA-256 for N=50 corpus (`e25d3e259110c6dd34dfccde111ae7a3b14a7f4285e00a96b7c2cdc57dcba799`)
+- `package.json` (bench-local) — `@anthropic-ai/sdk` as bench-local dep (NOT in root package.json)
+
+**Blind discipline:** Judge receives only arm_A/arm_B labels; never hook-enabled/hook-disabled.
+
+**Tier-2 invocation criteria:** Tier-1 score 2 (hallucinated) or score 4 (minor-slip) only.
+
+**Baseline artifact:** `tmp/B5-coherence/slice2-scores.json` — offline run with `judge_status: "skipped_no_api_key"`. Hook-enabled arm mean=4.506, 156 turns scored, N=50 corpus.
 
 **Out of scope for Slice 2:**
+- Real LLM emission (still uses `assistant_emission_target` simulation from Slice 1)
+- Cross-arm blind verdict (Slice 3)
 - Human rater integration (Slice 3 or separate WI)
-- Cross-vendor coherence (out of B5 entirely per #167 DQ-8)
 
 ### Slice 3 — Cross-arm blind verdict
 
@@ -83,7 +93,40 @@ node bench/B5-coherence/rubric-eval.mjs
 - `tmp/B5-coherence/arm-mapping.json` — which arm letter = which condition (gitignored)
 - `tmp/B5-coherence/slice1-scores.json` — aggregate scores (committed as decision input)
 
----
+
+### Slice 2 (offline baseline — no LLM judge needed)
+
+```bash
+pnpm bench:coherence:slice2
+```
+
+Or manually:
+```bash
+node bench/B5-coherence/harness/run-conversation.mjs
+node bench/B5-coherence/rubric-eval.mjs
+```
+
+**Output:**
+- `tmp/B5-coherence/transcripts/conv-<id>-arm-{A,B}.jsonl` — per-arm transcripts (gitignored)
+- `tmp/B5-coherence/arm-mapping.json` — which arm letter = which condition (gitignored)
+- `tmp/B5-coherence/slice2-scores.json` — aggregate scores with `judge_status: "skipped_no_api_key"` when key absent
+
+### Slice 2 (with LLM judge)
+
+Set `ANTHROPIC_API_KEY` then run:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... pnpm bench:coherence:slice2
+```
+
+First install bench-local deps (once):
+```bash
+pnpm --dir bench/B5-coherence install
+```
+
+**Output:** `tmp/B5-coherence/slice2-scores.json` with `judge_status: "judged"` and per-turn `tier2_used` flags.
+
+------
 
 ## Methodology tradeoffs
 

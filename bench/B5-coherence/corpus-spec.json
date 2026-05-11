@@ -1,18 +1,30 @@
-{
-  "description": "B5 coherence benchmark — Slice 1 conversation corpus spec",
+﻿{
+  "description": "B5 coherence benchmark — Slice 2 conversation corpus spec (N=50)",
   "conversationsFile": "bench/B5-coherence/conversations.jsonl",
-  "sha256": "f7ef2ea1a3a590d92e2da8962fb621f4d22462417a0aec6c1b703a8d5a6197b8",
-  "n": 10,
+  "sha256": "e25d3e259110c6dd34dfccde111ae7a3b14a7f4285e00a96b7c2cdc57dcba799",
+  "n": 50,
   "categories": {
-    "iterative-refinement": 2,
-    "cross-reference": 2,
-    "debugging": 2,
-    "refactoring": 2,
-    "composition": 2
+    "iterative-refinement": 10,
+    "cross-reference": 10,
+    "debugging": 10,
+    "refactoring": 10,
+    "composition": 10
+  },
+  "slices": {
+    "slice1": {
+      "n": 10,
+      "sha256": "f7ef2ea1a3a590d92e2da8962fb621f4d22462417a0aec6c1b703a8d5a6197b8",
+      "ids": ["conv-iter-001","conv-iter-002","conv-xref-001","conv-xref-002","conv-debug-001","conv-debug-002","conv-refactor-001","conv-refactor-002","conv-compose-001","conv-compose-002"]
+    },
+    "slice2": {
+      "n": 50,
+      "sha256": "e25d3e259110c6dd34dfccde111ae7a3b14a7f4285e00a96b7c2cdc57dcba799"
+    }
   },
   "notes": [
     "SHA-256 computed over the raw bytes of conversations.jsonl",
     "Recompute with: node -e \"const {createHash}=require('crypto');const {readFileSync}=require('fs');console.log(createHash('sha256').update(readFileSync('bench/B5-coherence/conversations.jsonl')).digest('hex'))\"",
-    "N=10 seeds are the Slice 1 corpus; Slice 2 expands to N=50"
+    "Slice 1 (N=10): 2 seeds per category, Slice 2 (N=50): 10 seeds per category",
+    "Seeds conv-iter-003..010, conv-xref-003..010, conv-debug-003..010, conv-refactor-003..010, conv-compose-003..010 added in Slice 2"
   ]
 }
