@@ -57,13 +57,20 @@
 //       are NOT a failure. New atoms NOT in committed ARE a failure (named in output).
 //   (c) CI is the sole writer of manifest updates going forward.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { BootstrapManifestEntry, Registry, RegistryOptions } from "@yakcc/registry";
+import { contractIdFromBytes } from "@yakcc/contracts";
+import type {
+  BootstrapManifestEntry,
+  Registry,
+  RegistryOptions,
+  SourceFileGlueEntry,
+} from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
 import { shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
+import { PLUMBING_INCLUDE_GLOBS, plumbingPathAllowed } from "./plumbing-globs.js";
 
 // ---------------------------------------------------------------------------
 // Expected-failures schema
@@ -496,6 +503,344 @@ async function runVerify(
 }
 
 // ---------------------------------------------------------------------------
+// captureWorkspacePlumbing — bootstrap plumbing capture pass (P2)
+//
+// @decision DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001
+// @title Bootstrap captures plumbing files via a single named glob set
+// @status decided (WI-V2-REGISTRY-SOURCE-FILE-PROVENANCE P2)
+// @rationale The glob constant lives in plumbing-globs.ts (single authority).
+//   This function performs the matching and calls registry.storeWorkspacePlumbing
+//   for each matching file. Errors are reported loudly — never silently dropped
+//   (Sacred Practice #5). Idempotent: re-running bootstrap on an existing registry
+//   is a no-op for rows already present (INSERT OR IGNORE semantics).
+// ---------------------------------------------------------------------------
+
+/**
+ * Expand a workspace-plumbing glob pattern to matching file paths.
+ *
+ * Uses simple manual expansion: splits the glob on '/' and matches
+ * directory segments that contain '*' (single-segment wildcard only —
+ * sufficient for the PLUMBING_INCLUDE_GLOBS patterns).
+ *
+ * Returns workspace-relative forward-slash paths.
+ */
+function expandPlumbingGlob(pattern: string, repoRoot: string): string[] {
+  const segments = pattern.split("/");
+  const results: string[] = [];
+
+  function walk(segIdx: number, currentDir: string, currentRel: string): void {
+    if (segIdx === segments.length) {
+      // Base case: check the file exists.
+      if (existsSync(currentDir) && statSync(currentDir).isFile()) {
+        results.push(currentRel);
+      }
+      return;
+    }
+
+    const seg = segments[segIdx];
+    if (seg === undefined) return;
+
+    if (seg.includes("*")) {
+      // Wildcard segment: enumerate the current directory.
+      if (!existsSync(currentDir)) return;
+      let entries: import("node:fs").Dirent[];
+      try {
+        entries = readdirSync(currentDir, { withFileTypes: true }) as import("node:fs").Dirent[];
+      } catch {
+        return;
+      }
+      // Build a simple regex from the glob segment (* = any non-slash chars).
+      const regexSrc = `^${seg.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`;
+      const re = new RegExp(regexSrc);
+      for (const entry of entries) {
+        if (re.test(entry.name)) {
+          const childAbs = join(currentDir, entry.name);
+          const childRel = currentRel ? `${currentRel}/${entry.name}` : entry.name;
+          walk(segIdx + 1, childAbs, childRel);
+        }
+      }
+    } else {
+      // Literal segment.
+      const childAbs = join(currentDir, seg);
+      const childRel = currentRel ? `${currentRel}/${seg}` : seg;
+      walk(segIdx + 1, childAbs, childRel);
+    }
+  }
+
+  walk(0, repoRoot, "");
+  return results;
+}
+
+/**
+ * Capture workspace plumbing files into the registry.
+ *
+ * Uses PLUMBING_INCLUDE_GLOBS from plumbing-globs.ts as the single authority
+ * for which files constitute "workspace plumbing". Each matched file is
+ * content-hashed (BLAKE3-256) and stored via registry.storeWorkspacePlumbing.
+ *
+ * Idempotent: INSERT OR IGNORE semantics in the registry mean re-running
+ * bootstrap against an existing registry is a no-op for already-captured rows.
+ *
+ * @decision DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001
+ *
+ * @param registry  - Open registry instance (storeWorkspacePlumbing will be called).
+ * @param repoRoot  - Absolute path to the workspace root.
+ * @param logger    - Output sink.
+ * @returns Number of plumbing files captured (new rows inserted, not no-ops).
+ */
+async function captureWorkspacePlumbing(
+  registry: Registry,
+  repoRoot: string,
+  logger: Logger,
+): Promise<number> {
+  // Expand all inclusion globs to concrete file paths.
+  const seen = new Set<string>(); // deduplicate across globs
+  const candidates: string[] = [];
+  for (const glob of PLUMBING_INCLUDE_GLOBS) {
+    const expanded = expandPlumbingGlob(glob, repoRoot);
+    for (const relPath of expanded) {
+      if (!seen.has(relPath)) {
+        seen.add(relPath);
+        candidates.push(relPath);
+      }
+    }
+  }
+
+  // Filter by exclusion rules (single authority in plumbing-globs.ts).
+  const toCapture = candidates.filter((p) => plumbingPathAllowed(p));
+
+  let capturedCount = 0;
+  for (const relPath of toCapture) {
+    const absPath = join(repoRoot, relPath);
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(absPath);
+    } catch (err) {
+      // File exists (was expanded) but cannot be read — loud failure.
+      logger.error(
+        `warning: bootstrap plumbing: cannot read ${relPath}: ${(err as Error).message}`,
+      );
+      continue;
+    }
+
+    const contentBytes = new Uint8Array(bytes);
+    // contractIdFromBytes(bytes) = BLAKE3-256(bytes) → hex, same hash used by
+    // storage.ts to verify contentHash. No direct @noble/hashes dep in @yakcc/cli
+    // (sacred-practice #12: single dependency path via @yakcc/contracts).
+    const contentHash: string = contractIdFromBytes(contentBytes);
+
+    try {
+      await registry.storeWorkspacePlumbing({
+        workspacePath: relPath,
+        contentBytes,
+        contentHash,
+        createdAt: Date.now(),
+      });
+      capturedCount++;
+    } catch (err) {
+      // storeWorkspacePlumbing only throws on integrity failure — loud failure.
+      logger.error(
+        `error: bootstrap plumbing: failed to store ${relPath}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  logger.log(
+    `bootstrap: workspace plumbing captured — ${toCapture.length} candidates, ${capturedCount} stored`,
+  );
+  return capturedCount;
+}
+
+// ---------------------------------------------------------------------------
+// captureSourceFileGlue — per-file glue capture pass (#333)
+//
+// @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+// @title Per-file glue stored as single concatenated blob; boundaries derived
+//   from DB-resident atoms for this sourceFile (not live shave stubs)
+// @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+// @rationale
+//   Glue = all non-atom byte regions of the source file as seen by the
+//   reconstruction algorithm. The reconstruction algorithm queries atoms by
+//   (source_pkg, source_file) from the registry. Therefore the glue blob must
+//   be the complement of those DB atoms — NOT the complement of all live shave
+//   atoms.
+//
+//   Root cause of the original bug: live shave stubs include PointerEntry atoms
+//   (already in DB from another file's first-observed-wins INSERT OR IGNORE).
+//   PointerEntry stubs have merkleRoot=undefined — the slicer never propagates
+//   the existing DB merkleRoot to ShavedAtomStub for pointer entries. There is
+//   also no way to distinguish a PointerEntry that belongs to THIS file vs one
+//   that belongs to ANOTHER file using only the stub (both have merkleRoot=undefined).
+//
+//   Attempting to filter stubs by merkleRoot!==undefined (novel atoms only) also
+//   fails: when re-bootstrapping a file whose atoms are already in the DB, ALL
+//   atoms are PointerEntries, so storedAtoms = [] and the entire file is treated
+//   as glue (storing the full 14k-char source as a blob).
+//
+//   FIX: query registry.getAtomRangesBySourceFile(sourceFile) AFTER Pass A
+//   completes (so all novel atoms for this file are in the DB). This returns
+//   exactly the ranges that reconstruction will use. Glue = complement of those
+//   ranges. INSERT OR IGNORE on storeBlock means each atom retains the sourceFile
+//   from the first bootstrap run that stored it, which is consistent with what
+//   getAtomRangesBySourceFile returns for this file.
+//
+//   The file is read as UTF-8 text (matching shave/src/index.ts which reads
+//   with readFile(path, "utf-8")). Atom ranges are JS string character offsets
+//   (not byte offsets). The glue blob is encoded as UTF-8 bytes for storage.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the concatenated glue blob for a single source file.
+ *
+ * Glue = regions of the file NOT covered by any atom range, concatenated in
+ * source order:
+ *   glue_blob = F[0..A1.start) ++ F[A1.end..A2.start) ++ ... ++ F[An.end..fileLen)
+ *
+ * Input ranges must be pre-sorted ascending by start (caller's responsibility).
+ * Overlapping/adjacent ranges are merged before computing gaps.
+ *
+ * Returns null when there are no glue regions (all bytes are covered by atoms,
+ * or the source string is empty). A null result means the caller should skip
+ * the storeSourceFileGlue call for this file.
+ *
+ * @param source  - Source file content as a JS string (read with utf-8 encoding).
+ * @param atomRanges - Sorted atom intervals: [{start, end}], where end = start + implSourceLength.
+ *                     These must be the DB-resident ranges for this sourceFile
+ *                     (from getAtomRangesBySourceFile), NOT live shave stubs.
+ * @returns UTF-8-encoded glue blob, or null if there are no glue bytes.
+ */
+export function computeGlueBlob(
+  source: string,
+  atomRanges: readonly { readonly start: number; readonly end: number }[],
+): Uint8Array | null {
+  const encoder = new TextEncoder();
+
+  if (atomRanges.length === 0) {
+    // No atoms stored for this file — entire file is glue.
+    const blob = encoder.encode(source);
+    return blob.byteLength > 0 ? blob : null;
+  }
+
+  // Merge overlapping or adjacent intervals to avoid double-counting.
+  // Input is pre-sorted by start (getAtomRangesBySourceFile ORDER BY source_offset ASC).
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of atomRanges) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && range.start <= last.end) {
+      // Extend the last interval if this one reaches further.
+      if (range.end > last.end) last.end = range.end;
+    } else {
+      merged.push({ start: range.start, end: range.end });
+    }
+  }
+
+  // Build glue spans: gaps before, between, and after atom intervals.
+  const glueParts: string[] = [];
+
+  let cursor = 0;
+  for (const { start, end } of merged) {
+    if (cursor < start) {
+      glueParts.push(source.slice(cursor, start));
+    }
+    cursor = end;
+  }
+  // Trailing span: [lastAtom.end .. fileLen)
+  if (cursor < source.length) {
+    glueParts.push(source.slice(cursor));
+  }
+
+  if (glueParts.length === 0) return null;
+
+  const glueText = glueParts.join("");
+  if (glueText.length === 0) return null;
+
+  return encoder.encode(glueText);
+}
+
+/**
+ * Capture source-file glue (non-atom regions) for a single source file.
+ *
+ * Reads the file, computes the glue blob from DB-resident atom ranges for this
+ * sourceFile, and stores it via registry.storeSourceFileGlue. No-ops when the
+ * file has no glue bytes (all content is covered by atoms for this file).
+ *
+ * Must be called AFTER Pass A (atom persistence) so getAtomRangesBySourceFile
+ * reflects all atoms stored with sourceFile = this file.
+ *
+ * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
+ *
+ * @param registry  - Open registry instance.
+ * @param absPath   - Absolute path to the source file (for fs.readFileSync).
+ * @param sourcePkg - Workspace package dir (e.g. 'packages/cli').
+ * @param sourceFile - Workspace-relative path (e.g. 'packages/cli/src/commands/foo.ts').
+ * @param logger    - Output sink.
+ * @returns true if a glue row was stored, false if skipped (no glue bytes).
+ */
+async function captureSourceFileGlue(
+  registry: Registry,
+  absPath: string,
+  sourcePkg: string,
+  sourceFile: string,
+  logger: Logger,
+): Promise<boolean> {
+  // Read the source file content (UTF-8 string, matching shave pipeline).
+  let source: string;
+  try {
+    source = readFileSync(absPath, "utf-8");
+  } catch (err) {
+    logger.error(
+      `warning: bootstrap glue: cannot read ${sourceFile} for glue capture: ${(err as Error).message}`,
+    );
+    return false;
+  }
+
+  // Query DB for atom ranges stored with this sourceFile.
+  // This is the authoritative source — it matches what reconstruction will use.
+  let atomRanges: readonly { readonly sourceOffset: number; readonly implSourceLength: number }[];
+  try {
+    atomRanges = await registry.getAtomRangesBySourceFile(sourceFile);
+  } catch (err) {
+    logger.error(
+      `warning: bootstrap glue: cannot query atom ranges for ${sourceFile}: ${(err as Error).message}`,
+    );
+    return false;
+  }
+
+  // Convert to {start, end} format for computeGlueBlob.
+  // Already sorted ascending by sourceOffset (getAtomRangesBySourceFile ORDER BY source_offset ASC).
+  const ranges = atomRanges.map((r) => ({
+    start: r.sourceOffset,
+    end: r.sourceOffset + r.implSourceLength,
+  }));
+
+  const glueBlob = computeGlueBlob(source, ranges);
+  if (glueBlob === null) {
+    // No glue bytes — all content is atoms. Skip silently.
+    return false;
+  }
+
+  const contentHash: string = contractIdFromBytes(glueBlob);
+
+  const entry: SourceFileGlueEntry = {
+    sourcePkg,
+    sourceFile,
+    contentHash,
+    contentBlob: glueBlob,
+    createdAt: Date.now(),
+  };
+
+  try {
+    await registry.storeSourceFileGlue(entry);
+    return true;
+  } catch (err) {
+    logger.error(
+      `error: bootstrap glue: failed to store glue for ${sourceFile}: ${(err as Error).message}`,
+    );
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // bootstrap() — public command handler
 // ---------------------------------------------------------------------------
 
@@ -650,18 +995,26 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
 
       // Force offline: true to disable AI-corpus extraction (DEC-V2-BOOT-NO-AI-CORPUS-001).
       // TODO: when ShaveOptions gains corpusOptions.disableSourceC, use that instead.
+      const sourceFileNorm = relPath.replace(/\\/g, "/");
       const result = await shaveImpl(absPath, shaveRegistry, {
         offline: true,
         intentStrategy: "static",
         sourceContext: {
           sourcePkg,
-          sourceFile: relPath.replace(/\\/g, "/"),
+          sourceFile: sourceFileNorm,
           // sourceOffset is null at the ShaveOptions level — per-atom offsets are
           // derived from entry.sourceRange.start inside shave() and forwarded into
           // PersistOptions.sourceContext.sourceOffset per novel-glue entry.
           sourceOffset: null,
         },
       });
+
+      // Pass B: capture per-file glue (non-atom regions) into source_file_glue.
+      // Queries DB for atoms stored with sourceFile = sourceFileNorm (DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
+      // Must run after Pass A so novel atoms are committed to the DB first.
+      // Errors are logged but do not fail the file outcome.
+      await captureSourceFileGlue(registry, absPath, sourcePkg, sourceFileNorm, logger);
+
       rawOutcomes.push({
         path: relPath,
         outcome: "success",

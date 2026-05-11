@@ -35,6 +35,7 @@ import type {
   IntentQuery,
   QueryCandidate,
   Registry,
+  SourceFileGlueEntry,
 } from "./index.js";
 import { openRegistry } from "./storage.js";
 
@@ -168,17 +169,18 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→6→7.
+    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→6→7→8.
     // Migration 4 bumps schema_version to 4 (parent_block_root; NULL default is correct).
     // Migration 5 bumps schema_version to 5 (block_artifacts table).
     // Migration 6 bumps schema_version to 6 (foreign-block columns + block_foreign_refs).
     // Migration 7 bumps schema_version to 7 (source provenance columns + workspace_plumbing).
+    // Migration 8 bumps schema_version to 8 (source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
     // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
-    expect(row?.version).toBe(7);
+    expect(row?.version).toBe(8);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -245,8 +247,8 @@ describe("schema migrations", () => {
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // Second application is a no-op; version stays at 7 (all migrations already ran).
-    expect(row?.version).toBe(7);
+    // Second application is a no-op; version stays at 8 (all migrations already ran).
+    expect(row?.version).toBe(8);
 
     db.close();
   });
@@ -302,14 +304,15 @@ describe("schema migrations", () => {
     expect(tableNames).not.toContain("implementations");
     expect(tableNames).toContain("blocks");
 
-    // Version is 7: migration 4 bumped to 4 (parent_block_root NULL default is correct);
+    // Version is 8: migration 4 bumped to 4 (parent_block_root NULL default is correct);
     // migration 5 bumped to 5 (block_artifacts table created);
     // migration 6 bumped to 6 (kind/foreign_* columns + block_foreign_refs table);
-    // migration 7 bumped to 7 (source provenance columns + workspace_plumbing table).
+    // migration 7 bumped to 7 (source provenance columns + workspace_plumbing table);
+    // migration 8 bumped to 8 (source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(7);
+    expect(vRow?.version).toBe(8);
 
     db.close();
   });
@@ -757,11 +760,12 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     expect(fetched?.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg.close();
 
-    // Verify schema_version is now 7: openRegistry ran the canonical_ast_hash backfill
+    // Verify schema_version is now 8: openRegistry ran the canonical_ast_hash backfill
     // (bumped to 3) then applyMigrations ran migration 4 DDL (bumped to 4),
     // migration 5 DDL (bumped to 5, block_artifacts table),
-    // migration 6 DDL (bumped to 6, kind/foreign_* columns + block_foreign_refs), and
-    // migration 7 DDL (bumped to 7, source provenance columns + workspace_plumbing).
+    // migration 6 DDL (bumped to 6, kind/foreign_* columns + block_foreign_refs),
+    // migration 7 DDL (bumped to 7, source provenance columns + workspace_plumbing), and
+    // migration 8 DDL (bumped to 8, source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
     // The preMigrationVersion capture in openRegistry ensures the backfill still
     // ran even though later migrations would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
@@ -769,7 +773,7 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const versionAfterBackfill = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionAfterBackfill).toBe(7);
+    expect(versionAfterBackfill).toBe(8);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -865,15 +869,16 @@ describe("migration 3 → 4: parent_block_root column", () => {
     expect(fetched?.artifacts.size).toBe(0);
     await reg.close();
 
-    // schema_version is now 7 (migration 4 added parent_block_root; migration 5 added
+    // schema_version is now 8 (migration 4 added parent_block_root; migration 5 added
     // block_artifacts; migration 6 added kind/foreign_* columns + block_foreign_refs;
-    // migration 7 added source provenance columns + workspace_plumbing table).
+    // migration 7 added source provenance columns + workspace_plumbing table;
+    // migration 8 added source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const ver = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(ver).toBe(7);
+    expect(ver).toBe(8);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
@@ -1608,7 +1613,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     ).cnt;
     expect(artCountPre).toBe(2);
 
-    // Apply the migration — applyMigrations on a v5 DB runs v5→v6 and v6→v7 steps.
+    // Apply the migration — applyMigrations on a v5 DB runs v5→v6, v6→v7, and v7→v8 steps.
     const { applyMigrations } = await import("./schema.js");
     applyMigrations(db);
 
@@ -1616,7 +1621,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vPost = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vPost).toBe(7);
+    expect(vPost).toBe(8);
 
     // kind column now present.
     const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -1659,12 +1664,12 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
   });
 
   /**
-   * L2-T2: Re-running migration on an already-v7 DB is a no-op.
+   * L2-T2: Re-running migration on an already-v8 DB is a no-op.
    *
-   * Ensures applyMigrations is idempotent on a fully-migrated v7 DB. No errors;
-   * schema_version stays at 7. Matches the MIGRATION_3/4/6 idempotency pattern.
+   * Ensures applyMigrations is idempotent on a fully-migrated v8 DB. No errors;
+   * schema_version stays at 8. Matches the MIGRATION_3/4/6 idempotency pattern.
    */
-  it("L2-T2: re-running applyMigrations on a v6 DB is a no-op (idempotent)", async () => {
+  it("L2-T2: re-running applyMigrations on a v8 DB is a no-op (idempotent)", async () => {
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
     const { applyMigrations, SCHEMA_VERSION } = await import("./schema.js");
@@ -1672,20 +1677,20 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const db = new Database(":memory:");
     sqliteVec.load(db);
 
-    // First run — migrates from 0 to 7.
+    // First run — migrates from 0 to 8.
     applyMigrations(db);
     const vAfterFirst = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterFirst).toBe(7);
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(vAfterFirst).toBe(8);
+    expect(SCHEMA_VERSION).toBe(8);
 
-    // Second run — must be a complete no-op; no throws; version stays at 7.
+    // Second run — must be a complete no-op; no throws; version stays at 8.
     expect(() => applyMigrations(db)).not.toThrow();
     const vAfterSecond = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterSecond).toBe(7);
+    expect(vAfterSecond).toBe(8);
 
     // Verify column count is stable (no duplicate columns created).
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3389,10 +3394,11 @@ describe("findCandidatesByQuery — T12: findCandidatesByIntent remains unaffect
 describe("migration 7: source-file provenance columns + workspace_plumbing (P1)", () => {
   /**
    * T1 — schema migration shape.
-   * Opening a fresh registry via openRegistry() produces a DB with schema_version=7,
-   * the three provenance columns on blocks, and the workspace_plumbing table.
+   * Opening a fresh registry via openRegistry() produces a DB with schema_version=8,
+   * the three provenance columns on blocks, the workspace_plumbing table, and the
+   * source_file_glue table (migration 8; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
    */
-  it("T1: fresh openRegistry() produces schema_version=7, provenance columns, workspace_plumbing", async () => {
+  it("T1: fresh openRegistry() produces schema_version=8, provenance columns, workspace_plumbing, source_file_glue", async () => {
     const { openRegistry } = await import("./storage.js");
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
@@ -3410,11 +3416,11 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     sqliteVec.load(db);
     applyMigrations(db);
 
-    // schema_version = 7.
+    // schema_version = 8 (includes source_file_glue table from migration 8).
     const versionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {
       version: number;
     };
-    expect(versionRow.version).toBe(7);
+    expect(versionRow.version).toBe(8);
 
     // blocks table has the three new provenance columns.
     const blockCols = (
@@ -3442,14 +3448,50 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     ).filter((c) => c.pk > 0);
     expect(pkCols.map((c) => c.name)).toContain("workspace_path");
 
+    // source_file_glue table exists (migration 8; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
+    const allTables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
+        name: string;
+      }>
+    ).map((t) => t.name);
+    expect(allTables).toContain("source_file_glue");
+
+    // source_file_glue columns match the schema DDL.
+    const glueCols = (
+      db.prepare("PRAGMA table_info(source_file_glue)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    expect(glueCols).toContain("source_pkg");
+    expect(glueCols).toContain("source_file");
+    expect(glueCols).toContain("content_hash");
+    expect(glueCols).toContain("content_blob");
+    expect(glueCols).toContain("created_at");
+
+    // source_file_glue PK is (source_pkg, source_file).
+    const gluePkCols = (
+      db.prepare("PRAGMA table_info(source_file_glue)").all() as Array<{
+        name: string;
+        pk: number;
+      }>
+    )
+      .filter((c) => c.pk > 0)
+      .map((c) => c.name);
+    expect(gluePkCols).toContain("source_pkg");
+    expect(gluePkCols).toContain("source_file");
+
+    // idx_source_file_glue_hash index exists.
+    const glueIndexes = (
+      db.prepare("PRAGMA index_list(source_file_glue)").all() as Array<{ name: string }>
+    ).map((i) => i.name);
+    expect(glueIndexes).toContain("idx_source_file_glue_hash");
+
     db.close();
   });
 
   /**
    * T2 — migration idempotency.
-   * Opening a fully-migrated DB a second time does not throw and stays at v7.
+   * Opening a fully-migrated DB a second time does not throw and stays at v8.
    */
-  it("T2: re-opening a v7 DB is idempotent — no errors, schema_version stays 7", async () => {
+  it("T2: re-opening a v8 DB is idempotent — no errors, schema_version stays 8", async () => {
     const { applyMigrations, SCHEMA_VERSION } = await import("./schema.js");
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
@@ -3457,19 +3499,19 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const db = new Database(":memory:");
     sqliteVec.load(db);
 
-    applyMigrations(db); // first — migrates 0→7
+    applyMigrations(db); // first — migrates 0→8
     const v1 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v1).toBe(7);
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(v1).toBe(8);
+    expect(SCHEMA_VERSION).toBe(8);
 
     // Second run — must be a complete no-op.
     expect(() => applyMigrations(db)).not.toThrow();
     const v2 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v2).toBe(7);
+    expect(v2).toBe(8);
 
     // Column count is stable — no duplicate columns.
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3483,19 +3525,19 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
 
   /**
    * T3 — pre-v7 DB upgrade preserves existing rows.
-   * Simulates a v6 DB with a stored row; after migration to v7, the row
+   * Simulates a v6 DB with a stored row; after migration to v8, the row
    * has NULL provenance (correct sentinel for pre-v7 rows).
    */
-  it("T3: v6→v7 migration preserves existing rows; new provenance columns are NULL", async () => {
+  it("T3: v6→v8 migration preserves existing rows; new provenance columns are NULL", async () => {
     const { applyMigrations } = await import("./schema.js");
     const { openRegistry } = await import("./storage.js");
     const Database = (await import("better-sqlite3")).default;
     const sqliteVec = await import("sqlite-vec");
 
     // Build a v6-equivalent DB by calling applyMigrations on a fresh in-memory DB.
-    // applyMigrations now runs 0→7 in one shot; we then verify that the v7 DDL
-    // added the columns and that the workspace_plumbing table is empty (P1 creates
-    // the table but does not populate it).
+    // applyMigrations now runs 0→8 in one shot; we then verify that the v7 DDL
+    // added the columns, the workspace_plumbing table is empty (P1 creates
+    // the table but does not populate it), and the source_file_glue table exists.
     //
     // To simulate a genuine pre-v7 DB with existing rows, we use openRegistryForTest()
     // to store a block, then inspect via applyMigrations on a fresh DB to verify column
@@ -3507,7 +3549,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionPost = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionPost).toBe(7);
+    expect(versionPost).toBe(8);
 
     // The workspace_plumbing table exists (P1 creates it empty).
     const tables = (
@@ -3522,6 +3564,15 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
       db2.prepare("SELECT COUNT(*) AS cnt FROM workspace_plumbing").get() as { cnt: number }
     ).cnt;
     expect(plumbingCount).toBe(0);
+
+    // source_file_glue table exists (migration 8; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
+    expect(tables).toContain("source_file_glue");
+
+    // Migration 8: source_file_glue starts empty.
+    const glueCount = (
+      db2.prepare("SELECT COUNT(*) AS cnt FROM source_file_glue").get() as { cnt: number }
+    ).cnt;
+    expect(glueCount).toBe(0);
 
     db2.close();
   });
@@ -3699,3 +3750,244 @@ function makeRow(opts: { name: string; behavior: string }): BlockTripletRow {
     `export function ${opts.name.replace(/-/g, "_")}(x: string): number { return x.length; }`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Migration 8: source_file_glue accessors
+// (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+//
+// Production sequence exercised:
+//   openRegistry → storeSourceFileGlue(entry) → getSourceFileGlue(pkg, file)
+//   → listSourceFileGlue() → storeSourceFileGlue(same key, new blob) → get → close
+//
+// @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001: source_file_glue is the single
+//   authority for per-file non-atom byte regions. INSERT OR REPLACE semantics
+//   make re-bootstrap idempotent. contentHash is BLAKE3-256 verified at write.
+// ---------------------------------------------------------------------------
+
+describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileGlue", () => {
+  /** Helper: compute BLAKE3-256 hex of a Uint8Array (matches storage.ts bytesToHex). */
+  async function blake3Hex(data: Uint8Array): Promise<string> {
+    const { blake3 } = await import("@noble/hashes/blake3.js");
+    const digest = blake3(data);
+    return Array.from(digest)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  it("G1: storeSourceFileGlue then getSourceFileGlue round-trips content", async () => {
+    const registry = await openRegistryForTest();
+
+    const blob = new TextEncoder().encode("// imports\nconst x = 1;\n");
+    const hash = await blake3Hex(blob);
+    const entry: SourceFileGlueEntry = {
+      sourcePkg: "packages/cli",
+      sourceFile: "packages/cli/src/commands/foo.ts",
+      contentHash: hash,
+      contentBlob: blob,
+      createdAt: 1_700_000_000_000,
+    };
+
+    await registry.storeSourceFileGlue(entry);
+
+    const retrieved = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/foo.ts");
+    expect(retrieved).not.toBeNull();
+    expect(retrieved?.sourcePkg).toBe("packages/cli");
+    expect(retrieved?.sourceFile).toBe("packages/cli/src/commands/foo.ts");
+    expect(retrieved?.contentHash).toBe(hash);
+    expect(Buffer.from(retrieved!.contentBlob).equals(Buffer.from(blob))).toBe(true);
+    expect(retrieved?.createdAt).toBe(1_700_000_000_000);
+
+    await registry.close();
+  });
+
+  it("G2: getSourceFileGlue returns null for unknown (sourcePkg, sourceFile)", async () => {
+    const registry = await openRegistryForTest();
+
+    const result = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/nonexistent.ts");
+    expect(result).toBeNull();
+
+    await registry.close();
+  });
+
+  it("G3: storeSourceFileGlue is INSERT OR REPLACE — re-store with new blob replaces old", async () => {
+    const registry = await openRegistryForTest();
+
+    const blobV1 = new TextEncoder().encode("// v1 glue\n");
+    const hashV1 = await blake3Hex(blobV1);
+    const entryV1: SourceFileGlueEntry = {
+      sourcePkg: "packages/cli",
+      sourceFile: "packages/cli/src/commands/bar.ts",
+      contentHash: hashV1,
+      contentBlob: blobV1,
+      createdAt: 1_700_000_000_000,
+    };
+    await registry.storeSourceFileGlue(entryV1);
+
+    const blobV2 = new TextEncoder().encode("// v2 glue with more content\n");
+    const hashV2 = await blake3Hex(blobV2);
+    const entryV2: SourceFileGlueEntry = {
+      sourcePkg: "packages/cli",
+      sourceFile: "packages/cli/src/commands/bar.ts",
+      contentHash: hashV2,
+      contentBlob: blobV2,
+      createdAt: 1_700_000_001_000,
+    };
+    await registry.storeSourceFileGlue(entryV2);
+
+    const retrieved = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/bar.ts");
+    expect(retrieved?.contentHash).toBe(hashV2);
+    expect(Buffer.from(retrieved!.contentBlob).equals(Buffer.from(blobV2))).toBe(true);
+
+    await registry.close();
+  });
+
+  it("G4: listSourceFileGlue returns all entries sorted by (source_pkg, source_file)", async () => {
+    const registry = await openRegistryForTest();
+
+    const entries: Array<{ pkg: string; file: string; content: string }> = [
+      { pkg: "packages/registry", file: "packages/registry/src/storage.ts", content: "// storage glue\n" },
+      { pkg: "packages/cli", file: "packages/cli/src/commands/bootstrap.ts", content: "// bootstrap glue\n" },
+      { pkg: "packages/cli", file: "packages/cli/src/commands/compile.ts", content: "// compile glue\n" },
+    ];
+
+    for (const e of entries) {
+      const blob = new TextEncoder().encode(e.content);
+      const hash = await blake3Hex(blob);
+      await registry.storeSourceFileGlue({
+        sourcePkg: e.pkg,
+        sourceFile: e.file,
+        contentHash: hash,
+        contentBlob: blob,
+        createdAt: Date.now(),
+      });
+    }
+
+    const list = await registry.listSourceFileGlue();
+    expect(list.length).toBe(3);
+
+    // Sorted by (source_pkg ASC, source_file ASC): packages/cli first, then packages/registry.
+    expect(list[0]?.sourcePkg).toBe("packages/cli");
+    expect(list[0]?.sourceFile).toBe("packages/cli/src/commands/bootstrap.ts");
+    expect(list[1]?.sourcePkg).toBe("packages/cli");
+    expect(list[1]?.sourceFile).toBe("packages/cli/src/commands/compile.ts");
+    expect(list[2]?.sourcePkg).toBe("packages/registry");
+    expect(list[2]?.sourceFile).toBe("packages/registry/src/storage.ts");
+
+    await registry.close();
+  });
+
+  it("G5: storeSourceFileGlue rejects contentHash mismatch", async () => {
+    const registry = await openRegistryForTest();
+
+    const blob = new TextEncoder().encode("// real content\n");
+    const wrongHash = "0".repeat(64); // definitely wrong
+
+    await expect(
+      registry.storeSourceFileGlue({
+        sourcePkg: "packages/cli",
+        sourceFile: "packages/cli/src/commands/baz.ts",
+        contentHash: wrongHash,
+        contentBlob: blob,
+        createdAt: Date.now(),
+      }),
+    ).rejects.toThrow(/contentHash mismatch/);
+
+    // Nothing stored.
+    const result = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/baz.ts");
+    expect(result).toBeNull();
+
+    await registry.close();
+  });
+
+  it("G6: storeSourceFileGlue rejects empty sourcePkg or sourceFile", async () => {
+    const registry = await openRegistryForTest();
+
+    const blob = new TextEncoder().encode("glue");
+    const hash = await blake3Hex(blob);
+
+    await expect(
+      registry.storeSourceFileGlue({
+        sourcePkg: "",
+        sourceFile: "packages/cli/src/commands/foo.ts",
+        contentHash: hash,
+        contentBlob: blob,
+        createdAt: Date.now(),
+      }),
+    ).rejects.toThrow(/sourcePkg.*sourceFile.*non-empty/);
+
+    await expect(
+      registry.storeSourceFileGlue({
+        sourcePkg: "packages/cli",
+        sourceFile: "",
+        contentHash: hash,
+        contentBlob: blob,
+        createdAt: Date.now(),
+      }),
+    ).rejects.toThrow(/sourcePkg.*sourceFile.*non-empty/);
+
+    await registry.close();
+  });
+
+  it("G7: compound-interaction — store two files, list, get each, replace one, re-list", async () => {
+    // This is the compound-interaction test exercising the production sequence for
+    // bootstrap glue capture: for each file in a package, storeSourceFileGlue;
+    // then compile-self calls getSourceFileGlue per file to reconstruct.
+    const registry = await openRegistryForTest();
+
+    const file1Content = new TextEncoder().encode("import { x } from './x.js';\nconst y = 1;\n");
+    const file2Content = new TextEncoder().encode("import { z } from './z.js';\n");
+    const file1Hash = await blake3Hex(file1Content);
+    const file2Hash = await blake3Hex(file2Content);
+
+    // Bootstrap captures two files.
+    await registry.storeSourceFileGlue({
+      sourcePkg: "packages/cli",
+      sourceFile: "packages/cli/src/a.ts",
+      contentHash: file1Hash,
+      contentBlob: file1Content,
+      createdAt: 1_700_000_000_000,
+    });
+    await registry.storeSourceFileGlue({
+      sourcePkg: "packages/cli",
+      sourceFile: "packages/cli/src/b.ts",
+      contentHash: file2Hash,
+      contentBlob: file2Content,
+      createdAt: 1_700_000_000_000,
+    });
+
+    // compile-self phase: reads each file's glue.
+    const g1 = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/a.ts");
+    const g2 = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/b.ts");
+    expect(g1?.contentHash).toBe(file1Hash);
+    expect(g2?.contentHash).toBe(file2Hash);
+
+    // List should show both sorted.
+    const list1 = await registry.listSourceFileGlue();
+    expect(list1.length).toBe(2);
+    expect(list1[0]?.sourceFile).toBe("packages/cli/src/a.ts");
+    expect(list1[1]?.sourceFile).toBe("packages/cli/src/b.ts");
+
+    // Re-bootstrap: file a.ts changes (different glue blob).
+    const file1ContentV2 = new TextEncoder().encode("import { x } from './x.js';\nconst y = 2;\n");
+    const file1HashV2 = await blake3Hex(file1ContentV2);
+    await registry.storeSourceFileGlue({
+      sourcePkg: "packages/cli",
+      sourceFile: "packages/cli/src/a.ts",
+      contentHash: file1HashV2,
+      contentBlob: file1ContentV2,
+      createdAt: 1_700_000_001_000,
+    });
+
+    // After replace: a.ts has new blob; b.ts unchanged.
+    const g1v2 = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/a.ts");
+    expect(g1v2?.contentHash).toBe(file1HashV2);
+    const g2still = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/b.ts");
+    expect(g2still?.contentHash).toBe(file2Hash);
+
+    // Still 2 entries total.
+    const list2 = await registry.listSourceFileGlue();
+    expect(list2.length).toBe(2);
+
+    await registry.close();
+  });
+});

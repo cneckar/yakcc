@@ -389,6 +389,10 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
         getForeignRefs: registry.getForeignRefs.bind(registry),
         storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
         listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
+        storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
+        getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
+        listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
+        getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
       };
 
       const ctx: EmissionContext = { intent: "some emission intent" };

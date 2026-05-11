@@ -270,6 +270,10 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       getForeignRefs: registry.getForeignRefs.bind(registry),
       storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
       listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
+        storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
+        getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
+        listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
+        getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {
