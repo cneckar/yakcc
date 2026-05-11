@@ -1,0 +1,27 @@
+[package]
+name = "json-transformer-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde_json = "1"
+
+# serde_json does not have feature-gated SIMD in the same way sha2 does.
+# Both bins are compiled from the same serde_json, so the difference between
+# "accelerated" and "software" here is academic — serde_json uses std SIMD
+# for UTF-8 validation on some targets but has no --features force-soft analog.
+# Both bins are kept for consistency with Slice 1's 4-comparator structure.
+# See algorithm.md for full rationale.
+
+[[bin]]
+name = "json-transformer-accelerated"
+path = "src/main.rs"
+
+[[bin]]
+name = "json-transformer-software"
+path = "src/main-software.rs"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

@@ -9,11 +9,11 @@ B1 is split into three slices for incremental delivery:
 
 | Slice | Workload | Status |
 |-------|----------|--------|
-| Slice 1 | Integer math — SHA-256 over 100MB buffer | **This commit** |
-| Slice 2 | JSON — parse + serialize integer arrays | Deferred (follow-up WI) |
+| Slice 1 | Integer math — SHA-256 over 100MB buffer | Shipped (PR #347) |
+| Slice 2 | JSON — DFS sum-of-numeric-leaves over ~100MB JSON | **This commit** |
 | Slice 3 | HTTP + CI integration | Deferred (follow-up WI) |
 
-This document covers Slice 1. Each subsequent slice will add a section here.
+This document covers Slices 1 and 2. Each subsequent slice will add a section here.
 
 ## What Slice 1 Measures
 
@@ -157,12 +157,84 @@ The result JSON **is committed** as the operator decision input for issue #185.
 The corpus binary (`corpus/input-100MB.bin`) is **not committed** — it is content-addressed
 and regenerated on demand.
 
-## Decision Reference
+## Decision Reference (Slice 1)
 
 `@decision DEC-BENCH-B1-INTEGER-001` — see `integer-math/run.mjs` header for full rationale.
 
 This decision captures:
 - The 3-slice strategy (B1 split for incremental delivery)
 - The dual-comparator discipline (apples-to-apples gate vs ceiling reference)
+- The methodology (100 warm-up + 1000 measured, per-process isolation)
+- This commit's measurement results and pass/warn/kill verdict
+
+---
+
+## Slice 2 — JSON Tree Traversal
+
+**Workload:** Sum-of-all-numeric-leaves via depth-first traversal over a ~100MB JSON corpus.
+
+**Why not camelCase transform (the original Slice 2 candidate):**
+The camelCase key normalization algorithm requires AS managed string operations
+(`string` type, GC heap) which are incompatible with `--runtime stub`. The
+`--runtime stub` constraint is fundamental to the AS-backend (see
+`DEC-AS-JSON-STRATEGY-001` in `as-backend.ts`). The fallback is sum-of-numeric-leaves,
+which exercises the same DFS traversal substrate with identical node-visit overhead.
+
+See `json-transformer/algorithm.md` for the full rationale.
+
+| Comparator | Engine | Role |
+|------------|--------|------|
+| `rust-accelerated` | Native Rust (`serde_json`) | Ceiling reference (same as software for this workload) |
+| `rust-software` | Native Rust (`serde_json`) | Apples-to-apples verdict gate |
+| `ts-node` | Node.js V8 (`JSON.parse` + recursive DFS) | Second reference point |
+| `yakcc-as` | AssemblyScript WASM (flat-memory DFS over binary tree) | Unit under test |
+
+**Pre-parse discipline:** JSON parsing is excluded from all timing loops. Each comparator
+times only the DFS traversal over a pre-parsed representation. This is documented and
+equivalent across all comparators.
+
+**Correctness gate:** Before timing, all 4 comparators run on a fixed 10KB test input.
+Outputs (f64 sums) must be byte-equivalent (relative error < 1e-6). Any mismatch
+aborts the timing measurement.
+
+### How to Reproduce (Slice 2)
+
+```bash
+# Generate corpus (one-time)
+node bench/B1-latency/json-transformer/generate-corpus.mjs
+
+# Run the benchmark
+pnpm bench:latency:json
+```
+
+### Result Artifact Format (Slice 2)
+
+Written to `tmp/B1-latency/json-transformer-<timestamp>.json`:
+
+```json
+{
+  "slice": "json-transformer",
+  "timestamp": "...",
+  "corpus": { "sha256": "...", "size_bytes": ... },
+  "algorithm": "sum-of-all-numeric-leaves (DFS); camelCase fallback — see algorithm.md",
+  "environment": { ... },
+  "correctness_check": { "passed": true, "checksums": [...] },
+  "results": [ ... ],
+  "verdict": {
+    "primary_comparison": "yakcc-as vs rust-software",
+    "yakcc_vs_rust_software_degradation_pct": ...,
+    "vs_pass_bar_15pct": "pass" | "warn" | "kill" | "blocker"
+  }
+}
+```
+
+## Decision Reference (Slice 2)
+
+`@decision DEC-BENCH-B1-JSON-001` — see `json-transformer/run.mjs` header for full rationale.
+
+This decision captures:
+- Algorithm choice: sum-of-numeric-leaves (camelCase blocked by --runtime stub)
+- Pre-parse discipline and timing scope equivalence across all 4 comparators
+- Correctness verification gate (byte-equivalent output on 10KB test input)
 - The methodology (100 warm-up + 1000 measured, per-process isolation)
 - This commit's measurement results and pass/warn/kill verdict
