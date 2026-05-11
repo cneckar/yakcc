@@ -1,0 +1,108 @@
+{
+  "slice": "http-routing",
+  "timestamp": "2026-05-11T19:06:02.944Z",
+  "corpus": {
+    "routing_table_sha256": "bc0ff2e1d2a5d9ec76abb3741ec518c1be080bb7b95bee687ac64242cf7ed463",
+    "query_set_sha256": "f2a3f43a8b1d8c6fd243e852e1e45b187468308dec00c2f80aa724e9dc1ce47d",
+    "rule_count": 10000,
+    "query_count": 100000
+  },
+  "algorithm": "u32-keyed trie (segment hashing outside timing loop); see algorithm.md",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 9 9950X 16-Core Processor            ",
+    "cpu_count": 32,
+    "total_mem_gb": 125.7,
+    "node": "v22.14.0",
+    "rust": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "yakcc_head": "8a23123"
+  },
+  "correctness_check": {
+    "passed": true,
+    "reference": {
+      "matched_count": 98,
+      "total_captures": 29
+    },
+    "checksums": [
+      {
+        "label": "rust-accelerated",
+        "matched_count": 98,
+        "total_captures": 29
+      },
+      {
+        "label": "rust-software",
+        "matched_count": 98,
+        "total_captures": 29
+      },
+      {
+        "label": "ts-node",
+        "matched_count": 98,
+        "total_captures": 29
+      },
+      {
+        "label": "yakcc-as",
+        "matched_count": 98,
+        "total_captures": 29
+      }
+    ],
+    "note": "All comparators verified to produce identical {matched_count, total_captures} on 100-query test set before timing"
+  },
+  "results": [
+    {
+      "comparator": "rust-accelerated",
+      "p50_ms": 11.1351,
+      "p95_ms": 13.2176,
+      "p99_ms": 16.2884,
+      "mean_ms": 11.343679,
+      "queries_per_sec": 8815482,
+      "iterations": 1000,
+      "matched_count": 95020,
+      "total_captures": 31530
+    },
+    {
+      "comparator": "rust-software",
+      "p50_ms": 10.2481,
+      "p95_ms": 11.8097,
+      "p99_ms": 12.8347,
+      "mean_ms": 10.295342,
+      "queries_per_sec": 9713130,
+      "iterations": 1000,
+      "matched_count": 95020,
+      "total_captures": 31530
+    },
+    {
+      "comparator": "ts-node",
+      "p50_ms": 12.832800000000134,
+      "p95_ms": 16.334999999999127,
+      "p99_ms": 20.273400000000038,
+      "mean_ms": 13.208909700000017,
+      "queries_per_sec": 7570647.560714255,
+      "iterations": 1000,
+      "matched_count": 95020,
+      "total_captures": 31530
+    },
+    {
+      "comparator": "yakcc-as",
+      "p50_ms": 5.785800000000563,
+      "p95_ms": 6.537800000000061,
+      "p99_ms": 6.934699999999793,
+      "mean_ms": 5.864221900000008,
+      "queries_per_sec": 17052560.715685036,
+      "iterations": 1000,
+      "matched_count": 95020,
+      "total_captures": 31530
+    }
+  ],
+  "verdict": {
+    "primary_comparison": "yakcc-as vs rust-software",
+    "yakcc_vs_rust_software_degradation_pct": -43.04,
+    "vs_pass_bar_25pct": "pass",
+    "note": "Glue-heavy workload: pass bar relaxed to ≤25% (vs ≤15% substrate-heavy). HTTP routing has no hardware-acceleration analog; both Rust bins are structurally identical.",
+    "ceiling_reference": {
+      "rust_accelerated_mean_ms": 11.343679,
+      "diff_vs_software_pct": -9.24,
+      "note": "No hardware acceleration for HTTP routing; rust-accelerated ≈ rust-software"
+    }
+  }
+}

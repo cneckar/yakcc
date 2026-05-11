@@ -32,6 +32,14 @@ bench/B1-latency/integer-math/corpus/
 # B1-latency Rust baseline build artifacts
 bench/B1-latency/integer-math/rust-baseline/target/
 
+# Slice 2: json-transformer corpus + Rust build artifacts
+bench/B1-latency/json-transformer/corpus/
+bench/B1-latency/json-transformer/rust-baseline/target/
+
+# Slice 3: http-routing corpus + Rust build artifacts
+bench/B1-latency/http-routing/corpus/
+bench/B1-latency/http-routing/rust-baseline/target/
+
 # compile-self recompiled output — generated artifact, never committed.
 # Reproducible from `yakcc compile-self` (DEC-V2-CORPUS-DISTRIBUTION-001, A2 slice).
 dist-recompiled/
