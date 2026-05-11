@@ -3,7 +3,8 @@
 // provider interface. Status: decided (MASTER_PLAN.md DEC-EMBED-010)
 // Rationale: Local-first matches v0's no-network stance. The provider interface
 // allows hosted providers to swap in later without changing call sites.
-// Model: Xenova/all-MiniLM-L6-v2 (384 dimensions, ~25MB quantized, MIT license).
+// Model: Xenova/bge-small-en-v1.5 (384 dimensions, ~25MB quantized, MIT license).
+// (Default swapped from all-MiniLM-L6-v2 per DEC-EMBED-MODEL-DEFAULT-002, #326.)
 // Lazy singleton load: the model is not loaded at import time; it loads on the
 // first embed() call and is reused for all subsequent calls.
 
@@ -50,8 +51,35 @@ export interface EmbeddingProvider {
 //   DEC-CI-OFFLINE-001 preserved: all listed models are @xenova/transformers–compatible.
 //   DEC-EMBED-010 preserved: model must be MIT or Apache 2.0 licensed.
 
-/** Default production model: all-MiniLM-L6-v2 (384 dims, MIT, ~25MB quantized). */
-const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
+/**
+ * Default production model: bge-small-en-v1.5 (384 dims, MIT, ~25MB quantized).
+ *
+ * @decision DEC-EMBED-MODEL-DEFAULT-002 — bge-small-en-v1.5 as production default
+ * @status accepted (operator 2026-05-11)
+ * @rationale WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT (#326) ran the full-corpus
+ *   harness against 3 alternative 384-dim models. Final numbers vs current default
+ *   (all-MiniLM-L6-v2 post-#322):
+ *
+ *     Model                          M2     M3     M4    Strong-band N (M5 calibration)
+ *     ---------------------          -----  ---    ----  -----------
+ *     Xenova/all-MiniLM-L6-v2        62.5%  92.5%  0.742  (current, below M2 target)
+ *     Xenova/bge-small-en-v1.5       70.0%  100%   0.823  36/50  ← winner
+ *     Xenova/e5-small-v2             52.5%  87.5%  0.653  N/A (mis-calibrated)
+ *     Xenova/all-MiniLM-L12-v2       72.5%  97.5%  0.824  0/50 (score collapse)
+ *
+ *   bge-small wins despite slightly lower M2 than L12 because:
+ *   - M3=100% across all 5 categories (every right atom in top-10, every time)
+ *   - Confidence distribution is operator-meaningful: 36/50 strong, 14/50 confident,
+ *     0 weak/poor → the D2 auto-accept gate (combinedScore > 0.85 + gap > 0.15) fires
+ *     on most queries
+ *   - L12 by contrast puts 48/50 entries in the weak band — auto-accept never fires
+ *     and downstream consumers always see "ambiguous, choose"
+ *
+ *   This swap closes the DEC-V3-INITIATIVE-002 measurement-first gate at the M2=70%
+ *   target. D1 multi-vector remains paused (and falsified): bge-small's best category
+ *   is multi-aspect at M2=87.5%, not its worst.
+ */
+const LOCAL_MODEL_ID = "Xenova/bge-small-en-v1.5";
 /** Output dimension for the default production model. */
 const LOCAL_DIMENSION = 384;
 
@@ -62,12 +90,12 @@ const LOCAL_DIMENSION = 384;
  * license check + offline verification must pass first.
  */
 export const LOCAL_KNOWN_MODELS: ReadonlyMap<string, number> = new Map([
-  ["Xenova/all-MiniLM-L6-v2", 384],        // default; MIT; ~25MB quantized
-  ["Xenova/all-MiniLM-L12-v2", 384],       // 12-layer same-family; Apache 2.0; ~34MB quantized
-  ["Xenova/paraphrase-MiniLM-L6-v2", 384], // paraphrase-tuned; Apache 2.0; ~25MB quantized
-  ["Xenova/bge-small-en-v1.5", 384],       // BGE retrieval model; MIT; ~25MB quantized; top pick
-  ["Xenova/e5-small-v2", 384],             // E5 retrieval model; MIT; ~25MB quantized; second pick
-  ["Xenova/all-mpnet-base-v2", 768],       // larger model; Apache 2.0; ~86MB quantized; requires FLOAT[768] schema
+  ["Xenova/bge-small-en-v1.5", 384],       // CURRENT DEFAULT (per DEC-EMBED-MODEL-DEFAULT-002); MIT; ~25MB; retrieval-tuned
+  ["Xenova/all-MiniLM-L6-v2", 384],        // prior default; MIT; ~25MB; below M2=70% target post-#322
+  ["Xenova/all-MiniLM-L12-v2", 384],       // 12-layer same-family; Apache 2.0; ~34MB; M2=72.5% but mis-calibrated (#326 reject)
+  ["Xenova/paraphrase-MiniLM-L6-v2", 384], // paraphrase-tuned; Apache 2.0; ~25MB; not benchmarked
+  ["Xenova/e5-small-v2", 384],             // E5 retrieval model; MIT; ~25MB; M2=52.5% (#326 reject)
+  ["Xenova/all-mpnet-base-v2", 768],       // larger model; Apache 2.0; ~86MB; requires FLOAT[768] schema (deferred)
 ]);
 
 // @decision DEC-EMBED-SINGLETON-CLOSURE-001: Pipeline singleton via closure, not module-level let.

@@ -97,11 +97,7 @@ const NULL_EMBEDDING_OPTS = {
 interface GapRow {
   readonly blockMerkleRoot: string;
   readonly packageName: string;
-  readonly reason:
-    | "null-provenance"
-    | "unresolved-pointer"
-    | "foreign-leaf-skipped"
-    | "other";
+  readonly reason: "null-provenance" | "unresolved-pointer" | "foreign-leaf-skipped" | "other";
   readonly detail: string;
 }
 
@@ -338,9 +334,7 @@ async function _runPipeline(
     // Step 1: Enumerate all atoms via exportManifest (single authority — Sacred Practice #12).
     const manifestEntries = await registry.exportManifest();
 
-    logger.log(
-      `compile-self: ${manifestEntries.length} total atoms in registry`,
-    );
+    logger.log(`compile-self: ${manifestEntries.length} total atoms in registry`);
 
     // Step 2: Group atoms by (sourcePkg, sourceFile).
     // Key: workspace-relative file path (sourceFile, e.g. 'packages/cli/src/commands/foo.ts').
