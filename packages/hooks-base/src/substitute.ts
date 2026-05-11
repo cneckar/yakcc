@@ -66,6 +66,27 @@ export const AUTO_ACCEPT_SCORE_THRESHOLD = 0.85;
  */
 export const AUTO_ACCEPT_GAP_THRESHOLD = 0.15;
 
+/**
+ * Float-tolerance for the gap-threshold comparison.
+ *
+ * @decision DEC-HOOKS-BASE-SUBSTITUTE-SMALL-GAP-001
+ * @title Float-tolerance buffer for AUTO_ACCEPT_GAP_THRESHOLD boundary
+ * @status accepted
+ * @rationale
+ *   IEEE 754 double-precision arithmetic produces small representation errors
+ *   on subtractions like `0.90 - 0.75` (evaluates to `0.15000000000000002`,
+ *   one ULP above the mathematical 0.15). The D2 design intent is that gaps
+ *   at the threshold boundary should NOT substitute (rejection is inclusive
+ *   of the boundary). Without a tolerance, exact-boundary cases slip past
+ *   the rejection check by ~2e-17 and incorrectly substitute. A 1e-9
+ *   tolerance is ~7 orders of magnitude above Number.EPSILON and ~7 orders
+ *   below the smallest meaningful score difference (combined scores are
+ *   2 decimal places of practical resolution). This eliminates the IEEE
+ *   boundary artifact without changing operator-observable behavior.
+ *   Issue #342. Property: prop_decideToSubstitute_small_gap_is_false.
+ */
+const GAP_FLOAT_TOLERANCE = 1e-9;
+
 // ---------------------------------------------------------------------------
 // Score conversion — L2 distance to combinedScore
 // ---------------------------------------------------------------------------
@@ -148,7 +169,8 @@ export function decideToSubstitute(candidates: readonly CandidateMatch[]): Subst
   // When there is no top-2, gap = top1Score (distance to 0).
   const top2Score = scores[1] ?? 0;
   const gap = top1Score - top2Score;
-  if (gap <= AUTO_ACCEPT_GAP_THRESHOLD) {
+  if (gap <= AUTO_ACCEPT_GAP_THRESHOLD + GAP_FLOAT_TOLERANCE) {
+    // DEC-HOOKS-BASE-SUBSTITUTE-SMALL-GAP-001: boundary inclusivity under IEEE 754.
     return { substitute: false };
   }
 
