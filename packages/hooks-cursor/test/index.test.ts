@@ -41,6 +41,9 @@ import {
   createHook,
 } from "../src/index.js";
 
+// Shared tmpdir for telemetry output in these tests — prevents writes to ~/.yakcc/telemetry.
+const TEST_TELEMETRY_DIR = join(tmpdir(), `yakcc-cursor-index-tel-${process.pid}`);
+
 // ---------------------------------------------------------------------------
 // Deterministic mock embedding provider
 // ---------------------------------------------------------------------------
@@ -137,6 +140,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await registry.close();
+  if (existsSync(TEST_TELEMETRY_DIR)) {
+    rmSync(TEST_TELEMETRY_DIR, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -167,9 +173,9 @@ describe("onCodeEmissionIntent — registry-hit path", () => {
       // Use a very permissive threshold so the mock embedder's close-but-not-identical
       // vectors still register as a hit. The production threshold (0.30) is tested
       // with a real embedding provider; here we verify the conditional logic fires.
-      const hook = createHook(registry, { threshold: 1.5 });
+      const hook = createHook(registry, { threshold: 1.5, telemetryDir: TEST_TELEMETRY_DIR });
       const ctx: EmissionContext = { intent: "Parse an integer from a string" };
-      const response: HookResponse = await hook.onCodeEmissionIntent(ctx);
+      const response: HookResponse = await hook.onCodeEmissionIntent(ctx, "Edit");
 
       expect(response.kind).toBe("registry-hit");
       if (response.kind === "registry-hit") {
@@ -186,11 +192,11 @@ describe("onCodeEmissionIntent — registry-hit path", () => {
       const spec = makeSpecYak("add-numbers", "Add two numbers together");
       await registry.storeBlock(makeBlockRow(spec));
 
-      const hook = createHook(registry, { threshold: 1.5 });
+      const hook = createHook(registry, { threshold: 1.5, telemetryDir: TEST_TELEMETRY_DIR });
       const ctx: EmissionContext = { intent: "Add two numbers together" };
 
-      const r1 = await hook.onCodeEmissionIntent(ctx);
-      const r2 = await hook.onCodeEmissionIntent(ctx);
+      const r1 = await hook.onCodeEmissionIntent(ctx, "Edit");
+      const r2 = await hook.onCodeEmissionIntent(ctx, "Edit");
 
       expect(r1.kind).toBe("registry-hit");
       expect(r2.kind).toBe("registry-hit");
@@ -211,9 +217,9 @@ describe("onCodeEmissionIntent — synthesis-required path", () => {
     "returns kind=synthesis-required when the registry is empty",
     async () => {
       // No blocks stored — any query must produce synthesis-required.
-      const hook = createHook(registry); // default threshold
+      const hook = createHook(registry, { telemetryDir: TEST_TELEMETRY_DIR }); // default threshold
       const ctx: EmissionContext = { intent: "Compute the Fibonacci sequence" };
-      const response = await hook.onCodeEmissionIntent(ctx);
+      const response = await hook.onCodeEmissionIntent(ctx, "Write");
 
       expect(response.kind).toBe("synthesis-required");
       if (response.kind === "synthesis-required") {
@@ -237,11 +243,11 @@ describe("onCodeEmissionIntent — synthesis-required path", () => {
       await registry.storeBlock(makeBlockRow(spec));
 
       // Use a zero threshold — no candidate can ever beat 0.0 cosine distance.
-      const hook = createHook(registry, { threshold: 0.0 });
+      const hook = createHook(registry, { threshold: 0.0, telemetryDir: TEST_TELEMETRY_DIR });
       const ctx: EmissionContext = {
         intent: "Completely different operation: validate email address format",
       };
-      const response = await hook.onCodeEmissionIntent(ctx);
+      const response = await hook.onCodeEmissionIntent(ctx, "Edit");
 
       expect(response.kind).toBe("synthesis-required");
       if (response.kind === "synthesis-required") {
@@ -254,12 +260,12 @@ describe("onCodeEmissionIntent — synthesis-required path", () => {
   it(
     "proposal behavior includes sourceContext when provided in the query",
     async () => {
-      const hook = createHook(registry);
+      const hook = createHook(registry, { telemetryDir: TEST_TELEMETRY_DIR });
       const ctx: EmissionContext = {
         intent: "filter the list",
         sourceContext: "by removing nulls",
       };
-      const response = await hook.onCodeEmissionIntent(ctx);
+      const response = await hook.onCodeEmissionIntent(ctx, "MultiEdit");
 
       // Empty registry → synthesis-required. The behavior query was built from
       // intent + sourceContext; the proposal behavior is the intent alone.
@@ -299,9 +305,9 @@ describe("onCodeEmissionIntent — passthrough (error) path", () => {
         listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
       };
 
-      const hook = createHook(brokenRegistry);
+      const hook = createHook(brokenRegistry, { telemetryDir: TEST_TELEMETRY_DIR });
       const ctx: EmissionContext = { intent: "some emission intent" };
-      const response = await hook.onCodeEmissionIntent(ctx);
+      const response = await hook.onCodeEmissionIntent(ctx, "Edit");
 
       expect(response.kind).toBe("passthrough");
     },
@@ -374,7 +380,7 @@ describe("compound interaction — full production sequence", () => {
 
       // Step 2: create the hook (as done once per Cursor session).
       const markerDir = join(tmpdir(), `yakcc-cursor-e2e-${process.pid}`);
-      const hook = createHook(registry, { threshold: 1.5, markerDir });
+      const hook = createHook(registry, { threshold: 1.5, markerDir, telemetryDir: TEST_TELEMETRY_DIR });
 
       try {
         // Step 3: register the command (wires the hook marker into the Cursor directory).
@@ -384,15 +390,15 @@ describe("compound interaction — full production sequence", () => {
         // Step 4: emit an intent that matches the seeded block.
         const hitResponse = await hook.onCodeEmissionIntent({
           intent: "Reverse a string",
-        });
+        }, "Edit");
         expect(hitResponse.kind).toBe("registry-hit");
 
         // Step 5: emit an intent with no match using strict zero-threshold hook
         // to force synthesis-required.
-        const strictHook = createHook(registry, { threshold: 0.0, markerDir });
+        const strictHook = createHook(registry, { threshold: 0.0, markerDir, telemetryDir: TEST_TELEMETRY_DIR });
         const strictMiss = await strictHook.onCodeEmissionIntent({
           intent: "Compute a 3D convex hull from point cloud data",
-        });
+        }, "Write");
         expect(strictMiss.kind).toBe("synthesis-required");
         if (strictMiss.kind === "synthesis-required") {
           expect(strictMiss.proposal.behavior).toContain("convex hull");

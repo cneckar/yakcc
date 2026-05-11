@@ -39,6 +39,7 @@ import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
+import { hooksCursorInstall } from "./commands/hooks-cursor-install.js";
 import { init } from "./commands/init.js";
 import { propose } from "./commands/propose.js";
 import { query } from "./commands/query.js";
@@ -147,6 +148,9 @@ COMMANDS
   hooks claude-code install           Wire yakcc tool-call interception for Claude Code
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc hook entry
+  hooks cursor install                Wire yakcc tool-call interception for Cursor
+                [--target <dir>]      Target project directory (default: .)
+                [--uninstall]         Remove the yakcc cursor hook entry
   federation serve --registry <p>     Start a read-only HTTP registry server
                 [--port <n>] [--host <h>]
   federation mirror --remote <url>    Mirror all blocks from a remote registry peer
@@ -274,8 +278,19 @@ export async function runCli(
         );
         return 1;
       }
+      // `yakcc hooks cursor install [--target <dir>]`
+      if (subcommand === "cursor") {
+        const [hooksSub, ...hooksRest] = rest;
+        if (hooksSub === "install") {
+          return hooksCursorInstall(hooksRest, logger);
+        }
+        logger.error(
+          `error: unknown hooks cursor subcommand: ${hooksSub ?? "(none)"}. Did you mean 'hooks cursor install'?`,
+        );
+        return 1;
+      }
       logger.error(
-        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install'?`,
+        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install' or 'hooks cursor install'?`,
       );
       return 1;
     }
