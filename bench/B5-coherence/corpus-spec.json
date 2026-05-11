@@ -1,0 +1,18 @@
+{
+  "description": "B5 coherence benchmark — Slice 1 conversation corpus spec",
+  "conversationsFile": "bench/B5-coherence/conversations.jsonl",
+  "sha256": "f7ef2ea1a3a590d92e2da8962fb621f4d22462417a0aec6c1b703a8d5a6197b8",
+  "n": 10,
+  "categories": {
+    "iterative-refinement": 2,
+    "cross-reference": 2,
+    "debugging": 2,
+    "refactoring": 2,
+    "composition": 2
+  },
+  "notes": [
+    "SHA-256 computed over the raw bytes of conversations.jsonl",
+    "Recompute with: node -e \"const {createHash}=require('crypto');const {readFileSync}=require('fs');console.log(createHash('sha256').update(readFileSync('bench/B5-coherence/conversations.jsonl')).digest('hex'))\"",
+    "N=10 seeds are the Slice 1 corpus; Slice 2 expands to N=50"
+  ]
+}
