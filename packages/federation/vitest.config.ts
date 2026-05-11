@@ -1,12 +1,18 @@
+// @decision DEC-FEDERATION-VITEST-CONFIG-001 — workspace-source aliases.
+// See packages/registry/vitest.config.ts DEC-REGISTRY-VITEST-CONFIG-001 for rationale.
+import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
+      "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
+    },
+  },
   test: {
     environment: "node",
-    // Only pick up tests from src/ — prevents vitest from doubling test count
-    // by also discovering compiled .test.js files in dist/.
     include: ["src/**/*.test.ts"],
-    // No native-binding deps; forks isolation kept for consistency with siblings.
     pool: "forks",
     testTimeout: 60_000,
     hookTimeout: 60_000,
