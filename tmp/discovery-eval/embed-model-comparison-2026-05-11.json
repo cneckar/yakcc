@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "date": "2026-05-11",
+  "wi": "WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT",
+  "issue": "#326",
+  "baseline_model": "Xenova/all-MiniLM-L6-v2",
+  "baseline_m2": 0.625,
+  "baseline_m3": 0.925,
+  "baseline_m4": 0.742,
+  "target_m2": 0.70,
+  "schema_dim_constraint": 384,
+  "schema_constraint_note": "vec0 schema hardcoded to FLOAT[384] (packages/registry/src/schema.ts:218). 768-dim models require a schema migration before benchmarking. Out of scope for this WI.",
+  "run_environment": "FuckGoblin cloud sandbox — HuggingFace network blocked; model downloads not possible",
+  "candidates": [
+    {
+      "model_id": "Xenova/all-MiniLM-L6-v2",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "all-MiniLM",
+      "notes": "Current default. General-purpose sentence embedding. SBERT score ~58.8 on MTEB.",
+      "m2": 0.625,
+      "m3": 0.925,
+      "m4": 0.742,
+      "run_status": "baseline (from post-#322 measurement)"
+    },
+    {
+      "model_id": "Xenova/bge-small-en-v1.5",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "BGE",
+      "notes": "BGE (BAAI General Embeddings) retrieval model. Designed for dense retrieval (similar to yakcc's use case). Outperforms MiniLM on MTEB retrieval tasks. Top recommended candidate.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+    },
+    {
+      "model_id": "Xenova/e5-small-v2",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "E5",
+      "notes": "Microsoft E5 embedding model. Strong on MTEB retrieval benchmarks. Requires instruction prefix 'query: ' for queries (special preprocessing needed). Second recommended candidate.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+    },
+    {
+      "model_id": "Xenova/all-MiniLM-L12-v2",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "all-MiniLM",
+      "notes": "12-layer variant of current model; same 384-dim output; generally +1-3pt over L6 on semantic similarity tasks.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+    },
+    {
+      "model_id": "Xenova/paraphrase-MiniLM-L6-v2",
+      "dimension": 384,
+      "license": "MIT",
+      "family": "paraphrase-MiniLM",
+      "notes": "Trained for paraphrase detection. May not outperform all-MiniLM for code-spec retrieval. Lower priority.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "NOT_RUN — HuggingFace download blocked in sandbox"
+    },
+    {
+      "model_id": "Xenova/all-mpnet-base-v2",
+      "dimension": 768,
+      "license": "MIT",
+      "family": "all-mpnet",
+      "notes": "768-dim model; requires schema migration (FLOAT[384] → FLOAT[768]). OUT OF SCOPE for this WI. File WI-V3-DISCOVERY-D6-DIM-MIGRATION if this WI's 384-dim results don't close the gap.",
+      "m2": null,
+      "m3": null,
+      "m4": null,
+      "run_status": "OUT_OF_SCOPE — requires schema dimension migration"
+    }
+  ],
+  "infrastructure_delivered": {
+    "factory_param": "createLocalEmbeddingProvider(modelId?, dimension?) now accepts optional params",
+    "env_var_model": "DISCOVERY_EMBED_MODEL=<model-id>",
+    "env_var_dim": "DISCOVERY_EMBED_DIM=<dimension>",
+    "local_known_models": "LOCAL_KNOWN_MODELS exported from @yakcc/contracts — validated registry of offline-capable MIT/Apache models",
+    "usage_example": "DISCOVERY_EVAL_PROVIDER=local DISCOVERY_EMBED_MODEL=Xenova/bge-small-en-v1.5 DISCOVERY_EMBED_DIM=384 pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts"
+  },
+  "recommendation": "Run bge-small-en-v1.5 first (most promising for retrieval tasks). If M2 >= 70%: swap default in packages/contracts/src/embeddings.ts. If M2 < 70% across all 384-dim candidates: file WI-V3-CORPUS-FIELD-COVERAGE-EXPAND.",
+  "decision": "PENDING_RUNS"
+}

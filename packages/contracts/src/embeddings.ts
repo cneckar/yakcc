@@ -38,10 +38,37 @@ export interface EmbeddingProvider {
 // Local provider (transformers.js)
 // ---------------------------------------------------------------------------
 
-/** Model identifier used by the local provider. */
+// @decision DEC-EMBED-MODEL-SELECTION-001
+// @title DISCOVERY_EMBED_MODEL env-var for D5 embedding-model experiment (#326)
+// @status accepted
+// @rationale WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT requires running the full-corpus
+//   harness against alternative embedding models without source edits. DISCOVERY_EMBED_MODEL
+//   allows runtime model selection. The knob is intentionally experiment-scoped (not a
+//   production config surface) — production always uses the committed LOCAL_MODEL_ID default.
+//   If the experiment surfaces a better model, LOCAL_MODEL_ID and LOCAL_DIMENSION are updated
+//   and DISCOVERY_EMBED_MODEL is no longer needed for that path.
+//   DEC-CI-OFFLINE-001 preserved: all listed models are @xenova/transformers–compatible.
+//   DEC-EMBED-010 preserved: model must be MIT or Apache 2.0 licensed.
+
+/** Default production model: all-MiniLM-L6-v2 (384 dims, MIT, ~25MB quantized). */
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
-/** Expected output dimension for all-MiniLM-L6-v2. */
+/** Output dimension for the default production model. */
 const LOCAL_DIMENSION = 384;
+
+/**
+ * Known offline-capable, MIT/Apache-2.0 licensed models and their output dimensions.
+ * Used for default dimension lookup when `createLocalEmbeddingProvider` is called with
+ * a model ID but no explicit dimension. Adding a model here is the canonical gate:
+ * license check + offline verification must pass first.
+ */
+export const LOCAL_KNOWN_MODELS: ReadonlyMap<string, number> = new Map([
+  ["Xenova/all-MiniLM-L6-v2", 384],        // default; MIT; ~25MB quantized
+  ["Xenova/all-MiniLM-L12-v2", 384],       // 12-layer same-family; Apache 2.0; ~34MB quantized
+  ["Xenova/paraphrase-MiniLM-L6-v2", 384], // paraphrase-tuned; Apache 2.0; ~25MB quantized
+  ["Xenova/bge-small-en-v1.5", 384],       // BGE retrieval model; MIT; ~25MB quantized; top pick
+  ["Xenova/e5-small-v2", 384],             // E5 retrieval model; MIT; ~25MB quantized; second pick
+  ["Xenova/all-mpnet-base-v2", 768],       // larger model; Apache 2.0; ~86MB quantized; requires FLOAT[768] schema
+]);
 
 // @decision DEC-EMBED-SINGLETON-CLOSURE-001: Pipeline singleton via closure, not module-level let.
 // Status: decided (WI-V2-02)
@@ -51,24 +78,34 @@ const LOCAL_DIMENSION = 384;
 // inside a function scope, not at module scope. Runtime behaviour is byte-identical — the
 // pipeline is still loaded lazily on first embed() call and cached for all subsequent calls.
 
-/** Load (or return the cached) transformers.js feature-extraction pipeline. */
-const getPipeline: () => Promise<unknown> = (() => {
-  // @decision DEC-EMBED-LAZY-001: Dynamic import for lazy pipeline init.
-  // Status: decided (WI-002)
-  // Rationale: Static import of @xenova/transformers triggers ONNX runtime
-  // initialization at module load time, adding hundreds of ms to every cold
-  // start even for callers that never embed. Dynamic import defers that cost
-  // until the first embed() call.
+// @decision DEC-EMBED-CUSTOM-MODEL-001: Per-model pipeline factory via makePipelineLoader.
+// Status: decided (WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT, issue #326)
+// Rationale: createLocalEmbeddingProvider now accepts an optional modelId to support embedding
+// model swaps for benchmarking (DISCOVERY_EMBED_MODEL env var). Non-default model IDs get
+// per-instance pipeline closures via makePipelineLoader; the default model still uses the
+// module-level singleton to preserve DEC-EMBED-SINGLETON-CLOSURE-001 semantics for production.
+
+/**
+ * Create a lazy pipeline loader closure for the given model.
+ *
+ * @decision DEC-EMBED-LAZY-001: Dynamic import for lazy pipeline init.
+ * Status: decided (WI-002)
+ * Rationale: Static import triggers ONNX runtime at module load; dynamic defers to first use.
+ */
+function makePipelineLoader(modelId: string): () => Promise<unknown> {
   let pipelinePromise: Promise<unknown> | null = null;
   return (): Promise<unknown> => {
     if (pipelinePromise === null) {
       pipelinePromise = import("@xenova/transformers").then((mod) =>
-        mod.pipeline("feature-extraction", LOCAL_MODEL_ID),
+        mod.pipeline("feature-extraction", modelId),
       );
     }
     return pipelinePromise;
   };
-})();
+}
+
+/** Module-level singleton pipeline for the default model (DEC-EMBED-SINGLETON-CLOSURE-001). */
+const getPipeline: () => Promise<unknown> = makePipelineLoader(LOCAL_MODEL_ID);
 
 /**
  * The output shape from transformers.js feature-extraction pipeline.
@@ -86,15 +123,39 @@ interface TransformerOutput {
  * same in-memory pipeline. Two calls with the same input text will return
  * byte-equal Float32Arrays.
  *
- * Model: Xenova/all-MiniLM-L6-v2, 384 dimensions, MIT license.
+ * Default: Xenova/all-MiniLM-L6-v2, 384 dimensions, MIT license.
+ *
+ * Custom model support (DEC-EMBED-CUSTOM-MODEL-001): pass a different modelId
+ * and optionally the corresponding dimension to benchmark alternative models.
+ * If `dimension` is omitted, it is looked up from LOCAL_KNOWN_MODELS.
+ * The schema is currently fixed at FLOAT[384]; 768-dim models require a schema
+ * migration before they can be benchmarked against the bootstrap registry.
+ *
+ * Model selection when `modelId` is omitted (in priority order):
+ *   1. `DISCOVERY_EMBED_MODEL` env var (experiment use)
+ *   2. LOCAL_MODEL_ID default (`Xenova/all-MiniLM-L6-v2`)
  */
-export function createLocalEmbeddingProvider(): EmbeddingProvider {
+export function createLocalEmbeddingProvider(
+  modelId: string = (typeof process !== "undefined"
+    ? (process.env.DISCOVERY_EMBED_MODEL ?? LOCAL_MODEL_ID)
+    : LOCAL_MODEL_ID),
+  dimension: number = LOCAL_KNOWN_MODELS.get(
+    typeof process !== "undefined"
+      ? (process.env.DISCOVERY_EMBED_MODEL ?? LOCAL_MODEL_ID)
+      : LOCAL_MODEL_ID,
+  ) ?? LOCAL_DIMENSION,
+): EmbeddingProvider {
+  // Default model reuses the module-level singleton (DEC-EMBED-SINGLETON-CLOSURE-001).
+  // Custom models get a fresh per-instance closure so they don't share pipeline state.
+  const getLoader: () => Promise<unknown> =
+    modelId === LOCAL_MODEL_ID ? getPipeline : makePipelineLoader(modelId);
+
   return {
-    dimension: LOCAL_DIMENSION,
-    modelId: LOCAL_MODEL_ID,
+    dimension,
+    modelId,
 
     async embed(text: string): Promise<Float32Array> {
-      const pipe = getPipeline() as Promise<
+      const pipe = getLoader() as Promise<
         (
           text: string,
           options: { pooling: string; normalize: boolean },

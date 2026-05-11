@@ -130,6 +130,29 @@ const QUERY_MODE: "query" | "intent" = (() => {
   return "query";
 })();
 
+// DISCOVERY_EMBED_MODEL / DISCOVERY_EMBED_DIM toggles — see DEC-EMBED-CUSTOM-MODEL-001 + #326.
+// Default: Xenova/all-MiniLM-L6-v2 (384-dim, MIT).
+// To benchmark an alternative model: set DISCOVERY_EMBED_MODEL to the Xenova model ID and
+// DISCOVERY_EMBED_DIM to the output dimension. Example:
+//   DISCOVERY_EVAL_PROVIDER=local DISCOVERY_EMBED_MODEL=Xenova/all-MiniLM-L12-v2 \
+//   DISCOVERY_EMBED_DIM=384 pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts
+// NOTE: the schema is hardcoded to FLOAT[384] (DEC-EMBED-010). Non-384 dimensions will cause
+// sqlite-vec insertion errors. A schema migration is required for 768-dim models such as
+// Xenova/all-mpnet-base-v2; that migration is out of scope for WI-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT.
+// Validation: unknown DISCOVERY_EMBED_DIM values warn and fall back to 384 (loud failure on typo).
+const EMBED_MODEL_RAW = process.env.DISCOVERY_EMBED_MODEL;
+const EMBED_DIM_RAW = process.env.DISCOVERY_EMBED_DIM;
+const EMBED_MODEL_ID: string = EMBED_MODEL_RAW ?? "Xenova/all-MiniLM-L6-v2";
+const EMBED_DIM: number = (() => {
+  if (EMBED_DIM_RAW === undefined || EMBED_DIM_RAW === "") return 384;
+  const parsed = parseInt(EMBED_DIM_RAW, 10);
+  if (!isNaN(parsed) && parsed > 0) return parsed;
+  console.warn(
+    `[discovery-eval] DISCOVERY_EMBED_DIM="${EMBED_DIM_RAW}" is not a positive integer; falling back to 384.`,
+  );
+  return 384;
+})();
+
 // ---------------------------------------------------------------------------
 // Corpus schema (extends BenchmarkEntry with stratification fields)
 // ---------------------------------------------------------------------------
@@ -619,7 +642,7 @@ harness to produce the final gate input with the text-asymmetry bug fixed.
 
 ${
   USE_LOCAL_PROVIDER
-    ? "Provider: transformers.js local (Xenova/all-MiniLM-L6-v2) — SEMANTIC embeddings. These numbers are operator-meaningful."
+    ? `Provider: transformers.js local (${provider}) — SEMANTIC embeddings. These numbers are operator-meaningful.`
     : `**WARNING: OFFLINE PROVIDER (BLAKE3 hashes — NOT semantic)**
 
 Numbers below were produced with the offline BLAKE3 provider (DEC-CI-OFFLINE-001).
@@ -737,7 +760,7 @@ let resolvedEntries: readonly StratifiedEntry[] = [];
 
 beforeAll(async () => {
   embeddingProvider = USE_LOCAL_PROVIDER
-    ? createLocalEmbeddingProvider()
+    ? createLocalEmbeddingProvider(EMBED_MODEL_ID, EMBED_DIM)
     : createOfflineEmbeddingProvider();
 
   if (!BOOTSTRAP_REGISTRY_EXISTS) {

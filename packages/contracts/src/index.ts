@@ -238,6 +238,7 @@ export {
 } from "./contract-id.js";
 export {
   type EmbeddingProvider,
+  LOCAL_KNOWN_MODELS,
   createLocalEmbeddingProvider,
   createOfflineEmbeddingProvider,
   generateEmbedding,
