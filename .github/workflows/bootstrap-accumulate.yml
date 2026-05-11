@@ -1,0 +1,79 @@
+# @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001
+# Title: bootstrap-accumulate CI workflow — monotonic manifest accumulator
+# Status: accepted
+# Rationale: The bootstrap manifest (bootstrap/expected-roots.json) must be a
+# monotonic superset of every atom ever shaved from the yakcc codebase, including
+# atoms from branches/PRs that never merged to main (e.g., the pre-deletion
+# TS→WASM lowerer, ~25,880 LoC removed in PR #280). CI is the sole writer.
+# Properties:
+#   - cancel-in-progress: false — every PR's atoms must be recorded, even if a
+#     newer commit arrives mid-run. Cancelling would silently lose atoms.
+#   - Pushes directly to main's manifest (not the PR branch). Abandoned PRs still
+#     contribute their atoms to the accumulated manifest.
+#   - concurrency group without a ref suffix — all runs queue behind a single slot,
+#     preventing two jobs from racing to update expected-roots.json simultaneously.
+#   - timeout-minutes: 120 — generous; shaving the full corpus can take 60+ min
+#     on cold runners. Do NOT shrink this value.
+#   - NOT in the required-checks list. A slow or failing run never blocks a merge.
+#     Atoms are recorded on a best-effort basis; the invariant is eventual (not
+#     gate-blocking). See pr-ci.yml for the required-checks gate.
+
+name: bootstrap-accumulate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+# Serialize all accumulate runs under a single concurrency slot.
+# cancel-in-progress: false — NEVER cancel. Every run may discover unique atoms
+# from a branch/PR that will be deleted after merge. Cancelling loses those atoms.
+concurrency:
+  group: bootstrap-accumulate
+  cancel-in-progress: false
+
+jobs:
+  accumulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always accumulate against main's committed manifest, not the PR branch.
+          # This ensures atoms are recorded into main's superset even for PRs that
+          # add source files the PR branch deletes before merging.
+          ref: main
+          fetch-depth: 0
+
+      # pnpm/action-setup@v4 with NO `with: version:` — honors the single
+      # packageManager authority in package.json (DEC-CI-OFFLINE-004).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build all packages (required before bootstrap shave)
+        run: pnpm build
+
+      - name: Run additive bootstrap
+        # bootstrap is now additive (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001):
+        # prior entries are retained; new entries from this shave are merged in.
+        # Output: "bootstrap: prior=N, shaved=M, added=K, total=N+K"
+        run: pnpm yakcc bootstrap
+
+      - name: Push updated manifest to main if changed
+        run: |
+          git diff --quiet bootstrap/expected-roots.json && echo "No new atoms — manifest unchanged." && exit 0
+          git config user.name  "ci-bootstrap"
+          git config user.email "ci-bootstrap@yakcc"
+          git add bootstrap/expected-roots.json
+          git commit -m "ci: accumulate atoms from ${{ github.event_name }} ${{ github.ref }}"
+          git push origin main

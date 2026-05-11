@@ -38,6 +38,24 @@
 //   upstream tests + documented usage. TODO: when ShaveOptions gains
 //   corpusOptions.disableSourceC, switch to that for a stronger guarantee.
 // Status: implemented (WI-V2-BOOTSTRAP-02)
+//
+// @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001
+// @title bootstrap/expected-roots.json is a monotonic accumulator — never shrinks
+// @status accepted
+// @rationale PR #280 deleted the in-house TS→WASM lowerer (~25,880 LoC). Atoms
+//   from that source existed in the manifest on feature branches that never merged
+//   to main. Re-running bootstrap against the current codebase would silently drop
+//   them, violating the registry's monotonic invariant: atoms are never deleted.
+//   Solution: `yakcc bootstrap` is now additive — prior entries absent from the
+//   current shave are RETAINED; new entries are ADDED; the result is always the
+//   superset sorted by blockMerkleRoot ASC. CI is the sole writer. Implementers
+//   MUST NOT run `yakcc bootstrap` manually to update the manifest; CI handles it.
+//   Three sub-decisions:
+//   (a) expected-roots.json is a monotonic superset, never shrinks.
+//   (b) --verify checks current_shave ⊆ committed_manifest (not byte-equality).
+//       Archived atoms (in committed but not in current shave) are EXPECTED and
+//       are NOT a failure. New atoms NOT in committed ARE a failure (named in output).
+//   (c) CI is the sole writer of manifest updates going forward.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -267,6 +285,47 @@ interface VerifyDiff {
 }
 
 // ---------------------------------------------------------------------------
+// mergeManifestEntries() — additive merge of prior + shaved entries
+//
+// @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 (see file header)
+// @title Additive manifest merge — union keyed on blockMerkleRoot, sorted ASC
+// @status accepted
+// @rationale Prior entries absent from the current shave are retained (archived
+//   atoms from deleted branches/PRs must not be lost). New entries are added.
+//   The superset is sorted by blockMerkleRoot ASC for diff-stability.
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge prior manifest entries with fresh shave entries into a monotonic superset.
+ *
+ * - Entries from `prior` absent in `shaved` are RETAINED (archived atoms).
+ * - Entries from `shaved` absent in `prior` are ADDED.
+ * - Duplicate roots (same blockMerkleRoot) → prior entry wins (stable identity).
+ * - Result is sorted by blockMerkleRoot ASC.
+ *
+ * @param prior  - Entries already committed to the manifest (may be empty).
+ * @param shaved - Entries produced by the current shave run (may be empty).
+ * @returns The merged superset sorted by blockMerkleRoot ASC.
+ */
+export function mergeManifestEntries(
+  prior: ReadonlyArray<BootstrapManifestEntry>,
+  shaved: ReadonlyArray<BootstrapManifestEntry>,
+): Array<BootstrapManifestEntry> {
+  // Build a map keyed by blockMerkleRoot. Prior wins on collision (stable identity).
+  const merged = new Map<string, BootstrapManifestEntry>();
+  for (const entry of prior) {
+    merged.set(entry.blockMerkleRoot, entry);
+  }
+  for (const entry of shaved) {
+    if (!merged.has(entry.blockMerkleRoot)) {
+      merged.set(entry.blockMerkleRoot, entry);
+    }
+  }
+  // Sort by blockMerkleRoot ASC for deterministic, diff-stable output.
+  return [...merged.values()].sort((a, b) => a.blockMerkleRoot.localeCompare(b.blockMerkleRoot));
+}
+
+// ---------------------------------------------------------------------------
 // collectSourceFiles() — shared file-walk used by both modes
 // ---------------------------------------------------------------------------
 
@@ -291,13 +350,20 @@ function collectSourceFiles(repoRoot: string): string[] {
 // runVerify() — --verify mode implementation
 //
 // @decision DEC-V2-BOOTSTRAP-VERIFY-001
-// @title verify mode uses :memory: registry and byte-identity gate
-// @status accepted
-// @rationale The verify check's load-bearing invariant is byte-identical JSON
-//   serialization. Using :memory: isolates the run from any previous on-disk
-//   state. The comparison is string-level (not object-level) so whitespace and
-//   key ordering differences surface as failures — the same discipline that
-//   makes content-addressing non-negotiable.
+// @title verify mode uses :memory: registry and superset gate
+// @status accepted (amended by DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001)
+// @rationale Original: byte-identity gate. Amended: superset gate.
+//   The committed manifest is a monotonic accumulator (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
+//   Archived atoms (in committed, not in current shave) are EXPECTED — they came
+//   from branches/PRs that were deleted after their atoms were recorded. They must
+//   NOT cause a verify failure. Only atoms in the current shave that are ABSENT
+//   from the committed manifest are a failure (unrecorded new atoms).
+//
+//   Semantics:
+//     PASS  — current_shave ⊆ committed_manifest
+//     PASS  — committed_manifest has strictly MORE entries (archived atoms OK)
+//     FAIL  — current_shave has atom(s) NOT in committed_manifest
+//             → error message names each missing root
 // ---------------------------------------------------------------------------
 
 async function runVerify(
@@ -359,8 +425,7 @@ async function runVerify(
         }
       }
     } catch {
-      // Shave errors are recorded in the diff (the missing roots will surface
-      // as "removed" entries relative to the committed manifest). Do not abort.
+      // Shave errors mean that source file produced no atoms. Do not abort.
     }
   }
 
@@ -375,58 +440,55 @@ async function runVerify(
   }
   await registry.close();
 
-  // Serialize fresh manifest the same way as the committed artifact.
-  const freshText = `${JSON.stringify(freshManifest, null, 2)}\n`;
-
-  // Byte-identity gate.
-  if (freshText === committedText) {
-    const entryCount = freshManifest.length;
-    logger.log(`bootstrap --verify: OK (${entryCount} entries, byte-identical)`);
-    return 0;
-  }
-
-  // Compute structured diff.
+  // Parse the committed manifest.
   const committedManifest = JSON.parse(committedText) as BootstrapManifestEntry[];
   const committedRoots = new Set(committedManifest.map((e) => e.blockMerkleRoot));
   const freshRoots = new Set(freshManifest.map((e) => e.blockMerkleRoot));
 
-  const diff: VerifyDiff = {
-    addedRoots: [...freshRoots]
-      .filter((r) => !committedRoots.has(r))
-      .map((r) => ({ merkleRoot: r, sourcePath: rootToSource.get(r) ?? null })),
-    removedRoots: [...committedRoots]
-      .filter((r) => !freshRoots.has(r))
-      .map((r) => ({ merkleRoot: r })),
-  };
+  // Superset gate (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 part (b)):
+  //   PASS  — every fresh root is already in committed (current_shave ⊆ committed)
+  //   FAIL  — any fresh root is NOT in committed (unrecorded new atoms)
+  //
+  // Archived atoms (in committed, not in fresh) are expected and not reported.
+  const unrecordedRoots: Array<{ merkleRoot: string; sourcePath: string | null }> = [...freshRoots]
+    .filter((r) => !committedRoots.has(r))
+    .map((r) => ({ merkleRoot: r, sourcePath: rootToSource.get(r) ?? null }));
 
-  logger.error("bootstrap --verify: FAILED");
-  logger.error(`  committed: ${committedManifestPath} (${committedManifest.length} entries)`);
-  logger.error(`  fresh:     ${freshManifest.length} entries`);
-
-  if (diff.removedRoots.length > 0) {
-    logger.error(
-      `\nRemoved merkle roots (${diff.removedRoots.length} — in committed, not in fresh):`,
-    );
-    for (const { merkleRoot } of diff.removedRoots) {
-      logger.error(`  - ${merkleRoot}`);
+  if (unrecordedRoots.length === 0) {
+    // All current atoms are in the committed manifest — PASS.
+    const archivedCount = [...committedRoots].filter((r) => !freshRoots.has(r)).length;
+    if (archivedCount > 0) {
+      logger.log(
+        `bootstrap --verify: OK (${freshManifest.length} shaved ⊆ ${committedManifest.length} committed; ${archivedCount} archived atoms retained)`,
+      );
+    } else {
+      logger.log(`bootstrap --verify: OK (${committedManifest.length} entries)`);
     }
+    return 0;
   }
 
-  if (diff.addedRoots.length > 0) {
-    // Group by source path for readability.
-    const bySource = new Map<string, string[]>();
-    for (const { merkleRoot, sourcePath } of diff.addedRoots) {
-      const key = sourcePath ?? "(unknown source)";
-      const list = bySource.get(key) ?? [];
-      list.push(merkleRoot);
-      bySource.set(key, list);
-    }
-    logger.error(`\nAdded merkle roots (${diff.addedRoots.length} — in fresh, not in committed):`);
-    for (const [sourcePath, roots] of bySource) {
-      logger.error(`  ${sourcePath}:`);
-      for (const root of roots) {
-        logger.error(`    + ${root}`);
-      }
+  // FAIL — current shave produced atoms not recorded in the committed manifest.
+  // Name every missing root explicitly (Sacred Practice #5: loud failure).
+  logger.error("bootstrap --verify: FAILED");
+  logger.error(`  committed: ${committedManifestPath} (${committedManifest.length} entries)`);
+  logger.error(`  shaved:    ${freshManifest.length} entries`);
+  logger.error(
+    `\nUnrecorded atoms (${unrecordedRoots.length} — in current shave, NOT in committed manifest):`,
+  );
+  logger.error("  Fix: run 'yakcc bootstrap' to record these atoms, then commit the manifest.");
+
+  // Group by source path for readability.
+  const bySource = new Map<string, string[]>();
+  for (const { merkleRoot, sourcePath } of unrecordedRoots) {
+    const key = sourcePath ?? "(unknown source)";
+    const list = bySource.get(key) ?? [];
+    list.push(merkleRoot);
+    bySource.set(key, list);
+  }
+  for (const [sourcePath, roots] of bySource) {
+    logger.error(`  ${sourcePath}:`);
+    for (const root of roots) {
+      logger.error(`    + ${root}`);
     }
   }
 
@@ -473,17 +535,22 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         "Usage: yakcc bootstrap [--registry <path>] [--manifest <path>] [--report <path>] [--verify]",
         "",
         "  Walk packages/*/src/**/*.ts and examples/*/src/**/*.ts, shave each file",
-        "  offline, and dump the deterministic block manifest.",
+        "  offline, and additively merge results into the committed manifest.",
+        "",
+        "  The manifest (bootstrap/expected-roots.json) is a monotonic accumulator:",
+        "  atoms from prior runs are RETAINED even if deleted from source.",
+        "  CI is the sole writer — do not run 'yakcc bootstrap' manually.",
         "",
         "  --registry           <path>  Registry SQLite path (default: bootstrap/yakcc.registry.sqlite)",
-        "  --manifest           <path>  Manifest path: output in normal mode, committed reference in --verify",
+        "  --manifest           <path>  Manifest path: read+write in normal mode, committed reference in --verify",
         "                               (default: bootstrap/expected-roots.json)",
         "  --report             <path>  Per-file outcome report (default: bootstrap/report.json)",
         "  --expected-failures  <path>  Expected-failures exemption list (default: bootstrap/expected-failures.json)",
         "                               Entries with matching path+errorClass are reclassified as expected-failures",
         "                               and do NOT count toward the failure total.",
-        "  --verify                     Shave into :memory: registry and byte-compare against committed manifest.",
-        "                               Exit 0 on byte-identical match; exit 1 with structured diff on mismatch.",
+        "  --verify                     Shave into :memory: registry and check current_shave ⊆ committed manifest.",
+        "                               PASS if all shaved atoms are in committed (archived atoms OK).",
+        "                               FAIL if any shaved atom is absent from committed (names missing roots).",
         "  -h, --help                   Print this help and exit",
       ].join("\n"),
     );
@@ -619,22 +686,46 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     }
   }
 
-  // Export the deterministic manifest.
-  let manifest: readonly object[];
+  // Export the deterministic manifest from the :memory: shave run.
+  let shavedManifest: readonly BootstrapManifestEntry[];
   try {
-    manifest = await registry.exportManifest();
+    shavedManifest = await registry.exportManifest();
   } catch (err) {
     logger.error(`error: failed to export manifest: ${(err as Error).message}`);
     await registry.close();
     return 1;
   }
 
-  // Write outputs.
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
-  writeFileSync(reportPath, `${JSON.stringify(outcomes, null, 2)}\n`, "utf-8");
-
-  // Close registry.
+  // Close registry — done with the shave-run DB.
   await registry.close();
+
+  // --- Additive merge (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 part (a)) ---
+  // Load prior entries from the committed manifest (if it exists) and merge
+  // with the shaved entries. Prior entries absent from this shave are RETAINED.
+  let priorEntries: ReadonlyArray<Record<string, unknown>> = [];
+  if (existsSync(manifestPath)) {
+    try {
+      const priorText = readFileSync(manifestPath, "utf-8");
+      priorEntries = JSON.parse(priorText) as Array<Record<string, unknown>>;
+    } catch (err) {
+      logger.error(
+        `error: failed to read prior manifest at ${manifestPath}: ${(err as Error).message}`,
+      );
+      return 1;
+    }
+  }
+
+  const shavedEntries = shavedManifest as unknown as Array<Record<string, unknown>>;
+  const mergedManifest = mergeManifestEntries(priorEntries, shavedEntries);
+
+  const priorCount = priorEntries.length;
+  const shavedCount = shavedEntries.length;
+  const addedCount = mergedManifest.length - priorCount;
+  const totalCount = mergedManifest.length;
+
+  // Write outputs.
+  writeFileSync(manifestPath, `${JSON.stringify(mergedManifest, null, 2)}\n`, "utf-8");
+  writeFileSync(reportPath, `${JSON.stringify(outcomes, null, 2)}\n`, "utf-8");
 
   // Summarise.
   const successCount = outcomes.filter((o) => o.outcome === "success").length;
@@ -648,7 +739,11 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     logger.log(`  expected-failures: ${expectedFailureCount} (license-refused, documented)`);
   }
   logger.log(`  failed:            ${failureCount}`);
-  logger.log(`  manifest:          ${manifestPath} (${manifest.length} entries)`);
+  // Additive summary line (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
+  logger.log(
+    `bootstrap: prior=${priorCount}, shaved=${shavedCount}, added=${addedCount}, total=${totalCount}`,
+  );
+  logger.log(`  manifest:          ${manifestPath} (${totalCount} entries)`);
   logger.log(`  report:            ${reportPath}`);
 
   if (failureCount > 0) {
