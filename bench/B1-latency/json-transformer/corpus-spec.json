@@ -1,0 +1,10 @@
+{
+  "algorithm": "xorshift32",
+  "seed": "0xCAFEF00D",
+  "seed_decimal": 3405705229,
+  "target_size_bytes": 104857600,
+  "actual_size_bytes": 106968932,
+  "sha256": "591bcbcbcbe6ebe17b940ae6df3586b78928e3171d6a31fe4ebc8fb12007d0f7",
+  "generated_at": "2026-05-11T18:03:32.361Z",
+  "note": "Deterministic: regenerating with same algorithm+seed always produces the same JSON and hash."
+}

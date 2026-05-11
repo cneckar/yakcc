@@ -1,0 +1,28 @@
+[package]
+name = "http-routing-rust"
+version = "0.1.0"
+edition = "2021"
+
+# HTTP routing trie — no external routing crate needed.
+# Both bins implement the same hand-rolled u32-keyed trie.
+# For HTTP routing there is no hardware-acceleration analog (unlike sha2's SHA-NI).
+# Both bins use the same algorithm; the dual-target pattern is kept for structural
+# consistency with Slices 1+2. The orchestrator documents that rust-accelerated and
+# rust-software produce identical results for this workload.
+
+[[bin]]
+name = "http-routing-accelerated"
+path = "src/main.rs"
+
+[[bin]]
+name = "http-routing-software"
+path = "src/main-software.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
