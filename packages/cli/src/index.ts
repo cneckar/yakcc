@@ -43,6 +43,7 @@ import { init } from "./commands/init.js";
 import { propose } from "./commands/propose.js";
 import { query } from "./commands/query.js";
 import { registryInit } from "./commands/registry-init.js";
+import { registryRebuild } from "./commands/registry-rebuild.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
 import { shave } from "./commands/shave.js";
@@ -125,6 +126,7 @@ USAGE
 COMMANDS
   init [--target <dir>] [--peer <url>] Initialize yakcc in a project directory
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
+  registry rebuild [--path <p>]       Re-embed all blocks after an embedding model swap
   compile <entry> [--registry <p>]    Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
   propose <contract-file>             Check registry for a matching contract
@@ -196,8 +198,15 @@ export async function runCli(
       if (subcommand === "init") {
         return registryInit(rest, logger);
       }
+      if (subcommand === "rebuild") {
+        // @decision DEC-EMBED-MODEL-MIGRATION-001
+        // `yakcc registry rebuild [--path <p>]` — re-embeds all stored blocks using the
+        // current default embedding provider. Canonical migration path after a model swap
+        // (DEC-EMBED-MODEL-DEFAULT-002, PR #336). See rebuild.ts and registry-rebuild.ts.
+        return registryRebuild(rest, logger, { embeddings: opts?.embeddings });
+      }
       logger.error(
-        `error: unknown registry subcommand: ${subcommand ?? "(none)"}. Did you mean 'registry init'?`,
+        `error: unknown registry subcommand: ${subcommand ?? "(none)"}. Did you mean 'registry init' or 'registry rebuild'?`,
       );
       return 1;
     }

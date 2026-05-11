@@ -2263,7 +2263,66 @@ describe("findCandidatesByQuery — T3: cross-provider rejection", () => {
       caught = e as Error & { reason?: string };
     }
 
-    expect(caught.message).toMatch(/cross_provider_rejected|does not match/);
+    // The enriched error message format (DEC-EMBED-MODEL-MIGRATION-001) includes
+    // both model IDs and the remediation command. The message no longer contains
+    // the literal "does not match" or "cross_provider_rejected" substring — it
+    // describes the mismatch in user-friendly terms and names the fix command.
+    expect(caught.message).toMatch(
+      /embedded with model|Embeddings are not portable|yakcc registry rebuild/,
+    );
+    expect(caught.reason).toBe("cross_provider_rejected");
+
+    await reg.close();
+  });
+
+  /**
+   * @decision DEC-EMBED-MODEL-MIGRATION-001 (enriched error message verification)
+   * The thrown Error.message MUST include ALL of:
+   *   (a) the stored (registry) modelId  — so the user knows what model the registry uses
+   *   (b) the caller modelId             — so the user knows what their current provider is
+   *   (c) literal "yakcc registry rebuild --path" — so the user gets the exact remediation command
+   *
+   * DEC-EMBED-010 is PRESERVED: reason='cross_provider_rejected' still fires on mismatch.
+   * DEC-V3-IMPL-QUERY-002 is PRESERVED: the throw condition is unchanged.
+   */
+  it("enriched error: message includes stored modelId, caller modelId, and remediation command", async () => {
+    const reg = await openIsolatedRegistry();
+    // Registry uses "mock/test-provider"; we pass a different model ID.
+    const callerModelId = "different/provider-v99";
+    const registryModelId = "mock/test-provider";
+
+    const spec = makeSymmetricSpecYak("Enrich error message test");
+    await reg.storeBlock(makeBlockRow(spec));
+
+    const card: QueryIntentCard = { behavior: "Enrich error message test" };
+    const opts: FindCandidatesByQueryOptions = {
+      queryEmbeddings: { modelId: callerModelId },
+    };
+
+    let caught: Error & { reason?: string } = new Error("not thrown");
+    try {
+      await reg.findCandidatesByQuery(card, opts);
+    } catch (e) {
+      caught = e as Error & { reason?: string };
+    }
+
+    // (a) stored modelId must appear with the "was embedded with" label
+    expect(caught.message).toMatch(
+      new RegExp(`was embedded with model "${registryModelId}"`),
+    );
+    // (b) caller modelId must appear with the "current query provider uses" label
+    expect(caught.message).toMatch(
+      new RegExp(`current query provider uses "${callerModelId}"`),
+    );
+    // (c) ordering: stored model is described before caller model
+    const storedIdx = caught.message.indexOf(registryModelId);
+    const callerIdx = caught.message.indexOf(callerModelId);
+    expect(storedIdx).toBeGreaterThan(-1);
+    expect(callerIdx).toBeGreaterThan(-1);
+    expect(storedIdx).toBeLessThan(callerIdx);
+    // (d) exact remediation command substring (evaluation contract invariant)
+    expect(caught.message).toContain("yakcc registry rebuild --path");
+    // DEC-EMBED-010 / DEC-V3-IMPL-QUERY-002: reason still fires
     expect(caught.reason).toBe("cross_provider_rejected");
 
     await reg.close();
@@ -3358,9 +3417,9 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     expect(versionRow.version).toBe(7);
 
     // blocks table has the three new provenance columns.
-    const blockCols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
-      (c) => c.name,
-    );
+    const blockCols = (
+      db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
     expect(blockCols).toContain("source_pkg");
     expect(blockCols).toContain("source_file");
     expect(blockCols).toContain("source_offset");

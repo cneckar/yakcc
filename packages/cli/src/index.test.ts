@@ -84,3 +84,30 @@ describe("T5: compile-self dispatch wiring in runCli — A2 (DEC-CLI-INDEX-001)"
     expect(allOutput).not.toContain("A1 scaffold stub, exit 2");
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-EMBED-MODEL-MIGRATION-001: registry rebuild help-text discoverability
+// ---------------------------------------------------------------------------
+
+describe("registry rebuild discoverability — help text (DEC-EMBED-MODEL-MIGRATION-001)", () => {
+  /**
+   * `registry rebuild` must appear alongside `registry init` in the usage output
+   * so users can discover the migration path without reading docs.
+   * (Evaluation contract: CLI help-text test asserting the new line is present.)
+   */
+  it("printUsage includes 'registry rebuild' line alongside 'registry init'", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+    const allOutput = logger.logLines.join("\n");
+    expect(allOutput).toContain("registry init");
+    expect(allOutput).toContain("registry rebuild");
+  });
+
+  it("printUsage includes 'registry rebuild' in -h alias output", async () => {
+    const logger = new CollectingLogger();
+    await runCli(["-h"], logger);
+    const allOutput = logger.logLines.join("\n");
+    expect(allOutput).toContain("registry rebuild");
+  });
+});
