@@ -165,14 +165,18 @@ function verifyCorpusIntegrity() {
     if (!existsSync(filePath)) {
       throw new Error(`Corpus file missing: ${filePath}`);
     }
-    const content = readFileSync(filePath);
-    const actual = createHash("sha256").update(content).digest("hex");
+    // Normalize CRLF → LF before hashing so SHA-256 is stable across git checkout modes.
+    // Windows git may add CRLF on checkout; the corpus-spec.json was generated with LF hashes.
+    // Content is identical — only the byte representation of line endings differs.
+    const rawBytes = readFileSync(filePath);
+    const normalizedBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
+    const actual = createHash("sha256").update(normalizedBytes).digest("hex");
     if (actual !== entry.sha256) {
       throw new Error(
         `SHA-256 drift detected for ${entry.filename}:\n` +
         `  expected: ${entry.sha256}\n` +
-        `  actual:   ${actual}\n` +
-        "Corpus is modified. Abort."
+        `  actual (LF-normalized): ${actual}\n` +
+        "Corpus content has changed. Abort."
       );
     }
     console.log(`  [OK] ${entry.filename} — sha256=${actual.slice(0, 16)}...`);
