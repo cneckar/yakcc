@@ -307,6 +307,9 @@ describe("onCodeEmissionIntent — passthrough (error) path", () => {
         getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
         listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
         getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
+        listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
+        listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
+        replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
       };
 
       const hook = createHook(brokenRegistry, { telemetryDir: TEST_TELEMETRY_DIR });

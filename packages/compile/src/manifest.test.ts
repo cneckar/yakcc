@@ -166,6 +166,31 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     ): Promise<readonly { readonly sourceOffset: number; readonly implSourceLength: number }[]> {
       return [];
     },
+    // #355: block_occurrences stubs (DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001).
+    // This mock never uses these methods; stubs satisfy the Registry interface.
+    async listOccurrencesBySourceFile(
+      _sourceFile: string,
+    ): Promise<readonly import("@yakcc/registry").BlockOccurrenceEntry[]> {
+      return [];
+    },
+    async listOccurrencesByMerkleRoot(
+      _blockMerkleRoot: string,
+    ): Promise<readonly import("@yakcc/registry").BlockOccurrenceEntry[]> {
+      return [];
+    },
+    async replaceSourceFileOccurrences(
+      _sourcePkg: string,
+      _sourceFile: string,
+      _occurrences: readonly {
+        readonly sourcePkg: string;
+        readonly sourceFile: string;
+        readonly sourceOffset: number;
+        readonly length: number;
+        readonly blockMerkleRoot: string;
+      }[],
+    ): Promise<void> {
+      throw new Error("not implemented in mock");
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing

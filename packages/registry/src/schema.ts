@@ -56,10 +56,19 @@
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  *
  * L2-I2 invariant: this constant must equal the highest MIGRATION_N_DDL number
- * (currently 8 after the v7 → v8 migration for per-file glue storage;
- * DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001 / WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE).
+ * (currently 9 after the v8 → v9 migration for per-occurrence offset tracking;
+ * DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001 / WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355).
+ *
+ * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001
+ * @title SCHEMA_VERSION 8 → 9; single-phase additive migration adding block_occurrences table
+ * @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+ * @rationale Pure DDL addition; no backfill required (new table starts empty;
+ *   bootstrap re-run populates block_occurrences for each file processed).
+ *   Atom content (blocks table) stays monotonic with INSERT OR IGNORE.
+ *   Atom occurrences (block_occurrences) are refreshed per-file on every
+ *   bootstrap pass via atomic delete-then-insert (DEC-V2-OCCURRENCE-DELETE-INSERT-001).
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -623,6 +632,83 @@ const MIGRATION_8_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 8 → 9: add block_occurrences table + indexes
+// (DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001 / DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001 /
+//  DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001 / WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+ * @title Option (b): block_occurrences table replaces blocks.source_* per-occurrence semantics
+ * @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+ * @rationale
+ *   DEC-STORAGE-IDEMPOTENT-001 made storeBlock() use INSERT OR IGNORE keyed on
+ *   block_merkle_root. After P1 added source_pkg/source_file/source_offset columns to
+ *   the same row, first-observed-wins became load-bearing for location as well as
+ *   content. That is the bug: block_merkle_root (content-identity) is correct as
+ *   INSERT OR IGNORE; source_offset (per-occurrence position) is NOT correct as
+ *   first-observed-wins when source files are edited and atoms shift.
+ *
+ *   Atom content (blocks) and atom occurrence (block_occurrences) are now two
+ *   independently authoritative tables. The blocks.source_* columns become a
+ *   write-once shim driven from the first occurrence observed; block_occurrences
+ *   is the authoritative read source for per-file ranges.
+ *
+ *   Supersedes DEC-STORAGE-IDEMPOTENT-001 for occurrence semantics only.
+ *   Content-identity semantics (INSERT OR IGNORE on blocks keyed by block_merkle_root)
+ *   are unchanged.
+ *
+ * @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
+ * @title block_occurrences table shape: PK (source_pkg, source_file, source_offset),
+ *   FK on blocks(block_merkle_root), length materialized for reconstruction
+ * @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+ * @rationale
+ *   PK (source_pkg, source_file, source_offset) makes each occurrence uniquely
+ *   identifiable and supports the per-file delete-then-insert refresh pattern.
+ *   FK on block_merkle_root enforces that an occurrence cannot reference a block
+ *   that has not yet been stored (bootstrap order: storeBlock first, then
+ *   replaceSourceFileOccurrences).
+ *   length is materialized (not derived) so reconstruction does not need a join
+ *   against blocks to compute range extents.
+ *   Two indexes cover the two dominant read patterns:
+ *     idx_block_occurrences_root — by block (cross-file sharing introspection)
+ *     idx_block_occurrences_file — by file (reconstruction / glue computation)
+ */
+const MIGRATION_9_DDL: readonly string[] = [
+  // block_occurrences: one row per occurrence of a block atom in a source file.
+  //
+  // source_pkg:        Workspace package directory (e.g. 'packages/cli').
+  // source_file:       Workspace-relative path of the source file. Part of PK.
+  // source_offset:     Byte offset of the atom's implSource within source_file.
+  //                    Together with source_pkg and source_file, forms the PK.
+  // length:            Byte length of the atom's implSource at write time.
+  //                    Materialized so reconstruction does not need a join.
+  // block_merkle_root: FK → blocks(block_merkle_root). The atom's content address.
+  //                    Must be stored first (storeBlock before storeBlockOccurrence).
+  //
+  // PRIMARY KEY (source_pkg, source_file, source_offset): one row per atom position.
+  // FOREIGN KEY (block_merkle_root) enforces referential integrity.
+  // No ownership columns — DEC-NO-OWNERSHIP-011.
+  `CREATE TABLE IF NOT EXISTS block_occurrences (
+    source_pkg        TEXT    NOT NULL,
+    source_file       TEXT    NOT NULL,
+    source_offset     INTEGER NOT NULL,
+    length            INTEGER NOT NULL,
+    block_merkle_root TEXT    NOT NULL,
+    PRIMARY KEY (source_pkg, source_file, source_offset),
+    FOREIGN KEY (block_merkle_root) REFERENCES blocks(block_merkle_root)
+  )`,
+
+  // Index for cross-file sharing introspection: given a block_merkle_root,
+  // find all files that contain it.
+  "CREATE INDEX IF NOT EXISTS idx_block_occurrences_root ON block_occurrences(block_merkle_root)",
+
+  // Index for reconstruction / glue computation: given (source_pkg, source_file),
+  // find all occurrences sorted by offset for interleaving.
+  "CREATE INDEX IF NOT EXISTS idx_block_occurrences_file ON block_occurrences(source_pkg, source_file)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -660,6 +746,9 @@ export interface MigrationsDb {
  *           (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 / DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001).
  *   7 → 8: add source_file_glue table + hash index
  *           (DEC-V2-GLUE-CAPTURE-AUTHORITY-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V8-001).
+ *   8 → 9: add block_occurrences table + indexes for per-occurrence offset tracking
+ *           (DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001 / DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001 /
+ *            DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -880,5 +969,23 @@ export function applyMigrations(db: MigrationsDb): void {
       db.exec(sql);
     }
     db.prepare("UPDATE schema_version SET version = ?").run(8);
+  }
+
+  // Migration 8 → 9: add block_occurrences table + indexes
+  // (DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001 / DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001 /
+  //  DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001 / WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355).
+  //
+  // Pure DDL — CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS are both
+  // naturally idempotent. No ADD COLUMN statements, no try/catch needed.
+  // No backfill: block_occurrences starts empty; the next `yakcc bootstrap` run
+  // calls replaceSourceFileOccurrences() for each file and populates it from scratch.
+  // A crash between the first DDL statement and the version bump leaves the table
+  // present at version=8; re-entry runs CREATE TABLE IF NOT EXISTS as a no-op
+  // and bumps to 9 normally.
+  if (currentVersion < 9) {
+    for (const sql of MIGRATION_9_DDL) {
+      db.exec(sql);
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(9);
   }
 }
