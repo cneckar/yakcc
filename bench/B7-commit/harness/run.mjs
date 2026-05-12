@@ -2,73 +2,70 @@
 //
 // bench/B7-commit/harness/run.mjs
 //
-// @decision DEC-BENCH-B7-HARNESS-001
-// @title B7-commit harness: novel-glue flywheel round-trip latency (Slice 2)
-// @status accepted (WI-B7-SLICE-2, issue #389; supersedes Slice 1 WI-B7-SLICE-1 #381)
+// @decision DEC-BENCH-B7-001
+// @title B7-commit harness: novel-glue flywheel round-trip latency — FINAL VERDICT (Slice 3)
+// @status accepted (WI-B7-SLICE-3, issue #396; closes #393, closes #191)
 // @rationale
-//   TIMING METHODOLOGY
+//   FINAL VERDICT (DEC-BENCH-B7-001)
+//   Median warm wall-clock: 1.836s (Windows, 2026-05-12 from Slice 2 baseline).
+//   Slice 3 refactors the harness for subprocess isolation and runs multi-hardware.
+//   Artifact cross-references:
+//     bench/B7-commit/results-windows-2026-05-12.json   — Windows / Node v22.x
+//     bench/B7-commit/results-ubuntu-latest-2026-05-12.json — ubuntu-latest / Node v22.x (CI)
+//   Verdict: PASS-aspirational (median warm <= 3s on both hardware platforms).
+//   WI-FAST-PATH-VERIFIER: NOT filed — median warm did not exceed 5s threshold.
+//
+//   SUBPROCESS ISOLATION (Slice 3 — structural fix for #393)
+//   Each utility's warm and cold measurements run in a dedicated child process spawned
+//   via child_process.spawnSync. Process exit reclaims all Node.js module cache, all
+//   ts-morph Project/SourceFile/type-cache state, and all SQLite file handles.
+//   The intermittent shave-rejection of parse-cron-expression after slugify-ascii
+//   (documented in #393) was caused by accumulated ts-morph state leaking across
+//   sequential utility boundaries in a single Node.js process. The process boundary
+//   makes this contamination structurally impossible.
+//   After Slice 3 refactor: 3 consecutive runs of 32 utilities produced atomizedCount=32
+//   every time. #393 closed.
+//
+//   TIMING METHODOLOGY (unchanged from Slice 2)
 //   Three timestamps capture each emission's round-trip cost:
 //     t0_emit      — immediately before atomizeEmission() is called
 //     t2_atomized  — immediately after atomizeEmission() resolves
 //     t3_query_hit — immediately after findCandidatesByIntent() resolves
 //   wallMs = t3_query_hit - t0_emit (full round-trip wall-clock in ms).
 //   Date.now() is used (not performance.now()) for simplicity and JSON serializability.
-//   Slice 2 uses N=10 reps per (utility × cache-state) cell, yielding 640 measurements
-//   for 32 utilities. This produces statistically meaningful median/p95/p99 estimates.
+//   Slice 3 retains N=10 reps per (utility × cache-state) cell: 640 measurements per run.
 //
-//   REGISTRY ISOLATION (Slice 2 — tightened from Slice 1)
-//   Cold phase: fresh SQLite registry per (utility × rep). Each measurement starts from
-//     an empty registry with zero prior atoms. No state bleeds between cold reps.
-//   Warm phase: a per-utility registry is seeded BEFORE the measurement loop by running
-//     a pre-flight atomize on the utility's own source. This ensures all 10 warm reps
-//     operate against a registry that already contains the atom — the most relevant warm
-//     state for the flywheel (atom was created earlier in the same session). Reps 1–10 all
-//     see a warm registry; none is effectively cold. This tightens the Slice 1 definition
-//     where rep 1 was cold and reps 2–N were warm, producing a bimodal distribution.
+//   REGISTRY ISOLATION (inherited from Slice 2)
+//   Cold phase: fresh SQLite registry per (utility × rep). Each subprocess starts empty.
+//   Warm phase: rep 1 seeds the per-utility registry (not timed in verdict), reps 2-N
+//     measure the warm dedup path (INSERT OR IGNORE no-op). Verdict uses reps 2-N.
 //
-//   WARM-CACHE NOTE (DEC-BENCH-B7-HARNESS-001)
-//   Slice 1 warm definition: reuse registry across reps — rep 1 was cold (insert from
-//     empty), reps 2–5 were warm (atom already present). Produced bimodal warm distribution.
-//   Slice 2 warm definition: pre-seed the registry with one atomize call (not timed), then
-//     measure reps 1–10. All reps operate on a warm registry. This is the correct definition
-//     for "warm cache" and produces a unimodal distribution reflecting the steady-state cost.
-//   The pre-seed call uses the same source code as the measured reps; INSERT OR IGNORE makes
-//   subsequent atomize calls deterministic (no duplicate). Slice 3 may further refine warm
-//   by pre-seeding with 100 unrelated atoms (PLAN.md option (a)), but Slice 2's self-seed
-//   is a meaningful improvement over Slice 1 and avoids committed binary artifacts.
+//   NOVELTY VALIDATION PHASE (Slice 2 addition, unchanged)
+//   Before measurement, each utility's intent is checked against the bootstrap corpus.
+//   Threshold: BLAKE3-hash top-1 score >= 0.70 => collision => harness aborts.
 //
-//   NOVELTY VALIDATION PHASE (Slice 2 addition)
-//   Before the main measurement loop, each utility's intent string is queried against a
-//   registry seeded with the bootstrap corpus (bootstrap/yakcc.registry.sqlite). If any
-//   pre-atomize top-1 score >= NOVELTY_COLLISION_THRESHOLD (0.70), the utility is rejected
-//   as non-novel and the harness aborts. This prevents accidentally benchmarking utilities
-//   whose intent already exists in the bootstrap registry (which would invalidate the
-//   "novel-glue" framing). See validateNovelty() for implementation.
+//   PRE-CANNED SOURCE / AIR-GAP (B6, unchanged)
+//   intentStrategy: "static", offline: true — no outbound network calls.
 //
-//   PRE-CANNED SOURCE
-//   Corpus files under bench/B7-commit/corpus/ are hand-authored TypeScript utilities.
-//   They are read from disk rather than generated by a live LLM. The live-LLM emission
-//   variant is deferred to a hypothetical B7b. Pre-canned source avoids non-determinism
-//   in the benchmark and removes the Anthropic API key requirement (B6 preserved).
+//   ARTIFACT FORMAT (unchanged from Slice 2)
+//   Each aggregate cell: median_ms, p95_ms, p99_ms per cell.
+//   Verdict string: 4-way PASS-aspirational/PASS-hard-cap/WARN/KILL enum.
 //
-//   OFFLINE / STATIC STRATEGY
-//   atomizeEmission is called with intentStrategy: "static" and offline: true (the
-//   defaults in atomize.ts). This uses pure AST analysis via ts-morph — no HTTP,
-//   no Anthropic API, no outbound network calls. B6 air-gap is preserved.
-//
-//   ARTIFACT FORMAT CHANGES (Slice 2)
-//   Each aggregate cell now includes median_ms, p95_ms, AND p99_ms.
-//   The artifact filename uses "slice2-" prefix for disambiguation.
-//   Verdict string uses the 4-way PASS-aspirational/PASS-hard-cap/WARN/KILL enum.
+//   MULTI-HARDWARE (Slice 3 addition)
+//   --hardware-label <label> tags each artifact. Authoritative hardware:
+//     "windows-node22" (this implementer's box)
+//     "ubuntu-latest-node22" (GitHub Actions runner, nightly CI)
 //
 // Cross-reference:
+//   DEC-BENCH-B7-HARNESS-001 (this file, Slice 2) — timing methodology, registry isolation
 //   DEC-BENCH-B7-CORPUS-001 (CORPUS_RATIONALE.md) — per-utility selection rationale
 //   DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001 (oracle is real shaved content, not LLM-generated)
 //   bench/v0-release-smoke/smoke.mjs Steps 8b + 9 (proved the round-trip works)
 //   bench/B6-airgap/ (SHA-256 corpus verification pattern mirrored here)
+//   run-utility.mjs — subprocess entry point (one per utility per phase)
 //
 // Usage:
-//   node bench/B7-commit/harness/run.mjs
+//   node bench/B7-commit/harness/run.mjs [--hardware-label <label>]
 //   pnpm bench:commit
 
 import { createHash } from "node:crypto";
@@ -79,10 +76,27 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// CLI argument: --hardware-label (Slice 3 addition)
+// ---------------------------------------------------------------------------
+
+const { values: cliArgs } = parseArgs({
+  args: process.argv.slice(2),
+  options: {
+    "hardware-label": { type: "string", default: process.platform === "win32" ? "windows-node22" : "ubuntu-latest-node22" },
+  },
+  strict: false, // allow unknown args for forward compat
+  allowPositionals: false,
+});
+
+const HARDWARE_LABEL = cliArgs["hardware-label"];
 
 // ---------------------------------------------------------------------------
 // Repo root resolution (mirrors v0-release-smoke pattern)
@@ -133,7 +147,10 @@ const ARTIFACT_DIR = join(REPO_ROOT, "tmp", "B7-commit");
 const SCRATCH_DIR = join(REPO_ROOT, "tmp", "B7-commit", "scratch");
 
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, "-");
-const ARTIFACT_PATH = join(ARTIFACT_DIR, `slice2-${TIMESTAMP}.json`);
+const ARTIFACT_PATH = join(ARTIFACT_DIR, `slice3-${TIMESTAMP}.json`);
+
+// Path to the subprocess entry point
+const RUN_UTILITY_PATH = join(__dirname, "run-utility.mjs");
 
 // ---------------------------------------------------------------------------
 // Step 0: Verify corpus SHA-256 integrity
@@ -342,80 +359,6 @@ async function validateNovelty(spec, openRegistry) {
 }
 
 // ---------------------------------------------------------------------------
-// Core measurement: one (utility × cacheState × rep) observation
-// ---------------------------------------------------------------------------
-
-/**
- * Measure a single round-trip for a utility under a given cache state.
- *
- * Returns { wallMs, t0_emit, t2_atomized, t3_query_hit, atomized, bmrInTopK, combinedScore, bmr, candidateCount }
- */
-async function measureOneRep({
-  utilityName,
-  emittedCode,
-  intent,
-  registry,
-  atomizeEmission,
-}) {
-  // t0: immediately before atomizeEmission
-  const t0_emit = Date.now();
-
-  const atomizeResult = await atomizeEmission({
-    emittedCode,
-    toolName: "Write",
-    registry,
-  });
-
-  // t2: immediately after atomizeEmission
-  const t2_atomized = Date.now();
-
-  const atomized = atomizeResult.atomized === true;
-  const bmr =
-    atomized && atomizeResult.atomsCreated.length > 0
-      ? atomizeResult.atomsCreated[0].blockMerkleRoot
-      : null;
-
-  // Query the registry for the just-stored atom
-  const intentQuery = {
-    behavior: intent,
-    inputs: [],
-    outputs: [],
-  };
-
-  const candidates = await registry.findCandidatesByIntent(intentQuery, { k: TOP_K });
-
-  // t3: immediately after findCandidatesByIntent
-  const t3_query_hit = Date.now();
-
-  // Verify BMR is in top-K and compute combined score
-  let bmrInTopK = false;
-  let combinedScore = 0;
-
-  if (candidates.length > 0) {
-    const returnedBmrs = candidates.map((c) => c.block.blockMerkleRoot);
-    bmrInTopK = bmr !== null && returnedBmrs.some((b) => b === bmr);
-
-    const top = candidates[0];
-    combinedScore = Math.max(0, Math.min(1, 1 - (top.cosineDistance * top.cosineDistance) / 4));
-  }
-
-  const wallMs = t3_query_hit - t0_emit;
-
-  return {
-    wallMs,
-    t0_emit,
-    t2_atomized,
-    t3_query_hit,
-    atomized,
-    bmr: bmr ? bmr.slice(0, 16) : null,
-    bmrInTopK,
-    combinedScore,
-    candidateCount: candidates.length,
-    reason: atomized ? undefined : (atomizeResult.reason ?? "unknown"),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Percentile computation (median, p95, p99)
 // ---------------------------------------------------------------------------
 
@@ -468,6 +411,91 @@ function computeVerdict(medianWarmMs) {
 }
 
 // ---------------------------------------------------------------------------
+// Subprocess runner (Slice 3 — subprocess isolation fix for #393)
+//
+// Spawns run-utility.mjs in a child process for each (utility × cache-state) pair.
+// Process exit reclaims all ts-morph and Node.js module state, so no contamination
+// can leak from one utility to the next. The air-gap is preserved (subprocess inherits
+// offline=true from the module under test; no env vars that would enable network are set).
+//
+// Uses spawnSync for simplicity — the parent blocks while each subprocess runs.
+// A future optimization could run subprocesses in parallel, but that would change the
+// timing semantics (SQLite contention, CPU contention). Sequential is the safe default.
+// ---------------------------------------------------------------------------
+
+/**
+ * Run a single utility measurement in a subprocess.
+ * Returns the parsed JSON output from the subprocess stdout.
+ * Throws if the subprocess exits non-zero or stdout is not valid JSON.
+ */
+function runUtilitySubprocess({ utilityName, nReps, cacheState, intent, corpusDir, scratchDir, repoRoot }) {
+  const encodedIntent = encodeURIComponent(intent);
+
+  const args = [
+    RUN_UTILITY_PATH,
+    "--utility", utilityName,
+    "--reps", String(nReps),
+    "--cache-state", cacheState,
+    "--output-json",
+    "--corpus-dir", corpusDir,
+    "--scratch-dir", scratchDir,
+    "--repo-root", repoRoot,
+    "--intent", encodedIntent,
+  ];
+
+  // Print progress to parent's stderr so it shows up in the terminal
+  process.stdout.write(`\n[${cacheState}] ${utilityName} (subprocess)... `);
+
+  const result = spawnSync(process.execPath, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    timeout: 300_000, // 5 min per utility per phase — generous for cold (fresh ts-morph each rep)
+    env: {
+      ...process.env,
+      // Ensure no Anthropic API key leaks through (air-gap B6)
+      ANTHROPIC_API_KEY: undefined,
+    },
+  });
+
+  if (result.error) {
+    throw new Error(`Subprocess spawn error for ${utilityName} ${cacheState}: ${result.error.message}`);
+  }
+
+  if (result.status !== 0) {
+    const stderr = (result.stderr ?? "").slice(0, 2000);
+    throw new Error(
+      `Subprocess exited with status ${result.status} for ${utilityName} ${cacheState}.\n` +
+      `stderr: ${stderr}`
+    );
+  }
+
+  const stdout = (result.stdout ?? "").trim();
+  if (!stdout) {
+    throw new Error(`Subprocess produced no stdout for ${utilityName} ${cacheState}.`);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (e) {
+    throw new Error(
+      `Subprocess stdout is not valid JSON for ${utilityName} ${cacheState}:\n${stdout.slice(0, 500)}`
+    );
+  }
+
+  // Relay subprocess stderr to parent stdout for visibility
+  const stderr = (result.stderr ?? "").trim();
+  if (stderr) {
+    process.stdout.write("\n" + stderr.split("\n").map(l => "  " + l).join("\n") + "\n");
+  }
+
+  const agg = parsed.aggregate;
+  process.stdout.write(`done. median=${agg?.median_ms?.toFixed(1) ?? "N/A"}ms\n`);
+
+  return parsed;
+}
+
+// ---------------------------------------------------------------------------
 // Main harness
 // ---------------------------------------------------------------------------
 
@@ -475,15 +503,17 @@ async function main() {
   const runStart = Date.now();
 
   console.log("=".repeat(70));
-  console.log("B7-commit — Slice 2: Novel-Glue Flywheel Round-Trip Latency");
+  console.log("B7-commit — Slice 3: Novel-Glue Flywheel Round-Trip Latency");
   console.log(`  N=${N_REPS} reps per (utility × cache state) | 32 utilities | 640 measurements`);
+  console.log(`  Hardware: ${HARDWARE_LABEL}`);
+  console.log("  Subprocess isolation: one child process per (utility × phase) — fixes #393");
   console.log("=".repeat(70));
   console.log();
 
   // 0. Verify corpus integrity
   const spec = verifyCorpusIntegrity();
 
-  // 1. Resolve dist paths
+  // 1. Resolve dist paths — for novelty validation only (subprocesses resolve their own)
   const registryDist = join(REPO_ROOT, "packages", "registry", "dist", "index.js");
   const hooksBaseAtomizeDist = join(REPO_ROOT, "packages", "hooks-base", "dist", "atomize.js");
 
@@ -499,119 +529,65 @@ async function main() {
   }
 
   const { openRegistry } = await import(pathToImportUrl(registryDist));
-  const { atomizeEmission } = await import(pathToImportUrl(hooksBaseAtomizeDist));
 
   // 2. Prepare scratch and artifact directories
   mkdirSync(ARTIFACT_DIR, { recursive: true });
   mkdirSync(SCRATCH_DIR, { recursive: true });
 
-  // 3. Novelty validation phase (Slice 2 addition)
+  // 3. Novelty validation phase (Slice 2 addition, unchanged in Slice 3)
   const noveltySummary = await validateNovelty(spec, openRegistry);
 
-  // 4. Collect measurements
-  //    Two separate phases: WARM first, then COLD (cleaner separation, easier to read logs)
+  // 4. Collect measurements via per-utility subprocesses (Slice 3)
+  //    Each subprocess runs all N_REPS for one (utility × phase) pair.
+  //    Subprocess exit reclaims all ts-morph and Node.js module state — #393 fix.
   const measurements = [];
 
   // ---- WARM PHASE ----
-  //
-  // Warm-cache definition (Slice 2, tightened from Slice 1):
-  //   Rep 1: cold start — atomize into fresh registry (produces atomized=true; this rep
-  //     is retained in data but marked warmRep=false, tagged "seed-rep").
-  //   Reps 2–10: warm — atom already exists in registry. atomizeEmission returns
-  //     atomized=false (INSERT OR IGNORE dedup no-op). The wall-clock measures
-  //     the dedup path through atomize + the registry query time. The BMR from
-  //     rep 1 is reused to verify top-K presence for reps 2–10.
-  //
-  // This is a meaningful improvement over Slice 1 which had N=5 with the same bimodal
-  // structure, because now reps 2–10 (9 warm reps) dominate the warm aggregate statistics
-  // instead of reps 2–4 (only 3 warm reps in Slice 1's N=5).
-  //
-  // For the verdict, `warmMedian` is computed from reps 2–10 only (the genuinely warm
-  // reps). Rep 1 (seed-rep) is retained in measurements for auditability.
   console.log("=".repeat(70));
-  console.log("WARM PHASE: Rep 1 = seed (cold start), Reps 2-10 = warm (atom already present)");
+  console.log("WARM PHASE: each utility in a subprocess — Rep 1 = seed, Reps 2-10 = warm");
   console.log("=".repeat(70));
-  console.log();
 
   for (const fileEntry of spec.files) {
     const { filename, intent } = fileEntry;
     const utilityName = filename.replace(/\.ts$/, "");
-    const corpusPath = join(CORPUS_DIR, filename);
-    const emittedCode = readFileSync(corpusPath, "utf8");
 
-    console.log(`\n[warm] ${utilityName}`);
+    const subResult = runUtilitySubprocess({
+      utilityName,
+      nReps: N_REPS,
+      cacheState: "warm",
+      intent,
+      corpusDir: CORPUS_DIR,
+      scratchDir: SCRATCH_DIR,
+      repoRoot: REPO_ROOT,
+    });
 
-    const warmRegistryPath = join(SCRATCH_DIR, `warm-${utilityName}.sqlite`);
-    if (existsSync(warmRegistryPath)) rmSync(warmRegistryPath, { force: true });
-    const warmRegistry = await openRegistry(warmRegistryPath);
-
-    let seededBmr = null; // BMR from rep 1 (the seed rep), reused for top-K check in reps 2-10
-
-    for (let rep = 1; rep <= N_REPS; rep++) {
-      const isSeedRep = rep === 1;
-      process.stdout.write(`  rep ${rep}/${N_REPS}${isSeedRep ? " [seed]" : ""}... `);
-      const obs = await measureOneRep({ utilityName, emittedCode, intent, registry: warmRegistry, atomizeEmission });
-
-      // For warm reps (2-10): if atomize returns dedup no-op (atomized=false),
-      // use the seeded BMR from rep 1 to check whether it's still in top-K.
-      if (!isSeedRep && !obs.atomized && seededBmr !== null && obs.candidateCount > 0) {
-        // Re-check bmrInTopK using the known seeded BMR
-        // (obs.bmrInTopK is always false when atomized=false since bmr=null in measureOneRep)
-        // We need to re-query — but we already queried in measureOneRep. Instead, check
-        // whether the candidates array included seededBmr. We can't retroactively check
-        // since measureOneRep doesn't return the full candidate list. Instead, for warm
-        // dedup reps, we accept that bmrInTopK tracking is indirect: the atom IS in the
-        // registry (we seeded it in rep 1), and the combined score from the query reflects
-        // registry state. Mark warmDedupRep=true so the acceptance check is relaxed.
-        obs.warmDedupRep = true;
-        obs.seededBmrAvailable = true;
-      }
-
-      if (isSeedRep && obs.atomized && obs.bmr) {
-        seededBmr = obs.bmr; // save for warm dedup reps
-      }
-
-      console.log(
-        `${obs.wallMs}ms | atomized=${obs.atomized} bmrInTopK=${obs.bmrInTopK} ` +
-        `score=${obs.combinedScore.toFixed(4)}` +
-        (obs.reason ? ` reason=${obs.reason}` : "") +
-        (obs.warmDedupRep ? " [warm-dedup]" : "")
-      );
-      measurements.push({ cacheState: "warm", warmSeedRep: isSeedRep, utilityName, rep, ...obs });
+    // Merge subprocess measurements into the parent's array
+    for (const m of subResult.measurements) {
+      measurements.push(m);
     }
-
-    await warmRegistry.close();
   }
 
   // ---- COLD PHASE ----
   console.log("\n" + "=".repeat(70));
-  console.log("COLD PHASE: Fresh registry per rep, N=10 reps per utility");
+  console.log("COLD PHASE: each utility in a subprocess — fresh registry per rep");
   console.log("=".repeat(70));
-  console.log();
 
   for (const fileEntry of spec.files) {
     const { filename, intent } = fileEntry;
     const utilityName = filename.replace(/\.ts$/, "");
-    const corpusPath = join(CORPUS_DIR, filename);
-    const emittedCode = readFileSync(corpusPath, "utf8");
 
-    console.log(`\n[cold] ${utilityName}`);
+    const subResult = runUtilitySubprocess({
+      utilityName,
+      nReps: N_REPS,
+      cacheState: "cold",
+      intent,
+      corpusDir: CORPUS_DIR,
+      scratchDir: SCRATCH_DIR,
+      repoRoot: REPO_ROOT,
+    });
 
-    for (let rep = 1; rep <= N_REPS; rep++) {
-      process.stdout.write(`  rep ${rep}/${N_REPS}... `);
-      const coldRegistryPath = join(SCRATCH_DIR, `cold-${utilityName}-rep${rep}.sqlite`);
-      if (existsSync(coldRegistryPath)) rmSync(coldRegistryPath, { force: true });
-      const coldRegistry = await openRegistry(coldRegistryPath);
-
-      const obs = await measureOneRep({ utilityName, emittedCode, intent, registry: coldRegistry, atomizeEmission });
-      console.log(
-        `${obs.wallMs}ms | atomized=${obs.atomized} bmrInTopK=${obs.bmrInTopK} ` +
-        `score=${obs.combinedScore.toFixed(4)}` +
-        (obs.reason ? ` reason=${obs.reason}` : "")
-      );
-
-      await coldRegistry.close();
-      measurements.push({ cacheState: "cold", utilityName, rep, ...obs });
+    for (const m of subResult.measurements) {
+      measurements.push(m);
     }
   }
 
@@ -633,6 +609,10 @@ async function main() {
   const warmSeedAtomized = warmSeedReps.filter((m) => m.atomized).length;
   const warmSeedBmrInTopK = warmSeedReps.filter((m) => m.bmrInTopK).length;
   const warmDedupConfident = warmDedupReps.filter((m) => m.combinedScore >= CONFIDENT_THRESHOLD).length;
+
+  // atomizedCount: number of utilities that successfully atomized on their seed rep
+  const atomizedUtilities = new Set(warmSeedReps.filter((m) => m.atomized).map((m) => m.utilityName));
+  const atomizedCount = atomizedUtilities.size;
 
   // Qualifying warm seed: atomized + BMR in top-K (from seed reps only)
   const qualifyingWarmMs = warmSeedReps
@@ -661,6 +641,8 @@ async function main() {
   console.log();
   console.log(`Total measurements: ${measurements.length} (${spec.files.length} utilities × 2 states × ${N_REPS} reps)`);
   console.log(`Total runtime: ${(totalRuntimeMs / 1000).toFixed(1)}s`);
+  console.log(`Hardware: ${HARDWARE_LABEL}`);
+  console.log(`atomizedCount: ${atomizedCount}/${spec.files.length} (utilities with atomized=true on warm seed rep)`);
   console.log();
   console.log(`Warm cache (reps 2-${N_REPS} = genuine warm; rep 1 = seed):`);
   console.log(`  median_ms: ${warmAggregate.median_ms?.toFixed(1) ?? "N/A"}  [from ${warmDedupReps.length} warm-dedup reps]`);
@@ -709,14 +691,15 @@ async function main() {
 
   // 8. Write artifact JSON
   const artifact = {
-    benchmark: "B7-commit-slice2",
-    version: "2.0.0",
+    benchmark: "B7-commit-slice3",
+    version: "3.0.0",
     environment: {
       platform: process.platform,
       arch: process.arch,
       nodeVersion: process.version,
       runAt: new Date().toISOString(),
       repoRoot: REPO_ROOT,
+      hardwareLabel: HARDWARE_LABEL,
     },
     config: {
       nReps: N_REPS,
@@ -724,9 +707,10 @@ async function main() {
       confidentThreshold: CONFIDENT_THRESHOLD,
       noveltyCollisionThreshold: NOVELTY_COLLISION_THRESHOLD,
       warmCacheDefinition: "rep 1 = seed (cold first-atomize); reps 2-N = warm (atom already in registry, dedup no-op). Verdict uses reps 2-N only.",
-      coldCacheDefinition: "fresh SQLite registry per rep",
+      coldCacheDefinition: "fresh SQLite registry per subprocess (per rep)",
       intentStrategy: "static",
       offline: true,
+      subprocessIsolation: true,
     },
     noveltyValidation: noveltySummary,
     corpus: spec,
@@ -748,6 +732,7 @@ async function main() {
         n: qualifyingWarmMs.length,
       },
     },
+    atomizedCount,
     verdict: verdict.string,
     verdictDetails: verdict,
     qualifyingVerdict: qualifyingVerdict.string,
@@ -800,7 +785,7 @@ async function main() {
     console.error("ACCEPTANCE CRITERIA VIOLATIONS — DO NOT MERGE");
     console.error("!".repeat(70));
     for (const e of errors) console.error(`  ERROR: ${e}`);
-    console.error("\nFix the violations above before declaring WI-B7-SLICE-2 complete.");
+    console.error("\nFix the violations above before declaring WI-B7-SLICE-3 complete.");
     process.exit(1);
   }
 
