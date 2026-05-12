@@ -6,31 +6,31 @@
       "filename": "array-median.ts",
       "description": "Compute median of a numeric array (O(n log n) sort). Known-passing baseline — mirrors bench/v0-release-smoke/fixtures/novel-glue-flywheel.ts.",
       "intent": "Compute the median of a numeric array using O(n log n) sort. Returns NaN for empty arrays.",
-      "sha256": "949e392787d0a30ae5cd3b6ead8e6f2ab8c440556580ba5d5b8a8eb489380b6b"
+      "sha256": "1176eb8f9fe9ad7c92d9d78ab0a0ea62291ce96bec0ebc1d260aae9ef876728c"
     },
     {
       "filename": "iso-duration-to-seconds.ts",
       "description": "Parse ISO 8601 duration string to total seconds.",
       "intent": "Parse an ISO 8601 duration string and return the total number of seconds. Supports years (365d), months (30d), weeks, days, hours, minutes, and seconds. Returns NaN for malformed or empty input.",
-      "sha256": "19440f63e875a7bf095f45e259abaa0c5330ef0c5b9140a459c9e87b8335cefc"
+      "sha256": "54adee84eeb30e118452cbf5b97f33b71111781bce2ce0712f18b50d7f4230fc"
     },
     {
       "filename": "is-valid-ipv4.ts",
       "description": "Validate dotted-decimal IPv4 address string.",
       "intent": "Validate whether a string is a valid IPv4 address in dotted-decimal notation. Accepts addresses of the form A.B.C.D where each octet is an integer in [0, 255]. Rejects leading zeros, extra whitespace, and non-numeric characters.",
-      "sha256": "15c086844c2320376722db835c3607db23f1a2140f3e6fb26b47ada85c63ea4c"
+      "sha256": "20b6e23c457c2a1507c20c99a467c6ad8a972a6ab3f0f98deb046646b0803a75"
     },
     {
       "filename": "hamming-distance.ts",
       "description": "Compute Hamming distance between two equal-length strings.",
       "intent": "Compute the Hamming distance between two strings of equal length. The Hamming distance is the number of positions at which the corresponding characters differ. Throws a RangeError if the strings have different lengths.",
-      "sha256": "a7476bf422ed11daadb3f05661e0d1f1f7a487e9973cc01a098f92d6d4214780"
+      "sha256": "d56dd8ecb33a8e4372a866b24ba822fcffdd796b5d36ff8e61564bc4d10b43d3"
     },
     {
       "filename": "camel-to-snake-preserving-acronyms.ts",
       "description": "Convert camelCase/PascalCase to snake_case, collapsing acronyms.",
       "intent": "Convert a camelCase or PascalCase identifier to snake_case, preserving consecutive uppercase acronyms as a single lowercase segment.",
-      "sha256": "e1d1350111c5a4c2a0f307b7b44d4899b0f073592d726b2934ebb273d3a530ae"
+      "sha256": "22f0547e5d1185affd45677d4d8ccce9f0cfe65c2eb9eebdb941de5d51870193"
     }
   ]
 }

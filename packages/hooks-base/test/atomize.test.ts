@@ -501,6 +501,102 @@ describe("renderAtomNewComment — @atom-new comment format", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A9 — JSDoc curly-brace regression (issue #383)
+//   Functions with @throws {X}, @returns {X}, @param {X}, @type {X} in JSDoc
+//   must not be falsely rejected as trivial-body.
+// ---------------------------------------------------------------------------
+
+/**
+ * Reproduction case from issue #383 (originally from B7 Slice 1 corpus).
+ * hammingDistance carries `@throws {RangeError}` — this must NOT cause a
+ * false "trivial-body" rejection from countBodyStatements().
+ */
+const JSDOC_THROWS_TAG = `// SPDX-License-Identifier: MIT
+/**
+ * Computes Hamming distance.
+ * @throws {RangeError} when strings differ in length
+ */
+export function hammingDistance(a: string, b: string): number {
+  if (a.length !== b.length) throw new RangeError("strings must be equal length");
+  let count = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) count++;
+  return count;
+}`;
+
+const JSDOC_RETURNS_TAG = `// SPDX-License-Identifier: MIT
+/**
+ * Parse an integer from a string.
+ * @returns {number} The parsed integer value.
+ */
+export function parseIntStrict(s: string): number {
+  const n = parseInt(s, 10);
+  if (isNaN(n)) throw new TypeError("not a valid integer: " + s);
+  if (String(n) !== s.trim()) throw new RangeError("not a strict integer: " + s);
+  return n;
+}`;
+
+const JSDOC_PARAM_TAG = `// SPDX-License-Identifier: MIT
+/**
+ * Compute a normalised score in [0, 1] for a value within [min, max].
+ * @param {number} value - The value to normalise.
+ * @param {number} min - The lower bound of the range.
+ * @param {number} max - The upper bound of the range.
+ * @returns A number in [0, 1] representing value's position in [min, max].
+ */
+export function normalise(value: number, min: number, max: number): number {
+  if (max === min) throw new RangeError("min and max must be different");
+  const range = max - min;
+  const shifted = value - min;
+  const ratio = shifted / range;
+  if (ratio < 0) return 0;
+  if (ratio > 1) return 1;
+  return ratio;
+}`;
+
+const JSDOC_TYPE_TAG = `// SPDX-License-Identifier: MIT
+/**
+ * Format a value as a fixed-precision decimal string.
+ * @type {(value: number, decimals: number) => string}
+ */
+export function toFixed(value: number, decimals: number): string {
+  if (decimals < 0) throw new RangeError("decimals must be non-negative");
+  const factor = Math.pow(10, decimals);
+  const rounded = Math.round(value * factor) / factor;
+  return rounded.toFixed(decimals);
+}`;
+
+describe("A9 — JSDoc curly-brace regression (issue #383)", () => {
+  it("A9a: @throws {RangeError} — hammingDistance reproduction case atomizes successfully", async () => {
+    const result = await atomizeEmission(makeInput({ emittedCode: JSDOC_THROWS_TAG }));
+    // The JSDoc @throws tag must NOT cause a false trivial-body rejection.
+    expect(result.reason).not.toBe("trivial-body");
+    expect(result.atomized).toBe(true);
+    expect(result.atomsCreated.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("A9b: @returns {number} — parseIntStrict atomizes successfully", async () => {
+    const result = await atomizeEmission(makeInput({ emittedCode: JSDOC_RETURNS_TAG }));
+    expect(result.reason).not.toBe("trivial-body");
+    expect(result.atomized).toBe(true);
+    expect(result.atomsCreated.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("A9c: @param {number} — normalise atomizes successfully", async () => {
+    const result = await atomizeEmission(makeInput({ emittedCode: JSDOC_PARAM_TAG }));
+    expect(result.reason).not.toBe("trivial-body");
+    expect(result.atomized).toBe(true);
+    expect(result.atomsCreated.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("A9d: @type {(value: number, decimals: number) => string} — toFixed atomizes successfully", async () => {
+    const result = await atomizeEmission(makeInput({ emittedCode: JSDOC_TYPE_TAG }));
+    expect(result.reason).not.toBe("trivial-body");
+    expect(result.atomized).toBe(true);
+    expect(result.atomsCreated.length).toBeGreaterThan(0);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
 // Test-file content heuristic detection
 // ---------------------------------------------------------------------------
 
