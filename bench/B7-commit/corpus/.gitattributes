@@ -1,0 +1,5 @@
+# Force LF line endings for corpus TypeScript files on all platforms.
+# Belt-and-suspenders: the canonical-LF hashing in run.mjs is the actual fix
+# (DEC-BENCH-B7-CORPUS-CANONICAL-LF-001), but this attribute prevents future
+# drift if corpus files are added or edited on Windows with core.autocrlf=true.
+*.ts text eol=lf

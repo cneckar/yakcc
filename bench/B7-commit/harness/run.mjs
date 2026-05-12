@@ -163,6 +163,24 @@ const RUN_UTILITY_PATH = join(__dirname, "run-utility.mjs");
 // Step 0: Verify corpus SHA-256 integrity
 // ---------------------------------------------------------------------------
 
+/**
+ * @decision DEC-BENCH-B7-CORPUS-CANONICAL-LF-001
+ * @title Canonical-LF SHA-256 hashing for B7 corpus integrity verification
+ * @status accepted
+ * @rationale corpus-spec.json stores hashes computed from LF-normalized bytes
+ *   (canonical-LF form). The harness always normalizes CRLF→LF before hashing
+ *   on read, so the computed hash is identical regardless of whether git checked
+ *   out the corpus files with CRLF (Windows) or LF (Linux CI). This eliminates
+ *   the "SHA-256 drift detected" false-positive that previously caused every CI
+ *   run to fail: the spec stored a CRLF-byte hash for array-median.ts (authored
+ *   on Windows), while Linux CI checked out LF bytes and produced a different
+ *   hash. The prior two-step raw-then-LF fallback logic could not repair this
+ *   because on Linux the raw bytes were already LF — the fallback never fired.
+ *   Fix: always normalize first, store only LF-canonical hashes in the spec.
+ *   Maintenance escape hatch: bench/B7-commit/harness/rehash-corpus-canonical-lf.mjs
+ *   re-derives all hashes and overwrites corpus-spec.json. Run it after any
+ *   legitimate corpus edit.
+ */
 function verifyCorpusIntegrity() {
   console.log("[B7] Verifying corpus SHA-256 integrity...");
   const spec = JSON.parse(readFileSync(CORPUS_SPEC_PATH, "utf8"));
@@ -172,28 +190,20 @@ function verifyCorpusIntegrity() {
     if (!existsSync(filePath)) {
       throw new Error(`Corpus file missing: ${filePath}`);
     }
-    // Hash robustness across git checkout line-ending modes:
-    // Some corpus files were committed with CRLF already in the blob; others as LF.
-    // On Windows, git may add CRLF on checkout for files stored as LF, so the on-disk
-    // bytes may differ from the committed bytes. Try raw bytes first; if that doesn't
-    // match the spec, try LF-normalized. If neither matches, it's a real content change.
+    // All hashes in corpus-spec.json are canonical-LF: computed from bytes with
+    // CRLF normalized to LF. Normalize before hashing so Windows checkouts
+    // (which may have CRLF on disk) and Linux CI checkouts (LF on disk) both
+    // produce the same hash. No fallback needed — there is only one form.
     const rawBytes = readFileSync(filePath);
-    const actualRaw = createHash("sha256").update(rawBytes).digest("hex");
-    let actual = actualRaw;
-    if (actual !== entry.sha256) {
-      // Try LF-normalization (handles Windows CRLF expansion on checkout)
-      const lfBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
-      const actualLf = createHash("sha256").update(lfBytes).digest("hex");
-      if (actualLf === entry.sha256) {
-        actual = actualLf; // CRLF expansion — content is identical, just line endings differ
-      }
-    }
+    const lfBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
+    const actual = createHash("sha256").update(lfBytes).digest("hex");
     if (actual !== entry.sha256) {
       throw new Error(
         `SHA-256 drift detected for ${entry.filename}:\n` +
-        `  expected: ${entry.sha256}\n` +
-        `  actual (raw):  ${actualRaw}\n` +
-        "Corpus content has changed. Abort."
+        `  expected:             ${entry.sha256}\n` +
+        `  actual (lf-normalized): ${actual}\n` +
+        "Corpus content has changed. If this is intentional, run:\n" +
+        "  node bench/B7-commit/harness/rehash-corpus-canonical-lf.mjs"
       );
     }
     console.log(`  [OK] ${entry.filename} — sha256=${actual.slice(0, 16)}...`);
