@@ -387,11 +387,7 @@ export async function _runWithRegistry(
           packageName: group.sourcePkg,
           sourcePath: group.sourceFile,
           reason: "glue-absorbed",
-          detail:
-            `Atom stale blocks.source_offset=${atom.block.sourceOffset ?? "null"} in ${group.sourceFile} — ` +
-            "absent from block_occurrences (v9 processed), content already present in glue blob. " +
-            "Excluded from reconstruction to prevent duplicate content. " +
-            "(DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001)",
+          detail: `Atom stale blocks.source_offset=${atom.block.sourceOffset ?? "null"} in ${group.sourceFile} — absent from block_occurrences (v9 processed), content already present in glue blob. Excluded from reconstruction to prevent duplicate content. (DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001)`,
         });
       } else {
         // Fallback: no occurrence rows (pre-v9 registry) — use legacy blocks.source_offset.

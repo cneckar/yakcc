@@ -40,6 +40,7 @@
 // pre-populated (bootstrap step can take minutes). When the registry is already
 // present (local dev), only the compile step runs.
 
+import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
@@ -52,7 +53,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { execSync } from "node:child_process";
 import { openRegistry } from "@yakcc/registry";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _runWithRegistry } from "../src/compile-pipeline.js";
@@ -152,11 +152,7 @@ beforeAll(async () => {
     const gapRate = corpusAtomCount > 0 ? nullProvenanceCount / corpusAtomCount : 0;
     if (gapRate > T8_NULL_PROVENANCE_RATE_THRESHOLD) {
       t8GapRateBlocked = true;
-      t8GapRateReport =
-        `BLOCKED_BY_PLAN (R4 gap gate): null-provenance gap rate ${(gapRate * 100).toFixed(2)}% ` +
-        `(${nullProvenanceCount}/${corpusAtomCount} atoms) exceeds threshold ${(T8_NULL_PROVENANCE_RATE_THRESHOLD * 100).toFixed(0)}%. ` +
-        `T8 workspace build/test/verify requires all local atoms to have provenance. ` +
-        `Re-run 'yakcc bootstrap' with a P1+ CLI to populate provenance for all atoms.`;
+      t8GapRateReport = `BLOCKED_BY_PLAN (R4 gap gate): null-provenance gap rate ${(gapRate * 100).toFixed(2)}% (${nullProvenanceCount}/${corpusAtomCount} atoms) exceeds threshold ${(T8_NULL_PROVENANCE_RATE_THRESHOLD * 100).toFixed(0)}%. T8 workspace build/test/verify requires all local atoms to have provenance. Re-run 'yakcc bootstrap' with a P1+ CLI to populate provenance for all atoms.`;
       console.warn(t8GapRateReport);
     }
   }
@@ -251,9 +247,7 @@ describe("T3: compile-self integration — pipeline mechanics", () => {
     const plumbingManifest = join(OUTPUT_DIR, "pnpm-workspace.yaml");
     if (!existsSync(plumbingManifest)) {
       console.warn(
-        "[T3(c)] pnpm-workspace.yaml not materialised. " +
-          "Possible cause: bootstrap was run without the P2 plumbing-capture pass. " +
-          `plumbingFilesEmitted=${pipelineResult.plumbingFilesEmitted}`,
+        `[T3(c)] pnpm-workspace.yaml not materialised. Possible cause: bootstrap was run without the P2 plumbing-capture pass. plumbingFilesEmitted=${pipelineResult.plumbingFilesEmitted}`,
       );
     }
     // Not a hard failure if plumbing is empty (bootstrap may be pre-P2).
@@ -520,9 +514,7 @@ describe("T8: recursive self-hosting byte-identity proof (I10)", () => {
     const wsYaml = join(OUTPUT_DIR, "pnpm-workspace.yaml");
     if (!existsSync(wsYaml)) {
       console.error(
-        `[T8] pnpm-workspace.yaml not found at ${wsYaml}. ` +
-          `plumbingFilesEmitted=${pipelineResult?.plumbingFilesEmitted}. ` +
-          "If the registry was built without P2 bootstrap, re-run 'yakcc bootstrap'.",
+        `[T8] pnpm-workspace.yaml not found at ${wsYaml}. plumbingFilesEmitted=${pipelineResult?.plumbingFilesEmitted}. If the registry was built without P2 bootstrap, re-run 'yakcc bootstrap'.`,
       );
     }
     expect(existsSync(wsYaml)).toBe(true);
@@ -596,9 +588,7 @@ describe("T8: recursive self-hosting byte-identity proof (I10)", () => {
           console.info(`[T8(f)] ${suffix}: uniquePlacedInFile=${uniquePlacedInFile}`);
           if (uniquePlacedInFile === 0) {
             console.warn(
-              `[T8(f)] BLOCKED_BY_PLAN (#355 regression check): NO atoms placed for ${suffix} — ` +
-                `block_occurrences has no rows for this file. ` +
-                `Verify that bootstrap calls replaceSourceFileOccurrences() for every shaved file.`,
+              `[T8(f)] BLOCKED_BY_PLAN (#355 regression check): NO atoms placed for ${suffix} — block_occurrences has no rows for this file. Verify that bootstrap calls replaceSourceFileOccurrences() for every shaved file.`,
             );
           }
         }
@@ -664,11 +654,7 @@ describe("T8: recursive self-hosting byte-identity proof (I10)", () => {
 
     if (buildExitCode !== 0) {
       console.warn(
-        `[T8(f)] BLOCKED_BY_PLAN (#399): pnpm -r build failed (exit ${buildExitCode}). ` +
-          "7 pre-existing shave failures tracked in issue #399 (WI-SHAVE-PROBLEM-CONSTRUCTS) " +
-          "prevent the recompiled workspace from building. " +
-          "T8(f/g/h) + I10 will pass once #399 is resolved. " +
-          "This is NOT a regression in #355 (block_occurrences) infrastructure.",
+        `[T8(f)] BLOCKED_BY_PLAN (#399): pnpm -r build failed (exit ${buildExitCode}). 7 pre-existing shave failures tracked in issue #399 (WI-SHAVE-PROBLEM-CONSTRUCTS) prevent the recompiled workspace from building. T8(f/g/h) + I10 will pass once #399 is resolved. This is NOT a regression in #355 (block_occurrences) infrastructure.`,
       );
       console.warn(`[T8(f)] Build tail:\n${output.slice(-1500)}`);
       // Soft skip: document the blocker, do not fail the test suite.
@@ -677,7 +663,7 @@ describe("T8: recursive self-hosting byte-identity proof (I10)", () => {
       return;
     }
 
-    console.info(`[T8(f)] pnpm -r build succeeded.`);
+    console.info("[T8(f)] pnpm -r build succeeded.");
     console.info(output.slice(-500)); // tail of build output
     // CLI dist/bin.js must exist.
     const binPath = join(OUTPUT_DIR, "packages", "cli", "dist", "bin.js");
@@ -990,9 +976,7 @@ describe("T7: glue-capture schema proof (#333)", () => {
     // Subset gate: every fresh root must be in committed (mirrors bootstrap --verify logic).
     const unrecorded = [...freshRoots].filter((r) => !committedSet.has(r));
     if (unrecorded.length > 0) {
-      console.warn(
-        `[T7(c)] ${unrecorded.length} fresh atoms not in committed manifest (first 5):`,
-      );
+      console.warn(`[T7(c)] ${unrecorded.length} fresh atoms not in committed manifest (first 5):`);
       for (const r of unrecorded.slice(0, 5)) {
         console.warn(`  + ${r}`);
       }
@@ -1018,9 +1002,7 @@ describe("T7: glue-capture schema proof (#333)", () => {
     // to include the new atoms. T7(c) will pass on the first CI run post-merge.
     if (unrecorded.length > 0) {
       console.warn(
-        `[T7(c)] BLOCKED_BY_PLAN (#355 post-land): ${unrecorded.length} new atoms from #355 ` +
-          "source edits are not yet in committed expected-roots.json (CI authority, forbidden path). " +
-          "Will pass automatically after #355 lands and CI re-runs bootstrap.",
+        `[T7(c)] BLOCKED_BY_PLAN (#355 post-land): ${unrecorded.length} new atoms from #355 source edits are not yet in committed expected-roots.json (CI authority, forbidden path). Will pass automatically after #355 lands and CI re-runs bootstrap.`,
       );
       // Soft skip: document the known post-land state, do not fail the test suite.
       return;

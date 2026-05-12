@@ -1547,9 +1547,7 @@ class SqliteRegistry implements Registry {
   //   one call per group (sourceFile) returns all offsets for that file.
   // -------------------------------------------------------------------------
 
-  async listOccurrencesBySourceFile(
-    sourceFile: string,
-  ): Promise<
+  async listOccurrencesBySourceFile(sourceFile: string): Promise<
     readonly {
       sourcePkg: string;
       sourceFile: string;
@@ -1589,9 +1587,7 @@ class SqliteRegistry implements Registry {
   // @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
   // -------------------------------------------------------------------------
 
-  async listOccurrencesByMerkleRoot(
-    blockMerkleRoot: string,
-  ): Promise<
+  async listOccurrencesByMerkleRoot(blockMerkleRoot: string): Promise<
     readonly {
       sourcePkg: string;
       sourceFile: string;
@@ -1674,8 +1670,7 @@ class SqliteRegistry implements Registry {
 
     if (!sourcePkg || !sourceFile) {
       throw new Error(
-        `replaceSourceFileOccurrences: sourcePkg and sourceFile must be non-empty: ` +
-          `sourcePkg=${sourcePkg}, sourceFile=${sourceFile}`,
+        `replaceSourceFileOccurrences: sourcePkg and sourceFile must be non-empty: sourcePkg=${sourcePkg}, sourceFile=${sourceFile}`,
       );
     }
 

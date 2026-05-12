@@ -2315,13 +2315,9 @@ describe("findCandidatesByQuery — T3: cross-provider rejection", () => {
     }
 
     // (a) stored modelId must appear with the "was embedded with" label
-    expect(caught.message).toMatch(
-      new RegExp(`was embedded with model "${registryModelId}"`),
-    );
+    expect(caught.message).toMatch(new RegExp(`was embedded with model "${registryModelId}"`));
     // (b) caller modelId must appear with the "current query provider uses" label
-    expect(caught.message).toMatch(
-      new RegExp(`current query provider uses "${callerModelId}"`),
-    );
+    expect(caught.message).toMatch(new RegExp(`current query provider uses "${callerModelId}"`));
     // (c) ordering: stored model is described before caller model
     const storedIdx = caught.message.indexOf(registryModelId);
     const callerIdx = caught.message.indexOf(callerModelId);
@@ -3013,7 +3009,6 @@ describe("findCandidatesByQuery — T9: Stage 5 ranking + ε=0 ordering semantic
 
       // With ε=0: the only valid ordering is strictly by combinedScore descending.
       // c0 must have a score >= c1 (no lex override for non-equal scores).
-      // biome-ignore lint/style/noNonNullAssertion: length check above
       expect(scoreDiff).toBeGreaterThanOrEqual(0);
 
       // Verify the two scores are NOT forced into lex order: if scores differ,
@@ -3061,7 +3056,9 @@ describe("findCandidatesByQuery — T9: Stage 5 ranking + ε=0 ordering semantic
     // If this hash ever changes (e.g. after a schema migration that alters how
     // blockMerkleRoot is computed), update the expected value to the new winner
     // and verify the descending-score ordering assertion above still holds.
+    // biome-ignore lint/style/noNonNullAssertion: length check via test setup
     const top0 = result.candidates[0]!;
+    // biome-ignore lint/style/noNonNullAssertion: length check via test setup
     const top1 = result.candidates[1]!;
     const scoreDiff = Math.abs(top0.combinedScore - top1.combinedScore);
     if (scoreDiff <= 0.02) {
@@ -3792,12 +3789,15 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
 
     await registry.storeSourceFileGlue(entry);
 
-    const retrieved = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/foo.ts");
+    const retrieved = await registry.getSourceFileGlue(
+      "packages/cli",
+      "packages/cli/src/commands/foo.ts",
+    );
     expect(retrieved).not.toBeNull();
     expect(retrieved?.sourcePkg).toBe("packages/cli");
     expect(retrieved?.sourceFile).toBe("packages/cli/src/commands/foo.ts");
     expect(retrieved?.contentHash).toBe(hash);
-    expect(Buffer.from(retrieved!.contentBlob).equals(Buffer.from(blob))).toBe(true);
+    expect(Buffer.from(retrieved?.contentBlob ?? new Uint8Array()).equals(Buffer.from(blob))).toBe(true);
     expect(retrieved?.createdAt).toBe(1_700_000_000_000);
 
     await registry.close();
@@ -3806,7 +3806,10 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
   it("G2: getSourceFileGlue returns null for unknown (sourcePkg, sourceFile)", async () => {
     const registry = await openRegistryForTest();
 
-    const result = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/nonexistent.ts");
+    const result = await registry.getSourceFileGlue(
+      "packages/cli",
+      "packages/cli/src/commands/nonexistent.ts",
+    );
     expect(result).toBeNull();
 
     await registry.close();
@@ -3837,9 +3840,12 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
     };
     await registry.storeSourceFileGlue(entryV2);
 
-    const retrieved = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/bar.ts");
+    const retrieved = await registry.getSourceFileGlue(
+      "packages/cli",
+      "packages/cli/src/commands/bar.ts",
+    );
     expect(retrieved?.contentHash).toBe(hashV2);
-    expect(Buffer.from(retrieved!.contentBlob).equals(Buffer.from(blobV2))).toBe(true);
+    expect(Buffer.from(retrieved?.contentBlob ?? new Uint8Array()).equals(Buffer.from(blobV2))).toBe(true);
 
     await registry.close();
   });
@@ -3848,9 +3854,21 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
     const registry = await openRegistryForTest();
 
     const entries: Array<{ pkg: string; file: string; content: string }> = [
-      { pkg: "packages/registry", file: "packages/registry/src/storage.ts", content: "// storage glue\n" },
-      { pkg: "packages/cli", file: "packages/cli/src/commands/bootstrap.ts", content: "// bootstrap glue\n" },
-      { pkg: "packages/cli", file: "packages/cli/src/commands/compile.ts", content: "// compile glue\n" },
+      {
+        pkg: "packages/registry",
+        file: "packages/registry/src/storage.ts",
+        content: "// storage glue\n",
+      },
+      {
+        pkg: "packages/cli",
+        file: "packages/cli/src/commands/bootstrap.ts",
+        content: "// bootstrap glue\n",
+      },
+      {
+        pkg: "packages/cli",
+        file: "packages/cli/src/commands/compile.ts",
+        content: "// compile glue\n",
+      },
     ];
 
     for (const e of entries) {
@@ -3896,7 +3914,10 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
     ).rejects.toThrow(/contentHash mismatch/);
 
     // Nothing stored.
-    const result = await registry.getSourceFileGlue("packages/cli", "packages/cli/src/commands/baz.ts");
+    const result = await registry.getSourceFileGlue(
+      "packages/cli",
+      "packages/cli/src/commands/baz.ts",
+    );
     expect(result).toBeNull();
 
     await registry.close();

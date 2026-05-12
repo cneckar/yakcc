@@ -264,7 +264,9 @@ export async function compileSelf(argv: ReadonlyArray<string>, logger: Logger): 
     const unresolvedPointer = pipelineResult.gapReport.filter(
       (r) => r.reason === "unresolved-pointer",
     ).length;
-    const glueAbsorbed = pipelineResult.gapReport.filter((r) => r.reason === "glue-absorbed").length;
+    const glueAbsorbed = pipelineResult.gapReport.filter(
+      (r) => r.reason === "glue-absorbed",
+    ).length;
     const other = pipelineResult.gapReport.filter((r) => r.reason === "other").length;
 
     logger.log("");
@@ -579,11 +581,7 @@ async function _runPipeline(
             blockMerkleRoot: atom.blockMerkleRoot,
             packageName: group.sourcePkg,
             reason: "glue-absorbed",
-            detail:
-              `Atom stale blocks.source_offset=${atom.block.sourceOffset ?? "null"} in ${group.sourceFile} — ` +
-              "absent from block_occurrences (v9 processed), content already present in glue blob. " +
-              "Excluded from reconstruction to prevent duplicate content. " +
-              "(DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001)",
+            detail: `Atom stale blocks.source_offset=${atom.block.sourceOffset ?? "null"} in ${group.sourceFile} — absent from block_occurrences (v9 processed), content already present in glue blob. Excluded from reconstruction to prevent duplicate content. (DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001)`,
           });
         } else {
           // Pre-v9 registry: fall back to blocks.source_offset (stale first-observed-wins).

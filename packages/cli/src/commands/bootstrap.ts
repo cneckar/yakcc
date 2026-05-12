@@ -1003,11 +1003,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       // sourceOffset is set per-atom inside shave() from entry.sourceRange.start.
       // Both sourceOffset and length are JS string character counts (not byte counts) —
       // the glue/reconstruct algorithms use source.slice() which is character-based.
-      if (
-        row.sourceFile != null &&
-        row.sourcePkg != null &&
-        row.sourceOffset != null
-      ) {
+      if (row.sourceFile != null && row.sourcePkg != null && row.sourceOffset != null) {
         perFileOccurrences.push({
           sourcePkg: row.sourcePkg,
           sourceFile: row.sourceFile,
@@ -1127,9 +1123,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
           const block = await registry.getBlock(merkleRoot);
           if (block === null) {
             logger.error(
-              `warning: bootstrap occurrence: block not found for pointer stub in ` +
-                `${sourceFileNorm} range=[${stub.sourceRange.start},${stub.sourceRange.end}] ` +
-                `merkleRoot=${merkleRoot} — occurrence skipped`,
+              `warning: bootstrap occurrence: block not found for pointer stub in ${sourceFileNorm} range=[${stub.sourceRange.start},${stub.sourceRange.end}] merkleRoot=${merkleRoot} — occurrence skipped`,
             );
             continue;
           }
@@ -1180,8 +1174,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         await registry.replaceSourceFileOccurrences(sourcePkg, sourceFileNorm, perFileOccurrences);
       } catch (err) {
         logger.error(
-          `error: bootstrap occurrence: replaceSourceFileOccurrences failed for ` +
-            `${sourceFileNorm}: ${(err as Error).message}`,
+          `error: bootstrap occurrence: replaceSourceFileOccurrences failed for ${sourceFileNorm}: ${(err as Error).message}`,
         );
         // Non-fatal: log and continue. getAtomRangesBySourceFile will return an
         // empty set for this file (no occurrences stored), and glue capture will
@@ -1221,9 +1214,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   try {
     await captureWorkspacePlumbing(registry, repoRoot, logger);
   } catch (err) {
-    logger.error(
-      `error: workspace plumbing capture failed: ${(err as Error).message}`,
-    );
+    logger.error(`error: workspace plumbing capture failed: ${(err as Error).message}`);
     await registry.close();
     return 1;
   }

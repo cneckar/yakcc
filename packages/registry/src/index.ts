@@ -1019,9 +1019,7 @@ export interface Registry {
    *
    * @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
    */
-  listOccurrencesByMerkleRoot(
-    blockMerkleRoot: string,
-  ): Promise<readonly BlockOccurrenceEntry[]>;
+  listOccurrencesByMerkleRoot(blockMerkleRoot: string): Promise<readonly BlockOccurrenceEntry[]>;
 
   /**
    * Atomically replace all occurrence rows for `(sourcePkg, sourceFile)` in
