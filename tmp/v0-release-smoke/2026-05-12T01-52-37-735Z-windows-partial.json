@@ -1,0 +1,96 @@
+{
+  "runId": "1778550757735-wjn79m",
+  "timestamp": "2026-05-12T01:52:41.570Z",
+  "platform": "win32",
+  "node": "v22.14.0",
+  "repoRoot": "C:/src/yakcc",
+  "keepScratch": false,
+  "steps": [
+    {
+      "step": 1,
+      "name": "Scratch project setup",
+      "expected": "scratch dir created, contains a 3-file TS project",
+      "actual": "scratch dir created with package.json + tsconfig.json + src/index.ts",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 2,
+      "name": "yakcc init --target <scratch>",
+      "expected": ".yakcc/registry.sqlite exists, .yakccrc.json exists, idempotent re-run",
+      "actual": "SKIPPED on Windows (bin.js import.meta.url bug #274)",
+      "pass": false,
+      "warn": true
+    },
+    {
+      "step": 3,
+      "name": "yakcc hooks claude-code install --target <scratch>",
+      "expected": ".claude/settings.json references yakcc hook-intercept",
+      "actual": "SKIPPED on Windows (bin.js import.meta.url bug #274)",
+      "pass": false,
+      "warn": true
+    },
+    {
+      "step": 4,
+      "name": "Verify hook installed in .claude/settings.json",
+      "expected": "parse-clean JSON, yakcc PreToolUse entry present pointing to hook-intercept",
+      "actual": "SKIPPED on Windows (depends on Step 3 which was skipped)",
+      "pass": false,
+      "warn": true
+    },
+    {
+      "step": 5,
+      "name": "Substitution trigger simulation (known-match.ts)",
+      "expected": "substitution fires OR synthesis-required (registry may be empty) — response kind recorded",
+      "actual": "substituted=false, kind=synthesis-required",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 6,
+      "name": "yakcc_resolve MCP tool surface",
+      "expected": "yakccResolve returns valid envelope; absent hash → no_match",
+      "actual": "absent hash→no_match=true; intent query→status=no_match candidates=0",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 7,
+      "name": "yakcc query returns seed atoms after seeding",
+      "expected": "at least one candidate returned for 'parse json int list', top-1 is a recognizable atom",
+      "actual": "5 candidates; top behavior=\"Parse a string of the form '[i1,i2,...,iN]' where each element is a non-negative\" plausible=true",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 8,
+      "name": "Atomize-on-emission trigger simulation (novel-glue.ts)",
+      "expected": "substitution=false (no match), atomize fires or graceful non-atom shape, scratch registry persists",
+      "actual": "substituted=false, atomized=false (shape filter skipped or shave-rejected — non-fatal), kind=synthesis-required",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 9,
+      "name": "Round-trip flywheel: query registry for novel atom after step 8",
+      "expected": "atomized atom is discoverable; if step 8 atomized, query returns it; if not atomized, verify graceful state",
+      "actual": "no candidates found (expected — step 8 shape-filter skipped, no atom was created)",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 10,
+      "name": "Cleanup scratch directory",
+      "expected": "scratch dir removed (unless --keep-scratch)",
+      "actual": "scratch dir removed",
+      "pass": true,
+      "warn": false
+    }
+  ],
+  "summary": {
+    "passed": 7,
+    "warned": 3,
+    "failed": 0,
+    "allPass": true
+  }
+}

@@ -10,6 +10,7 @@
   "references": [
     { "path": "../contracts" },
     { "path": "../ir" },
-    { "path": "../registry" }
+    { "path": "../registry" },
+    { "path": "../shave" }
   ]
 }
