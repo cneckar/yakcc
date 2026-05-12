@@ -707,7 +707,7 @@ NEW_ATOM_PROPOSAL
              great-circle implementation; neither satisfies the sub-meter + flat-signature requirement.
 ```
 
-This proposal is surfaced to the user for review and eventual `yakcc block author` submission.
+This proposal is surfaced to the user for review and eventual `yakcc propose` submission (the manual-authoring template prints from `yakcc propose` on a registry miss; there is no separate `block author` subcommand).
 
 ---
 
