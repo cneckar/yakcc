@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm A = hook-enabled (yakccResolve MCP active). Token counts are representative of hook-assisted output — fewer output tokens because the hook substitutes atom references for verbose code. This fixture is NOT a real API response; it exists to exercise telemetry capture and oracle invocation without network calls.",
+  "_arm": "A",
+  "_task": "lru-cache-with-ttl",
+  "id": "msg_dry_lru_arm_a_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1240,
+    "output_tokens": 312,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is an LRU cache with TTL eviction implementing the required interface:\n\n```typescript\n// @yakcc:atom:lru-doubly-linked-map\ninterface Entry<V> {\n  value: V;\n  expiresAt: number;\n  prev: Entry<V> | null;\n  next: Entry<V> | null;\n  key: unknown;\n}\n\nclass LRUCacheWithTTL<K, V> {\n  private readonly capacity: number;\n  private readonly defaultTtlMs: number;\n  private readonly map: Map<K, Entry<V>>;\n  private readonly head: Entry<V>;\n  private readonly tail: Entry<V>;\n\n  constructor(capacity: number, defaultTtlMs: number) {\n    this.capacity = capacity;\n    this.defaultTtlMs = defaultTtlMs;\n    this.map = new Map();\n    this.head = { value: undefined as unknown as V, expiresAt: Infinity, prev: null, next: null, key: null };\n    this.tail = { value: undefined as unknown as V, expiresAt: Infinity, prev: null, next: null, key: null };\n    this.head.next = this.tail;\n    this.tail.prev = this.head;\n  }\n\n  private isExpired(e: Entry<V>): boolean { return Date.now() >= e.expiresAt; }\n  private detach(e: Entry<V>): void {\n    if (e.prev) e.prev.next = e.next;\n    if (e.next) e.next.prev = e.prev;\n    e.prev = null; e.next = null;\n  }\n  private insertMRU(e: Entry<V>): void {\n    e.next = this.head.next; e.prev = this.head;\n    if (this.head.next) this.head.next.prev = e;\n    this.head.next = e;\n  }\n\n  set(key: K, value: V, ttlMs?: number): void {\n    const ttl = ttlMs !== undefined ? ttlMs : this.defaultTtlMs;\n    const expiresAt = Date.now() + ttl;\n    const existing = this.map.get(key);\n    if (existing) { existing.value = value; existing.expiresAt = expiresAt; this.detach(existing); this.insertMRU(existing); return; }\n    const entry: Entry<V> = { value, expiresAt, prev: null, next: null, key };\n    this.map.set(key, entry); this.insertMRU(entry);\n    if (this.map.size > this.capacity) { const lru = this.tail.prev!; this.detach(lru); this.map.delete(lru.key as K); }\n  }\n\n  get(key: K): V | undefined {\n    const e = this.map.get(key); if (!e) return undefined;\n    if (this.isExpired(e)) { this.detach(e); this.map.delete(key); return undefined; }\n    this.detach(e); this.insertMRU(e); return e.value;\n  }\n\n  has(key: K): boolean {\n    const e = this.map.get(key); if (!e) return false;\n    if (this.isExpired(e)) { this.detach(e); this.map.delete(key); return false; }\n    return true;\n  }\n\n  delete(key: K): boolean {\n    const e = this.map.get(key); if (!e) return false;\n    if (this.isExpired(e)) { this.detach(e); this.map.delete(key); return false; }\n    this.detach(e); this.map.delete(key); return true;\n  }\n\n  size(): number {\n    const now = Date.now(); let n = 0;\n    for (const [, e] of this.map) if (now < e.expiresAt) n++;\n    return n;\n  }\n\n  clear(): void { this.map.clear(); this.head.next = this.tail; this.tail.prev = this.head; }\n}\n\nexport default LRUCacheWithTTL;\n```"
+    }
+  ]
+}
