@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm B = hook-disabled (vanilla Claude). Token counts representative of verbose vanilla output. This fixture is NOT a real API response; it exists to exercise telemetry capture and oracle invocation without network calls.",
+  "_arm": "B",
+  "_task": "debounce-with-cancel",
+  "id": "msg_dry_dbc_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1220,
+    "output_tokens": 842,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll implement a debounce function with cancellation, flush, and pending support. The implementation uses setTimeout/clearTimeout and maintains state for the pending invocation.\n\n```typescript\nexport interface DebouncedFunction<T extends (...args: unknown[]) => void> {\n  (...args: Parameters<T>): void;\n  cancel(): void;\n  flush(): void;\n  pending(): boolean;\n}\n\n/**\n * Creates a debounced version of the provided function.\n *\n * The debounced function delays invoking `fn` until `waitMs` milliseconds\n * have elapsed since the last time it was called. Repeated calls within\n * the wait window reset the timer and update the pending arguments.\n *\n * @param fn - The function to debounce\n * @param waitMs - Milliseconds to wait after the last call before invoking fn\n * @returns A debounced function with cancel(), flush(), and pending() methods\n *\n * @example\n * const debouncedSearch = debounce((query: string) => search(query), 300);\n * input.addEventListener('input', (e) => debouncedSearch(e.target.value));\n */\nexport function debounce<T extends (...args: unknown[]) => void>(\n  fn: T,\n  waitMs: number,\n): DebouncedFunction<T> {\n  // State: the current pending timer handle and the most recent arguments\n  let pendingTimer: ReturnType<typeof setTimeout> | undefined = undefined;\n  let pendingArgs: Parameters<T> | undefined = undefined;\n\n  /**\n   * The debounced wrapper function.\n   * Each call cancels the previous timer and schedules a new one.\n   */\n  function debounced(...args: Parameters<T>): void {\n    // Store the latest arguments (these will be forwarded when the timer fires)\n    pendingArgs = args;\n\n    // Cancel the previous pending timer if one exists\n    if (pendingTimer !== undefined) {\n      clearTimeout(pendingTimer);\n    }\n\n    // Schedule a new invocation after waitMs\n    pendingTimer = setTimeout(() => {\n      // Clear state before invoking fn so that if fn calls debounced() again,\n      // it starts fresh\n      pendingTimer = undefined;\n      const argsToForward = pendingArgs!;\n      pendingArgs = undefined;\n      fn(...argsToForward);\n    }, waitMs);\n  }\n\n  /**\n   * Cancel any pending invocation without calling fn.\n   * After calling cancel(), pending() returns false.\n   */\n  debounced.cancel = function cancel(): void {\n    if (pendingTimer !== undefined) {\n      clearTimeout(pendingTimer);\n      pendingTimer = undefined;\n    }\n    pendingArgs = undefined;\n  };\n\n  /**\n   * If a pending invocation exists, invoke fn immediately with the most\n   * recent arguments and clear the pending state. No-op if not pending.\n   */\n  debounced.flush = function flush(): void {\n    if (pendingTimer !== undefined) {\n      clearTimeout(pendingTimer);\n      pendingTimer = undefined;\n\n      // Capture and clear args before calling fn\n      const argsToForward = pendingArgs!;\n      pendingArgs = undefined;\n      fn(...argsToForward);\n    }\n    // If not pending, flush is a no-op\n  };\n\n  /**\n   * Returns true if a pending invocation exists (timer is running).\n   */\n  debounced.pending = function pending(): boolean {\n    return pendingTimer !== undefined;\n  };\n\n  return debounced as DebouncedFunction<T>;\n}\n```\n\nKey design decisions:\n1. State is captured before invoking `fn` in both the timer callback and `flush()`, so if `fn` itself calls the debounced function, it starts a fresh cycle rather than operating on stale state.\n2. `waitMs = 0` still defers execution via `setTimeout(fn, 0)` — it never invokes synchronously.\n3. `flush()` is synchronous — it immediately invokes `fn` and clears state without waiting for the event loop.\n4. `cancel()` clears both the timer and the pending arguments, so a subsequent call to `flush()` is a no-op."
+    }
+  ]
+}

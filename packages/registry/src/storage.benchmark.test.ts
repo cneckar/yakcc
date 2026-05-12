@@ -30,6 +30,16 @@
  * `YAKCC_BENCHMARKS=1 pnpm --filter @yakcc/registry test` runs the benchmark
  * and asserts the p99-under-100ms invariant. Status: decided (WI-CI-OFFLINE-02).
  *
+ * @decision DEC-V2-BENCH-SCOPE-SKIPIF-001: The 1000-block lifecycle (let
+ * declarations, beforeAll, afterAll) is scoped inside describe.skipIf so the
+ * expensive corpus setup only runs when YAKCC_BENCHMARKS=1. Previously these
+ * lived at module scope, causing the 1000-block beforeAll (up to 180 s) and
+ * tmpdir allocation to fire on every default `pnpm test` run — even when the
+ * benchmark it() blocks were skipped — because Vitest always runs module-level
+ * hooks regardless of describe.skipIf. Moving lifecycle vars and hooks inside
+ * the describe body ties their execution to the skipIf gate.
+ * Status: decided (issue-406, wi-406-bench-scope).
+ *
  * Production sequence exercised end-to-end:
  *   openRegistry → storeBlock(1000 blocks) → [warm-up] selectBlocks(specHash)
  *   → 100× timed selectBlocks(specHash) → p99 assertion
@@ -216,63 +226,61 @@ function makeBlockRow(spec: SpecYak, idx: number): BlockTripletRow {
 }
 
 // ---------------------------------------------------------------------------
-// Test lifecycle
-// ---------------------------------------------------------------------------
-
-let registry: Registry;
-let dbPath: string;
-let corpus: SpecYak[];
-let querySpecHashes: SpecHash[];
-
-beforeAll(async () => {
-  // Use a temp file; sqlite-vec's vec0 is most reliable on disk.
-  dbPath = path.join(os.tmpdir(), `yakcc-bench-${Date.now()}.db`);
-  registry = await openRegistry(dbPath, { embeddings: benchEmbeddingProvider() });
-
-  // Generate corpus and query specs.
-  corpus = generateCorpus(1000);
-  // 100 query specs drawn from a different seed to ensure realistic overlap.
-  const querySpecs = fc.sample(specArb, { numRuns: 200, seed: 99 }).slice(0, 100);
-  querySpecHashes = querySpecs.map((s) => deriveSpecHash(s));
-
-  // Store all 1000 blocks. storeBlock is serial because better-sqlite3 is sync
-  // under the hood — Promises resolve immediately after the JS microtask queue.
-  for (let i = 0; i < corpus.length; i++) {
-    const spec = corpus[i];
-    if (spec === undefined) continue;
-    const row = makeBlockRow(spec, i);
-    await registry.storeBlock(row);
-  }
-
-  // Warm-up: one selectBlocks to prime the SQLite index and any module caches.
-  const firstHash = querySpecHashes[0];
-  if (firstHash !== undefined) {
-    await registry.selectBlocks(firstHash);
-  }
-}, 180_000 /* 3-min budget for 1000 stores under turbo concurrency */);
-
-afterAll(async () => {
-  await registry.close();
-  // Clean up the temp file.
-  try {
-    fs.unlinkSync(dbPath);
-    // sqlite-vec may create a -shm and -wal file.
-    for (const suffix of ["-shm", "-wal"]) {
-      const p = dbPath + suffix;
-      if (fs.existsSync(p)) fs.unlinkSync(p);
-    }
-  } catch {
-    // Best-effort cleanup; ignore errors.
-  }
-});
-
-// ---------------------------------------------------------------------------
 // Benchmark test
 // ---------------------------------------------------------------------------
 
 describe.skipIf(process.env.YAKCC_BENCHMARKS !== "1")(
   "benchmark: 1000-block corpus — selectBlocks p99 < 100ms",
   () => {
+    // Lifecycle vars scoped here so the 1000-block setup only runs when
+    // YAKCC_BENCHMARKS=1 (see @decision DEC-V2-BENCH-SCOPE-SKIPIF-001 above).
+    let registry: Registry;
+    let dbPath: string;
+    let corpus: SpecYak[];
+    let querySpecHashes: SpecHash[];
+
+    beforeAll(async () => {
+      // Use a temp file; sqlite-vec's vec0 is most reliable on disk.
+      dbPath = path.join(os.tmpdir(), `yakcc-bench-${Date.now()}.db`);
+      registry = await openRegistry(dbPath, { embeddings: benchEmbeddingProvider() });
+
+      // Generate corpus and query specs.
+      corpus = generateCorpus(1000);
+      // 100 query specs drawn from a different seed to ensure realistic overlap.
+      const querySpecs = fc.sample(specArb, { numRuns: 200, seed: 99 }).slice(0, 100);
+      querySpecHashes = querySpecs.map((s) => deriveSpecHash(s));
+
+      // Store all 1000 blocks. storeBlock is serial because better-sqlite3 is sync
+      // under the hood — Promises resolve immediately after the JS microtask queue.
+      for (let i = 0; i < corpus.length; i++) {
+        const spec = corpus[i];
+        if (spec === undefined) continue;
+        const row = makeBlockRow(spec, i);
+        await registry.storeBlock(row);
+      }
+
+      // Warm-up: one selectBlocks to prime the SQLite index and any module caches.
+      const firstHash = querySpecHashes[0];
+      if (firstHash !== undefined) {
+        await registry.selectBlocks(firstHash);
+      }
+    }, 180_000 /* 3-min budget for 1000 stores under turbo concurrency */);
+
+    afterAll(async () => {
+      await registry.close();
+      // Clean up the temp file.
+      try {
+        fs.unlinkSync(dbPath);
+        // sqlite-vec may create a -shm and -wal file.
+        for (const suffix of ["-shm", "-wal"]) {
+          const p = dbPath + suffix;
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        }
+      } catch {
+        // Best-effort cleanup; ignore errors.
+      }
+    });
+
     it("p99 latency of selectBlocks(specHash) over 100 queries is under 100ms", async () => {
       expect(querySpecHashes.length).toBe(100);
       expect(corpus.length).toBe(1000);

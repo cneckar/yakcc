@@ -141,6 +141,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Build full workspace (required before tests can resolve workspace deps)
+        run: pnpm -r build
+
       - name: Test affected packages (non-gating)
         # Affected filter retained for cycle-time speed (DEC-CI-FAST-PATH-PHASE-1-001).
         # Failure surfaces in PR UI but does NOT block merge (see continue-on-error

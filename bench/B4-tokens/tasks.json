@@ -1,0 +1,38 @@
+{
+  "note": "Frozen task manifest for B4-tokens benchmark. SHA-256 hashes content-address each task prompt file. Harness verifies these on startup and aborts on drift (mirrors B7/B6 discipline). Slice 1: 3 tasks.",
+  "schema_version": 1,
+  "slice": 1,
+  "n_tasks": 3,
+  "tasks": [
+    {
+      "id": "lru-cache-with-ttl",
+      "prompt_file": "tasks/lru-cache-with-ttl/prompt.md",
+      "oracle_test": "tasks/lru-cache-with-ttl/oracle.test.ts",
+      "reference_impl": "tasks/lru-cache-with-ttl/reference-impl.ts",
+      "sha256": "7db4d508a6da488b42e8a04d9426c05d38af1f7249b4f993c80a4d1ad73b802b",
+      "description": "Implement an LRU cache with TTL eviction (O(1) get/set/has/delete via doubly-linked list + Map).",
+      "adversarial_framing": "Multi-method class with real properties: LRU eviction order, TTL precedence, lazy expiry, capacity enforcement. Hook must atomize all constituent primitives correctly or the implementation breaks under adversarial oracle edge cases.",
+      "expected_export": "default"
+    },
+    {
+      "id": "csv-parser-quoted",
+      "prompt_file": "tasks/csv-parser-quoted/prompt.md",
+      "oracle_test": "tasks/csv-parser-quoted/oracle.test.ts",
+      "reference_impl": "tasks/csv-parser-quoted/reference-impl.ts",
+      "sha256": "3dceef582b3f5fd33b46ab77897f85e70a5d597ff3b377584f6333a228d2234c",
+      "description": "Build a CSV parser with quoted-field handling per RFC 4180.",
+      "adversarial_framing": "Edge-heavy parsing: escaped quotes, embedded newlines, CRLF vs LF, BOM handling, ragged rows, trailing newline suppression. Regex-only approaches fail. Requires genuine state machine — tests the hook's ability to atomize parsing primitives.",
+      "expected_export": "named:parseCSV"
+    },
+    {
+      "id": "debounce-with-cancel",
+      "prompt_file": "tasks/debounce-with-cancel/prompt.md",
+      "oracle_test": "tasks/debounce-with-cancel/oracle.test.ts",
+      "reference_impl": "tasks/debounce-with-cancel/reference-impl.ts",
+      "sha256": "77898f6b7f8f3c756893e0c0a689dd237ec977c9ebd070976bfd2616d5d3ecb6",
+      "description": "Write a debounce wrapper with cancellation, flush(), and pending().",
+      "adversarial_framing": "Stateful time-based primitive: cancel()-during-wait, flush()-vs-timer race, waitMs=0 deferred (not synchronous), sequential vs overlapping windows. Fake-timer oracle exposes any implementation that conflates synchronous vs async invocation.",
+      "expected_export": "named:debounce"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm A = hook-enabled (yakccResolve MCP active). Token counts representative of hook-assisted output. This fixture is NOT a real API response; it exists to exercise telemetry capture and oracle invocation without network calls.",
+  "_arm": "A",
+  "_task": "debounce-with-cancel",
+  "id": "msg_dry_dbc_arm_a_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1290,
+    "output_tokens": 187,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the debounce implementation:\n\n```typescript\nexport interface DebouncedFunction<T extends (...args: unknown[]) => void> {\n  (...args: Parameters<T>): void;\n  cancel(): void;\n  flush(): void;\n  pending(): boolean;\n}\n\nexport function debounce<T extends (...args: unknown[]) => void>(fn: T, waitMs: number): DebouncedFunction<T> {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  let lastArgs: Parameters<T> | undefined;\n\n  function debounced(...args: Parameters<T>): void {\n    lastArgs = args;\n    if (timer !== undefined) clearTimeout(timer);\n    timer = setTimeout(() => {\n      timer = undefined;\n      const a = lastArgs!; lastArgs = undefined;\n      fn(...a);\n    }, waitMs);\n  }\n\n  debounced.cancel = (): void => {\n    if (timer !== undefined) { clearTimeout(timer); timer = undefined; }\n    lastArgs = undefined;\n  };\n\n  debounced.flush = (): void => {\n    if (timer !== undefined) {\n      clearTimeout(timer); timer = undefined;\n      const a = lastArgs!; lastArgs = undefined;\n      fn(...a);\n    }\n  };\n\n  debounced.pending = (): boolean => timer !== undefined;\n\n  return debounced as DebouncedFunction<T>;\n}\n```"
+    }
+  ]
+}
