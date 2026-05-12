@@ -962,8 +962,32 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   }
 
   // Adapt Registry → ShaveRegistryView (same pattern as shave.ts lines ~79-87).
-  // storeBlock is forwarded from the full Registry so that atoms are persisted
-  // during the bootstrap shave run.
+  //
+  // @decision DEC-V2-OCCURRENCE-DELETE-INSERT-001
+  // storeBlock is wrapped (not bound) so the bootstrap can intercept each novel
+  // atom's (blockMerkleRoot, sourceOffset, length) for block_occurrences storage.
+  // The wrapper captures occurrences into a per-file mutable array that is drained
+  // after shave() returns and before captureSourceFileGlue() runs.
+  //
+  // Novel atoms are captured here. PointerEntry atoms (already in the DB) are
+  // resolved after shave by reading stub.merkleRoot directly — shave() now
+  // propagates PointerEntry.merkleRoot to ShavedAtomStub (DEC-SHAVE-POINTER-MERKLROOT-PROPAGATION-001).
+  // This ensures block_occurrences reflects the current-truth offsets for ALL atoms
+  // in the file, regardless of whether they are novel or pre-existing in the DB.
+  //
+  // @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+
+  // Per-file occurrence accumulator. Populated by the storeBlock wrapper below
+  // and by the PointerEntry resolution pass after shave. Drained per file.
+  type OccurrenceRecord = {
+    sourcePkg: string;
+    sourceFile: string;
+    sourceOffset: number;
+    length: number;
+    blockMerkleRoot: string;
+  };
+  let perFileOccurrences: OccurrenceRecord[] = [];
+
   const shaveRegistry = {
     selectBlocks: (specHash: Parameters<typeof registry.selectBlocks>[0]) =>
       registry.selectBlocks(specHash),
@@ -972,7 +996,27 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       return row ?? undefined;
     },
     findByCanonicalAstHash: registry.findByCanonicalAstHash?.bind(registry),
-    storeBlock: registry.storeBlock?.bind(registry),
+    storeBlock: async (row: Parameters<typeof registry.storeBlock>[0]): Promise<void> => {
+      // Forward the store to the real registry first.
+      await registry.storeBlock(row);
+      // Capture the occurrence if sourceContext provenance is present.
+      // sourceOffset is set per-atom inside shave() from entry.sourceRange.start.
+      // Both sourceOffset and length are JS string character counts (not byte counts) —
+      // the glue/reconstruct algorithms use source.slice() which is character-based.
+      if (
+        row.sourceFile != null &&
+        row.sourcePkg != null &&
+        row.sourceOffset != null
+      ) {
+        perFileOccurrences.push({
+          sourcePkg: row.sourcePkg,
+          sourceFile: row.sourceFile,
+          sourceOffset: row.sourceOffset,
+          length: row.implSource.length, // character count, not byte count
+          blockMerkleRoot: row.blockMerkleRoot,
+        });
+      }
+    },
   };
 
   // Process each file.
@@ -993,9 +1037,20 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       const sourcePkg =
         relSegments.length >= 2 ? `${relSegments[0]}/${relSegments[1]}` : (relSegments[0] ?? "");
 
+      // Reset per-file occurrence accumulator before shave.
+      perFileOccurrences = [];
+
       // Force offline: true to disable AI-corpus extraction (DEC-V2-BOOT-NO-AI-CORPUS-001).
       // TODO: when ShaveOptions gains corpusOptions.disableSourceC, use that instead.
       const sourceFileNorm = relPath.replace(/\\/g, "/");
+      // Read source text for exact-match comparison in the pointer stub pass below.
+      // Canonical-AST matching can unify atoms from different files whose textual
+      // representations differ (e.g. variable names). When recording pointer
+      // occurrences, we skip atoms whose stored impl_source doesn't match the
+      // actual source text at that position — those spans are better captured as
+      // glue so that reconstruction emits the correct verbatim text.
+      // DEC-V2-POINTER-OCCURRENCE-LENGTH-001
+      const sourceText = readFileSync(absPath, "utf-8");
       const result = await shaveImpl(absPath, shaveRegistry, {
         offline: true,
         intentStrategy: "static",
@@ -1009,9 +1064,135 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         },
       });
 
+      // Pass A (occurrence resolution): after shave, resolve PointerEntry atom
+      // occurrences that were not captured by the storeBlock interceptor.
+      //
+      // @decision DEC-V2-OCCURRENCE-DELETE-INSERT-001
+      // Novel atoms are already in perFileOccurrences (captured by storeBlock wrapper above).
+      // PointerEntry atoms (result.atoms entries with stub.merkleRoot !== undefined, set
+      // by shave/src/index.ts DEC-SHAVE-POINTER-MERKLROOT-PROPAGATION-001) were matched
+      // from the DB and NOT passed through storeBlock — their new sourceOffset is
+      // known (stub.sourceRange.start) and their blockMerkleRoot is now directly
+      // available via stub.merkleRoot.
+      //
+      // Previous approach: re-derive blockMerkleRoot via canonicalAstHash(source, range)
+      // → findByCanonicalAstHash(). This failed for type-only declarations and export
+      // statements because canonicalAstHash throws CanonicalAstParseError when the
+      // source range spans multiple AST nodes (e.g. `export type { A, B, C }`). Files
+      // like universalize/types.ts (100% type-only) had 0/N occurrences stored.
+      //
+      // Current approach: read stub.merkleRoot directly. shave() now propagates
+      // entry.merkleRoot from PointerEntry to ShavedAtomStub, so no re-derivation
+      // is needed. The block's implSource.length is still fetched from the registry
+      // to record the correct occurrence length (character count).
+      //
+      // Deduplication: storeBlock (novel atoms) and this pointer pass must not
+      // both record an occurrence for the same source offset. Build a set of
+      // already-captured offsets from perFileOccurrences before iterating stubs.
+      // A stub whose offset is already captured is a novel atom — skip it here.
+      const capturedOffsets = new Set(perFileOccurrences.map((o) => o.sourceOffset));
+      const pointerStubs = result.atoms.filter(
+        (stub) => stub.merkleRoot !== undefined && !capturedOffsets.has(stub.sourceRange.start),
+      );
+      for (const stub of pointerStubs) {
+        const merkleRoot = stub.merkleRoot;
+        // merkleRoot is guaranteed non-undefined by the filter above, but the
+        // TypeScript type is BlockMerkleRoot|undefined, so we guard explicitly.
+        if (merkleRoot === undefined) continue;
+        // @decision DEC-V2-POINTER-OCCURRENCE-LENGTH-001
+        // @title Pointer stub occurrence: skip when impl_source text doesn't match actual source
+        // @status active
+        // @rationale
+        //   Canonical-AST matching can unify atoms from different files whose textual
+        //   representation differs (e.g. `const encoder = new TextEncoder()` in one file
+        //   vs `const TEXT_ENCODER = new TextEncoder()` in another). These atoms share
+        //   the same blockMerkleRoot because they normalize to the same canonical AST.
+        //
+        //   Problem: if we record an occurrence for the `TEXT_ENCODER` span using
+        //   the shared block (impl_source = "const encoder = ..."), reconstruction
+        //   will emit "const encoder = ..." instead of "const TEXT_ENCODER = ...",
+        //   breaking byte-identity. Worse, the glue computation excludes the atom span,
+        //   so the original "TEXT_ENCODER" text is lost from both the atom block AND
+        //   the glue blob — reconstruction cannot recover it.
+        //
+        //   Fix: compare the actual source text at the stub's span with the block's
+        //   impl_source. When they differ, skip the occurrence record. The span then
+        //   falls entirely into glue (computeGlueBlob includes it), and reconstruction
+        //   emits the correct verbatim text from the glue blob.
+        //
+        //   When they match (most pointer atoms), record the occurrence using the
+        //   actual span length (stub.sourceRange.end - stub.sourceRange.start) so the
+        //   glue cursor advances by the correct character count.
+        {
+          const block = await registry.getBlock(merkleRoot);
+          if (block === null) {
+            logger.error(
+              `warning: bootstrap occurrence: block not found for pointer stub in ` +
+                `${sourceFileNorm} range=[${stub.sourceRange.start},${stub.sourceRange.end}] ` +
+                `merkleRoot=${merkleRoot} — occurrence skipped`,
+            );
+            continue;
+          }
+          const actualSpan = sourceText.slice(stub.sourceRange.start, stub.sourceRange.end);
+          if (actualSpan !== block.implSource) {
+            // Text mismatch: the canonical-AST match unified two structurally equivalent
+            // but textually different atoms. Skip the occurrence; the span falls into glue
+            // and the verbatim original text is preserved for reconstruction.
+            continue;
+          }
+          perFileOccurrences.push({
+            sourcePkg,
+            sourceFile: sourceFileNorm,
+            sourceOffset: stub.sourceRange.start,
+            // Actual character span in THIS file.
+            length: stub.sourceRange.end - stub.sourceRange.start,
+            blockMerkleRoot: merkleRoot,
+          });
+        }
+      }
+
+      // Deduplicate perFileOccurrences by sourceOffset before storing.
+      //
+      // The slicer can produce multiple stubs at the same sourceRange.start when
+      // overlapping slice plan entries share a start position (e.g. nested blocks or
+      // adjacent atoms with identical starts). Inserting two rows at the same
+      // (source_pkg, source_file, source_offset) violates the block_occurrences PK.
+      // Strategy: keep the LAST entry for each offset (stub order from result.atoms
+      // is stable, so "last wins" is deterministic). Using a Map preserves insertion
+      // order and overwrites earlier duplicates.
+      {
+        const deduped = new Map<number, (typeof perFileOccurrences)[number]>();
+        for (const occ of perFileOccurrences) {
+          deduped.set(occ.sourceOffset, occ);
+        }
+        perFileOccurrences = [...deduped.values()];
+      }
+
+      // Pass A (occurrence store): atomically replace per-file occurrences in block_occurrences.
+      //
+      // @decision DEC-V2-OCCURRENCE-DELETE-INSERT-001
+      // @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+      // All atom occurrences for this file (both novel and pointer-resolved) are now
+      // in perFileOccurrences. replaceSourceFileOccurrences atomically deletes the
+      // prior set and inserts the fresh set inside one SQLite transaction.
+      // On failure: prior occurrences remain intact (transaction rollback).
+      try {
+        await registry.replaceSourceFileOccurrences(sourcePkg, sourceFileNorm, perFileOccurrences);
+      } catch (err) {
+        logger.error(
+          `error: bootstrap occurrence: replaceSourceFileOccurrences failed for ` +
+            `${sourceFileNorm}: ${(err as Error).message}`,
+        );
+        // Non-fatal: log and continue. getAtomRangesBySourceFile will return an
+        // empty set for this file (no occurrences stored), and glue capture will
+        // store the full file as glue — reconstruction will be degraded but safe.
+      }
+
       // Pass B: capture per-file glue (non-atom regions) into source_file_glue.
-      // Queries DB for atoms stored with sourceFile = sourceFileNorm (DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
-      // Must run after Pass A so novel atoms are committed to the DB first.
+      // Queries DB for atoms stored with sourceFile = sourceFileNorm via
+      // getAtomRangesBySourceFile — which now reads from block_occurrences
+      // (DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001 / DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
+      // Must run after Pass A so novel atoms and occurrences are committed first.
       // Errors are logged but do not fail the file outcome.
       await captureSourceFileGlue(registry, absPath, sourcePkg, sourceFileNorm, logger);
 
@@ -1030,6 +1211,21 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
         errorMessage: e.message,
       });
     }
+  }
+
+  // Capture workspace plumbing files into the registry (P2).
+  // Runs after the shave loop so all atoms are already persisted.
+  // Ordering is not required by the schema FK, but mirrors logical dependency.
+  //
+  // @decision DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001
+  try {
+    await captureWorkspacePlumbing(registry, repoRoot, logger);
+  } catch (err) {
+    logger.error(
+      `error: workspace plumbing capture failed: ${(err as Error).message}`,
+    );
+    await registry.close();
+    return 1;
   }
 
   // Reclassify failures that match an expected-failures entry (DEC-V2-BOOT-EXPECTED-FAILURES-001).

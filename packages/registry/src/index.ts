@@ -403,6 +403,51 @@ export interface ForeignRefRow {
 }
 
 // ---------------------------------------------------------------------------
+// #355: BlockOccurrenceEntry — one row from block_occurrences
+// (DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001 / WI-V2-STORAGE-IDEMPOTENT-RECOMPILE)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row from the `block_occurrences` table.
+ *
+ * Records a single occurrence of a block atom at a specific position in a
+ * source file. Per-occurrence state is authoritative here; the legacy
+ * `blocks.source_offset` column is a write-once shim for the first observed
+ * occurrence and must not be used as an authoritative offset after re-bootstrap.
+ *
+ * @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
+ * @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+ *
+ * No ownership-shaped fields — DEC-NO-OWNERSHIP-011.
+ */
+export interface BlockOccurrenceEntry {
+  /**
+   * Workspace package directory (e.g. 'packages/cli').
+   * Part of the composite PK in block_occurrences.
+   */
+  readonly sourcePkg: string;
+  /**
+   * Workspace-relative path of the source file
+   * (e.g. 'packages/cli/src/commands/bootstrap.ts').
+   * Part of the composite PK.
+   */
+  readonly sourceFile: string;
+  /**
+   * JS string character offset of the atom's implSource within sourceFile.
+   * This is the current-truth offset from the most recent bootstrap pass —
+   * NOT the stale first-observed-wins value in blocks.source_offset.
+   */
+  readonly sourceOffset: number;
+  /**
+   * JS string character count of the atom's implSource.
+   * Materialized so reconstruction does not need a join against blocks.
+   */
+  readonly length: number;
+  /** Content address of the atom block. FK → blocks(block_merkle_root). */
+  readonly blockMerkleRoot: string;
+}
+
+// ---------------------------------------------------------------------------
 // WI-025: Intent query shape + vector-search types (findCandidatesByIntent)
 // ---------------------------------------------------------------------------
 
@@ -933,23 +978,85 @@ export interface Registry {
    * Return the source-offset and implSource length for every block stored with
    * the given `sourceFile`, sorted ascending by `sourceOffset`.
    *
-   * This is the authoritative atom-position query for glue-blob computation
-   * (#333). Using the DB state (not live shave stubs) ensures the glue blob
-   * is consistent with what the reconstruction algorithm will find: it also
-   * queries by sourceFile when interleaving atoms and glue.
+   * As of schema v9 (#355), this queries `block_occurrences` (current-truth
+   * per-file positions) instead of `blocks.source_offset` (stale first-observed
+   * position). The function signature and return type are unchanged — callers
+   * in `captureSourceFileGlue` and `compile-self.ts` are transparent to this
+   * migration.
    *
-   * Only rows where source_offset IS NOT NULL are returned.
-   * Rows from prior bootstrap runs (different sourceFile) are intentionally
-   * excluded — INSERT OR IGNORE keeps the first-observed sourceFile, so a
-   * PointerEntry encountered in a subsequent file's shave will NOT overwrite
-   * the original sourceFile, and therefore will NOT appear in this list for
-   * the later file.
-   *
+   * @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
    * @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
    */
   getAtomRangesBySourceFile(
     sourceFile: string,
   ): Promise<readonly { readonly sourceOffset: number; readonly implSourceLength: number }[]>;
+
+  /**
+   * Return all occurrence rows for `sourceFile` sorted ascending by
+   * `sourceOffset`. Queries `block_occurrences` (current-truth), not
+   * `blocks.source_offset` (stale first-observed-wins value).
+   *
+   * Returns an empty array when no occurrences are stored for that file —
+   * i.e., the file has not been processed by a v9+ bootstrap pass yet.
+   *
+   * Primary consumer: compile-self and compile-pipeline reconstruction
+   * pipelines, which need current-truth offsets to place atoms correctly in
+   * the reconstructed source file.
+   *
+   * @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+   * @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
+   */
+  listOccurrencesBySourceFile(sourceFile: string): Promise<readonly BlockOccurrenceEntry[]>;
+
+  /**
+   * Return all occurrence rows for the given `blockMerkleRoot`, sorted
+   * ascending by `(source_pkg, source_file, source_offset)`.
+   *
+   * Returns an empty array when no occurrences are stored for that block.
+   *
+   * Primary consumer: diagnostic tooling and the planner's stale-offset
+   * introspection tests.
+   *
+   * @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
+   */
+  listOccurrencesByMerkleRoot(
+    blockMerkleRoot: string,
+  ): Promise<readonly BlockOccurrenceEntry[]>;
+
+  /**
+   * Atomically replace all occurrence rows for `(sourcePkg, sourceFile)` in
+   * the `block_occurrences` table.
+   *
+   * Runs inside a single SQLite transaction:
+   *   BEGIN;
+   *   DELETE FROM block_occurrences WHERE source_pkg=? AND source_file=?;
+   *   for each occurrence: INSERT INTO block_occurrences(...);
+   *   COMMIT;
+   * On failure: ROLLBACK keeps the previous occurrences intact.
+   *
+   * Bootstrap pipeline contract:
+   *   1. Call `storeBlock()` for every novel atom first (FK enforced).
+   *   2. Call `replaceSourceFileOccurrences()` once per file after Pass A.
+   *
+   * Passing an empty `occurrences` array deletes all prior rows for the file
+   * without inserting new ones (valid for files that yielded zero atoms).
+   *
+   * Throws if `sourcePkg` or `sourceFile` is empty.
+   *
+   * @decision DEC-V2-OCCURRENCE-DELETE-INSERT-001
+   * @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+   */
+  replaceSourceFileOccurrences(
+    sourcePkg: string,
+    sourceFile: string,
+    occurrences: readonly {
+      readonly sourcePkg: string;
+      readonly sourceFile: string;
+      readonly sourceOffset: number;
+      readonly length: number;
+      readonly blockMerkleRoot: string;
+    }[],
+  ): Promise<void>;
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;

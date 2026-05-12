@@ -777,7 +777,37 @@ export async function shave(
       if (merkleRoot !== undefined) {
         lastNovelMerkleRoot = merkleRoot;
       }
+    } else if (entry.kind === "pointer") {
+      // @decision DEC-SHAVE-POINTER-MERKLROOT-PROPAGATION-001
+      // title: PointerEntry merkleRoot propagated to ShavedAtomStub
+      // status: decided
+      // rationale:
+      //   Prior to this fix, pointer entries pushed undefined to merkleRoots[]
+      //   (the else branch here). This left ShavedAtomStub.merkleRoot=undefined
+      //   for ALL PointerEntry atoms — including those whose blocks are fully
+      //   persisted in the registry. The bootstrap's occurrence-store pass then
+      //   tried to recover the merkleRoot by calling canonicalAstHash(source,
+      //   stub.sourceRange), which fails for type-only exports and declarations
+      //   whose source ranges span multiple AST nodes. This caused 100% occurrence
+      //   drop for files like universalize/types.ts (all type-only exports).
+      //
+      //   Fix: propagate entry.merkleRoot directly. PointerEntry is the exact
+      //   place where the slicer records the registry-matched merkleRoot — it
+      //   carries the value that storeBlock already returned on a prior bootstrap.
+      //   Propagating it here makes ShavedAtomStub self-sufficient: callers (e.g.
+      //   bootstrap's occurrence-store pass) can record occurrences without
+      //   re-deriving the hash from the source text.
+      //
+      //   The ShavedAtomStub.merkleRoot type is BlockMerkleRoot|undefined;
+      //   PointerEntry.merkleRoot is BlockMerkleRoot (non-optional). No type widening
+      //   needed. The storeBlock wrapper in bootstrap.ts checks merkleRoot!==undefined
+      //   before recording, so pointer stubs are now correctly captured there instead.
+      //
+      //   Note: novel-glue entries still use merkleRoots[i] (the value returned by
+      //   maybePersistNovelGlueAtom). Only pointer entries are affected by this change.
+      merkleRoots.push(entry.merkleRoot);
     } else {
+      // Other entry kinds (foreign-leaf, glue) — no merkleRoot in the registry.
       merkleRoots.push(undefined);
     }
   }

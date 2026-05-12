@@ -1534,62 +1534,240 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
-  // getAtomRangesBySourceFile (#333 — glue capture authority)
+  // listOccurrencesBySourceFile — current-truth atom positions for a file (#355)
+  //
+  // @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+  // @title listOccurrencesBySourceFile queries block_occurrences (current-truth)
+  // @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+  // @rationale
+  //   Compile-self and compile-pipeline must use current-truth offsets for
+  //   reconstruction. blocks.source_offset is a stale first-observed-wins value;
+  //   block_occurrences is refreshed atomically per file on every bootstrap pass.
+  //   Returning occurrences here avoids N+1 queries in the reconstruction pipeline:
+  //   one call per group (sourceFile) returns all offsets for that file.
   // -------------------------------------------------------------------------
+
+  async listOccurrencesBySourceFile(
+    sourceFile: string,
+  ): Promise<
+    readonly {
+      sourcePkg: string;
+      sourceFile: string;
+      sourceOffset: number;
+      length: number;
+      blockMerkleRoot: string;
+    }[]
+  > {
+    this.assertOpen();
+
+    interface OccurrenceRow {
+      source_pkg: string;
+      source_file: string;
+      source_offset: number;
+      length: number;
+      block_merkle_root: string;
+    }
+
+    const rows = this.db
+      .prepare<[string], OccurrenceRow>(
+        "SELECT source_pkg, source_file, source_offset, length, block_merkle_root FROM block_occurrences WHERE source_file = ? ORDER BY source_offset ASC",
+      )
+      .all(sourceFile);
+
+    return rows.map((r) => ({
+      sourcePkg: r.source_pkg,
+      sourceFile: r.source_file,
+      sourceOffset: r.source_offset,
+      length: r.length,
+      blockMerkleRoot: r.block_merkle_root,
+    }));
+  }
+
+  // -------------------------------------------------------------------------
+  // listOccurrencesByMerkleRoot — all occurrence rows for a given block (#355)
+  //
+  // @decision DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001
+  // -------------------------------------------------------------------------
+
+  async listOccurrencesByMerkleRoot(
+    blockMerkleRoot: string,
+  ): Promise<
+    readonly {
+      sourcePkg: string;
+      sourceFile: string;
+      sourceOffset: number;
+      length: number;
+      blockMerkleRoot: string;
+    }[]
+  > {
+    this.assertOpen();
+
+    interface OccurrenceRow {
+      source_pkg: string;
+      source_file: string;
+      source_offset: number;
+      length: number;
+      block_merkle_root: string;
+    }
+
+    const rows = this.db
+      .prepare<[string], OccurrenceRow>(
+        "SELECT source_pkg, source_file, source_offset, length, block_merkle_root FROM block_occurrences WHERE block_merkle_root = ? ORDER BY source_pkg ASC, source_file ASC, source_offset ASC",
+      )
+      .all(blockMerkleRoot);
+
+    return rows.map((r) => ({
+      sourcePkg: r.source_pkg,
+      sourceFile: r.source_file,
+      sourceOffset: r.source_offset,
+      length: r.length,
+      blockMerkleRoot: r.block_merkle_root,
+    }));
+  }
+
+  // -------------------------------------------------------------------------
+  // replaceSourceFileOccurrences (#355 — per-occurrence offset tracking)
+  // -------------------------------------------------------------------------
+  //
+  // @decision DEC-V2-OCCURRENCE-DELETE-INSERT-001
+  // @title Per-file occurrence refresh is atomic delete-then-insert under one SQLite transaction.
+  //   Bootstrap is the sole writer. The legacy blocks.source_* columns become a one-shot
+  //   first-occurrence shim driven by the first observed occurrence for that block in a
+  //   given process.
+  // @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+  // @rationale
+  //   DEC-STORAGE-IDEMPOTENT-001's first-observed-wins INSERT OR IGNORE correctly handles
+  //   content-identity (block_merkle_root is immutable). But it incorrectly preserved
+  //   source_offset across re-shaves: atoms with unchanged impl_source (same merkle root)
+  //   kept their first-observed offset even when the source file was modified and the atom
+  //   shifted to a new byte position. This caused compile-self to place atoms at wrong
+  //   offsets, producing malformed reconstructed source files.
+  //
+  //   The fix: move per-occurrence position into block_occurrences (a separate table with
+  //   PK (source_pkg, source_file, source_offset)). Each bootstrap pass deletes the prior
+  //   occurrences for a file and inserts fresh ones inside a single SQLite transaction.
+  //   A failure mid-transaction rolls back — prior occurrences remain intact.
+  //   On success, block_occurrences reflects the current-truth ranges for that file.
+  //
+  //   Bootstrap pipeline order:
+  //     1. storeBlock() for each novel atom (content-only, INSERT OR IGNORE on blocks).
+  //     2. replaceSourceFileOccurrences() after Pass A for the file (occurrence refresh).
+  //   storeBlock must precede replaceSourceFileOccurrences: the FK on
+  //   block_occurrences(block_merkle_root) → blocks(block_merkle_root) is enforced.
+  //
+  // @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+  // @title block_occurrences is the authoritative per-file read source; blocks.source_* is a shim.
+  // @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+
+  async replaceSourceFileOccurrences(
+    sourcePkg: string,
+    sourceFile: string,
+    occurrences: readonly {
+      readonly sourcePkg: string;
+      readonly sourceFile: string;
+      readonly sourceOffset: number;
+      readonly length: number;
+      readonly blockMerkleRoot: string;
+    }[],
+  ): Promise<void> {
+    this.assertOpen();
+
+    if (!sourcePkg || !sourceFile) {
+      throw new Error(
+        `replaceSourceFileOccurrences: sourcePkg and sourceFile must be non-empty: ` +
+          `sourcePkg=${sourcePkg}, sourceFile=${sourceFile}`,
+      );
+    }
+
+    const deleteOccurrences = this.db.prepare<[string, string]>(
+      "DELETE FROM block_occurrences WHERE source_pkg = ? AND source_file = ?",
+    );
+
+    const insertOccurrence = this.db.prepare<[string, string, number, number, string]>(
+      "INSERT INTO block_occurrences(source_pkg, source_file, source_offset, length, block_merkle_root) VALUES (?, ?, ?, ?, ?)",
+    );
+
+    const txn = this.db.transaction(() => {
+      deleteOccurrences.run(sourcePkg, sourceFile);
+      for (const occ of occurrences) {
+        insertOccurrence.run(
+          occ.sourcePkg,
+          occ.sourceFile,
+          occ.sourceOffset,
+          occ.length,
+          occ.blockMerkleRoot,
+        );
+      }
+    });
+
+    txn();
+  }
+
+  // getAtomRangesBySourceFile (#355 — now queries block_occurrences)
+  // -------------------------------------------------------------------------
+  //
+  // @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+  // @title getAtomRangesBySourceFile queries block_occurrences (current-truth), not blocks.source_*
+  // @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+  // @rationale
+  //   Prior implementation queried blocks WHERE source_file = ? AND source_offset IS NOT NULL.
+  //   This produced stale offsets after source edits because INSERT OR IGNORE on blocks kept
+  //   the first-observed source_offset for atoms whose impl_source was unchanged (same merkle
+  //   root, shifted position). Glue computation and compile-self reconstruction then used these
+  //   stale offsets, producing malformed source files.
+  //
+  //   Migration: query block_occurrences (source_pkg, source_file, source_offset, length) instead.
+  //   block_occurrences is refreshed atomically by replaceSourceFileOccurrences on every
+  //   bootstrap pass — it always reflects the current-truth positions for each file.
+  //
+  //   The interval-merge de-overlap logic is retained: block_occurrences for a given file
+  //   should never have overlapping intervals (the PK on source_offset enforces uniqueness per
+  //   position), but the merge is defensive and preserves glue-capture correctness if a file
+  //   is shaved in parallel or if the PK uniqueness is violated at a different layer.
+  //
+  //   Callers (captureSourceFileGlue in bootstrap.ts and the compile-self reconstruction in
+  //   compile-self.ts) are unchanged — the function signature and return type are identical.
+  //   Only the backing SQL query changes.
   //
   // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001
   // @title getAtomRangesBySourceFile is the authoritative query for glue computation
-  // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
-  // @rationale
-  //   computeGlueBlob must compute the complement of atoms that are STORED with
-  //   sourceFile = THIS_FILE in the DB — not the complement of all live shave
-  //   stubs. Using live shave stubs incorrectly excludes PointerEntry atoms that
-  //   belong to other files, leaving those regions missing from both glue and
-  //   atom reconstruction lists. Querying the DB after Pass A ensures the glue
-  //   blob is consistent with what the reconstruction algorithm will find.
-  //   Only rows with source_offset IS NOT NULL are returned (rows without an
-  //   offset cannot be positioned in the file and must not influence glue spans).
-  //   Rows are sorted ascending by source_offset.
+  // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333; updated WI-355)
 
   async getAtomRangesBySourceFile(
     sourceFile: string,
   ): Promise<readonly { readonly sourceOffset: number; readonly implSourceLength: number }[]> {
     this.assertOpen();
 
-    type AtomRangeRow = { source_offset: number; impl_len: number };
+    type AtomRangeRow = { source_offset: number; length: number };
 
+    // Query block_occurrences for current-truth atom positions for this file.
+    // The source_pkg filter is omitted (only sourceFile is supplied by callers) — the
+    // idx_block_occurrences_file index covers (source_pkg, source_file); a query by
+    // source_file alone performs an index scan. Since (source_pkg, source_file) pairs are
+    // unique in practice (each workspace-relative path belongs to exactly one package),
+    // the result set is correct. The sourcePkg-aware overload is exposed via
+    // replaceSourceFileOccurrences for the write path; the read path accepts sourceFile only
+    // to preserve the existing caller contract (DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
     const rows = this.db
       .prepare<[string], AtomRangeRow>(
-        "SELECT source_offset, length(impl_source) AS impl_len FROM blocks WHERE source_file = ? AND source_offset IS NOT NULL ORDER BY source_offset ASC",
+        "SELECT source_offset, length FROM block_occurrences WHERE source_file = ? ORDER BY source_offset ASC",
       )
       .all(sourceFile);
 
-    // De-overlap intervals before returning.
+    // De-overlap intervals (defensive — block_occurrences PK enforces uniqueness per offset,
+    // but merge is retained for glue-capture correctness and future-proofing).
     //
-    // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001 (de-overlap addendum)
-    // @title getAtomRangesBySourceFile merges overlapping intervals from the monotonic accumulator
-    // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333 overlap fix)
-    // @rationale
-    //   The registry is a monotonic accumulator (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
-    //   When source files are modified and re-bootstrapped, new atoms are added at their
-    //   new offsets while old atoms (from the prior bootstrap) remain in the DB with their
-    //   old offsets. This produces overlapping intervals (e.g. old atom at offset=65606
-    //   overlapping new atom at 65382-65630). If computeGlueBlob uses overlapping intervals,
-    //   it cuts out the stale-atom region from the glue even though those chars are actually
-    //   covered by the newer atom. The glue then lacks those chars, and reconstruction that
-    //   skips the stale atoms cannot recover them.
-    //
-    //   Solution: merge overlapping intervals (standard interval-merge algorithm) before
-    //   returning. The merged intervals represent the EFFECTIVE char coverage of atoms in
-    //   the file. computeGlueBlob uses these merged ranges to correctly identify glue chars.
-    //   The compile-self reconstruction uses the same sorted-atom-with-skip logic, which
-    //   naturally produces the same non-overlapping coverage (DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001).
-    //
-    //   Invariant: merged intervals are non-overlapping and sorted by sourceOffset ASC.
+    // @decision DEC-V2-GLUE-CAPTURE-AUTHORITY-001 (de-overlap addendum retained from #333)
+    // @rationale block_occurrences rows are freshly inserted per bootstrap pass so overlaps
+    //   should not occur in normal operation. The merge is retained as a defensive measure:
+    //   if future logic produces two occurrences at adjacent-but-overlapping offsets (e.g.
+    //   atoms from different source_pkg values that share a source_file), the merge prevents
+    //   double-exclusion from the glue blob. Invariant: merged intervals are non-overlapping
+    //   and sorted by sourceOffset ASC.
     const merged: Array<{ sourceOffset: number; implSourceLength: number }> = [];
     for (const r of rows) {
       const start = r.source_offset;
-      const end = start + r.impl_len;
+      const end = start + r.length;
       const last = merged[merged.length - 1];
       if (last !== undefined && start < last.sourceOffset + last.implSourceLength) {
         // Overlaps previous interval: extend it to cover both (union).
@@ -1602,7 +1780,7 @@ class SqliteRegistry implements Registry {
         }
         // else: entirely contained in previous — skip.
       } else {
-        merged.push({ sourceOffset: start, implSourceLength: r.impl_len });
+        merged.push({ sourceOffset: start, implSourceLength: r.length });
       }
     }
     return merged;

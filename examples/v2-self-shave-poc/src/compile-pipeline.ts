@@ -53,7 +53,14 @@ import { openRegistry } from "@yakcc/registry";
  *   'foreign-leaf-skipped' — foreign atoms are opaque leaves (informational)
  *   'null-provenance'      — local atom with NULL sourcePkg AND sourceFile
  *   'unresolved-pointer'   — PointerEntry with no in-corpus resolution
+ *   'glue-absorbed'        — atom absorbed into glue (in blocks.source_file but not block_occurrences)
  *   'other'                — catch-all; triggers integration test failure (Sacred Practice #5)
+ *
+ * @decision DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001
+ *   'glue-absorbed' is informational (same status as 'foreign-leaf-skipped'): the atom's
+ *   implSource content is present in the reconstructed file via the glue blob. No data is
+ *   lost — the atom was found in the group (via blocks.source_file fallback) but is not in
+ *   block_occurrences, meaning bootstrap's glue capture already included its content.
  */
 export interface GapRow {
   readonly blockMerkleRoot: BlockMerkleRoot;
@@ -63,6 +70,7 @@ export interface GapRow {
     | "null-provenance"
     | "unresolved-pointer"
     | "foreign-leaf-skipped"
+    | "glue-absorbed"
     | "other";
   readonly detail: string;
 }
@@ -174,6 +182,13 @@ export async function _runWithRegistry(
     sourcePkg: string;
     sourceFile: string;
     atoms: Array<{ block: BlockTripletRow; blockMerkleRoot: BlockMerkleRoot }>;
+    // addedRoots tracks which blockMerkleRoots have been placed in this group.
+    // A single atom may appear at N offsets within one file (N occurrence rows),
+    // but must appear at most once in the group — the offset is resolved later
+    // via listOccurrencesBySourceFile in step 3. Without this guard, atoms at
+    // 2 offsets would be added twice, producing duplicate manifest entries
+    // (violates I9: unique (outputPath, blockMerkleRoot) pairs).
+    addedRoots: Set<BlockMerkleRoot>;
   }
 
   const groupMap = new Map<string, AtomGroup>();
@@ -204,31 +219,76 @@ export async function _runWithRegistry(
       continue;
     }
 
-    // Local atoms with NULL provenance: cannot place in workspace tree.
-    // @decision I7 resolution: NULL-provenance atoms emit a gap row.
-    if (block.sourcePkg == null || block.sourceFile == null) {
-      gapReport.push({
-        blockMerkleRoot: entry.blockMerkleRoot,
-        packageName: block.sourcePkg ?? "unknown",
-        reason: "null-provenance",
-        detail:
-          "Atom has NULL sourcePkg and/or NULL sourceFile — cannot place in workspace tree. " +
-          "Re-run 'yakcc bootstrap' with a P1+ CLI to populate provenance.",
-      });
-      continue;
-    }
+    // @decision DEC-STORAGE-IDEMPOTENT-001 (option b / #355)
+    // @title Group atoms by block_occurrences, not blocks.source_file (stale first-observed)
+    // @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355)
+    // @rationale blocks.source_file is a first-observed shim — it points to the file where
+    //   the atom was first encountered, not all files where it appears. block_occurrences is
+    //   refreshed atomically per file on every bootstrap pass and accurately tracks all files
+    //   containing each atom. Grouping by block_occurrences fixes the 6-atom gap for shared
+    //   atoms in bootstrap.ts (and analogous shared atoms in other files) that were incorrectly
+    //   placed in the first-observed file's group instead of all files they appear in.
+    //   Fallback: when block_occurrences has no rows for this atom (pre-v9 registry or atom
+    //   removed from source), fall back to block.sourceFile to preserve backward compatibility.
+    const occurrences = await registry.listOccurrencesByMerkleRoot(entry.blockMerkleRoot);
 
-    // Collect into group keyed by sourceFile.
-    const key = block.sourceFile;
-    const existing = groupMap.get(key);
-    if (existing !== undefined) {
-      existing.atoms.push({ block, blockMerkleRoot: entry.blockMerkleRoot });
+    if (occurrences.length > 0) {
+      // Per-occurrence placement: add this atom to every file's group it appears in.
+      // Shared atoms (same implSource content appearing in N files) correctly appear
+      // in N groups — one manifest entry per (file, atom) pair.
+      //
+      // Deduplication: an atom may appear at multiple offsets within the SAME file
+      // (N occurrence rows with same source_file but different source_offset). The
+      // group adds the atom only once — step 3 resolves the correct offset via
+      // listOccurrencesBySourceFile. addedRoots tracks which merkle roots are already
+      // in each group to prevent duplicate manifest entries.
+      for (const occ of occurrences) {
+        const key = occ.sourceFile;
+        const existing = groupMap.get(key);
+        if (existing !== undefined) {
+          if (!existing.addedRoots.has(entry.blockMerkleRoot)) {
+            existing.addedRoots.add(entry.blockMerkleRoot);
+            existing.atoms.push({ block, blockMerkleRoot: entry.blockMerkleRoot });
+          }
+        } else {
+          groupMap.set(key, {
+            sourcePkg: occ.sourcePkg,
+            sourceFile: occ.sourceFile,
+            atoms: [{ block, blockMerkleRoot: entry.blockMerkleRoot }],
+            addedRoots: new Set([entry.blockMerkleRoot]),
+          });
+        }
+      }
     } else {
-      groupMap.set(key, {
-        sourcePkg: block.sourcePkg,
-        sourceFile: block.sourceFile,
-        atoms: [{ block, blockMerkleRoot: entry.blockMerkleRoot }],
-      });
+      // Fallback: no block_occurrences rows (pre-v9 registry or atom not in any current file).
+      // Use blocks.source_* columns for backward compatibility.
+      if (block.sourcePkg == null || block.sourceFile == null) {
+        // @decision I7 resolution: NULL-provenance atoms emit a gap row.
+        gapReport.push({
+          blockMerkleRoot: entry.blockMerkleRoot,
+          packageName: block.sourcePkg ?? "unknown",
+          reason: "null-provenance",
+          detail:
+            "Atom has NULL sourcePkg and/or NULL sourceFile — cannot place in workspace tree. " +
+            "Re-run 'yakcc bootstrap' with a P1+ CLI to populate provenance.",
+        });
+        continue;
+      }
+      const key = block.sourceFile;
+      const existing = groupMap.get(key);
+      if (existing !== undefined) {
+        if (!existing.addedRoots.has(entry.blockMerkleRoot)) {
+          existing.addedRoots.add(entry.blockMerkleRoot);
+          existing.atoms.push({ block, blockMerkleRoot: entry.blockMerkleRoot });
+        }
+      } else {
+        groupMap.set(key, {
+          sourcePkg: block.sourcePkg,
+          sourceFile: block.sourceFile,
+          atoms: [{ block, blockMerkleRoot: entry.blockMerkleRoot }],
+          addedRoots: new Set([entry.blockMerkleRoot]),
+        });
+      }
     }
   }
 
@@ -256,10 +316,93 @@ export async function _runWithRegistry(
   mkdirSync(outputDir, { recursive: true });
 
   for (const [, group] of groupMap) {
-    // Sort: non-null offsets ascending first, null offsets appended.
-    const sorted = [...group.atoms].sort((a, b) => {
-      const ao = a.block.sourceOffset ?? null;
-      const bo = b.block.sourceOffset ?? null;
+    // @decision DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001
+    // Read current-truth atom offsets from block_occurrences (not blocks.source_offset).
+    // blocks.source_offset is a stale first-observed-wins value; block_occurrences is
+    // refreshed atomically per file on every bootstrap pass (#355). Using block_occurrences
+    // ensures atoms are placed at their current positions even after source edits.
+    //
+    // Fallback: when block_occurrences is empty (pre-v9 registry or bootstrap not run),
+    // use blocks.source_offset for backward compatibility.
+    const occurrences = await registry.listOccurrencesBySourceFile(group.sourceFile);
+
+    // Build a map from blockMerkleRoot → ALL offsets where the atom appears in this file.
+    // A single atom may appear at N different offsets (same implSource repeated N times).
+    // Each occurrence offset produces a separate sorted entry so the glue-interleaving
+    // emits the atom N times at the correct positions (mirroring the original source).
+    //
+    // @decision DEC-STORAGE-IDEMPOTENT-001 multi-offset expansion
+    // @rationale When block_occurrences has N rows for (file, blockMerkleRoot) with different
+    //   source_offsets, the original file contained the atom N times. Expanding to N sorted
+    //   entries ensures each repetition is emitted at its correct position. A single-offset
+    //   map (occurrenceOffsets) would miss the N-1 earlier occurrences, producing malformed
+    //   output (observed build failure: canonical-ast.ts missing two instances of a 13-char atom).
+    const occurrencesByRoot = new Map<string, number[]>();
+    for (const occ of occurrences) {
+      const existing = occurrencesByRoot.get(occ.blockMerkleRoot);
+      if (existing !== undefined) {
+        existing.push(occ.sourceOffset);
+      } else {
+        occurrencesByRoot.set(occ.blockMerkleRoot, [occ.sourceOffset]);
+      }
+    }
+
+    // Expand group atoms: each unique atom gets one entry per occurrence offset.
+    // For atoms with 1 occurrence: same as before (one entry). For atoms with N
+    // occurrences in the same file: N entries with the same block data but different
+    // effectiveOffset.
+    //
+    // @decision DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001
+    // @title When v9 occurrence rows exist for a file, atoms absent from block_occurrences
+    //   are glue-absorbed and must be excluded from reconstruction (not placed at stale offset)
+    // @status decided (WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355 Bug D fix)
+    // @rationale
+    //   Mirrors compile-self.ts DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001 exactly
+    //   (DEC-V2-COMPILE-SELF-EQ-001). When occurrences.length > 0 the file was processed
+    //   by v9+ bootstrap and block_occurrences is authoritative. Atoms absent from
+    //   occurrencesByRoot are glue-absorbed — excluding them prevents inserting their
+    //   implSource inside a glue region that already contains the same content.
+    //   When occurrences.length === 0 (pre-v9 registry), fall back to blocks.source_offset
+    //   for backward compatibility.
+    const v9ProcessedFile = occurrences.length > 0;
+    interface AtomWithOffset {
+      block: BlockTripletRow;
+      blockMerkleRoot: BlockMerkleRoot;
+      effectiveOffset: number | null;
+    }
+    const atomsWithOffset: AtomWithOffset[] = [];
+    for (const atom of group.atoms) {
+      const offsets = occurrencesByRoot.get(atom.blockMerkleRoot);
+      if (offsets !== undefined && offsets.length > 0) {
+        for (const offset of offsets) {
+          atomsWithOffset.push({ ...atom, effectiveOffset: offset });
+        }
+      } else if (v9ProcessedFile) {
+        // v9 bootstrap processed this file: atom absent from block_occurrences is
+        // glue-absorbed — exclude it from reconstruction to avoid duplication, and
+        // emit an informational gap row so the uniquePlaced + gap = total invariant holds.
+        // (See DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001 for full rationale.)
+        gapReport.push({
+          blockMerkleRoot: atom.blockMerkleRoot,
+          packageName: group.sourcePkg,
+          sourcePath: group.sourceFile,
+          reason: "glue-absorbed",
+          detail:
+            `Atom stale blocks.source_offset=${atom.block.sourceOffset ?? "null"} in ${group.sourceFile} — ` +
+            "absent from block_occurrences (v9 processed), content already present in glue blob. " +
+            "Excluded from reconstruction to prevent duplicate content. " +
+            "(DEC-V2-GLUE-GHOST-ATOM-EXCLUSION-001)",
+        });
+      } else {
+        // Fallback: no occurrence rows (pre-v9 registry) — use legacy blocks.source_offset.
+        atomsWithOffset.push({ ...atom, effectiveOffset: atom.block.sourceOffset ?? null });
+      }
+    }
+
+    // Sort: current-truth offsets ascending first, null offsets appended.
+    const sorted = [...atomsWithOffset].sort((a, b) => {
+      const ao = a.effectiveOffset;
+      const bo = b.effectiveOffset;
       if (ao === null && bo === null) return 0;
       if (ao === null) return 1;
       if (bo === null) return -1;
@@ -271,26 +414,24 @@ export async function _runWithRegistry(
     let fileContent: string;
     const glueEntry = await registry.getSourceFileGlue(group.sourcePkg, group.sourceFile);
 
-    if (glueEntry !== null && sorted.every((a) => a.block.sourceOffset !== null)) {
+    if (glueEntry !== null && sorted.every((a) => a.effectiveOffset !== null)) {
       // Glue-interleaved path: reconstruct the original file by weaving glue + atoms.
       //
       // @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001 (overlap handling)
       // @title Reconstruction uses merged intervals to mirror computeGlueBlob's behaviour
-      // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333 overlap fix)
+      // @status decided (WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333 overlap fix; updated #355)
       // @rationale
       //   bootstrap.ts computeGlueBlob() merges overlapping atom intervals before
       //   computing glue gaps. The reconstruction must mirror this: build the same
-      //   merged intervals, walk them to advance gluePos, and skip stale atoms within
-      //   each interval. The registry is a monotonic accumulator
-      //   (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001): old atoms from prior bootstraps
-      //   remain with their original offsets even after source edits. Merged-interval
-      //   reconstruction handles this correctly without falling back to atom-only concat.
+      //   merged intervals, walk them to advance gluePos. With block_occurrences (#355),
+      //   stale offsets are eliminated — each file's occurrences are refreshed atomically
+      //   on every bootstrap pass. The merge is retained defensively.
       //
       //   Algorithm:
       //     1. Build merged intervals (same merge as computeGlueBlob).
       //     2. For each merged interval:
       //        a. Emit glue chars from gluePos up to interval.start.
-      //        b. Emit atoms within the interval in sourceOffset order, skipping stale ones.
+      //        b. Emit atoms within the interval in sourceOffset order, skipping overlapping ones.
       //        c. Advance prevMergedEnd = interval.end.
       //     3. Emit trailing glue after the last merged interval.
       const glueString = new TextDecoder().decode(glueEntry.contentBlob);
@@ -299,11 +440,11 @@ export async function _runWithRegistry(
       interface MergedInterval {
         start: number;
         end: number;
-        atoms: Array<typeof sorted[number]>;
+        atoms: Array<(typeof sorted)[number]>;
       }
       const mergedIntervals: MergedInterval[] = [];
       for (const atom of sorted) {
-        const start = atom.block.sourceOffset as number;
+        const start = atom.effectiveOffset as number;
         const end = start + atom.block.implSource.length;
         const last = mergedIntervals[mergedIntervals.length - 1];
         if (last !== undefined && start < last.end) {
@@ -327,12 +468,12 @@ export async function _runWithRegistry(
           gluePosCursor += glueBetween;
         }
 
-        // 2b: atoms within this interval, skipping stale overlapping ones.
+        // 2b: atoms within this interval, skipping overlapping ones.
         let intervalCursor = interval.start;
         for (const atom of interval.atoms) {
-          const atomStart = atom.block.sourceOffset as number;
+          const atomStart = atom.effectiveOffset as number;
           if (atomStart < intervalCursor) {
-            continue; // stale atom — already covered by a prior atom in this interval
+            continue; // overlapping atom — already covered by a prior atom in this interval
           }
           parts.push(atom.block.implSource);
           intervalCursor = atomStart + atom.block.implSource.length;
@@ -363,14 +504,14 @@ export async function _runWithRegistry(
     writeFileSync(outputPath, fileContent, "utf-8");
     recompiledFiles++;
 
-    // One manifest row per atom.
+    // One manifest row per atom. sourceOffset now reflects current-truth from block_occurrences.
     for (const atom of sorted) {
       manifest.push({
         outputPath: group.sourceFile,
         blockMerkleRoot: atom.blockMerkleRoot,
         sourcePkg: atom.block.sourcePkg ?? null,
         sourceFile: atom.block.sourceFile ?? null,
-        sourceOffset: atom.block.sourceOffset ?? null,
+        sourceOffset: atom.effectiveOffset,
       });
     }
   }
@@ -378,8 +519,7 @@ export async function _runWithRegistry(
   // Step 5: Materialise plumbing files.
   // SINGLE AUTHORITY: only registry.listWorkspacePlumbing() — no filesystem reads
   // at compile time (DEC-V2-WORKSPACE-PLUMBING-AUTHORITY-001 / FS3).
-  const plumbingEntries: readonly WorkspacePlumbingEntry[] =
-    await registry.listWorkspacePlumbing();
+  const plumbingEntries: readonly WorkspacePlumbingEntry[] = await registry.listWorkspacePlumbing();
   let plumbingFilesEmitted = 0;
 
   for (const plumbing of plumbingEntries) {
