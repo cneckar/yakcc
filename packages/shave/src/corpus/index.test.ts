@@ -1,15 +1,17 @@
 // @decision DEC-CORPUS-001 (WI-016)
 // title: Corpus extraction unit tests: determinism, cache seeding, priority chain, cascade, and error path
-// status: decided (WI-016, extended WI-V2-07-L8)
+// status: decided (WI-016, extended WI-V2-07-L8, revised WI-376)
 // rationale:
 //   Tests cover the full contract of the corpus extraction module:
-//   (1) upstream-test determinism, (2) documented-usage determinism,
+//   (1) upstream-test determinism, (2) documented-usage determinism + loud-refusal,
 //   (3) ai-derived cache cold/warm, (4) priority order a>b>c,
 //   (5) cascade variant (a+b disabled → c), (6) all-disabled error,
 //   (7) props-file extractor: match/no-match/missing-file,
 //   (8) props-file wins priority over upstream-test.
 //   DEC-SHAVE-002: no Anthropic SDK import; cache is seeded via public seedCorpusCache.
 //   DEC-SHAVE-003: seedCorpusCache is the only authority for priming the AI-derived cache.
+//   WI-376 revision: documented-usage now returns undefined (loud refusal) for unparseable
+//   @example blocks per DEC-PROPTEST-DOCUMENTED-USAGE-001. Tests updated accordingly.
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -56,7 +58,10 @@ const PLAIN_SOURCE = `function parseIntList(raw: string): number[] {
   return raw.split(",").map(Number).filter(Number.isFinite);
 }`;
 
-/** Atom source text containing a JSDoc @example block for documented-usage synthesis. */
+/**
+ * Atom source text containing a parseable JSDoc @example block.
+ * The pattern "parseIntList("1,2,3") // => [1, 2, 3]" matches Option-A deterministic parsing.
+ */
 const JSDOC_SOURCE = `/**
  * Parse a comma-separated list of integers.
  *
@@ -116,15 +121,22 @@ describe("extractFromUpstreamTest()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 2: documented-usage determinism
+// Test 2: documented-usage — determinism + loud-refusal contract (WI-376)
 // ---------------------------------------------------------------------------
 
 describe("extractFromDocumentedUsage()", () => {
-  it("produces a deterministic fast-check property file for an IntentCard with a JSDoc @example block", () => {
+  it("produces a deterministic result for an IntentCard with a parseable JSDoc @example block", () => {
     const intentCard = makeIntentCard();
 
     const result1 = extractFromDocumentedUsage(intentCard, JSDOC_SOURCE);
     const result2 = extractFromDocumentedUsage(intentCard, JSDOC_SOURCE);
+
+    // JSDOC_SOURCE contains 'parseIntList("1,2,3") // => [1, 2, 3]' which matches the
+    // Option-A deterministic pattern, so both calls must produce a non-undefined CorpusResult.
+    expect(result1).not.toBeUndefined();
+    expect(result2).not.toBeUndefined();
+
+    if (!result1 || !result2) return; // type narrowing for TS
 
     // Source discrimination
     expect(result1.source).toBe("documented-usage");
@@ -139,6 +151,28 @@ describe("extractFromDocumentedUsage()", () => {
     // Determinism: identical contentHash
     expect(result1.contentHash).toBe(result2.contentHash);
     expect(result1.contentHash.length).toBeGreaterThan(0);
+  });
+
+  it("returns undefined (loud refusal) when source has no @example blocks at all", () => {
+    const intentCard = makeIntentCard();
+    // PLAIN_SOURCE has no @example blocks at all — loud refusal required
+    const result = extractFromDocumentedUsage(intentCard, PLAIN_SOURCE);
+    expect(result).toBeUndefined();
+  });
+
+  it("generates expect().toEqual() assertions (not return-true placeholders) for parseable @example blocks", () => {
+    const intentCard = makeIntentCard();
+    const result = extractFromDocumentedUsage(intentCard, JSDOC_SOURCE);
+    expect(result).not.toBeUndefined();
+    if (!result) return;
+
+    const content = Buffer.from(result.bytes).toString("utf-8");
+    // Must contain a real expect() assertion, not a placeholder
+    expect(content).toContain("expect(");
+    expect(content).toContain(".toEqual(");
+    expect(content).not.toContain("return true");
+    expect(content).not.toContain("// placeholder");
+    expect(content).not.toContain("TODO:");
   });
 });
 
@@ -208,6 +242,28 @@ describe("extractCorpus() — priority order", () => {
     // All three sources enabled (default). Upstream-test must win.
     const result = await extractCorpus(atomSpec);
     expect(result.source).toBe("upstream-test");
+  });
+
+  it("falls through to ai-derived when documented-usage refuses (no parseable @example) and upstream-test is disabled", async () => {
+    const intentCard = makeIntentCard();
+
+    // Pre-seed the AI-derived cache
+    await seedCorpusCache({ source: PLAIN_SOURCE, cacheDir }, AI_CORPUS_CONTENT);
+
+    const atomSpec: CorpusAtomSpec = {
+      // PLAIN_SOURCE has no @example blocks — documented-usage will refuse (return undefined)
+      source: PLAIN_SOURCE,
+      intentCard,
+      cacheDir,
+    };
+
+    // Disable upstream-test so the chain is: documented-usage (refuses) → ai-derived
+    const result = await extractCorpus(atomSpec, {
+      enableUpstreamTest: false,
+      enableDocumentedUsage: true,
+      enableAiDerived: true,
+    });
+    expect(result.source).toBe("ai-derived");
   });
 });
 
