@@ -18,7 +18,8 @@
     "bench:latency:all": "node bench/B1-latency/integer-math/run.mjs && node bench/B1-latency/json-transformer/run.mjs && node bench/B1-latency/http-routing/run.mjs",
     "bench:coherence:slice1": "node bench/B5-coherence/harness/run-conversation.mjs && node bench/B5-coherence/rubric-eval.mjs",
     "bench:coherence:slice2": "node bench/B5-coherence/harness/run-conversation.mjs && node bench/B5-coherence/rubric-eval.mjs",
-    "bench:curve-synthetic:slice1": "node bench/B8-synthetic/run.mjs"
+    "bench:curve-synthetic:slice1": "node bench/B8-synthetic/run.mjs",
+    "bench:v0-smoke": "node bench/v0-release-smoke/smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
