@@ -35,9 +35,19 @@
 //   Cache cold/warm transitions would make the bootstrap output non-deterministic
 //   across runs (the load-bearing content-address invariant). Bootstrap mode forces
 //   offline:true + intentStrategy:"static" so the extracted corpus comes only from
-//   upstream tests + documented usage. TODO: when ShaveOptions gains
-//   corpusOptions.disableSourceC, switch to that for a stronger guarantee.
+//   upstream tests + documented usage.
 // Status: implemented (WI-V2-BOOTSTRAP-02)
+//
+// @decision DEC-BOOTSTRAP-CORPUS-OPT-001
+// @title Inline offline/static-intent flags are sufficient; disableSourceC option not needed
+// @status accepted
+// @rationale A TODO anticipated adding ShaveOptions.corpusOptions.disableSourceC as a
+//   more explicit mechanism to disable AI-derived corpus extraction. Option B (keep inline
+//   flags, drop the TODO) was chosen: offline:true + intentStrategy:"static" already
+//   provide the required determinism guarantee. The anticipated disableSourceC option adds
+//   no safety beyond what the inline flags deliver, and introducing it would require
+//   ShaveOptions API changes and consumer updates for zero practical benefit. The inline
+//   mechanism is the permanent solution.
 //
 // @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001
 // @title bootstrap/expected-roots.json is a monotonic accumulator — never shrinks
@@ -1037,7 +1047,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       perFileOccurrences = [];
 
       // Force offline: true to disable AI-corpus extraction (DEC-V2-BOOT-NO-AI-CORPUS-001).
-      // TODO: when ShaveOptions gains corpusOptions.disableSourceC, use that instead.
+      // @decision DEC-BOOTSTRAP-CORPUS-OPT-001 — inline flags are the permanent solution.
       const sourceFileNorm = relPath.replace(/\\/g, "/");
       // Read source text for exact-match comparison in the pointer stub pass below.
       // Canonical-AST matching can unify atoms from different files whose textual
