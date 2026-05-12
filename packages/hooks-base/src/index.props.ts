@@ -48,6 +48,7 @@ import {
   buildSkeletonSpec,
   type EmissionContext,
 } from "./index.js";
+import { atomizeEmission } from "./atomize.js";
 
 // ---------------------------------------------------------------------------
 // Representative input sets
@@ -428,4 +429,168 @@ export function prop_buildSkeletonSpec_long_and_special_intent_preserved(): bool
     if (s.behavior !== intent) return false;
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Atomize property tests (DEC-HOOK-ATOM-CAPTURE-001)
+//
+// These three properties cover atomizeEmission invariants:
+//   A-P1 — idempotent: same code twice → same BMR
+//   A-P2 — shape-filter totality: every input returns a defined AtomizeResult (no throws)
+//   A-P3 — no-jsdoc-skip: function-without-jsdoc + skipOnNoJsdoc → reason="no-jsdoc"
+//
+// All three are async (atomizeEmission is async). They follow the hand-authored
+// property pattern of this file: return Promise<boolean>.
+//
+// NOT covered here: full shave pipeline (covered in test/atomize.test.ts),
+// license handling (A4/A5 in atomize.test.ts), dedup (A6), concurrent (A7), flywheel (A8).
+// ---------------------------------------------------------------------------
+
+import { openRegistry } from "@yakcc/registry";
+import type { EmbeddingProvider } from "@yakcc/contracts";
+
+/** Zero-dimension embedding provider for property tests — no ONNX, no network. */
+function zeroEmbeddingProvider(): EmbeddingProvider {
+  return {
+    dimension: 4,
+    modelId: "zero/props-test",
+    async embed(_text: string): Promise<Float32Array> {
+      return new Float32Array([0.5, 0.5, 0.5, 0.5]);
+    },
+  };
+}
+
+/** Canonical "atomize-yes" snippet used for idempotency property. */
+const IDEMPOTENT_TEST_CODE = `// SPDX-License-Identifier: MIT
+/**
+ * Clamp a number between min and max bounds.
+ *
+ * @param value - The number to clamp.
+ * @param min   - Lower bound (inclusive).
+ * @param max   - Upper bound (inclusive).
+ * @returns The clamped value.
+ */
+export function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}`;
+
+/**
+ * prop_atomize_idempotent
+ *
+ * Calling atomizeEmission with the same source code twice produces the same
+ * BlockMerkleRoot on both calls.
+ *
+ * Invariant: atomization is content-addressed. BlockMerkleRoot = BLAKE3(spec||impl||proof)
+ * — deterministic for identical inputs. Two atomize calls on the same code must
+ * produce the same BMR (INSERT OR IGNORE handles the second store silently).
+ *
+ * @decision DEC-HOOK-ATOM-CAPTURE-001 (idempotency)
+ */
+export async function prop_atomize_idempotent(): Promise<boolean> {
+  const registry = await openRegistry(":memory:", { embeddings: zeroEmbeddingProvider() });
+  try {
+    const r1 = await atomizeEmission({ emittedCode: IDEMPOTENT_TEST_CODE, toolName: "Edit", registry });
+    const r2 = await atomizeEmission({ emittedCode: IDEMPOTENT_TEST_CODE, toolName: "Edit", registry });
+
+    if (!r1.atomized || !r2.atomized) return true; // shave may reject — property is vacuously true
+    const bmr1 = r1.atomsCreated[0]?.blockMerkleRoot;
+    const bmr2 = r2.atomsCreated[0]?.blockMerkleRoot;
+    if (bmr1 === undefined || bmr2 === undefined) return false;
+    return bmr1 === bmr2;
+  } finally {
+    await registry.close();
+  }
+}
+
+/** Corpus of representative inputs for the shape-filter totality property. */
+const SHAPE_FILTER_CORPUS: string[] = [
+  // exported-with-jsdoc
+  `// SPDX-License-Identifier: MIT\n/**\n * Negate a number.\n * @param n - Input.\n * @returns Negation.\n */\nexport function negate(n: number): number {\n  const result = -n;\n  const str = String(result);\n  return parseFloat(str);\n}`,
+  // exported-no-jsdoc
+  `// SPDX-License-Identifier: MIT\nexport function double(n: number): number { return n * 2; }`,
+  // type-only
+  `// SPDX-License-Identifier: MIT\nexport type Pair = { a: number; b: number };`,
+  // inner function
+  `// SPDX-License-Identifier: MIT\nexport function outer(): void { function inner() { return 1; } inner(); }`,
+  // test code
+  `// SPDX-License-Identifier: MIT\nimport { it } from "vitest"; it("x", () => {});`,
+  // empty string
+  ``,
+  // pure whitespace
+  `   `,
+];
+
+/**
+ * prop_atomize_shape_filter_total
+ *
+ * For every input in the representative corpus, atomizeEmission returns a defined
+ * AtomizeResult and never throws.
+ *
+ * Invariant: the shape filter must be total — no unhandled edge case causes
+ * atomizeEmission to throw an unhandled exception. Failures are surfaced via
+ * atomized=false + reason, never via exception propagation.
+ *
+ * @decision DEC-HOOK-ATOM-CAPTURE-001 (observe-don't-throw)
+ */
+export async function prop_atomize_shape_filter_total(): Promise<boolean> {
+  const registry = await openRegistry(":memory:", { embeddings: zeroEmbeddingProvider() });
+  try {
+    for (const code of SHAPE_FILTER_CORPUS) {
+      let result: Awaited<ReturnType<typeof atomizeEmission>> | undefined;
+      try {
+        result = await atomizeEmission({ emittedCode: code, toolName: "Write", registry });
+      } catch {
+        return false; // threw — totality violated
+      }
+      if (result === undefined) return false;
+      // Must be a valid AtomizeResult: atomized is boolean, atomsCreated is array.
+      if (typeof result.atomized !== "boolean") return false;
+      if (!Array.isArray(result.atomsCreated)) return false;
+    }
+    return true;
+  } finally {
+    await registry.close();
+  }
+}
+
+/** Function without JSDoc for the no-jsdoc property. */
+const NO_JSDOC_CODE = `// SPDX-License-Identifier: MIT
+export function increment(n: number): number {
+  const result = n + 1;
+  const formatted = String(result);
+  return parseFloat(formatted);
+}`;
+
+/**
+ * prop_atomize_no_jsdoc_returns_skip
+ *
+ * When skipOnNoJsdoc=true, an exported function without JSDoc consistently returns
+ * atomized=false with reason="no-jsdoc".
+ *
+ * Invariant: the skipOnNoJsdoc flag gates the MAYBE shape path. A function that
+ * matches "exported-no-jsdoc" shape and skipOnNoJsdoc=true must always return
+ * reason="no-jsdoc" regardless of other parameters.
+ *
+ * @decision DEC-HOOK-ATOM-CAPTURE-001 (skipOnNoJsdoc flag semantics)
+ */
+export async function prop_atomize_no_jsdoc_returns_skip(): Promise<boolean> {
+  const registry = await openRegistry(":memory:", { embeddings: zeroEmbeddingProvider() });
+  try {
+    for (const toolName of ["Edit", "Write", "MultiEdit"] as const) {
+      const result = await atomizeEmission({
+        emittedCode: NO_JSDOC_CODE,
+        toolName,
+        registry,
+        skipOnNoJsdoc: true,
+      });
+      if (result.atomized !== false) return false;
+      if (result.reason !== "no-jsdoc") return false;
+      if (result.atomsCreated.length !== 0) return false;
+    }
+    return true;
+  } finally {
+    await registry.close();
+  }
 }

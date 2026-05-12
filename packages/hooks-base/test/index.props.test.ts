@@ -21,6 +21,9 @@ import {
   prop_buildSkeletonSpec_total,
   prop_defaultThreshold_in_valid_range,
   prop_defaultThreshold_is_0_30,
+  prop_atomize_idempotent,
+  prop_atomize_shape_filter_total,
+  prop_atomize_no_jsdoc_returns_skip,
 } from "../src/index.props.js";
 
 // DEFAULT_REGISTRY_HIT_THRESHOLD constant invariants
@@ -88,4 +91,20 @@ it("property: prop_buildSkeletonSpec_empty_intent_produces_empty_behavior", () =
 
 it("property: prop_buildSkeletonSpec_long_and_special_intent_preserved", () => {
   if (!prop_buildSkeletonSpec_long_and_special_intent_preserved()) throw new Error("property failed");
+});
+
+// ---------------------------------------------------------------------------
+// Atomize property tests (DEC-HOOK-ATOM-CAPTURE-001)
+// ---------------------------------------------------------------------------
+
+it("property: prop_atomize_idempotent", async () => {
+  if (!(await prop_atomize_idempotent())) throw new Error("property failed");
+}, 30_000);
+
+it("property: prop_atomize_shape_filter_total", async () => {
+  if (!(await prop_atomize_shape_filter_total())) throw new Error("property failed");
+}, 30_000);
+
+it("property: prop_atomize_no_jsdoc_returns_skip", async () => {
+  if (!(await prop_atomize_no_jsdoc_returns_skip())) throw new Error("property failed");
 });

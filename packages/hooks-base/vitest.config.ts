@@ -8,6 +8,12 @@ export default defineConfig({
     alias: {
       "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
       "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
+      // @yakcc/shave is aliased to its pre-built dist because the shave package
+      // has a tsc error in types.props.ts that prevents building from source.
+      // The dist is committed and valid. Tests that stub atomizeEmission bypass
+      // the shave runtime entirely; tests that exercise it end-to-end use the dist.
+      // @decision DEC-HOOK-ATOM-CAPTURE-001 (shave dist alias)
+      "@yakcc/shave": resolve(__dirname, "../shave/dist/index.js"),
     },
   },
   test: {
