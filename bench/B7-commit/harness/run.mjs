@@ -7,13 +7,18 @@
 // @status accepted (WI-B7-SLICE-3, issue #396; closes #393, closes #191)
 // @rationale
 //   FINAL VERDICT (DEC-BENCH-B7-001)
-//   Median warm wall-clock: 1.836s (Windows, 2026-05-12 from Slice 2 baseline).
-//   Slice 3 refactors the harness for subprocess isolation and runs multi-hardware.
+//   Median warm wall-clock: 1804.5ms (Windows / Node v22.x, 2026-05-12).
+//   Warm p95: 4893ms, p99: 6133ms. Cold median: 2705ms, p95: 8870ms, p99: 9297ms.
+//   atomizedCount: 32/32 — subprocess isolation closes #393.
+//   BMR-in-top-K: 32/32 seed reps. Total runtime: 29.9 min.
+//   Verdict: PASS-aspirational (median warm 1804.5ms << 3s aspirational bar).
+//   WI-FAST-PATH-VERIFIER: NOT filed — warm median 1804.5ms well under 5s threshold.
+//   Per operator decision, single-run verification was accepted in place of the
+//   3-consecutive-run protocol (cost trade-off; subprocess refactor correctness is
+//   structurally evident from atomizedCount=32/32 with zero failures).
 //   Artifact cross-references:
-//     bench/B7-commit/results-windows-2026-05-12.json   — Windows / Node v22.x
-//     bench/B7-commit/results-ubuntu-latest-2026-05-12.json — ubuntu-latest / Node v22.x (CI)
-//   Verdict: PASS-aspirational (median warm <= 3s on both hardware platforms).
-//   WI-FAST-PATH-VERIFIER: NOT filed — median warm did not exceed 5s threshold.
+//     bench/B7-commit/results-windows-2026-05-12.json   — Windows / Node v22.x (committed)
+//     bench/B7-commit/results-ubuntu-latest-<date>.json — ubuntu-latest / Node v22.x (CI, pending)
 //
 //   SUBPROCESS ISOLATION (Slice 3 — structural fix for #393)
 //   Each utility's warm and cold measurements run in a dedicated child process spawned
@@ -23,8 +28,10 @@
 //   (documented in #393) was caused by accumulated ts-morph state leaking across
 //   sequential utility boundaries in a single Node.js process. The process boundary
 //   makes this contamination structurally impossible.
-//   After Slice 3 refactor: 3 consecutive runs of 32 utilities produced atomizedCount=32
-//   every time. #393 closed.
+//   Verified result: atomizedCount=32/32 with 0 failures across all 32 utilities.
+//   #393 closed.
+//   ubuntu-latest cell: to be added when CI workflow (bench-b7-commit.yml) nightly
+//   run produces its artifact. See issue #191 for status comments.
 //
 //   TIMING METHODOLOGY (unchanged from Slice 2)
 //   Three timestamps capture each emission's round-trip cost:

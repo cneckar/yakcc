@@ -14,15 +14,14 @@ WI-FAST-PATH-VERIFIER: NOT filed — median warm did not exceed 5s threshold.
 
 | Cache state | Hardware | median\_ms | p95\_ms | p99\_ms | n |
 |-------------|----------|-----------|---------|---------|---|
-| warm | Windows / Node v22.x | TBD | TBD | TBD | 288 |
-| warm | ubuntu-latest / Node v22.x | TBD | TBD | TBD | 288 |
-| cold | Windows / Node v22.x | TBD | TBD | TBD | 320 |
-| cold | ubuntu-latest / Node v22.x | TBD | TBD | TBD | 320 |
+| warm | Windows / Node v22.x | **1804.5** | 4893 | 6133 | 288 |
+| warm | ubuntu-latest / Node v22.x | pending CI | — | — | — |
+| cold | Windows / Node v22.x | 2705 | 8870 | 9297 | 320 |
+| cold | ubuntu-latest / Node v22.x | pending CI | — | — | — |
 
-> Windows results from `results-windows-<date>.json` (committed).  
-> ubuntu-latest results from CI nightly run via `bench-b7-commit.yml` — see artifact `b7-commit-<run_number>` or issue #191 comment.
-
-**Note:** Table will be updated with real values once all three consecutive Windows runs and the first CI run complete. The `DEC-BENCH-B7-001` annotation in `harness/run.mjs` is the source of truth for the final numbers.
+> Windows results from `results-windows-2026-05-12.json` (committed, 2026-05-12).  
+> ubuntu-latest results from CI nightly run via `bench-b7-commit.yml` — see artifact `b7-commit-<run_number>` or issue #191 comment.  
+> Single-run verification accepted per operator decision (subprocess correctness is structural; cost trade-off vs 3-consecutive-run protocol).
 
 ## What it measures
 
