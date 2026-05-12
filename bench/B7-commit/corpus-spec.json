@@ -1,6 +1,6 @@
 {
-  "note": "SHA-256 content addresses for B7-commit corpus files. Harness verifies these on startup and aborts on drift (mirrors B1 discipline).",
-  "n": 5,
+  "note": "SHA-256 content addresses for B7-commit corpus files. Harness verifies these on startup and aborts on drift (mirrors B1 discipline). Slice 2: 32 utilities.",
+  "n_utilities": 32,
   "files": [
     {
       "filename": "array-median.ts",
@@ -31,6 +31,168 @@
       "description": "Convert camelCase/PascalCase to snake_case, collapsing acronyms.",
       "intent": "Convert a camelCase or PascalCase identifier to snake_case, preserving consecutive uppercase acronyms as a single lowercase segment.",
       "sha256": "22f0547e5d1185affd45677d4d8ccce9f0cfe65c2eb9eebdb941de5d51870193"
+    },
+    {
+      "filename": "parse-semver.ts",
+      "description": "Parse a semantic version string into major, minor, patch, prerelease, and build-metadata components per SemVer 2.0.0.",
+      "intent": "Parse a semantic version string into major, minor, patch, prerelease, and build-metadata components per SemVer 2.0.0. Returns null for strings that do not conform.",
+      "sha256": "5c0e0190b7eee137e4a0b0c581ac6ea66e0f6001afea564f662c0be9c76fea24"
+    },
+    {
+      "filename": "valid-uuid-v4-detector.ts",
+      "description": "Detect whether a string is a valid UUID v4 in canonical lowercase hyphenated form.",
+      "intent": "Detect whether a string is a valid UUID version 4 in canonical lowercase hyphenated form, verifying the version nibble and variant bits. Returns false for uppercase hex, missing hyphens, wrong version, or wrong variant.",
+      "sha256": "d4a7228ca9037339670854b30c43af6ebc2484bef034307949fbab88c5180b3a"
+    },
+    {
+      "filename": "valid-email-rfc5322.ts",
+      "description": "Validate a string as a plausible RFC 5322 email address using structural heuristics.",
+      "intent": "Validate whether a string is a plausible RFC 5322 email address. Checks local-part@domain structure, label length limits, and character sets. Returns false for quoted local parts, IP-literal domains, or structurally invalid strings.",
+      "sha256": "28d19e7d4dbd3c843805cff955394612bb7d7826d736d3316eed88afed3eb7f0"
+    },
+    {
+      "filename": "parse-rgb-hex.ts",
+      "description": "Parse a CSS hex color string (#RGB or #RRGGBB) into r, g, b components.",
+      "intent": "Parse a CSS hex color string in 3-digit (#RGB) or 6-digit (#RRGGBB) form into red, green, and blue integer components in [0, 255]. Returns null for any string that does not match these forms exactly.",
+      "sha256": "2f7261f7d40fb18e49db9d605061a7e8b382517b60b2539d6b0864c69d91f4bb"
+    },
+    {
+      "filename": "valid-jwt-shape.ts",
+      "description": "Validate the structural shape of a JSON Web Token without verifying the signature.",
+      "intent": "Validate the structural shape of a JSON Web Token: three base64url segments separated by dots, with a JSON header containing a string alg field and a JSON object payload. Signature bytes are not cryptographically verified.",
+      "sha256": "222c4295d4650b01ccaa628eb725ef27902c03c63de238e8266392c2771cff4e"
+    },
+    {
+      "filename": "parse-query-string.ts",
+      "description": "Parse a URL query string into a map of decoded key-value pairs, supporting repeated keys.",
+      "intent": "Parse a URL query string into a record of decoded key-value pairs. Keys that appear multiple times produce arrays. Both keys and values are percent-decoded. Accepts strings with or without a leading question mark.",
+      "sha256": "1816c597c5ec2dbc3be7afa5fce8ab3be818d9eef454e08ba20ce295c4183ebe"
+    },
+    {
+      "filename": "slugify-ascii.ts",
+      "description": "Convert a string to an ASCII URL slug by lowercasing, stripping non-ASCII, and collapsing non-alphanumeric runs to hyphens.",
+      "intent": "Convert a string to an ASCII URL slug: lowercase, strip non-ASCII characters, collapse runs of non-alphanumeric characters to a single hyphen, and trim leading and trailing hyphens.",
+      "sha256": "eeebe44cc707fbca128aa2c25dda523875f9061cb65a956e53d82a894fd129aa"
+    },
+    {
+      "filename": "parse-cron-expression.ts",
+      "description": "Parse a 5-field cron expression into its minute, hour, day-of-month, month, and day-of-week fields, validating each field's range.",
+      "intent": "Parse a standard 5-field cron expression into its component fields (minute, hour, day-of-month, month, day-of-week). Validates wildcard, integer, and step forms. Returns null for any expression that does not conform.",
+      "sha256": "ed987387c23b05089f5162c1d6404b48f4186b34322fb297e411cc9675751e76"
+    },
+    {
+      "filename": "gcd-euclidean.ts",
+      "description": "Compute the greatest common divisor of two non-negative integers using the iterative Euclidean algorithm.",
+      "intent": "Compute the greatest common divisor of two non-negative integers using the iterative Euclidean algorithm. Returns n for gcd(0, n) and gcd(n, 0). Throws RangeError for non-finite inputs.",
+      "sha256": "20d1ef3fe32aaf4801938924abbd5b75af5a59ea36efc8d010393d784e379526"
+    },
+    {
+      "filename": "prime-sieve-eratosthenes.ts",
+      "description": "Return all prime numbers up to a given limit using the Sieve of Eratosthenes.",
+      "intent": "Return all prime numbers up to and including a given limit using the Sieve of Eratosthenes. Returns an empty array for limits below 2. Throws RangeError for non-integer or negative limits.",
+      "sha256": "5d06ffa9b564ef246ffbb78542264e1479f04ce2c2e1845cb80b56cd3cd016b7"
+    },
+    {
+      "filename": "lerp-clamped.ts",
+      "description": "Linearly interpolate between two values and clamp the result to the [a, b] range.",
+      "intent": "Linearly interpolate between two values and clamp the result to [min(a,b), max(a,b)]. The interpolation factor t is clamped to [0, 1] before use, preventing floating-point rounding from pushing the result outside the valid range.",
+      "sha256": "2d6449672bc726deb3e3b763b1821057e85511d0483f927cfe4e24e0341895ba"
+    },
+    {
+      "filename": "fast-pow-mod.ts",
+      "description": "Compute (base ^ exponent) mod modulus using binary exponentiation.",
+      "intent": "Compute base raised to the power of exponent modulo modulus using fast binary exponentiation. All arguments must be non-negative safe integers and modulus must be positive. Returns 1 for exponent 0.",
+      "sha256": "726e0f5a064a624bb31eb657f841b9ea8cc5b10781dc226f3d854347453d7980"
+    },
+    {
+      "filename": "sum-digits-recursive.ts",
+      "description": "Recursively sum the decimal digits of a non-negative integer until a single digit remains (digital root).",
+      "intent": "Recursively sum the decimal digits of a non-negative integer until a single digit remains, computing the digital root. Returns 0 for input 0. Throws RangeError for non-safe-integer or negative inputs.",
+      "sha256": "cd2840ca4278a48759760bf90c230c44e88f79124a38b3fbfd532fbe25030168"
+    },
+    {
+      "filename": "kahan-sum.ts",
+      "description": "Compute the sum of a numeric array using the Kahan compensated summation algorithm.",
+      "intent": "Compute the sum of a numeric array using the Kahan compensated summation algorithm to reduce floating-point rounding error compared to naive sequential addition. Returns 0 for an empty array.",
+      "sha256": "dfccfe06227f90e9f0c866b37150089f5c1d1fdee435675f9dd7b2805353148b"
+    },
+    {
+      "filename": "chunk-fixed-size.ts",
+      "description": "Split an array into consecutive fixed-size chunks, with the final chunk possibly smaller.",
+      "intent": "Split an array into consecutive chunks of exactly size elements. The final chunk may be smaller if the array length is not evenly divisible. Returns an empty array for empty input. Throws RangeError for non-positive chunk sizes.",
+      "sha256": "063c348bd869bafa834e7411efeb9c849a02226e8adb7eec48f54bad03132250"
+    },
+    {
+      "filename": "group-by-key.ts",
+      "description": "Group an array of items by a computed key, returning a Map with first-seen key ordering.",
+      "intent": "Group an array of items by a key extracted from each item, returning a Map from key to array of matching items. Insertion order is preserved within each group and across groups in first-seen order.",
+      "sha256": "c9670247ee6c21a1702de55b2a259316f4e4b1885e13d91eea40eee5360d6808"
+    },
+    {
+      "filename": "dedupe-stable-order.ts",
+      "description": "Remove duplicate elements from an array, preserving first-occurrence order.",
+      "intent": "Remove duplicate elements from an array, preserving the order of first occurrence of each element. Equality is determined by SameValueZero. Accepts an optional key extractor function for custom equality. Returns a new array.",
+      "sha256": "ebb8cb4826c7bc6b49fd0bb25cd2eada421f905328a52e86b380b464c5d4eb47"
+    },
+    {
+      "filename": "zip-longest.ts",
+      "description": "Zip two arrays into pairs, extending the shorter array with fill values so no elements are lost.",
+      "intent": "Zip two arrays into pairs extending to the length of the longer array. The shorter array is padded with optional fill values. Returns an array of tuples of length max(a.length, b.length).",
+      "sha256": "540d3a946b34ddc2eca55d97a821b673f862e9ebf255d58584b43dfc14e0fb26"
+    },
+    {
+      "filename": "flatten-depth-bounded.ts",
+      "description": "Recursively flatten a nested array up to a specified depth.",
+      "intent": "Recursively flatten a nested array up to a specified depth. At depth 0 returns a shallow copy. Non-array elements are included as-is at any depth. Throws RangeError for negative or non-integer depth.",
+      "sha256": "739ef2c130ffe40eb2f2fbbee0480a4250a34f23bf8c4acc668aa5132c8a9f14"
+    },
+    {
+      "filename": "rotate-array-in-place.ts",
+      "description": "Rotate an array in-place to the right by k positions using the three-reversal algorithm.",
+      "intent": "Rotate an array in-place to the right by k positions. Elements that fall off the right end wrap around to the left. Negative k rotates left. Uses the three-reversal algorithm for O(n) time and O(1) extra space.",
+      "sha256": "69995d08c6e67825195238dea287bfb6d64c8a41d71d0d8390af9b954bedceb4"
+    },
+    {
+      "filename": "is-leap-year-gregorian.ts",
+      "description": "Determine whether a year is a leap year in the proleptic Gregorian calendar.",
+      "intent": "Determine whether a year is a leap year in the proleptic Gregorian calendar. Divisible-by-4 years are leap years except century years, which must also be divisible by 400. Throws RangeError for non-integer inputs.",
+      "sha256": "4780c6381300fe09ee93980b2dde34f0b6464bf859d008a237dcea197a8addbf"
+    },
+    {
+      "filename": "days-between-dates.ts",
+      "description": "Compute the number of whole calendar days between two ISO 8601 date strings.",
+      "intent": "Compute the absolute number of whole calendar days between two ISO 8601 date strings in YYYY-MM-DD format. Dates are interpreted as UTC midnight. Result is always non-negative regardless of argument order.",
+      "sha256": "bf3f6e14e10f18ed53aa253221a3684583a182292b5331688a71b970edc1788f"
+    },
+    {
+      "filename": "parse-rfc3339-utc.ts",
+      "description": "Parse an RFC 3339 UTC timestamp string into year, month, day, hour, minute, second, and millisecond components.",
+      "intent": "Parse an RFC 3339 UTC timestamp string into its year, month, day, hour, minute, second, and millisecond components. Requires a Z suffix. Accepts optional fractional seconds. Returns null for any non-conforming string.",
+      "sha256": "0675348111b701ec60c959f8acc1f30b84cb8b07bfabfa33a3f1dd8c4b8427b0"
+    },
+    {
+      "filename": "popcount.ts",
+      "description": "Count the number of set bits in a 32-bit unsigned integer using the parallel bit-counting algorithm.",
+      "intent": "Count the number of set bits in a 32-bit unsigned integer using the parallel bit-counting population count algorithm. The input is coerced to an unsigned 32-bit integer before counting.",
+      "sha256": "a9407f94a17a485df2866f6ddd1c7bf580a032b2a55014434ab83c3102b540e0"
+    },
+    {
+      "filename": "base64-url-encode.ts",
+      "description": "Encode binary data as a base64url string with no padding (RFC 4648 §5).",
+      "intent": "Encode a Uint8Array to a base64url string per RFC 4648 section 5: substitutes - for + and _ for /, and omits = padding. The output is safe for URLs and HTTP headers without percent-encoding.",
+      "sha256": "2df1e7f097da3418d7a6d18d38d9bd2447d1964fa76f143f21b8feaf5156b59b"
+    },
+    {
+      "filename": "hex-encode-lowercase.ts",
+      "description": "Encode binary data as a lowercase hexadecimal string with two hex digits per byte.",
+      "intent": "Encode a Uint8Array as a lowercase hexadecimal string. Each byte is represented as exactly two hex digits with a leading zero when needed. An empty input produces an empty string.",
+      "sha256": "9c2c8853079f0f902e2e1f0b63b4ba5a4bef72baf1ccc155a661699a441875dd"
+    },
+    {
+      "filename": "varint-encode.ts",
+      "description": "Encode a non-negative integer as a Protocol Buffers base-128 variable-length integer.",
+      "intent": "Encode a non-negative safe integer as a Protocol Buffers base-128 variable-length integer. Each byte contributes 7 bits of the value; the MSB is 1 if more bytes follow. Returns a Uint8Array of 1 to 8 bytes.",
+      "sha256": "5bb30bf7827f84f75b0bf40c8a02993448928d509aacbda1d0e9e4bedcfc2ed3"
     }
   ]
 }
