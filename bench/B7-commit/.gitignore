@@ -1,0 +1,7 @@
+# Scratch SQLite registries written by the harness at runtime
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Harness output artifacts (committed separately per benchmark run)
+tmp/

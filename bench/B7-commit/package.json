@@ -1,0 +1,7 @@
+{
+  "name": "@yakcc/bench-b7-commit",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B7 — Time-to-commit benchmark: novel-glue flywheel round-trip latency on 5 hand-authored utilities."
+}
