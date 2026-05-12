@@ -6,8 +6,7 @@
 //   (a) Consolidates the type and logic duplication that was intentionally deferred
 //       in v1 W1/W2. DEC-HOOK-CURSOR-001 (d) and DEC-HOOK-CODEX-001 (d) both
 //       flagged the local EmissionContext / HookResponse / HookOptions declarations
-//       as temporary, with a note that a future WI would consolidate them into a
-//       @yakcc/hooks-base package. This is that WI.
+//       as temporary. This WI (WI-V1W2-HOOKS-BASE) performed that consolidation.
 //   (b) Public surface mirrors exactly what was duplicated in the three consumer
 //       packages (hooks-claude-code, hooks-cursor, hooks-codex): the shared types,
 //       the DEFAULT_REGISTRY_HIT_THRESHOLD constant, the buildSkeletonSpec helper,
