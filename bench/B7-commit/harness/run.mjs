@@ -165,17 +165,27 @@ function verifyCorpusIntegrity() {
     if (!existsSync(filePath)) {
       throw new Error(`Corpus file missing: ${filePath}`);
     }
-    // Normalize CRLF → LF before hashing so SHA-256 is stable across git checkout modes.
-    // Windows git may add CRLF on checkout; the corpus-spec.json was generated with LF hashes.
-    // Content is identical — only the byte representation of line endings differs.
+    // Hash robustness across git checkout line-ending modes:
+    // Some corpus files were committed with CRLF already in the blob; others as LF.
+    // On Windows, git may add CRLF on checkout for files stored as LF, so the on-disk
+    // bytes may differ from the committed bytes. Try raw bytes first; if that doesn't
+    // match the spec, try LF-normalized. If neither matches, it's a real content change.
     const rawBytes = readFileSync(filePath);
-    const normalizedBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
-    const actual = createHash("sha256").update(normalizedBytes).digest("hex");
+    const actualRaw = createHash("sha256").update(rawBytes).digest("hex");
+    let actual = actualRaw;
+    if (actual !== entry.sha256) {
+      // Try LF-normalization (handles Windows CRLF expansion on checkout)
+      const lfBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
+      const actualLf = createHash("sha256").update(lfBytes).digest("hex");
+      if (actualLf === entry.sha256) {
+        actual = actualLf; // CRLF expansion — content is identical, just line endings differ
+      }
+    }
     if (actual !== entry.sha256) {
       throw new Error(
         `SHA-256 drift detected for ${entry.filename}:\n` +
         `  expected: ${entry.sha256}\n` +
-        `  actual (LF-normalized): ${actual}\n` +
+        `  actual (raw):  ${actualRaw}\n` +
         "Corpus content has changed. Abort."
       );
     }
