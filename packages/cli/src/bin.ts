@@ -4,7 +4,8 @@
 // Delegates to runCli and exits with the returned code.
 // WI-005 wires the real command handlers.
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
 import { runCli } from "./index.js";
 import { patchSqliteDatabase } from "./pkg-native-compat.js";
 
@@ -36,20 +37,51 @@ import { patchSqliteDatabase } from "./pkg-native-compat.js";
 /**
  * @decision DEC-CLI-BIN-MAIN-MODULE-001
  * @title Cross-platform main-module guard using fileURLToPath
+ * @status superseded
+ * @rationale Superseded by DEC-CLI-BIN-MAIN-MODULE-GUARD-WINDOWS-001. The original
+ *   fileURLToPath(import.meta.url) === process.argv[1] guard was a correct fix for
+ *   #274 but does not cover symlinks, Windows case-insensitive drive letters (C:\ vs c:\),
+ *   or 8.3 short-name forms (PROGRA~1 vs Program Files). See new decision below.
+ */
+
+/**
+ * @decision DEC-CLI-BIN-MAIN-MODULE-GUARD-WINDOWS-001
+ * @title Defense-in-depth main-module guard: realpathSync normalizes path before comparison
  * @status accepted
- * @rationale Manual `file://${argv[1]}` string construction fails on Windows because
- *   Node's import.meta.url uses `file:///C:/...` (triple slash, forward slashes) while
- *   the manual concatenation produces `file://C:\...` (double slash, backslashes).
- *   Approach (a): `fileURLToPath(import.meta.url) === argv[1]` avoids URL construction
- *   entirely — both sides are OS-native paths that Node normalizes consistently on all
- *   platforms. This is simpler and more readable than approach (b) (pathToFileURL(argv[1])).
- *   Cross-platform safe: fileURLToPath() is the inverse of pathToFileURL() and is
- *   guaranteed to produce the same path format as process.argv[1] on every platform.
- *   Closes #274.
+ * @rationale WI-ALPHA-WINDOWS-BIN-JS (#385): the original fileURLToPath guard (DEC-CLI-BIN-MAIN-MODULE-001)
+ *   is functionally correct for the typical `node bin.js` invocation but leaves open three
+ *   Windows edge cases: (1) symlink-to-bin.js where process.argv[1] is the symlink path
+ *   and import.meta.url is the real path; (2) case-insensitive drive letter normalization
+ *   (C:\foo vs c:\foo); (3) 8.3 short-name forms (PROGRA~1 vs Program Files).
+ *   realpathSync resolves all three: it canonicalizes symlinks, normalizes case on
+ *   case-insensitive filesystems, and resolves 8.3 short names. fileURLToPath handles
+ *   the file:///C:/... drive-letter URL form on Windows. The byte-string comparison
+ *   after both transforms is platform-agnostic.
+ *   FORBIDDEN: NO try-catch around the comparison itself — that re-introduces the
+ *   silent-no-op failure mode that #274 was filed to defeat. Only the ENOENT case
+ *   (process.argv[1] path does not exist, e.g. node -e "...") falls back to URL comparison.
+ *   PRESERVES: WI-361 patchSqliteDatabase invocation above; this guard is a separate concern.
  */
 // Guard dispatch on direct execution so this module can be imported without
-// side effects. The fileURLToPath comparison matches only when Node runs this
-// file directly; tests or other importers skip the dispatch.
-if (fileURLToPath(import.meta.url) === process.argv[1]) {
+// side effects. realpathSync(fileURLToPath(...)) normalizes case + symlinks +
+// 8.3 short-names on Windows; fileURLToPath handles the file:/// drive-letter form.
+// Both sides resolve to OS-native canonical paths before the byte comparison.
+function isMainModule(): boolean {
+  try {
+    const thisFile = realpathSync(fileURLToPath(import.meta.url));
+    const entryFile = process.argv[1] ? realpathSync(process.argv[1]) : "";
+    return thisFile === entryFile;
+  } catch (err) {
+    // realpathSync throws ENOENT when the path does not exist (e.g. node -e "...").
+    // Fall back to URL string comparison ONLY for the not-found case.
+    // Do NOT catch other errors (e.g. EACCES, EPERM) — propagate them.
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+    }
+    throw err;
+  }
+}
+
+if (isMainModule()) {
   runCli(process.argv.slice(2)).then((code) => process.exit(code));
 }
