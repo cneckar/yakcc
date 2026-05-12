@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm A = hook-enabled (yakccResolve MCP active). Token counts representative of hook-assisted output. This fixture is NOT a real API response; it exists to exercise telemetry capture and oracle invocation without network calls.",
+  "_arm": "A",
+  "_task": "csv-parser-quoted",
+  "id": "msg_dry_csv_arm_a_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1380,
+    "output_tokens": 298,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is a state-machine RFC 4180 CSV parser:\n\n```typescript\nexport interface ParseCSVOptions {\n  delimiter?: string;\n  quote?: string;\n  newline?: string;\n}\n\nexport function parseCSV(input: string, options?: ParseCSVOptions): string[][] {\n  const delim = options?.delimiter ?? ',';\n  const quote = options?.quote ?? '\"';\n  const text = input.startsWith('\\uFEFF') ? input.slice(1) : input;\n  if (text === '') return [];\n  const rows: string[][] = [];\n  let row: string[] = [];\n  let field = '';\n  type S = 'START' | 'UNQUOTED' | 'QUOTED' | 'AFTER_QUOTE';\n  let state: S = 'START';\n  let i = 0;\n  const len = text.length;\n  const pushRow = () => { rows.push(row); row = []; };\n  while (i < len) {\n    const ch = text[i]!;\n    if (state === 'START') {\n      if (ch === quote) { state = 'QUOTED'; i++; }\n      else if (ch === delim) { row.push(''); i++; }\n      else if (ch === '\\r') { row.push(''); pushRow(); state = 'START'; i++; if (i < len && text[i] === '\\n') i++; }\n      else if (ch === '\\n') { row.push(''); pushRow(); state = 'START'; i++; }\n      else { field += ch; state = 'UNQUOTED'; i++; }\n    } else if (state === 'UNQUOTED') {\n      if (ch === delim) { row.push(field); field = ''; state = 'START'; i++; }\n      else if (ch === '\\r') { row.push(field); field = ''; pushRow(); state = 'START'; i++; if (i < len && text[i] === '\\n') i++; }\n      else if (ch === '\\n') { row.push(field); field = ''; pushRow(); state = 'START'; i++; }\n      else { field += ch; i++; }\n    } else if (state === 'QUOTED') {\n      if (ch === quote) { state = 'AFTER_QUOTE'; i++; }\n      else { field += ch; i++; }\n    } else {\n      if (ch === quote) { field += quote; state = 'QUOTED'; i++; }\n      else if (ch === delim) { row.push(field); field = ''; state = 'START'; i++; }\n      else if (ch === '\\r') { row.push(field); field = ''; pushRow(); state = 'START'; i++; if (i < len && text[i] === '\\n') i++; }\n      else if (ch === '\\n') { row.push(field); field = ''; pushRow(); state = 'START'; i++; }\n      else { field += ch; state = 'UNQUOTED'; i++; }\n    }\n  }\n  if (state === 'QUOTED' || state === 'AFTER_QUOTE' || field !== '' || row.length > 0) {\n    row.push(field); rows.push(row);\n  }\n  return rows;\n}\n```"
+    }
+  ]
+}
