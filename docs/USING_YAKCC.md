@@ -79,11 +79,49 @@ yakcc init --target ./some-other-project --peer https://registry.example.com
 
 ## 4. Verify the integration
 
-Start (or restart) Claude Code in the project root. Then in the project, ask Claude to write something the empty registry won't have — e.g. *"add a debounce utility to `src/util.ts`."*
+### 4a. Seed the yakcc bootstrap corpus (recommended day-1 step)
+
+Before verifying the integration, seed the registry with yakcc's own atoms. This gives you ~3,800 real-shaved atoms covering yakcc's parsers, registry primitives, hook helpers, federation transport, and more — enough that your first Claude Code sessions hit the registry immediately instead of returning `synthesis-required` for every emission.
+
+```sh
+yakcc seed --yakcc
+```
+
+This is a one-time operation. It reads `bootstrap/yakcc.registry.sqlite` (in the yakcc repo clone) and imports every atom into your local registry via content-addressed storage. The import is idempotent — re-running is a no-op for already-present atoms.
+
+> **Why opt-in?** `yakcc init` deliberately does not auto-seed (per `DEC-CLI-INIT-001`). You may only want your own project's atoms. `yakcc seed --yakcc` is the explicit first-boot step when you want the full yakcc corpus day-1.
+
+> **Wall-time:** expect 20–60 seconds on a modern dev machine (mostly BLAKE3 + sqlite-vec embedding insertion).
+
+Confirm the import:
+
+```sh
+yakcc query "store a block by content address"
+```
+
+You should see at least one registry hit. If the query returns nothing, the bootstrap corpus was not imported — check that `bootstrap/yakcc.registry.sqlite` exists in your repo clone (`git status bootstrap/`).
+
+---
+
+### 4b. Optionally prime with the minimal seed corpus
+
+If you only want the 20-block JSON integer-list parser seed (the original smaller corpus):
+
+```sh
+yakcc seed
+```
+
+Both `yakcc seed` and `yakcc seed --yakcc` are idempotent; running them together is safe.
+
+---
+
+### 4c. Verify the Claude Code hook
+
+Start (or restart) Claude Code in the project root. Then in the project, ask Claude to write something the registry knows about — e.g. *"parse a JSON array of integers from this string."*
 
 What you'll see:
 
-- The first time, the registry is empty, so the hook returns `synthesis-required`. Claude writes the code itself. (See [§6](#6-the-synthesis-required-outcome) for what to do next.)
+- With the bootstrap corpus seeded, the hook returns `outcome: "registry-hit"` for queries that match existing atoms. Claude will reference an existing atom by its BlockMerkleRoot instead of generating new code.
 - The hook records every emission to `~/.yakcc/telemetry/<session-id>.jsonl`. Check that it fired:
 
   ```sh
@@ -91,15 +129,7 @@ What you'll see:
   tail -1 ~/.yakcc/telemetry/*.jsonl | jq .
   ```
 
-  You should see a JSON line with `outcome: "passthrough"` or `outcome: "synthesis-required"` and a sub-millisecond `latencyMs`. If the file does not exist, the hook is not wired — re-run `yakcc init` from the project root and restart Claude Code.
-
-Optionally, prime the registry with the bundled seed corpus (~20 atoms composing a JSON integer-list parser):
-
-```sh
-yakcc seed
-```
-
-Now ask Claude Code something the seed corpus *does* know about, e.g. *"parse a JSON array of integers from this string."* The hook should return `outcome: "registry-hit"` and Claude will reference an existing atom by its BlockMerkleRoot instead of generating new code.
+  You should see a JSON line with `outcome: "passthrough"` or `outcome: "registry-hit"` and a sub-millisecond `latencyMs`. If the file does not exist, the hook is not wired — re-run `yakcc init` from the project root and restart Claude Code.
 
 ---
 
