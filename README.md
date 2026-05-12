@@ -64,7 +64,7 @@ parse-int-list demo — assembled by Yakcc v0
 yakcc init --target my-project/ [--peer https://registry.example.com]
 ```
 
-For the full walkthrough see `docs/USING_YAKCC.md`.
+For the full walkthrough see `docs/USING_YAKCC.md`. Testing the v0.5.0-alpha? See `docs/ALPHA.md` for the alpha-specific tester guide.
 
 ## Shaving your own code
 
