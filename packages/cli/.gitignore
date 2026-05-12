@@ -1,0 +1,6 @@
+# Binary output from build:binary script
+dist/yakcc-bin
+dist/yakcc-bin-linux-x64
+dist/yakcc-bin-darwin-arm64
+dist/yakcc-bin-darwin-x64
+dist/yakcc-bin-win32-x64.exe
