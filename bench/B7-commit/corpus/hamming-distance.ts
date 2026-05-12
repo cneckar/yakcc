@@ -8,6 +8,7 @@
  * @param a - First string.
  * @param b - Second string, must have the same length as `a`.
  * @returns The number of positions where `a` and `b` differ.
+ * @throws {RangeError} if `a` and `b` have different lengths.
  */
 export function hammingDistance(a: string, b: string): number {
   if (a.length !== b.length) {

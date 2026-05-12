@@ -24,7 +24,7 @@
 
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import * as fc from "fast-check";
 import { locateProjectRoot } from "./locate-root.js";
 
@@ -233,13 +233,25 @@ export const prop_locateProjectRoot_compound_result_is_ancestor_of_start = fc.as
       const deepDir = await mkdirChain(rootDir, segments);
       const result = await locateProjectRoot(deepDir);
 
-      // The result must be a prefix of deepDir (ancestor or equal).
-      // On POSIX, every ancestor of /a/b/c starts with /a (inclusive).
-      // We add a trailing separator to avoid false prefix matches like
-      // '/foo-bar' being a prefix of '/foo-bar-baz'.
-      const resultNorm = result.endsWith("/") ? result : `${result}/`;
-      const deepNorm = deepDir.endsWith("/") ? deepDir : `${deepDir}/`;
-      return deepNorm.startsWith(resultNorm);
+      // The result must be an ancestor of (or equal to) deepDir.
+      //
+      // @decision DEC-SHAVE-LOCATE-ROOT-WIN-001
+      // @title Platform-aware ancestor check using path.relative()
+      // @status accepted (issue #383 Windows regression fix)
+      // @rationale
+      //   The original check normalised paths with a trailing "/" and used
+      //   String.startsWith(), which hard-codes the POSIX separator. On Windows,
+      //   node's path.join() returns "\" separators, so concatenating "/" and
+      //   calling startsWith() produced false negatives (shrunk counterexample:
+      //   seed -1876568335, segments ["0"]).
+      //
+      //   path.relative(result, deepDir) is platform-aware: it returns "" when
+      //   paths are equal, a forward-only relative path when result is an ancestor
+      //   of deepDir, and starts with ".." (or is absolute, for drive-letter
+      //   mismatches on Windows) when it is not. This covers UNC paths, Windows
+      //   drive letters, and mixed-separator inputs correctly.
+      const rel = relative(result, deepDir);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
     } finally {
       await rm(rootDir, { recursive: true, force: true }).catch(() => {});
     }

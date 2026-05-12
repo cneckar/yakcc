@@ -226,17 +226,37 @@ function detectFunctionShape(code: string): FunctionShape {
 /**
  * Count non-blank, non-comment lines in the outermost function body.
  * Used for trivial-body detection.
+ *
+ * @decision DEC-HOOK-ATOM-CAPTURE-002
+ * @title JSDoc comment stripping before body-locator string-scan
+ * @status accepted (issue #383)
+ * @rationale
+ *   The original implementation found the first `{` in the raw source string,
+ *   which caused JSDoc tags like `@throws {RangeError}`, `@returns {Promise<T>}`,
+ *   `@param {number} n`, and `@type {string}` to be mistaken for the function
+ *   body opener. The fix strips all block JSDoc comments (`/** ... *\/`) before
+ *   the scan, then locates the first `{` in the comment-free code. This is the
+ *   preferred approach over full AST parsing because:
+ *     (a) ts-morph is NOT a direct dependency of @yakcc/hooks-base (would balloon scope)
+ *     (b) JSDoc block comments have a fixed shape `/** ... *\/` — the regex is robust
+ *     (c) Strip-then-scan preserves line/offset fidelity for statement counting
+ *   Future maintainers: if ts-morph is ever added to hooks-base, consider upgrading
+ *   to `getBody()?.getStatements().length` for exact AST-level statement counting.
  */
 function countBodyStatements(code: string): number {
-  const openIdx = code.indexOf("{");
+  // Strip JSDoc and other block comments before scanning for `{`.
+  // This prevents tags like `@throws {RangeError}` from being mistaken
+  // for the function body opener (issue #383).
+  const codeWithoutBlockComments = code.replace(/\/\*[\s\S]*?\*\//g, "");
+  const openIdx = codeWithoutBlockComments.indexOf("{");
   if (openIdx === -1) return 0;
 
   let depth = 0;
   let bodyStart = -1;
   let bodyEnd = -1;
 
-  for (let i = openIdx; i < code.length; i++) {
-    const ch = code[i];
+  for (let i = openIdx; i < codeWithoutBlockComments.length; i++) {
+    const ch = codeWithoutBlockComments[i];
     if (ch === "{") {
       if (depth === 0) bodyStart = i + 1;
       depth++;
@@ -251,7 +271,7 @@ function countBodyStatements(code: string): number {
 
   if (bodyStart === -1 || bodyEnd === -1) return 0;
 
-  return code
+  return codeWithoutBlockComments
     .slice(bodyStart, bodyEnd)
     .split("\n")
     .map((l) => l.trim())
