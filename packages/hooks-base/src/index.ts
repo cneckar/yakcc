@@ -375,15 +375,26 @@ export const HOOK_LATENCY_BUDGET_MS = 200;
  *       a discovery-side bug per D-HOOK-3). The latency check happens after
  *       the substitution attempt so we always have a result to return.
  *
- *   Observe-don't-mutate is preserved: substitution failure at any stage
- *   returns the original HookResponse unchanged; only successful substitution
- *   returns the modified response with substituted bytes.
+ *   @decision DEC-HOOK-ATOM-CAPTURE-001 (Phase 3 atomize extension)
+ *   When substitution is NOT fired, this wrapper now attempts atomization:
+ *   (5) atomizeEmission(originalCode, registry) — shape filter → shave pipeline
+ *       → registry.storeBlock. B6-safe (static strategy, offline, no network).
+ *   (6) If atomized: prepend `// @atom-new: <BMR[:8]> — yakcc:<name>` above the
+ *       original code in the returned result (same placement as D-HOOK-4 contract
+ *       comment). The ORIGINAL code is still used unchanged — only the comment is
+ *       prepended. No substitution occurs.
+ *   (7) Telemetry captures outcome="atomized" + atomsCreated=[BMR prefixes].
+ *
+ *   Observe-don't-mutate is preserved: substitution/atomize failure at any stage
+ *   returns the original HookResponse unchanged; only successful substitution or
+ *   atomization returns the modified response.
  *
  *   Cross-reference:
  *     DEC-HOOK-PHASE-1-001 (Phase 1 telemetry wrapper)
  *     DEC-HOOK-LAYER-001 (D-HOOK-2 tool-call rewrite, D-HOOK-3 latency)
  *     DEC-V3-DISCOVERY-D2-001 (auto-accept rule)
  *     DEC-V3-DISCOVERY-D3-001 (cornerstone #4: structural filter is binary)
+ *     DEC-HOOK-ATOM-CAPTURE-001 (D-HOOK-7: atom-creation-on-emission)
  *
  * @param registry     - Registry instance to query.
  * @param ctx          - Emission context from the IDE hook call.
@@ -435,6 +446,21 @@ export async function executeRegistryQueryWithSubstitution(
     ? (substitutionResult as import("./substitute.js").SubstitutionResult & { substituted: true }).atomHash
     : null;
 
+  // ── Phase 3 / D-HOOK-7: atomize path ─────────────────────────────────────
+  // When substitution did not fire, attempt to atomize the emission.
+  // The atomize path is ADDITIVE — it never changes the response when it fails.
+  // @decision DEC-HOOK-ATOM-CAPTURE-001
+  let atomizeResult: import("./atomize.js").AtomizeResult | null = null;
+  if (!substituted && originalCode.trim().length > 0 && process.env.YAKCC_HOOK_DISABLE_ATOMIZE !== "1") {
+    try {
+      const { atomizeEmission } = await import("./atomize.js");
+      atomizeResult = await atomizeEmission({ emittedCode: originalCode, toolName, registry });
+    } catch {
+      // Atomize failure must not affect the hook outcome (observe-don't-mutate).
+      atomizeResult = null;
+    }
+  }
+
   // Capture telemetry (fire-and-forget; errors swallowed).
   try {
     const { captureTelemetry } = await import("./telemetry.js");
@@ -443,6 +469,11 @@ export async function executeRegistryQueryWithSubstitution(
     const top1Score = scores[0] ?? null;
     const top2Score = scores[1] ?? 0;
     const top1Gap = top1Score !== null ? top1Score - top2Score : null;
+
+    const didAtomize = atomizeResult?.atomized === true;
+    const atomsBmrPrefixes = didAtomize && atomizeResult !== null
+      ? atomizeResult.atomsCreated.map((a) => a.blockMerkleRoot.slice(0, 8))
+      : undefined;
 
     captureTelemetry({
       intent: ctx.intent,
@@ -457,6 +488,8 @@ export async function executeRegistryQueryWithSubstitution(
       top1Score,
       top1Gap,
       latencyBudgetExceeded,
+      ...(didAtomize ? { outcomeOverride: "atomized" as const } : {}),
+      ...(atomsBmrPrefixes !== undefined ? { atomsCreated: atomsBmrPrefixes } : {}),
       ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
       ...(options.telemetryDir !== undefined ? { telemetryDir: options.telemetryDir } : {}),
     });
@@ -478,20 +511,58 @@ export async function executeRegistryQueryWithSubstitution(
     };
   }
 
+  // If atomization fired, prepend the @atom-new comment above the original code.
+  // The original code is unchanged — the comment is purely informational for the agent.
+  // @decision DEC-HOOK-ATOM-CAPTURE-001 (@atom-new comment placement)
+  if (atomizeResult?.atomized === true && atomizeResult.atomsCreated.length > 0) {
+    try {
+      const { renderAtomNewComment } = await import("./atomize.js");
+      const firstAtom = atomizeResult.atomsCreated[0];
+      if (firstAtom !== undefined) {
+        const comment = renderAtomNewComment(firstAtom.blockMerkleRoot, firstAtom.atomName);
+        return {
+          ...response,
+          substituted: false,
+          atomizedCode: `${comment}\n${originalCode}`,
+          atomsCreated: atomizeResult.atomsCreated,
+        };
+      }
+    } catch {
+      // Comment rendering failure is non-fatal — fall through to plain passthrough.
+    }
+  }
+
   return { ...response, substituted: false };
 }
 
 /**
- * HookResponse extended with Phase 2 substitution information.
+ * HookResponse extended with Phase 2 substitution and Phase 3 atomize information.
  *
  * The base HookResponse fields are unchanged (registry-hit | synthesis-required | passthrough).
- * Phase 2 adds substituted + optional substitutedCode + atomHash to the same object.
+ * Phase 2 adds substituted + optional substitutedCode + atomHash.
+ *
+ * @decision DEC-HOOK-ATOM-CAPTURE-001 (additive atomize fields)
+ * Phase 3 (D-HOOK-7) adds atomizedCode + atomsCreated to the non-substituted branch.
+ * When atomized === false AND atomizedCode is undefined, the original code is used
+ * unchanged (Phase 1 passthrough). When atomizedCode is defined, the caller should
+ * prepend the @atom-new comment to the written output.
  *
  * Callers check `result.substituted` first; if true, `result.substitutedCode` contains
- * the rendered substitution to write to disk instead of the agent's original code.
+ * the rendered substitution. If false, check `result.atomizedCode` — if defined, the
+ * @atom-new comment has been prepended; if undefined, passthrough (original code unchanged).
  */
 export type HookResponseWithSubstitution = HookResponse & (
-  | { readonly substituted: false }
+  | {
+      readonly substituted: false;
+      /** Present when the emission was atomized into the local registry (D-HOOK-7). */
+      readonly atomizedCode?: string;
+      /** Atoms created during atomization. Non-empty when atomizedCode is defined. */
+      readonly atomsCreated?: ReadonlyArray<{
+        readonly blockMerkleRoot: string;
+        readonly atomName: string;
+        readonly spec: { readonly name: string; readonly behavior: string };
+      }>;
+    }
   | { readonly substituted: true; readonly substitutedCode: string; readonly atomHash: string }
 );
 
