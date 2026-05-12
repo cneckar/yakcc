@@ -3,8 +3,35 @@
 // Entry point for the `yakcc` CLI binary.
 // Delegates to runCli and exits with the returned code.
 // WI-005 wires the real command handlers.
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { runCli } from "./index.js";
+import { patchSqliteDatabase } from "./pkg-native-compat.js";
+
+// Apply the pkg snapshot .so extraction patch before any registry command can
+// call db.loadExtension().  better-sqlite3 is a CJS module; we use createRequire
+// to access it so that patchSqliteDatabase receives the real Database constructor.
+// This is a no-op when running from source (insideSnapshot returns false).
+{
+  const _require = createRequire(import.meta.url);
+  try {
+    // better-sqlite3 is a CJS module; require() returns the Database
+    // constructor directly (not wrapped in { default: ... }).
+    const Database = _require("better-sqlite3") as {
+      prototype: { loadExtension?: (...a: unknown[]) => unknown };
+    };
+    patchSqliteDatabase(Database);
+  } catch (err) {
+    // better-sqlite3 not available at patch time; skip silently.
+    // The patch is best-effort: if it can't load here, the native
+    // addon may not be in the snapshot either, and the real error
+    // will surface when the command runs.
+    // Set YAKCC_DEBUG=1 to surface this warning for troubleshooting.
+    if (process.env.YAKCC_DEBUG && err instanceof Error) {
+      console.warn(`[yakcc] pkg-native-compat patch skipped: ${err.message}`);
+    }
+  }
+}
 
 /**
  * @decision DEC-CLI-BIN-MAIN-MODULE-001
