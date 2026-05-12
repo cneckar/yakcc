@@ -8,12 +8,17 @@ export default defineConfig({
     alias: {
       "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
       "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
-      // @yakcc/shave is aliased to its pre-built dist because the shave package
-      // has a tsc error in types.props.ts that prevents building from source.
-      // The dist is committed and valid. Tests that stub atomizeEmission bypass
-      // the shave runtime entirely; tests that exercise it end-to-end use the dist.
-      // @decision DEC-HOOK-ATOM-CAPTURE-001 (shave dist alias)
-      "@yakcc/shave": resolve(__dirname, "../shave/dist/index.js"),
+      // @yakcc/shave + @yakcc/ir aliased to src/ to remove the CI dependency on
+      // a built `dist/` (which is gitignored). Matches the workspace-source alias
+      // pattern established in PR #356 for contracts/registry. Vitest uses
+      // vite/esbuild for module loading, so the TS types pre-existing in shave's
+      // source don't need to compile cleanly — only runtime imports must resolve.
+      // @decision DEC-HOOK-ATOM-CAPTURE-001 (shave dist alias) — updated: now
+      // workspace-source alias for shave + ir, matching #356 pattern.
+      // @decision DEC-HOOKS-BASE-VITEST-SHAVE-SRC-001 — shave/ir aliased to src/
+      // to remove CI dependency on built dist.
+      "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
+      "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
     },
   },
   test: {
