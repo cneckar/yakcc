@@ -83,11 +83,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build required packages (skip @yakcc/shave — pre-existing broken)
+        # @decision DEC-V0-RELEASE-SMOKE-BUILD-ORDER-001 / WI-V0-SMOKE-SEEDS-BUILD (#390)
+        # @yakcc/ir MUST precede @yakcc/seeds (which imports from @yakcc/ir).
+        # Surfaced post-WI-385 first smoke run on 3937873 — both ubuntu and
+        # windows jobs failed at seeds build with "Cannot find module '@yakcc/ir'".
+        # NOT switching to `pnpm -r build` because that would build @yakcc/shave
+        # (pre-existing broken; deliberately skipped per the original sequence).
+        # Follow-up to WI-339 (#339), WI-348 (#348), WI-364 (#364), WI-385 (#385).
         run: |
           pnpm --filter @yakcc/contracts build
           pnpm --filter @yakcc/registry build
-          pnpm --filter @yakcc/seeds build
           pnpm --filter @yakcc/ir build
+          pnpm --filter @yakcc/seeds build
           pnpm --filter @yakcc/hooks-base build
           pnpm --filter @yakcc/hooks-claude-code build
           pnpm --filter @yakcc/cli build
@@ -150,11 +157,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build required packages (skip @yakcc/shave — pre-existing broken)
+        # @decision DEC-V0-RELEASE-SMOKE-BUILD-ORDER-001 / WI-V0-SMOKE-SEEDS-BUILD (#390)
+        # @yakcc/ir MUST precede @yakcc/seeds (which imports from @yakcc/ir).
+        # Surfaced post-WI-385 first smoke run on 3937873 — both ubuntu and
+        # windows jobs failed at seeds build with "Cannot find module '@yakcc/ir'".
+        # NOT switching to `pnpm -r build` because that would build @yakcc/shave
+        # (pre-existing broken; deliberately skipped per the original sequence).
+        # Follow-up to WI-339 (#339), WI-348 (#348), WI-364 (#364), WI-385 (#385).
         run: |
           pnpm --filter @yakcc/contracts build
           pnpm --filter @yakcc/registry build
-          pnpm --filter @yakcc/seeds build
           pnpm --filter @yakcc/ir build
+          pnpm --filter @yakcc/seeds build
           pnpm --filter @yakcc/hooks-base build
           pnpm --filter @yakcc/hooks-claude-code build
           pnpm --filter @yakcc/cli build
