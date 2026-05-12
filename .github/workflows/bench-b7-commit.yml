@@ -1,0 +1,107 @@
+# bench-b7-commit.yml — Nightly B7 time-to-commit benchmark CI
+#
+# @decision DEC-BENCH-B7-CI-001
+# @title Nightly B7 commit-latency workflow: ubuntu-latest multi-hardware measurement
+# @status accepted (WI-B7-SLICE-3, issue #396; closes #191)
+# @rationale
+#   Mirrors bench-b1-latency.yml exactly (same job shape, same Node/pnpm/Rust setup)
+#   with the bench command swapped to pnpm bench:commit and a 90-min timeout.
+#
+#   B7 runs 32 utilities × 2 cache states × 10 reps = 640 measurements per run.
+#   Each utility runs in a subprocess (Slice 3 fix for #393). Worst-case per-utility
+#   time is ~50s (10 cold reps at ~5s each). Total expected runtime: 25-35 min on
+#   ubuntu-latest. The 90-min timeout provides a 2.5x buffer.
+#
+#   Schedule: 09:05 UTC daily — offset by 5 min from B1 to avoid runner queue collision.
+#
+#   Concurrency: cancel-in-progress=true — nightly supersedes prior run (safe, independent
+#   measurements).
+#
+#   on-push-to-main: triggers on any push to main that touches bench/B7-commit/** or
+#   the harness. This gives a canary signal if a commit breaks the flywheel path.
+#
+#   Comment posting: gh issue comment on #191 after each run (same non-fatal pattern as B1).
+#
+#   Artifact: b7-commit-<run_number>, retained 90 days. Named slice3-<timestamp>.json
+#   inside the artifact — aligns with artifact filename convention from run.mjs.
+#
+#   Ubuntu-latest is the authoritative non-Windows hardware platform for B7 per
+#   PLAN.md § "Dependencies that must land before Slice 3 dispatch" (hardware substitution
+#   note: orchestrator is Windows-only; ubuntu-latest GHA accepted as the Linux reference).
+#
+#   Hardware label: the workflow passes --hardware-label ubuntu-latest-node22 to run.mjs
+#   so the artifact is tagged for the 4-cell results table.
+#
+# Triggers:
+#   - Scheduled: 09:05 UTC daily
+#   - workflow_dispatch: manual trigger (used by Slice 3 implementer for first CI run)
+#   - push to main (bench/B7-commit/** or harness)
+
+name: bench-b7-commit
+
+on:
+  schedule:
+    - cron: "5 9 * * *"   # 09:05 UTC daily — offset from B1 to avoid runner queue collision
+  workflow_dispatch:        # manual trigger (ad-hoc runs + Slice 3 first-run)
+  push:
+    branches: [ main ]
+    paths:
+      - "bench/B7-commit/**"
+      - "packages/hooks-base/src/atomize.ts"
+      - "packages/registry/src/**"
+
+concurrency:
+  group: bench-b7-commit
+  cancel-in-progress: true  # safe — each run is an independent measurement
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # B7: 32 utilities × 2 phases × subprocess overhead; 90 min = 2.5x buffer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build required packages (skip @yakcc/shave — pre-existing broken, DEC-SHAVE-SKIP-001)
+        run: |
+          pnpm --filter @yakcc/contracts build || true
+          pnpm --filter @yakcc/registry build || true
+          pnpm --filter @yakcc/hooks-base build || true
+          pnpm --filter @yakcc/cli build || true
+
+      - name: Run B7 commit-latency benchmark
+        run: node bench/B7-commit/harness/run.mjs --hardware-label ubuntu-latest-node22
+        timeout-minutes: 85
+
+      - name: Post results to issue #191
+        if: always()  # post even if benchmark exited non-zero; KILL verdict is the operator signal
+        # Non-fatal: if token scope doesn't allow issue comments, artifacts still upload.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node bench/B7-commit/post-nightly-comment.mjs || echo "Warning: comment posting failed (non-fatal)"
+
+      - name: Archive artifacts
+        if: always()  # archive even if benchmark exited non-zero
+        uses: actions/upload-artifact@v4
+        with:
+          name: b7-commit-${{ github.run_number }}
+          path: tmp/B7-commit/*.json
+          retention-days: 90

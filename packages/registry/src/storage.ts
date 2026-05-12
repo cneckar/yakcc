@@ -171,10 +171,37 @@ class SqliteRegistry implements Registry {
   private readonly autoRebuild: boolean;
   private closed = false;
 
+  // ---------------------------------------------------------------------------
+  // @decision DEC-V2-OCCURRENCE-WRITE-PERF-001
+  // @title Hoist DELETE + INSERT prepared statements outside the per-file loop
+  // @status decided (WI-V2-BOOTSTRAP-PERF-OCCURRENCES / issue #377)
+  // @rationale
+  //   Prior implementation called this.db.prepare(...) on every invocation of
+  //   replaceSourceFileOccurrences (once per source file during bootstrap).
+  //   With ~145 files, that is 290 wasted prepare() calls (DELETE + INSERT each).
+  //   better-sqlite3 prepare() parses and compiles SQL on every call; reusing the
+  //   same Statement object across files saves that compilation overhead.
+  //   The fix: prepare once in the constructor, bind new parameters per call.
+  //   Per-file transaction boundary (DEC-V2-OCCURRENCE-DELETE-INSERT-001) is
+  //   preserved — only the prepare() location moves, not the transaction scope.
+  // ---------------------------------------------------------------------------
+  private readonly stmtDeleteOccurrences: Database.Statement<[string, string]>;
+  private readonly stmtInsertOccurrence: Database.Statement<
+    [string, string, number, number, string]
+  >;
+
   constructor(db: Database.Database, embeddings: EmbeddingProvider, autoRebuild = false) {
     this.db = db;
     this.embeddings = embeddings;
     this.autoRebuild = autoRebuild;
+    // Prepare the occurrence write-path statements once for the lifetime of this
+    // registry instance. See @decision DEC-V2-OCCURRENCE-WRITE-PERF-001.
+    this.stmtDeleteOccurrences = db.prepare<[string, string]>(
+      "DELETE FROM block_occurrences WHERE source_pkg = ? AND source_file = ?",
+    );
+    this.stmtInsertOccurrence = db.prepare<[string, string, number, number, string]>(
+      "INSERT INTO block_occurrences(source_pkg, source_file, source_offset, length, block_merkle_root) VALUES (?, ?, ?, ?, ?)",
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1674,18 +1701,12 @@ class SqliteRegistry implements Registry {
       );
     }
 
-    const deleteOccurrences = this.db.prepare<[string, string]>(
-      "DELETE FROM block_occurrences WHERE source_pkg = ? AND source_file = ?",
-    );
-
-    const insertOccurrence = this.db.prepare<[string, string, number, number, string]>(
-      "INSERT INTO block_occurrences(source_pkg, source_file, source_offset, length, block_merkle_root) VALUES (?, ?, ?, ?, ?)",
-    );
-
+    // Use instance-level prepared statements (hoisted in constructor).
+    // See @decision DEC-V2-OCCURRENCE-WRITE-PERF-001 — no prepare() on the hot path.
     const txn = this.db.transaction(() => {
-      deleteOccurrences.run(sourcePkg, sourceFile);
+      this.stmtDeleteOccurrences.run(sourcePkg, sourceFile);
       for (const occ of occurrences) {
-        insertOccurrence.run(
+        this.stmtInsertOccurrence.run(
           occ.sourcePkg,
           occ.sourceFile,
           occ.sourceOffset,
@@ -1950,6 +1971,21 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
 
   // Enable WAL mode for better concurrent read performance.
   db.pragma("journal_mode = WAL");
+  // @decision DEC-V2-OCCURRENCE-WRITE-PERF-002
+  // @title Set synchronous=NORMAL for the registry (WAL already on)
+  // @status decided (WI-V2-BOOTSTRAP-PERF-OCCURRENCES / issue #377)
+  // @rationale
+  //   WAL mode was already enabled above. The default synchronous=FULL forces an
+  //   fsync on every transaction commit, which is the dominant I/O cost during
+  //   bootstrap (~145 commits × fsync overhead). NORMAL+WAL is safe here because:
+  //   (a) the registry is rebuilt from source on every bootstrap — a crash that
+  //       loses the partially-written registry is recoverable by re-running; and
+  //   (b) WAL still guarantees transaction atomicity (partial transactions roll
+  //       back); only the "flush to durable media on every commit" guarantee is
+  //       relaxed. NORMAL is the idiomatic SQLite setting for write-heavy workloads
+  //       where durability-on-crash is irrelevant. OFF was considered and rejected
+  //       (evaluation contract §6 — forbidden shortcut).
+  db.pragma("synchronous = NORMAL");
   // Enable foreign key enforcement.
   db.pragma("foreign_keys = ON");
 
