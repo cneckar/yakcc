@@ -9,8 +9,12 @@
 //   WI-V0-RELEASE-SMOKE (issue #360) — the load-bearing v0-release blocker.
 //   This script verifies that hook + discovery + substitution + atomize actually
 //   compose end-to-end for a fresh user project. The walkthrough is CI-driven on
-//   ubuntu-latest (Windows has a pre-existing bin.js bug per #274 — Step 2 and
-//   Step 3 are skipped-with-WARN on Windows rather than hard-failing).
+//   ubuntu-latest and windows-latest (see .github/workflows/v0-release-smoke.yml).
+//
+//   WI-ALPHA-WINDOWS-BIN-JS (#385): Windows-skip blocks for Steps 2/3/4 removed.
+//   The bin.js main-module guard was hardened with realpathSync in DEC-CLI-BIN-MAIN-MODULE-GUARD-WINDOWS-001,
+//   closing the Windows path-normalization edge cases that made the skip necessary.
+//   Steps 2/3/4 now run on Windows to produce real evidence of CLI correctness.
 //
 //   The simulated-Claude-Code-session approach uses executeRegistryQueryWithSubstitution
 //   from @yakcc/hooks-base directly to emulate what the Claude Code hook subprocess
@@ -27,10 +31,6 @@
 //     - Structured JSON written to tmp/v0-release-smoke/<timestamp>.json
 //     - Markdown table printed to stdout
 //     - Exit code 0 always (post-comment step reads the JSON regardless of outcome)
-//
-//   Ubuntu-only note: Steps 2 and 3 invoke the CLI binary. On Windows the bin.js
-//   import.meta.url path resolution is broken (#274). Those steps are skipped-with-WARN
-//   on process.platform === "win32".
 //
 // Usage:
 //   node bench/v0-release-smoke/smoke.mjs [--keep-scratch]
@@ -83,7 +83,6 @@ function resolveRepoRoot() {
 }
 
 const REPO_ROOT = resolveRepoRoot();
-const IS_WINDOWS = process.platform === "win32";
 const KEEP_SCRATCH = process.argv.includes("--keep-scratch");
 
 // ---------------------------------------------------------------------------
@@ -225,11 +224,6 @@ async function step2() {
   const name = "yakcc init --target <scratch>";
   const expected = ".yakcc/registry.sqlite exists, .yakccrc.json exists, idempotent re-run";
 
-  if (IS_WINDOWS) {
-    record(2, name, expected, "SKIPPED on Windows (bin.js import.meta.url bug #274)", false, true);
-    return;
-  }
-
   try {
     // Build the CLI if dist is stale or absent.
     const binPath = join(REPO_ROOT, "packages", "cli", "dist", "bin.js");
@@ -274,11 +268,6 @@ async function step3() {
   const name = "yakcc hooks claude-code install --target <scratch>";
   const expected = ".claude/settings.json references yakcc hook-intercept";
 
-  if (IS_WINDOWS) {
-    record(3, name, expected, "SKIPPED on Windows (bin.js import.meta.url bug #274)", false, true);
-    return;
-  }
-
   try {
     const r = runCli(["hooks", "claude-code", "install", "--target", SCRATCH_DIR], REPO_ROOT);
     if (r.error) {
@@ -317,11 +306,6 @@ async function step3() {
 async function step4() {
   const name = "Verify hook installed in .claude/settings.json";
   const expected = "parse-clean JSON, yakcc PreToolUse entry present pointing to hook-intercept";
-
-  if (IS_WINDOWS) {
-    record(4, name, expected, "SKIPPED on Windows (depends on Step 3 which was skipped)", false, true);
-    return;
-  }
 
   try {
     const settingsPath = join(SCRATCH_DIR, ".claude", "settings.json");

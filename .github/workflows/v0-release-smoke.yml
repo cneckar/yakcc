@@ -8,9 +8,10 @@
 #   This workflow verifies that hook + discovery + substitution + atomize compose
 #   correctly for a fresh user project in a clean ubuntu-latest environment.
 #
-#   UBUNTU-ONLY: Windows has a pre-existing bin.js import.meta.url path bug (#274).
-#   Steps 2-3 (CLI invocation) are skipped-with-WARN on Windows. This workflow
-#   runs exclusively on ubuntu-latest so the authoritative verdict is meaningful.
+#   UBUNTU-ONLY note removed: WI-ALPHA-WINDOWS-BIN-JS (#385) added a smoke-windows
+#   job on windows-latest. Steps 2/3/4 now run on Windows after the bin.js main-module
+#   guard was hardened with realpathSync (DEC-CLI-BIN-MAIN-MODULE-GUARD-WINDOWS-001).
+#   The ubuntu job remains the authoritative signal; the windows job produces evidence.
 #
 #   SCHEDULE: 10:00 UTC daily — after the B1 nightly benchmark (09:00 UTC) so
 #   both nightly jobs don't compete for runner capacity during peak UTC morning.
@@ -35,7 +36,7 @@
 #   lazily; shave is already compiled as a dep of hooks-base).
 #
 #   ARTIFACT RETENTION: 90 days. Each artifact named v0-release-smoke-<run_number>
-#   for trend analysis.
+#   for trend analysis. Windows artifacts named v0-release-smoke-windows-<run_number>.
 #
 # Triggers:
 #   - Scheduled: 10:00 UTC daily
@@ -109,5 +110,65 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: v0-release-smoke-${{ github.run_number }}
+          path: tmp/v0-release-smoke/*.json
+          retention-days: 90
+
+  # @decision DEC-V0-RELEASE-SMOKE-CI-WINDOWS-001
+  # @title Add windows-latest smoke job to produce Windows CLI evidence (#385)
+  # @status accepted
+  # @rationale WI-ALPHA-WINDOWS-BIN-JS (#385): the smoke runner previously hardcoded
+  #   IS_WINDOWS skips for Steps 2/3/4, so Windows CI evidence was impossible.
+  #   After removing those skips and hardening bin.ts with realpathSync, this job
+  #   runs the same smoke walkthrough on windows-latest to prove Steps 2/3/4 pass.
+  #   POST-COMMENT step is intentionally omitted — the ubuntu job owns the single
+  #   comment on issue #360. Posting twice (ubuntu + windows) would spam the thread.
+  #   The windows artifact (v0-release-smoke-windows-<run_number>) is the evidence.
+  #   Non-fatal by the same policy as the ubuntu job: smoke.mjs exits 0 regardless
+  #   of step results; the operator reads the artifact JSON for the verdict.
+  smoke-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build required packages (skip @yakcc/shave — pre-existing broken)
+        run: |
+          pnpm --filter @yakcc/contracts build
+          pnpm --filter @yakcc/registry build
+          pnpm --filter @yakcc/seeds build
+          pnpm --filter @yakcc/ir build
+          pnpm --filter @yakcc/hooks-base build
+          pnpm --filter @yakcc/hooks-claude-code build
+          pnpm --filter @yakcc/cli build
+
+      - name: Run v0-release smoke walkthrough (Windows)
+        id: smoke-windows
+        # NOTE: smoke.mjs always exits 0; step failures are captured in the artifact.
+        # Steps 2/3/4 now run on Windows (IS_WINDOWS skips removed, #385).
+        run: node bench/v0-release-smoke/smoke.mjs
+
+      - name: Archive Windows smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0-release-smoke-windows-${{ github.run_number }}
           path: tmp/v0-release-smoke/*.json
           retention-days: 90
