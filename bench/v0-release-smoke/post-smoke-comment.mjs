@@ -8,10 +8,10 @@
 // @rationale
 //   This script is called by v0-release-smoke.yml after smoke.mjs completes
 //   (always, including on partial-pass runs). It reads the most-recent artifact
-//   JSON from tmp/v0-release-smoke/, formats a Markdown comment with the 10-step
+//   JSON from tmp/v0-release-smoke/, formats a Markdown comment with the step
 //   pass/fail table, and posts to issue #360 via `gh issue comment`.
 //
-//   Auto-close policy: if all 10 steps pass (summary.allPass === true AND
+//   Auto-close policy: if all steps pass (summary.allPass === true AND
 //   summary.warned === 0), the script also calls `gh issue close 360` with a
 //   certification comment. If any steps warn or fail, the issue is left open
 //   and the comment carries the diagnosis.
@@ -114,8 +114,9 @@ function formatComment(artifact) {
         "",
         "---",
         "",
-        "> All 10 steps passed on ubuntu-latest.",
-        "> The hook + discovery + substitution + atomize pipeline composes correctly for a fresh user project.",
+        `> All ${steps?.length ?? "?"} steps passed on ubuntu-latest.`,
+        "> The hook + discovery + substitution + atomize flywheel composes correctly for a fresh user project.",
+        "> Steps 8b and 9 (load-bearing flywheel) confirmed: novel emission atomized and round-trip query found it.",
         "> Auto-closing per WI-V0-RELEASE-SMOKE acceptance criteria.",
       ]
     : [
@@ -200,9 +201,11 @@ async function main() {
   // Auto-close only when ALL steps truly pass (no warns, no fails).
   const { summary } = artifact;
   if (summary.allPass && summary.warned === 0 && summary.failed === 0) {
-    console.log("post-smoke-comment: all 10 steps pass — closing issue #360");
+    const stepCount = artifact.steps?.length ?? "?";
+    console.log(`post-smoke-comment: all ${stepCount} steps pass — closing issue #360`);
     const closeResult = ghClose(
-      "All 10 steps pass on ubuntu-latest — v0-release smoke verified. " +
+      `All ${stepCount} steps pass on ubuntu-latest — v0-release smoke verified. ` +
+        "Steps 8b (flywheel atomize) and 9 (round-trip query) confirmed load-bearing flywheel spins. " +
         "Auto-closing per WI-V0-RELEASE-SMOKE acceptance criteria (issue #360).",
     );
     if (closeResult.error || closeResult.status !== 0) {

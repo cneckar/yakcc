@@ -102,7 +102,7 @@ mkdirSync(ARTIFACT_DIR, { recursive: true });
 // Step result accumulator
 // ---------------------------------------------------------------------------
 
-/** @type {Array<{step: number, name: string, expected: string, actual: string, pass: boolean, warn: boolean, errorExcerpt?: string}>} */
+/** @type {Array<{step: number|string, name: string, expected: string, actual: string, pass: boolean, warn: boolean, errorExcerpt?: string}>} */
 const results = [];
 
 function record(step, name, expected, actual, pass, warn = false, errorExcerpt = undefined) {
@@ -113,6 +113,24 @@ function record(step, name, expected, actual, pass, warn = false, errorExcerpt =
     console.log(`       Error: ${errorExcerpt.slice(0, 200)}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cross-step state (Step 8b → Step 9 BMR hand-off)
+// ---------------------------------------------------------------------------
+
+/**
+ * BMR returned by Step 8b atomization.
+ * Set by step8b(), consumed by step9() to verify round-trip.
+ * @type {string | null}
+ */
+let step8bBmr = null;
+
+/**
+ * Effective registry path used by Step 8b.
+ * step9() must reopen the SAME file to find the just-created atom.
+ * @type {string | null}
+ */
+let step8bRegistryPath = null;
 
 // ---------------------------------------------------------------------------
 // CLI invocation helper
@@ -557,18 +575,18 @@ async function step7() {
 }
 
 // ---------------------------------------------------------------------------
-// STEP 8 — Atomize-on-emission trigger simulation (novel-glue.ts)
+// STEP 8a — Shape-filter graceful rejection (chunkArray generic fixture)
 // ---------------------------------------------------------------------------
 
-async function step8() {
-  const name = "Atomize-on-emission trigger simulation (novel-glue.ts)";
+async function step8a() {
+  const name = "Shape-filter graceful rejection on generic-typed code (novel-glue.ts / chunkArray)";
   const expected =
-    "substitution=false (no match), atomize fires or graceful non-atom shape, scratch registry persists";
+    "substitution=false (no match), atomize skipped (generic type param declined by static strategy), non-fatal";
 
   try {
     const hooksBaseDist = join(REPO_ROOT, "packages", "hooks-base", "dist", "index.js");
     if (!existsSync(hooksBaseDist)) {
-      record(8, name, expected, "@yakcc/hooks-base dist not found", false, false,
+      record("8a", name, expected, "@yakcc/hooks-base dist not found", false, false,
         `expected at ${hooksBaseDist}`);
       return;
     }
@@ -581,7 +599,7 @@ async function step8() {
 
     const effectiveRegistryPath = existsSync(registryPath)
       ? registryPath
-      : join(ARTIFACT_DIR, `tmp-registry-step8-${RUN_ID}.sqlite`);
+      : join(ARTIFACT_DIR, `tmp-registry-step8a-${RUN_ID}.sqlite`);
 
     const registry = await openRegistry(effectiveRegistryPath);
 
@@ -596,7 +614,7 @@ async function step8() {
       ctx,
       novelCode,
       "Write",
-      { threshold: 0.3, sessionId: `smoke-step8-${RUN_ID}` },
+      { threshold: 0.3, sessionId: `smoke-step8a-${RUN_ID}` },
     );
 
     await registry.close();
@@ -605,56 +623,168 @@ async function step8() {
     const atomized = result.atomsCreated !== undefined && result.atomsCreated.length > 0;
     const atomizedCode = result.atomizedCode !== undefined;
 
-    // Step 8 passes if:
-    //   - substituted=false (novel code should NOT match existing atoms), AND
-    //   - either atomized or the shape filter gracefully skipped (non-fatal)
-    const pass = !substituted; // core requirement: must NOT be substituted
+    // Step 8a passes if the code was NOT substituted (novel code should not match
+    // existing atoms). Whether atomize fires or the shape/shave filter declines is
+    // both acceptable — the test confirms graceful non-crash behaviour.
+    const pass = !substituted;
 
     let actual;
     if (substituted) {
-      actual = `substituted=true (unexpected — novel code matched an existing atom)`;
+      actual = `substituted=true (unexpected — chunkArray matched an existing atom)`;
     } else if (atomized) {
       const names = result.atomsCreated.map((a) => a.atomName).join(", ");
-      actual = `substituted=false, atomized=true, atoms=[${names}], @atom-new comment present=${atomizedCode}`;
+      actual = `substituted=false, atomized=true (unexpected but not wrong), atoms=[${names}], @atom-new present=${atomizedCode}`;
     } else {
-      actual = `substituted=false, atomized=false (shape filter skipped or shave-rejected — non-fatal), kind=${result.kind}`;
+      actual = `substituted=false, atomized=false (shape/shave-filter skipped — expected for generic <T> code), kind=${result.kind}`;
     }
 
-    record(8, name, expected, actual, pass);
+    record("8a", name, expected, actual, pass);
   } catch (err) {
-    record(8, name, expected, "exception", false, false, String(err));
+    record("8a", name, expected, "exception", false, false, String(err));
   }
 }
 
 // ---------------------------------------------------------------------------
-// STEP 9 — Round-trip flywheel: query for newly atomized atom
+// STEP 8b — LOAD-BEARING: flywheel atomization (arrayMedian fixture)
 // ---------------------------------------------------------------------------
 
-async function step9() {
-  const name = "Round-trip flywheel: query registry for novel atom after step 8";
+async function step8b() {
+  const name = "LOAD-BEARING: flywheel atomization (novel-glue-flywheel.ts / arrayMedian)";
   const expected =
-    "atomized atom is discoverable; if step 8 atomized, query returns it; if not atomized, verify graceful state";
+    "substitution=false, atomized=true, atomsCreated non-empty, @atom-new comment emitted";
 
   try {
-    const registryDist = join(REPO_ROOT, "packages", "registry", "dist", "index.js");
-    const { openRegistry } = await import(pathToImportUrl(registryDist));
-
-    const registryPath = join(SCRATCH_DIR, ".yakcc", "registry.sqlite");
-    const effectiveRegistryPath = existsSync(registryPath)
-      ? registryPath
-      : join(ARTIFACT_DIR, `tmp-registry-step8-${RUN_ID}.sqlite`);
-
-    if (!existsSync(effectiveRegistryPath)) {
-      record(9, name, expected, "registry from step 8 not found — step 8 must have failed", false, false,
-        `path=${effectiveRegistryPath}`);
+    const hooksBaseDist = join(REPO_ROOT, "packages", "hooks-base", "dist", "index.js");
+    if (!existsSync(hooksBaseDist)) {
+      record("8b", name, expected, "@yakcc/hooks-base dist not found", false, false,
+        `expected at ${hooksBaseDist}`);
       return;
     }
 
+    const { executeRegistryQueryWithSubstitution } = await import(pathToImportUrl(hooksBaseDist));
+
+    const registryPath = join(SCRATCH_DIR, ".yakcc", "registry.sqlite");
+    const registryDist = join(REPO_ROOT, "packages", "registry", "dist", "index.js");
+    const { openRegistry } = await import(pathToImportUrl(registryDist));
+
+    // Use a dedicated registry for the flywheel test so Step 9 can reopen it.
+    // We prefer the scratch registry if it exists (from Step 2); otherwise create
+    // a fresh temporary file. The flywheel registry path is captured in step8bRegistryPath
+    // so Step 9 can reopen the SAME database and find the just-stored atom.
+    const effectiveRegistryPath = existsSync(registryPath)
+      ? registryPath
+      : join(ARTIFACT_DIR, `tmp-registry-step8b-${RUN_ID}.sqlite`);
+
+    // Record the path so Step 9 opens the same registry.
+    step8bRegistryPath = effectiveRegistryPath;
+
     const registry = await openRegistry(effectiveRegistryPath);
 
-    // Query for the novel atom's intent.
+    const flywheelCode = readFileSync(join(__dirname, "fixtures", "novel-glue-flywheel.ts"), "utf8");
+
+    // Intent text distinct from any seed atom — ensures the substitute path declines
+    // and the atomize path fires. The JSDoc of arrayMedian is the canonical text.
+    const ctx = {
+      intent: "Compute the median of a numeric array using O(n log n) sort. Returns NaN for empty arrays.",
+      sourceContext: "TypeScript pure function; no side effects; plain number[] input and output",
+    };
+
+    const result = await executeRegistryQueryWithSubstitution(
+      registry,
+      ctx,
+      flywheelCode,
+      "Write",
+      { threshold: 0.3, sessionId: `smoke-step8b-${RUN_ID}` },
+    );
+
+    await registry.close();
+
+    const substituted = result.substituted === true;
+    const atomized = result.atomsCreated !== undefined && result.atomsCreated.length > 0;
+    const atomizedCode = result.atomizedCode !== undefined;
+
+    if (substituted) {
+      // arrayMedian is novel — if it substituted an existing atom that is unexpected.
+      record("8b", name, expected,
+        "substituted=true (unexpected — arrayMedian matched an existing atom; flywheel trivially verified)",
+        true, // not a hard failure — the registry found something, which is still useful
+      );
+      return;
+    }
+
+    if (!atomized) {
+      // atomize did not fire — the static strategy likely declined the shape.
+      // This is a FAIL for the load-bearing flywheel check.
+      record("8b", name, expected,
+        `substituted=false, atomized=false (FAIL — static strategy declined arrayMedian; kind=${result.kind})`,
+        false, false,
+        `atomsCreated undefined or empty; atomizedCode=${atomizedCode}`,
+      );
+      return;
+    }
+
+    // atomized=true — capture the BMR for Step 9's round-trip check.
+    const firstAtom = result.atomsCreated[0];
+    if (firstAtom !== undefined) {
+      step8bBmr = firstAtom.blockMerkleRoot;
+    }
+
+    const names = result.atomsCreated.map((a) => a.atomName).join(", ");
+    const bmrShort = firstAtom !== undefined ? firstAtom.blockMerkleRoot.slice(0, 8) : "unknown";
+    const actual = `substituted=false, atomized=true, atoms=[${names}], BMR[:8]=${bmrShort}, @atom-new present=${atomizedCode}`;
+
+    record("8b", name, expected, actual, true);
+  } catch (err) {
+    record("8b", name, expected, "exception", false, false, String(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// STEP 9 — LOAD-BEARING round-trip flywheel: query for the atom created in Step 8b
+// ---------------------------------------------------------------------------
+
+async function step9() {
+  const name = "LOAD-BEARING round-trip: query registry for arrayMedian atom created in Step 8b";
+  const expected =
+    "top-K candidates include the BMR from Step 8b; top-1 combinedScore >= 0.70 (CONFIDENT_THRESHOLD)";
+
+  // The CONFIDENT_THRESHOLD from hooks-base (CONFIDENT_THRESHOLD constant).
+  const CONFIDENT_THRESHOLD = 0.70;
+
+  try {
+    // If Step 8b did not atomize, we cannot verify the round-trip.
+    if (step8bBmr === null || step8bRegistryPath === null) {
+      const step8bResult = results.find((r) => r.step === "8b");
+      if (step8bResult && step8bResult.pass) {
+        // Step 8b passed but BMR was not captured — unexpected.
+        record(9, name, expected,
+          "Step 8b passed but no BMR was captured — cannot verify round-trip",
+          false, false, "step8bBmr is null even though step8b.pass=true");
+      } else {
+        // Step 8b failed (static strategy declined arrayMedian) — record diagnostic WARN.
+        record(9, name, expected,
+          "SKIPPED — Step 8b did not atomize (static strategy declined fixture; flywheel unverified)",
+          false, true);
+      }
+      return;
+    }
+
+    const registryDist = join(REPO_ROOT, "packages", "registry", "dist", "index.js");
+    const { openRegistry } = await import(pathToImportUrl(registryDist));
+
+    if (!existsSync(step8bRegistryPath)) {
+      record(9, name, expected,
+        `registry file from Step 8b not found at ${step8bRegistryPath}`,
+        false, false, "registry file missing");
+      return;
+    }
+
+    const registry = await openRegistry(step8bRegistryPath);
+
+    // Query for arrayMedian's behavior — the JSDoc text used as the intent in Step 8b.
+    // This is the load-bearing assertion: the corpus grows on emission.
     const intentQuery = {
-      behavior: "chunk an array into fixed-size sub-arrays",
+      behavior: "Compute the median of a numeric array using O(n log n) sort. Returns NaN for empty arrays.",
       inputs: [],
       outputs: [],
     };
@@ -662,26 +792,26 @@ async function step9() {
     const candidates = await registry.findCandidatesByIntent(intentQuery, { k: 5 });
     await registry.close();
 
-    // The CONFIDENT_THRESHOLD from hooks-base is 0.70.
-    const CONFIDENT_THRESHOLD = 0.70;
-
     if (candidates.length === 0) {
-      // If step 8 didn't atomize (shape filter skipped), this is expected.
-      const step8Result = results.find((r) => r.step === 8);
-      if (step8Result && step8Result.actual.includes("atomized=false")) {
-        record(9, name, expected,
-          "no candidates found (expected — step 8 shape-filter skipped, no atom was created)", true);
-      } else {
-        record(9, name, expected, "no candidates found after atomization — flywheel may be broken", false, false,
-          "expected at least 1 candidate after step 8 atomized");
-      }
+      record(9, name, expected,
+        "FAIL — no candidates found after Step 8b atomization; flywheel is broken",
+        false, false,
+        `BMR from Step 8b: ${step8bBmr}; registry: ${step8bRegistryPath}`);
       return;
     }
 
+    // Verify the top-K contains the BMR created by Step 8b.
+    const returnedBmrs = candidates.map((c) => c.block.blockMerkleRoot);
+    const bmrFound = returnedBmrs.some((bmr) => bmr === step8bBmr);
+
+    // Compute combinedScore for the top-1 candidate.
     const top = candidates[0];
-    // Convert cosineDistance to combinedScore (same formula as hooks-base).
-    // sqlite-vec returns L2 distance; combinedScore = 1 - L2^2/4
+    // sqlite-vec returns cosine distance in [0, 2] for unit-norm vectors.
+    // combinedScore formula (same as hooks-base's candidatesToCombinedScores):
+    //   combinedScore = 1 - cosineDistance^2 / 4
+    // This maps: distance=0 → score=1.0 (perfect), distance=2 → score=0.0 (orthogonal).
     const combinedScore = Math.max(0, Math.min(1, 1 - (top.cosineDistance * top.cosineDistance) / 4));
+    const isConfident = combinedScore >= CONFIDENT_THRESHOLD;
 
     let topBehavior = "";
     try {
@@ -691,9 +821,20 @@ async function step9() {
       topBehavior = top.block.specHash ?? "unknown";
     }
 
-    const isConfident = combinedScore >= CONFIDENT_THRESHOLD;
-    const actual = `${candidates.length} candidates; top combinedScore=${combinedScore.toFixed(4)} (threshold=${CONFIDENT_THRESHOLD}); behavior="${topBehavior.slice(0, 80)}"`;
-    record(9, name, expected, actual, true); // pass if we got candidates at all
+    const bmrShort = step8bBmr.slice(0, 8);
+    const actual = [
+      `${candidates.length} candidates`,
+      `BMR[${bmrShort}] in top-K=${bmrFound}`,
+      `top-1 combinedScore=${combinedScore.toFixed(4)} (threshold=${CONFIDENT_THRESHOLD}, confident=${isConfident})`,
+      `behavior="${topBehavior.slice(0, 80)}"`,
+    ].join("; ");
+
+    // Pass if: the BMR from Step 8b appears in top-K (round-trip proven).
+    // A confident score is informational — the primary assertion is BMR presence.
+    const pass = bmrFound;
+    const errorExcerpt = pass ? undefined : `BMR ${step8bBmr} not in top-K: [${returnedBmrs.join(", ")}]`;
+
+    record(9, name, expected, actual, pass, false, errorExcerpt);
   } catch (err) {
     record(9, name, expected, "exception", false, false, String(err));
   }
@@ -744,7 +885,8 @@ async function main() {
   await step5();
   await step6();
   await step7();
-  await step8();
+  await step8a();
+  await step8b();
   await step9();
   await step10();
 
@@ -800,7 +942,7 @@ main().catch((err) => {
     platform: process.platform,
     fatalError: String(err),
     steps: results,
-    summary: { passed: 0, warned: 0, failed: 10, allPass: false },
+    summary: { passed: 0, warned: 0, failed: 11, allPass: false },
   };
   writeFileSync(ARTIFACT_PATH, JSON.stringify(failArtifact, null, 2), "utf8");
   process.exit(0);

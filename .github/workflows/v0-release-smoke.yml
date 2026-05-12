@@ -22,8 +22,8 @@
 #   the comment is the operator signal. A future gate (separate job or check)
 #   can parse the artifact JSON and set a hard exit if needed.
 #
-#   AUTO-CLOSE: post-smoke-comment.mjs closes issue #360 when all 10 steps pass
-#   AND warned === 0. If gh CLI lacks scope for issue.write, the close attempt
+#   AUTO-CLOSE: post-smoke-comment.mjs closes issue #360 when all steps pass
+#   (summary.allPass && warned === 0). If gh CLI lacks scope for issue.write, the close attempt
 #   fails non-fatally (gh CLI step exits 0 via the script's own try/catch).
 #
 #   CONCURRENCY: cancel-in-progress=true — a newer nightly supersedes the prior
