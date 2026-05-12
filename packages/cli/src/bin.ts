@@ -3,9 +3,9 @@
 // Entry point for the `yakcc` CLI binary.
 // Delegates to runCli and exits with the returned code.
 // WI-005 wires the real command handlers.
+import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { realpathSync } from "node:fs";
 import { runCli } from "./index.js";
 import { patchSqliteDatabase } from "./pkg-native-compat.js";
 

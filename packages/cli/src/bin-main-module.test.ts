@@ -27,8 +27,8 @@
  * filesystem paths (import.meta.url of THIS test file).
  */
 
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("bin main-module guard — cross-platform path round-trip (DEC-CLI-BIN-MAIN-MODULE-001)", () => {
@@ -169,9 +169,7 @@ describe("bin main-module guard — realpathSync hardening (DEC-CLI-BIN-MAIN-MOD
     //
     // We prove the fallback path is reachable and produces stable output.
     const nonExistentPath =
-      process.platform === "win32"
-        ? "C:\\does-not-exist\\bin.js"
-        : "/does-not-exist/bin.js";
+      process.platform === "win32" ? "C:\\does-not-exist\\bin.js" : "/does-not-exist/bin.js";
 
     let threwEnoent = false;
     try {
