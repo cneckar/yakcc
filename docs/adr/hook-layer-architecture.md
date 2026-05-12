@@ -212,6 +212,90 @@ Phase 5 is explicitly conditional. If neither the Codex CLI base grows nor the d
 
 ---
 
+### D-HOOK-7: atom-creation-on-emission (bidirectional hook write path)
+
+**Decision:** The hook layer is bidirectional. Every intercepted tool call either (a) substitutes an existing atom (D-HOOK-2 read path) OR (b) atomizes the emission as a new registry atom (D-HOOK-7 write path). This closes the "every session grows the corpus" thesis (#362).
+
+**Rationale:** Without the write path, atoms only enter the registry via bulk `yakcc bootstrap` (shave). Sessions are read-only from the corpus perspective — the flywheel never spins. With D-HOOK-7:
+
+- Atoms authored by the LLM in any session passively enter the local registry.
+- Future sessions discover those atoms via the normal discovery query (D-HOOK-6).
+- At federation scale (F1+), each user's locally-accumulated atoms can be shared with peers.
+- The corpus densifies over time without any explicit user action.
+
+**Shape filter** (per acceptance criteria, issue #362):
+
+| Shape | Atomize? | Rationale |
+|---|---|---|
+| Exported function with JSDoc | Yes | Clearest atom shape; JSDoc → IntentCard via static extractor |
+| Exported function without JSDoc | Maybe (skipOnNoJsdoc flag) | Intent inferred from name + signature; lower quality but valid |
+| Inner function / arrow expression | No | Not addressable; scoped inside a container |
+| Test code (`*.test.ts`, `*.spec.ts`) | No | Not corpus-eligible; test-framework heuristic applied |
+| Type-only emissions | No | Atoms have runtime behavior; types are not executable |
+| Trivial body (< 3 statements) | No | Not worth registry weight; simple wrappers excluded |
+
+Detection is heuristic (regex-based, no full AST). Conservative: false negatives preferred over false positives.
+
+**License policy:**
+
+- SPDX header present → use as-is.
+- SPDX header absent → auto-prepend `// SPDX-License-Identifier: MIT` (v0 default).
+- GPL / AGPL detected → refuse; reason `"license-missing"`. No atom stored.
+- Future: `.yakccrc.json` override deferred to a later WI.
+
+**INSERT OR IGNORE dedup discipline:**
+
+`registry.storeBlock()` uses `INSERT OR IGNORE`. Atoms are content-addressed via BlockMerkleRoot (`BLAKE3(spec_hash || impl_hash || proof_root)`). Two `atomizeEmission` calls on identical code produce the same BMR; the second store is a no-op. The second `atomizeEmission` call may return `atomized=false` because `universalize()` detects the atom already in registry via `findByCanonicalAstHash` and returns a `PointerEntry` (not `novel-glue`). This is correct behavior — the corpus does not accumulate duplicates.
+
+**Local-only (v0):**
+
+All stores go to the local SQLite registry. No outbound network calls. Federation (`yakcc federation mirror`) is a future WI. B6 air-gap is preserved: `universalize()` is called with `strategy: "static"` + `offline: true` — pure AST analysis via ts-morph, no Anthropic API key, no HTTP.
+
+**Pipeline:**
+
+```
+atomizeEmission(input)
+  → shape filter (regex heuristic)
+  → license header injection (MIT default)
+  → shave.universalize(source, registry, { intentStrategy: "static", offline: true })
+    → detectLicense + licenseGate (accept/refuse)
+    → decompose (ts-morph AST, offline)
+    → slice (DFG slicer, offline)
+    → extractIntent (static JSDoc extractor, offline)
+  → for each NovelGlueEntry with intentCard:
+      buildBlockRow → registry.storeBlock (INSERT OR IGNORE)
+  → AtomizeResult { atomized, atomsCreated[], reason? }
+```
+
+**Telemetry (additive per D-HOOK-5):**
+
+Atomization events extend the existing `TelemetryEvent` schema with two additive optional fields (backwards-compatible; Phase 1/2 events omit them):
+
+```ts
+outcome: "atomized"         // new discriminant (existing: registry-hit | synthesis-required | passthrough)
+atomsCreated: string[]      // BMR[:8] prefixes of atoms created this event
+```
+
+**@atom-new comment format:**
+
+When atomization succeeds, the hook prepends a comment to the output:
+
+```
+// @atom-new: <BMR[:8]> — yakcc:<atomName>
+```
+
+Parallels the `// @atom <name>` contract comment from D-HOOK-4, but distinguishable by the `-new:` suffix. Enables agents to distinguish newly-created atoms from substituted ones. Future tooling can grep `@atom-new:` to audit session contributions.
+
+**Implementation:**
+
+- `packages/hooks-base/src/atomize.ts` — core atomizeEmission() function (DEC-HOOK-ATOM-CAPTURE-001)
+- `packages/hooks-base/src/index.ts` — wire-in after substitution check in `executeRegistryQueryWithSubstitution()`
+- `packages/hooks-base/src/telemetry.ts` — additive outcome + atomsCreated fields
+- `packages/hooks-base/test/atomize.test.ts` — A1–A8 integration tests including flywheel round-trip (A8)
+- **Reference issue:** #362
+
+---
+
 ## References
 
 - Issue: https://github.com/cneckar/yakcc/issues/194

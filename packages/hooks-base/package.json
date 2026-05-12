@@ -19,7 +19,8 @@
     "@noble/hashes": "^2.2.0",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/ir": "workspace:*",
-    "@yakcc/registry": "workspace:*"
+    "@yakcc/registry": "workspace:*",
+    "@yakcc/shave": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

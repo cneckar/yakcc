@@ -1,0 +1,113 @@
+# v0-release-smoke.yml — Daily end-to-end smoke walkthrough CI
+#
+# @decision DEC-V0-RELEASE-SMOKE-CI-001
+# @title v0-release smoke CI: ubuntu-latest authoritative, daily + on-push schedule
+# @status accepted
+# @rationale
+#   WI-V0-RELEASE-SMOKE (issue #360) — the load-bearing v0-release blocker.
+#   This workflow verifies that hook + discovery + substitution + atomize compose
+#   correctly for a fresh user project in a clean ubuntu-latest environment.
+#
+#   UBUNTU-ONLY: Windows has a pre-existing bin.js import.meta.url path bug (#274).
+#   Steps 2-3 (CLI invocation) are skipped-with-WARN on Windows. This workflow
+#   runs exclusively on ubuntu-latest so the authoritative verdict is meaningful.
+#
+#   SCHEDULE: 10:00 UTC daily — after the B1 nightly benchmark (09:00 UTC) so
+#   both nightly jobs don't compete for runner capacity during peak UTC morning.
+#   Also triggers on every push to main to validate each merge immediately.
+#
+#   NON-FATAL SMOKE STEP: smoke.mjs always exits 0 regardless of step results.
+#   The post-comment step fires unconditionally (if: always()) and posts the
+#   step-by-step table to issue #360. CI does not fail on a partial-pass smoke —
+#   the comment is the operator signal. A future gate (separate job or check)
+#   can parse the artifact JSON and set a hard exit if needed.
+#
+#   AUTO-CLOSE: post-smoke-comment.mjs closes issue #360 when all steps pass
+#   (summary.allPass && warned === 0). If gh CLI lacks scope for issue.write, the close attempt
+#   fails non-fatally (gh CLI step exits 0 via the script's own try/catch).
+#
+#   CONCURRENCY: cancel-in-progress=true — a newer nightly supersedes the prior
+#   run. Safe to cancel because each run is fully independent (no accumulated state).
+#
+#   BUILD FILTER: builds only the packages that smoke.mjs depends on.
+#   @yakcc/shave is intentionally excluded — pre-existing broken (DEC-SHAVE-SKIP-001).
+#   The smoke walkthrough doesn't need @yakcc/shave directly (atomize imports it
+#   lazily; shave is already compiled as a dep of hooks-base).
+#
+#   ARTIFACT RETENTION: 90 days. Each artifact named v0-release-smoke-<run_number>
+#   for trend analysis.
+#
+# Triggers:
+#   - Scheduled: 10:00 UTC daily
+#   - workflow_dispatch: manual ad-hoc runs
+#   - push to main: validates every merge
+
+name: v0-release-smoke
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # daily 10:00 UTC — after B1 nightly (09:00 UTC)
+  workflow_dispatch:          # manual trigger for ad-hoc runs
+  push:
+    branches: [main]          # also run on push to main to validate every merge
+
+concurrency:
+  group: v0-release-smoke
+  cancel-in-progress: true    # safe to cancel — each run is an independent walkthrough
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      issues: write           # for post-comment and optional auto-close of #360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build required packages (skip @yakcc/shave — pre-existing broken)
+        run: |
+          pnpm --filter @yakcc/contracts build
+          pnpm --filter @yakcc/registry build
+          pnpm --filter @yakcc/seeds build
+          pnpm --filter @yakcc/ir build
+          pnpm --filter @yakcc/hooks-base build
+          pnpm --filter @yakcc/hooks-claude-code build
+          pnpm --filter @yakcc/cli build
+
+      - name: Run v0-release smoke walkthrough
+        id: smoke
+        # NOTE: smoke.mjs always exits 0; step failures are captured in the artifact.
+        # This prevents the CI job from blocking on partial-pass — the comment is the signal.
+        run: node bench/v0-release-smoke/smoke.mjs
+
+      - name: Post smoke results to issue #360
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node bench/v0-release-smoke/post-smoke-comment.mjs || echo "Warning: comment posting failed (non-fatal)"
+
+      - name: Archive smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0-release-smoke-${{ github.run_number }}
+          path: tmp/v0-release-smoke/*.json
+          retention-days: 90

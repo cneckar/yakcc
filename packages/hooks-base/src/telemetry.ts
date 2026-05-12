@@ -56,7 +56,7 @@ export type TelemetryEvent = {
   /** End-to-end latency in milliseconds from intercept start to response. */
   readonly latencyMs: number;
   /** Outcome of the hook decision. */
-  readonly outcome: "registry-hit" | "synthesis-required" | "passthrough";
+  readonly outcome: "registry-hit" | "synthesis-required" | "passthrough" | "atomized";
   // ---------------------------------------------------------------------------
   // Phase 2 additions — additive fields (backwards-compatible per #217 spec).
   // Old telemetry consumers see these as optional (undefined in Phase 1 events).
@@ -87,6 +87,22 @@ export type TelemetryEvent = {
    * Phase 1 events: undefined (not present).
    */
   readonly latencyBudgetExceeded?: boolean;
+  // ---------------------------------------------------------------------------
+  // Phase 3 / atomize additions — additive fields (D-HOOK-7, issue #362).
+  // Old telemetry consumers see these as optional (undefined in prior events).
+  // Atomized events always populate atomsCreated; prior events omit it.
+  // ---------------------------------------------------------------------------
+  /**
+   * BlockMerkleRoot[:8] prefixes of atoms created during atomization.
+   * Non-empty only when outcome === "atomized".
+   * Additive field: Phase 1/2 events do not carry this field (undefined).
+   *
+   * @decision DEC-HOOK-ATOM-CAPTURE-001 (additive telemetry — D-HOOK-7)
+   * Adding atomsCreated as an optional field preserves backward compatibility:
+   * old telemetry consumers see it as absent (undefined), while new consumers
+   * can check outcome === "atomized" before reading atomsCreated.
+   */
+  readonly atomsCreated?: readonly string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -169,10 +185,18 @@ export function hashIntent(intentText: string): string {
 
 /**
  * Extract the outcome string from a HookResponse discriminated union.
+ *
+ * @decision DEC-HOOK-ATOM-CAPTURE-001 (D-HOOK-7 additive outcome)
+ * The "atomized" outcome cannot be derived from a HookResponse (which only
+ * carries registry-hit | synthesis-required | passthrough). The atomize path
+ * sets outcome explicitly. This overload accepts an explicit override so the
+ * telemetry wrapper can pass "atomized" when the atomize path fires.
  */
 export function outcomeFromResponse(
   response: HookResponse,
-): "registry-hit" | "synthesis-required" | "passthrough" {
+  outcomeOverride?: "atomized",
+): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" {
+  if (outcomeOverride !== undefined) return outcomeOverride;
   return response.kind;
 }
 
@@ -245,6 +269,11 @@ export function captureTelemetry(opts: {
   top1Score?: number | null;
   top1Gap?: number | null;
   latencyBudgetExceeded?: boolean;
+  // Phase 3 / D-HOOK-7 additions — additive, all optional.
+  /** Explicit outcome override — used by the atomize path to set "atomized". */
+  outcomeOverride?: "atomized";
+  /** BMR prefixes of atoms created. Non-empty only for outcome === "atomized". */
+  atomsCreated?: readonly string[];
   sessionId?: string;
   telemetryDir?: string;
 }): void {
@@ -260,7 +289,7 @@ export function captureTelemetry(opts: {
     substituted: opts.substituted ?? false,
     substitutedAtomHash: opts.substitutedAtomHash ?? null,
     latencyMs: opts.latencyMs,
-    outcome: outcomeFromResponse(opts.response),
+    outcome: outcomeFromResponse(opts.response, opts.outcomeOverride),
     // Phase 2 fields — spread only when defined so Phase 1 JSONL lines stay lean.
     ...(opts.substitutionLatencyMs !== undefined
       ? { substitutionLatencyMs: opts.substitutionLatencyMs }
@@ -270,6 +299,8 @@ export function captureTelemetry(opts: {
     ...(opts.latencyBudgetExceeded !== undefined
       ? { latencyBudgetExceeded: opts.latencyBudgetExceeded }
       : {}),
+    // D-HOOK-7 / atomize fields — present only for outcome === "atomized".
+    ...(opts.atomsCreated !== undefined ? { atomsCreated: opts.atomsCreated } : {}),
   };
 
   appendTelemetryEvent(event, sessionId, dir);

@@ -1,0 +1,10 @@
+{
+  "name": "@yakcc/bench-v0-release-smoke",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "v0-release 10-step smoke walkthrough — fresh project end-to-end validation",
+  "scripts": {
+    "smoke": "node bench/v0-release-smoke/smoke.mjs"
+  }
+}
