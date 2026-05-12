@@ -474,10 +474,14 @@ later is mechanical.
 
 ### `@yakcc/cli`
 
-A thin developer surface: `propose`, `search`, `compile`, `registry init`,
-`block author`. All real logic lives in the packages above; the CLI is the
-adapter and the demoable artifact host. `yakcc compile examples/parse-int-list`
-is the v0 acceptance check.
+A thin developer surface: `propose`, `search`, `compile`, `registry init`
+(plus `init`, `query`, `seed`, `bootstrap`, `shave`, `federation`, `hooks`
+as v0.5+ landed verbs). The manual-authoring flow lives inside `yakcc propose`
+on a registry miss — earlier planning copy mentioned a separate `block author`
+verb; corrected 2026-05-12 (no such command exists or is needed). All real
+logic lives in the packages above; the CLI is the adapter and the demoable
+artifact host. `yakcc compile examples/parse-int-list` is the v0 acceptance
+check.
 
 ### `@yakcc/hooks-claude-code`
 
