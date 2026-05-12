@@ -500,4 +500,20 @@ console.log(`Environment: ${artifact.environment.platform}/${artifact.environmen
 console.log(`Node: ${artifact.environment.node}  Rust: ${artifact.environment.rust}`);
 console.log(`${"=".repeat(60)}\n`);
 
-process.exit(bar === "kill" || bar === "blocker" ? 1 : 0);
+// @decision DEC-BENCH-B1-CI-VERDICT-EXIT-001
+// @title KILL verdict does NOT exit code 1
+// @status accepted
+// @rationale
+//   The orchestrator emits the verdict (pass/warn/kill) to both stdout and the artifact JSON.
+//   For nightly CI, KILL is a measurement outcome — the workflow should still:
+//     (a) upload the artifact, (b) post the verdict comment to issue #185, (c) succeed at the workflow level.
+//   The workflow's downstream steps gate on the orchestrator succeeding; exit-1-on-KILL prevents
+//   the comment + artifact upload from running, which means the operator gets no notification of
+//   the KILL (the WORST case for a regression). Issue #192 verdict KILL also follows this discipline
+//   when WI-BENCHMARK-B8-SYNTHETIC lands its CI integration.
+// @reference issue #185 nightly workflow output run 25700865989 — KILL +41.3% suppressed by exit 1
+//
+// Reserve non-zero exit ONLY for genuine script failures (corpus mismatch, subprocess crash,
+// comparator missing output). KILL, WARN, BLOCKER, and ERROR verdicts all exit 0 — the verdict
+// is communicated via stdout and the artifact JSON, not the exit code.
+process.exit(0);
