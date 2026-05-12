@@ -88,6 +88,7 @@ jobs:
         run: pnpm bench:latency:http
 
       - name: Post results to issue #185
+        if: always()  # post even if a measure step exited non-zero; KILL verdict is the operator signal
         # Non-fatal: if token scope doesn't allow issue comments, artifacts still upload.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -95,6 +96,7 @@ jobs:
           node bench/B1-latency/post-nightly-comment.mjs || echo "Warning: comment posting failed (non-fatal)"
 
       - name: Archive artifacts
+        if: always()  # archive even if a measure step exited non-zero
         uses: actions/upload-artifact@v4
         with:
           name: b1-latency-${{ github.run_number }}
