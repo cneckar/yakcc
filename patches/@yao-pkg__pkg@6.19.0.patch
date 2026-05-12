@@ -1,0 +1,370 @@
+diff --git a/lib-es5/detector.js b/lib-es5/detector.js
+index 0b8426da11ce3a4e08ead4dba3f2661aab09b05a..82ffbb708cc0ca638a0fceb4f3f778c8b5e0aa1f 100644
+--- a/lib-es5/detector.js
++++ b/lib-es5/detector.js
+@@ -167,6 +167,33 @@ function visitorImport(n) {
+     }
+     return { v1: n.source.value, v3: reconstructSpecifiers(n.specifiers) };
+ }
++/**
++ * Matches ESM re-export declarations: `export { X } from "lit"` and
++ * `export * from "lit"`. Without this, pkg's walker skips re-export
++ * source modules and they are missing from the snapshot at runtime.
++ *
++ * @decision DEC-DIST-PACKAGING-004
++ * @title pkg ESM re-export walker patch in detector.js
++ * @status accepted
++ * @rationale pkg's Babel-based detector (visitorSuccessful) handles ImportDeclaration
++ *   and dynamic import() but silently skips ExportNamedDeclaration/ExportAllDeclaration
++ *   with a "from" source. pnpm workspace packages use re-export barrel patterns
++ *   (e.g. @yakcc/contracts/dist/index.js re-exports embeddings.js, merkle.js, etc.).
++ *   When the walker misses them, those files are absent from the snapshot and the
++ *   binary throws ERR_MODULE_NOT_FOUND at runtime for any command that triggers
++ *   the re-exported path. This patch adds the missing visitor so the walker
++ *   follows re-export sources exactly as it follows static imports.
++ */
++function visitorExportFrom(n) {
++    // Matches both `export { X } from "lit"` and `export * from "lit"`
++    if (!babelTypes.isExportNamedDeclaration(n) && !babelTypes.isExportAllDeclaration(n)) {
++        return null;
++    }
++    if (!n.source) {
++        return null; // export { X } without "from" — no source module
++    }
++    return { v1: n.source.value };
++}
+ /** Matches dynamic `import("lit")` so bundler-emitted chunk splits get walked like static imports. */
+ function visitorDynamicImport(n) {
+     if (!babelTypes.isCallExpression(n)) {
+@@ -272,6 +299,16 @@ function visitorSuccessful(node, test = false) {
+         }
+         return { alias: was.v1, aliasType: common_1.ALIAS_AS_RELATIVE, mayExclude: false };
+     }
++    // ESM re-export: `export { X } from "lit"` or `export * from "lit"`
++    // This visitor must come after import/require so it doesn't shadow the
++    // primary import detection paths.
++    was = visitorExportFrom(node);
++    if (was) {
++        if (test) {
++            return forge('export * from {v1}', was);
++        }
++        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RESOLVABLE };
++    }
+     return null;
+ }
+ exports.visitorSuccessful = visitorSuccessful;
+diff --git a/prelude/sea-bootstrap.bundle.js b/prelude/sea-bootstrap.bundle.js
+index 182a189748435c6171350a16eb9a3f5e801630ce..f651ad41034c1190af5c98d99b77f8b79c37c2d7 100644
+--- a/prelude/sea-bootstrap.bundle.js
++++ b/prelude/sea-bootstrap.bundle.js
+@@ -2228,6 +2228,47 @@ var require_module_hooks = __commonJS({
+     var originalWatchFile = null;
+     var originalUnwatchFile = null;
+     var hooksInstalled = false;
++    // sharp/lib/sharp.js stub constants — defined at module scope so both
++    // installModuleHooks and installFsPatches can reference them.
++    var SHARP_LIB_SHARP_PATTERN = /[\\/]sharp[\\/]lib[\\/]sharp\.js$/;
++    // sharp/lib/sharp.js is the native addon module. It exports an object with
++    // format(), metadata(), stats(), pipeline(), etc. utility.js accesses
++    // sharp.format() at module-load time and expects a deeply nested format object.
++    // This stub provides the minimal shape so all sharp lib files can load without
++    // error, while throwing on actual image processing operations.
++    //
++    // Format object shape (each key needs at minimum { input: {}, output: { alias: [] } }):
++    // heif, jpeg, tiff, jp2k, png, webp, gif, avif, tif, jpe, jpg, avif, heic, etc.
++    // utility.js specifically sets .alias on heif.output, jpeg.output, tiff.output, jp2k.output.
++    var SHARP_FORMAT_KEYS = ['heif', 'jpeg', 'png', 'webp', 'gif', 'tiff', 'jp2k', 'avif',
++      'raw', 'tile', 'vips', 'magick', 'openslide', 'ppm', 'fits', 'rad', 'svg', 'nifti',
++      'hdr', 'dz', 'fits'];
++    var SHARP_STUB_CONTENT = '"use strict";\n' +
++      '// pkg-binary stub: sharp native addon not bundled (text-only build)\n' +
++      '// This stub provides the structural shape that sharp\'s lib files require at\n' +
++      '// module-load time (format metadata, version info). Actual image processing\n' +
++      '// throws a clear error since the native addon cannot be bundled.\n' +
++      'function makeFormatEntry() { return { id: 0, input: { file: false, buffer: false, stream: false, fileSuffix: [], url: false }, output: { file: false, buffer: false, stream: false, alias: [], tile: false, meta: false, colourspace: false } }; }\n' +
++      'var FORMAT_KEYS = ["heif","jpeg","png","webp","gif","tiff","jp2k","avif","raw","tile","vips","magick","openslide","ppm","fits","rad","svg","nifti","hdr","dz"];\n' +
++      'function makeFormatObj() { var f = {}; FORMAT_KEYS.forEach(function(k) { f[k] = makeFormatEntry(); }); return f; }\n' +
++      'function sharpStub() { throw new Error("sharp image processing is not available in this binary build."); }\n' +
++      'sharpStub.cache = function() { return { memory: 0, files: 0, items: 0 }; };\n' +
++      'sharpStub.concurrency = function(n) { return n != null ? n : 0; };\n' +
++      'sharpStub.counters = function() { return { queue: 0, process: 0 }; };\n' +
++      'sharpStub.queue = { on: function() {}, emit: function() {} };\n' +
++      'sharpStub.versions = { vips: "0.0.0" };\n' +
++      'sharpStub.interpolators = {};\n' +
++      'sharpStub.format = function() { return makeFormatObj(); };\n' +
++      'sharpStub.metadata = function(opts, cb) { if (cb) cb(new Error("sharp not available")); };\n' +
++      'sharpStub.stats = function(opts, cb) { if (cb) cb(new Error("sharp not available")); };\n' +
++      'sharpStub.pipeline = function(opts, cb) { if (cb) cb(new Error("sharp not available")); };\n' +
++      'sharpStub.simd = function() { return false; };\n' +
++      'sharpStub.block = function() {};\n' +
++      'sharpStub.unblock = function() {};\n' +
++      'sharpStub.libvipsVersion = function() { return "0.0.0"; };\n' +
++      'sharpStub._isUsingJemalloc = function() { return false; };\n' +
++      'module.exports = sharpStub;\n';
++    var SHARP_STUB_BUF = null; // initialized lazily on first use
+     function registerVFS(vfs) {
+       if (activeVFSList.indexOf(vfs) === -1) {
+         activeVFSList.push(vfs);
+@@ -2443,9 +2484,16 @@ var require_module_hooks = __commonJS({
+       return null;
+     }
+     function makeResolveResult(vfs, filePath) {
++      // Resolve symlinks so that the returned URL is the real path.
++      // This ensures that subsequent relative imports from the loaded module
++      // use the real path as parentURL, not the symlink path. Without this,
++      // pnpm workspace symlinks cause cascading resolution failures when a
++      // symlinked module imports packages that aren't accessible from the
++      // symlink path but ARE accessible from the real path.
++      const realPath = vfs.realSnapshotPath ? vfs.realSnapshotPath(filePath) : filePath;
+       return {
+-        url: vfsPathToURL(filePath),
+-        format: getVFSFormat(vfs, filePath),
++        url: vfsPathToURL(realPath),
++        format: getVFSFormat(vfs, realPath),
+         shortCircuit: true
+       };
+     }
+@@ -3007,6 +3055,17 @@ var require_module_hooks = __commonJS({
+         return nextLoad(url, context);
+       }
+       const filePath = urlToVFSPath(url);
++      // Intercept sharp/lib/sharp.js at the load-hook level so that CJS-in-ESM
++      // context (Node v22 ESM translators) picks up the stub. The _extensions
++      // and fs.readFileSync intercepts are bypassed by ESM translators which
++      // cache readFileSync at startup before bootstrap patches it.
++      if (SHARP_LIB_SHARP_PATTERN.test(filePath)) {
++        return {
++          format: "commonjs",
++          source: SHARP_STUB_CONTENT,
++          shortCircuit: true
++        };
++      }
+       const normalized = normalizeVFSPath(filePath);
+       for (let i = 0; i < activeVFSList.length; i++) {
+         const vfs = activeVFSList[i];
+@@ -3104,7 +3163,9 @@ var require_module_hooks = __commonJS({
+               packageName,
+               packageSubpath
+             );
+-            if (found) return found;
++            // Return the real path so parent.filename uses the real path for
++            // subsequent require() calls, avoiding cascading symlink failures.
++            if (found) return vfs.realSnapshotPath ? vfs.realSnapshotPath(found) : found;
+           }
+           if (!matched) {
+             for (let i = 0; i < activeVFSList.length; i++) {
+@@ -3117,15 +3178,32 @@ var require_module_hooks = __commonJS({
+                 packageName,
+                 packageSubpath
+               );
+-              if (found) return found;
++              if (found) return vfs.realSnapshotPath ? vfs.realSnapshotPath(found) : found;
+             }
+           }
+         }
+         return origResolveFilename.call(this, request, parent, isMain, options);
+       };
+       const origJsHandler = NodeModule._extensions[".js"];
++      // Stub content for the sharp native bridge. The sharp library's
++      // lib/sharp.js requires a platform-specific .node addon that cannot
++      // be bundled inside a pkg SEA binary (it depends on libvips which has
++      // RPATH-relative shared libraries). Since yakcc only uses @xenova/transformers
++      // for text embeddings (never image processing), a non-functional sharp stub
++      // is sufficient. The stub exports a function that throws a clear message if
++      // image ops are ever attempted, and provides the metadata fields that
++      // @xenova/transformers reads at module evaluation time (format, versions, etc.).
+       NodeModule._extensions[".js"] = function(module3, filename) {
+         const normalized = normalizeVFSPath(filename);
++        // Substitute a non-crashing stub for sharp's native bridge module.
++        // sharp/lib/sharp.js throws if its .node addon is missing; since the
++        // addon cannot be bundled (libvips RPATH dependency), we replace it.
++        // Note: ESM-context require() bypasses _extensions and reads via
++        // fs.readFileSync; that interception is handled in installFsPatches.
++        if (SHARP_LIB_SHARP_PATTERN.test(filename)) {
++          module3._compile(SHARP_STUB_CONTENT, filename);
++          return;
++        }
+         for (let i = 0; i < activeVFSList.length; i++) {
+           const vfs = activeVFSList[i];
+           if (vfs.shouldHandle(normalized) && vfs.existsSync(normalized)) {
+@@ -3156,7 +3234,18 @@ var require_module_hooks = __commonJS({
+       originalRealpathSync = fs.realpathSync;
+       originalLstatSync = fs.lstatSync;
+       originalStatSync = fs.statSync;
++      // The sharp/lib/sharp.js stub replacement must be applied at fs.readFileSync
++      // level because ESM-context require() (loadCJSModule in translators.js)
++      // reads file content via fs.readFileSync, bypassing Module._extensions.
+       fs.readFileSync = function readFileSync(path2, options) {
++        if (typeof path2 === "string" && SHARP_LIB_SHARP_PATTERN.test(path2)) {
++          // Return the stub content regardless of whether it's in the VFS.
++          // This path is a belt-and-suspenders fallback; the primary intercept
++          // is vfsLoadHook which fires for ESM-context CJS loads.
++          if (!SHARP_STUB_BUF) SHARP_STUB_BUF = Buffer.from(SHARP_STUB_CONTENT, "utf8");
++          var encoding = typeof options === "string" ? options : options && options.encoding;
++          return encoding ? SHARP_STUB_BUF.toString(encoding) : Buffer.from(SHARP_STUB_BUF);
++        }
+         if (typeof path2 === "string") {
+           const vfsResult = findVFSForRead(path2, options);
+           if (vfsResult !== null) {
+@@ -3856,6 +3945,20 @@ var require_file_system = __commonJS({
+           return -2;
+         }
+       }
++      /**
++       * Returns the fully-resolved real snapshot path for filePath (symlinks resolved).
++       * Used by makeResolveResult to return real paths so that subsequent relative
++       * imports use the real path as their base, not the symlink path.
++       */
++      realSnapshotPath(filePath) {
++        try {
++          const providerPath = this.#toProviderPath(filePath);
++          const realProviderPath = this[kProvider]._getRealPath(providerPath);
++          return this.#toMountedPath(realProviderPath);
++        } catch {
++          return filePath;
++        }
++      }
+       // ==================== File Descriptor Operations ====================
+       openSync(filePath, flags = "r", mode) {
+         const providerPath = this.#toProviderPath(filePath);
+@@ -5376,12 +5479,125 @@ var require_sea_vfs_setup = __commonJS({
+       }
+       _resolveSymlink(p) {
+         var symlinks = this._manifest.symlinks;
+-        if (symlinks[p] === void 0) return p;
++        // Iteratively resolve symlinks with prefix-segment matching.
++        // Each iteration either resolves the exact key, or finds the longest
++        // matching prefix and rewrites the path. We loop up to MAX_SYMLINK_DEPTH
++        // times total to guard against cycles.
++        //
++        // This handles pnpm's two-level symlink structure for workspace packages:
++        //   packages/cli/node_modules/@yakcc/contracts (workspace symlink)
++        //     → packages/contracts (real workspace dir)
++        //   packages/contracts/node_modules/@noble/hashes (pnpm symlink)
++        //     → node_modules/.pnpm/@noble+hashes@2.2.0/node_modules/@noble/hashes
++        //
++        // When resolving packages/cli/.../contracts/dist/contract-id.js:
++        //   1. prefix match: @yakcc/contracts → packages/contracts
++        //      path becomes: packages/contracts/dist/contract-id.js
++        //   2. No more symlinks needed — stats entry exists at real path
+         var original = p;
+         for (var i = 0; i < MAX_SYMLINK_DEPTH; i++) {
+-          var target = symlinks[p];
+-          if (!target) return p;
+-          p = target;
++          // Fast path: exact match
++          if (symlinks[p] !== void 0) {
++            p = symlinks[p];
++            continue;
++          }
++          // Slow path: find longest matching prefix
++          var sep = "/";
++          var parts = p.split(sep);
++          var found = false;
++          for (var j = parts.length - 1; j > 0; j--) {
++            var prefix = parts.slice(0, j).join(sep);
++            if (symlinks[prefix] !== void 0) {
++              p = symlinks[prefix] + sep + parts.slice(j).join(sep);
++              found = true;
++              break;
++            }
++          }
++          if (!found) {
++            // Fallback: handle cross-workspace node_modules symlinks that the
++            // walker missed. pnpm creates identical symlinks in every workspace
++            // package's node_modules/ for its @yakcc/* peers, but the walker
++            // only captures the ones it traverses. At runtime, when code loaded
++            // from a real workspace path (e.g. packages/shave/dist/foo.js)
++            // imports a peer (e.g. @yakcc/contracts), Node resolves the symlink
++            // path packages/shave/node_modules/@yakcc/contracts which may not
++            // be in the manifest.
++            //
++            // Strategy: build a lazy reverse map from package-name suffixes
++            // (e.g. "@yakcc/contracts") → canonical real target (e.g.
++            // "packages/contracts"). Any symlink in the manifest of the form
++            // "*/node_modules/@scope/pkg" → "packages/pkg" contributes to this
++            // map. Then when the prefix walk fails, check if any suffix of the
++            // unresolved path matches a pattern like
++            // "node_modules/<scope>/<name>" and rewrite using the canonical
++            // target.
++            if (!this._pkgCanonicalMap) {
++              this._pkgCanonicalMap = /* @__PURE__ */ new Map();
++              var nmSuffix = "/node_modules/";
++              for (var cmkey of Object.keys(symlinks)) {
++                var cmNmIdx = cmkey.lastIndexOf(nmSuffix);
++                if (cmNmIdx >= 0) {
++                  var cmPkgName = cmkey.slice(cmNmIdx + nmSuffix.length);
++                  // Only map bare package names (no trailing path segments)
++                  // to avoid false matches.
++                  if (!this._pkgCanonicalMap.has(cmPkgName)) {
++                    this._pkgCanonicalMap.set(cmPkgName, symlinks[cmkey]);
++                  }
++                }
++              }
++            }
++            // Try to find a node_modules/<pkgname> segment anywhere in path.
++            // Walk from the LAST node_modules segment first (most specific), then
++            // outer ones. We only apply the canonical map ONCE per iteration to
++            // avoid re-entering the canonical map on the result path (which may
++            // also contain a node_modules segment and would loop). After a single
++            // canonical map rewrite, we return the new path directly — the next
++            // outer loop iteration will try exact/prefix matching on the real
++            // pnpm store path, and if that still fails the loop terminates naturally.
++            var nmStart = -1;
++            // Find the rightmost node_modules segment first
++            var tmpIdx = p.lastIndexOf("/node_modules/");
++            while (tmpIdx >= 0) {
++              var afterNm2 = p.slice(tmpIdx + "/node_modules/".length);
++              var slashIdx2 = afterNm2.startsWith("@")
++                ? afterNm2.indexOf("/", afterNm2.indexOf("/") + 1)
++                : afterNm2.indexOf("/");
++              var pkgPart2 = slashIdx2 >= 0 ? afterNm2.slice(0, slashIdx2) : afterNm2;
++              var rest2 = slashIdx2 >= 0 ? afterNm2.slice(slashIdx2 + 1) : "";
++              var canonical2 = this._pkgCanonicalMap.get(pkgPart2);
++              if (canonical2 !== void 0) {
++                p = rest2 ? canonical2 + sep + rest2 : canonical2;
++                // After canonical rewrite, run one more exact/prefix check.
++                // If that still fails, return p directly to avoid infinite loop.
++                if (symlinks[p] !== void 0) {
++                  p = symlinks[p];
++                  found = true;
++                } else {
++                  // Try prefix walk on the new p
++                  var newParts = p.split(sep);
++                  var prefixFound = false;
++                  for (var pj = newParts.length - 1; pj > 0; pj--) {
++                    var newPrefix = newParts.slice(0, pj).join(sep);
++                    if (symlinks[newPrefix] !== void 0) {
++                      p = symlinks[newPrefix] + sep + newParts.slice(pj).join(sep);
++                      prefixFound = true;
++                      found = true;
++                      break;
++                    }
++                  }
++                  if (!prefixFound) {
++                    // No more symlinks to follow. Return the canonical path directly.
++                    // The manifest stats should have the real pnpm store path.
++                    return p;
++                  }
++                }
++                break;
++              }
++              // Try the next node_modules segment (working leftward)
++              tmpIdx = p.lastIndexOf("/node_modules/", tmpIdx - 1);
++            }
++            if (!found) return p; // no more symlinks to resolve
++          }
+         }
+         var err = new Error(
+           "ELOOP: too many symbolic links encountered, '" + original + "'"
+@@ -5392,6 +5608,10 @@ var require_sea_vfs_setup = __commonJS({
+         err.path = original;
+         throw err;
+       }
++      /** Returns the fully-resolved real path (no symlinks) for a manifest key. */
++      _getRealPath(filePath) {
++        return this._resolveSymlink(toManifestKey(filePath));
++      }
+       get fileCacheSize() {
+         return this._fileCache.size;
+       }

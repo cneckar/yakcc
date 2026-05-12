@@ -1,0 +1,10 @@
+{
+  "sea": true,
+  "assets": [
+    "../../node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+    "../../node_modules/.pnpm/sqlite-vec@0.1.9/node_modules/sqlite-vec-linux-x64/vec0.so",
+    "../../node_modules/.pnpm/@xenova+transformers@2.17.2/node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node",
+    "../../node_modules/.pnpm/@xenova+transformers@2.17.2/node_modules/onnxruntime-node/bin/napi-v3/linux/x64/libonnxruntime.so.1.14.0"
+  ],
+  "targets": ["node22-linux-x64"]
+}
