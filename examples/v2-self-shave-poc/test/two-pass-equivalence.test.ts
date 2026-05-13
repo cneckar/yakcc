@@ -20,6 +20,20 @@
 //   Compare (S1 ≡ S3): every blockMerkleRoot from the pass-1 SUCCESS set must
 //          appear byte-identically in the pass-2 SUCCESS set (and vice versa).
 //
+// @decision DEC-V2-TWO-PASS-PRECONDITION-001
+// @title Hard-fail on missing preconditions when YAKCC_TWO_PASS=1 gate is open
+// @status accepted (Issue #472, WI-V2-TWO-PASS-CI-FALSE-GREEN, 2026-05-13)
+// @rationale When YAKCC_TWO_PASS=1 is set, the CI gate is OPEN and the full two-pass
+//   cycle is expected to run. If a prerequisite artifact (registry A, report.json, CLI
+//   binary) is absent, a silent early-return produces a false-green result — vitest
+//   counts the early-return as a PASS, masking ALL regressions in the harness.
+//   The correct behaviour: throw a hard Error so vitest reports a FAIL, and the CI
+//   job goes red with a clear actionable message. This protects the load-bearing
+//   contract established by DEC-V2-CI-GATE-FINAL-001 (two-pass gate on push:main + PR).
+//   The off-path (YAKCC_TWO_PASS !== "1") uses describe.skipIf — that silent-skip is
+//   correct and is NOT changed here. Only the precondition-paths INSIDE the open gate
+//   are converted from soft-skip to hard-fail.
+//
 // @decision DEC-V2-BOOTSTRAP-EQUIV-001
 // @title Strict byte-equality of every BlockMerkleRoot in the included subset
 // @status superseded by DEC-V2-HARNESS-STRICT-EQUALITY-001 (Issue #436, WI-V2-09-FIX)
@@ -264,14 +278,36 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     // -------------------------------------------------------------------------
 
     beforeAll(async () => {
-      // --- Precondition: registry A must exist ---
-      if (!existsSync(REGISTRY_A_PATH)) {
-        console.warn(
-          `[two-pass] BLOCKED_BY_PLAN (precondition): registry A not found at ${REGISTRY_A_PATH}.` +
-            ` Run 'yakcc bootstrap' first to populate it. Two-pass cycle cannot proceed.`,
-        );
-        return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 (beforeAll enforcement site)
+      //
+      // When YAKCC_TWO_PASS=1 the gate is open. Missing prerequisites are hard
+      // errors here — NOT soft skips. A soft skip (console.warn + return) causes
+      // vitest to count the test as PASSED while running no assertions, producing
+      // the false-green signal this fix was written to eliminate (Issue #472).
+      //
+      // The gating helper: if the gate is open (YAKCC_TWO_PASS=1) and a precondition
+      // fails, throw immediately so vitest marks the test as FAILED with a clear
+      // actionable message. If the gate is closed, the entire describe block is
+      // already describe.skipIf-skipped before beforeAll runs — this branch is
+      // unreachable in the off-path.
+      const gateName = "YAKCC_TWO_PASS=1";
+      function requireArtifact(exists: boolean, msg: string): void {
+        if (!exists) {
+          throw new Error(
+            `Precondition FAILED [${gateName}]: ${msg} ` +
+              `YAKCC_TWO_PASS=1 was set, meaning the gate is open, but a required ` +
+              `prerequisite artifact is missing. Either produce the artifact before ` +
+              `running the test, or unset YAKCC_TWO_PASS to skip the gate entirely. ` +
+              `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+          );
+        }
       }
+
+      // --- Precondition: registry A must exist ---
+      requireArtifact(
+        existsSync(REGISTRY_A_PATH),
+        `registry A not found at ${REGISTRY_A_PATH}. Run 'yakcc bootstrap' first to populate it.`,
+      );
       registryAAvailable = true;
 
       // --- Precondition: report.json (report A) must exist ---
@@ -282,24 +318,18 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
       // It does NOT re-run bootstrap to generate it — that would be a 60-min
       // wall-time operation and would conflate "first-pass" with "second-pass"
       // semantics (per plan.md §6 D5 / Risk R1 mitigation).
-      if (!existsSync(REPORT_A_PATH)) {
-        console.warn(
-          `[two-pass] BLOCKED_BY_PLAN (precondition): pass-1 report.json not found at ${REPORT_A_PATH}.` +
-            ` Run 'yakcc bootstrap' first to produce it. Two-pass cycle cannot proceed without` +
-            ` the authoritative per-file shave outcomes.`,
-        );
-        return;
-      }
+      requireArtifact(
+        existsSync(REPORT_A_PATH),
+        `pass-1 report.json not found at ${REPORT_A_PATH}. ` +
+          `Run 'yakcc bootstrap' first to produce the authoritative per-file shave outcomes.`,
+      );
       reportAAvailable = true;
 
       // --- Precondition: CLI binary must be built ---
-      if (!existsSync(CLI_BIN_PATH)) {
-        console.warn(
-          `[two-pass] BLOCKED_BY_PLAN (precondition): CLI binary not found at ${CLI_BIN_PATH}.` +
-            ` Run 'pnpm -r build' first. Two-pass cycle cannot proceed.`,
-        );
-        return;
-      }
+      requireArtifact(
+        existsSync(CLI_BIN_PATH),
+        `CLI binary not found at ${CLI_BIN_PATH}. Run 'pnpm -r build' first.`,
+      );
       cliBinAvailable = true;
 
       // --- Step 0: create scratch directories ---
@@ -559,12 +589,25 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     // T1: Two-pass cycle ran to completion without error
     // -------------------------------------------------------------------------
 
+    // @decision DEC-V2-TWO-PASS-PRECONDITION-001 (individual test enforcement)
+    //
+    // When YAKCC_TWO_PASS=1 is set and beforeAll throws on a missing precondition,
+    // individual tests that depend on those flags will be marked as FAILED by vitest
+    // (because beforeAll threw). However, for completeness and to produce a clear
+    // error message independent of vitest's beforeAll failure reporting, we also
+    // guard at the individual test level. Unlike the old soft-skip pattern (console.warn
+    // + return), these guards throw so the test is counted as FAILED, not silently PASSED.
+    //
+    // Pattern: throw rather than return when the gate is open (YAKCC_TWO_PASS=1).
+    // The describe.skipIf at the top of the block ensures these tests never run when
+    // the gate is closed — the early-throw path is only reachable when the gate is open.
+
     it("T1: registry A exists (precondition)", () => {
       if (!registryAAvailable) {
-        console.warn(
-          "BLOCKED_BY_PLAN (precondition): registry A not found. Run 'yakcc bootstrap' first.",
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: registry A not found at ${REGISTRY_A_PATH}. ` +
+            `Run 'yakcc bootstrap' first. (DEC-V2-TWO-PASS-PRECONDITION-001)`,
         );
-        return; // soft-skip: document blocker, not a hard failure
       }
       expect(existsSync(REGISTRY_A_PATH)).toBe(true);
     });
@@ -572,27 +615,35 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     it("T1: report.json (pass-1) exists (precondition)", () => {
       // @decision DEC-V2-HARNESS-FAILURE-SOURCE-001 (precondition test)
       if (!reportAAvailable) {
-        console.warn(
-          `BLOCKED_BY_PLAN (precondition): bootstrap/report.json not found at ${REPORT_A_PATH}.` +
-            ` Run 'yakcc bootstrap' first to produce the per-file outcome report.`,
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: bootstrap/report.json not found at ${REPORT_A_PATH}. ` +
+            `Run 'yakcc bootstrap' first to produce the per-file outcome report. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
         );
-        return;
       }
       expect(existsSync(REPORT_A_PATH)).toBe(true);
     });
 
     it("T1: CLI binary exists (precondition)", () => {
       if (!cliBinAvailable) {
-        console.warn(
-          "BLOCKED_BY_PLAN (precondition): CLI binary not found. Run 'pnpm -r build' first.",
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: CLI binary not found at ${CLI_BIN_PATH}. ` +
+            `Run 'pnpm -r build' first. (DEC-V2-TWO-PASS-PRECONDITION-001)`,
         );
-        return;
       }
       expect(existsSync(CLI_BIN_PATH)).toBe(true);
     });
 
     it("T1: compile-self produced the recompiled workspace", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       expect(existsSync(DIST_RECOMPILED_DIR)).toBe(true);
       // The manifest must exist (proves compile-self emitted atoms and wrote manifest).
       const manifestPath = join(DIST_RECOMPILED_DIR, "manifest.json");
@@ -603,7 +654,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     });
 
     it("T1: compile-self emitted ≥ 137 source files (137/144 shavable subset)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // Verify the recompiled workspace contains source files under packages/ and examples/.
       let tsFileCount = 0;
       function countTs(dir: string): void {
@@ -621,13 +680,29 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     });
 
     it("T1: registry B exists (second bootstrap pass completed)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       expect(existsSync(REGISTRY_B_PATH)).toBe(true);
       expect(statSync(REGISTRY_B_PATH).size).toBeGreaterThan(0);
     });
 
     it("T1: report-B.json exists (second bootstrap pass produced outcomes)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // @decision DEC-V2-HARNESS-FAILURE-SOURCE-001 (report-B existence check)
       expect(existsSync(REPORT_B_PATH)).toBe(true);
       expect(statSync(REPORT_B_PATH).size).toBeGreaterThan(0);
@@ -638,7 +713,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     });
 
     it("T1: registry B has a non-empty manifest (atoms were shaved in pass 2)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       expect(rootsB.size).toBeGreaterThan(0);
       console.info(`[two-pass] T1: registry B (S3) has ${rootsB.size} blockMerkleRoots.`);
     });
@@ -651,7 +734,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     // -------------------------------------------------------------------------
 
     it("T2: exclusion set is sourced from report.json (not workspace-walk diff)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // The dynamic exclusion set size must equal the count of failure+expected-failure
       // entries in the union of report-A and report-B.
       // (dynamicExclusionSet is the UNION of both passes' excluded paths.)
@@ -667,7 +758,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     });
 
     it("T2: report-A failure count is plausible (≤ total shavable corpus size)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // Sanity check: we should not have more failures than there are source files.
       // The full corpus is ~144 files; failures must be a small fraction.
       console.info(
@@ -688,7 +787,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     it(
       "T3: every included blockMerkleRoot from S1 exists byte-identically in S3",
       () => {
-        if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+        // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
 
         // @decision DEC-V2-HARNESS-STRICT-EQUALITY-001 (assertion site)
         //
@@ -734,7 +841,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     );
 
     it("T3: S3 does not introduce roots absent from S1 (symmetric check)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // @decision DEC-V2-HARNESS-STRICT-EQUALITY-001 (symmetric assertion)
       //
       // S1 ≡ S3 means not only S1 ⊆ S3 but also S3 ⊆ S1 for included files.
@@ -771,14 +886,30 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     // -------------------------------------------------------------------------
 
     it("T4: registry A (S1) has a non-trivial number of unique roots (sanity check)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // The 137-file shavable corpus has at least several hundred unique atoms.
       expect(rootsA.size).toBeGreaterThan(100);
       console.info(`[two-pass] T4: registry A (S1) unique roots: ${rootsA.size}`);
     });
 
     it("T4: rootsA = includedRoots + excludedRoots (partition coverage)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // Every root in A is either included or excluded — no root is lost.
       const totalCovered = includedRoots.size + excludedRoots.size;
       expect(totalCovered).toBe(rootsA.size);
@@ -788,7 +919,15 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     });
 
     it("T4: byte-identity summary line is logged (PASS or FAIL)", () => {
-      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) return;
+      // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+      if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+        throw new Error(
+          `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+            `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+            `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+            `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+        );
+      }
       // This test always passes — it surfaces the summary line in vitest console output
       // for reviewer paste-back (evaluation contract T4 evidence).
       const passFail =
