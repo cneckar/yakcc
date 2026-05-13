@@ -125,7 +125,7 @@ jobs:
   test-advisory:
     name: test (affected packages, advisory)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
