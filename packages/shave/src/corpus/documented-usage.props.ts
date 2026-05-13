@@ -142,7 +142,7 @@ const UNSTRUCTURED_SOURCE = `/**
 export function parseList(raw: string): number[] { return []; }`;
 
 /** Source with no @example blocks at all. */
-const NO_EXAMPLE_SOURCE = `export function parseList(raw: string): number[] { return []; }`;
+const NO_EXAMPLE_SOURCE = "export function parseList(raw: string): number[] { return []; }";
 
 /** Source with multi-line @example (should be refused). */
 const MULTILINE_EXAMPLE_SOURCE = `/**
@@ -302,7 +302,9 @@ export const prop_extractFromDocumentedUsage_parseableExampleProducesExpectAsser
   // Exactly one parseable example -> exactly one it() block
   if (itCount !== 1) return false;
   // Must use expect().toEqual() not fc.property() / return true
-  return content.includes("expect(") && content.includes(".toEqual(") && !content.includes("return true");
+  return (
+    content.includes("expect(") && content.includes(".toEqual(") && !content.includes("return true")
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -370,7 +372,7 @@ export const prop_extractFromDocumentedUsage_exampleCommentsAreLinePrefixed: fc.
   // The @example text appears prefixed with "   * " in the JSDoc comment block.
   // The exampleText is "* myFn(\"x\") // => \"x\"" so the comment line is "   * * myFn(\"x\") // => \"x\""
   // Check for the prefix pattern without the double-quote args (JSON-escaped in content).
-  return content.includes('   * * myFn(');
+  return content.includes("   * * myFn(");
 });
 
 // ---------------------------------------------------------------------------
@@ -722,4 +724,3 @@ export function fn(x: string): string { return x; }`;
   // Only the first (parseable) example produces an it() block
   return itCount === 1;
 });
-

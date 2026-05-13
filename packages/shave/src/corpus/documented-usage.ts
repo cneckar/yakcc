@@ -151,7 +151,9 @@ function extractJsDocExamples(source: string): JsDocExample[] {
  */
 function tryParseExampleAssertion(
   example: JsDocExample,
-): { kind: "success"; assertion: ParsedAssertion } | { kind: "failure"; skipReason: ExampleSkipReason } {
+):
+  | { kind: "success"; assertion: ParsedAssertion }
+  | { kind: "failure"; skipReason: ExampleSkipReason } {
   // Normalise: strip JSDoc leading-asterisk decoration from lines like ` * fn(x) // => y`
   const stripped = example.text
     .split("\n")
@@ -170,7 +172,17 @@ function tryParseExampleAssertion(
     };
   }
 
-  const line = stripped[0]!;
+  const [line] = stripped;
+  if (line === undefined) {
+    return {
+      kind: "failure",
+      skipReason: {
+        index: example.index,
+        text: example.text,
+        reason: "internal parser invariant violated: expected one normalized @example line",
+      },
+    };
+  }
 
   // Match: <callExpr> // => <expectedExpr>  OR  <callExpr> // -> <expectedExpr>
   // The call expression must contain parentheses (it is a function call, not prose).
@@ -181,13 +193,28 @@ function tryParseExampleAssertion(
       skipReason: {
         index: example.index,
         text: example.text,
-        reason: "@example does not match deterministic pattern fn(args) // => expected -- too unstructured to derive an assertion",
+        reason:
+          "@example does not match deterministic pattern fn(args) // => expected -- too unstructured to derive an assertion",
       },
     };
   }
 
-  const callExpr = m[1]!.trim();
-  const expectedExpr = m[2]!.trim();
+  const rawCallExpr = m[1];
+  const rawExpectedExpr = m[2];
+  if (rawCallExpr === undefined || rawExpectedExpr === undefined) {
+    return {
+      kind: "failure",
+      skipReason: {
+        index: example.index,
+        text: example.text,
+        reason:
+          "internal parser invariant violated: expected call and expected-expression captures",
+      },
+    };
+  }
+
+  const callExpr = rawCallExpr.trim();
+  const expectedExpr = rawExpectedExpr.trim();
 
   return {
     kind: "success",
@@ -253,9 +280,7 @@ export function extractFromDocumentedUsage(
   // Log skipped examples to stderr so operators can see the gap without a hard failure.
   // This is the "loud" part of loud refusal: each skipped example is named + explained.
   for (const skip of skipped) {
-    process.stderr.write(
-      `[documented-usage] skipped @example ${skip.index + 1}: ${skip.reason}\n`,
-    );
+    process.stderr.write(`[documented-usage] skipped @example ${skip.index + 1}: ${skip.reason}\n`);
   }
 
   const bytes = encoder.encode(content);
