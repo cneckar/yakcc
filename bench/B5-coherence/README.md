@@ -1,5 +1,14 @@
 ﻿# B5 — Hallucination Rebound / Multi-Turn Coherence Benchmark
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B5-coherence pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Issue:** [#189](https://github.com/cneckar/yakcc/issues/189)
 **Parent:** WI-BENCHMARK-SUITE (#167)
 **Track:** B5 of 8
@@ -23,7 +32,7 @@ B5 verifies that yakcc's hook interception does not break the LLM's coherence ac
 **Goal:** Build the infrastructure that Slices 2 and 3 plug into.
 
 **What's implemented:**
-- `RUBRIC.md` — authoritative scoring spec (0–5 per turn, 4 failure modes, pass/KILL bars)
+- `RUBRIC.md` — authoritative scoring spec (0–5 per turn, 4 failure modes, pass/directional-target bars)
 - `conversations.jsonl` — N=10 adversarial conversation seeds, 2 per shape category
 - `harness/run-conversation.mjs` — runs hook-enabled and hook-disabled arms using offline simulation (no real LLM)
 - `rubric-eval.mjs` — programmatic offline classifier implementing the rubric mechanically
@@ -58,7 +67,7 @@ B5 verifies that yakcc's hook interception does not break the LLM's coherence ac
 
 ### Slice 3 — Cross-arm blind verdict
 
-**Goal:** Produce the final B5 verdict against the pass/KILL bars.
+**Goal:** Produce the final B5 verdict against the pass/directional-target bars.
 
 **What gets added:**
 - Full blind verdict: final comparison of hook-enabled vs hook-disabled arms
@@ -153,7 +162,7 @@ The programmatic classifier is structurally blind: it scores by pattern matching
 
 ### Sample size
 
-Slice 1: N=10 (calibration). Slice 2: N=50 (per #189 spec). The pass/KILL bars are designed for N=50. Slice 1 scores on N=10 are indicative only.
+Slice 1: N=10 (calibration). Slice 2: N=50 (per #189 spec). The pass/directional-target bars are designed for N=50. Slice 1 scores on N=10 are indicative only.
 
 ---
 
@@ -176,25 +185,25 @@ Arm assignment is randomized per run (for blind-eval discipline). The scores wit
 
 ## Falsifiability statement
 
-B5 CAN return KILL. The KILL criterion is explicit and binary:
+B5 has explicit directional failure criteria (no KILL pre-data). The criteria are:
 - Mean coherence < 2.5 on the hook-enabled arm, OR
 - Catastrophic failures > 15% of scored turns
 
-If KILL triggers, the conclusion is: **atom references break LLM context; the hook cannot ship in its current form**. This would trigger redesign of the contract-surfacing mechanism (D-HOOK-4).
+If these criteria trigger post-characterisation, the conclusion is: **atom references break LLM context; the hook cannot ship in its current form**. This would trigger redesign of the contract-surfacing mechanism (D-HOOK-4).
 
-The Slice 1 offline classifier will generally NOT trigger KILL on the `assistant_emission_target` seeds because those seeds were authored to represent correct behavior. Slice 2 with real LLM emission is where divergence from the expected behavior can surface a genuine KILL.
+The Slice 1 offline classifier will generally NOT reach these thresholds on the `assistant_emission_target` seeds because those seeds were authored to represent correct behavior. Slice 2 with real LLM emission is where divergence from the expected behavior can surface genuine threshold violations.
 
 ---
 
-## Pass/KILL bars (from #189)
+## Pass / Directional Target Bars (from #189)
 
-| Metric | Pass | KILL |
-|--------|------|------|
+| Metric | Pass | Directional target (no KILL pre-data) |
+|--------|------|--------------------------------------|
 | Mean coherence score | ≥ 4.0 | < 2.5 |
 | Subsequent-turn coherence rate (score ≥ 4) | ≥ 90% | — |
 | Catastrophic failures (score 0–1) | ≤ 5% of turns | > 15% |
 
-KILL triggers on **either** condition: mean < 2.5 **OR** catastrophic > 15%.
+Directional target triggers on **either** condition: mean < 2.5 **OR** catastrophic > 15%. No measurement triggers a project-level KILL pre-characterisation-data.
 
 ---
 
