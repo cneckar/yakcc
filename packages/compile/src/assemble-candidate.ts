@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: MIT
 // @decision DEC-COMPILE-CANDIDATE-001
 // title: assembleCandidate is the compile-time entry point for the
-// continuous-shave pipeline (WI-014-05)
-// status: implemented (WI-014-05)
+// continuous-shave pipeline (WI-014-05, updated WI-373)
+// status: implemented (WI-014-05, WI-373)
 // rationale: Composes cleanly with the existing assemble() rather than forking.
 // The slicer/license/intent pipeline lives entirely in @yakcc/shave; @yakcc/compile
 // stays focused on composition resolution. This is a new entry point — no changes
 // to the existing assemble() signature.
 //
-// Flow:
+// Flow (updated WI-373):
 //   1. Adapt the full Registry → ShaveRegistryView (null → undefined for getBlock).
-//   2. Run universalize(candidate, shaveRegistry) — license gate runs first (cheap,
-//      fail-fast), then intent extraction, decompose, slice.
+//   2. Run universalize(candidate, shaveRegistry, { persist: true, ...shaveOptions }) —
+//      license gate runs first (cheap, fail-fast), then intent extraction, decompose,
+//      slice, and now step 6 in-pipeline atom persistence (WI-373). persist:true is
+//      always forced so novel-glue entries are persisted and their merkleRoot surfaced.
 //   3. Resolve the candidate's BlockMerkleRoot via one of three paths:
 //      a. PointerEntry-only single-entry slice: the entire candidate matches an
 //         existing primitive exactly. Use that BlockMerkleRoot directly.
-//      b. NovelGlueEntry single-entry: the candidate is a novel block. universalize()
-//         does not persist atoms on its own (only shave() calls maybePersistNovelGlueAtom).
-//         Throw CandidateNotResolvableError pointing to WI shave for now.
-//      c. Multi-leaf slice (>1 entries): throw CandidateNotResolvableError.
+//      b. NovelGlueEntry single-entry: the candidate is novel. universalize() now
+//         persists the atom in-pipeline (WI-373) and surfaces merkleRoot on the
+//         entry. resolveToMerkleRoot() lifts that value. No more CandidateNotResolvableError
+//         for this case (the TODO comment is deleted).
+//      c. Multi-leaf slice (>1 entries): throw CandidateNotResolvableError (follow-up WI).
 //   4. Call the existing assemble(merkleRoot, registry, backend, options).
 //
 // The license gate in universalize() guarantees only permissive sources reach the
@@ -26,7 +29,12 @@
 
 import type { BlockMerkleRoot } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
-import { type ShaveOptions, type UniversalizeResult, universalize } from "@yakcc/shave";
+import {
+  type ShaveOptions,
+  type UniversalizeOptions,
+  type UniversalizeResult,
+  universalize,
+} from "@yakcc/shave";
 import type { Artifact, AssembleOptions } from "./assemble.js";
 import { assemble } from "./assemble.js";
 import type { Backend } from "./ts-backend.js";
@@ -64,14 +72,23 @@ export class CandidateNotResolvableError extends Error {
  * Options for assembleCandidate().
  *
  * Extends AssembleOptions (forwarded to assemble()) with an optional
- * shaveOptions block forwarded to universalize().
+ * shaveOptions block forwarded to universalize(). shaveOptions accepts
+ * UniversalizeOptions (a strict superset of ShaveOptions) so callers may
+ * pass persist:true when they want novel-glue atoms to be persisted in-pipeline.
+ *
+ * assembleCandidate() always merges { persist: true } into whatever shaveOptions
+ * the caller supplies — this is how it wires up the WI-373 persistence path.
+ *
+ * @decision DEC-UNIVERSALIZE-PERSIST-API-001 (WI-373)
+ * @see UniversalizeOptions
  */
 export interface AssembleCandidateOptions extends AssembleOptions {
   /**
    * Options forwarded to universalize() for intent extraction tuning
-   * (cacheDir, model, offline, recursionOptions).
+   * (cacheDir, model, offline, recursionOptions) and persistence (persist).
+   * assembleCandidate() forces persist:true regardless of what is supplied here.
    */
-  readonly shaveOptions?: ShaveOptions;
+  readonly shaveOptions?: UniversalizeOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,13 +154,34 @@ function resolveToMerkleRoot(result: UniversalizeResult): BlockMerkleRoot {
     return only.merkleRoot;
   }
 
-  // kind === "novel-glue": universalize() does not call maybePersistNovelGlueAtom
-  // (only shave() does). The atom is not yet in the registry, so we cannot produce
-  // a stable merkleRoot here without modifying the universalize() contract.
-  // TODO(future-WI): when universalize() gains in-pipeline atom persistence,
-  // surface the stored merkleRoot from the NovelGlueEntry and remove this error.
+  if (only.kind === "novel-glue") {
+    // WI-373: universalize({persist:true}) now persists the atom in-pipeline and
+    // surfaces the BlockMerkleRoot on the NovelGlueEntry. assembleCandidate()
+    // always forces persist:true (see assembleCandidate() below), so by the time
+    // we reach this branch the entry should carry a defined merkleRoot.
+    //
+    // @decision DEC-UNIVERSALIZE-PERSIST-PIPELINE-001 (WI-373)
+    // @title resolveToMerkleRoot lifts NovelGlueEntry.merkleRoot after in-pipeline persist
+    // @status accepted
+    // @rationale
+    //   assembleCandidate() merges persist:true into the universalize() call, so
+    //   any NovelGlueEntry that had an intentCard will carry a merkleRoot here.
+    //   If merkleRoot is still undefined after persist:true (e.g. the entry had no
+    //   intentCard — a deep leaf without an extracted card), we throw a clear error
+    //   rather than silently returning null. This keeps the loud-fail contract of
+    //   Sacred Practice #5 while surfacing a diagnosable message.
+    if (only.merkleRoot !== undefined) {
+      return only.merkleRoot;
+    }
+    throw new CandidateNotResolvableError(
+      "single novel-glue entry — atom was not persisted (no intentCard on the entry; " +
+        "ensure the source passes intent extraction before assembling)",
+    );
+  }
+
+  // Other single-entry kinds (foreign-leaf, glue) cannot be resolved to a merkleRoot.
   throw new CandidateNotResolvableError(
-    "single novel-glue entry — atom persistence in universalize() pipeline pending; use `yakcc shave` to persist first, then assemble() directly",
+    `single entry of kind '${only.kind}' cannot be resolved to a BlockMerkleRoot`,
   );
 }
 
@@ -183,12 +221,19 @@ export async function assembleCandidate(
   // Step 1: adapt Registry → ShaveRegistryView.
   const shaveRegistry = toShaveRegistryView(registry);
 
-  // Step 2: run universalize() — license gate runs first, then intent extraction,
-  // decompose, and slice. All universalize() errors propagate unwrapped.
+  // Step 2: run universalize() with persist:true — license gate runs first, then
+  // intent extraction, decompose, slice, and now in-pipeline atom persistence
+  // (step 6, WI-373). persist:true is always forced here so novel-glue entries
+  // are persisted in-pipeline and their merkleRoot is surfaced to resolveToMerkleRoot().
+  // All universalize() errors propagate unwrapped.
+  const universalizeOptions: UniversalizeOptions = {
+    ...options.shaveOptions,
+    persist: true,
+  };
   const result = await universalize(
     { source: candidateSource, hint: { origin: "compile-resolver" } },
     shaveRegistry,
-    options.shaveOptions,
+    universalizeOptions,
   );
 
   // Step 3: resolve to a single BlockMerkleRoot (or throw CandidateNotResolvableError).

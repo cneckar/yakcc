@@ -77,6 +77,32 @@ export class LicenseRefusedError extends Error {
 }
 
 /**
+ * Thrown by universalize() when `options.persist === true` is requested but
+ * the registry view does not implement `storeBlock`.
+ *
+ * This is a loud-fail per Sacred Practice #5: callers that request persistence
+ * must supply a registry that supports it. Silent no-op (the graceful-degradation
+ * path used when persist is NOT requested) is intentionally not available here —
+ * if the caller says "persist", the absence of storeBlock is a programmer error,
+ * not a configuration choice.
+ *
+ * Resolution: pass a full Registry (which implements storeBlock) or remove the
+ * persist: true option from the universalize() call.
+ *
+ * @decision DEC-UNIVERSALIZE-PERSIST-ERR-001 (WI-373)
+ * @see UniversalizeOptions.persist
+ */
+export class PersistRequestedButNotSupportedError extends Error {
+  constructor() {
+    super(
+      "universalize: persist:true was requested but the registry view does not implement storeBlock. " +
+        "Pass a full Registry that supports storeBlock, or remove persist:true from the options.",
+    );
+    this.name = "PersistRequestedButNotSupportedError";
+  }
+}
+
+/**
  * Thrown by shave() when foreignPolicy === 'reject' and the slice plan
  * contains one or more ForeignLeafEntry records.
  *

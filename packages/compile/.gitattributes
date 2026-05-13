@@ -1,0 +1,11 @@
+# @decision DEC-CI-COMPILE-LINT-LF-001
+# All sources in @yakcc/compile are LF-canonical on checkout.
+# Mirrors the shave (.gitattributes DEC-CI-SHAVE-LINT-LF-001) and seeds (#418)
+# fixes — without an LF pin, Windows checkouts via core.autocrlf=true would
+# deliver CRLF and produce phantom format-violations on any PR that
+# invalidates the compile-lint turbo cache.
+
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf
