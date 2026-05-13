@@ -140,10 +140,12 @@ function makeStoreStub(): {
  * When the NovelGlueEntry has no intentCard, persistNovelGlueAtom returns
  * undefined and never calls storeBlock.
  *
- * Invariant (AP1.1, DEC-ATOM-PERSIST-001): deep-leaf entries (multi-leaf trees
- * without per-leaf intent extraction) are silently skipped — no error, no
- * persistence. This preserves backward-compatibility while future WIs add
- * per-leaf extraction.
+ * Invariant (AP1.1, DEC-ATOM-PERSIST-001): entries without an intentCard are
+ * silently skipped — no error, no persistence. This is the safety net for
+ * non-NovelGlue kinds (PointerEntry, ForeignLeafEntry). Per WI-031
+ * (DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001), novel-glue entries in multi-leaf
+ * trees carry per-leaf cards; intentCard optionality is preserved for
+ * forward-compat with entry kinds that carry no intent slot.
  */
 export const prop_persistNovelGlueAtom_skips_no_intent_card = fc.asyncProperty(
   novelGlueEntryNoCardArb,

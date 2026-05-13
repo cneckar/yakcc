@@ -413,11 +413,10 @@ import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./univers
  *
  * Intent card attachment: for single-leaf trees (root is an AtomLeaf), the
  * extracted intent card is attached to the one NovelGlueEntry that covers the
- * root. For multi-leaf trees, per-leaf intent extraction would require calling
- * extractIntent once per leaf — this is deferred to a future work item. Entries
- * for non-root leaves are emitted without an intentCard (the field is optional).
- * TODO(future-WI): call extractIntent per leaf and populate intentCard on each
- * NovelGlueEntry for multi-leaf trees.
+ * root. For multi-leaf trees, per-leaf intentCard population is implemented by
+ * WI-031 (commit `8dfb44b`, merge `3049ec3`, 2026-05-01) — see
+ * `DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001` for the live decision and the
+ * per-leaf extractIntent loop at lines ~542-573.
  *
  * "decomposition" is removed from diagnostics.stubbed — decomposition is now
  * live. "license-gate" is removed — gate is now live (WI-013-02).

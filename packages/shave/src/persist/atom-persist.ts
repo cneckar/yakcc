@@ -9,9 +9,12 @@
 //     be used without modification.
 //   - Only NovelGlueEntries with an intentCard persist; PointerEntries reference
 //     existing blocks in the registry and do not produce new rows.
-//   - Entries without an intentCard (deep leaves in multi-leaf trees per
-//     DEC-UNIVERSALIZE-WIRING-001) are skipped. Future work: per-leaf intent
-//     extraction for multi-leaf trees.
+//   - Entries without an intentCard are skipped. For NovelGlueEntries this
+//     should not occur in practice: WI-031 (commit `8dfb44b`, 2026-05-01)
+//     calls extractIntent per novel-glue entry for multi-leaf trees (see
+//     DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001). The intentCard field remains
+//     optional on NovelGlueEntry for forward-compat with PointerEntry /
+//     ForeignLeafEntry kinds that carry no intent slot.
 //   - WI-016: Property-test corpus is extracted via extractCorpus() before buildTriplet().
 //     The CorpusResult is passed to buildTriplet() as the canonical artifact source.
 //     The bootstrap placeholder (empty bytes) is no longer the silent default.
@@ -137,8 +140,11 @@ export async function persistNovelGlueAtom(
   registry: Registry,
   options?: PersistOptions,
 ): Promise<BlockMerkleRoot | undefined> {
-  // Skip atoms without an intent card — deep leaves in multi-leaf trees do not
-  // carry one (per DEC-UNIVERSALIZE-WIRING-001; future WI populates per-leaf cards).
+  // Skip atoms without an intent card — this is the defensive safety net for
+  // non-NovelGlue entry kinds (PointerEntry, ForeignLeafEntry) that have no
+  // intentCard slot. Per WI-031 (DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001),
+  // novel-glue entries in multi-leaf trees DO carry per-leaf cards; this branch
+  // is not expected to fire for them in the normal pipeline.
   const intentCard: IntentCard | undefined = entry.intentCard;
   if (intentCard === undefined) {
     return undefined;
