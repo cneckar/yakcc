@@ -905,21 +905,112 @@ export function inferDomainFromSource(src: string): NumericDomain {
 
 /** TS/AS reserved keywords that should never be classified as captured variables. */
 const AS_KEYWORDS: ReadonlySet<string> = new Set([
-  "abstract", "as", "async", "await", "boolean", "break", "case", "catch",
-  "class", "const", "continue", "debugger", "declare", "default", "delete",
-  "do", "else", "enum", "export", "extends", "f32", "f64", "false", "finally",
-  "for", "from", "function", "get", "i16", "i32", "i64", "i8", "if",
-  "implements", "import", "in", "instanceof", "interface", "keyof", "let",
-  "module", "namespace", "new", "null", "number", "of", "override", "package",
-  "private", "protected", "public", "readonly", "return", "set", "static",
-  "string", "super", "switch", "this", "throw", "true", "try", "type",
-  "typeof", "u16", "u32", "u64", "u8", "undefined", "var", "void", "while",
-  "with", "yield", "Math", "Number", "Boolean", "String", "Object", "Array",
-  "Int8Array", "Int16Array", "Int32Array", "Uint8Array", "Uint16Array",
-  "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
-  "WebAssembly", "console", "BigInt", "Symbol", "Promise", "Error",
-  "load", "store", "changetype", "idof", "offsetof", "sizeof", "alignof",
-  "unchecked", "unreachable", "abort",
+  "abstract",
+  "as",
+  "async",
+  "await",
+  "boolean",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "declare",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "f32",
+  "f64",
+  "false",
+  "finally",
+  "for",
+  "from",
+  "function",
+  "get",
+  "i16",
+  "i32",
+  "i64",
+  "i8",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "keyof",
+  "let",
+  "module",
+  "namespace",
+  "new",
+  "null",
+  "number",
+  "of",
+  "override",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "readonly",
+  "return",
+  "set",
+  "static",
+  "string",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "type",
+  "typeof",
+  "u16",
+  "u32",
+  "u64",
+  "u8",
+  "undefined",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+  "Math",
+  "Number",
+  "Boolean",
+  "String",
+  "Object",
+  "Array",
+  "Int8Array",
+  "Int16Array",
+  "Int32Array",
+  "Uint8Array",
+  "Uint16Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+  "WebAssembly",
+  "console",
+  "BigInt",
+  "Symbol",
+  "Promise",
+  "Error",
+  "load",
+  "store",
+  "changetype",
+  "idof",
+  "offsetof",
+  "sizeof",
+  "alignof",
+  "unchecked",
+  "unreachable",
+  "abort",
 ]);
 
 /**
@@ -954,9 +1045,13 @@ function parseParamList(paramStr: string): Array<{ name: string; typeAnnotation:
   let depth = 0;
   let current = "";
   for (const ch of trimmed) {
-    if (ch === "<") { depth++; current += ch; }
-    else if (ch === ">") { depth--; current += ch; }
-    else if (ch === "," && depth === 0) {
+    if (ch === "<") {
+      depth++;
+      current += ch;
+    } else if (ch === ">") {
+      depth--;
+      current += ch;
+    } else if (ch === "," && depth === 0) {
       rawParams.push(current.trim());
       current = "";
     } else {
@@ -1039,8 +1134,7 @@ export function liftClosures(source: string): string {
   // Regex: match a function declaration to extract its params for scope tracking
   // Group 1: function name
   // Group 2: param list
-  const FUNCTION_DECL_RE =
-    /^\s*(?:export\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(([^)]*)\)/;
+  const FUNCTION_DECL_RE = /^\s*(?:export\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(([^)]*)\)/;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
@@ -1068,10 +1162,7 @@ export function liftClosures(source: string): string {
     braceDepth += openBraces - closeBraces;
 
     // Pop scopes that have ended (brace depth fell below scope entry depth)
-    while (
-      scopeStack.length > 0 &&
-      braceDepth < (scopeStack[scopeStack.length - 1]?.depth ?? 0)
-    ) {
+    while (scopeStack.length > 0 && braceDepth < (scopeStack[scopeStack.length - 1]?.depth ?? 0)) {
       const poppedScope = scopeStack.pop();
       if (poppedScope !== undefined) {
         // Clean up lifted names introduced in this scope
@@ -1128,11 +1219,7 @@ export function liftClosures(source: string): string {
         // (conservative: if in doubt, thread it)
         const captureNames: string[] = [];
         for (const id of bodyIds) {
-          if (
-            id !== bindingName &&
-            !arrowParamNames.has(id) &&
-            scopeAvailableNames.has(id)
-          ) {
+          if (id !== bindingName && !arrowParamNames.has(id) && scopeAvailableNames.has(id)) {
             captureNames.push(id);
           }
         }
@@ -1171,10 +1258,7 @@ export function liftClosures(source: string): string {
         const allParamStrs = [...captureParamStrs, ...arrowParamStrs];
 
         // Build the lifted function declaration
-        const liftedFnDecl =
-          `function ${syntheticName}(${allParamStrs.join(", ")}): ${returnTypeStr} {\n` +
-          `  return ${bodyExpr};\n` +
-          `}`;
+        const liftedFnDecl = `function ${syntheticName}(${allParamStrs.join(", ")}): ${returnTypeStr} {\n  return ${bodyExpr};\n}`;
         hoisted.push(liftedFnDecl);
 
         // Record the lift for call-site rewriting
@@ -1237,7 +1321,7 @@ export function liftClosures(source: string): string {
     return source; // No lifts performed — return original unchanged
   }
 
-  return hoisted.join("\n") + "\n\n" + outputLines.join("\n");
+  return `${hoisted.join("\n")}\n\n${outputLines.join("\n")}`;
 }
 
 // ---------------------------------------------------------------------------
