@@ -276,6 +276,20 @@ function extractFunctionName(code: string): string | null {
   return /(?:export\s+(?:async\s+)?function\s+)(\w+)/.exec(code)?.[1] ?? null;
 }
 
+/**
+ * Behavior-derived slug fallback for atomName when extractFunctionName returns null.
+ * Mirrors specFromIntent.deriveSpecName's format so anonymous-function fallbacks
+ * keep the same shape as before WI-424's persist delegation.
+ */
+function deriveAtomNameFallback(behavior: string, canonicalAstHashHex: string): string {
+  const prefix = behavior
+    .slice(0, 30)
+    .replace(/\W+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const hashSuffix = canonicalAstHashHex.slice(-6);
+  return `${prefix}-${hashSuffix}`;
+}
+
 // ---------------------------------------------------------------------------
 // Core atomizeEmission function
 // ---------------------------------------------------------------------------
@@ -449,7 +463,10 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
       const behaviorText = entry.intentCard?.behavior ?? "";
       const atomName =
         extractFunctionName(entry.source) ??
-        (entry.merkleRoot as unknown as string).slice(0, 12);
+        deriveAtomNameFallback(
+          behaviorText,
+          entry.canonicalAstHash as unknown as string,
+        );
 
       atomsCreated.push({
         blockMerkleRoot: entry.merkleRoot as unknown as string,
