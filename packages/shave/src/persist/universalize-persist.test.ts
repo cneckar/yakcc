@@ -179,10 +179,7 @@ describe("T5 (WI-373 A7): shave() and universalize({persist:true}) produce byte-
     });
 
     const persistedAtoms1 = shaveResult.atoms.filter((a) => a.merkleRoot !== undefined);
-    expect(
-      persistedAtoms1.length,
-      "shave() must persist exactly 1 atom for ATOMIC_SOURCE",
-    ).toBe(1);
+    expect(persistedAtoms1.length, "shave() must persist exactly 1 atom for ATOMIC_SOURCE").toBe(1);
     // biome-ignore lint/style/noNonNullAssertion: length asserted to be 1 above
     const merkleRoot1 = persistedAtoms1[0]!.merkleRoot as BlockMerkleRoot;
     const row1 = await registry1.getBlock(merkleRoot1);
@@ -257,7 +254,7 @@ describe("T6 (WI-373 A7 multi-leaf): universalize({persist:true}) persists all N
       if (entry.kind === "novel-glue") {
         expect(
           entry.merkleRoot,
-          `NovelGlueEntry must carry a defined merkleRoot after universalize({persist:true})`,
+          "NovelGlueEntry must carry a defined merkleRoot after universalize({persist:true})",
         ).toBeDefined();
       }
     }
@@ -277,10 +274,9 @@ describe("T6 (WI-373 A7 multi-leaf): universalize({persist:true}) persists all N
 
     // Exactly one root (parentBlockRoot === null) — the first persisted atom (DFS order).
     const rootRows = rows.filter((r) => r.parentBlockRoot === null);
-    expect(
-      rootRows.length,
-      "Exactly one row must have parentBlockRoot === null (DFS root)",
-    ).toBe(1);
+    expect(rootRows.length, "Exactly one row must have parentBlockRoot === null (DFS root)").toBe(
+      1,
+    );
 
     // All non-root rows must reference a valid sibling (lineage chain intact).
     const allMerkleRoots = new Set(rows.map((r) => r.blockMerkleRoot));

@@ -632,11 +632,22 @@ export async function universalize(
         const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
           cacheDir: options?.cacheDir,
           parentBlockRoot,
-          sourceFilePath: options?.sourceFilePath,
+          // sourceFilePath is intentionally omitted: universalize() operates on a
+          // CandidateBlock (in-memory source), not on a file path. The props-file
+          // corpus extractor that consumes sourceFilePath is only meaningful in the
+          // shave() path (which forwards its sourcePath parameter). Interactive
+          // universalize() callers (e.g. assembleCandidate) have no file path.
+          // REQ-NOGO-006: sourceFilePath may be undefined -- atoms persist with null
+          // provenance, which is correct per DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001.
           sourceContext: perAtomSourceContext,
         });
         // Surface the merkleRoot on the entry (may be undefined if intentCard absent).
-        const enriched: NovelGlueEntry = { ...entry, merkleRoot };
+        // exactOptionalPropertyTypes: spread only when defined to satisfy
+        // NovelGlueEntry.merkleRoot?: BlockMerkleRoot (not BlockMerkleRoot | undefined).
+        const enriched: NovelGlueEntry = {
+          ...entry,
+          ...(merkleRoot !== undefined && { merkleRoot }),
+        };
         enrichedWithMerkle.push(enriched);
         if (merkleRoot !== undefined) {
           lastNovelMerkleRoot = merkleRoot;
