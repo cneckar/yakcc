@@ -679,15 +679,19 @@ describe("decompose — CallExpression glue-route (DEC-V2-SHAVE-CALLEXPRESSION-G
   /**
    * Helper: walk the recursion tree and find all AtomLeaf nodes.
    */
-  function collectAtomLeaves(
-    node: { kind: string; atomTest?: { isAtom: boolean }; children?: unknown[] },
-  ): Array<{ isAtom: boolean }> {
+  function collectAtomLeaves(node: {
+    kind: string;
+    atomTest?: { isAtom: boolean };
+    children?: unknown[];
+  }): Array<{ isAtom: boolean }> {
     if (node.kind === "atom" && node.atomTest !== undefined) {
       return [node.atomTest as { isAtom: boolean }];
     }
     if (node.kind === "branch" && Array.isArray(node.children)) {
       return node.children.flatMap((c) =>
-        collectAtomLeaves(c as { kind: string; atomTest?: { isAtom: boolean }; children?: unknown[] }),
+        collectAtomLeaves(
+          c as { kind: string; atomTest?: { isAtom: boolean }; children?: unknown[] },
+        ),
       );
     }
     return [];
