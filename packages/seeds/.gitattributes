@@ -1,0 +1,17 @@
+# @decision DEC-CI-SEEDS-LINT-LF-001
+# @title seeds package — enforce LF line endings on source files
+# @status accepted
+# @rationale Biome (the project linter) enforces LF line endings. On Windows,
+#   git core.autocrlf=true checks files out as CRLF, causing 64 biome violations
+#   on every CI run that misses the turbo seeds-lint cache (e.g., when upstream
+#   packages like @yakcc/shave are touched and the cache is invalidated). These
+#   .gitattributes rules override core.autocrlf for seeds source files, ensuring
+#   git stores AND checks out LF regardless of local OS settings. Without this
+#   pin, any Windows contributor re-introduces the CRLF drift on their next
+#   commit. This is the canonical fix: biome --write normalizes the working copy,
+#   .gitattributes keeps it normalized forever.
+#
+# Affects: packages/seeds/src/**/*.ts, packages/seeds/src/**/*.json
+
+*.ts   text eol=lf
+*.json text eol=lf
