@@ -1,7 +1,8 @@
 # B4-tokens: Token-Expenditure A/B Benchmark
 
 **Parent issue:** [#188](https://github.com/cneckar/yakcc/issues/188) — WI-BENCHMARK-B4: ≥70% LLM output-token reduction
-**This slice:** [#402](https://github.com/cneckar/yakcc/issues/402) — WI-B4-SLICE-1: harness MVP + 3-task seed suite
+**Current slice:** [#473](https://github.com/cneckar/yakcc/issues/473) — WI-B4-MATRIX-HARNESS-V2: 3-driver × 8-task × N=3 matrix
+**Previous slice:** [#402](https://github.com/cneckar/yakcc/issues/402) — WI-B4-SLICE-1: harness MVP + 3-task seed suite
 
 The B4 benchmark measures whether the yakcc hook layer reduces LLM output-token expenditure
 while preserving semantic correctness. Arm A = hook-enabled; Arm B = vanilla Claude.
@@ -14,22 +15,45 @@ The headline claim is ≥70% output-token reduction with ≥90% semantic equival
 ### Dry-run (no API key required — validates harness end-to-end)
 
 ```bash
+# Min tier: 3 drivers × 2 arms × 8 tasks × 3 reps = 144 runs (uses fixtures)
 pnpm bench:tokens --dry-run
+
+# Full tier: 3 drivers × 4 arms × 8 tasks × 3 reps = 288 runs
+pnpm bench:tokens --dry-run --tier=full
+
+# Single driver dry-run
+pnpm bench:tokens --dry-run --driver=sonnet
 ```
 
 Uses canned response fixtures from `bench/B4-tokens/fixtures/` instead of real API calls.
-Exercises telemetry capture, oracle invocation, and aggregate logic on fixture data.
-Exits 0 on success. Safe to run in CI without API budget.
+Tasks without real fixtures use synthetic stubs (oracle FAILs are expected — harness pipeline is proven).
+Exits 0 on success. Safe to run without API budget.
 
 ### Real-run (requires ANTHROPIC_API_KEY)
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pnpm bench:tokens
+
+# Min tier: 144 real API calls ($75 cap enforced — DEC-V0-B4-SLICE2-COST-CEILING-004)
+pnpm bench:tokens --tier=min
+
+# Single driver (recommended for dev smoke test, ~$0.10 for sonnet on one task)
+pnpm bench:tokens --driver=sonnet --tier=min
 ```
 
-Makes real Anthropic API calls (18+ calls at claude-sonnet-4-5 pricing for N=3 reps × 3 tasks × 2 arms).
+Makes real Anthropic API calls across all 3 drivers (haiku, sonnet, opus).
+Per-driver keys: `B4_API_KEY_HAIKU`, `B4_API_KEY_SONNET`, `B4_API_KEY_OPUS`.
+Fallback: `ANTHROPIC_API_KEY` used for all drivers.
+**Cost cap: $75 USD (DEC-V0-B4-SLICE2-COST-CEILING-004).** Harness stops and writes partial results on cap-cross.
 **This is the one benchmark in the suite that exits the B6 air-gap.** See §Air-Gap Caveat below.
+
+### Slice 1 → Slice 2 Migration
+
+Slice 1 produced `tmp/B4-tokens/slice1-*.json` artifacts using a single driver (sonnet-4-5) and 2 arms.
+Slice 2 (WI-473) produces `tmp/B4-tokens/results-{tier}-{date}.json` with the 3-driver matrix.
+The `--mcp` flag from Slice 1 is accepted but ignored (Slice 2 always uses MCP for the hooked arm).
+Slice 1 dry-run mode (`--dry-run` without `--tier`) still works — it now runs all 3 drivers
+against fixtures instead of a single driver, but the harness pipeline is unchanged.
 
 ### Oracle tests only (validate reference implementations)
 
@@ -68,8 +92,14 @@ bench/B4-tokens/
 │       ├── arm-a-response.json
 │       └── arm-b-response.json
 ├── harness/
-│   ├── run.mjs                        # A/B orchestrator (@DEC-BENCH-B4-HARNESS-001)
-│   └── oracle-runner.mjs              # Code extraction + vitest invocation
+│   ├── run.mjs                        # Matrix orchestrator (@DEC-V0-B4-MATRIX-RUNNER-001)
+│   ├── matrix.mjs                     # Cell space: DRIVERS, SWEEP_POSITIONS, buildCellSpace()
+│   ├── billing.mjs                    # Per-run JSONL billing log (@DEC-V0-B4-BILLING-LOG-001)
+│   ├── budget.mjs                     # Cost ceiling enforcement (BudgetTracker, $75 cap)
+│   ├── oracle-runner.mjs              # Code extraction + vitest invocation
+│   ├── mcp-server.mjs                 # Real MCP atom-lookup server (DO NOT MODIFY)
+│   ├── harness-unit.test.mjs          # MCP lifecycle + extractCode unit tests
+│   └── matrix-unit.test.mjs           # Matrix shape, billing, budget unit tests
 └── tasks/
     ├── lru-cache-with-ttl/
     │   ├── prompt.md                  # Frozen task prompt (SHA-256 verified)
@@ -217,10 +247,9 @@ during normal operation?" B4 does not test this property and does not touch the 
 
 | Slice | Status | Description |
 |---|---|---|
-| Slice 1 (this PR) | COMPLETE | Harness MVP + 3-task seed + dry-run verified |
-| Slice 2 | Planned | Operator provides API key; real A/B runs; empirical verdict against 70% bar |
-
-Slice 2 will scale to 5–10 tasks per [#188](https://github.com/cneckar/yakcc/issues/188).
+| Slice 1 (#402) | COMPLETE | Harness MVP + 3-task seed + dry-run verified |
+| Slice 2 (#473) | COMPLETE | 3-driver × 8-task × N=3 matrix + billing log + quality-lift |
+| Slice 3 | Planned | Empirical verdict from full min-tier run; real API results committed |
 
 ---
 

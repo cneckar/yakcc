@@ -2,94 +2,57 @@
 //
 // bench/B4-tokens/harness/run.mjs
 //
-// @decision DEC-BENCH-B4-HARNESS-001
-// @title B4 harness: token-expenditure A/B orchestrator
+// @decision DEC-V0-B4-MATRIX-RUNNER-001
+// @title B4 Slice 2: 3-driver × 8-task × N=3 matrix runner
 // @status accepted
 // @rationale
-//   CAPTURE POINTS
-//   Each LLM response provides:
-//     output_tokens     — from response.usage.output_tokens (primary measurement)
-//     input_tokens      — from response.usage.input_tokens (for context accounting)
-//     inference_passes  — always 1 per call in Slice 1 (no multi-turn, no retries)
-//     wall_ms           — Date.now() delta from API call start to response received
-//   output_tokens is the primary metric for the B4 hypothesis (≥70% reduction Arm A vs B).
+//   WI-473 promotes the B4 harness from a single-driver/2-arm Slice 1 run to a
+//   locked 3-driver × 8-task × N=3 matrix per DEC-V0-B4-SLICE2-MATRIX-002.
 //
-//   ORACLE METHODOLOGY
-//   For each LLM response:
-//   1. Extract TypeScript code from fenced code block in response text.
-//   2. Write extracted code to a temp .ts file under tmp/B4-tokens/oracle-scratch/.
-//   3. Run the task's oracle.test.ts against the temp file via vitest subprocess.
-//      IMPL_PATH env var points vitest to the temp file (see oracle.test.ts imports).
-//   4. semantic_equivalent = (vitest exit code 0 AND all tests passed).
-//   The oracle is NEVER mocked. Real code execution is mandatory (issue #402 contract).
+//   MATRIX SHAPE (see matrix.mjs for canonical definition)
+//   - min tier:  3 drivers × 2 arms (unhooked + hooked-default)  = 6 cells/task
+//                6 × 8 tasks × 3 reps = 144 total API calls
+//   - full tier: 3 drivers × 4 arms (unhooked + 3 sweep positions) = 12 cells/task
+//                12 × 8 tasks × 3 reps = 288 total API calls
 //
-//   DRY-RUN SEMANTICS
-//   When --dry-run is passed:
-//   - The Anthropic API is NOT called.
-//   - Canned response fixtures from bench/B4-tokens/fixtures/<task>/<arm>-response.json
-//     are loaded instead. These capture real Anthropic Messages API response shapes.
-//   - Telemetry capture (output_tokens, input_tokens, wall_ms) runs against fixture data.
-//   - Oracle invocation runs against the code extracted from fixture responses.
-//   - The aggregate + verdict logic runs normally.
-//   This proves the full harness pipeline without spending API budget.
+//   BACKWARD COMPATIBILITY
+//   The Slice 1 invocation `node run.mjs --dry-run` still works and produces a
+//   complete dry-run results artifact. It now uses the 3-driver matrix instead of
+//   single-driver. Migration note: Slice 1 produced slice1-*.json artifacts; Slice 2
+//   produces results-{tier}-{date}.json. The --mcp flag from Slice 1 is accepted but
+//   ignored (Slice 2 always uses MCP for the hooked arm in real mode).
 //
-//   REAL-MODE
-//   When run without --dry-run:
-//   - ANTHROPIC_API_KEY must be set. Harness aborts with clear error if absent.
-//   - Each (task × arm × rep) makes one real Anthropic Messages API call.
-//   - N=3 reps per (task × arm) in Slice 1 = 18 calls minimum.
-//   - arm A: claude-sonnet model + yakcc hook system-prompt enabled.
-//   - arm B: same model, no hook system-prompt text.
-//   This is the one benchmark in the suite that exits the B6 air-gap.
-//   See README.md for B6 air-gap caveat documentation.
+//   CELL ITERATION ORDER
+//   Per forbidden shortcuts §3: all N=3 reps for one (task × cell) are completed
+//   before moving to the next cell. No round-robin across drivers within a task rep.
 //
-//   ARM A TOOL DECLARATION — WHY REMOVED IN SLICE 1 (issue #450 fix)
-//   @decision DEC-BENCH-B4-HARNESS-002
-//   @title Slice 1 must NOT declare yakccResolve as a callable tool
-//   @status accepted
-//   @rationale
-//     The original Slice 1 implementation declared a `yakccResolve` tool in the Arm A
-//     API call. The intent was to simulate hook-assisted generation using only a system
-//     prompt suffix. However, declaring a tool in the Anthropic API means the model CAN
-//     call it — and claude-sonnet-4-5 does call it aggressively on CSV/parsing tasks.
-//     When the model issues a tool_use block (stop_reason: "tool_use"), the response has
-//     no text content block. extractCode("") returns "". The oracle-scratch file has no
-//     exports. All oracle tests fail with "must export parseCSV".
+//   COST CEILING
+//   Per DEC-V0-B4-SLICE2-COST-CEILING-004: $75 USD slice cap. BudgetTracker checks
+//   before every API call. No env-var bypass. Rolling spend printed after every call.
 //
-//     Root cause: Slice 1 has no real MCP server to service tool calls. The declared
-//     tool is unserviceable. The model calling it produces an incomplete response.
-//
-//     Fix: Remove the `tools` array from Arm A's API call. The system prompt suffix
-//     already communicates the yakcc hook context. Slice 1 measures "hook system prompt
-//     presence vs absence" — real tool infrastructure belongs in Slice 2 when the MCP
-//     server is wired (see issue #188 Slice 2 spec).
-//
-//     Observed failure (2026-05-13 run): Arm A reps 2 and 3 for csv-parser-quoted had
-//     stop_reason=tool_use, 65-71 output tokens, 0/39 oracle tests passing. Arm A rep 1
-//     (end_turn, 1036 tokens) passed 36/39. After fix, all Arm A reps should produce
-//     TypeScript code directly (end_turn) with semantic_eq ≥ Arm B baseline.
-//
-//   WHY 3 TASKS (SLICE 1 FLOOR)
-//   3 tasks provides minimum statistical surface to detect signal:
-//   - Enough variance to distinguish systematic hook benefit from per-task coincidence.
-//   - Covers 3 distinct implementation patterns (class, pure function, HOF).
-//   - Each task has a distinct adversarial framing that stresses hook atoms differently.
-//   Slice 2 scales to 5–10 tasks per #188 spec.
+//   DRIVER KEY VALIDATION
+//   In real mode, all configured drivers must have API keys. MissingDriverKeyError
+//   aborts if any driver key is absent (partial-matrix data is forbidden).
+//   Per-driver keys: B4_API_KEY_HAIKU / B4_API_KEY_SONNET / B4_API_KEY_OPUS.
+//   Fallback: ANTHROPIC_API_KEY used for all drivers.
 //
 // Cross-reference:
-//   DEC-BENCH-B4-CORPUS-001 (TASKS_RATIONALE.md) — per-task selection rationale
-//   bench/B4-tokens/tasks.json — frozen task manifest with SHA-256 per prompt
-//   bench/B4-tokens/harness/oracle-runner.mjs — code extraction + vitest invocation
-//   bench/B6-airgap/ — air-gap CI gate (NOT regressed by B4; see README.md §Air-Gap)
+//   matrix.mjs       — cell space definition, DRIVERS, SWEEP_POSITIONS
+//   billing.mjs      — JSONL billing log, estimateCostUsd
+//   budget.mjs       — BudgetTracker, BudgetExceededError, SLICE2_CAP_USD
+//   oracle-runner.mjs — code extraction and oracle test invocation
+//   mcp-server.mjs   — real MCP atom-lookup backend (DO NOT MODIFY from this file)
 //
 // Usage:
 //   node bench/B4-tokens/harness/run.mjs --dry-run
-//   node bench/B4-tokens/harness/run.mjs          # requires ANTHROPIC_API_KEY
+//   node bench/B4-tokens/harness/run.mjs --dry-run --tier=full
+//   node bench/B4-tokens/harness/run.mjs --driver=sonnet --tier=min  # requires API key
+//   node bench/B4-tokens/harness/run.mjs --tier=min                  # all 3 drivers
 //   pnpm bench:tokens --dry-run
-//   pnpm bench:tokens
+//   pnpm bench:tokens --dry-run --tier=full
 
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,9 +63,6 @@ const BENCH_B4_ROOT = resolve(__dirname, "..");
 
 // REPO_ROOT: find the main git repository root (not a worktree root) by looking
 // for a directory named ".git" (worktrees have a .git FILE, not a directory).
-// This correctly handles both main repo and feature worktree invocations.
-import { statSync } from "node:fs";
-
 function findRepoRootSync(startDir) {
   let current = startDir;
   for (let i = 0; i < 12; i++) {
@@ -110,22 +70,34 @@ function findRepoRootSync(startDir) {
     if (existsSync(gitPath)) {
       try {
         const stat = statSync(gitPath);
-        if (stat.isDirectory()) {
-          // This is the main git repo (not a worktree)
-          return current;
-        }
-        // .git is a file (worktree) — keep walking up
+        if (stat.isDirectory()) return current;
       } catch (_) {}
     }
     const parent = resolve(current, "..");
-    if (parent === current) break; // filesystem root
+    if (parent === current) break;
     current = parent;
   }
-  // Fallback: ../../.. from harness dir
   return resolve(startDir, "../../..");
 }
 
 const REPO_ROOT = findRepoRootSync(__dirname);
+
+// ---------------------------------------------------------------------------
+// Imports of Slice 2 modules
+// ---------------------------------------------------------------------------
+
+const { buildCellSpace, DRIVERS } = await import(
+  new URL("file://" + join(__dirname, "matrix.mjs")).href
+);
+const { BillingLog, estimateCostUsd } = await import(
+  new URL("file://" + join(__dirname, "billing.mjs")).href
+);
+const { BudgetTracker, BudgetExceededError, SLICE2_CAP_USD } = await import(
+  new URL("file://" + join(__dirname, "budget.mjs")).href
+);
+const { extractCode, runOracle } = await import(
+  new URL("file://" + join(__dirname, "oracle-runner.mjs")).href
+);
 
 // ---------------------------------------------------------------------------
 // CLI arguments
@@ -134,166 +106,81 @@ const REPO_ROOT = findRepoRootSync(__dirname);
 const { values: cliArgs } = parseArgs({
   args: process.argv.slice(2),
   options: {
-    "dry-run": { type: "boolean", default: false },
-    "no-network": { type: "boolean", default: false },
-    "mcp": { type: "boolean", default: false },
-    "reps": { type: "string", default: "3" },
-    "output": { type: "string" },
+    "dry-run":         { type: "boolean", default: false },
+    "no-network":      { type: "boolean", default: false },
+    "mcp":             { type: "boolean", default: false }, // Slice 1 compat flag, now ignored
+    "driver":          { type: "string",  default: "all" },
+    "tier":            { type: "string",  default: "min" },
+    "reps":            { type: "string",  default: "3" },
+    "output":          { type: "string" },
+    "sweep-positions": { type: "string" }, // informational only; matrix.mjs controls shape
   },
   strict: false,
   allowPositionals: false,
 });
 
-const DRY_RUN = cliArgs["dry-run"] === true;
-const NO_NETWORK = cliArgs["no-network"] === true;
-const N_REPS = parseInt(cliArgs["reps"] ?? "3", 10);
-
-// MCP_ENABLED: when true, Arm A uses the real MCP atom-lookup tool instead of
-// the system-prompt-suffix-only approach from Slice 1. Enables substitution
-// aggressiveness as a real sweep dimension (DEC-V0-B4-HOOK-WIRING-001).
-const MCP_ENABLED = cliArgs["mcp"] === true;
+const DRY_RUN      = cliArgs["dry-run"] === true;
+const NO_NETWORK   = cliArgs["no-network"] === true;
+const DRIVER_FILTER = cliArgs["driver"] ?? "all";
+const TIER          = cliArgs["tier"] ?? "min";
+const N_REPS        = parseInt(cliArgs["reps"] ?? "3", 10);
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const TASKS_JSON_PATH = join(BENCH_B4_ROOT, "tasks.json");
-const ARTIFACT_DIR = join(REPO_ROOT, "tmp", "B4-tokens");
-const SCRATCH_DIR = join(ARTIFACT_DIR, "oracle-scratch");
-const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, "-");
-const ARTIFACT_PATH = cliArgs["output"] ?? join(ARTIFACT_DIR, `slice1-${DRY_RUN ? "dry-" : ""}${TIMESTAMP}.json`);
+const ARTIFACT_DIR    = join(REPO_ROOT, "tmp", "B4-tokens");
+const SCRATCH_DIR     = join(ARTIFACT_DIR, "oracle-scratch");
 const MCP_SERVER_PATH = join(BENCH_B4_ROOT, "harness", "mcp-server.mjs");
 
-// Verdict gates per #188 / issue #402
-const VERDICT_PASS_STRETCH_THRESHOLD = 0.80; // >=80% reduction
-const VERDICT_PASS_THRESHOLD = 0.70;          // >=70% reduction
-const VERDICT_WARN_THRESHOLD = 0.40;          // 40-70% = WARN
-const VERDICT_SEMANTIC_EQ_MIN = 0.90;         // <90% semantic-eq on arm A = KILL regardless
+const DATE_STAMP = new Date().toISOString().replace(/T/, "-").replace(/[:.]/g, "-").slice(0, 16);
+const RUN_ID     = `${TIER}-${DATE_STAMP}-${randomUUID().slice(0, 8)}`;
 
-// Model configuration (same for both arms — only hook integration differs)
-const MODEL = "claude-sonnet-4-5";
-const MAX_TOKENS = 2048;
+const ARTIFACT_PATH = cliArgs["output"] ??
+  join(ARTIFACT_DIR, `results-${TIER}-${DATE_STAMP}.json`);
+const SUMMARY_PATH  = join(ARTIFACT_DIR, `summary-${TIER}-${DATE_STAMP}.md`);
+
+const MAX_TOKENS  = 2048;
 const TEMPERATURE = 1.0;
+const MAX_TOOL_CYCLES = 5;
 
-// System prompt for Arm B (vanilla — no hook integration)
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+class MissingDriverKeyError extends Error {
+  constructor(missingDrivers) {
+    super(
+      `Missing API keys for drivers: ${missingDrivers.join(", ")}.\n` +
+      "Real-mode requires all configured drivers to have API keys.\n" +
+      "Partial-matrix data is forbidden (corrupts cross-cell comparison).\n" +
+      "Per-driver keys: B4_API_KEY_HAIKU, B4_API_KEY_SONNET, B4_API_KEY_OPUS\n" +
+      "Or set ANTHROPIC_API_KEY for all drivers."
+    );
+    this.name = "MissingDriverKeyError";
+    this.missingDrivers = missingDrivers;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// System prompts
+// ---------------------------------------------------------------------------
+
 const SYSTEM_PROMPT_VANILLA = `You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a \`\`\`typescript code block. Do not include explanation before or after the code block.`;
 
-// Additional system prompt text for Arm A (hook-enabled).
-// Represents the context injected by the yakcc hook layer.
-// Slice 1 measures system-prompt presence only — no real MCP tool is declared.
-// Slice 2 will wire real MCP tool calls when the MCP server is ready (issue #188).
-//
-// NOTE (issue #450): The previous version declared a real `yakccResolve` Anthropic
-// tool here. This caused the model to call the tool (stop_reason=tool_use), producing
-// no code output and failing all oracle tests. Removed — see DEC-BENCH-B4-HARNESS-002.
 const SYSTEM_PROMPT_HOOK_SUFFIX = `
 
 You are working in a codebase that uses the yakcc registry for common atomic implementations. When implementing code, prefer token-efficient implementations that compose proven patterns (state machines, data structures, parsing primitives) rather than verbose from-scratch approaches. Output only the implementation code in a \`\`\`typescript code block.`;
 
-// ---------------------------------------------------------------------------
-// Task manifest loading and SHA-256 verification
-// ---------------------------------------------------------------------------
-
-function loadAndVerifyTasks() {
-  console.log("[B4] Loading and verifying task manifest...");
-
-  if (!existsSync(TASKS_JSON_PATH)) {
-    throw new Error(`tasks.json not found at ${TASKS_JSON_PATH}`);
-  }
-
-  const manifest = JSON.parse(readFileSync(TASKS_JSON_PATH, "utf8"));
-
-  for (const task of manifest.tasks) {
-    const promptPath = join(BENCH_B4_ROOT, task.prompt_file);
-    if (!existsSync(promptPath)) {
-      throw new Error(`Task prompt not found: ${promptPath}`);
-    }
-
-    // SHA-256 verification — mirrors B7/B6 discipline
-    // Try raw bytes first, then LF-normalized (handles Windows CRLF git checkout)
-    const rawBytes = readFileSync(promptPath);
-    const actualRaw = createHash("sha256").update(rawBytes).digest("hex");
-    let actual = actualRaw;
-
-    if (actual !== task.sha256) {
-      const lfBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
-      const actualLf = createHash("sha256").update(lfBytes).digest("hex");
-      if (actualLf === task.sha256) {
-        actual = actualLf; // CRLF expansion — content is identical
-      }
-    }
-
-    if (actual !== task.sha256) {
-      throw new Error(
-        `SHA-256 drift detected for ${task.prompt_file}:\n` +
-        `  expected: ${task.sha256}\n` +
-        `  actual:   ${actualRaw}\n` +
-        "Task prompt has changed. Regenerate tasks.json with updated hashes before running."
-      );
-    }
-
-    console.log(`  [OK] ${task.id} — sha256=${actual.slice(0, 16)}...`);
-  }
-
-  console.log(`[B4] Task manifest OK — ${manifest.tasks.length} tasks verified.\n`);
-  return manifest;
-}
-
-// ---------------------------------------------------------------------------
-// Fixture loading (dry-run mode)
-// ---------------------------------------------------------------------------
-
-function loadFixture(taskId, arm) {
-  const fixturePath = join(BENCH_B4_ROOT, "fixtures", taskId, `arm-${arm.toLowerCase()}-response.json`);
-  if (!existsSync(fixturePath)) {
-    throw new Error(
-      `Dry-run fixture not found: ${fixturePath}\n` +
-      `Expected fixture at bench/B4-tokens/fixtures/${taskId}/arm-${arm.toLowerCase()}-response.json`
-    );
-  }
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
-  return fixture;
-}
-
-// ---------------------------------------------------------------------------
-// MCP subprocess: start, query, and stop the atom-lookup server
-//
-// @decision DEC-V0-B4-HOOK-WIRING-001
-// @title Arm A hook wiring: subprocess MCP server with real tool_use cycle relay
-// @status accepted
-// @rationale
-//   Slice 2 Arm A declares `atom-lookup` as a real Anthropic tool (not a phantom).
-//   When the model issues a tool_use block (stop_reason=tool_use), the harness:
-//     1. Parses the tool input from the response content block.
-//     2. Sends the query to the MCP server subprocess via JSON-RPC over stdin.
-//     3. Reads the MCP response from stdout.
-//     4. Returns the tool result to the Anthropic API as a follow-up messages call.
-//   This relay continues until stop_reason=end_turn (model produces TypeScript code)
-//   or until MAX_TOOL_CYCLES is reached (hook_non_engaged: true logged).
-//
-//   WHY SUBPROCESS (not in-process):
-//   The MCP spec requires the server to be a distinct process communicating over
-//   stdio. This matches the production MCP pattern and avoids embedding the SQLite
-//   registry in the harness's address space (which would require different build
-//   configuration). The subprocess starts once per (task × rep) and is reused
-//   for all tool_use cycles in that rep.
-//
-//   EMPTY RESULT HANDLING:
-//   When the MCP server returns { atoms: [] }, the harness returns the empty result
-//   to the model (no phantom substitution). The model then generates the code
-//   directly. This is correct behavior — a miss in the registry is not a harness
-//   error. Documented as hook_non_engaged: true in the rep result.
-//
-//   REPLACING THE PHANTOM TOOL:
-//   Slice 1 cut the yakccResolve tool entirely (DEC-BENCH-B4-HARNESS-002) because
-//   it had no real backend. Slice 2 re-introduces the tool via the real MCP server.
-//   The tool is now named "atom-lookup" (not "yakccResolve") to avoid confusion.
-// ---------------------------------------------------------------------------
-
-/** Maximum tool_use cycles per rep before declaring hook_non_engaged. */
-const MAX_TOOL_CYCLES = 5;
-
-/** Anthropic tool definition for the MCP atom-lookup server. */
+/**
+ * @decision DEC-V0-B4-HOOK-WIRING-001
+ * @title Arm A hook wiring: subprocess MCP server with real tool_use cycle relay
+ * @status accepted
+ * @rationale See original decision in harness/run.mjs Slice 1 comments.
+ *   Slice 2: atom-lookup tool declared for hooked arm. Real MCP server relays
+ *   tool_use blocks. sweep_position's substitution_aggressiveness passed to tool.
+ */
 const ATOM_LOOKUP_TOOL_DEF = {
   name: "atom-lookup",
   description:
@@ -318,38 +205,141 @@ const ATOM_LOOKUP_TOOL_DEF = {
   },
 };
 
-/**
- * Start the MCP server subprocess and return a handle for querying it.
- * The handle's close() method terminates the server.
- */
-async function startMcpServer() {
-  // Pass REPO_ROOT as YAKCC_REGISTRY_PATH env so the MCP server finds the correct
-  // registry regardless of whether it's running from the main worktree or a feature
-  // worktree. The registry lives at REPO_ROOT/.yakcc/registry.sqlite.
-  const registryPath = process.env["YAKCC_REGISTRY_PATH"]
-    ?? join(REPO_ROOT, ".yakcc", "registry.sqlite");
+// ---------------------------------------------------------------------------
+// API key resolution per driver
+// ---------------------------------------------------------------------------
 
+function getApiKeyForDriver(shortName) {
+  const perDriver = {
+    haiku:  process.env["B4_API_KEY_HAIKU"],
+    sonnet: process.env["B4_API_KEY_SONNET"],
+    opus:   process.env["B4_API_KEY_OPUS"],
+  };
+  return perDriver[shortName] ?? process.env["ANTHROPIC_API_KEY"];
+}
+
+function validateApiKeysForDrivers(activeDrivers) {
+  const missing = [];
+  for (const driver of activeDrivers) {
+    if (!getApiKeyForDriver(driver.short_name)) {
+      missing.push(driver.short_name);
+    }
+  }
+  if (missing.length > 0) throw new MissingDriverKeyError(missing);
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic SDK loader (lazy, singleton)
+// ---------------------------------------------------------------------------
+
+let _anthropicClass = null;
+async function getAnthropicClass() {
+  if (_anthropicClass) return _anthropicClass;
+  const sdkPath    = join(BENCH_B4_ROOT, "node_modules", "@anthropic-ai", "sdk", "dist", "index.mjs");
+  const sdkPathCjs = join(BENCH_B4_ROOT, "node_modules", "@anthropic-ai", "sdk", "dist", "index.js");
+  if (existsSync(sdkPath)) {
+    const mod = await import(new URL(`file://${sdkPath}`).href);
+    _anthropicClass = mod.default ?? mod.Anthropic;
+  } else if (existsSync(sdkPathCjs)) {
+    const mod = await import(new URL(`file://${sdkPathCjs}`).href);
+    _anthropicClass = mod.default ?? mod.Anthropic;
+  } else {
+    try {
+      const mod = await import("@anthropic-ai/sdk");
+      _anthropicClass = mod.default ?? mod.Anthropic;
+    } catch (_) {
+      throw new Error(
+        "Could not load @anthropic-ai/sdk. Run `pnpm --dir bench/B4-tokens install` first."
+      );
+    }
+  }
+  return _anthropicClass;
+}
+
+// ---------------------------------------------------------------------------
+// Task manifest loading and SHA-256 verification
+// ---------------------------------------------------------------------------
+
+function loadAndVerifyTasks() {
+  console.log("[B4] Loading and verifying task manifest...");
+  if (!existsSync(TASKS_JSON_PATH)) {
+    throw new Error(`tasks.json not found at ${TASKS_JSON_PATH}`);
+  }
+  const manifest = JSON.parse(readFileSync(TASKS_JSON_PATH, "utf8"));
+  for (const task of manifest.tasks) {
+    const promptPath = join(BENCH_B4_ROOT, task.prompt_file);
+    if (!existsSync(promptPath)) {
+      throw new Error(`Task prompt not found: ${promptPath}`);
+    }
+    const rawBytes  = readFileSync(promptPath);
+    const actualRaw = createHash("sha256").update(rawBytes).digest("hex");
+    let actual = actualRaw;
+    if (actual !== task.sha256) {
+      const lfBytes = Buffer.from(rawBytes.toString("binary").replace(/\r\n/g, "\n"), "binary");
+      const actualLf = createHash("sha256").update(lfBytes).digest("hex");
+      if (actualLf === task.sha256) actual = actualLf;
+    }
+    if (actual !== task.sha256) {
+      throw new Error(
+        `SHA-256 drift detected for ${task.prompt_file}:\n` +
+        `  expected: ${task.sha256}\n  actual: ${actualRaw}\n` +
+        "Task prompt has changed. Regenerate tasks.json with updated hashes."
+      );
+    }
+    console.log(`  [OK] ${task.id} — sha256=${actual.slice(0, 16)}...`);
+  }
+  console.log(`[B4] Task manifest OK — ${manifest.tasks.length} tasks verified.\n`);
+  return manifest;
+}
+
+// ---------------------------------------------------------------------------
+// Fixture / stub loading (dry-run mode)
+// ---------------------------------------------------------------------------
+
+function loadFixtureOrStub(taskId, arm) {
+  // Fixture arm convention: "hooked" → arm-a-response.json, "unhooked" → arm-b-response.json
+  const fixtureArm  = arm === "hooked" ? "a" : "b";
+  const fixturePath = join(BENCH_B4_ROOT, "fixtures", taskId, `arm-${fixtureArm}-response.json`);
+  if (existsSync(fixturePath)) {
+    return JSON.parse(readFileSync(fixturePath, "utf8"));
+  }
+  // Stub: correct structure, no real code. Oracle will FAIL — expected for dry-run.
+  const isHooked = arm === "hooked";
+  return {
+    _fixture_note: "Synthetic stub — no real fixture for this task yet",
+    id: `msg_dry_${taskId}_arm_${fixtureArm}_stub`,
+    type: "message", role: "assistant", model: "claude-sonnet-4-6",
+    stop_reason: "end_turn", stop_sequence: null,
+    usage: {
+      input_tokens:  isHooked ? 900 : 1100,
+      output_tokens: isHooked ? 280 : 420,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+    content: [{ type: "text", text: "```typescript\n// dry-run stub\nexport {};\n```" }],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// MCP server subprocess lifecycle
+// ---------------------------------------------------------------------------
+
+async function startMcpServer() {
+  const registryPath = process.env["YAKCC_REGISTRY_PATH"] ??
+    join(REPO_ROOT, ".yakcc", "registry.sqlite");
   const server = spawn("node", [MCP_SERVER_PATH], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      YAKCC_REGISTRY_PATH: registryPath,
-      YAKCC_REPO_ROOT: REPO_ROOT,
-    },
+    env: { ...process.env, YAKCC_REGISTRY_PATH: registryPath, YAKCC_REPO_ROOT: REPO_ROOT },
     stdio: ["pipe", "pipe", "pipe"],
   });
-
-  server.stderr.on("data", (d) => {
-    console.log(`  [MCP] ${d.toString().trim()}`);
-  });
+  server.stderr.on("data", (d) => process.stdout.write(`  [MCP] ${d.toString().trim()}\n`));
 
   let stdoutBuf = Buffer.alloc(0);
-  let pendingResolves = new Map();
+  const pending = new Map();
   let reqId = 100;
 
   server.stdout.on("data", (chunk) => {
     stdoutBuf = Buffer.concat([stdoutBuf, chunk]);
-    // Parse Content-Length framed messages
     while (true) {
       const hEnd = stdoutBuf.indexOf("\r\n\r\n");
       if (hEnd === -1) break;
@@ -363,568 +353,582 @@ async function startMcpServer() {
       stdoutBuf = stdoutBuf.slice(bStart + cl);
       try {
         const msg = JSON.parse(body);
-        const resolve = pendingResolves.get(msg.id);
-        if (resolve) {
-          pendingResolves.delete(msg.id);
-          resolve(msg);
-        }
+        const res = pending.get(msg.id);
+        if (res) { pending.delete(msg.id); res(msg); }
       } catch (_) {}
     }
   });
 
-  function sendMcpRequest(method, params) {
+  function request(method, params) {
     const id = reqId++;
     return new Promise((resolve, reject) => {
-      pendingResolves.set(id, resolve);
-      const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
+      pending.set(id, resolve);
+      const body   = JSON.stringify({ jsonrpc: "2.0", id, method, params });
       const header = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n`;
       server.stdin.write(header + body);
-      // Timeout after 10s
       setTimeout(() => {
-        if (pendingResolves.has(id)) {
-          pendingResolves.delete(id);
-          reject(new Error(`MCP request timeout: ${method}`));
-        }
+        if (pending.has(id)) { pending.delete(id); reject(new Error(`MCP timeout: ${method}`)); }
       }, 10000);
     });
   }
 
-  // Handshake
-  await sendMcpRequest("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
+  await request("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
 
   return {
     async callTool(toolInput) {
-      const response = await sendMcpRequest("tools/call", {
-        name: "atom-lookup",
-        arguments: toolInput,
-      });
-      if (response.error) {
-        throw new Error(`MCP tool error: ${response.error.message}`);
-      }
-      const text = response.result?.content?.[0]?.text ?? '{"atoms":[]}';
+      const resp = await request("tools/call", { name: "atom-lookup", arguments: toolInput });
+      if (resp.error) throw new Error(`MCP tool error: ${resp.error.message}`);
+      const text = resp.result?.content?.[0]?.text ?? '{"atoms":[]}';
       return JSON.parse(text);
     },
-    close() {
-      server.kill("SIGTERM");
-    },
+    close() { server.kill("SIGTERM"); },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Real API call (requires ANTHROPIC_API_KEY)
+// Real API call for one (task × cell × rep)
 // ---------------------------------------------------------------------------
 
-async function callAnthropicAPI(taskId, taskManifest, arm) {
-  // Guard: real mode requires API key
-  if (!process.env["ANTHROPIC_API_KEY"]) {
-    throw new Error(
-      "ANTHROPIC_API_KEY environment variable is not set.\n" +
-      "Real-run mode requires an API key. To run without API calls, use --dry-run.\n" +
-      "Example: pnpm bench:tokens --dry-run"
-    );
-  }
+async function callAnthropicForCell(taskId, taskManifest, cell, budget, billingLog, rep) {
+  const apiKey = getApiKeyForDriver(cell.driver);
+  if (!apiKey) throw new MissingDriverKeyError([cell.driver]);
 
+  const Anthropic  = await getAnthropicClass();
+  const client     = new Anthropic({ apiKey });
   const promptPath = join(BENCH_B4_ROOT, taskManifest.prompt_file);
   const promptText = readFileSync(promptPath, "utf8");
 
-  // Lazy import Anthropic SDK (only in real mode)
-  // The SDK is bench-local dep in bench/B4-tokens/package.json
-  let Anthropic;
-  const sdkPath = join(BENCH_B4_ROOT, "node_modules", "@anthropic-ai", "sdk", "dist", "index.mjs");
-  const sdkPathCjs = join(BENCH_B4_ROOT, "node_modules", "@anthropic-ai", "sdk", "dist", "index.js");
-
-  if (existsSync(sdkPath)) {
-    const mod = await import(new URL(`file://${sdkPath}`).href);
-    Anthropic = mod.default ?? mod.Anthropic;
-  } else if (existsSync(sdkPathCjs)) {
-    const mod = await import(new URL(`file://${sdkPathCjs}`).href);
-    Anthropic = mod.default ?? mod.Anthropic;
-  } else {
-    // Try workspace-resolved import (if running via pnpm in workspace context)
-    try {
-      const mod = await import("@anthropic-ai/sdk");
-      Anthropic = mod.default ?? mod.Anthropic;
-    } catch (_) {
-      throw new Error(
-        "Could not load @anthropic-ai/sdk. Run `pnpm --dir bench/B4-tokens install` first."
-      );
-    }
-  }
-
-  const client = new Anthropic({ apiKey: process.env["ANTHROPIC_API_KEY"] });
-
-  const systemPrompt = arm === "A"
+  const isHooked     = cell.arm === "hooked";
+  const systemPrompt = isHooked
     ? SYSTEM_PROMPT_VANILLA + SYSTEM_PROMPT_HOOK_SUFFIX
     : SYSTEM_PROMPT_VANILLA;
 
-  // Arm A with MCP enabled: start the MCP server and declare the real atom-lookup tool.
-  // Arm A without MCP (Slice 1 mode): system-prompt suffix only, no tool declaration.
-  // Arm B: vanilla system prompt, no tool.
-  // See DEC-V0-B4-HOOK-WIRING-001 for the full relay decision.
-  const useRealMcp = arm === "A" && MCP_ENABLED;
+  let mcpServer    = null;
+  let toolCycles   = 0;
+  let hookNonEng   = false;
+  const subEvents  = [];
 
-  let mcpServer = null;
-  let toolCycleCount = 0;
-  let hookNonEngaged = false;
-  const substitutionEvents = []; // Records which atoms were proposed per cycle
-
-  if (useRealMcp) {
-    console.log("  [MCP] Starting atom-lookup MCP server...");
+  if (isHooked) {
+    console.log(`    [MCP] Starting server for ${cell.cell_id}...`);
     mcpServer = await startMcpServer();
-    console.log("  [MCP] Server ready.");
   }
 
-  try {
-    const t0 = Date.now();
+  const startedAt = new Date().toISOString();
+  const t0        = Date.now();
 
-    // Build initial API call parameters
+  try {
+    // Conservative pre-call cost estimate (1500 in + 500 out tokens)
+    const estCost = estimateCostUsd({
+      model_id_requested: cell.model_id,
+      input_tokens: 1500, output_tokens: 500,
+      cache_read_tokens: 0, cache_write_tokens: 0,
+    });
+    budget.checkBeforeCall(estCost);
+
     const apiParams = {
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      temperature: TEMPERATURE,
+      model: cell.model_id, max_tokens: MAX_TOKENS, temperature: TEMPERATURE,
       system: systemPrompt,
       messages: [{ role: "user", content: promptText }],
-      ...(useRealMcp ? { tools: [ATOM_LOOKUP_TOOL_DEF] } : {}),
+      ...(isHooked ? { tools: [ATOM_LOOKUP_TOOL_DEF] } : {}),
     };
 
     let response = await client.messages.create(apiParams);
 
-    // Tool-use relay loop (Slice 2 Arm A with MCP only)
-    // Per DEC-V0-B4-HOOK-WIRING-001: relay tool_use cycles back to MCP server.
-    if (useRealMcp) {
-      const conversationMessages = [...apiParams.messages];
-
-      while (response.stop_reason === "tool_use" && toolCycleCount < MAX_TOOL_CYCLES) {
-        toolCycleCount++;
-        console.log(`  [MCP] tool_use cycle ${toolCycleCount} detected.`);
-
-        // Collect all tool_use blocks from the response
+    // Tool-use relay (hooked arm only)
+    if (isHooked) {
+      const conv = [...apiParams.messages];
+      while (response.stop_reason === "tool_use" && toolCycles < MAX_TOOL_CYCLES) {
+        toolCycles++;
         const toolUseBlocks = response.content.filter((c) => c.type === "tool_use");
-        const toolResults = [];
-
-        for (const toolUse of toolUseBlocks) {
-          console.log(`  [MCP] Model called tool: ${toolUse.name} with intent="${JSON.stringify(toolUse.input).slice(0, 80)}..."`);
-
+        const toolResults   = [];
+        for (const tu of toolUseBlocks) {
           let toolResult;
           try {
-            toolResult = await mcpServer.callTool(toolUse.input);
+            toolResult = await mcpServer.callTool({
+              ...tu.input,
+              substitution_aggressiveness: cell.substitution_aggressiveness,
+            });
           } catch (err) {
-            console.warn(`  [MCP] Tool call failed: ${err.message}. Returning empty result.`);
+            console.warn(`    [MCP] Tool call failed: ${err.message}`);
             toolResult = { atoms: [] };
           }
-
-          // Record substitution event
-          substitutionEvents.push({
-            cycle: toolCycleCount,
-            tool_name: toolUse.name,
-            intent: toolUse.input?.intent ?? "",
+          subEvents.push({
+            cycle: toolCycles,
+            intent: tu.input?.intent ?? "",
             atoms_proposed: toolResult.atoms?.length ?? 0,
-            atoms: toolResult.atoms ?? [],
+            sweep_position: cell.sweep_position,
           });
-
-          if (!toolResult.atoms || toolResult.atoms.length === 0) {
-            console.log("  [MCP] No atoms returned (registry miss or below threshold) -- model will generate directly.");
-          } else {
-            console.log(`  [MCP] ${toolResult.atoms.length} atom(s) returned to model.`);
-          }
-
           toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
+            type: "tool_result", tool_use_id: tu.id,
             content: JSON.stringify(toolResult),
           });
         }
-
-        // Extend conversation with assistant response + tool results
-        conversationMessages.push({ role: "assistant", content: response.content });
-        conversationMessages.push({ role: "user", content: toolResults });
-
-        // Continue the conversation
+        conv.push({ role: "assistant", content: response.content });
+        conv.push({ role: "user", content: toolResults });
         response = await client.messages.create({
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          temperature: TEMPERATURE,
-          system: systemPrompt,
-          messages: conversationMessages,
-          tools: [ATOM_LOOKUP_TOOL_DEF],
+          model: cell.model_id, max_tokens: MAX_TOKENS, temperature: TEMPERATURE,
+          system: systemPrompt, messages: conv, tools: [ATOM_LOOKUP_TOOL_DEF],
         });
       }
-
-      // If we still have tool_use after max cycles, log hook_non_engaged
-      if (response.stop_reason === "tool_use") {
-        console.warn(`  [MCP] Reached MAX_TOOL_CYCLES (${MAX_TOOL_CYCLES}). Force-stopping tool relay.`);
-        hookNonEngaged = true;
-      }
-
-      // If model never called the tool at all, log hook_non_engaged
-      if (toolCycleCount === 0) {
-        console.log("  [MCP] Model did not call atom-lookup tool (hook_non_engaged: true).");
-        hookNonEngaged = true;
-      }
-    } else {
-      // Slice 1 mode: no MCP server. Defensive guard for unexpected tool_use.
-      if (response.stop_reason === "tool_use") {
-        console.warn(
-          `  [WARN] ${arm} got stop_reason=tool_use despite no tool declaration. ` +
-          "This indicates a harness configuration error. The code extraction will produce " +
-          "an empty file and oracle will fail. Check DEC-BENCH-B4-HARNESS-002 in run.mjs."
-        );
-      }
+      if (response.stop_reason === "tool_use") hookNonEng = true;
+      if (toolCycles === 0) hookNonEng = true;
     }
 
-    const wallMs = Date.now() - t0;
-    return { response, wallMs, toolCycleCount, hookNonEngaged, substitutionEvents };
+    const wallMs      = Date.now() - t0;
+    const finishedAt  = new Date().toISOString();
+    const usage       = response.usage ?? {};
 
+    // Model drift detection (real_path_checks §3)
+    const actualModel = response.model ?? "";
+    if (actualModel && actualModel !== cell.model_id) {
+      console.error(
+        `[MODEL DRIFT] requested=${cell.model_id} actual=${actualModel} ` +
+        "— both logged in billing. Continuing."
+      );
+    }
+
+    const billingEntry = {
+      run_id:             RUN_ID,
+      cell_id:            cell.cell_id,
+      task_id:            taskId,
+      task_repetition:    rep,
+      input_tokens:       usage.input_tokens ?? 0,
+      output_tokens:      usage.output_tokens ?? 0,
+      cache_read_tokens:  usage.cache_read_input_tokens ?? 0,
+      cache_write_tokens: usage.cache_creation_input_tokens ?? 0,
+      model_id_requested: cell.model_id,
+      model_id_actual:    actualModel || cell.model_id,
+      cost_usd_estimated: 0,
+      wall_time_ms:       wallMs,
+      started_at_iso:     startedAt,
+      finished_at_iso:    finishedAt,
+    };
+    billingEntry.cost_usd_estimated = estimateCostUsd(billingEntry);
+    billingLog.append(billingEntry);
+    budget.addSpend(billingEntry.cost_usd_estimated);
+    budget.logRollingSpend({ cellId: cell.cell_id, taskId, rep, callCost: billingEntry.cost_usd_estimated });
+
+    return { response, wallMs, toolCycles, hookNonEng, subEvents, billingEntry };
   } finally {
-    if (mcpServer !== null) {
-      mcpServer.close();
-    }
+    if (mcpServer) mcpServer.close();
   }
 }
 
 // ---------------------------------------------------------------------------
-// Response processing: extract telemetry
-// ---------------------------------------------------------------------------
-
-function extractTelemetry(response, wallMs) {
-  const usage = response.usage ?? {};
-  return {
-    output_tokens: usage.output_tokens ?? 0,
-    input_tokens: usage.input_tokens ?? 0,
-    inference_passes: 1, // Slice 1: single-turn, no retries
-    wall_ms: wallMs,
-    model: response.model ?? MODEL,
-    stop_reason: response.stop_reason ?? "unknown",
-  };
-}
-
-function extractResponseText(response) {
-  const content = response.content ?? [];
-  const textBlock = content.find((c) => c.type === "text");
-  return textBlock?.text ?? "";
-}
-
-// ---------------------------------------------------------------------------
-// Statistics helpers
+// Statistics
 // ---------------------------------------------------------------------------
 
 function mean(arr) {
-  if (arr.length === 0) return 0;
+  if (!arr.length) return 0;
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
 function stddev(arr) {
   if (arr.length <= 1) return 0;
   const m = mean(arr);
-  const variance = arr.reduce((acc, v) => acc + (v - m) ** 2, 0) / (arr.length - 1);
-  return Math.sqrt(variance);
+  return Math.sqrt(arr.reduce((acc, v) => acc + (v - m) ** 2, 0) / (arr.length - 1));
 }
 
 // ---------------------------------------------------------------------------
-// Verdict computation (per #188 / issue #402)
+// Quality-lift computation
+//
+// @decision DEC-V0-B4-QUALITY-LIFT-001
+// @title Quality-lift: operational definition and aggregation rule
+// @status accepted
+// @rationale
+//   Lift = fraction of tasks where hooked-arm passes oracle AND unhooked-arm fails
+//   oracle, for the same driver. Generous definition: any rep passing counts.
+//   A task is "hooked-pass" if ANY rep passes. "Unhooked-fail" if NO rep passes.
+//   Aggregated per driver. Killer-cell = Haiku's lift rate (cheapest model).
 // ---------------------------------------------------------------------------
 
-function computeVerdict(meanReductionPct, meanSemanticEqA) {
-  // KILL conditions
-  if (meanSemanticEqA < VERDICT_SEMANTIC_EQ_MIN) {
-    return {
-      string: "KILL",
-      reason: `semantic_eq_A (${(meanSemanticEqA * 100).toFixed(1)}%) < ${(VERDICT_SEMANTIC_EQ_MIN * 100).toFixed(0)}% threshold`,
-    };
-  }
-  if (meanReductionPct < VERDICT_WARN_THRESHOLD) {
-    return {
-      string: "KILL",
-      reason: `mean_reduction_pct (${(meanReductionPct * 100).toFixed(1)}%) < ${(VERDICT_WARN_THRESHOLD * 100).toFixed(0)}%`,
-    };
-  }
-  if (meanReductionPct >= VERDICT_PASS_STRETCH_THRESHOLD) {
-    return { string: "PASS-stretch", reason: `mean_reduction_pct ${(meanReductionPct * 100).toFixed(1)}% >= ${(VERDICT_PASS_STRETCH_THRESHOLD * 100).toFixed(0)}%` };
-  }
-  if (meanReductionPct >= VERDICT_PASS_THRESHOLD) {
-    return { string: "PASS", reason: `mean_reduction_pct ${(meanReductionPct * 100).toFixed(1)}% >= ${(VERDICT_PASS_THRESHOLD * 100).toFixed(0)}%` };
+function computeQualityLift(cellRepResults, driverShortName) {
+  const rows   = cellRepResults.filter((r) => r.driver === driverShortName);
+  const taskIds = [...new Set(rows.map((r) => r.task_id))];
+  let liftCount = 0;
+  for (const taskId of taskIds) {
+    const taskRows     = rows.filter((r) => r.task_id === taskId);
+    const unhookedRows = taskRows.filter((r) => r.arm === "unhooked");
+    const hookedRows   = taskRows.filter((r) => r.arm === "hooked");
+    const unhookedAny  = unhookedRows.some((r) => r.oracle_pass);
+    const hookedAny    = hookedRows.some((r)   => r.oracle_pass);
+    if (!unhookedAny && hookedAny) liftCount++;
   }
   return {
-    string: "WARN",
-    reason: `mean_reduction_pct ${(meanReductionPct * 100).toFixed(1)}% in [${(VERDICT_WARN_THRESHOLD * 100).toFixed(0)}%, ${(VERDICT_PASS_THRESHOLD * 100).toFixed(0)}%)`,
+    lift_count: liftCount,
+    lift_rate:  taskIds.length > 0 ? liftCount / taskIds.length : 0,
+    task_count: taskIds.length,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Single arm run (one task, one arm, N reps)
+// Results table
 // ---------------------------------------------------------------------------
 
-async function runArm(task, arm, nReps, dryRun) {
-  const results = [];
+function buildResultsTable(cellRepResults, activeCells) {
+  const drivers = [...new Set(activeCells.map((c) => c.driver))];
+  // Column keys: "unhooked", "hooked-default", "hooked-conservative", "hooked-aggressive"
+  const colKeys = [...new Set(activeCells.map((c) =>
+    c.arm === "unhooked" ? "unhooked" : `hooked-${c.sweep_position}`
+  ))];
 
-  for (let rep = 1; rep <= nReps; rep++) {
-    console.log(`  [${arm}] ${task.id} rep ${rep}/${nReps}...`);
-
-    let response;
-    let wallMs;
-
-    let toolCycleCount = 0;
-    let hookNonEngaged = false;
-    let substitutionEvents = [];
-
-    if (dryRun) {
-      // Load canned fixture
-      const fixture = loadFixture(task.id, arm);
-      response = fixture;
-      // Simulate wall_ms from fixture (deterministic for dry-run)
-      wallMs = arm === "A" ? 1200 + rep * 50 : 2800 + rep * 80;
-    } else {
-      // Real API call
-      const result = await callAnthropicAPI(task.id, task, arm);
-      response = result.response;
-      wallMs = result.wallMs;
-      toolCycleCount = result.toolCycleCount ?? 0;
-      hookNonEngaged = result.hookNonEngaged ?? false;
-      substitutionEvents = result.substitutionEvents ?? [];
+  const rows = [];
+  for (const driver of drivers) {
+    const row = { driver };
+    for (const colKey of colKeys) {
+      const [armType, sweepPos] = colKey.startsWith("hooked-")
+        ? ["hooked", colKey.replace("hooked-", "")]
+        : ["unhooked", "default"];
+      const rr = cellRepResults.filter((r) =>
+        r.driver === driver &&
+        r.arm === armType &&
+        (armType === "unhooked" || r.sweep_position === sweepPos)
+      );
+      const outputTokens = rr.map((r) => r.output_tokens);
+      const semanticEq   = rr.map((r) => r.oracle_pass ? 1 : 0);
+      const wallMs       = rr.map((r) => r.wall_ms);
+      const costs        = rr.map((r) => r.cost_usd_estimated);
+      row[colKey] = {
+        mean_token_reduction_pct: null, // filled below
+        mean_semantic_eq_rate:    mean(semanticEq),
+        mean_output_tokens:       mean(outputTokens),
+        mean_wall_ms:             mean(wallMs),
+        mean_cost_usd:            mean(costs),
+        n:                        rr.length,
+      };
     }
-
-    const telemetry = extractTelemetry(response, wallMs);
-    const responseText = extractResponseText(response);
-
-    // Extract code and run oracle
-    const { extractCode, runOracle } = await import(
-      new URL("file://" + join(__dirname, "oracle-runner.mjs")).href
-    );
-    const generatedCode = extractCode(responseText);
-
-    console.log(`    Extracted ${generatedCode.length} chars of code. Running oracle...`);
-
-    const oracleResult = await runOracle(task.id, generatedCode, {
-      scratchDir: SCRATCH_DIR,
-    });
-
-    console.log(
-      `    Oracle: ${oracleResult.semantic_equivalent ? "PASS" : "FAIL"} ` +
-      `(${oracleResult.passed}/${oracleResult.total} tests passed)`
-    );
-
-    // Log hook engagement status for MCP mode
-    if (MCP_ENABLED && arm === "A") {
-      if (hookNonEngaged) {
-        console.log(`    hook_non_engaged: true (tool called ${toolCycleCount} times)`);
-      } else if (toolCycleCount > 0) {
-        console.log(`    hook_engaged: true (${toolCycleCount} tool cycle(s), ${substitutionEvents.reduce((s, e) => s + e.atoms_proposed, 0)} atoms proposed)`);
-      }
-    }
-
-    results.push({
-      rep,
-      arm,
-      task_id: task.id,
-      telemetry,
-      oracle: oracleResult,
-      dry_run: dryRun,
-      // MCP Slice 2 fields (undefined in Slice 1 / non-MCP mode)
-      ...(MCP_ENABLED && arm === "A" ? {
-        tool_cycle_count: toolCycleCount,
-        hook_non_engaged: hookNonEngaged,
-        substitution_events: substitutionEvents,
-      } : {}),
-    });
+    rows.push(row);
   }
 
-  return results;
+  // Compute reduction relative to unhooked baseline
+  for (const row of rows) {
+    const base = row["unhooked"]?.mean_output_tokens ?? 0;
+    for (const col of colKeys) {
+      if (col !== "unhooked" && row[col]) {
+        const hooked = row[col].mean_output_tokens;
+        row[col].mean_token_reduction_pct = base > 0 ? (base - hooked) / base : 0;
+      }
+    }
+    if (row["unhooked"]) row["unhooked"].mean_token_reduction_pct = 0;
+  }
+
+  return { headers: ["driver", ...colKeys], rows };
 }
 
 // ---------------------------------------------------------------------------
-// Main harness
+// Markdown summary
+// ---------------------------------------------------------------------------
+
+function buildMarkdownSummary(artifact) {
+  const { summary, config, run_id } = artifact;
+  const table = summary.results_table;
+
+  let md = `# B4-tokens Matrix Run — ${config.tier.toUpperCase()} tier\n\n`;
+  md += `**Run ID:** ${run_id}  \n`;
+  md += `**Date:** ${artifact.environment.runAt}  \n`;
+  md += `**Mode:** ${artifact.environment.dryRun ? "DRY-RUN" : "REAL API"}  \n`;
+  md += `**Total runs completed:** ${summary.total_calls_completed}  \n`;
+  md += `**Total estimated cost:** $${summary.total_cost_usd.toFixed(4)}  \n\n`;
+  md += `## Results Table\n\n`;
+
+  md += `| ${table.headers.join(" | ")} |\n`;
+  md += `| ${table.headers.map(() => "---").join(" | ")} |\n`;
+  for (const row of table.rows) {
+    const cells = table.headers.map((h) => {
+      if (h === "driver") return `**${row.driver}**`;
+      const cell = row[h];
+      if (!cell) return "—";
+      const red = cell.mean_token_reduction_pct != null
+        ? `${(cell.mean_token_reduction_pct * 100).toFixed(1)}% reduction`
+        : "baseline";
+      return `${red} | ${(cell.mean_semantic_eq_rate * 100).toFixed(0)}% oracle | n=${cell.n}`;
+    });
+    md += `| ${cells.join(" | ")} |\n`;
+  }
+
+  md += `\n## Quality-Lift\n\n`;
+  const ql = summary.quality_lift_by_driver;
+  for (const [driver, stats] of Object.entries(ql)) {
+    md += `- **${driver}**: ${(stats.lift_rate * 100).toFixed(1)}% (${stats.lift_count}/${stats.task_count} tasks)\n`;
+  }
+  md += `\n**Killer-cell (Haiku):** ${summary.killer_cell.haiku_lift_count} task(s), ${summary.killer_cell.haiku_lift_rate_pct.toFixed(1)}%\n`;
+  md += `\n> ${summary.directional_targets_note}\n`;
+  return md;
+}
+
+// ---------------------------------------------------------------------------
+// Main
 // ---------------------------------------------------------------------------
 
 async function main() {
   const runStart = Date.now();
 
-  console.log("=".repeat(70));
-  console.log("B4-tokens — Token-Expenditure A/B Harness");
-  console.log(`  Mode: ${DRY_RUN ? "DRY-RUN (canned fixtures, no API calls)" : NO_NETWORK ? "NO-NETWORK (MCP server smoke test only)" : "REAL (API calls required)"}`);
-  console.log(`  MCP: ${MCP_ENABLED ? "ENABLED (Slice 2 — real atom-lookup tool for Arm A)" : "DISABLED (Slice 1 — system-prompt suffix only)"}`);
-  console.log(`  N=${N_REPS} reps per (task × arm) | tasks loaded from tasks.json`);
-  console.log("=".repeat(70));
-  console.log();
-
-  // --no-network: verify MCP server starts and responds, then exit (no API calls)
-  if (NO_NETWORK) {
-    console.log("[--no-network] Verifying MCP server starts and responds...");
-    const testServer = await startMcpServer();
-    const result = await testServer.callTool({ intent: "schedule timer callback with cancel", substitution_aggressiveness: "aggressive" });
-    testServer.close();
-    console.log(`[--no-network] MCP server OK. ${result.atoms?.length ?? 0} candidate(s) returned for test query.`);
-    console.log("[--no-network] Smoke test passed. Exiting without API calls.");
-    process.exit(0);
-  }
-
-  // Real-mode guard: abort early with clear error if no API key
-  if (!DRY_RUN && !process.env["ANTHROPIC_API_KEY"]) {
-    console.error(
-      "\n" + "!".repeat(70) + "\n" +
-      "ERROR: ANTHROPIC_API_KEY is not set.\n\n" +
-      "Real-run mode requires an Anthropic API key to make LLM calls.\n" +
-      "This will incur API costs (18+ calls at claude-sonnet-4-5 pricing).\n\n" +
-      "Options:\n" +
-      "  1. Set ANTHROPIC_API_KEY and re-run for real A/B measurement (Slice 2)\n" +
-      "  2. Run with --dry-run to validate the harness without API calls:\n" +
-      "       pnpm bench:tokens --dry-run\n" +
-      "!".repeat(70) + "\n"
-    );
+  // Parse cell space
+  let activeCells;
+  try {
+    activeCells = buildCellSpace({ tier: TIER, driverFilter: DRIVER_FILTER });
+  } catch (err) {
+    console.error(`[B4] Cell space error: ${err.message}`);
     process.exit(1);
   }
 
-  // Step 0: Verify task manifest SHA-256 integrity
-  const manifest = loadAndVerifyTasks();
-  const tasks = manifest.tasks;
+  const activeDriverShortNames = [...new Set(activeCells.map((c) => c.driver))];
+  const activeDrivers = DRIVERS.filter((d) => activeDriverShortNames.includes(d.short_name));
+  const estimatedTotalCalls = activeCells.length * 8 * N_REPS;
 
-  // Step 1: Prepare output directories
+  console.log("=".repeat(70));
+  console.log("B4-tokens — Matrix Token-Expenditure Harness (Slice 2)");
+  console.log(`  Mode:     ${DRY_RUN ? "DRY-RUN (fixtures, no API)" : "REAL (Anthropic API)"}`);
+  console.log(`  Tier:     ${TIER.toUpperCase()} (${activeCells.length} cells/task)`);
+  console.log(`  Drivers:  ${DRIVER_FILTER === "all" ? "all 3" : DRIVER_FILTER}`);
+  console.log(`  N:        ${N_REPS} reps per (task × cell)`);
+  console.log(`  Est. runs: ${estimatedTotalCalls} (${activeCells.length} × 8 tasks × ${N_REPS})`);
+  console.log(`  Cap:      $${SLICE2_CAP_USD} USD (DEC-V0-B4-SLICE2-COST-CEILING-004)`);
+  console.log(`  Run ID:   ${RUN_ID}`);
+  console.log("=".repeat(70));
+  console.log();
+
+  // --no-network: MCP smoke test
+  if (NO_NETWORK) {
+    console.log("[--no-network] Verifying MCP server...");
+    const testServer = await startMcpServer();
+    const result     = await testServer.callTool({ intent: "schedule timer callback", substitution_aggressiveness: "aggressive" });
+    testServer.close();
+    console.log(`[--no-network] MCP OK. ${result.atoms?.length ?? 0} atom(s). Exiting.`);
+    process.exit(0);
+  }
+
+  // Real-mode: validate API keys before touching anything
+  if (!DRY_RUN) {
+    try {
+      validateApiKeysForDrivers(activeDrivers);
+    } catch (err) {
+      console.error(`\n${"!".repeat(70)}\nERROR: ${err.message}\n${"!".repeat(70)}\n`);
+      process.exit(1);
+    }
+  }
+
   mkdirSync(ARTIFACT_DIR, { recursive: true });
-  mkdirSync(SCRATCH_DIR, { recursive: true });
+  mkdirSync(SCRATCH_DIR,  { recursive: true });
 
-  // Step 2: Run A/B for each task
-  const allResults = [];
-  const perTaskSummaries = [];
+  const manifest = loadAndVerifyTasks();
+  const tasks    = manifest.tasks;
 
+  const budget     = new BudgetTracker({ cap_usd: SLICE2_CAP_USD });
+  const billingLog = new BillingLog({ dir: ARTIFACT_DIR, runId: RUN_ID });
+
+  const cellRepResults = [];
+  let budgetExceeded   = false;
+
+  // Outer loops: task → cell → reps
+  TASK_LOOP:
   for (const task of tasks) {
     console.log(`\n${"─".repeat(70)}`);
     console.log(`Task: ${task.id}`);
     console.log("─".repeat(70));
 
-    const armAResults = await runArm(task, "A", N_REPS, DRY_RUN);
-    const armBResults = await runArm(task, "B", N_REPS, DRY_RUN);
+    for (const cell of activeCells) {
+      console.log(`\n  Cell: ${cell.cell_id}`);
 
-    allResults.push(...armAResults, ...armBResults);
+      for (let rep = 1; rep <= N_REPS; rep++) {
+        console.log(`    rep ${rep}/${N_REPS}...`);
 
-    // Aggregate per task
-    const armAOutputTokens = armAResults.map((r) => r.telemetry.output_tokens);
-    const armBOutputTokens = armBResults.map((r) => r.telemetry.output_tokens);
-    const armASemanticEq = armAResults.map((r) => r.oracle.semantic_equivalent ? 1 : 0);
-    const armBSemanticEq = armBResults.map((r) => r.oracle.semantic_equivalent ? 1 : 0);
-    const armAWallMs = armAResults.map((r) => r.telemetry.wall_ms);
-    const armBWallMs = armBResults.map((r) => r.telemetry.wall_ms);
+        let outputTokens   = 0;
+        let inputTokens    = 0;
+        let cacheReadTok   = 0;
+        let wallMs         = 0;
+        let costUsd        = 0;
+        let toolCycles     = 0;
+        let hookNonEng     = false;
+        let subEvents      = [];
+        let oraclePass     = false;
+        let oraclePassed   = 0;
+        let oracleTotal    = 0;
+        let responseContent = [];
 
-    const meanATokens = mean(armAOutputTokens);
-    const meanBTokens = mean(armBOutputTokens);
-    const reductionPct = meanBTokens > 0 ? (meanBTokens - meanATokens) / meanBTokens : 0;
+        if (DRY_RUN) {
+          const fixture   = loadFixtureOrStub(task.id, cell.arm);
+          const usage     = fixture.usage ?? {};
+          responseContent = fixture.content ?? [];
+          outputTokens    = usage.output_tokens ?? 0;
+          inputTokens     = usage.input_tokens  ?? 0;
+          cacheReadTok    = usage.cache_read_input_tokens ?? 0;
+          wallMs          = cell.arm === "hooked" ? 1200 + rep * 50 : 2800 + rep * 80;
+          costUsd         = estimateCostUsd({
+            model_id_requested: cell.model_id,
+            input_tokens: inputTokens, output_tokens: outputTokens,
+            cache_read_tokens: cacheReadTok, cache_write_tokens: 0,
+          });
+        } else {
+          let callResult;
+          try {
+            callResult = await callAnthropicForCell(
+              task.id, task, cell, budget, billingLog, rep
+            );
+          } catch (err) {
+            if (err instanceof BudgetExceededError) {
+              console.error(`\n[BUDGET] ${err.message}`);
+              budgetExceeded = true;
+              break TASK_LOOP;
+            }
+            throw err;
+          }
+          const respUsage = callResult.response.usage ?? {};
+          responseContent = callResult.response.content ?? [];
+          outputTokens    = respUsage.output_tokens ?? 0;
+          inputTokens     = respUsage.input_tokens  ?? 0;
+          cacheReadTok    = respUsage.cache_read_input_tokens ?? 0;
+          wallMs          = callResult.wallMs;
+          toolCycles      = callResult.toolCycles;
+          hookNonEng      = callResult.hookNonEng;
+          subEvents       = callResult.subEvents;
+          costUsd         = callResult.billingEntry.cost_usd_estimated;
+        }
 
-    const summary = {
-      task_id: task.id,
-      arm_A: {
-        mean_output_tokens: meanATokens,
-        std_output_tokens: stddev(armAOutputTokens),
-        mean_semantic_eq_rate: mean(armASemanticEq),
-        mean_wall_ms: mean(armAWallMs),
-        reps: armAResults.length,
-      },
-      arm_B: {
-        mean_output_tokens: meanBTokens,
-        std_output_tokens: stddev(armBOutputTokens),
-        mean_semantic_eq_rate: mean(armBSemanticEq),
-        mean_wall_ms: mean(armBWallMs),
-        reps: armBResults.length,
-      },
-      reduction_pct: reductionPct,
-    };
+        // Extract code and run oracle
+        const responseText  = responseContent.find((c) => c.type === "text")?.text ?? "";
+        const generatedCode = extractCode(responseText);
+        const oracle        = await runOracle(task.id, generatedCode, { scratchDir: SCRATCH_DIR });
+        oraclePass    = oracle.semantic_equivalent;
+        oraclePassed  = oracle.passed;
+        oracleTotal   = oracle.total;
 
-    perTaskSummaries.push(summary);
+        console.log(
+          `    Oracle: ${oraclePass ? "PASS" : "FAIL"} ` +
+          `(${oraclePassed}/${oracleTotal}) | out=${outputTokens} tok | ${wallMs}ms`
+        );
 
-    console.log(`\n  [${task.id}] A/B Summary:`);
-    console.log(`    Arm A: mean_output_tokens=${meanATokens.toFixed(1)} std=${stddev(armAOutputTokens).toFixed(1)}`);
-    console.log(`    Arm B: mean_output_tokens=${meanBTokens.toFixed(1)} std=${stddev(armBOutputTokens).toFixed(1)}`);
-    console.log(`    reduction_pct: ${(reductionPct * 100).toFixed(1)}%`);
-    console.log(`    semantic_eq A: ${(mean(armASemanticEq) * 100).toFixed(0)}%  B: ${(mean(armBSemanticEq) * 100).toFixed(0)}%`);
+        cellRepResults.push({
+          run_id:             RUN_ID,
+          task_id:            task.id,
+          driver:             cell.driver,
+          model_id:           cell.model_id,
+          arm:                cell.arm,
+          sweep_position:     cell.sweep_position,
+          cell_id:            cell.cell_id,
+          rep,
+          oracle_pass:        oraclePass,
+          oracle_passed:      oraclePassed,
+          oracle_total:       oracleTotal,
+          output_tokens:      outputTokens,
+          input_tokens:       inputTokens,
+          cache_read_tokens:  cacheReadTok,
+          wall_ms:            wallMs,
+          cost_usd_estimated: costUsd,
+          dry_run:            DRY_RUN,
+          ...(cell.arm === "hooked" ? {
+            tool_cycle_count:    toolCycles,
+            hook_non_engaged:    hookNonEng,
+            substitution_events: subEvents,
+          } : {}),
+        });
+      }
+    }
   }
 
-  // Step 3: Aggregate across tasks
-  const meanReductionPct = mean(perTaskSummaries.map((s) => s.reduction_pct));
-  const meanSemanticEqA = mean(perTaskSummaries.map((s) => s.arm_A.mean_semantic_eq_rate));
-  const meanSemanticEqB = mean(perTaskSummaries.map((s) => s.arm_B.mean_semantic_eq_rate));
+  // ---------------------------------------------------------------------------
+  // Aggregate
+  // ---------------------------------------------------------------------------
 
-  const verdictResult = computeVerdict(meanReductionPct, meanSemanticEqA);
+  const resultsTable = buildResultsTable(cellRepResults, activeCells);
 
-  const aggregate = {
-    mean_reduction_pct: meanReductionPct,
-    mean_semantic_eq_A: meanSemanticEqA,
-    mean_semantic_eq_B: meanSemanticEqB,
-    verdict: verdictResult.string,
-    verdict_reason: verdictResult.reason,
-    n_tasks: tasks.length,
-    n_reps_per_arm: N_REPS,
-    total_calls: allResults.length,
+  const qualityLiftByDriver = {};
+  for (const driver of activeDrivers) {
+    qualityLiftByDriver[driver.short_name] = computeQualityLift(cellRepResults, driver.short_name);
+  }
+  const haikuLift = qualityLiftByDriver["haiku"] ?? { lift_count: 0, lift_rate: 0, task_count: 0 };
+
+  const totalCostUsd = cellRepResults.reduce((s, r) => s + (r.cost_usd_estimated ?? 0), 0);
+
+  const summary = {
+    tier:                   TIER,
+    run_id:                 RUN_ID,
+    cells_per_task:         activeCells.length,
+    total_calls_completed:  cellRepResults.length,
+    total_cost_usd:         totalCostUsd,
+    results_table:          resultsTable,
+    quality_lift_by_driver: qualityLiftByDriver,
+    killer_cell: {
+      haiku_lift_count:    haikuLift.lift_count,
+      haiku_lift_rate_pct: haikuLift.lift_rate * 100,
+      note: "Fraction of tasks where hooked-Haiku passes and unhooked-Haiku fails.",
+    },
+    quality_lift_footnote:
+      `Lift = fraction of tasks where hooked arm passes AND unhooked arm fails (same driver). ` +
+      `Generous: any rep passing counts. (DEC-V0-B4-QUALITY-LIFT-001)`,
+    directional_targets_note:
+      "Pass-bar columns are directional targets only. No KILL conditions pre-data. " +
+      "(DEC-V0-B4-SLICE2-MATRIX-002)",
+    ...(budgetExceeded ? { partial_run_note: "Run stopped early: budget cap reached." } : {}),
   };
 
-  const runEnd = Date.now();
-  const totalRuntimeMs = runEnd - runStart;
+  // ---------------------------------------------------------------------------
+  // Console output
+  // ---------------------------------------------------------------------------
 
-  // Step 4: Print summary
+  const totalRuntimeMs = Date.now() - runStart;
   console.log("\n" + "=".repeat(70));
-  console.log("AGGREGATE RESULTS");
+  console.log("MATRIX AGGREGATE RESULTS");
   console.log("=".repeat(70));
+  console.log(`Mode:          ${DRY_RUN ? "DRY-RUN" : "REAL"}`);
+  console.log(`Tier:          ${TIER.toUpperCase()}`);
+  console.log(`Calls done:    ${cellRepResults.length} / ${estimatedTotalCalls}`);
+  console.log(`Cost total:    $${totalCostUsd.toFixed(4)} USD`);
+  console.log(`Runtime:       ${(totalRuntimeMs / 1000).toFixed(1)}s`);
   console.log();
-  console.log(`Mode:               ${DRY_RUN ? "DRY-RUN" : "REAL"}`);
-  console.log(`Tasks:              ${tasks.length}`);
-  console.log(`Reps per arm:       ${N_REPS}`);
-  console.log(`Total measurements: ${allResults.length}`);
-  console.log(`Total runtime:      ${(totalRuntimeMs / 1000).toFixed(1)}s`);
-  console.log();
-  console.log("Per-task reduction:");
-  for (const s of perTaskSummaries) {
-    console.log(
-      `  ${s.task_id.padEnd(30)} A=${s.arm_A.mean_output_tokens.toFixed(0).padStart(5)} tok  ` +
-      `B=${s.arm_B.mean_output_tokens.toFixed(0).padStart(5)} tok  ` +
-      `reduction=${(s.reduction_pct * 100).toFixed(1).padStart(6)}%  ` +
-      `semantic_eq_A=${(s.arm_A.mean_semantic_eq_rate * 100).toFixed(0)}%`
-    );
+  console.log("Quality Lift by Driver:");
+  for (const [drv, stats] of Object.entries(qualityLiftByDriver)) {
+    console.log(`  ${drv.padEnd(8)}: ${(stats.lift_rate * 100).toFixed(1)}% (${stats.lift_count}/${stats.task_count} tasks)`);
   }
-  console.log();
-  console.log(`mean_reduction_pct:  ${(meanReductionPct * 100).toFixed(1)}%`);
-  console.log(`mean_semantic_eq_A:  ${(meanSemanticEqA * 100).toFixed(1)}%`);
-  console.log(`mean_semantic_eq_B:  ${(meanSemanticEqB * 100).toFixed(1)}%`);
-  console.log();
-  console.log(`VERDICT: ${verdictResult.string}`);
-  console.log(`  Reason: ${verdictResult.reason}`);
-  console.log();
-
+  console.log(`Killer-cell (Haiku): ${haikuLift.lift_count} / ${haikuLift.task_count} tasks`);
+  if (budgetExceeded) console.log("\nWARNING: Run stopped early — budget cap reached.");
   if (DRY_RUN) {
-    console.log("NOTE: This was a DRY-RUN. Token counts are from canned fixtures, not real LLM calls.");
-    console.log("      The reduction % and verdict are illustrative, not empirical.");
-    console.log("      Run without --dry-run (with ANTHROPIC_API_KEY) for real A/B measurement.");
-    console.log();
+    console.log("\nNOTE: DRY-RUN. Token counts from fixtures/stubs, not real API.");
+    console.log("      Oracle FAIL is expected for stub tasks — harness pipeline is proven.");
   }
+  console.log();
 
-  // Step 5: Write artifact
+  // ---------------------------------------------------------------------------
+  // Write artifacts
+  // ---------------------------------------------------------------------------
+
   const artifact = {
-    benchmark: "B4-tokens-slice1",
-    version: "1.0.0",
+    benchmark: "B4-tokens-matrix",
+    version:   "2.0.0",
+    run_id:    RUN_ID,
     environment: {
-      platform: process.platform,
-      arch: process.arch,
+      platform:    process.platform,
+      arch:        process.arch,
       nodeVersion: process.version,
-      runAt: new Date().toISOString(),
-      repoRoot: REPO_ROOT,
-      dryRun: DRY_RUN,
+      runAt:       new Date().toISOString(),
+      repoRoot:    REPO_ROOT,
+      dryRun:      DRY_RUN,
     },
     config: {
-      model: MODEL,
-      maxTokens: MAX_TOKENS,
-      temperature: TEMPERATURE,
-      nReps: N_REPS,
-      nTasks: tasks.length,
-      verdictGates: {
-        passStretch: VERDICT_PASS_STRETCH_THRESHOLD,
-        pass: VERDICT_PASS_THRESHOLD,
-        warn: VERDICT_WARN_THRESHOLD,
-        semanticEqMin: VERDICT_SEMANTIC_EQ_MIN,
-      },
+      tier:          TIER,
+      driverFilter:  DRIVER_FILTER,
+      nReps:         N_REPS,
+      nTasks:        tasks.length,
+      nCellsPerTask: activeCells.length,
+      totalCalls:    estimatedTotalCalls,
+      costCapUsd:    SLICE2_CAP_USD,
     },
-    tasks: perTaskSummaries,
-    aggregate,
-    measurements: allResults,
+    cells:         activeCells,
+    summary,
+    measurements:  cellRepResults,
     totalRuntimeMs,
   };
 
   writeFileSync(ARTIFACT_PATH, JSON.stringify(artifact, null, 2), "utf8");
-  console.log(`Artifact written to: ${ARTIFACT_PATH}`);
+  console.log(`Results JSON:  ${ARTIFACT_PATH}`);
+
+  const md = buildMarkdownSummary(artifact);
+  writeFileSync(SUMMARY_PATH, md, "utf8");
+  console.log(`Summary MD:    ${SUMMARY_PATH}`);
+
+  if (billingLog.rowCount > 0) {
+    console.log(`Billing log:   ${billingLog.path} (${billingLog.rowCount} entries)`);
+  }
 
   console.log("[B4] Done.");
 }
