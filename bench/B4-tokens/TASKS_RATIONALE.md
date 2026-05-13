@@ -80,6 +80,31 @@ produces an implementation that fails the most adversarial oracle tests.
 
 ## Task 3: `debounce-with-cancel`
 
+<!--
+@decision DEC-BENCH-B4-NON-ENGAGEMENT-001
+@title B4 debounce-with-cancel: known hook non-engagement in Slice 1
+@status accepted
+@rationale
+  Diagnosed under WI-B4-DEBOUNCE-HOOK-ENGAGEMENT (#451), 2026-05-13.
+  Root cause: debounce is a genuinely novel stateful higher-order function with
+  no matching atom in the Slice 1 registry. The model saw the yakccResolve tool
+  (Arm A input_tokens=1226 vs Arm B input_tokens=567; delta=659 = system prompt
+  suffix + tool schema) but correctly did not invoke it because no atom matches.
+  Both arms produced ~427 vs ~433 output tokens (1.4% noise, not a hook win).
+  Three candidates evaluated:
+    1. Registry not seeded → CONFIRMED. No debounce atom in bootstrap corpus.
+    2. Embedding threshold filters candidate → RULED OUT. No candidate exists to
+       fail threshold; the tool was presented but not invoked.
+    3. Substitution flow logic bug → RULED OUT. The oracle shows Arm A semantic_eq=1
+       (all 27 tests pass), meaning the model produced correct code without invoking
+       the tool — the flow is intact, there's simply nothing to substitute.
+  Path to engagement in Slice 2: seed a timer-management atom (setTimeout/clearTimeout
+  closure pattern) into the registry seed corpus. Track via follow-up issue #454.
+  This threshold will become a sweep parameter in B4 Slice 2; the non-engagement
+  rate at 0.0% for debounce is a data point for the Slice 2 threshold sweep planner.
+  Full annotation in corpus-spec.json.
+-->
+
 **Prompt**: "Write a debounce wrapper with cancellation, with cancel() and flush()"
 
 **Why adversarial:**
