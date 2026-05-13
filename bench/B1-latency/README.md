@@ -1,5 +1,14 @@
 # B1 — Latency / Substrate Throughput Benchmark
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B1-latency pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Issue:** [#185](https://github.com/cneckar/yakcc/issues/185)  
 **Parent:** WI-BENCHMARK-SUITE (#167)
 
@@ -58,13 +67,13 @@ WASM is from the CPU's peak throughput — informational context, not the verdic
 
 See `integer-math/algorithm.md` for full rationale.
 
-## Pass / Kill Bars (from issue #185)
+## Pass / Directional Target Bars (from issue #185)
 
 | Result | Verdict |
 |--------|---------|
 | yakcc-as degradation vs rust-software **≤ 15%** | **PASS** |
 | degradation **15%–40%** | **WARN** — concerning, review AS initiative |
-| degradation **> 40%** | **KILL** — triggers re-plan of #143 AS initiative |
+| degradation **> 40%** | **Directional target (no KILL pre-data)** — would prompt re-plan of #143 AS initiative post-characterisation |
 
 Degradation = `(yakcc_mean_ms - rust_software_mean_ms) / rust_software_mean_ms * 100`.
 
@@ -75,7 +84,7 @@ Degradation = `(yakcc_mean_ms - rust_software_mean_ms) / rust_software_mean_ms *
 Results on other platforms are **informational only**:
 - Windows development machines: SHA-NI availability varies; Node V8 JIT behavior differs
 - macOS (Apple Silicon): ARM SHA extensions, different WASM JIT characteristics
-- Cross-architecture results should not be used to make pass/kill decisions
+- Cross-architecture results should not be used to make pass-bar verdict decisions
 
 The result JSON includes an `environment` block (platform, arch, CPU model, Node version,
 Rust version, yakcc git HEAD) so results can be correlated with hardware context.
@@ -143,7 +152,7 @@ Written to `tmp/B1-latency/integer-math-<timestamp>.json`:
   "verdict": {
     "primary_comparison": "yakcc-as vs rust-software",
     "yakcc_vs_rust_software_degradation_pct": ...,
-    "vs_pass_bar_15pct": "pass" | "warn" | "kill" | "blocker",
+    "vs_pass_bar_15pct": "pass" | "warn" | "kill" | "blocker", // "kill" reserved for post-characterisation; never emitted by Tester pre-data
     "ceiling_reference": {
       "rust_accelerated_throughput_mb_per_sec": ...,
       "speedup_vs_software_pct": ...,
@@ -165,7 +174,7 @@ This decision captures:
 - The 3-slice strategy (B1 split for incremental delivery)
 - The dual-comparator discipline (apples-to-apples gate vs ceiling reference)
 - The methodology (100 warm-up + 1000 measured, per-process isolation)
-- This commit's measurement results and pass/warn/kill verdict
+- This commit's measurement results and pass/warn/directional-target verdict
 
 ---
 
@@ -190,13 +199,13 @@ All four comparators exclude JSON parsing from the timing loop:
 - ts-node: `JSON.parse` result cached before timing
 - yakcc-as: flat binary tagged-union serialized into WASM memory before timing
 
-### Slice 2 Pass/Kill Bars
+### Slice 2 Directional Target Bars
 
 | Result | Verdict |
 |--------|---------|
 | yakcc-as degradation vs rust-software **≤ 15%** | **PASS** |
 | degradation **15%–40%** | **WARN** |
-| degradation **> 40%** | **KILL** |
+| degradation **> 40%** | **Directional target (no KILL pre-data)** |
 
 ### How to Run Slice 2
 
@@ -246,15 +255,15 @@ Query distribution: 70% static hit, 25% param hit, 5% miss.
 Note: for HTTP routing, there is no hardware-acceleration analog. Both Rust bins are
 structurally identical — the dual-target pattern is kept for consistency with Slices 1+2.
 
-### Slice 3 Pass/Kill Bars
+### Slice 3 Directional Target Bars
 
 | Result | Verdict |
 |--------|---------|
 | yakcc-as degradation vs rust-software **≤ 25%** | **PASS** (glue-heavy relaxed bar) |
 | degradation **25%–40%** | **WARN** |
-| degradation **> 40%** | **KILL** |
+| degradation **> 40%** | **Directional target (no KILL pre-data)** |
 
-The kill bar is the same across all workload types. The pass bar is relaxed from 15% to 25%
+The directional target bar is the same across all workload types. The pass bar is relaxed from 15% to 25%
 to account for WASM's inherent indirect-call dispatch overhead on branching-heavy workloads.
 
 ### How to Run Slice 3

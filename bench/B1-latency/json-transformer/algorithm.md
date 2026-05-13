@@ -1,5 +1,14 @@
 # Algorithm Choice: Sum-of-All-Numeric-Leaves over ~100MB JSON Corpus
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B1 json-transformer pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 ## Algorithm Selected: Sum-of-All-Numeric-Leaves (DFS)
 
 The primary candidate for Slice 2 was a **string-keys-to-camelCase recursive normalization**.
@@ -72,12 +81,12 @@ Before timing, all 4 comparators run on a fixed 10KB test input. Their outputs (
 numeric sum as a serialized float) must be byte-identical. Without this check the
 measurement compares different algorithms. Any mismatch is a hard fail in run.mjs.
 
-## Pass/Kill Bars (from issue #185, same as Slice 1)
+## Directional Target Bars (from issue #185, same as Slice 1)
 
 | Result | Verdict |
 |--------|---------|
 | yakcc-as degradation vs rust-software ≤ 15% | PASS |
 | degradation 15%–40% | WARN |
-| degradation > 40% | KILL (triggers re-plan of #143 AS initiative) |
+| degradation > 40% | Directional target (no KILL pre-data) — would prompt re-plan of #143 AS initiative post-characterisation |
 
 Degradation = `(yakcc_mean_ms - rust_software_mean_ms) / rust_software_mean_ms * 100`.

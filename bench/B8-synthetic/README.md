@@ -1,5 +1,14 @@
 # B8-SYNTHETIC — Pre-hook Scaling-Curve Prototype via Transcript Replay
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B8-synthetic pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Parent issue:** [#192](https://github.com/cneckar/yakcc/issues/192)  
 **Parent suite:** [#167](https://github.com/cneckar/yakcc/issues/167) (WI-BENCHMARK-SUITE)  
 **Decision:** `DEC-BENCH-B8-SYNTHETIC-SLICE1-001`  
@@ -45,8 +54,8 @@ Token savings heuristic (per hit block):
 
 ### Falsifiability
 
-The benchmark has explicit KILL criteria (see `RUBRIC.md`):
-- **Asymptote < 50%** → architecture fundamentally limited; triggers replanning
+The benchmark has explicit directional criteria (see `RUBRIC.md`; no KILL pre-data):
+- **Asymptote < 50%** → architecture fundamentally limited; would trigger replanning post-characterisation
 - **Non-monotonic curve** (Slice 2) → simulation bug; not publishable
 
 ---
@@ -115,7 +124,7 @@ Expected: `40788cc0403036ea7b562eccfa1c2be73bc812ac8dffb0fbe5c8fb355a4477a3`
 ```
 bench/B8-synthetic/
 ├── README.md                    # this file
-├── RUBRIC.md                    # pass/kill bars verbatim from #192 + #167 DQ-5/6/7/9
+├── RUBRIC.md                    # pass/directional-target bars verbatim from #192 + #167 DQ-5/6/7/9
 ├── transcripts/
 │   ├── corpus-spec.json         # SHA-256 of the transcript set
 │   ├── substrate-001.jsonl      # substrate-heavy task transcripts (4 fixtures)

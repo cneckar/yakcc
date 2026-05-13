@@ -1,5 +1,14 @@
 # Algorithm Choice: SHA-256 over 100MB Buffer
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B1 integer-math pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 ## Why SHA-256
 
 SHA-256 is chosen as the integer-math kernel for the following reasons:
@@ -58,12 +67,12 @@ The verdict gate is **yakcc-as vs rust-software**, not yakcc-as vs rust-accelera
 The 15%/40% bars measure the WASM JIT overhead — the cost of running the same algorithm
 in a sandboxed runtime vs native Rust. Hardware acceleration is irrelevant to this question.
 
-## Pass/Kill Bars (from issue #185)
+## Directional Target Bars (from issue #185)
 
 | Result | Verdict |
 |--------|---------|
 | yakcc-as degradation vs rust-software ≤ 15% | PASS |
 | degradation 15%–40% | WARN |
-| degradation > 40% | KILL (triggers re-plan of #143 AS initiative) |
+| degradation > 40% | Directional target (no KILL pre-data) — would prompt re-plan of #143 AS initiative post-characterisation |
 
 Degradation = `(yakcc_mean_ms - rust_software_mean_ms) / rust_software_mean_ms * 100`.
