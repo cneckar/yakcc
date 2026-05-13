@@ -1,0 +1,171 @@
+# @decision DEC-V2-CI-GATE-001
+# @title Self-shave two-pass CI gate: push:main unconditional + PR [v2-check] opt-in
+# @status accepted (WI-V2-10 / Issue #287)
+# @rationale Push-to-main runs unconditionally so post-merge regressions are
+#   detected within one workflow run. PR runs are gated behind [v2-check] in the
+#   commit message to avoid adding a ~70-min cold-path wait to every PR's median
+#   latency (which would contradict DEC-CI-FAST-PATH-PHASE-1-005, Tier-1 ≤5 min).
+#   Source-hash fast-skip cache mirrors the bootstrap.yml Tier-2 pattern: when
+#   the exact input state was previously verified, re-running produces a
+#   bit-identical result by construction. Nightly backstop via nightly.yml
+#   (unmodified, separate workflow) provides additional coverage.
+#   Alternatives rejected: Alt-A (unconditional PR, ~70 min all PRs — Tier-1
+#   contradiction); Alt-B (nightly-only — misses post-merge regressions for up
+#   to 24 hours, contradicts MASTER_PLAN exit criterion 6).
+
+name: v2 self-shave
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: self-shave-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: two-pass bootstrap equivalence
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------
+      # PR opt-in gate.
+      #
+      # The two-pass cycle takes ~60-70 min cold. Running it on every PR
+      # would push every PR's median wait past 1 hour, contradicting the
+      # Tier-1 ≤5-min target (DEC-CI-FAST-PATH-PHASE-1-005). Instead:
+      #   - push:main → always run (post-merge regression detection)
+      #   - pull_request → run only when commit message contains [v2-check]
+      #
+      # PR authors who want pre-merge confirmation that their changes don't
+      # break self-hosting add [v2-check] to their commit message. All other
+      # PRs skip the slow path entirely.
+      # ---------------------------------------------------------------------
+      - name: Check v2-check opt-in
+        id: opt-in
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Running unconditionally on push to main."
+          elif echo "${{ github.event.head_commit.message }}" | grep -qF '[v2-check]'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "PR opt-in detected: [v2-check] found in commit message."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping self-shave: add '[v2-check]' to commit message to opt in."
+            echo "Two-pass wall-clock is ~60-70 min; opt-in prevents blocking every PR."
+          fi
+
+      # ---------------------------------------------------------------------
+      # Fast-skip cache.
+      #
+      # The two-pass equivalence assertion is a deterministic function of:
+      #   - all .ts source under packages/*/src and examples/*/src
+      #     (shave pipeline inputs and compile-self sources)
+      #   - the harness itself (examples/v2-self-shave-poc/test/**)
+      #   - the committed bootstrap/expected-roots.json (pass-1 verify target)
+      #   - the lockfile (transitive shave-pipeline dependencies)
+      #
+      # If we have previously run the full two-pass cycle for this exact input
+      # hash and it passed, re-running it produces a bit-identical result by
+      # construction. We cache a marker file keyed on the input hash and skip
+      # the slow path on cache hit.
+      #
+      # Cache miss = first time we've seen this input state, OR the previous
+      # run failed (markers are written only after a green two-pass run).
+      # Over-hashing (e.g. including *.test.ts beyond the harness file) causes
+      # a benign cache miss — never a false hit. Under-hashing would be unsafe.
+      # ---------------------------------------------------------------------
+      - name: Compute source hash
+        id: source-hash
+        if: steps.opt-in.outputs.run == 'true'
+        run: |
+          HASH=$(
+            {
+              find packages/*/src examples/*/src -name '*.ts' -type f -print0 \
+                  | sort -z \
+                  | xargs -0 sha256sum
+              find examples/v2-self-shave-poc/test -name '*.ts' -type f -print0 \
+                  | sort -z \
+                  | xargs -0 sha256sum
+              sha256sum bootstrap/expected-roots.json pnpm-lock.yaml
+            } | sha256sum | awk '{print $1}'
+          )
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "Computed input hash: $HASH"
+
+      - name: Restore self-shave verified-marker cache
+        id: verified-cache
+        if: steps.opt-in.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: tmp/.self-shave-verified-marker
+          key: self-shave-verified-${{ steps.source-hash.outputs.hash }}
+
+      - name: Skip — already verified for this source state
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "Cache hit — the two-pass equivalence check was previously verified"
+          echo "for this exact input state. The result is deterministic by construction;"
+          echo "re-running the 60-70 min cycle would produce a bit-identical outcome."
+          echo
+          cat tmp/.self-shave-verified-marker
+
+      # ---------------------------------------------------------------------
+      # Slow path — full two-pass cycle. Runs only on opt-in cache miss.
+      # Mirrors the bootstrap.yml Tier-2 pattern exactly.
+      # ---------------------------------------------------------------------
+      - name: Set up pnpm
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit != 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit != 'true'
+        run: pnpm -r build
+
+      - name: Run two-pass equivalence check
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit != 'true'
+        env:
+          YAKCC_TWO_PASS: "1"
+        run: |
+          # Pass 1 (registry A): bootstrap --verify confirms the live registry is
+          # consistent with bootstrap/expected-roots.json.
+          #
+          # The harness (examples/v2-self-shave-poc/test/two-pass-equivalence.test.ts)
+          # then invokes compile-self and bootstrap internally to complete the
+          # two-pass cycle and assert byte-identity at the BlockMerkleRoot level.
+          #
+          # No continue-on-error: a two-pass failure is a hard CI failure.
+          # A regression here means non-determinism was introduced in the
+          # canonicalizer, AST-hash, or merkle path — the load-bearing claim.
+          pnpm --filter @yakcc/v2-self-shave-poc test two-pass-equivalence
+
+      - name: Write self-shave verified-marker
+        if: steps.opt-in.outputs.run == 'true' && steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tmp
+          {
+            echo "input-hash: ${{ steps.source-hash.outputs.hash }}"
+            echo "verified-at: $(date -u +%FT%TZ)"
+            echo "commit: ${{ github.sha }}"
+            echo "ref: ${{ github.ref }}"
+          } > tmp/.self-shave-verified-marker
+          cat tmp/.self-shave-verified-marker

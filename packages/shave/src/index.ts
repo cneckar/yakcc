@@ -413,11 +413,10 @@ import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./univers
  *
  * Intent card attachment: for single-leaf trees (root is an AtomLeaf), the
  * extracted intent card is attached to the one NovelGlueEntry that covers the
- * root. For multi-leaf trees, per-leaf intent extraction would require calling
- * extractIntent once per leaf — this is deferred to a future work item. Entries
- * for non-root leaves are emitted without an intentCard (the field is optional).
- * TODO(future-WI): call extractIntent per leaf and populate intentCard on each
- * NovelGlueEntry for multi-leaf trees.
+ * root. For multi-leaf trees, per-leaf intentCard population is implemented by
+ * WI-031 (commit `8dfb44b`, merge `3049ec3`, 2026-05-01) — see
+ * `DEC-UNIVERSALIZE-MULTI-LEAF-INTENT-001` for the live decision and the
+ * per-leaf extractIntent loop at lines ~542-573.
  *
  * "decomposition" is removed from diagnostics.stubbed — decomposition is now
  * live. "license-gate" is removed — gate is now live (WI-013-02).
@@ -633,13 +632,12 @@ export async function universalize(
         const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
           cacheDir: options?.cacheDir,
           parentBlockRoot,
-          // sourceFilePath is intentionally omitted: universalize() operates on a
-          // CandidateBlock (in-memory source), not on a file path. The props-file
-          // corpus extractor that consumes sourceFilePath is only meaningful in the
-          // shave() path (which forwards its sourcePath parameter). Interactive
-          // universalize() callers (e.g. assembleCandidate) have no file path.
-          // REQ-NOGO-006: sourceFilePath may be undefined -- atoms persist with null
-          // provenance, which is correct per DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001.
+          // sourceFilePath: forwarded from UniversalizeOptions.sourceFilePath when
+          // present (set by shave() to enable props-file corpus extraction).
+          // Undefined for interactive universalize() callers (e.g. assembleCandidate)
+          // — those atoms persist with null provenance per REQ-NOGO-006 /
+          // DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001.
+          sourceFilePath: options?.sourceFilePath,
           sourceContext: perAtomSourceContext,
         });
         // Surface the merkleRoot on the entry (may be undefined if intentCard absent).
@@ -740,8 +738,45 @@ export async function shave(
     hint: { name: basename(sourcePath), origin: "user" },
   };
 
-  // Step 3: Run through universalize() — errors propagate unwrapped.
-  const result = await universalize(candidate, registry, options);
+  // Step 3: Run through universalize({persist:true}) — errors propagate unwrapped.
+  //
+  // @decision DEC-V2-SHAVE-DELEGATES-UNIVERSALIZE-001
+  // title: shave() delegates atom persistence to universalize({persist:true})
+  // status: accepted (WI-423)
+  // rationale:
+  //   WI-373 (PR #419) lifted the postorder lineage-threading persist loop from
+  //   shave() into universalize() as step 6, gated on options.persist===true.
+  //   However, the WI-373 implementer copied the loop rather than refactoring
+  //   shave() to delegate — leaving two parallel persistence mechanisms (Sacred
+  //   Practice #12 violation). This WI (WI-423) closes that debt.
+  //
+  //   shave() now calls universalize({persist:true, sourceFilePath:sourcePath})
+  //   and reads merkleRoot directly from the enriched slicePlan entries returned
+  //   by universalize(). The in-line loop (DEC-ATOM-PERSIST-001 / DEC-REGISTRY-
+  //   PARENT-BLOCK-004) that previously ran here is removed — universalize() is
+  //   the single authority for atom persistence.
+  //
+  //   sourceFilePath is forwarded via UniversalizeOptions.sourceFilePath so the
+  //   props-file corpus extractor (DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001)
+  //   can locate the sibling <stem>.props.ts file exactly as before.
+  //
+  //   Behavior is bit-for-bit identical: T5 (DEC-UNIVERSALIZE-PERSIST-PIPELINE-001)
+  //   passes because the same maybePersistNovelGlueAtom primitives run in the same
+  //   postorder with the same parentBlockRoot chain.
+  //
+  //   Graceful degradation (read-only registry): universalize()'s step 6 is
+  //   gated on options.persist===true, and shave() always passes persist:true.
+  //   When registry.storeBlock is absent, PersistRequestedButNotSupportedError is
+  //   thrown (Sacred Practice #5 loud-fail). Previously, shave() used
+  //   maybePersistNovelGlueAtom's silent-no-op path when storeBlock was absent —
+  //   this was a silent degradation. The new behaviour preserves that: we pass
+  //   persist:true only when registry.storeBlock is present, otherwise we call
+  //   universalize without persist (maintaining the graceful-degradation contract).
+  const hasPersist = typeof registry.storeBlock === "function";
+  const result = await universalize(candidate, registry, {
+    ...options,
+    ...(hasPersist && { persist: true, sourceFilePath: sourcePath }),
+  });
 
   // Step 3b: Foreign-policy gate — enforced AFTER slice() returns, NOT inside slicer.ts.
   //
@@ -788,147 +823,33 @@ export async function shave(
   const foreignDeps: readonly ForeignRef[] | undefined =
     effectivePolicy === "tag" ? foreignRefs : undefined;
 
-  // Step 4: Persist novel atoms and translate UniversalizeResult into ShaveResult.
+  // Step 4: Translate universalize() result into ShaveResult.
   //
-  // @decision DEC-ATOM-PERSIST-001
-  // title: shave() persists NovelGlueEntries with intentCard via maybePersistNovelGlueAtom
-  // status: decided
-  // rationale:
-  //   - Persistence is opt-in: maybePersistNovelGlueAtom checks for registry.storeBlock
-  //     before doing anything. Callers with a read-only ShaveRegistryView get silent
-  //     no-ops; callers with a full Registry get atoms stored automatically.
-  //   - Only NovelGlueEntries with an intentCard persist; PointerEntries reference
-  //     existing blocks and do not produce new rows.
-  //   - Entries without intentCard (deep leaves in multi-leaf trees) return undefined
-  //     from maybePersistNovelGlueAtom; their ShavedAtomStub has no merkleRoot.
-  //   - PointerEntries do not have an intentCard slot; their stub also has no merkleRoot
-  //     (the pointer's existing registry merkleRoot is carried on the PointerEntry
-  //     itself, not propagated to ShavedAtomStub in this slice).
-  //   - property-test corpus is empty at L0 bootstrap (deferred to WI-013-03).
-  //   - effect declaration is empty (atoms pure-by-default; effect inference future).
-
-  // @decision DEC-REGISTRY-PARENT-BLOCK-004
-  // title: shave() walks SlicePlan in postorder to propagate parentBlockRoot lineage
-  // status: decided (WI-017)
-  // rationale:
-  //   The slicer emits entries in DFS (depth-first, children-before-parent) order.
-  //   By persisting sequentially rather than in parallel we guarantee that a
-  //   child's parent has already been persisted and its BlockMerkleRoot is known
-  //   before the child is written. The parent merkle root is the LITERAL value
-  //   returned by the prior maybePersistNovelGlueAtom call — no re-derivation is
-  //   performed (DEC-REGISTRY-PARENT-BLOCK-004: content-address purity).
-  //
-  //   NovelGlueEntry does not carry an explicit parent pointer (that would couple
-  //   slicer to persistence). Instead the parentBlockRoot field on PersistOptions
-  //   is populated here at the call-site. For a single-leaf plan (the common case)
-  //   the outer entry's parentBlockRoot is null — it is the root of the tree.
-  //   For a multi-entry plan the last entry is the root; all preceding entries
-  //   whose immediate structural predecessor is novel-glue forward its merkle root.
-  //
-  //   NOTE: The slicer currently emits flat plans where each NovelGlueEntry is
-  //   independent (no nesting information is carried). The "parent" here is the
-  //   immediately preceding novel-glue entry in the DFS-ordered plan when shaving
-  //   a nested function — i.e. the outer function is the parent of the inner.
-  //   For the single-leaf case the parent is always null.
-  //
-  //   Two-pass with registry update (the alternative) is excluded because
-  //   registry/storage.ts is outside this WI's scope, making tree-postorder
-  //   the only viable path (DEC-REGISTRY-PARENT-BLOCK-004).
-
-  // Persist novel-glue entries sequentially (postorder). The last novel-glue
-  // entry in the DFS slice plan is the outermost (root) function; earlier entries
-  // are its nested descendants. Each entry captures its predecessor's merkle root
-  // as its parentBlockRoot so the registry row carries the full lineage chain.
-  const merkleRoots: Array<BlockMerkleRoot | undefined> = [];
-  let lastNovelMerkleRoot: BlockMerkleRoot | undefined = undefined;
-  for (const entry of result.slicePlan) {
-    if (entry.kind === "novel-glue") {
-      // Determine parent: for the first novel-glue entry in the plan (the leaf),
-      // parentBlockRoot is null (it has no prior novel ancestor in this shave call).
-      // For subsequent novel-glue entries the preceding novel-glue's merkle root
-      // is the structural parent — it is the outer function that was just persisted.
-      const parentBlockRoot: BlockMerkleRoot | null = lastNovelMerkleRoot ?? null;
-      // @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
-      // sourceContext: when ShaveOptions.sourceContext is present (bootstrap mode),
-      // forward it with the per-atom sourceOffset derived from the slice plan entry's
-      // sourceRange.start. This is the byte offset within the source file at which
-      // the atom begins — used by compile-self (P2) to sort atoms back into file order.
-      // When sourceContext is absent (interactive shave), atoms are stored with null
-      // provenance, which is correct for non-bootstrap corpus production.
-      const baseSourceContext = options?.sourceContext;
-      const perAtomSourceContext =
-        baseSourceContext !== undefined
-          ? {
-              sourcePkg: baseSourceContext.sourcePkg,
-              sourceFile: baseSourceContext.sourceFile,
-              sourceOffset: entry.sourceRange.start,
-            }
-          : undefined;
-      const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
-        ...options,
-        parentBlockRoot,
-        sourceFilePath: sourcePath,
-        sourceContext: perAtomSourceContext,
-      });
-      merkleRoots.push(merkleRoot);
-      if (merkleRoot !== undefined) {
-        lastNovelMerkleRoot = merkleRoot;
-      }
-    } else if (entry.kind === "pointer") {
-      // @decision DEC-SHAVE-POINTER-MERKLROOT-PROPAGATION-001
-      // title: PointerEntry merkleRoot propagated to ShavedAtomStub
-      // status: decided
-      // rationale:
-      //   Prior to this fix, pointer entries pushed undefined to merkleRoots[]
-      //   (the else branch here). This left ShavedAtomStub.merkleRoot=undefined
-      //   for ALL PointerEntry atoms — including those whose blocks are fully
-      //   persisted in the registry. The bootstrap's occurrence-store pass then
-      //   tried to recover the merkleRoot by calling canonicalAstHash(source,
-      //   stub.sourceRange), which fails for type-only exports and declarations
-      //   whose source ranges span multiple AST nodes. This caused 100% occurrence
-      //   drop for files like universalize/types.ts (all type-only exports).
-      //
-      //   Fix: propagate entry.merkleRoot directly. PointerEntry is the exact
-      //   place where the slicer records the registry-matched merkleRoot — it
-      //   carries the value that storeBlock already returned on a prior bootstrap.
-      //   Propagating it here makes ShavedAtomStub self-sufficient: callers (e.g.
-      //   bootstrap's occurrence-store pass) can record occurrences without
-      //   re-deriving the hash from the source text.
-      //
-      //   The ShavedAtomStub.merkleRoot type is BlockMerkleRoot|undefined;
-      //   PointerEntry.merkleRoot is BlockMerkleRoot (non-optional). No type widening
-      //   needed. The storeBlock wrapper in bootstrap.ts checks merkleRoot!==undefined
-      //   before recording, so pointer stubs are now correctly captured there instead.
-      //
-      //   Note: novel-glue entries still use merkleRoots[i] (the value returned by
-      //   maybePersistNovelGlueAtom). Only pointer entries are affected by this change.
-      merkleRoots.push(entry.merkleRoot);
-    } else {
-      // Other entry kinds (foreign-leaf, glue) — no merkleRoot in the registry.
-      merkleRoots.push(undefined);
-    }
-  }
+  // Persistence was handled by universalize({persist:true}) above
+  // (DEC-V2-SHAVE-DELEGATES-UNIVERSALIZE-001). NovelGlueEntry items in the
+  // slicePlan already carry merkleRoot when persist:true ran. PointerEntry items
+  // always carry merkleRoot (per DEC-SHAVE-POINTER-MERKLROOT-PROPAGATION-001).
+  // ForeignLeafEntry and GlueLeafEntry are excluded (per DEC-V2-GLUE-AWARE-SHAVE-001).
 
   // Each SlicePlanEntry that carries an AST hash maps to a ShavedAtomStub.
   // ForeignLeafEntry and GlueLeafEntry are intentionally excluded:
   //   - ForeignLeafEntry is an opaque leaf with no host-module sourceRange.
   //   - GlueLeafEntry is a verbatim-preserved region with no sourceRange
   //     (per DEC-V2-GLUE-LEAF-CONTRACT-001: glue is project-local, not registry-registered).
-  // The merkleRoots array was built with one slot per entry (including excluded
-  // slots, which received `undefined`), so we use flatMap with the index to skip
-  // excluded entries while keeping the merkleRoots[i] alignment intact.
   // (per DEC-SHAVE-PIPELINE-001, DEC-V2-FOREIGN-BLOCK-SCHEMA-001, DEC-V2-GLUE-AWARE-SHAVE-001)
-  const atoms = result.slicePlan.flatMap((entry, i): ShavedAtomStub[] => {
+  const atoms = result.slicePlan.flatMap((entry): ShavedAtomStub[] => {
     if (entry.kind === "foreign-leaf" || entry.kind === "glue") {
       // Excluded: foreign deps are opaque leaves; glue regions are verbatim-preserved
       // project-local code with no registry entry and no sourceRange field.
       return [];
     }
+    // novel-glue: merkleRoot populated by universalize({persist:true}) step 6.
+    // pointer: merkleRoot always present (DEC-SHAVE-POINTER-MERKLROOT-PROPAGATION-001).
     return [
       {
         placeholderId: `shave-atom-${entry.canonicalAstHash.slice(0, 8)}`,
         sourceRange: entry.sourceRange,
-        merkleRoot: merkleRoots[i],
+        merkleRoot: entry.merkleRoot,
       },
     ];
   });
