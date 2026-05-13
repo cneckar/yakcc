@@ -10,7 +10,7 @@
     ".": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "vitest run",
     "lint": "echo \"no lint yet\""
