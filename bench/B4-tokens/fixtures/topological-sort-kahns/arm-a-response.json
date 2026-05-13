@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm A = hook-enabled. Token counts representative of hook-assisted output. NOT a real API response — exercises telemetry capture and oracle invocation without network calls.",
+  "_arm": "A",
+  "_task": "topological-sort-kahns",
+  "id": "msg_dry_topological_sort_kahns_arm_a_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 980,
+    "output_tokens": 310,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the implementation:\n\n```typescript\n// SPDX-License-Identifier: MIT\n//\n// bench/B4-tokens/tasks/topological-sort-kahns/reference-impl.ts\n//\n// @decision DEC-V0-B4-TASKS-EXPAND-001\n// @title B4 Slice 2 task corpus: topological-sort-kahns reference implementation\n// @status accepted\n// @rationale\n//   Reference implementation for oracle validation. Proves the oracle tests correctly\n//   distinguish correct Kahn's-algorithm from broken DFS-based or in-degree-miscounted\n//   implementations. Hand-written; not LLM-generated (DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001).\n//\n//   Adversarial trap: models use DFS-based sort (produces valid ordering but wrong\n//   pattern), miss nodes with zero out-degree in in-degree computation, or skip cycle\n//   detection. Deterministic ascending-queue ordering is the discriminating test.\n\n/**\n * Topological sort using Kahn's algorithm.\n *\n * @param graph - Adjacency list: Map<node, neighbors[]> where edges point FROM node TO neighbor.\n *                Every node must appear as a key, even with empty neighbor list.\n * @returns Topologically sorted array of nodes, or null if the graph contains a cycle.\n */\nexport function topologicalSort(graph: Map<number, number[]>): number[] | null {\n  const nodes = Array.from(graph.keys());\n  const nodeCount = nodes.length;\n\n  if (nodeCount === 0) return [];\n\n  // Step 1: Compute in-degree for every node\n  const inDegree = new Map<number, number>();\n  for (const node of nodes) {\n    if (!inDegree.has(node)) inDegree.set(node, 0);\n    for (const neighbor of graph.get(node) ?? []) {\n      inDegree.set(neighbor, (inDegree.get(neighbor) ?? 0) + 1);\n    }\n  }\n\n  // Step 2: Initialize queue with zero-in-degree nodes, sorted ascending for determinism\n  const queue: number[] = nodes\n    .filter((n) => (inDegree.get(n) ?? 0) === 0)\n    .sort((a, b) => a - b);\n\n  const result: number[] = [];\n\n  // Step 3: Queue drain\n  while (queue.length > 0) {\n    // Dequeue from front (FIFO)\n    const node = queue.shift()!;\n    result.push(node);\n\n    // Reduce in-degree of neighbors\n    const neighbors = graph.get(node) ?? [];\n    for (const neighbor of neighbors) {\n      const newDegree = (inDegree.get(neighbor) ?? 0) - 1;\n      inDegree.set(neighbor, newDegree);\n      if (newDegree === 0) {\n        // Insert in ascending sorted position for determinism\n        let inserted = false;\n        for (let i = 0; i < queue.length; i++) {\n          if (neighbor < queue[i]!) {\n            queue.splice(i, 0, neighbor);\n            inserted = true;\n            break;\n          }\n        }\n        if (!inserted) queue.push(neighbor);\n      }\n    }\n  }\n\n  // Step 4: Cycle detection\n  if (result.length !== nodeCount) {\n    return null; // cycle detected\n  }\n\n  return result;\n}\n\n```"
+    }
+  ]
+}

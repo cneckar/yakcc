@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm B = vanilla (no hook). Token counts representative of verbose from-scratch output. NOT a real API response.",
+  "_arm": "B",
+  "_task": "base64-encode-rfc4648",
+  "id": "msg_dry_base64_encode_rfc4648_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 850,
+    "output_tokens": 410,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the implementation:\n\n```typescript\n// SPDX-License-Identifier: MIT\n//\n// bench/B4-tokens/tasks/base64-encode-rfc4648/reference-impl.ts\n//\n// @decision DEC-V0-B4-TASKS-EXPAND-001\n// @title B4 Slice 2 task corpus: base64-encode-rfc4648 reference implementation\n// @status accepted\n// @rationale\n//   Reference implementation for oracle validation. Proves oracle tests correctly\n//   distinguish RFC-compliant from hallucinated-alphabet implementations. Hand-written;\n//   not LLM-generated (DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001).\n//\n//   Adversarial trap: alphabet must be exactly RFC 4648 §4 (index 62='+', index 63='/').\n//   URL-safe variant (§5): replace '+' with '-' and '/' with '_'. Common failure:\n//   swapping standard and URL-safe alphabets, or applying URL-safe by default.\n\nexport interface Base64EncodeOptions {\n  padding?: boolean;   // default: true\n  urlSafe?: boolean;   // default: false\n}\n\n// RFC 4648 §4 standard alphabet\nconst STANDARD_ALPHABET = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n// RFC 4648 §5 URL-safe alphabet (replaces +62 with - and /63 with _)\nconst URLSAFE_ALPHABET = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\";\n\n/**\n * Encode a Uint8Array to a Base64 string per RFC 4648.\n *\n * @param input - Raw bytes to encode\n * @param options - Encoding options (padding and alphabet variant)\n * @returns Base64-encoded string\n */\nexport function base64Encode(input: Uint8Array, options?: Base64EncodeOptions): string {\n  const padding = options?.padding !== false; // default: true\n  const urlSafe = options?.urlSafe === true;  // default: false\n  const alphabet = urlSafe ? URLSAFE_ALPHABET : STANDARD_ALPHABET;\n\n  if (input.length === 0) return \"\";\n\n  let result = \"\";\n  const len = input.length;\n\n  // Process 3-byte groups\n  for (let i = 0; i < len; i += 3) {\n    const b0 = input[i]!;\n    const b1 = i + 1 < len ? input[i + 1]! : 0;\n    const b2 = i + 2 < len ? input[i + 2]! : 0;\n\n    // Pack 3 bytes into a 24-bit integer\n    const triple = (b0 << 16) | (b1 << 8) | b2;\n\n    // Extract 4 6-bit indices\n    const c0 = (triple >> 18) & 0x3f;\n    const c1 = (triple >> 12) & 0x3f;\n    const c2 = (triple >> 6) & 0x3f;\n    const c3 = triple & 0x3f;\n\n    const remaining = len - i;\n\n    if (remaining >= 3) {\n      // Full group: 4 characters\n      result += alphabet[c0]! + alphabet[c1]! + alphabet[c2]! + alphabet[c3]!;\n    } else if (remaining === 2) {\n      // 2 remaining bytes → 3 chars + optional padding\n      result += alphabet[c0]! + alphabet[c1]! + alphabet[c2]!;\n      if (padding) result += \"=\";\n    } else {\n      // 1 remaining byte → 2 chars + optional padding\n      result += alphabet[c0]! + alphabet[c1]!;\n      if (padding) result += \"==\";\n    }\n  }\n\n  return result;\n}\n\n```"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "digits-to-sum",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "A non-empty string of decimal digits matching /^\\d+$/."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "number",
+      "description": "The sum of all digit characters."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Sum the digits of a non-empty string of decimal digits. The input must match /^\\d+$/. Returns the sum of all digit characters as a number (e.g., '123' returns 6). Throws SyntaxError for non-digit input.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "narrow-domain",
+      "description": "Only 0-9 digit characters are valid inputs. All other characters are refused."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input is empty.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains non-digit characters (anything outside 0-9).",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains non-ASCII characters.",
+      "errorType": "SyntaxError"
+    }
+  ]
+}

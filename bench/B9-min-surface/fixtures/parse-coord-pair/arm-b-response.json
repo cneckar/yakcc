@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B9 dry-run mode (parse-coord-pair task). Representative claude-sonnet-4-6 emit for the locked Arm B prompt.",
+  "_fixture_provenance": "Hand-authored representative fixture. A typical LLM response to the parse-coord-pair prompt produces a regex-based or positional parser. The fixture represents this common pattern.",
+  "_arm": "B",
+  "_task": "parse-coord-pair",
+  "id": "msg_dry_parse_coord_pair_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 298,
+    "output_tokens": 312,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nfunction parseCoordPair(input: string): readonly [number, number] {\n  for (let i = 0; i < input.length; i++) {\n    if (input.charCodeAt(i) > 127) {\n      throw new RangeError(`Non-ASCII character at position ${i}`);\n    }\n  }\n\n  if (!input.startsWith('(')) {\n    throw new SyntaxError(`Expected '(' at start of input`);\n  }\n\n  if (!input.endsWith(')')) {\n    throw new SyntaxError(`Expected input to end with ')'`);\n  }\n\n  const inner = input.slice(1, -1);\n  const commaIdx = inner.indexOf(',');\n\n  if (commaIdx === -1) {\n    throw new SyntaxError('Missing comma separator between coordinates');\n  }\n\n  const xStr = inner.slice(0, commaIdx);\n  const yStr = inner.slice(commaIdx + 1);\n\n  if (!/^\\d+$/.test(xStr)) {\n    throw new SyntaxError(`Invalid x coordinate: ${JSON.stringify(xStr)}`);\n  }\n  if (!/^\\d+$/.test(yStr)) {\n    throw new SyntaxError(`Invalid y coordinate: ${JSON.stringify(yStr)}`);\n  }\n\n  return [parseInt(xStr, 10), parseInt(yStr, 10)] as const;\n}\n\nexport { parseCoordPair };\nexport default parseCoordPair;\n```"
+    }
+  ]
+}

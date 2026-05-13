@@ -1,0 +1,43 @@
+{
+  "name": "csv-row-narrow",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "A CSV row string with exactly 3 unquoted fields separated by commas."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [string, string, string]",
+      "description": "The 3-tuple of field strings (trimmed of surrounding whitespace)."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Parse a CSV row with exactly 3 unquoted fields separated by commas. Fields may contain only ASCII printable characters (codes 32-126) and no commas. Returns a readonly 3-tuple of the field strings (trimmed). Throws SyntaxError on wrong number of fields or disallowed characters, and RangeError on non-ASCII input.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "exact-field-count",
+      "description": "Always returns exactly 3 fields or throws."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input contains non-ASCII characters (code > 127).",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "Input does not contain exactly 2 commas (not exactly 3 fields).",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains control characters (code < 32).",
+      "errorType": "SyntaxError"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+id: base64-encode-rfc4648
+title: Base64 Encode (RFC 4648)
+version: 1
+export: named:base64Encode
+
+adversarial_framing: |
+  The trap is alphabet hallucination. RFC 4648 §4 specifies a precise 64-character alphabet
+  where index 62 is '+' and index 63 is '/'. Models trained on common base64 examples
+  frequently hallucinate variants: swapping '+' and '/', using '-' and '_' in the standard
+  alphabet (confusing §4 and §5), or producing the URL-safe alphabet by default. The
+  urlSafe option is a secondary trap: models often flip the condition (apply URL-safe when
+  urlSafe=false). The null-byte encoding (0x00 must encode to 'A', not cause special
+  treatment) is a known correctness failure point. Forbidding btoa/Buffer.from ensures the
+  model cannot delegate to a runtime that gets the alphabet right — it must implement the
+  bit manipulation correctly and compose the alphabet lookup as an explicit atom.
+
+spec: |
+  function base64Encode(input: Uint8Array, options?: Base64EncodeOptions): string
+
+  Alphabet: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
+  URL-safe variant: +->-, /-_ (when urlSafe: true).
+  Padding: default true, omit = when false.
+  Empty input: "".
+  No btoa/Buffer/atob.
+  No external libraries.

@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B9 dry-run mode (kebab-to-camel task).",
+  "_fixture_provenance": "Hand-authored representative fixture. A typical LLM response uses regex validation then split/map.",
+  "_arm": "B",
+  "_task": "kebab-to-camel",
+  "id": "msg_dry_kebab_to_camel_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 287,
+    "output_tokens": 245,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nfunction kebabToCamel(input: string): string {\n  if (!input || input.length === 0) {\n    throw new SyntaxError('Input must not be empty');\n  }\n\n  if (!/^[a-z]+(-[a-z]+)*$/.test(input)) {\n    if (input.startsWith('-') || input.endsWith('-')) {\n      throw new SyntaxError('Input must not start or end with a hyphen');\n    }\n    if (/--/.test(input)) {\n      throw new SyntaxError('Input must not contain consecutive hyphens');\n    }\n    throw new SyntaxError(`Invalid kebab-case input: ${JSON.stringify(input)}`);\n  }\n\n  return input\n    .split('-')\n    .map((part, index) => index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1))\n    .join('');\n}\n\nexport { kebabToCamel };\nexport default kebabToCamel;\n```"
+    }
+  ]
+}

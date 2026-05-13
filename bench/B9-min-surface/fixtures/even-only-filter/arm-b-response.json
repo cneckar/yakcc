@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B9 dry-run mode (even-only-filter task).",
+  "_fixture_provenance": "Hand-authored representative fixture. A typical LLM response validates then filters.",
+  "_arm": "B",
+  "_task": "even-only-filter",
+  "id": "msg_dry_even_only_filter_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 312,
+    "output_tokens": 267,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nfunction evenOnlyFilter(input: readonly number[]): readonly number[] {\n  if (input.length > 256) {\n    throw new RangeError(`Input array exceeds maximum length of 256, got ${input.length}`);\n  }\n\n  for (let i = 0; i < input.length; i++) {\n    if (!Number.isSafeInteger(input[i])) {\n      throw new TypeError(`Element at index ${i} is not a safe integer: ${input[i]}`);\n    }\n  }\n\n  return input.filter(n => n % 2 === 0);\n}\n\nexport { evenOnlyFilter };\nexport default evenOnlyFilter;\n```"
+    }
+  ]
+}

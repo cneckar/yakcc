@@ -1,0 +1,55 @@
+{
+  "name": "parse-coord-pair",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "A coordinate pair string of the form '(x,y)'."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly [number, number]",
+      "description": "The parsed [x, y] coordinate tuple."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Parse a string of the form '(x,y)' where x and y are non-negative decimal integers. Surrounding whitespace around coordinate values is not allowed. Returns a readonly tuple [x, y]. Throws SyntaxError on malformed input and RangeError on non-ASCII input.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "narrow-input-domain",
+      "description": "Accepts only the exact pattern '(x,y)' with non-negative integers. Everything else is refused."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input does not start with '('.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains non-ASCII characters.",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "Coordinate values are not valid non-negative integers.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Missing comma separator between coordinates.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input does not end with ')'.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Trailing characters after closing ')'.",
+      "errorType": "SyntaxError"
+    }
+  ]
+}

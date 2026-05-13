@@ -1,0 +1,26 @@
+id: semver-range-satisfies
+title: Semver Range Satisfies
+version: 1
+export: named:parseSemver,named:parseRange,named:satisfies
+
+adversarial_framing: |
+  The trap is range-grammar composition. A satisfies(version, range) implementation requires
+  three distinct atom functions: parseSemver (tokenize + validate), parseRange (tokenize ||
+  groups, then AND comparators, then parse each comparator version), and a comparator
+  evaluation function. Models frequently: (a) conflate the three into one undecomposed
+  function (correct output, wrong pattern), (b) misparse the range grammar by treating
+  whitespace as OR instead of AND within a group, (c) mishandle prerelease ordering (a
+  version with prerelease LESS THAN same base without prerelease), or (d) get the
+  leading-zeros validation wrong for the version parser. The oracle tests the grammar
+  boundary between OR (||) and AND (whitespace) heavily since this is the most common
+  mis-parse.
+
+spec: |
+  function parseSemver(version: string): SemverVersion | null
+  function parseRange(range: string): SemverRange | null
+  function satisfies(version: string, range: string): boolean
+
+  Semantics: subset of semver.org — no tilde/caret/wildcards.
+  OR groups separated by ||; AND comparators separated by whitespace.
+  Prerelease: less-than same base without prerelease.
+  No external libraries.

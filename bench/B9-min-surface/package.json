@@ -1,0 +1,29 @@
+{
+  "name": "@yakcc-bench/b9-min-surface",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B9 — Attack-surface proof benchmark: structural minimality + adversarial-input refusal + in-shape equivalence.",
+  "notes": [
+    "This package.json is NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is a bench-local dep — it MUST NOT appear in the root package.json.",
+    "Install bench deps: pnpm --dir bench/B9-min-surface install",
+    "Dry-run mode works without install (no API calls). Real-run requires ANTHROPIC_API_KEY and pnpm install.",
+    "ts-morph: required for Axis 1 reachability. Install via: pnpm --dir bench/B9-min-surface install"
+  ],
+  "scripts": {
+    "test": "node --test test/measure-axis1.test.mjs test/measure-axis2.test.mjs test/measure-axis3.test.mjs test/arm-a-emit.test.mjs test/classify-arm-b.test.mjs test/measure-axis5.test.mjs",
+    "test:new": "node --test test/arm-a-emit.test.mjs test/classify-arm-b.test.mjs test/measure-axis5.test.mjs",
+    "run:dry": "node harness/run.mjs --dry-run",
+    "run:no-network": "node harness/run.mjs --no-network",
+    "run:live": "node harness/run.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "ts-morph": "^23.0.0",
+    "fast-check": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

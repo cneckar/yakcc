@@ -1,0 +1,72 @@
+{
+  "attack_class_id": "integer-overflow",
+  "description": "Inputs with integers exceeding JavaScript safe integer range (Number.MAX_SAFE_INTEGER = 2^53 - 1). A JSON.parse-based emit silently produces imprecise values for large integers. The atomic emit parses digit-by-digit and may produce imprecise results for very large values — this class tests whether that imprecision is a shape-escape or a contained result.",
+  "inputs": [
+    {
+      "label": "max-safe-plus-one",
+      "payload": "[9007199254740992]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "2^53 — beyond MAX_SAFE_INTEGER. Both arms likely produce imprecise result. Test if any arm crashes or throws unexpectedly vs silently loses precision. BENIGN-PASS because the spec does not declare a max-int constraint."
+    },
+    {
+      "label": "very-large-integer",
+      "payload": "[99999999999999999999999999999]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Huge integer — well beyond safe range; both arms produce Infinity or imprecise value. BENIGN-PASS because input shape is valid (digits only)."
+    },
+    {
+      "label": "zero-integer",
+      "payload": "[0]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Zero — valid non-negative integer boundary; should parse cleanly"
+    },
+    {
+      "label": "leading-zeros",
+      "payload": "[007]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Leading zeros are not valid in the spec's integer grammar per strict decimal notation."
+    },
+    {
+      "label": "max-safe-exact",
+      "payload": "[9007199254740991]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "MAX_SAFE_INTEGER exactly — should be representable precisely in both arms"
+    },
+    {
+      "label": "overflow-in-list",
+      "payload": "[1,9007199254740992,2]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Large integer as second element; valid digit sequence — BENIGN-PASS despite precision loss"
+    },
+    {
+      "label": "hex-notation",
+      "payload": "[0xff]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Hex prefix '0x' — 'x' is not a digit; SyntaxError after the leading '0'"
+    },
+    {
+      "label": "octal-notation",
+      "payload": "[0o17]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Octal prefix '0o' — 'o' is not a digit; SyntaxError after the leading '0'"
+    },
+    {
+      "label": "binary-notation",
+      "payload": "[0b1010]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Binary prefix '0b' — 'b' is not a digit; SyntaxError after the leading '0'"
+    },
+    {
+      "label": "plus-prefix-integer",
+      "payload": "[+1]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "'+' prefix is not a digit and not allowed in the spec's grammar"
+    },
+    {
+      "label": "single-large-digit",
+      "payload": "[9]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Single digit 9 — valid, well within safe integer range"
+    }
+  ]
+}
