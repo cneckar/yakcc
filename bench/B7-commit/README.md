@@ -1,5 +1,14 @@
 # B7 — Time-to-Commit: Novel-Glue Flywheel Latency
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B7-commit pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Issue:** [#396](https://github.com/cneckar/yakcc/issues/396) — WI-B7-SLICE-3: Multi-hardware + subprocess isolation + DEC-BENCH-B7-001  
 **Predecessors:** [#381](https://github.com/cneckar/yakcc/issues/381) (Slice 1), [#389](https://github.com/cneckar/yakcc/issues/389) (Slice 2)  
 **Parent:** [#191](https://github.com/cneckar/yakcc/issues/191) — WI-BENCHMARK-B7: Time-to-commit for novel glue  
@@ -51,7 +60,7 @@ Two cache states are measured per utility:
 | ≤3 s | PASS-aspirational |
 | 3–10 s | PASS-hard-cap |
 | 10–15 s | WARN |
-| >15 s | **KILL** — file `WI-FAST-PATH-VERIFIER` immediately |
+| >15 s | **Directional target (no KILL pre-data)** — would file `WI-FAST-PATH-VERIFIER` post-characterisation |
 | >5 s (any) | File `WI-FAST-PATH-VERIFIER` with empirical baseline |
 
 ## Slice 3 methodology
@@ -106,7 +115,7 @@ Results written to `tmp/B7-commit/slice3-<timestamp>.json`. Artifact contains:
 - `measurements[]`: per-rep records with `cacheState`, `utilityName`, timing fields, `atomized`, `bmrInTopK`, `combinedScore`
 - `aggregate`: `{ warm, cold, qualifyingWarm }` each with `median_ms`, `p95_ms`, `p99_ms`, `n`
 - `atomizedCount`: number of utilities that atomized on their warm seed rep (should = 32)
-- `verdict`: one of `PASS-aspirational` | `PASS-hard-cap` | `WARN` | `KILL`
+- `verdict`: one of `PASS-aspirational` | `PASS-hard-cap` | `WARN` | `KILL` <!-- "KILL" reserved for post-characterisation; never emitted by Tester pre-data -->
 
 ## Architecture
 

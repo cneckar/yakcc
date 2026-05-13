@@ -1,5 +1,14 @@
 # B5 Coherence Rubric
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B5-coherence rubric bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Issue:** [#189](https://github.com/cneckar/yakcc/issues/189)
 **Benchmark:** B5 — Hallucination Rebound / Multi-Turn Coherence
 **Authoritative version:** This file is the single source of truth for B5 scoring.
@@ -115,7 +124,7 @@ Four categorical failure modes are tracked independently of per-turn scores:
 The LLM treats a yakcc atom reference as an opaque token (the hash is present but unused semantically). Score 3 turns are classified here. Indicates the hook's contract comment (D-HOOK-4) is insufficient — the LLM cannot infer the atom's semantics from the substitution context alone.
 
 ### `hallucinated`
-The LLM invents atom semantics that contradict the registered spec. Score 2 turns are classified here. Indicates the LLM is not grounding its reasoning in the atom's contract — a contract-surfacing failure. B5 KILL criterion applies if this failure mode exceeds thresholds.
+The LLM invents atom semantics that contradict the registered spec. Score 2 turns are classified here. Indicates the LLM is not grounding its reasoning in the atom's contract — a contract-surfacing failure. B5 directional-target criterion applies if this failure mode exceeds thresholds.
 
 ### `re-emission`
 The LLM re-emits the atom's body verbatim. Score 1 turns are classified here. Indicates the hook's substitution is not "sticking" — the LLM ignores the reference and regenerates from its training context. Most serious coherence failure short of catastrophic.
@@ -125,17 +134,17 @@ The conversation derails entirely. Score 0 turns are classified here. Indicates 
 
 ---
 
-## Pass/KILL Bars (from #189)
+## Pass / Directional Target Bars (from #189)
 
-| Metric | Pass | KILL |
-|--------|------|------|
+| Metric | Pass | Directional target (no KILL pre-data) |
+|--------|------|--------------------------------------|
 | Mean coherence score | ≥ 4.0 | < 2.5 |
 | Subsequent-turn coherence rate (score ≥ 4) | ≥ 90% | — |
 | Catastrophic failures (score 0–1) | ≤ 5% of turns | > 15% |
 
-KILL triggers on **either** condition: mean < 2.5 **OR** catastrophic > 15%.
+Directional target triggers on **either** condition: mean < 2.5 **OR** catastrophic > 15%. No measurement triggers a project-level KILL pre-characterisation-data.
 
-**KILL meaning:** atom references break LLM context; cannot ship hook in current shape. Triggers redesign of hook contract-surfacing mechanism (D-HOOK-4).
+**Post-characterisation meaning if thresholds are crossed:** atom references break LLM context; cannot ship hook in current shape. Would trigger redesign of hook contract-surfacing mechanism (D-HOOK-4).
 
 ---
 

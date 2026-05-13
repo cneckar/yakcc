@@ -1,5 +1,14 @@
 # B8-SYNTHETIC Benchmark Rubric
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B8-synthetic rubric bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Source:** #192 (WI-BENCHMARK-B8-SYNTHETIC) + #167 (WI-BENCHMARK-SUITE DQ-5/6/7/9)
 
 ---
@@ -14,11 +23,11 @@
 
 ---
 
-## KILL Bars (per #192 + #167 DQ-5)
+## Directional Target Bars (per #192 + #167 DQ-5; no KILL pre-characterisation-data)
 
 | Bar | Condition | Consequence |
 |-----|-----------|-------------|
-| **Asymptote < 50%** | mean savings % at f=1.0 < 50% | Architecture fundamentally limited; production cannot exceed this ceiling; triggers replanning before production B8 starts |
+| **Asymptote < 50%** | mean savings % at f=1.0 < 50% | Architecture fundamentally limited; production cannot exceed this ceiling; would trigger replanning post-characterisation |
 | **Non-monotonic curve** | any decreasing savings as f increases | Bug in simulation; not safe to publish; requires investigation |
 
 ---
@@ -70,7 +79,7 @@ B8 numbers can only be equal to or worse than the synthetic ceiling.
 |------------------------------|----------------|
 | ≥ 80% | PASS — ceiling is viable; production worth pursuing |
 | 50% – 79% | WARN — ceiling is marginal; investigate corpus composition |
-| < 50% | KILL — ceiling too low; architecture needs replanning |
+| < 50% | Directional target (no KILL pre-data) — ceiling too low; architecture would need replanning post-characterisation |
 
 ---
 

@@ -1,5 +1,14 @@
 # B6 — Air-Gapped / Network-Locality Benchmark
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B6-airgap pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Issue:** [#190](https://github.com/cneckar/yakcc/issues/190)  
 **Parent:** WI-BENCHMARK-SUITE (#167)
 
@@ -9,8 +18,8 @@ Two sub-benchmarks:
 
 | Sub-benchmark | Mode | Bar | Description |
 |---|---|---|---|
-| B6a | Offline (air-gapped) | **ZERO outbound connections** | Full 7-step developer flow with `createOfflineEmbeddingProvider()` (BLAKE3-based, no network). Any outbound connection is a KILL — cannot claim air-gapped viability. |
-| B6b | Networked | Only allowlisted destinations | Same flow with live Anthropic API embeddings. Every outbound destination must appear in `allowlist.json`. Any unlisted destination is a KILL. |
+| B6a | Offline (air-gapped) | **ZERO outbound connections** | Full 7-step developer flow with `createOfflineEmbeddingProvider()` (BLAKE3-based, no network). Any outbound connection is a directional-target failure (no KILL pre-data) — cannot claim air-gapped viability. |
+| B6b | Networked | Only allowlisted destinations | Same flow with live Anthropic API embeddings. Every outbound destination must appear in `allowlist.json`. Any unlisted destination is a directional-target failure (no KILL pre-data). |
 
 ## How to run
 

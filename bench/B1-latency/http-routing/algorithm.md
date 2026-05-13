@@ -1,5 +1,14 @@
 # B1 Slice 3 — HTTP Routing Algorithm
 
+<!--
+@decision DEC-V0-BENCH-SLICE3-RELABEL-001
+@title B1 HTTP routing pass-bars are directional targets only pre-characterisation-data
+@status accepted
+@rationale Per WI-BENCHMARK-SUITE-CHARACTERISATION-PASS, pass-bars are directional targets only pre-characterisation-data.
+-->
+
+> **Note (WI-BENCHMARK-SUITE-CHARACTERISATION-PASS / PR #448):** This bench is part of the `WI-BENCHMARK-SUITE-CHARACTERISATION-PASS` initiative (PR #448). Pass-bars are directional targets only; no measurement triggers a project-level KILL pre-data. Pass-bar revision happens after the characterisation distributions are in.
+
 **Issue:** [#185](https://github.com/cneckar/yakcc/issues/185)  
 **Workload class:** Glue-heavy (dispatch/branching intensive, low arithmetic depth)
 
@@ -86,7 +95,7 @@ the WASM flat encoding is equivalent to what Rust lays out in memory for a Vec<N
 - For yakcc-as: pre-flatten trie + pre-hash: EXCLUDED from timing loop
 - Inner loop: 100,000-query match phase, 100 warm-up + 1,000 measured iterations
 
-### Pass/Kill Bars for Glue-Heavy Workload
+### Directional Target Bars for Glue-Heavy Workload
 
 Per issue #185: glue-heavy workloads have a relaxed bar because WASM's indirect branching
 overhead is inherent and not an AS-backend-specific deficiency.
@@ -95,9 +104,9 @@ overhead is inherent and not an AS-backend-specific deficiency.
 |---------|-----------|
 | PASS | yakcc-as degradation vs rust-software ≤ 25% |
 | WARN | degradation 25%–40% |
-| KILL | degradation > 40% |
+| Directional target (no KILL pre-data) | degradation > 40% |
 
-The kill bar remains the same across all workload types (>40% = re-plan AS initiative).
+The directional target bar is the same across all workload types (>40% would prompt re-plan of AS initiative post-characterisation).
 The pass bar is relaxed from 15% (substrate-heavy) to 25% (glue-heavy) to account for
 the inherent WASM dispatch overhead that is not present in native code.
 
