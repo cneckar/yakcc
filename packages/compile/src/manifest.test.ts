@@ -191,6 +191,20 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     ): Promise<void> {
       throw new Error("not implemented in mock");
     },
+    // #363: shave-cache stubs (DEC-V2-SHAVE-CACHE-STORAGE-001).
+    async storeSourceFileContentHash(
+      _sourcePkg: string,
+      _sourceFile: string,
+      _contentHash: string,
+    ): Promise<void> {
+      throw new Error("not implemented in mock");
+    },
+    async getSourceFileContentHash(
+      _sourcePkg: string,
+      _sourceFile: string,
+    ): Promise<string | null> {
+      return null;
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing

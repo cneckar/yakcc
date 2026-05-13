@@ -1803,6 +1803,87 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // storeSourceFileContentHash — write or update per-file content hash (issue #363)
+  //
+  // @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+  // @title source_file_state is the single authority for per-source-file content hashes;
+  //   INSERT OR REPLACE for re-bootstrap idempotency (hash changes on file edit)
+  // @status decided (issue #363 / wi-363-shave-cache)
+  // @rationale
+  //   Each bootstrap pass computes BLAKE3-256 of the source file's UTF-8 bytes.
+  //   On cache miss, after a successful shave, storeSourceFileContentHash writes
+  //   (or overwrites) the row so the next bootstrap can short-circuit this file.
+  //   INSERT OR REPLACE semantics mirror storeSourceFileGlue: both represent the
+  //   most-recent bootstrap state for a given (source_pkg, source_file) pair.
+  //   Uses a hoisted prepared statement (DEC-V2-OCCURRENCE-WRITE-PERF-001 pattern)
+  //   to avoid re-compilation on every call in the per-file bootstrap loop.
+  // -------------------------------------------------------------------------
+
+  // Hoisted prepared statement for cache-hash writes (avoids prepare() on hot path).
+  // Lazily initialized on first use; stored as a class field for lifetime reuse.
+  private stmtUpsertSourceFileState: Database.Statement<
+    [string, string, string, number]
+  > | null = null;
+
+  async storeSourceFileContentHash(
+    sourcePkg: string,
+    sourceFile: string,
+    contentHash: string,
+  ): Promise<void> {
+    this.assertOpen();
+
+    if (!sourcePkg || !sourceFile) {
+      throw new Error(
+        `storeSourceFileContentHash: sourcePkg and sourceFile must be non-empty: sourcePkg=${sourcePkg}, sourceFile=${sourceFile}`,
+      );
+    }
+    if (sourceFile.startsWith("/") || sourceFile.includes("..")) {
+      throw new Error(
+        `storeSourceFileContentHash: sourceFile must be workspace-relative and must not contain '..': ${sourceFile}`,
+      );
+    }
+    if (!contentHash) {
+      throw new Error(
+        `storeSourceFileContentHash: contentHash must be non-empty for ${sourceFile}`,
+      );
+    }
+
+    // Prepare once per registry lifetime (DEC-V2-OCCURRENCE-WRITE-PERF-001 pattern).
+    if (this.stmtUpsertSourceFileState === null) {
+      this.stmtUpsertSourceFileState = this.db.prepare<[string, string, string, number]>(
+        "INSERT OR REPLACE INTO source_file_state(source_pkg, source_file, content_hash, last_shave_time) VALUES (?, ?, ?, ?)",
+      );
+    }
+
+    this.stmtUpsertSourceFileState.run(sourcePkg, sourceFile, contentHash, Date.now());
+  }
+
+  // -------------------------------------------------------------------------
+  // getSourceFileContentHash — retrieve per-file content hash (issue #363)
+  //
+  // @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+  // -------------------------------------------------------------------------
+
+  async getSourceFileContentHash(
+    sourcePkg: string,
+    sourceFile: string,
+  ): Promise<string | null> {
+    this.assertOpen();
+
+    interface StateRow {
+      content_hash: string;
+    }
+
+    const row = this.db
+      .prepare<[string, string], StateRow>(
+        "SELECT content_hash FROM source_file_state WHERE source_pkg = ? AND source_file = ?",
+      )
+      .get(sourcePkg, sourceFile);
+
+    return row?.content_hash ?? null;
+  }
+
+  // -------------------------------------------------------------------------
   // close
   // -------------------------------------------------------------------------
 
