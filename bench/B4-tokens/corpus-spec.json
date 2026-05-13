@@ -1,0 +1,33 @@
+{
+  "description": "B4-tokens benchmark Slice 1 task corpus spec — task selection rationale, per-task hook engagement annotations, and non-engagement records.",
+  "schema_version": 1,
+  "slice": 1,
+  "n_tasks": 3,
+  "tasks": [
+    {
+      "id": "lru-cache-with-ttl",
+      "hook_engagement": "high",
+      "engagement_notes": "High atom density: doubly-linked-list node management, Map operations, and TTL timestamp arithmetic decompose into distinct reusable atoms. The hook has substitution targets across all three sub-patterns. Slice 1 real run showed 22.1% output-token reduction (A=1171, B=1503).",
+      "follow_up_issue": null
+    },
+    {
+      "id": "csv-parser-quoted",
+      "hook_engagement": "medium",
+      "engagement_notes": "Medium atom density: the CSV state machine is task-specific but delimiter/quoting primitives are generic. Slice 1 real run showed 59.7% output-token reduction (A=391, B=969), though semantic_eq was 0% on Arm A indicating the hook-assisted implementation had oracle failures on edge cases. Reduction measurement is valid but correctness gap exists.",
+      "follow_up_issue": "450"
+    },
+    {
+      "id": "debounce-with-cancel",
+      "hook_engagement": "none",
+      "non_engagement_reason": "Debounce is a genuinely novel stateful higher-order function. The Slice 1 bootstrap corpus contains no timer-management atom that the yakccResolve tool could substitute. The model correctly ignored the tool and generated the implementation directly. Both arms produced approximately equal output (~427 vs ~433 tokens, 1.4% noise). Root cause analysis (WI-B4-DEBOUNCE-HOOK-ENGAGEMENT #451): Candidate 1 (registry not seeded for debounce-shaped contracts) confirmed — the Slice 1 registry does not contain a debounce atom. Candidate 2 (embedding match threshold) and Candidate 3 (substitution flow logic bug) are ruled out: the model DID see the yakccResolve tool (Arm A input_tokens=1226 vs Arm B input_tokens=567, delta=659 tokens = system prompt suffix + tool schema) but chose not to invoke it because no matching atom exists. This is correct behavior: the hook should not hallucinate atom names. Resolution: document non-engagement here. Path to engagement in Slice 2: seed a timer-management atom (setTimeout/clearTimeout closure pattern) into the registry. The debounce prompt would then have a candidate for at least the timer-state primitive, reducing the code the model must regenerate.",
+      "follow_up_issue": "453"
+    }
+  ],
+  "notes": [
+    "hook_engagement values: 'none' = model did not use yakccResolve tool; 'low'/'medium'/'high' = tool used, engagement quality varies",
+    "non_engagement_reason is required when hook_engagement is 'none'",
+    "follow_up_issue references GitHub issue number for tracking; null if no follow-up needed",
+    "Slice 1 real-run artifact: tmp/B4-tokens/slice1-2026-05-13T06-28-13-376Z.json",
+    "Debounce non-engagement diagnosed under WI-B4-DEBOUNCE-HOOK-ENGAGEMENT (#451), 2026-05-13"
+  ]
+}
