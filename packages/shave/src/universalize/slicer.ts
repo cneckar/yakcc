@@ -109,6 +109,7 @@
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import { validateStrictSubset } from "@yakcc/ir";
 import { Project, ScriptKind } from "ts-morph";
+import type { IntentCard } from "../intent/types.js";
 import type { ShaveRegistryView } from "../types.js";
 import type {
   BranchNode,
@@ -121,6 +122,7 @@ import type {
   SlicePlan,
   SlicePlanEntry,
 } from "./types.js";
+import { rankCluster } from "./variance-rank.js";
 
 // ---------------------------------------------------------------------------
 // Foreign-classification constants (single source of truth — L3 forbidden
@@ -302,6 +304,22 @@ export interface SliceOptions {
    * @see DEC-V2-GLUE-AWARE-SHAVE-001
    */
   readonly shaveMode?: "strict" | "glue-aware";
+
+  /**
+   * The extracted intent card for the candidate being sliced.
+   *
+   * When provided along with a registry that supports `getBlock`, the slicer
+   * applies variance ranking at multi-candidate cluster sites: any
+   * `findByCanonicalAstHash` result with >1 match is ranked by
+   * `@yakcc/variance.varianceScore` rather than silently picking `matches[0]`.
+   *
+   * When absent (or when the registry lacks `getBlock`), the slicer falls back
+   * to the legacy behavior (first match wins) and `PointerEntry.varianceScores`
+   * is always undefined.
+   *
+   * @see DEC-VARIANCE-WIRING-001
+   */
+  readonly intentCard?: IntentCard | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,17 +350,38 @@ interface SliceAccumulator {
  * AtomLeaves are checked for foreign imports before falling through to
  * NovelGlueEntry; unmatched BranchNodes descend into children.
  *
+ * When `intentCard` is provided and the registry returns >1 candidate for a
+ * given canonicalAstHash, variance ranking is applied via `rankCluster()` to
+ * select the best-matching candidate. The selected merkleRoot and all ranked
+ * scores are surfaced on `PointerEntry.varianceScores`.
+ *
  * This function is the backward-compatible path; it never emits GlueLeafEntry.
  */
 async function walkNodeStrict(
   node: RecursionNode,
-  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash">,
+  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash" | "getBlock">,
   acc: SliceAccumulator,
+  intentCard: import("../intent/types.js").IntentCard | undefined,
 ): Promise<void> {
   // Query registry — degrade gracefully when findByCanonicalAstHash is absent.
   const matches = await registry.findByCanonicalAstHash?.(node.canonicalAstHash);
-  const firstMatch: BlockMerkleRoot | undefined =
-    matches !== undefined && matches.length > 0 ? matches[0] : undefined;
+
+  // Determine the winning match and optional variance scores.
+  let firstMatch: BlockMerkleRoot | undefined;
+  let varianceScores: readonly import("./variance-rank.js").VarianceScoreEntry[] | undefined;
+
+  if (matches !== undefined && matches.length > 0) {
+    if (matches.length > 1 && intentCard !== undefined) {
+      // Multi-candidate cluster: apply variance ranking (DEC-VARIANCE-WIRING-001).
+      // rankCluster sorts descending by score; first entry is the winner.
+      const ranked = await rankCluster(intentCard, node.canonicalAstHash, matches, registry);
+      firstMatch = ranked[0]?.merkleRoot;
+      varianceScores = ranked;
+    } else {
+      // Single candidate (or no intentCard): legacy first-match semantics.
+      firstMatch = matches[0];
+    }
+  }
 
   if (firstMatch !== undefined) {
     // Registry match: collapse this node (and any subtree) to a PointerEntry.
@@ -353,6 +392,8 @@ async function walkNodeStrict(
       merkleRoot: firstMatch,
       canonicalAstHash: node.canonicalAstHash,
       matchedBy: "canonical_ast_hash",
+      // varianceScores is only set for multi-candidate sites where ranking ran.
+      ...(varianceScores !== undefined && { varianceScores }),
     };
     acc.entries.push(entry);
     acc.pointerBytes += node.sourceRange.end - node.sourceRange.start;
@@ -404,7 +445,7 @@ async function walkNodeStrict(
     // invariant for SlicePlan.entries.
     const branch = node as BranchNode;
     for (const child of branch.children) {
-      await walkNodeStrict(child, registry, acc);
+      await walkNodeStrict(child, registry, acc, intentCard);
     }
   }
 }
@@ -436,13 +477,27 @@ async function walkNodeStrict(
  */
 async function walkNodeGlueAware(
   node: RecursionNode,
-  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash">,
+  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash" | "getBlock">,
   acc: SliceAccumulator,
+  intentCard: import("../intent/types.js").IntentCard | undefined,
 ): Promise<void> {
   // Step 1: Registry lookup (same priority as strict mode).
+  // When >1 candidate is returned and intentCard is available, variance ranking
+  // selects the best match (DEC-VARIANCE-WIRING-001).
   const matches = await registry.findByCanonicalAstHash?.(node.canonicalAstHash);
-  const firstMatch: BlockMerkleRoot | undefined =
-    matches !== undefined && matches.length > 0 ? matches[0] : undefined;
+
+  let firstMatch: BlockMerkleRoot | undefined;
+  let varianceScores: readonly import("./variance-rank.js").VarianceScoreEntry[] | undefined;
+
+  if (matches !== undefined && matches.length > 0) {
+    if (matches.length > 1 && intentCard !== undefined) {
+      const ranked = await rankCluster(intentCard, node.canonicalAstHash, matches, registry);
+      firstMatch = ranked[0]?.merkleRoot;
+      varianceScores = ranked;
+    } else {
+      firstMatch = matches[0];
+    }
+  }
 
   if (firstMatch !== undefined) {
     const entry: PointerEntry = {
@@ -451,6 +506,7 @@ async function walkNodeGlueAware(
       merkleRoot: firstMatch,
       canonicalAstHash: node.canonicalAstHash,
       matchedBy: "canonical_ast_hash",
+      ...(varianceScores !== undefined && { varianceScores }),
     };
     acc.entries.push(entry);
     acc.pointerBytes += node.sourceRange.end - node.sourceRange.start;
@@ -544,7 +600,7 @@ async function walkNodeGlueAware(
     // Instead, each child is visited independently and classified by its own predicate.
     const branch = node as BranchNode;
     for (const child of branch.children) {
-      await walkNodeGlueAware(child, registry, acc);
+      await walkNodeGlueAware(child, registry, acc, intentCard);
     }
   }
 }
@@ -591,7 +647,7 @@ async function walkNodeGlueAware(
  */
 export async function slice(
   tree: RecursionTree,
-  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash">,
+  registry: Pick<ShaveRegistryView, "findByCanonicalAstHash" | "getBlock">,
   options?: SliceOptions,
 ): Promise<SlicePlan> {
   const acc: SliceAccumulator = {
@@ -603,11 +659,12 @@ export async function slice(
   };
 
   const mode = options?.shaveMode ?? "strict";
+  const intentCard = options?.intentCard;
 
   if (mode === "glue-aware") {
-    await walkNodeGlueAware(tree.root, registry, acc);
+    await walkNodeGlueAware(tree.root, registry, acc, intentCard);
   } else {
-    await walkNodeStrict(tree.root, registry, acc);
+    await walkNodeStrict(tree.root, registry, acc, intentCard);
   }
 
   return {
