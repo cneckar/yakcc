@@ -47,33 +47,20 @@
  *   atomizeEmission makes ZERO outbound network calls — shave uses the "static"
  *   strategy which is pure AST analysis (no Anthropic API, no HTTP). B6 preserved.
  *
- * PIPELINE:
- *   atomizeEmission → licenseGate (from @yakcc/shave) → universalize (static strategy)
- *   → iterate NovelGlueEntry items → buildBlockRow (inline) → registry.storeBlock
+ * PIPELINE (WI-424):
+ *   atomizeEmission → licenseGate (from @yakcc/shave) → universalize({persist:true})
+ *   → iterate NovelGlueEntry items in slicePlan (merkleRoot populated by universalize)
  *
- *   buildBlockRow is inlined here (not imported from shave) because specFromIntent
- *   and buildTriplet are private to @yakcc/shave's persist/ sub-directory and not
- *   on the package's public API surface (exports."."). The logic is minimal and
- *   fully derived from public @yakcc/contracts and @yakcc/shave types.
+ *   WI-424 (DEC-V2-ATOMIZE-DELEGATES-UNIVERSALIZE-001): the inline buildBlockRow +
+ *   registry.storeBlock loop is removed. universalize({persist:true}) is now the
+ *   single authority for atom persistence (Sacred Practice #12), mirroring the
+ *   WI-423 delegation pattern applied to shave() (PR #431).
  *
  * Cross-reference: DEC-HOOK-PHASE-2-001, DEC-HOOK-PHASE-1-001, DEC-HOOK-LAYER-001,
  *   docs/adr/hook-layer-architecture.md D-HOOK-7.
  */
 
-import {
-  blockMerkleRoot,
-  canonicalize,
-  canonicalAstHash as deriveCanonicalAstHash,
-  specHash as deriveSpecHash,
-  validateSpecYak,
-} from "@yakcc/contracts";
-import type {
-  BlockMerkleRoot,
-  ProofManifest,
-  SpecYak,
-  SpecYakParameter,
-} from "@yakcc/contracts";
-import type { BlockTripletRow, Registry } from "@yakcc/registry";
+import type { Registry } from "@yakcc/registry";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -290,129 +277,6 @@ function extractFunctionName(code: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// BlockTripletRow builder
-// ---------------------------------------------------------------------------
-
-/**
- * L0 bootstrap manifest — placeholder for the property-tests artifact.
- * Used here because atomizeEmission runs offline (no corpus extraction API call).
- *
- * @decision DEC-HOOK-ATOM-CAPTURE-001 (property tests)
- * Per spec edge case #6: v0 atoms have a placeholder property_tests artifact.
- * Corpus extraction (WI-016) and prop-test synthesis (WI-HOOK-ATOM-PROPTEST-SYNTHESIS)
- * are future work. The placeholder satisfies the schema requirement without
- * making any LLM or network call (B6 compliance).
- */
-const PROPERTY_TESTS_PATH = "property-tests.ts";
-const EMPTY_BYTES = new Uint8Array(0);
-
-const L0_BOOTSTRAP_MANIFEST: ProofManifest = {
-  artifacts: [{ kind: "property_tests", path: PROPERTY_TESTS_PATH }],
-} as const;
-
-/**
- * Derive a stable spec name slug from a behavior string and canonical AST hash.
- *
- * Mirrors specFromIntent's deriveSpecName from @yakcc/shave/persist/spec-from-intent.ts.
- * Format: <30-char-slug>-<last-6-of-hash>
- * Non-word characters are replaced with "-"; leading/trailing "-" stripped.
- */
-function deriveSpecName(behavior: string, canonicalAstHashHex: string): string {
-  const prefix = behavior
-    .slice(0, 30)
-    .replace(/\W+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const hashSuffix = canonicalAstHashHex.slice(-6);
-  return `${prefix}-${hashSuffix}`;
-}
-
-/**
- * Map an IntentParam (shave type) to a SpecYakParameter (contracts type).
- *
- * Mirrors the mapping in @yakcc/shave/persist/spec-from-intent.ts.
- * IntentParam.typeHint maps to SpecYakParameter.type.
- */
-function mapIntentParam(param: {
-  name: string;
-  typeHint: string;
-  description: string;
-}): SpecYakParameter {
-  return { name: param.name, type: param.typeHint, description: param.description };
-}
-
-/**
- * Build an L0 BlockTripletRow from a NovelGlueEntry's intentCard + source.
- *
- * This inline implementation mirrors the logic in:
- *   @yakcc/shave/persist/spec-from-intent.ts (specFromIntent)
- *   @yakcc/shave/persist/triplet.ts (buildTriplet → L0 bootstrap path)
- *   @yakcc/shave/persist/atom-persist.ts (persistNovelGlueAtom)
- *
- * All three are in @yakcc/shave's private persist/ sub-directory and are NOT
- * exported on the package's public API surface. Inlining here uses only public
- * APIs from @yakcc/contracts and @yakcc/registry.
- *
- * @decision DEC-HOOK-ATOM-CAPTURE-001 (inline persist logic)
- * The alternative — calling persistNovelGlueAtom directly via a deep import — would
- * violate the package boundary (exports map) and break on any future dist reorganization.
- * This inline path is self-contained, auditable, and safe for v0.
- */
-function buildBlockRow(entry: {
-  source: string;
-  canonicalAstHash: string;
-  intentCard: {
-    behavior: string;
-    inputs: readonly { name: string; typeHint: string; description: string }[];
-    outputs: readonly { name: string; typeHint: string; description: string }[];
-    preconditions: readonly string[];
-    postconditions: readonly string[];
-  };
-}): BlockTripletRow {
-  const { source, canonicalAstHash: astHashHex, intentCard } = entry;
-
-  // Build SpecYak from the intentCard (mirrors specFromIntent logic).
-  const specName = deriveSpecName(intentCard.behavior, astHashHex);
-  const specCandidate = {
-    name: specName,
-    inputs: intentCard.inputs.map(mapIntentParam),
-    outputs: intentCard.outputs.map(mapIntentParam),
-    preconditions: Array.from(intentCard.preconditions),
-    postconditions: Array.from(intentCard.postconditions),
-    invariants: [] as string[],
-    effects: [] as string[],
-    level: "L0" as const,
-  };
-  const spec: SpecYak = validateSpecYak(specCandidate);
-
-  // Compute content addresses.
-  const specCanonicalBytes = canonicalize(spec as unknown as Parameters<typeof canonicalize>[0]);
-  const sh = deriveSpecHash(spec);
-
-  // L0 bootstrap manifest (placeholder property-tests artifact).
-  const manifest = L0_BOOTSTRAP_MANIFEST;
-  const artifacts = new Map<string, Uint8Array>([[PROPERTY_TESTS_PATH, EMPTY_BYTES]]);
-
-  // blockMerkleRoot = BLAKE3(spec_hash || impl_hash || proof_root).
-  const root: BlockMerkleRoot = blockMerkleRoot({ spec, implSource: source, manifest, artifacts });
-
-  // Canonical AST hash — re-derive from source to get the typed value.
-  const canonicalAstHashTyped = deriveCanonicalAstHash(source);
-
-  return {
-    blockMerkleRoot: root,
-    specHash: sh,
-    specCanonicalBytes,
-    implSource: source,
-    proofManifestJson: JSON.stringify(manifest),
-    level: "L0",
-    createdAt: Date.now(),
-    canonicalAstHash: canonicalAstHashTyped,
-    artifacts,
-    parentBlockRoot: null,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Core atomizeEmission function
 // ---------------------------------------------------------------------------
 
@@ -423,8 +287,9 @@ function buildBlockRow(entry: {
  * Steps:
  *   1. Shape filter (test-file, inner-scope, type-only, trivial-body rejection)
  *   2. License header injection (MIT default if absent)
- *   3. @yakcc/shave universalize() — static strategy, offline, zero network calls
- *   4. For each NovelGlueEntry with intentCard: buildBlockRow + registry.storeBlock
+ *   3. @yakcc/shave universalize({persist:true}) — static strategy, offline, zero
+ *      network calls; universalize handles all atom persistence internally
+ *   4. Consume merkleRoot from NovelGlueEntry items in the returned slicePlan
  *   5. Return AtomizeResult with the list of atoms created
  *
  * CONCURRENT SAFETY: registry.storeBlock uses INSERT OR IGNORE — idempotent under
@@ -503,16 +368,50 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
     // The shave registry view interface is structurally satisfied by our Registry.
     // universalize() uses selectBlocks / getBlock / findByCanonicalAstHash for
     // known-primitive lookups — all present on the Registry interface.
+    // storeBlock is also on Registry and will be used by universalize({persist:true}).
     const registryAsShaveView = registry as Parameters<typeof universalize>[1];
 
     let universalizeResult;
     try {
+      /**
+       * @decision DEC-V2-ATOMIZE-DELEGATES-UNIVERSALIZE-001
+       * @title atomize.ts delegates atom persistence to universalize({persist:true})
+       * @status accepted (WI-424)
+       * @rationale
+       *   WI-373 (PR #419) introduced universalize({persist:true}) as the canonical
+       *   persistence primitive. WI-423 (PR #431) closed the Sacred Practice #12 debt
+       *   for shave() by making it delegate to universalize({persist:true}).
+       *
+       *   This WI (WI-424) applies the identical delegation pattern to atomize.ts.
+       *   The previous inline loop — buildBlockRow() + registry.storeBlock()
+       *   for each novel-glue entry — duplicated the postorder lineage-threading
+       *   logic that universalize()'s step 6 already implements
+       *   (DEC-UNIVERSALIZE-PERSIST-PIPELINE-001).
+       *
+       *   By passing persist:true, universalize() now runs maybePersistNovelGlueAtom
+       *   for each NovelGlueEntry in DFS postorder with parentBlockRoot lineage
+       *   threading, and surfaces merkleRoot on each enriched entry. atomize.ts reads
+       *   these merkleRoots from the returned slicePlan instead of calling storeBlock
+       *   directly.
+       *
+       *   Sacred Practice #12: universalize() is the single authority for atom
+       *   persistence in the entire system. Both shave() (WI-423) and atomize.ts
+       *   (this WI) now delegate to it. The inline buildBlockRow helper and all
+       *   associated @yakcc/contracts / @yakcc/registry persist-side imports are
+       *   removed.
+       *
+       *   Hot-path compliance (DEC-HOOK-LAYER-001 D-HOOK-3 <=200ms p95): the persist
+       *   step is O(novel-glue entries) before and after this refactor. The same
+       *   SQLite writes via the same maybePersistNovelGlueAtom primitive run either
+       *   way. No additional I/O, network calls, or synchronization is introduced.
+       */
       universalizeResult = await universalize(
         { source: codeForShave },
         registryAsShaveView,
         {
           intentStrategy: "static",
           offline: true,
+          persist: true,
         },
       );
     } catch (e) {
@@ -529,7 +428,13 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
       throw e;
     }
 
-    // ── Step 4: Persist novel-glue entries ───────────────────────────────
+    // ── Step 4: Collect atoms from the enriched slicePlan ────────────────────
+    //
+    // universalize({persist:true}) has already called storeBlock for each
+    // NovelGlueEntry that carried an intentCard. The enriched entries carry
+    // merkleRoot when persistence succeeded; entries without intentCard have
+    // merkleRoot === undefined (they were skipped by maybePersistNovelGlueAtom,
+    // per DEC-ATOM-PERSIST-001).
 
     const atomsCreated: Array<{
       blockMerkleRoot: string;
@@ -539,38 +444,22 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
 
     for (const entry of universalizeResult.slicePlan) {
       if (entry.kind !== "novel-glue") continue;
+      if (entry.merkleRoot === undefined) continue;
 
-      const { intentCard } = entry;
-      if (intentCard === undefined) continue;
+      const behaviorText = entry.intentCard?.behavior ?? "";
+      const atomName =
+        extractFunctionName(entry.source) ??
+        (entry.merkleRoot as unknown as string).slice(0, 12);
 
-      try {
-        const row = buildBlockRow({
-          source: entry.source,
-          canonicalAstHash: entry.canonicalAstHash as unknown as string,
-          intentCard: {
-            behavior: intentCard.behavior,
-            inputs: intentCard.inputs as readonly { name: string; typeHint: string; description: string }[],
-            outputs: intentCard.outputs as readonly { name: string; typeHint: string; description: string }[],
-            preconditions: intentCard.preconditions,
-            postconditions: intentCard.postconditions,
-          },
-        });
-
-        // storeBlock uses INSERT OR IGNORE — safe under concurrent calls (DEC-HOOK-ATOM-CAPTURE-001).
-        await registry.storeBlock(row);
-
-        const atomName = extractFunctionName(entry.source) ?? deriveSpecName(intentCard.behavior, entry.canonicalAstHash as unknown as string);
-
-        atomsCreated.push({
-          blockMerkleRoot: row.blockMerkleRoot as unknown as string,
-          atomName,
-          spec: { name: row.specHash as unknown as string, behavior: intentCard.behavior },
-        });
-      } catch {
-        // Individual atom build/store failure is non-fatal — continue with other entries.
-      }
+      atomsCreated.push({
+        blockMerkleRoot: entry.merkleRoot as unknown as string,
+        atomName,
+        spec: {
+          name: entry.merkleRoot as unknown as string,
+          behavior: behaviorText,
+        },
+      });
     }
-
     if (atomsCreated.length === 0) {
       return { atomized: false, atomsCreated: [], reason: "shave-rejected" };
     }

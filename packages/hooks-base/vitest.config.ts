@@ -19,6 +19,10 @@ export default defineConfig({
       // to remove CI dependency on built dist.
       "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
       "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
+      // @yakcc/variance aliased to src/ — same workspace-source pattern as shave/ir.
+      // variance has no dist/ in the worktree (gitignored) and the module is imported
+      // transitively by shave/src/universalize/variance-rank.ts (WI-374).
+      "@yakcc/variance": resolve(__dirname, "../variance/src/index.ts"),
     },
   },
   test: {
