@@ -99,7 +99,7 @@ produces an implementation that fails the most adversarial oracle tests.
        (all 27 tests pass), meaning the model produced correct code without invoking
        the tool — the flow is intact, there's simply nothing to substitute.
   Path to engagement in Slice 2: seed a timer-management atom (setTimeout/clearTimeout
-  closure pattern) into the registry seed corpus. Track via follow-up issue #453.
+  closure pattern) into the registry seed corpus. Track via follow-up issue #454.
   This threshold will become a sweep parameter in B4 Slice 2; the non-engagement
   rate at 0.0% for debounce is a data point for the Slice 2 threshold sweep planner.
   Full annotation in corpus-spec.json.
