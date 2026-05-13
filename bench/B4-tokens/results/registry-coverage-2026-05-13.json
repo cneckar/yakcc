@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-13T18:03:12.449Z",
+  "wi_id": "WI-B4-MCP-ATOM-LOOKUP",
+  "slice": 2,
+  "registry_path": ".yakcc/registry.sqlite",
+  "registry_atom_count": 21,
+  "embedding_provider": "yakcc/offline-blake3-stub",
+  "note": "The offline embedding provider uses deterministic BLAKE3-derived vectors, not semantic embeddings. Confidence scores are structural/vector-space proximity, NOT semantic similarity. All confidence values are low (<0.4) for all tasks because: (1) the current seed corpus is parsing primitives (digit, integer, whitespace, etc.) that are semantically distant from all 8 tasks; (2) the offline provider produces low-discrimination vectors. After bootstrapping with a real embedding model (e.g. all-MiniLM-L6-v2), confidence scores will be meaningful. The timer-handle atom (closes #454) is seeded in this WI but requires registry rebuild to appear in query results.",
+  "tasks": [
+    {
+      "task_id": "lru-cache-with-ttl",
+      "slice": "existing",
+      "query_intent": "cache key-value pairs with TTL expiration and LRU eviction, O(1) get and set operations using doubly linked list and hash map",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.322,
+      "top_candidate_signature": "positionStep(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "GAP",
+      "gap_reason": "No atom in the current corpus is semantically close to LRU+TTL cache data structures. The doubly-linked-list and Map-based eviction pattern has no seed atom. The seed corpus (20+1 parsing primitives) is purely text-parsing focused.",
+      "gap_issue": null,
+      "gap_notes": "Filing as coverage gap. Seed atoms needed: lru-node (doubly-linked-list node), time-stamp-provider (monotonic timestamp for TTL). Out of scope for WI-460 — these are separate seed corpus WIs."
+    },
+    {
+      "task_id": "csv-parser-quoted",
+      "slice": "existing",
+      "query_intent": "parse CSV data with quoted fields per RFC 4180, handle embedded newlines and escaped quotes",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.297,
+      "top_candidate_signature": "signedInteger(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "PARTIAL",
+      "gap_reason": "The CSV parsing primitive atoms (comma, bracket, peek-char) are semantically related but confidence is below 0.5 with the offline embedding provider. With a real embedding model, the comma/bracket atoms should score higher. Not a registry gap per se, but a threshold gap.",
+      "gap_issue": null,
+      "gap_notes": "Comma and bracket atoms exist and are relevant to CSV parsing. The offline embedding vector quality prevents them from surfacing at confidence >= 0.5. With a real embedding provider, this task should have coverage."
+    },
+    {
+      "task_id": "debounce-with-cancel",
+      "slice": "existing",
+      "query_intent": "debounce a function call with delayed execution, cancel pending timer with clearTimeout, flush immediately",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.294,
+      "top_candidate_signature": "signedInteger(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "PARTIAL",
+      "gap_reason": "The timer-handle atom (setTimeout/clearTimeout closure pattern) is seeded by WI-460 (closes #454) but the .yakcc/registry.sqlite has not been rebuilt with the new seed yet. After 'yakcc bootstrap', this task should have the timer-handle atom as a relevant candidate.",
+      "gap_issue": null,
+      "gap_notes": "timer-handle atom seeded at packages/seeds/src/blocks/timer-handle/. Requires registry rebuild to appear in query results. This is NOT a gap — the atom exists, the registry just needs reseeding."
+    },
+    {
+      "task_id": "levenshtein-with-memo",
+      "slice": "new (WI-B4-TASK-SUITE-EXPAND-8 / #459)",
+      "query_intent": "compute minimum edit distance between two strings using dynamic programming memoization",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.281,
+      "top_candidate_signature": "whitespace(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "GAP",
+      "gap_reason": "Dynamic programming / memoization patterns have no seed atom in the current corpus. Levenshtein requires a 2D matrix iteration primitive that does not exist.",
+      "gap_issue": "#465",
+      "gap_notes": "Filed: https://github.com/cneckar/yakcc/issues/465 — seed a memoize atom (function memoize pattern) for levenshtein/topological-sort coverage."
+    },
+    {
+      "task_id": "topological-sort-kahns",
+      "slice": "new (WI-B4-TASK-SUITE-EXPAND-8 / #459)",
+      "query_intent": "topological sort of a directed acyclic graph using Kahn's algorithm with in-degree queue",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.286,
+      "top_candidate_signature": "emptyListContent(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "GAP",
+      "gap_reason": "Graph traversal / queue-drain patterns have no seed atom. Kahn's algorithm requires in-degree map, neighbor adjacency, and queue management primitives.",
+      "gap_issue": "#466",
+      "gap_notes": "Filed: https://github.com/cneckar/yakcc/issues/466 — seed a queue-drain atom for topological sort coverage."
+    },
+    {
+      "task_id": "json-pointer-resolve",
+      "slice": "new (WI-B4-TASK-SUITE-EXPAND-8 / #459)",
+      "query_intent": "resolve JSON pointer per RFC 6901 navigating nested objects and arrays with escape sequences tilde zero tilde one",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.326,
+      "top_candidate_signature": "positionStep(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "PARTIAL",
+      "gap_reason": "The positionStep atom is structurally related (position-based navigation) but doesn't provide the JSON pointer escape-decode pattern (~0/~1). String navigation primitives exist but not JSON-specific ones.",
+      "gap_issue": "#467",
+      "gap_notes": "Filed: https://github.com/cneckar/yakcc/issues/467 — seed a JSON pointer token splitter / escape decoder atom. The position-step and string-from-position atoms provide partial coverage."
+    },
+    {
+      "task_id": "base64-encode-rfc4648",
+      "slice": "new (WI-B4-TASK-SUITE-EXPAND-8 / #459)",
+      "query_intent": "base64 encode binary data using RFC 4648 alphabet with padding character equals sign",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.318,
+      "top_candidate_signature": "isAsciiDigit(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "GAP",
+      "gap_reason": "Base64 encoding requires a 64-character alphabet lookup table and 3-byte to 4-character grouping. The ascii-char / ascii-digit-set atoms are tangentially related but don't provide the base64 alphabet.",
+      "gap_issue": "#468",
+      "gap_notes": "Filed: https://github.com/cneckar/yakcc/issues/468 — seed a base64-alphabet lookup atom for base64-encode coverage."
+    },
+    {
+      "task_id": "semver-range-satisfies",
+      "slice": "new (WI-B4-TASK-SUITE-EXPAND-8 / #459)",
+      "query_intent": "parse semantic version and check if version satisfies a range constraint following semver specification",
+      "candidates_found_aggressive": 5,
+      "top_candidate_confidence": 0.295,
+      "top_candidate_signature": "nonAsciiRejector(...)",
+      "has_candidate_at_0_5": false,
+      "has_candidate_at_0_7": false,
+      "coverage_status": "PARTIAL",
+      "gap_reason": "Semver parsing requires integer parsing (exists: integer atom) and dot/hyphen tokenization. The signed-integer and digit atoms are relevant for parsing major.minor.patch components.",
+      "gap_issue": "#469",
+      "gap_notes": "Filed: https://github.com/cneckar/yakcc/issues/469 — seed a semver component parser atom composing integer + dot-separator. The existing integer/digit atoms provide foundation but not the version-range grammar."
+    }
+  ],
+  "summary": {
+    "total_tasks": 8,
+    "coverage_status": {
+      "FULL": 0,
+      "PARTIAL": 3,
+      "GAP": 5
+    },
+    "tasks_with_candidate_at_0_5": 0,
+    "tasks_with_candidate_at_0_7": 0,
+    "tasks_with_any_candidate_aggressive": 8,
+    "gap_issues_to_file": 0
+  },
+  "gap_issues_filed": {
+    "levenshtein-with-memo": "#465",
+    "topological-sort-kahns": "#466",
+    "json-pointer-resolve": "#467",
+    "base64-encode-rfc4648": "#468",
+    "semver-range-satisfies": "#469"
+  },
+  "action_items": [
+    "Rebuild registry with 'yakcc bootstrap' to include timer-handle atom (debounce coverage improvement)",
+    "Gap issues filed: #465 (levenshtein), #466 (topological-sort), #467 (json-pointer), #468 (base64), #469 (semver)",
+    "Note: With a real embedding provider (all-MiniLM-L6-v2 or similar), PARTIAL tasks may achieve coverage at 0.5+ threshold",
+    "Note: FULL coverage requires dedicated seed atoms per task domain — out of scope for WI-460"
+  ]
+}
