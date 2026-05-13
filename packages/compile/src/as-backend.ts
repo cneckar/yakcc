@@ -520,6 +520,46 @@
 //        captures, Array.map/filter/reduce with arrow predicates, bound class methods)
 //        is deferred to a future phase that adopts --runtime minimal/full.
 // Status: decided (WI-AS-PHASE-2F-CLOSURES, Issue #230, 2026-05-10)
+//
+// @decision DEC-AS-CLOSURE-STRATEGY-002
+// Title: Slice 1 source-level lambda-lifting in prepareAsSource() hoists
+//        `const/let f = (params): RetType => expr` forms (without an explicit
+//        function-type annotation on the binding) to top-level
+//        `function __closure_<n>(captures..., params...): RetType` declarations,
+//        threading captured variables as additional leading parameters; call sites
+//        `f(args)` are rewritten to `__closure_<n>(captures..., args)`.
+// Status: decided (WI-211-AS-CLOSURES-SLICE-1, Issue #211, 2026-05-13)
+// Rationale:
+//   AssemblyScript --runtime stub rejects ALL closure forms (C1-C4,
+//   DEC-AS-CLOSURE-STRATEGY-001) because closure-context allocation requires GC.
+//   However, arrow functions assigned to an untyped `const`/`let` binding can be
+//   mechanically rewritten at the source level into top-level named functions, with
+//   captured variables threaded as leading parameters. The lifted form uses no closures
+//   and no GC, so asc 0.28.x --runtime stub can compile it.
+//
+//   Forms lifted (Slice 1):
+//     S1: `const f = (x: number): number => x * 2;`  — no-capture lambda
+//     S2: `const f = (x: number): number => x + n;`  — single primitive capture
+//     S3: flat-memory variant with (ptr, len, outPtr) — A4 flat-memory protocol
+//
+//   Forms NOT lifted (preserved as-is, asc still rejects):
+//     C2: `const f: (x: i32) => i32 = ...` — explicit type annotation on binding
+//         (colon after binding name distinguishes this from liftable form).
+//         Keeping it un-lifted preserves C2 probe stability (COMPILE FAIL expected).
+//
+//   The lift is applied BEFORE the `number → i32|i64|f64` rewrite so domain
+//   inference applies uniformly to original and synthesized function forms.
+//
+//   Capture detection (Slice 1): scan the arrow body for identifiers not in the
+//   arrow's own parameter list, not TS/AS keywords, and not the local binding name.
+//   Identifiers found in the enclosing function's param list or prior local
+//   const/let declarations are threaded as leading captures.
+//
+//   Counter: per liftClosures() invocation; __closure_0, __closure_1, etc.
+//   Slices 2/3/4 (HOF, returns-a-closure, this-binding) are out of scope here.
+//
+//   Cross-links: #211 (this WI), DEC-AS-CLOSURE-STRATEGY-001 (closures survey),
+//   DEC-AS-ARRAY-LAYOUT-001 (S3 flat-memory A4 protocol).
 // Rationale:
 //   AssemblyScript closures under --runtime stub are constrained by the absence of
 //   a GC heap. Closure context allocation (the object that captures variables from
@@ -823,6 +863,384 @@ export function inferDomainFromSource(src: string): NumericDomain {
 }
 
 // ---------------------------------------------------------------------------
+// Lambda-lifting: source-level closure hoisting
+//
+// @decision DEC-AS-CLOSURE-STRATEGY-002
+//
+// liftClosures() is the FIRST transformation applied in prepareAsSource()
+// (before number→i32|f64|i64 rewriting). It detects arrow-function bindings
+// of the form:
+//
+//   const f = (x: T, y: T): T => <expr>;
+//   let f = (x: T): T => <expr>;
+//
+// WITHOUT an explicit function-type annotation on the binding (no colon
+// between the binding name and `=`). This distinguishes liftable forms from
+// the C2 typed-binding form (`const f: (x: i32) => i32 = ...`) which is left
+// un-lifted so the C2 compile-fail probe remains stable.
+//
+// For each detected arrow binding inside a function body:
+//   1. Extract param names/types and return type from the arrow signature.
+//   2. Scan the arrow body for identifiers that are NOT the arrow's own params.
+//      Identifiers that appear in the enclosing function scope (from its params
+//      or prior const/let declarations in the same function body) are "captures"
+//      and are threaded as additional leading parameters on the lifted function.
+//   3. Hoist to a synthetic top-level:
+//        function __closure_<n>(<captures..., params...>): <RetType> { return <expr>; }
+//   4. Rewrite call site `f(<args>)` → `__closure_<n>(<captures..., args>)`.
+//   5. Remove the original `const/let f = ...` binding declaration.
+//
+// Counter `n` is reset per liftClosures() call (i.e., per prepareAsSource()).
+//
+// Limitations (Slice 1, 2026-05-13):
+//   - Single-expression arrow bodies only (no block `=> { ... }` form).
+//   - Single-statement call sites only (f(...) as a return expression).
+//   - Single level of nesting (arrow body itself must not contain closures).
+//   - Capture detection is heuristic (identifier scan, not full AST).
+//     False positives (non-captured identifiers) produce extra leading params
+//     that are unused but compile cleanly; false negatives (missed captures)
+//     produce compile errors. The heuristic is conservative (tends to over-capture).
+//   - Multi-line arrow signatures or comma-split across lines are NOT lifted.
+// ---------------------------------------------------------------------------
+
+/** TS/AS reserved keywords that should never be classified as captured variables. */
+const AS_KEYWORDS: ReadonlySet<string> = new Set([
+  "abstract", "as", "async", "await", "boolean", "break", "case", "catch",
+  "class", "const", "continue", "debugger", "declare", "default", "delete",
+  "do", "else", "enum", "export", "extends", "f32", "f64", "false", "finally",
+  "for", "from", "function", "get", "i16", "i32", "i64", "i8", "if",
+  "implements", "import", "in", "instanceof", "interface", "keyof", "let",
+  "module", "namespace", "new", "null", "number", "of", "override", "package",
+  "private", "protected", "public", "readonly", "return", "set", "static",
+  "string", "super", "switch", "this", "throw", "true", "try", "type",
+  "typeof", "u16", "u32", "u64", "u8", "undefined", "var", "void", "while",
+  "with", "yield", "Math", "Number", "Boolean", "String", "Object", "Array",
+  "Int8Array", "Int16Array", "Int32Array", "Uint8Array", "Uint16Array",
+  "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+  "WebAssembly", "console", "BigInt", "Symbol", "Promise", "Error",
+  "load", "store", "changetype", "idof", "offsetof", "sizeof", "alignof",
+  "unchecked", "unreachable", "abort",
+]);
+
+/**
+ * Extract all identifiers from a source expression (simple heuristic tokenizer).
+ * Returns identifiers only — filters keywords, numeric/string literals, operators.
+ */
+function extractIdentifiers(expr: string): Set<string> {
+  const ids = new Set<string>();
+  // Match JavaScript/TypeScript identifiers (word chars starting with letter or _)
+  const matches = expr.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g) ?? [];
+  for (const id of matches) {
+    if (!AS_KEYWORDS.has(id) && !/^\d/.test(id)) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Parse a parameter list string `x: T, y: U, ...` into an array of
+ * `{ name, typeAnnotation }` objects. Returns empty array on parse failure.
+ *
+ * Handles simple `name: Type` pairs separated by commas.
+ * Does NOT handle default values, destructuring, or rest params (Slice 1 scope).
+ */
+function parseParamList(paramStr: string): Array<{ name: string; typeAnnotation: string }> {
+  const trimmed = paramStr.trim();
+  if (trimmed === "") return [];
+
+  // Collect raw param strings (split on commas not inside angle brackets)
+  const rawParams: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of trimmed) {
+    if (ch === "<") { depth++; current += ch; }
+    else if (ch === ">") { depth--; current += ch; }
+    else if (ch === "," && depth === 0) {
+      rawParams.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim() !== "") rawParams.push(current.trim());
+
+  return rawParams.map((p) => {
+    const colonIdx = p.indexOf(":");
+    if (colonIdx === -1) return { name: p.trim(), typeAnnotation: "i32" };
+    return {
+      name: p.slice(0, colonIdx).trim(),
+      typeAnnotation: p.slice(colonIdx + 1).trim(),
+    };
+  });
+}
+
+/**
+ * Perform source-level lambda-lifting on a TS/AS source string.
+ *
+ * Detects `const/let f = (params): RetType => expr;` bindings inside function
+ * bodies (untyped binding form only) and hoists them to top-level function
+ * declarations `function __closure_<n>(captures..., params...): RetType`.
+ *
+ * @param source  Raw implSource string (before any other prepareAsSource rewrites).
+ * @returns Source string with arrow bindings hoisted and call sites rewritten.
+ *
+ * @decision DEC-AS-CLOSURE-STRATEGY-002
+ */
+export function liftClosures(source: string): string {
+  // Counter reset per invocation (per prepareAsSource call).
+  let counter = 0;
+
+  // Synthetic top-level function declarations to prepend to the source.
+  const hoisted: string[] = [];
+
+  // We work line-by-line on the source, building the output.
+  // The approach: for each function body, track:
+  //   - The enclosing function's parameter names (available as captures)
+  //   - Prior const/let variable names declared before the arrow binding
+  // Then detect arrow binding lines and:
+  //   1. Record the lifted function (binding name → __closure_n)
+  //   2. Remove the binding line from the output
+  //   3. Rewrite call sites in subsequent lines
+
+  // We track arrow bindings that have been lifted: name → synthetic name
+  const lifted = new Map<string, { syntheticName: string; captureNames: string[] }>();
+
+  // Parse the source into lines and process function-scope contexts
+  const lines = source.split("\n");
+  const outputLines: string[] = [];
+
+  // Simple scope tracking: we detect function entry by matching `function` keyword
+  // and track params from the function signature. We maintain a stack of scopes.
+  // Each scope has: paramNames (from function signature), localNames (from prior
+  // const/let bindings in this scope).
+  interface Scope {
+    paramNames: string[];
+    localNames: string[];
+    depth: number; // brace depth at scope entry
+  }
+  const scopeStack: Scope[] = [];
+  let braceDepth = 0;
+  // Track which lifted names were introduced in which scope (for cleanup after scope exit)
+  const liftedInScope: Map<number, string[]> = new Map();
+
+  // Regex: match a liftable arrow binding.
+  // Group 1: const|let
+  // Group 2: binding name (no colon follows — the C2 form has `name: type` which we skip)
+  // Group 3: param list
+  // Group 4: return type (after `:`)
+  // Group 5: arrow body (single expression, not a block)
+  //
+  // Critical: the binding name must NOT be followed by `:` (which would indicate
+  // an explicit function type annotation — the C2 form that stays un-lifted).
+  const ARROW_BINDING_RE =
+    /^(\s*)(const|let)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*\(([^)]*)\)\s*:\s*([^=>{]+?)\s*=>\s*(.+?)\s*;?\s*$/;
+
+  // Regex: match a function declaration to extract its params for scope tracking
+  // Group 1: function name
+  // Group 2: param list
+  const FUNCTION_DECL_RE =
+    /^\s*(?:export\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(([^)]*)\)/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+
+    // Track brace depth for scope management
+    const openBraces = (line.match(/\{/g) ?? []).length;
+    const closeBraces = (line.match(/\}/g) ?? []).length;
+
+    // Check for function entry BEFORE processing the line (so we can push scope)
+    const fnMatch = FUNCTION_DECL_RE.exec(line);
+    if (fnMatch !== null) {
+      const paramList = fnMatch[2] ?? "";
+      const paramParsed = parseParamList(paramList);
+      const scope: Scope = {
+        paramNames: paramParsed.map((p) => p.name),
+        localNames: [],
+        depth: braceDepth + openBraces - closeBraces, // approximate: depth after this line
+      };
+      // The scope depth is the brace depth after the opening `{` of the function body.
+      // We track it as braceDepth + net braces on this line.
+      scopeStack.push(scope);
+    }
+
+    // Update brace depth
+    braceDepth += openBraces - closeBraces;
+
+    // Pop scopes that have ended (brace depth fell below scope entry depth)
+    while (
+      scopeStack.length > 0 &&
+      braceDepth < (scopeStack[scopeStack.length - 1]?.depth ?? 0)
+    ) {
+      const poppedScope = scopeStack.pop();
+      if (poppedScope !== undefined) {
+        // Clean up lifted names introduced in this scope
+        const scopeIdx = scopeStack.length;
+        const scopeLiftedNames = liftedInScope.get(scopeIdx) ?? [];
+        for (const name of scopeLiftedNames) {
+          lifted.delete(name);
+        }
+        liftedInScope.delete(scopeIdx);
+      }
+    }
+
+    const currentScope = scopeStack[scopeStack.length - 1];
+
+    // Try to match an arrow binding line (only inside a function scope)
+    if (currentScope !== undefined) {
+      const arrowMatch = ARROW_BINDING_RE.exec(line);
+      if (arrowMatch !== null) {
+        const _indent = arrowMatch[1] ?? "";
+        const _keyword = arrowMatch[2] ?? "";
+        const bindingName = arrowMatch[3] ?? "";
+        const paramListStr = arrowMatch[4] ?? "";
+        const returnTypeStr = arrowMatch[5] ?? "";
+        const bodyExpr = arrowMatch[6] ?? "";
+
+        // Skip C2-style typed bindings: `const f: ... = ...`
+        // The ARROW_BINDING_RE already excludes them (it requires `name =` not `name: type =`)
+        // but double-check: if the binding name in the line is followed by `:` before `=`,
+        // it is the typed form — skip it.
+        const bindingPartEnd = line.indexOf(bindingName);
+        const afterBinding = line.slice(bindingPartEnd + bindingName.length).trimStart();
+        if (afterBinding.startsWith(":")) {
+          // Typed binding form — do NOT lift, pass through unchanged
+          outputLines.push(line);
+          if (currentScope !== undefined) {
+            currentScope.localNames.push(bindingName);
+          }
+          continue;
+        }
+
+        // Parse the arrow's own parameter names
+        const arrowParams = parseParamList(paramListStr);
+        const arrowParamNames = new Set(arrowParams.map((p) => p.name));
+
+        // Detect captures: identifiers in bodyExpr that are NOT the arrow's own params,
+        // NOT the binding name itself, NOT keywords, and ARE present in the enclosing scope.
+        const bodyIds = extractIdentifiers(bodyExpr);
+        const scopeAvailableNames = new Set([
+          ...currentScope.paramNames,
+          ...currentScope.localNames,
+        ]);
+
+        // Only treat as captured if the identifier is available in enclosing scope
+        // (conservative: if in doubt, thread it)
+        const captureNames: string[] = [];
+        for (const id of bodyIds) {
+          if (
+            id !== bindingName &&
+            !arrowParamNames.has(id) &&
+            scopeAvailableNames.has(id)
+          ) {
+            captureNames.push(id);
+          }
+        }
+
+        // Build the lifted function name and signature
+        const syntheticName = `__closure_${counter++}`;
+
+        // Capture params: `captureVar: T` — we need the type for captured vars.
+        // For Slice 1 (primitive captures), we look up their type from the enclosing
+        // function's param list. If not found in param list, fall back to `i32`.
+        const enclosingParamMap = new Map<string, string>();
+        if (currentScope !== undefined) {
+          // Re-parse the enclosing function's param list to get types.
+          // We stored only names; we need to find types from the original line.
+          // Look backwards for the function declaration to get typed params.
+          for (let j = i - 1; j >= 0; j--) {
+            const prevLine = lines[j] ?? "";
+            const prevFnMatch = FUNCTION_DECL_RE.exec(prevLine);
+            if (prevFnMatch !== null) {
+              const enclosingParams = parseParamList(prevFnMatch[2] ?? "");
+              for (const ep of enclosingParams) {
+                enclosingParamMap.set(ep.name, ep.typeAnnotation);
+              }
+              break;
+            }
+          }
+        }
+
+        // Build param string for the lifted function:
+        //   captured vars first (with types), then the arrow's own params
+        const captureParamStrs = captureNames.map((cn) => {
+          const captureType = enclosingParamMap.get(cn) ?? "i32";
+          return `${cn}: ${captureType}`;
+        });
+        const arrowParamStrs = arrowParams.map((p) => `${p.name}: ${p.typeAnnotation}`);
+        const allParamStrs = [...captureParamStrs, ...arrowParamStrs];
+
+        // Build the lifted function declaration
+        const liftedFnDecl =
+          `function ${syntheticName}(${allParamStrs.join(", ")}): ${returnTypeStr} {\n` +
+          `  return ${bodyExpr};\n` +
+          `}`;
+        hoisted.push(liftedFnDecl);
+
+        // Record the lift for call-site rewriting
+        lifted.set(bindingName, { syntheticName, captureNames });
+        const scopeIdx = scopeStack.length - 1;
+        const existingLifted = liftedInScope.get(scopeIdx) ?? [];
+        existingLifted.push(bindingName);
+        liftedInScope.set(scopeIdx, existingLifted);
+
+        // Add binding name to localNames so subsequent lines can see it
+        currentScope.localNames.push(bindingName);
+
+        // Suppress the original binding line from output
+        continue;
+      }
+
+      // Track const/let declarations for capture detection
+      const LOCAL_DECL_RE = /^\s*(?:const|let)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*[=:]/;
+      const localDeclMatch = LOCAL_DECL_RE.exec(line);
+      if (localDeclMatch !== null) {
+        currentScope.localNames.push(localDeclMatch[1] ?? "");
+      }
+    }
+
+    // Rewrite call sites: replace `bindingName(args)` → `__closure_n(captures..., args)`
+    let rewrittenLine = line;
+    for (const [bindingName, { syntheticName, captureNames }] of lifted) {
+      // Match `bindingName(` not preceded by a word character (avoid partial matches)
+      // and not followed by `:` (to avoid type annotations like `f: (x) => x`)
+      const callRe = new RegExp(`(?<![a-zA-Z0-9_$])${bindingName}\\(`, "g");
+      if (callRe.test(rewrittenLine)) {
+        // Build the replacement: prepend captures to the argument list
+        if (captureNames.length === 0) {
+          rewrittenLine = rewrittenLine.replace(
+            new RegExp(`(?<![a-zA-Z0-9_$])${bindingName}\\(`, "g"),
+            `${syntheticName}(`,
+          );
+        } else {
+          // Insert captures before existing args. For empty call `f()`, produce `__n(c1, c2)`.
+          // For `f(arg)`, produce `__n(c1, c2, arg)`.
+          rewrittenLine = rewrittenLine.replace(
+            new RegExp(`(?<![a-zA-Z0-9_$])${bindingName}\\(([^)]*)\\)`, "g"),
+            (_, args: string) => {
+              const trimmedArgs = (args as string).trim();
+              const allArgs =
+                trimmedArgs === ""
+                  ? captureNames.join(", ")
+                  : `${captureNames.join(", ")}, ${trimmedArgs}`;
+              return `${syntheticName}(${allArgs})`;
+            },
+          );
+        }
+      }
+    }
+    outputLines.push(rewrittenLine);
+  }
+
+  // Prepend all hoisted functions before the rest of the source
+  if (hoisted.length === 0) {
+    return source; // No lifts performed — return original unchanged
+  }
+
+  return hoisted.join("\n") + "\n\n" + outputLines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // AS source preparation
 //
 // Takes the entry block's TypeScript implSource and produces valid
@@ -830,11 +1248,12 @@ export function inferDomainFromSource(src: string): NumericDomain {
 //
 // Transformations applied (matching tsBackend's cleanBlockSource for stripping,
 // then applying AS-specific rewrites):
-//   1. Strip TS-only import/export constructs (import type, type aliases,
+//   1. [NEW] Lambda-lift arrow bindings (liftClosures) — DEC-AS-CLOSURE-STRATEGY-002
+//   2. Strip TS-only import/export constructs (import type, type aliases,
 //      CONTRACT export, shadow type aliases)
-//   2. Rewrite `number` type annotations to the inferred AS numeric type
+//   3. Rewrite `number` type annotations to the inferred AS numeric type
 //      (i32 | i64 | f64)
-//   3. Handle bigint→i64 rewrites when domain is i64
+//   4. Handle bigint→i64 rewrites when domain is i64
 // ---------------------------------------------------------------------------
 
 const INTRA_IMPORT_RE =
@@ -856,7 +1275,14 @@ const CONTRACT_EXPORT_START_RE = /^export const CONTRACT(?:\s*:\s*\w+)?\s*=\s*\{
 export function prepareAsSource(source: string, domain: NumericDomain): string {
   const asType = domain === "i64" ? "i64" : domain === "f64" ? "f64" : "i32";
 
-  const lines = source.split("\n");
+  // Stage 1: Lambda-lift arrow bindings FIRST, before any type rewriting.
+  // @decision DEC-AS-CLOSURE-STRATEGY-002
+  // The lift must run on the original `number`-annotated source so that
+  // both original and synthesized function bodies receive the number→AS-type
+  // rewrite uniformly in stage 3 below.
+  const lifted = liftClosures(source);
+
+  const lines = lifted.split("\n");
   const cleaned: string[] = [];
   let contractDepth = 0;
 
