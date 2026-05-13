@@ -1,0 +1,25 @@
+id: levenshtein-with-memo
+title: Levenshtein Distance with Memoization
+version: 1
+export: named:levenshtein
+
+adversarial_framing: |
+  The trap is memoization composition. A model trained on Levenshtein examples will often
+  produce a correct naive recursive implementation OR a correct iterative DP table, but
+  rarely correctly composes memoized recursion as a distinct pattern — the cache key must
+  encode both indices (i, j) and the memo must be declared outside the inner recursive
+  function but closed over it. Models frequently: (a) declare the memo inside the recursion
+  (resets on every call), (b) use the iterative DP approach (correct answer, wrong pattern —
+  oracle explicitly checks for the Map/memo structure), (c) use string slicing as cache keys
+  instead of index pairs (O(m*n) key generation overhead defeats memoization). The oracle
+  checks both correctness and that the implementation exhibits memoized-recursion performance
+  characteristics on inputs that would time out without memo.
+
+spec: |
+  function levenshtein(a: string, b: string): number
+
+  Semantics: minimum single-character edit distance (insert, delete, substitute).
+  Base cases: levenshtein("", b) = b.length; levenshtein(a, "") = a.length.
+  Symmetric, reflexive-zero.
+  Memoization: top-down recursive with cache; O(m*n) time and space.
+  No external libraries.

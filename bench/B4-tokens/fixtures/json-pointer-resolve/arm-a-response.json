@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm A = hook-enabled. Token counts representative of hook-assisted output. NOT a real API response — exercises telemetry capture and oracle invocation without network calls.",
+  "_arm": "A",
+  "_task": "json-pointer-resolve",
+  "id": "msg_dry_json_pointer_resolve_arm_a_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 980,
+    "output_tokens": 295,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the implementation:\n\n```typescript\n// SPDX-License-Identifier: MIT\n//\n// bench/B4-tokens/tasks/json-pointer-resolve/reference-impl.ts\n//\n// @decision DEC-V0-B4-TASKS-EXPAND-001\n// @title B4 Slice 2 task corpus: json-pointer-resolve reference implementation\n// @status accepted\n// @rationale\n//   Reference implementation for oracle validation. Proves oracle tests correctly\n//   distinguish RFC-compliant from broken JSON pointer resolvers. Hand-written;\n//   not LLM-generated (DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001).\n//\n//   Adversarial trap: ~01 must decode to ~1 (apply ~1→/ first, then ~0→~).\n//   Applying ~0 first gives ~1→/ which is wrong. This is the RFC-specified decode\n//   order and the most common correctness failure in model-generated implementations.\n\n/**\n * Decode a single RFC 6901 reference token.\n * Escape sequences: ~1 → /, ~0 → ~. Order matters: ~1 first, then ~0.\n *\n * @throws {Error} If an invalid escape sequence is found\n */\nfunction decodeToken(token: string): string {\n  // Validate: ~ must be followed by 0 or 1\n  // Find all ~ chars and check the character after each\n  for (let i = 0; i < token.length; i++) {\n    if (token[i] === \"~\") {\n      const next = token[i + 1];\n      if (next !== \"0\" && next !== \"1\") {\n        throw new Error(\n          `Invalid JSON Pointer escape sequence: ~${next ?? \"(end)\"} in token \"${token}\"`\n        );\n      }\n    }\n  }\n\n  // RFC 6901 §3: decode ~1 → / first, then ~0 → ~\n  // This order prevents ~01 from being decoded as / instead of ~1.\n  return token.replace(/~1/g, \"/\").replace(/~0/g, \"~\");\n}\n\n/**\n * Resolve an RFC 6901 JSON Pointer against a document.\n *\n * @param doc - The JSON document to resolve against (any JSON-compatible value)\n * @param pointer - RFC 6901 JSON Pointer string (e.g. \"/foo/bar/0\")\n * @returns The value at the pointed location\n * @throws {Error} For invalid pointer syntax, missing keys, or out-of-bounds access\n */\nexport function jsonPointerResolve(doc: unknown, pointer: string): unknown {\n  // Empty pointer: reference the whole document\n  if (pointer === \"\") return doc;\n\n  // Non-empty pointer must start with /\n  if (!pointer.startsWith(\"/\")) {\n    throw new Error(\n      `Invalid JSON Pointer: must be empty or start with \"/\", got \"${pointer}\"`\n    );\n  }\n\n  // Split into reference tokens (skip the leading empty string before first /)\n  const rawTokens = pointer.slice(1).split(\"/\");\n\n  let current: unknown = doc;\n\n  for (const rawToken of rawTokens) {\n    // Decode escape sequences in the reference token\n    const token = decodeToken(rawToken);\n\n    if (Array.isArray(current)) {\n      // Array indexing rules\n      if (token === \"-\") {\n        throw new Error(\n          `JSON Pointer \"-\" token refers to a non-existent array element (end-of-array)`\n        );\n      }\n\n      // Token must be a non-negative integer with no leading zeros (except \"0\" itself)\n      if (!/^(?:0|[1-9]\\d*)$/.test(token)) {\n        throw new Error(\n          `JSON Pointer array index must be a non-negative integer without leading zeros, got \"${token}\"`\n        );\n      }\n\n      const index = parseInt(token, 10);\n      if (index >= current.length) {\n        throw new Error(\n          `JSON Pointer index ${index} is out of bounds for array of length ${current.length}`\n        );\n      }\n\n      current = current[index];\n    } else if (current !== null && typeof current === \"object\") {\n      const obj = current as Record<string, unknown>;\n      if (!Object.prototype.hasOwnProperty.call(obj, token)) {\n        throw new Error(\n          `JSON Pointer key \"${token}\" not found in object`\n        );\n      }\n      current = obj[token];\n    } else {\n      // current is a primitive — cannot traverse further\n      throw new Error(\n        `JSON Pointer cannot traverse into primitive value ${JSON.stringify(current)} with token \"${token}\"`\n      );\n    }\n  }\n\n  return current;\n}\n\n```"
+    }
+  ]
+}
