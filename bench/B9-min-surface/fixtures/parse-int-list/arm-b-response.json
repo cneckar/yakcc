@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B9 dry-run mode. Arm B = LLM baseline (no yakcc hook, no atomic composition). This represents a typical claude-sonnet-4-5 emit for the locked Arm B prompt (DEC-V0-MIN-SURFACE-003). The implementation uses JSON.parse as a typical LLM baseline would — this is representative of the attack surface we are benchmarking against.",
+  "_fixture_provenance": "Hand-authored representative fixture. A typical claude-sonnet-4-5 response to the locked Arm B prompt produces a JSON.parse-based implementation (the model's most natural approach to 'parse a JSON list'). The fixture represents this common pattern. The actual live response may differ — the Tester will replace this with a real captured response in W-B9-S1-9.",
+  "_arm": "B",
+  "_task": "parse-int-list",
+  "_prompt_sha256": "75137b6a1812bb493ca925ff8275e2328f48515be499708b9e6c659254ffc0d5",
+  "id": "msg_dry_parse_int_list_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 312,
+    "output_tokens": 487,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nfunction listOfInts(input: string): readonly number[] {\n  // Validate non-ASCII characters\n  for (let i = 0; i < input.length; i++) {\n    if (input.charCodeAt(i) > 127) {\n      throw new RangeError(`Non-ASCII character at position ${i}: code ${input.charCodeAt(i)}`);\n    }\n  }\n\n  const trimmed = input.trim();\n\n  if (!trimmed.startsWith('[')) {\n    throw new SyntaxError(`Expected input to start with '[', got: ${JSON.stringify(trimmed[0])}`);\n  }\n\n  if (!trimmed.endsWith(']')) {\n    throw new SyntaxError(`Expected input to end with ']'`);\n  }\n\n  const inner = trimmed.slice(1, -1).trim();\n\n  if (inner === '') {\n    return [] as const;\n  }\n\n  // Use JSON.parse to handle the parsing, then validate\n  let parsed: unknown;\n  try {\n    parsed = JSON.parse(trimmed);\n  } catch (e) {\n    throw new SyntaxError(`Invalid input format: ${e instanceof Error ? e.message : String(e)}`);\n  }\n\n  if (!Array.isArray(parsed)) {\n    throw new SyntaxError('Expected an array');\n  }\n\n  const result: number[] = [];\n  for (let i = 0; i < parsed.length; i++) {\n    const item = parsed[i];\n    if (typeof item !== 'number' || !Number.isInteger(item) || item < 0) {\n      throw new SyntaxError(`Element at index ${i} is not a non-negative integer: ${JSON.stringify(item)}`);\n    }\n    result.push(item);\n  }\n\n  return result as const;\n}\n\nexport { listOfInts };\nexport default listOfInts;\n```"
+    }
+  ]
+}

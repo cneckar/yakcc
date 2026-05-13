@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B9 dry-run mode (csv-row-narrow task).",
+  "_fixture_provenance": "Hand-authored representative fixture. A typical LLM response uses string.split(',') with length validation.",
+  "_arm": "B",
+  "_task": "csv-row-narrow",
+  "id": "msg_dry_csv_row_narrow_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 321,
+    "output_tokens": 298,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nfunction parseCsvRowNarrow(input: string): readonly [string, string, string] {\n  for (let i = 0; i < input.length; i++) {\n    const code = input.charCodeAt(i);\n    if (code > 127) {\n      throw new RangeError(`Non-ASCII character at position ${i}: code ${code}`);\n    }\n    if (code < 32) {\n      throw new SyntaxError(`Control character at position ${i}: code ${code}`);\n    }\n  }\n\n  const fields = input.split(',');\n\n  if (fields.length !== 3) {\n    throw new SyntaxError(`Expected exactly 3 comma-separated fields, got ${fields.length}`);\n  }\n\n  return [fields[0].trim(), fields[1].trim(), fields[2].trim()] as const;\n}\n\nexport { parseCsvRowNarrow };\nexport default parseCsvRowNarrow;\n```"
+    }
+  ]
+}

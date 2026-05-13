@@ -1,0 +1,72 @@
+{
+  "attack_class_id": "deep-nesting-dos",
+  "description": "Inputs that exploit recursive JSON parser depth to cause stack overflow or O(n) nesting traversal cost. JSON.parse on deeply nested objects/arrays can blow the call stack. The atomic emit has no recursive parser; it loops, so deeply nested inputs hit shape refusal immediately.",
+  "inputs": [
+    {
+      "label": "deeply-nested-arrays-1000",
+      "payload": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Outer structure is a nested array, not [i1,i2,...]; first char '[' OK but first element is another array — SyntaxError on inner '['"
+    },
+    {
+      "label": "deeply-nested-objects-100",
+      "payload": "{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Not a bracket-list at all; leading '{' triggers SyntaxError at position 0"
+    },
+    {
+      "label": "array-of-arrays",
+      "payload": "[[1,2],[3,4],[5,6]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Outer list contains array elements — SyntaxError on first '[' element"
+    },
+    {
+      "label": "large-flat-list-benign",
+      "payload": "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Valid large flat integer list — should parse without error"
+    },
+    {
+      "label": "triple-nested-array",
+      "payload": "[[[1]]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Three levels of nesting; first element is [[1]] which is non-integer; SyntaxError on inner '['"
+    },
+    {
+      "label": "array-with-object-element",
+      "payload": "[1,{\"depth\":2},3]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Object element in integer list; SyntaxError on '{' at second element"
+    },
+    {
+      "label": "json-with-nested-arrays-and-objects",
+      "payload": "{\"data\":[{\"id\":1},{\"id\":2}]}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Complex nested JSON object; leading '{' is immediate SyntaxError"
+    },
+    {
+      "label": "two-dimensional-array",
+      "payload": "[[1,2,3],[4,5,6]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "2D array; first element '[1,2,3]' is not an integer — SyntaxError on '['"
+    },
+    {
+      "label": "mixed-depth-array",
+      "payload": "[1,[2,3],4]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Valid integer then array element; second element triggers SyntaxError on '['"
+    },
+    {
+      "label": "deeply-nested-single-value",
+      "payload": "[[[[[[[[[[1]]]]]]]]]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "10 levels deep; first element is [[[[[[[[1]]]]]]]] — SyntaxError on inner '['"
+    },
+    {
+      "label": "flat-single-element-benign",
+      "payload": "[42]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Single valid integer element — control input"
+    }
+  ]
+}

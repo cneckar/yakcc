@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B9 dry-run mode (digits-to-sum task).",
+  "_fixture_provenance": "Hand-authored representative fixture. A typical LLM response uses regex validation then sum.",
+  "_arm": "B",
+  "_task": "digits-to-sum",
+  "id": "msg_dry_digits_to_sum_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 276,
+    "output_tokens": 198,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nfunction digitsToSum(input: string): number {\n  if (!input || input.length === 0) {\n    throw new SyntaxError('Input must not be empty');\n  }\n\n  if (!/^\\d+$/.test(input)) {\n    throw new SyntaxError(`Input must contain only digits 0-9, got: ${JSON.stringify(input.slice(0, 20))}`);\n  }\n\n  let sum = 0;\n  for (const char of input) {\n    sum += parseInt(char, 10);\n  }\n  return sum;\n}\n\nexport { digitsToSum };\nexport default digitsToSum;\n```"
+    }
+  ]
+}

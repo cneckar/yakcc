@@ -1,0 +1,78 @@
+{
+  "attack_class_id": "escape-sequence-abuse",
+  "description": "Inputs containing Unicode escape sequences, null bytes, or control characters that exploit JSON.parse's escape handling. The atomic emit uses a nonAsciiRejector gate that fires before any parsing, so escape sequences embedded in the raw input string are caught at the top-level ASCII check.",
+  "inputs": [
+    {
+      "label": "unicode-escape-in-string",
+      "payload": "[\"\\u0041\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String element with unicode escape; SyntaxError on '\"' at first element position"
+    },
+    {
+      "label": "high-unicode-in-brackets",
+      "payload": "[АБВ]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Cyrillic chars (U+0410+) are > 127; nonAsciiRejector fires before any parsing (RangeError)"
+    },
+    {
+      "label": "emoji-injection",
+      "payload": "[1,😀,2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Emoji surrogate pair (U+1F600) — code points > 127; nonAsciiRejector fires (RangeError)"
+    },
+    {
+      "label": "tab-in-element",
+      "payload": "[\t1]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Tab (U+0009) is ASCII whitespace <= 127; nonAsciiRejector passes it. optionalWhitespace handles tabs. Parses as [1]."
+    },
+    {
+      "label": "backslash-injection",
+      "payload": "[1\\2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Backslash (ASCII 92) after digit triggers SyntaxError — not a valid continuation"
+    },
+    {
+      "label": "newline-in-list",
+      "payload": "[1\n2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Newline (U+000A) between elements — not valid whitespace in spec grammar; SyntaxError"
+    },
+    {
+      "label": "carriage-return-in-list",
+      "payload": "[1\r2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "CR (U+000D) between elements — not valid whitespace in spec grammar; SyntaxError"
+    },
+    {
+      "label": "backspace-in-list",
+      "payload": "[1\b2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Backspace (U+0008) between elements — control char causes SyntaxError"
+    },
+    {
+      "label": "form-feed-in-list",
+      "payload": "[1\f2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Form feed (U+000C) between elements — control char causes SyntaxError"
+    },
+    {
+      "label": "high-surrogate-only",
+      "payload": "[\uD800]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Lone high surrogate (U+D800) — code > 127 triggers nonAsciiRejector RangeError"
+    },
+    {
+      "label": "latin-extended-chars",
+      "payload": "[Àéü]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Latin extended characters (accented letters, code > 127) — nonAsciiRejector fires"
+    },
+    {
+      "label": "valid-spaces-benign",
+      "payload": "[ 1 , 2 , 3 ]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Spaces around integers are valid per spec — control input"
+    }
+  ]
+}

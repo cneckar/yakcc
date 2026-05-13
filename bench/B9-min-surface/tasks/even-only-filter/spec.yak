@@ -1,0 +1,43 @@
+{
+  "name": "even-only-filter",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "readonly number[]",
+      "description": "A readonly array of safe integers (bounded length ≤256)."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "readonly number[]",
+      "description": "A readonly array containing only the even integers from input, in order."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Filter a readonly array of numbers to return only the even integers, in order. The input must be a readonly array of numbers, each of which must be a safe integer (Number.isSafeInteger). Maximum input length is 256 elements. Returns a readonly array containing only the even elements.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "bounded-input",
+      "description": "Array length is capped at 256. Longer arrays are refused."
+    },
+    {
+      "id": "order-preserving",
+      "description": "Output elements appear in the same order as input."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input array exceeds 256 elements.",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "Any element is not a safe integer (NaN, Infinity, float, too large).",
+      "errorType": "TypeError"
+    }
+  ]
+}

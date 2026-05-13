@@ -1,0 +1,172 @@
+{
+  "$schema": "corpus-spec/v2",
+  "note": "SHA-256 content addresses for B9-min-surface task corpus (6 tasks). Harness verifies spec_sha256 on startup and aborts on drift (mirrors B6/B7 discipline). Prompt sha256 locks the Arm B baseline (DEC-V0-MIN-SURFACE-003). Authored tasks 2-6 live under bench/B9-min-surface/tasks/.",
+  "benchmark": "B9-min-surface",
+  "slice": "slice-1",
+  "amendment": "suite-wide-characterisation-pass-2026-05-13",
+  "tasks": [
+    {
+      "id": "parse-int-list",
+      "spec_path": "examples/parse-int-list/spec.yak",
+      "spec_sha256_lf": "30c66d30a118d1eb025f6b87c8847974ff4a409d5a67ceda667ad3f625a464d6",
+      "spec_sha256_note": "LF-normalized sha256. Computed via: Buffer CRLF->LF then sha256. See B7 canonical-LF discipline (DEC-BENCH-B7-CORPUS-CANONICAL-LF-001).",
+      "entry_function": "listOfInts",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function listOfInts(input: string): readonly number[]\n\nBehavior:\n{behavior}\n\nError conditions:\n{error_conditions_numbered}\n\nThrow appropriate Error subclasses (SyntaxError or RangeError) for invalid input.",
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 2048,
+        "temperature": 1.0,
+        "prompt_sha256": "75137b6a1812bb493ca925ff8275e2328f48515be499708b9e6c659254ffc0d5",
+        "prompt_sha256_note": "sha256 over UTF-8 bytes of system_prompt + '\\n\\n' + rendered user_prompt for parse-int-list. See DEC-V0-MIN-SURFACE-003.",
+        "dry_run_fixture": "bench/B9-min-surface/fixtures/parse-int-list/arm-b-response.json"
+      },
+      "directional_targets": {
+        "note": "Directional targets only — no KILL pre-data per #167 Principle 1 and #446 Gap 12.",
+        "axis_1_reachable_function_reduction_pct_target": 90,
+        "axis_1_loc_reduction_pct_target": 75,
+        "axis_2_refused_early_rate_pct_target": 95,
+        "axis_2_shape_escapes_correctness_floor": 0,
+        "axis_3_byte_equivalence_pct_correctness_floor": 100,
+        "axis_3_min_corpus_size": 20
+      }
+    },
+    {
+      "id": "parse-coord-pair",
+      "spec_path": "bench/B9-min-surface/tasks/parse-coord-pair/spec.yak",
+      "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
+      "spec_sha256_note": "Authored in Slice 1. sha256 computed by harness at first run and locked thereafter.",
+      "entry_function": "parseCoordPair",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function parseCoordPair(input: string): readonly [number, number]\n\nBehavior:\nParse a string of the form '(x,y)' where x and y are non-negative decimal integers. Returns a readonly tuple [x, y]. Throws SyntaxError on malformed input and RangeError on non-ASCII input.\n\nError conditions:\n1. Input does not start with '('. (SyntaxError)\n2. Input contains non-ASCII characters. (RangeError)\n3. Coordinate values are not valid non-negative integers. (SyntaxError)\n4. Missing comma separator between coordinates. (SyntaxError)\n5. Input does not end with ')'. (SyntaxError)\n6. Trailing characters after closing ')'. (SyntaxError)\n\nThrow appropriate Error subclasses (SyntaxError or RangeError) for invalid input.",
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 2048,
+        "temperature": 1.0,
+        "prompt_sha256": null,
+        "dry_run_fixture": "bench/B9-min-surface/fixtures/parse-coord-pair/arm-b-response.json"
+      },
+      "directional_targets": {
+        "note": "Directional targets only — no KILL pre-data.",
+        "axis_1_reachable_function_reduction_pct_target": 90,
+        "axis_1_loc_reduction_pct_target": 75,
+        "axis_2_refused_early_rate_pct_target": 95,
+        "axis_2_shape_escapes_correctness_floor": 0,
+        "axis_3_byte_equivalence_pct_correctness_floor": 100,
+        "axis_3_min_corpus_size": 20
+      }
+    },
+    {
+      "id": "csv-row-narrow",
+      "spec_path": "bench/B9-min-surface/tasks/csv-row-narrow/spec.yak",
+      "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
+      "spec_sha256_note": "Authored in Slice 1. Deliberately separate from B4's csv-parser-quoted to avoid cross-contamination.",
+      "entry_function": "parseCsvRowNarrow",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function parseCsvRowNarrow(input: string): readonly [string, string, string]\n\nBehavior:\nParse a CSV row with exactly 3 unquoted fields separated by commas. Fields may contain only ASCII printable characters (codes 32-126) and no commas. Returns a readonly 3-tuple of the field strings (trimmed of surrounding whitespace). Throws SyntaxError on wrong number of fields or disallowed characters, and RangeError on non-ASCII input.\n\nError conditions:\n1. Input contains non-ASCII characters (code > 127). (RangeError)\n2. Input does not contain exactly 2 commas (exactly 3 fields). (SyntaxError)\n3. Any field contains a comma after splitting (impossible by spec but checked). (SyntaxError)\n4. Input contains control characters (code < 32). (SyntaxError)\n\nThrow appropriate Error subclasses (SyntaxError or RangeError) for invalid input.",
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 2048,
+        "temperature": 1.0,
+        "prompt_sha256": null,
+        "dry_run_fixture": "bench/B9-min-surface/fixtures/csv-row-narrow/arm-b-response.json"
+      },
+      "directional_targets": {
+        "note": "Directional targets only — no KILL pre-data.",
+        "axis_1_reachable_function_reduction_pct_target": 90,
+        "axis_1_loc_reduction_pct_target": 75,
+        "axis_2_refused_early_rate_pct_target": 95,
+        "axis_2_shape_escapes_correctness_floor": 0,
+        "axis_3_byte_equivalence_pct_correctness_floor": 100,
+        "axis_3_min_corpus_size": 20
+      }
+    },
+    {
+      "id": "kebab-to-camel",
+      "spec_path": "bench/B9-min-surface/tasks/kebab-to-camel/spec.yak",
+      "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
+      "spec_sha256_note": "Authored in Slice 1. Narrow string-transformation task.",
+      "entry_function": "kebabToCamel",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function kebabToCamel(input: string): string\n\nBehavior:\nConvert a kebab-case string to camelCase. The input must match the pattern /^[a-z]+(-[a-z]+)*$/. Returns the camelCase equivalent. Throws SyntaxError for inputs that do not match the pattern.\n\nError conditions:\n1. Input is empty. (SyntaxError)\n2. Input contains characters outside [a-z-]. (SyntaxError)\n3. Input starts or ends with a hyphen. (SyntaxError)\n4. Input contains consecutive hyphens. (SyntaxError)\n\nThrow appropriate Error subclasses (SyntaxError) for invalid input.",
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 2048,
+        "temperature": 1.0,
+        "prompt_sha256": null,
+        "dry_run_fixture": "bench/B9-min-surface/fixtures/kebab-to-camel/arm-b-response.json"
+      },
+      "directional_targets": {
+        "note": "Directional targets only — no KILL pre-data.",
+        "axis_1_reachable_function_reduction_pct_target": 90,
+        "axis_1_loc_reduction_pct_target": 75,
+        "axis_2_refused_early_rate_pct_target": 95,
+        "axis_2_shape_escapes_correctness_floor": 0,
+        "axis_3_byte_equivalence_pct_correctness_floor": 100,
+        "axis_3_min_corpus_size": 20
+      }
+    },
+    {
+      "id": "digits-to-sum",
+      "spec_path": "bench/B9-min-surface/tasks/digits-to-sum/spec.yak",
+      "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
+      "spec_sha256_note": "Authored in Slice 1. Narrow numeric-reduction task.",
+      "entry_function": "digitsToSum",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function digitsToSum(input: string): number\n\nBehavior:\nSum the digits of a non-empty string of decimal digits. The input must match /^\\d+$/. Returns the sum of all digit characters as a number (e.g. '123' returns 6). Throws SyntaxError for non-digit input.\n\nError conditions:\n1. Input is empty. (SyntaxError)\n2. Input contains non-digit characters (anything outside 0-9). (SyntaxError)\n3. Input contains non-ASCII characters. (SyntaxError)\n\nThrow appropriate Error subclasses (SyntaxError) for invalid input.",
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 2048,
+        "temperature": 1.0,
+        "prompt_sha256": null,
+        "dry_run_fixture": "bench/B9-min-surface/fixtures/digits-to-sum/arm-b-response.json"
+      },
+      "directional_targets": {
+        "note": "Directional targets only — no KILL pre-data.",
+        "axis_1_reachable_function_reduction_pct_target": 90,
+        "axis_1_loc_reduction_pct_target": 75,
+        "axis_2_refused_early_rate_pct_target": 95,
+        "axis_2_shape_escapes_correctness_floor": 0,
+        "axis_3_byte_equivalence_pct_correctness_floor": 100,
+        "axis_3_min_corpus_size": 20
+      }
+    },
+    {
+      "id": "even-only-filter",
+      "spec_path": "bench/B9-min-surface/tasks/even-only-filter/spec.yak",
+      "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
+      "spec_sha256_note": "Authored in Slice 1. Narrow collection-filtering task.",
+      "entry_function": "evenOnlyFilter",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function evenOnlyFilter(input: readonly number[]): readonly number[]\n\nBehavior:\nFilter a readonly array of numbers to return only the even integers, in order. The input must be a readonly array of numbers, each of which must be a safe integer (Number.isSafeInteger). Maximum input length is 256 elements. Returns a readonly array containing only the even elements. Throws RangeError if the array exceeds 256 elements. Throws TypeError if any element is not a safe integer.\n\nError conditions:\n1. Input array exceeds 256 elements. (RangeError)\n2. Any element is not a safe integer (NaN, Infinity, float, too large). (TypeError)\n\nThrow appropriate Error subclasses (RangeError or TypeError) for invalid input.",
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 2048,
+        "temperature": 1.0,
+        "prompt_sha256": null,
+        "dry_run_fixture": "bench/B9-min-surface/fixtures/even-only-filter/arm-b-response.json"
+      },
+      "directional_targets": {
+        "note": "Directional targets only — no KILL pre-data.",
+        "axis_1_reachable_function_reduction_pct_target": 90,
+        "axis_1_loc_reduction_pct_target": 75,
+        "axis_2_refused_early_rate_pct_target": 95,
+        "axis_2_shape_escapes_correctness_floor": 0,
+        "axis_3_byte_equivalence_pct_correctness_floor": 100,
+        "axis_3_min_corpus_size": 20
+      }
+    }
+  ]
+}

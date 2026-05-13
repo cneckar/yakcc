@@ -1,0 +1,78 @@
+{
+  "attack_class_id": "nan-infinity-injection",
+  "description": "Inputs that inject NaN, Infinity, or special float tokens that JSON.parse accepts as valid but are semantically dangerous in numeric contexts. The spec declares non-negative integer elements, so NaN/Infinity/-1 are all shape violations.",
+  "inputs": [
+    {
+      "label": "nan-keyword",
+      "payload": "[NaN]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "NaN is not a valid JSON value and not an integer literal; SyntaxError on 'N'"
+    },
+    {
+      "label": "infinity-keyword",
+      "payload": "[Infinity]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Infinity is not a valid JSON value and not an integer literal; SyntaxError on 'I'"
+    },
+    {
+      "label": "negative-infinity",
+      "payload": "[-Infinity]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Negative Infinity — negative sign triggers SyntaxError (spec: non-negative integers)"
+    },
+    {
+      "label": "negative-integer",
+      "payload": "[-1]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Negative integer — spec declares non-negative; '-' is not a digit"
+    },
+    {
+      "label": "float-with-decimal",
+      "payload": "[1.5]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Float element — '.' after digit triggers end-of-integer, then SyntaxError on '.'"
+    },
+    {
+      "label": "scientific-notation",
+      "payload": "[1e5]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "'e' after digits ends integer parse, then SyntaxError on 'e5' before closing bracket"
+    },
+    {
+      "label": "null-element",
+      "payload": "[null]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "null is not an integer literal; SyntaxError on 'n'"
+    },
+    {
+      "label": "undefined-element",
+      "payload": "[undefined]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "undefined is not valid JSON or an integer; SyntaxError on 'u'"
+    },
+    {
+      "label": "positive-infinity-long",
+      "payload": "[+Infinity]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "'+' is not a digit; SyntaxError at position 1"
+    },
+    {
+      "label": "nan-in-list",
+      "payload": "[1,NaN,2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "NaN as second element; SyntaxError on 'N' at the second element position"
+    },
+    {
+      "label": "float-in-list",
+      "payload": "[1,2.5,3]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Float as second element; '.' after '2' triggers SyntaxError"
+    },
+    {
+      "label": "valid-zero-benign",
+      "payload": "[0]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Zero is a valid non-negative integer — control input"
+    }
+  ]
+}

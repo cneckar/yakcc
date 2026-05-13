@@ -1,0 +1,72 @@
+{
+  "attack_class_id": "reviver-callback-abuse",
+  "description": "Inputs crafted to exploit JSON.parse reviver callbacks. A JSON.parse(input, reviver)-based implementation allows a reviver function to transform values during parsing, which can be hijacked. The atomic emit has no JSON.parse call and therefore has no reviver surface to exploit — refusal is structural.",
+  "inputs": [
+    {
+      "label": "proto-in-json-string",
+      "payload": "[\"__proto__\",\"constructor\",\"toString\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String elements where a JSON.parse+reviver implementation might leak prototype properties through value transformation; atomic emit refuses on first string element"
+    },
+    {
+      "label": "toJSON-key",
+      "payload": "[\"toJSON\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String element; atomic emit refuses on non-integer content"
+    },
+    {
+      "label": "valueOf-key",
+      "payload": "[\"valueOf\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String element targeting Object.prototype.valueOf; refuses as non-integer"
+    },
+    {
+      "label": "mixed-keys-and-ints",
+      "payload": "[1,\"valueOf\",2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Mixed list; second element is a string targeting prototype method; refused on second element"
+    },
+    {
+      "label": "boolean-elements",
+      "payload": "[true,false,true]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Boolean elements — not integers; 't' in 'true' triggers SyntaxError"
+    },
+    {
+      "label": "symbol-like-string",
+      "payload": "[\"Symbol.iterator\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String targeting Symbol.iterator; first char '\"' triggers SyntaxError"
+    },
+    {
+      "label": "object-with-toJSON",
+      "payload": "[{\"toJSON\":true}]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Object element with toJSON property; '{' triggers SyntaxError"
+    },
+    {
+      "label": "nested-reviver-vector",
+      "payload": "{\"__proto__\":{\"valueOf\":function(){return 0;}}}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Classic reviver pollution pattern; '{' at position 0 triggers immediate SyntaxError"
+    },
+    {
+      "label": "json-replacer-array",
+      "payload": "[\"replacer\",\"reviver\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String elements naming JSON hooks; SyntaxError on first '\"'"
+    },
+    {
+      "label": "function-string-element",
+      "payload": "[\"function(){}\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String element that looks like a function literal; SyntaxError on '\"'"
+    },
+    {
+      "label": "valid-single-element",
+      "payload": "[42]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Valid integer element — control input"
+    }
+  ]
+}
