@@ -205,6 +205,15 @@ export interface PointerEntry {
  *
  * The `intentCard` field is optional: AtomLeaf nodes may carry one if the caller
  * ran intent extraction; branch nodes never produce NovelGlueEntry.
+ *
+ * The `merkleRoot` field is populated ONLY after persistence ran (either via
+ * shave() or universalize({persist:true})). It is undefined by default, which
+ * preserves backwards compatibility for all existing callers that do not request
+ * persistence. The field is strictly additive — external consumers of this type
+ * will see undefined for merkleRoot unless they opt in via persist:true.
+ *
+ * @decision DEC-UNIVERSALIZE-PERSIST-API-001 (WI-373)
+ * @see UniversalizeOptions.persist
  */
 export interface NovelGlueEntry {
   readonly kind: "novel-glue";
@@ -213,6 +222,17 @@ export interface NovelGlueEntry {
   readonly canonicalAstHash: CanonicalAstHash;
   /** Optional intent card if available (atom leaves carry one); branches may omit. */
   readonly intentCard?: IntentCard;
+  /**
+   * The BlockMerkleRoot of the persisted block. Populated only when persistence
+   * ran for this entry (shave() always persists when storeBlock is available;
+   * universalize() persists only when options.persist === true).
+   *
+   * undefined when:
+   *   - No persistence was requested (the common/default case).
+   *   - The entry had no intentCard (deep leaf in a multi-leaf tree).
+   *   - registry.storeBlock was absent and persist was not true (graceful degradation).
+   */
+  readonly merkleRoot?: BlockMerkleRoot;
 }
 
 /**

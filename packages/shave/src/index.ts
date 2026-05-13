@@ -27,6 +27,7 @@ export type {
   ShaveRegistryView,
   ShaveResult,
   ShavedAtomStub,
+  UniversalizeOptions,
   UniversalizeResult,
   UniversalizeSlicePlanEntry,
 } from "./types.js";
@@ -198,6 +199,7 @@ export {
   IntentCardSchemaError,
   LicenseRefusedError,
   OfflineCacheMissError,
+  PersistRequestedButNotSupportedError,
 } from "./errors.js";
 
 // Version constants — exported so callers can introspect the cache keying
@@ -360,7 +362,11 @@ import {
   keyFromIntentInputs as _keyFromIntentInputs,
   sourceHash as _sourceHash,
 } from "./cache/key.js";
-import { ForeignPolicyRejectError, LicenseRefusedError } from "./errors.js";
+import {
+  ForeignPolicyRejectError,
+  LicenseRefusedError,
+  PersistRequestedButNotSupportedError,
+} from "./errors.js";
 import {
   DEFAULT_MODEL,
   INTENT_PROMPT_VERSION,
@@ -382,6 +388,7 @@ import type {
   ShaveRegistryView,
   ShaveResult,
   ShavedAtomStub,
+  UniversalizeOptions,
   UniversalizeResult,
 } from "./types.js";
 import { decompose } from "./universalize/recursion.js";
@@ -452,7 +459,7 @@ import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./univers
 export async function universalize(
   candidate: CandidateBlock,
   registry: ShaveRegistryView,
-  options?: ShaveOptions,
+  options?: UniversalizeOptions,
 ): Promise<UniversalizeResult> {
   const projectRoot = await locateProjectRoot();
   const cacheDir = options?.cacheDir ?? join(projectRoot, ".yakcc", "shave-cache", "intent");
@@ -564,9 +571,87 @@ export async function universalize(
     slicePlan = enrichedEntries;
   }
 
+  // Step 6 (NEW — WI-373): in-pipeline atom persistence, gated on options.persist === true.
+  //
+  // @decision DEC-UNIVERSALIZE-PERSIST-PIPELINE-001
+  // @title Persistence step 6 runs after intentCard attachment, postorder DFS, with parentBlockRoot lineage
+  // @status accepted (WI-373)
+  // @rationale
+  //   Placed after step 5 (intentCard attachment) so every NovelGlueEntry that
+  //   enters the persist loop already carries its intentCard. Without intentCard,
+  //   maybePersistNovelGlueAtom() skips the entry (per DEC-ATOM-PERSIST-001).
+  //   DFS postorder preserves DEC-REGISTRY-PARENT-BLOCK-004: the first novel-glue
+  //   entry in DFS order is the innermost leaf (parentBlockRoot=null); each
+  //   subsequent novel-glue entry takes the preceding entry's merkleRoot as its
+  //   parentBlockRoot. This is the identical semantics used by shave()'s loop
+  //   (index.ts:741-779) — lifted verbatim so both paths consolidate onto the
+  //   same primitive (Sacred Practice #12).
+  //
+  //   Loud-fail: if persist:true is requested but registry.storeBlock is absent,
+  //   PersistRequestedButNotSupportedError is thrown immediately (Sacred Practice
+  //   #5). The graceful-degradation (silent no-op) path from maybePersistNovelGlueAtom
+  //   is intentionally NOT used here — the caller explicitly asked for persistence.
+  //
+  //   When persist is false/undefined, this entire step is a no-op and slicePlan
+  //   is returned unchanged — zero effect on today's default behavior.
+  //
+  //   Per REQ-NOGO-006: sourceFilePath and sourceContext may be undefined when
+  //   called from assembleCandidate() (interactive use). Atoms persist with null
+  //   provenance — correct per DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001.
+  //
+  //   P1 follow-up (not in this slice): refactor shave() to delegate to
+  //   universalize({persist:true, sourceContext, ...}) and delete its own
+  //   postorder loop (Sacred Practice #12 consolidation, plan §6 slice 2).
+  //   Also flag: atomize.ts in @yakcc/hooks-base runs a parallel buildBlockRow +
+  //   storeBlock loop that should consolidate onto universalize({persist:true})
+  //   once this WI lands (plan §7).
+  let finalSlicePlan = slicePlan;
+  if (options?.persist === true) {
+    // Loud-fail: storeBlock must be present when persist:true is requested.
+    if (typeof registry.storeBlock !== "function") {
+      throw new PersistRequestedButNotSupportedError();
+    }
+
+    // Postorder lineage loop — lifted verbatim from shave()'s index.ts:741-779.
+    // Each NovelGlueEntry is persisted in DFS order; the preceding novel-glue
+    // entry's merkleRoot becomes the current entry's parentBlockRoot.
+    let lastNovelMerkleRoot: BlockMerkleRoot | undefined = undefined;
+    const enrichedWithMerkle: SlicePlanEntry[] = [];
+    for (const entry of slicePlan) {
+      if (entry.kind === "novel-glue") {
+        const parentBlockRoot: BlockMerkleRoot | null = lastNovelMerkleRoot ?? null;
+        const baseSourceContext = options?.sourceContext;
+        const perAtomSourceContext =
+          baseSourceContext !== undefined
+            ? {
+                sourcePkg: baseSourceContext.sourcePkg,
+                sourceFile: baseSourceContext.sourceFile,
+                sourceOffset: entry.sourceRange.start,
+              }
+            : undefined;
+        const merkleRoot = await maybePersistNovelGlueAtom(entry, registry, {
+          cacheDir: options?.cacheDir,
+          parentBlockRoot,
+          sourceFilePath: options?.sourceFilePath,
+          sourceContext: perAtomSourceContext,
+        });
+        // Surface the merkleRoot on the entry (may be undefined if intentCard absent).
+        const enriched: NovelGlueEntry = { ...entry, merkleRoot };
+        enrichedWithMerkle.push(enriched);
+        if (merkleRoot !== undefined) {
+          lastNovelMerkleRoot = merkleRoot;
+        }
+      } else {
+        // PointerEntry / ForeignLeafEntry / GlueLeafEntry — pass through unchanged.
+        enrichedWithMerkle.push(entry);
+      }
+    }
+    finalSlicePlan = enrichedWithMerkle;
+  }
+
   return {
     intentCard,
-    slicePlan,
+    slicePlan: finalSlicePlan,
     matchedPrimitives: plan.matchedPrimitives,
     licenseDetection: detection,
     diagnostics: {

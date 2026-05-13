@@ -257,6 +257,50 @@ export interface UniversalizeResult {
   readonly diagnostics: ShaveDiagnostics;
 }
 
+/**
+ * Options for universalize().
+ *
+ * Extends ShaveOptions with an optional `persist` flag. When `persist: true`,
+ * universalize() will call maybePersistNovelGlueAtom for each NovelGlueEntry in
+ * the slice plan (postorder, lineage-threaded via parentBlockRoot) and surface
+ * the resulting BlockMerkleRoot on each entry.
+ *
+ * `shave()` does NOT accept this type — it always persists unconditionally when
+ * registry.storeBlock is present. The persist flag is exclusively meaningful for
+ * universalize() callers who need opt-in persistence (e.g. assembleCandidate()).
+ *
+ * @decision DEC-UNIVERSALIZE-PERSIST-API-001
+ * @title UniversalizeOptions extends ShaveOptions with optional persist flag
+ * @status accepted (WI-373)
+ * @rationale
+ *   Option A chosen over Option B (universalizeAndPersist()) and Option C
+ *   (caller-side wrapping). A new extending type keeps ShaveOptions clean while
+ *   signalling that persist is only meaningful for universalize(). The flag is
+ *   optional and defaults to false so all existing callers are unaffected.
+ *   If persist:true is requested but the registry has no storeBlock, a loud
+ *   PersistRequestedButNotSupportedError is thrown (Sacred Practice #5).
+ *   The shave() refactor to delegate (Sacred Practice #12 consolidation) is
+ *   deferred to a follow-up WI per the plan §6 slicing recommendation.
+ *   Flag as P1 follow-up: atomize.ts in @yakcc/hooks-base also runs a parallel
+ *   buildBlockRow+storeBlock loop; once universalize({persist:true}) lands, that
+ *   caller should consolidate onto this path too (see WI-373 plan §7).
+ */
+export interface UniversalizeOptions extends ShaveOptions {
+  /**
+   * When true, universalize() will persist each NovelGlueEntry atom to the
+   * registry (using maybePersistNovelGlueAtom) in postorder DFS order with
+   * parentBlockRoot lineage threading, and surface the resulting BlockMerkleRoot
+   * on each NovelGlueEntry.
+   *
+   * Defaults to false (undefined). When false or omitted, no persistence occurs
+   * and NovelGlueEntry.merkleRoot is always undefined — preserving today's
+   * default behavior bit-for-bit.
+   *
+   * Throws PersistRequestedButNotSupportedError if registry.storeBlock is absent.
+   */
+  readonly persist?: boolean | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Candidate block
 // ---------------------------------------------------------------------------
