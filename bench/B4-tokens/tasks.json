@@ -1,8 +1,22 @@
 {
-  "note": "Frozen task manifest for B4-tokens benchmark. SHA-256 hashes content-address each task prompt file. Harness verifies these on startup and aborts on drift (mirrors B7/B6 discipline). Slice 1: 3 tasks.",
+  "_decision": {
+    "id": "DEC-V0-B4-TASKS-EXPAND-001",
+    "title": "B4 Slice 2: Expand task corpus from 3 to 8 adversarial tasks",
+    "status": "accepted",
+    "rationale": "Slice 1 seeded 3 tasks covering class (LRU), pure-function (CSV), and HOF (debounce) patterns. Slice 2 adds 5 tasks locked by WI-B4-TASK-SUITE-EXPAND-8 planner brief to increase statistical surface and cover additional adversarial failure modes: (1) levenshtein-with-memo: memoization composition trap — models declare memo inside recursion, resetting cache on every call; (2) topological-sort-kahns: multi-block decomposition — models use DFS instead of Kahn's, miss in-degree counting, or skip cycle detection; (3) json-pointer-resolve: RFC 6901 escape-rule ordering — ~01 must decode to ~1 not / (apply ~1 before ~0); (4) base64-encode-rfc4648: alphabet hallucination — RFC 4648 §4 specifies +62 and /63, models swap with URL-safe alphabet; (5) semver-range-satisfies: range-grammar composition — whitespace=AND between comparators, ||=OR between groups, prerelease ordering (prerelease < release at same base). DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001 applies: all oracles and reference implementations are hand-written and verified before commit.",
+    "locked_by": "WI-B4-TASK-SUITE-EXPAND-8 (#459)",
+    "per_task_traps": {
+      "levenshtein-with-memo": "memo declared inside recursive fn resets cache on every top-level call; string-slicing cache keys have O(m*n) allocation overhead defeating memoization savings",
+      "topological-sort-kahns": "DFS-based sort produces valid ordering but wrong pattern; in-degree computed only from outgoing edges misses sink-only nodes; cycle detection skipped (no result.length check)",
+      "json-pointer-resolve": "~01 decoded as / (wrong order: apply ~0 first) instead of ~1 (correct: apply ~1 first then ~0); - token treated as valid in-bounds index instead of throwing",
+      "base64-encode-rfc4648": "RFC 4648 §4 alphabet uses + at index 62 and / at index 63; models hallucinate URL-safe alphabet (-62, _63) in standard mode or swap the two alphabets",
+      "semver-range-satisfies": "whitespace between comparators is AND not OR; prerelease version less than same base without prerelease; tilde/caret operators must return null (not be parsed as unknown comparators)"
+    }
+  },
+  "note": "Frozen task manifest for B4-tokens benchmark. SHA-256 hashes content-address each task prompt file. Harness verifies these on startup and aborts on drift (mirrors B7/B6 discipline). Slice 2: 8 tasks.",
   "schema_version": 1,
-  "slice": 1,
-  "n_tasks": 3,
+  "slice": 2,
+  "n_tasks": 8,
   "tasks": [
     {
       "id": "lru-cache-with-ttl",
@@ -33,6 +47,56 @@
       "description": "Write a debounce wrapper with cancellation, flush(), and pending().",
       "adversarial_framing": "Stateful time-based primitive: cancel()-during-wait, flush()-vs-timer race, waitMs=0 deferred (not synchronous), sequential vs overlapping windows. Fake-timer oracle exposes any implementation that conflates synchronous vs async invocation.",
       "expected_export": "named:debounce"
+    },
+    {
+      "id": "levenshtein-with-memo",
+      "prompt_file": "tasks/levenshtein-with-memo/prompt.md",
+      "oracle_test": "tasks/levenshtein-with-memo/oracle.test.ts",
+      "reference_impl": "tasks/levenshtein-with-memo/reference-impl.ts",
+      "sha256": "6a2e076eb4946498768a5934f40464ddb52de21028251520bca4ebb2af34342d",
+      "description": "Compute Levenshtein edit distance using memoized top-down recursion (Map-based cache, O(m*n) time/space).",
+      "adversarial_framing": "Memoization composition: memo declared inside recursion resets cache on every top-level call; string-slicing cache keys have O(m*n) allocation overhead; models produce iterative DP instead of memoized recursion.",
+      "expected_export": "named:levenshtein"
+    },
+    {
+      "id": "topological-sort-kahns",
+      "prompt_file": "tasks/topological-sort-kahns/prompt.md",
+      "oracle_test": "tasks/topological-sort-kahns/oracle.test.ts",
+      "reference_impl": "tasks/topological-sort-kahns/reference-impl.ts",
+      "sha256": "1515d7d65ee0c0ff463cb71c2e5d7a949c3f1205013a7de86935b8dd6753e216",
+      "description": "Topological sort of a DAG using Kahn's algorithm (in-degree counting + queue drain, null on cycle).",
+      "adversarial_framing": "Multi-block decomposition: DFS sort produces valid ordering but wrong pattern; in-degree computed only from outgoing edges misses sink nodes; cycle detection (result.length != nodeCount) frequently omitted.",
+      "expected_export": "named:topologicalSort"
+    },
+    {
+      "id": "json-pointer-resolve",
+      "prompt_file": "tasks/json-pointer-resolve/prompt.md",
+      "oracle_test": "tasks/json-pointer-resolve/oracle.test.ts",
+      "reference_impl": "tasks/json-pointer-resolve/reference-impl.ts",
+      "sha256": "8ca8e07b3402028269c4f22d920afd702d7a581df9fa85b4ea0012b12f89f0d6",
+      "description": "Resolve an RFC 6901 JSON Pointer against a document (escape sequences ~0/~1, array indexing, error on missing/invalid).",
+      "adversarial_framing": "RFC escape-rule decode order: ~1 must be decoded to / before ~0 to ~; applying in wrong order makes ~01 decode to / (wrong) instead of ~1 (correct); - token must always throw not be treated as in-bounds.",
+      "expected_export": "named:jsonPointerResolve"
+    },
+    {
+      "id": "base64-encode-rfc4648",
+      "prompt_file": "tasks/base64-encode-rfc4648/prompt.md",
+      "oracle_test": "tasks/base64-encode-rfc4648/oracle.test.ts",
+      "reference_impl": "tasks/base64-encode-rfc4648/reference-impl.ts",
+      "sha256": "f462de928b494b1b06dd714653f36a289f0581313293665a21570f4f996b96b9",
+      "description": "Encode Uint8Array to Base64 per RFC 4648 §4 standard alphabet (not URL-safe by default), with optional padding.",
+      "adversarial_framing": "Alphabet hallucination: RFC 4648 §4 specifies + at index 62 and / at index 63; models frequently produce URL-safe alphabet (- and _) in standard mode or apply urlSafe inverted; forbidding btoa/Buffer forces explicit bit manipulation.",
+      "expected_export": "named:base64Encode"
+    },
+    {
+      "id": "semver-range-satisfies",
+      "prompt_file": "tasks/semver-range-satisfies/prompt.md",
+      "oracle_test": "tasks/semver-range-satisfies/oracle.test.ts",
+      "reference_impl": "tasks/semver-range-satisfies/reference-impl.ts",
+      "sha256": "eb3a96ea17a4f1aa042db4cccfbb913e21040b91ec7b8d7397ba68417ddb6d8e",
+      "description": "Parse semver versions and ranges (OR via ||, AND via whitespace), check satisfaction with prerelease ordering.",
+      "adversarial_framing": "Range-grammar composition: whitespace between comparators is AND (not OR); prerelease version less than same base without prerelease; tilde/caret must return null; requires three composed atoms (parseSemver, parseRange, compare).",
+      "expected_export": "named:parseSemver,named:parseRange,named:satisfies"
     }
   ]
 }

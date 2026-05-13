@@ -1,0 +1,23 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm B = vanilla (no hook). Token counts representative of verbose from-scratch output. NOT a real API response.",
+  "_arm": "B",
+  "_task": "levenshtein-with-memo",
+  "id": "msg_dry_levenshtein_with_memo_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 850,
+    "output_tokens": 420,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the implementation:\n\n```typescript\n// SPDX-License-Identifier: MIT\n//\n// bench/B4-tokens/tasks/levenshtein-with-memo/reference-impl.ts\n//\n// @decision DEC-V0-B4-TASKS-EXPAND-001\n// @title B4 Slice 2 task corpus: levenshtein-with-memo reference implementation\n// @status accepted\n// @rationale\n//   Reference implementation for oracle validation. Proves the oracle tests correctly\n//   distinguish correct memoized-recursive from broken implementations. Hand-written;\n//   not LLM-generated (DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001).\n//\n//   Adversarial trap: memo declared OUTSIDE the inner recursive fn, closed over it.\n//   Models often declare memo INSIDE (resets on every levenshtein call) or use\n//   string slicing as cache keys (defeating memoization overhead savings).\n\n/**\n * Compute the Levenshtein edit distance between strings a and b.\n *\n * Uses top-down dynamic programming with a Map-based memo cache.\n * The cache is keyed by (i, j) index pairs encoded as a single integer\n * to avoid string allocation overhead.\n *\n * @param a - Source string\n * @param b - Target string\n * @returns Minimum edit distance (non-negative integer)\n */\nexport function levenshtein(a: string, b: string): number {\n  const m = a.length;\n  const n = b.length;\n\n  // Memo cache: key = i * (n+1) + j, value = edit distance at (i, j)\n  // Declared outside the inner function so it persists across recursive calls.\n  const memo = new Map<number, number>();\n\n  function dp(i: number, j: number): number {\n    // Base cases\n    if (i === 0) return j; // insert all of b[0..j)\n    if (j === 0) return i; // delete all of a[0..i)\n\n    const key = i * (n + 1) + j;\n    const cached = memo.get(key);\n    if (cached !== undefined) return cached;\n\n    let result: number;\n    if (a[i - 1] === b[j - 1]) {\n      // Characters match — no edit needed at this position\n      result = dp(i - 1, j - 1);\n    } else {\n      // Min of: substitute (i-1, j-1), delete from a (i-1, j), insert into a (i, j-1)\n      result = 1 + Math.min(dp(i - 1, j - 1), dp(i - 1, j), dp(i, j - 1));\n    }\n\n    memo.set(key, result);\n    return result;\n  }\n\n  return dp(m, n);\n}\n\n```"
+    }
+  ]
+}
