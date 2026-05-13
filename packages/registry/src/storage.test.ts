@@ -169,19 +169,20 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(9);
+    expect(SCHEMA_VERSION).toBe(10);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→6→7→8→9.
+    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→6→7→8→9→10.
     // Migration 4 bumps schema_version to 4 (parent_block_root; NULL default is correct).
     // Migration 5 bumps schema_version to 5 (block_artifacts table).
     // Migration 6 bumps schema_version to 6 (foreign-block columns + block_foreign_refs).
     // Migration 7 bumps schema_version to 7 (source provenance columns + workspace_plumbing).
     // Migration 8 bumps schema_version to 8 (source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
     // Migration 9 bumps schema_version to 9 (block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix).
+    // Migration 10 bumps schema_version to 10 (source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001).
     // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
-    expect(row?.version).toBe(9);
+    expect(row?.version).toBe(10);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -232,6 +233,25 @@ describe("schema migrations", () => {
     expect(artColNames).toContain("bytes");
     expect(artColNames).toContain("declaration_index");
 
+    // source_file_state table (migration 10 / DEC-V2-SHAVE-CACHE-STORAGE-001).
+    // T1: source_file_state table exists with expected columns.
+    expect(tableNames).toContain("source_file_state");
+    const stateCols = db.prepare("PRAGMA table_info(source_file_state)").all() as Array<{
+      name: string;
+    }>;
+    const stateColNames = stateCols.map((c) => c.name);
+    expect(stateColNames).toContain("source_pkg");
+    expect(stateColNames).toContain("source_file");
+    expect(stateColNames).toContain("content_hash");
+    expect(stateColNames).toContain("last_shave_time");
+
+    // idx_source_file_state_hash index exists.
+    const stateIndexes = db
+      .prepare("PRAGMA index_list(source_file_state)")
+      .all() as Array<{ name: string }>;
+    const stateIndexNames = stateIndexes.map((i) => i.name);
+    expect(stateIndexNames).toContain("idx_source_file_state_hash");
+
     db.close();
   });
 
@@ -248,8 +268,8 @@ describe("schema migrations", () => {
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // Second application is a no-op; version stays at 9 (all migrations already ran).
-    expect(row?.version).toBe(9);
+    // Second application is a no-op; version stays at 10 (all migrations already ran).
+    expect(row?.version).toBe(10);
 
     db.close();
   });
@@ -305,18 +325,118 @@ describe("schema migrations", () => {
     expect(tableNames).not.toContain("implementations");
     expect(tableNames).toContain("blocks");
 
-    // Version is 9: migration 4 bumped to 4 (parent_block_root NULL default is correct);
+    // Version is 10: migration 4 bumped to 4 (parent_block_root NULL default is correct);
     // migration 5 bumped to 5 (block_artifacts table created);
     // migration 6 bumped to 6 (kind/foreign_* columns + block_foreign_refs table);
     // migration 7 bumped to 7 (source provenance columns + workspace_plumbing table);
     // migration 8 bumped to 8 (source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001);
-    // migration 9 bumped to 9 (block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix).
+    // migration 9 bumped to 9 (block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix);
+    // migration 10 bumped to 10 (source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001).
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(9);
+    expect(vRow?.version).toBe(10);
 
     db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T2: source_file_state round-trip (issue #363 / DEC-V2-SHAVE-CACHE-STORAGE-001)
+// ---------------------------------------------------------------------------
+
+describe("source_file_state accessors (storeSourceFileContentHash / getSourceFileContentHash)", () => {
+  /**
+   * T2 — Storage accessor round-trip.
+   *
+   * Verifies:
+   *   - getSourceFileContentHash returns null when no row exists.
+   *   - storeSourceFileContentHash + getSourceFileContentHash returns stored hash.
+   *   - INSERT OR REPLACE semantics: second store overwrites first.
+   *   - Cross-key isolation: (pkgA, fileA) and (pkgA, fileB) are independent rows.
+   *
+   * @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+   */
+  it("T2: round-trip — store then get returns stored hash; null when absent; second store overwrites", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+
+    // Null when never stored.
+    const missing = await reg.getSourceFileContentHash("packages/cli", "packages/cli/src/foo.ts");
+    expect(missing).toBeNull();
+
+    // Store and retrieve.
+    const hash1 = "a".repeat(64);
+    await reg.storeSourceFileContentHash("packages/cli", "packages/cli/src/foo.ts", hash1);
+    const retrieved1 = await reg.getSourceFileContentHash(
+      "packages/cli",
+      "packages/cli/src/foo.ts",
+    );
+    expect(retrieved1).toBe(hash1);
+
+    // INSERT OR REPLACE: second store overwrites first.
+    const hash2 = "b".repeat(64);
+    await reg.storeSourceFileContentHash("packages/cli", "packages/cli/src/foo.ts", hash2);
+    const retrieved2 = await reg.getSourceFileContentHash(
+      "packages/cli",
+      "packages/cli/src/foo.ts",
+    );
+    expect(retrieved2).toBe(hash2);
+
+    // Cross-key isolation: different file returns null until stored.
+    const crossKey = await reg.getSourceFileContentHash("packages/cli", "packages/cli/src/bar.ts");
+    expect(crossKey).toBeNull();
+
+    // Different pkg, same file path — independent row.
+    await reg.storeSourceFileContentHash("packages/registry", "packages/cli/src/foo.ts", hash1);
+    const crossPkg = await reg.getSourceFileContentHash(
+      "packages/registry",
+      "packages/cli/src/foo.ts",
+    );
+    expect(crossPkg).toBe(hash1);
+    // Original (packages/cli) row is unchanged.
+    const origAfterCross = await reg.getSourceFileContentHash(
+      "packages/cli",
+      "packages/cli/src/foo.ts",
+    );
+    expect(origAfterCross).toBe(hash2);
+
+    await reg.close();
+  });
+
+  it("T2: storeSourceFileContentHash rejects empty sourcePkg", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+    await expect(
+      reg.storeSourceFileContentHash("", "packages/cli/src/foo.ts", "a".repeat(64)),
+    ).rejects.toThrow(/sourcePkg and sourceFile must be non-empty/);
+    await reg.close();
+  });
+
+  it("T2: storeSourceFileContentHash rejects absolute sourceFile", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+    await expect(
+      reg.storeSourceFileContentHash("packages/cli", "/abs/path/foo.ts", "a".repeat(64)),
+    ).rejects.toThrow(/workspace-relative/);
+    await reg.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T8: Registry interface invariant (issue #363 / DEC-V2-SHAVE-CACHE-STORAGE-001)
+// ---------------------------------------------------------------------------
+
+describe("Registry interface invariant — storeSourceFileContentHash and getSourceFileContentHash", () => {
+  /**
+   * T8 — The Registry interface gains exactly two new methods for the cache.
+   * This test verifies their signatures are present on the concrete implementation
+   * without testing any other method (that would be an interface audit, not this test).
+   *
+   * @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+   */
+  it("T8: Registry instance has storeSourceFileContentHash and getSourceFileContentHash as functions", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+    expect(typeof reg.storeSourceFileContentHash).toBe("function");
+    expect(typeof reg.getSourceFileContentHash).toBe("function");
+    await reg.close();
   });
 });
 
@@ -762,12 +882,14 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     expect(fetched?.canonicalAstHash).toEqual(deriveCanonicalAstHash(row.implSource));
     await reg.close();
 
-    // Verify schema_version is now 8: openRegistry ran the canonical_ast_hash backfill
+    // Verify schema_version is now 10: openRegistry ran the canonical_ast_hash backfill
     // (bumped to 3) then applyMigrations ran migration 4 DDL (bumped to 4),
     // migration 5 DDL (bumped to 5, block_artifacts table),
     // migration 6 DDL (bumped to 6, kind/foreign_* columns + block_foreign_refs),
-    // migration 7 DDL (bumped to 7, source provenance columns + workspace_plumbing), and
-    // migration 8 DDL (bumped to 8, source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
+    // migration 7 DDL (bumped to 7, source provenance columns + workspace_plumbing),
+    // migration 8 DDL (bumped to 8, source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001),
+    // migration 9 DDL (bumped to 9, block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix), and
+    // migration 10 DDL (bumped to 10, source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001).
     // The preMigrationVersion capture in openRegistry ensures the backfill still
     // ran even though later migrations would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
@@ -775,7 +897,7 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const versionAfterBackfill = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionAfterBackfill).toBe(9);
+    expect(versionAfterBackfill).toBe(10);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -871,17 +993,18 @@ describe("migration 3 → 4: parent_block_root column", () => {
     expect(fetched?.artifacts.size).toBe(0);
     await reg.close();
 
-    // schema_version is now 9 (migration 4 added parent_block_root; migration 5 added
+    // schema_version is now 10 (migration 4 added parent_block_root; migration 5 added
     // block_artifacts; migration 6 added kind/foreign_* columns + block_foreign_refs;
     // migration 7 added source provenance columns + workspace_plumbing table;
     // migration 8 added source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001;
-    // migration 9 added block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix).
+    // migration 9 added block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix;
+    // migration 10 added source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001).
     const db2 = new Database(dbPath);
     sqliteVec.load(db2);
     const ver = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(ver).toBe(9);
+    expect(ver).toBe(10);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
@@ -1624,7 +1747,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vPost = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vPost).toBe(9);
+    expect(vPost).toBe(10);
 
     // kind column now present.
     const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -1680,20 +1803,20 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const db = new Database(":memory:");
     sqliteVec.load(db);
 
-    // First run — migrates from 0 to 9.
+    // First run — migrates from 0 to 10.
     applyMigrations(db);
     const vAfterFirst = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterFirst).toBe(9);
-    expect(SCHEMA_VERSION).toBe(9);
+    expect(vAfterFirst).toBe(10);
+    expect(SCHEMA_VERSION).toBe(10);
 
-    // Second run — must be a complete no-op; no throws; version stays at 9.
+    // Second run — must be a complete no-op; no throws; version stays at 10.
     expect(() => applyMigrations(db)).not.toThrow();
     const vAfterSecond = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterSecond).toBe(9);
+    expect(vAfterSecond).toBe(10);
 
     // Verify column count is stable (no duplicate columns created).
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3416,11 +3539,12 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     sqliteVec.load(db);
     applyMigrations(db);
 
-    // schema_version = 9 (includes source_file_glue from migration 8 and block_occurrences from migration 9).
+    // schema_version = 10 (includes source_file_glue from migration 8, block_occurrences
+    // from migration 9, and source_file_state from migration 10).
     const versionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {
       version: number;
     };
-    expect(versionRow.version).toBe(9);
+    expect(versionRow.version).toBe(10);
 
     // blocks table has the three new provenance columns.
     const blockCols = (
@@ -3499,19 +3623,19 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const db = new Database(":memory:");
     sqliteVec.load(db);
 
-    applyMigrations(db); // first — migrates 0→9
+    applyMigrations(db); // first — migrates 0→10
     const v1 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v1).toBe(9);
-    expect(SCHEMA_VERSION).toBe(9);
+    expect(v1).toBe(10);
+    expect(SCHEMA_VERSION).toBe(10);
 
     // Second run — must be a complete no-op.
     expect(() => applyMigrations(db)).not.toThrow();
     const v2 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v2).toBe(9);
+    expect(v2).toBe(10);
 
     // Column count is stable — no duplicate columns.
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3549,7 +3673,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionPost = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionPost).toBe(9);
+    expect(versionPost).toBe(10);
 
     // The workspace_plumbing table exists (P1 creates it empty).
     const tables = (

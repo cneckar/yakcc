@@ -51,12 +51,18 @@ const emptyRegistry = {
   async findByCanonicalAstHash(_hash: CanonicalAstHash): Promise<readonly BlockMerkleRoot[]> {
     return [];
   },
+  async getBlock(_root: BlockMerkleRoot) {
+    return undefined;
+  },
 };
 
 /** Registry that returns a fake match for every hash query. */
 const alwaysMatchRegistry = {
   async findByCanonicalAstHash(_hash: CanonicalAstHash): Promise<readonly BlockMerkleRoot[]> {
     return ["fake-merkle-root" as BlockMerkleRoot];
+  },
+  async getBlock(_root: BlockMerkleRoot) {
+    return undefined;
   },
 };
 
@@ -463,6 +469,9 @@ export const prop_compound_slice_real_tree_joint_invariants = fc.asyncProperty(
     const registry = {
       async findByCanonicalAstHash(hash: CanonicalAstHash): Promise<readonly BlockMerkleRoot[]> {
         return hash === hashX ? [merkleX] : [];
+      },
+      async getBlock(_root: BlockMerkleRoot) {
+        return undefined;
       },
     };
 

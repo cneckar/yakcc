@@ -396,6 +396,8 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
         listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
         listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
         replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
+        storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
+        getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
       };
 
       const ctx: EmissionContext = { intent: "some emission intent" };

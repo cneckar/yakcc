@@ -293,6 +293,8 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
         listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
         listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
         replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
+        storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
+        getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {
