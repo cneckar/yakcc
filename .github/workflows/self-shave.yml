@@ -119,17 +119,70 @@ jobs:
         if: steps.verified-cache.outputs.cache-hit != 'true'
         run: pnpm -r build
 
+      # @decision DEC-V2-CI-PREREQ-RUN-001
+      # @title Order-of-operations contract: build → bootstrap → two-pass test
+      # @status accepted (Issue #472, WI-V2-TWO-PASS-CI-FALSE-GREEN, 2026-05-13)
+      # @rationale The two-pass equivalence test (two-pass-equivalence.test.ts) requires
+      #   three prerequisite artifacts to be present before the test runner starts:
+      #   1. packages/cli/dist/bin.js — produced by 'pnpm -r build' (step above)
+      #   2. bootstrap/yakcc.registry.sqlite — produced by 'yakcc bootstrap' (this step)
+      #   3. bootstrap/report.json — produced by 'yakcc bootstrap' (this step)
+      #
+      #   These three files are gitignored and do NOT exist on a fresh checkout. Before
+      #   this fix (Issue #472), the workflow was missing the 'yakcc bootstrap' step
+      #   entirely. The test code detected the missing files and silently early-returned
+      #   via 'console.warn + return', which vitest counted as 15 passing tests — a
+      #   false-green that masked all v2 self-shave regressions.
+      #
+      #   The correct sequence on cache miss is:
+      #     1. pnpm -r build    — produces CLI binary (packages/cli/dist/bin.js)
+      #     2. yakcc bootstrap  — produces registry A + report A (bootstrap/ dir)
+      #     3. vitest (test)    — runs the full two-pass cycle using those artifacts
+      #
+      #   The two-pass cycle itself (compile-self + second bootstrap + byte-identity check)
+      #   runs INSIDE the harness (beforeAll in two-pass-equivalence.test.ts), not as
+      #   a separate workflow step. The harness handles all the internal orchestration.
+      #   Wall-time estimate: ~5 min for build + bootstrap, ~60-70 min for two-pass test.
+      #
+      #   Cache-hit path (steps.verified-cache.outputs.cache-hit == 'true'): the entire
+      #   build → bootstrap → test sequence is fast-skipped. The cache key is keyed on the
+      #   source hash (all .ts sources + harness + expected-roots.json + pnpm-lock.yaml),
+      #   so a cache hit is a proof that the identical input state previously passed the
+      #   full two-pass cycle. The cache marker file is only written after a green run
+      #   (step "Write self-shave verified-marker" below), so a stale false-green cache
+      #   cannot arise once the test code is fixed to hard-fail on missing preconditions
+      #   (DEC-V2-TWO-PASS-PRECONDITION-001).
+      - name: Bootstrap pass 1 (produce registry A + report A)
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          # yakcc bootstrap shaves all source files under packages/*/src and
+          # examples/*/src, writing:
+          #   - bootstrap/yakcc.registry.sqlite  (registry A — pass-1 registry)
+          #   - bootstrap/expected-roots.json    (monotonic manifest accumulator)
+          #   - bootstrap/report.json            (per-file shave outcomes — pass-1)
+          #
+          # The harness reads registry A and report A but does NOT re-run bootstrap
+          # itself for pass 1 — it uses these artifacts as authoritative inputs.
+          # (Risk R1 mitigation per plan.md §6 D5: re-running bootstrap inside the
+          # test would conflate first-pass and second-pass semantics.)
+          node packages/cli/dist/bin.js bootstrap \
+            --registry bootstrap/yakcc.registry.sqlite \
+            --manifest bootstrap/expected-roots.json \
+            --report bootstrap/report.json
+
       - name: Run two-pass equivalence check
         if: steps.verified-cache.outputs.cache-hit != 'true'
         env:
           YAKCC_TWO_PASS: "1"
         run: |
-          # Pass 1 (registry A): bootstrap --verify confirms the live registry is
-          # consistent with bootstrap/expected-roots.json.
+          # With bootstrap/yakcc.registry.sqlite and bootstrap/report.json now present
+          # (produced by the preceding step), and packages/cli/dist/bin.js available
+          # (produced by 'pnpm -r build'), the two-pass harness can proceed.
           #
-          # The harness (examples/v2-self-shave-poc/test/two-pass-equivalence.test.ts)
-          # then invokes compile-self and bootstrap internally to complete the
-          # two-pass cycle and assert byte-identity at the BlockMerkleRoot level.
+          # The harness runs the full two-pass cycle internally:
+          #   Step 1: yakcc compile-self (produces tmp/two-pass/dist-recompiled/)
+          #   Step 2: yakcc bootstrap on the recompiled workspace (produces registry B)
+          #   Step 3: byte-identity comparison S1 ≡ S3 (the crown-jewel assertion)
           #
           # No continue-on-error: a two-pass failure is a hard CI failure.
           # A regression here means non-determinism was introduced in the
