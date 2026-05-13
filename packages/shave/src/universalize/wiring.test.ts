@@ -36,7 +36,7 @@ import { openRegistry } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeIntent } from "../cache/file-cache.js";
 import { keyFromIntentInputs, sourceHash } from "../cache/key.js";
-import { universalize } from "../index.js";
+import { PersistRequestedButNotSupportedError, universalize } from "../index.js";
 import {
   DEFAULT_MODEL,
   INTENT_PROMPT_VERSION,
@@ -44,7 +44,7 @@ import {
 } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
-import type { ShaveRegistryView } from "../types.js";
+import type { ShaveRegistryView, UniversalizeOptions } from "../types.js";
 import { DidNotReachAtomError } from "./recursion.js";
 
 // ---------------------------------------------------------------------------
@@ -382,5 +382,101 @@ describe("universalize() + maybePersistNovelGlueAtom() — single-leaf persist r
     } finally {
       await registry.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T2 (WI-373): Default path (persist:undefined) is unchanged
+//
+// Verifies REQ-GOAL-001 backwards-compat clause: when universalize() is called
+// WITHOUT persist:true, NovelGlueEntry.merkleRoot is always undefined and no
+// row is written to the registry.
+//
+// This pins the contract for all existing callers (shave(), atomize.ts,
+// wiring.test.ts Tests 1-4) that do not opt in to in-pipeline persistence.
+// ---------------------------------------------------------------------------
+
+describe("universalize() — default path (persist:undefined): NovelGlueEntry.merkleRoot is undefined (WI-373 T2)", () => {
+  it("NovelGlueEntry has merkleRoot===undefined and no row written when persist is not requested", async () => {
+    // Seed cache so extractIntent succeeds without an API key.
+    await seedCache(ATOMIC_SOURCE);
+
+    // Open a real in-memory registry so we can verify no rows are written.
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+    });
+
+    try {
+      // Call universalize() WITHOUT persist flag — the default backwards-compat path.
+      const result = await universalize({ source: ATOMIC_SOURCE }, registry, {
+        cacheDir,
+        offline: true,
+        intentStrategy: "llm",
+      } satisfies UniversalizeOptions);
+
+      // The single-leaf plan should produce one NovelGlueEntry.
+      expect(result.slicePlan.length).toBe(1);
+      const entry = result.slicePlan[0];
+      expect(entry?.kind).toBe("novel-glue");
+
+      // WI-373 backwards-compat: merkleRoot must be undefined when persist not requested.
+      if (entry?.kind === "novel-glue") {
+        expect(entry.merkleRoot).toBeUndefined();
+      }
+
+      // No row must have been written to the registry.
+      const hash = canonicalAstHash(ATOMIC_SOURCE);
+      const stored = await registry.findByCanonicalAstHash(hash);
+      expect(stored.length).toBe(0);
+    } finally {
+      await registry.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4 (WI-373): persist:true + registry without storeBlock → loud error
+//
+// Verifies DEC-UNIVERSALIZE-PERSIST-ERR-001: when persist:true is requested
+// but the registry view does NOT implement storeBlock, universalize() throws
+// PersistRequestedButNotSupportedError immediately — no silent no-op.
+//
+// This is the Sacred Practice #5 (loud failure) check: a caller that says
+// "persist" must get a clear error if the registry cannot honour that request.
+// ---------------------------------------------------------------------------
+
+describe("universalize() — persist:true + registry missing storeBlock → PersistRequestedButNotSupportedError (WI-373 T4)", () => {
+  it("throws PersistRequestedButNotSupportedError when storeBlock is absent from the registry view", async () => {
+    // Seed cache so the pipeline reaches step 6 (persistence) without crashing earlier.
+    await seedCache(ATOMIC_SOURCE);
+
+    // emptyRegistry (defined above) has no storeBlock — it's a pure ShaveRegistryView.
+    // persist:true + no storeBlock → immediate loud-fail per DEC-UNIVERSALIZE-PERSIST-ERR-001.
+    await expect(
+      universalize({ source: ATOMIC_SOURCE }, emptyRegistry, {
+        cacheDir,
+        offline: true,
+        intentStrategy: "llm",
+        persist: true,
+      } satisfies UniversalizeOptions),
+    ).rejects.toBeInstanceOf(PersistRequestedButNotSupportedError);
+  });
+
+  it("does NOT throw when persist is undefined (the default path) even without storeBlock", async () => {
+    // Ensure the default path (no persist flag) is a strict no-op regardless of
+    // whether storeBlock is present. This guards against a regression where adding
+    // the check breaks existing callers that never set persist:true.
+    await seedCache(ATOMIC_SOURCE);
+
+    // Should resolve normally — no error.
+    const result = await universalize({ source: ATOMIC_SOURCE }, emptyRegistry, {
+      cacheDir,
+      offline: true,
+      intentStrategy: "llm",
+      // No persist flag — emptyRegistry has no storeBlock, but that's irrelevant here.
+    });
+
+    expect(result.slicePlan.length).toBeGreaterThan(0);
+    expect(result.slicePlan[0]?.kind).toBe("novel-glue");
   });
 });

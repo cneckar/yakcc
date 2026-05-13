@@ -1,0 +1,11 @@
+# @decision DEC-CI-SHAVE-LINT-LF-001
+# All TypeScript and JSON sources in @yakcc/shave are LF-canonical on checkout.
+# Biome enforces LF; without this, Windows checkouts via core.autocrlf=true
+# would deliver CRLF and produce ~125 phantom format-violations on any PR
+# that invalidates the shave-lint turbo cache. See packages/seeds/.gitattributes
+# for the same fix in a sibling package (#417 / #418).
+
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf

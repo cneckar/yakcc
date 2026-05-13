@@ -229,6 +229,30 @@ export function foo(x: number): number { return x + 1; }`;
       }),
     ).rejects.toBeInstanceOf(LicenseRefusedError);
   });
+
+  // T3 (WI-373 A6): license-refused source — no rows written to registry.
+  //
+  // persist:true is forced by assembleCandidate() (WI-373), so the license gate
+  // running BEFORE persistence is the only thing preventing rows from being written.
+  // This test verifies acceptance criterion A6: the license gate runs before step 6
+  // (persist) and leaves the registry empty.
+  it("(A6) leaves the registry empty — license gate fires before any persistence side-effect", async () => {
+    const gplSource = `// SPDX-License-Identifier: GPL-3.0-or-later
+export const gplFn = (n: number): number => n + 42;`;
+
+    // Attempt assembly — must throw LicenseRefusedError.
+    await expect(
+      assembleCandidate(gplSource, registry, undefined, {
+        shaveOptions: { cacheDir, offline: true },
+      }),
+    ).rejects.toBeInstanceOf(LicenseRefusedError);
+
+    // Verify no row was written: the registry must report nothing for any hash
+    // derivable from the refused source.
+    const hash = canonicalAstHash(gplSource);
+    const stored = await registry.findByCanonicalAstHash(hash);
+    expect(stored.length, "No block must be stored for a license-refused source").toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -340,24 +364,34 @@ ${f2Source}`;
 });
 
 // ---------------------------------------------------------------------------
-// Test 4: Single NovelGlueEntry → CandidateNotResolvableError("atom persistence")
+// Test 4 (WI-373 inverted): Single NovelGlueEntry → resolves to Artifact
 //
-// WI-018: enabled using seedIntentCache() from @yakcc/shave.
+// Prior behaviour (WI-018): assembleCandidate threw CandidateNotResolvableError
+// for a single novel-glue source. WI-373 wires in-pipeline persistence via
+// universalize({persist:true}), so the atom is now stored in-pipeline and the
+// merkleRoot is surfaced on the NovelGlueEntry, enabling full resolution.
 //
-// Production sequence:
-//   seedIntentCache(spec, card)         — seed intent cache for the full source
-//   assembleCandidate(source, registry) — universalize():
+// Production sequence (WI-373):
+//   seedIntentCache(spec, card)         — seed intent cache for the source
+//   assembleCandidate(source, registry) — universalize({persist:true}):
+//     → license gate (passes MIT)
 //     → extractIntent (cache hit)
 //     → decompose: SourceFile is AtomLeaf (no registry match, CF=0)
-//     → slice: SourceFile atom → NovelGlueEntry (not in registry)
-//     → resolveToMerkleRoot: single novel-glue → CandidateNotResolvableError
+//     → slice: SourceFile atom → NovelGlueEntry
+//     → step 6: maybePersistNovelGlueAtom → merkleRoot surfaced on entry
+//     → resolveToMerkleRoot: novel-glue entry carries merkleRoot → returns it
+//     → assemble(merkleRoot, registry) → Artifact
+//
+// Backwards-compat sub-test: universalize() called directly WITHOUT persist:true
+// still returns a NovelGlueEntry with merkleRoot === undefined (the default path
+// is unchanged). Covered by T2 in wiring.test.ts (new test added there).
 // ---------------------------------------------------------------------------
 
-describe("assembleCandidate — single novel-glue entry", () => {
-  it("throws CandidateNotResolvableError with 'atom persistence in universalize' in message", async () => {
+describe("assembleCandidate — single novel-glue entry (WI-373: now resolves)", () => {
+  it("resolves a single novel-glue source end-to-end, producing a persisted Artifact", async () => {
     // A single const arrow function. No registry match → NovelGlueEntry.
-    // The empty in-memory registry has findByCanonicalAstHash returning []
-    // for all hashes, so SourceFile is AtomLeaf and becomes a NovelGlueEntry.
+    // After WI-373: universalize({persist:true}) persists the atom in-pipeline
+    // and assembleCandidate() resolves it to a full Artifact.
     const source =
       "// SPDX-License-Identifier: MIT\nexport const novelGlue = (n: number): number => n * 7;";
 
@@ -366,14 +400,30 @@ describe("assembleCandidate — single novel-glue entry", () => {
     const spec: SeedIntentSpec = { source, cacheDir };
     await seedIntentCache(spec, card);
 
-    await expect(
-      assembleCandidate(source, registry, undefined, {
-        shaveOptions: { cacheDir, offline: true },
-      }),
-    ).rejects.toSatisfy(
-      (e) =>
-        e instanceof CandidateNotResolvableError &&
-        /atom persistence in universalize/i.test(e.message),
-    );
+    // Full production pipeline — no API key, cache hit guaranteed.
+    const artifact = await assembleCandidate(source, registry, undefined, {
+      shaveOptions: { cacheDir, offline: true },
+    });
+
+    // The artifact must be produced (no throw).
+    expect(typeof artifact.source).toBe("string");
+    expect(artifact.source.length).toBeGreaterThan(0);
+    // The assembled source must contain the function name.
+    expect(artifact.source).toContain("novelGlue");
+    // Manifest must reference the stored block.
+    expect(artifact.manifest.entries.length).toBeGreaterThan(0);
+
+    // The novel atom must now be persisted in the registry.
+    const persistedRoot = artifact.manifest.entries[0]?.blockMerkleRoot;
+    expect(persistedRoot).toBeDefined();
+    if (persistedRoot !== undefined) {
+      const row = await registry.getBlock(persistedRoot);
+      expect(row).not.toBeNull();
+      // Root atom — parentBlockRoot is null (first/only atom in its recursion tree).
+      expect(row?.parentBlockRoot).toBeNull();
+      // Content-address: canonicalAstHash must match the source.
+      const { canonicalAstHash: computeHash } = await import("@yakcc/contracts");
+      expect(row?.canonicalAstHash).toBe(computeHash(source));
+    }
   });
 });
