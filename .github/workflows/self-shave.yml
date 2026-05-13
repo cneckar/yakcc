@@ -165,14 +165,10 @@ jobs:
           # itself for pass 1 — it uses these artifacts as authoritative inputs.
           # (Risk R1 mitigation per plan.md §6 D5: re-running bootstrap inside the
           # test would conflate first-pass and second-pass semantics.)
-          # INTENTIONAL-BREAK: bootstrap step commented out to prove false-green is gone.
-          # This commit will be reverted immediately after CI goes red.
-          # echo "(intentional-break) bootstrap skipped"
-          # node packages/cli/dist/bin.js bootstrap \
-          #   --registry bootstrap/yakcc.registry.sqlite \
-          #   --manifest bootstrap/expected-roots.json \
-          #   --report bootstrap/report.json
-          echo "INTENTIONAL-BREAK: bootstrap step disabled — artifacts will be absent. Test must FAIL." && exit 0
+          node packages/cli/dist/bin.js bootstrap \
+            --registry bootstrap/yakcc.registry.sqlite \
+            --manifest bootstrap/expected-roots.json \
+            --report bootstrap/report.json
 
       - name: Run two-pass equivalence check
         if: steps.verified-cache.outputs.cache-hit != 'true'
