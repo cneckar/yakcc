@@ -265,9 +265,9 @@ export interface UniversalizeResult {
  * the slice plan (postorder, lineage-threaded via parentBlockRoot) and surface
  * the resulting BlockMerkleRoot on each entry.
  *
- * `shave()` does NOT accept this type — it always persists unconditionally when
- * registry.storeBlock is present. The persist flag is exclusively meaningful for
- * universalize() callers who need opt-in persistence (e.g. assembleCandidate()).
+ * `shave()` delegates to universalize({persist:true}) and passes its file path
+ * via `sourceFilePath` so that the props-file corpus extractor can locate the
+ * sibling `.props.ts` file (WI-423: DEC-V2-SHAVE-DELEGATES-UNIVERSALIZE-001).
  *
  * @decision DEC-UNIVERSALIZE-PERSIST-API-001
  * @title UniversalizeOptions extends ShaveOptions with optional persist flag
@@ -279,8 +279,9 @@ export interface UniversalizeResult {
  *   optional and defaults to false so all existing callers are unaffected.
  *   If persist:true is requested but the registry has no storeBlock, a loud
  *   PersistRequestedButNotSupportedError is thrown (Sacred Practice #5).
- *   The shave() refactor to delegate (Sacred Practice #12 consolidation) is
- *   deferred to a follow-up WI per the plan §6 slicing recommendation.
+ *   WI-423 (DEC-V2-SHAVE-DELEGATES-UNIVERSALIZE-001) completes the consolidation:
+ *   shave() now delegates its persist loop to universalize({persist:true}) and
+ *   passes sourceFilePath so the props-file corpus path remains functional.
  *   Flag as P1 follow-up: atomize.ts in @yakcc/hooks-base also runs a parallel
  *   buildBlockRow+storeBlock loop; once universalize({persist:true}) lands, that
  *   caller should consolidate onto this path too (see WI-373 plan §7).
@@ -299,6 +300,23 @@ export interface UniversalizeOptions extends ShaveOptions {
    * Throws PersistRequestedButNotSupportedError if registry.storeBlock is absent.
    */
   readonly persist?: boolean | undefined;
+
+  /**
+   * Absolute path to the source file being processed.
+   *
+   * When provided alongside `persist: true`, this path is forwarded to
+   * maybePersistNovelGlueAtom as `sourceFilePath`, enabling the props-file
+   * corpus extractor to locate the sibling `<stem>.props.ts` file.
+   *
+   * Set by shave() from its own `sourcePath` parameter (WI-423). Interactive
+   * universalize() callers (e.g. assembleCandidate) leave this undefined, which
+   * disables the props-file source for those atoms — correct per
+   * REQ-NOGO-006: atoms persist with null provenance.
+   *
+   * @decision DEC-V2-SHAVE-DELEGATES-UNIVERSALIZE-001
+   * @scope WI-423
+   */
+  readonly sourceFilePath?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
