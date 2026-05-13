@@ -12,9 +12,24 @@
 // All tests use os.tmpdir() cache paths and synthetic in-memory registries
 // so they complete in seconds without touching the real corpus.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// @decision DEC-CI-NIGHTLY-001
+// title: Derive repoRoot at runtime via import.meta.url
+// status: accepted
+// rationale: The original test hardcoded an absolute worktree path
+//   (/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-parity-cache-001) that
+//   only existed on the original author's machine.  On CI and every other
+//   developer machine those paths are missing, so regenerateCorpus received
+//   zero source files and returned zero atoms, causing the cacheMisses ≥ 1
+//   assertion to fail for 30+ consecutive CI runs.  Using
+//   fileURLToPath(new URL("../../..", import.meta.url)) pins the root to the
+//   actual location of this test file in whatever checkout is running, making
+//   the test portable across machines, worktrees, and CI environments.
+//   existsSync guards are added so a missing seed file fails loudly rather than
+//   silently producing an empty corpus that masks the real problem.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type BlockMerkleRoot,
   type CanonicalAstHash,
@@ -525,12 +540,29 @@ describe("regenerateCorpus — integrated determinism", () => {
 
       // Two real seed impl files (tiny source; shave completes in seconds).
       // Using digit and comma blocks — both exist in the monorepo and are ≤20 lines.
-      const repoRoot =
-        "/home/claude/yakcc/.worktrees/feature-wi-v1w4-lower-parity-cache-001";
+      //
+      // repoRoot is derived from import.meta.url so the path is correct in any
+      // checkout or CI environment (see @decision DEC-CI-NIGHTLY-001 at the top
+      // of this file).  This file lives at
+      //   examples/v1-wave-3-wasm-lower-demo/test/cache.test.ts
+      // so three levels up ("../../..") reaches the monorepo root.
+      const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
       const sourceFiles = [
         pathJoin(repoRoot, "packages/seeds/src/blocks/digit/impl.ts"),
         pathJoin(repoRoot, "packages/seeds/src/blocks/comma/impl.ts"),
       ];
+
+      // Guard: fail loudly if the seed files are missing rather than letting a
+      // silent zero-atom run hide the problem (see DEC-CI-NIGHTLY-001).
+      for (const sf of sourceFiles) {
+        if (!existsSync(sf)) {
+          throw new Error(
+            `[DEC-CI-NIGHTLY-001] Seed source file not found: ${sf}\n` +
+              `repoRoot resolved to: ${repoRoot}\n` +
+              `Ensure the monorepo checkout is complete and packages/seeds exists.`,
+          );
+        }
+      }
 
       const tempDir = mkdtempSync(pathJoin(tmpdir(), "wi119-determinism-"));
       const cacheFilePath = pathJoin(tempDir, "shave-cache.json");

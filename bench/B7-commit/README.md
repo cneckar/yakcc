@@ -10,18 +10,27 @@
 `DEC-BENCH-B7-001` — median warm wall-clock ≤ 3s on both hardware platforms.  
 WI-FAST-PATH-VERIFIER: NOT filed — median warm did not exceed 5s threshold.
 
-## Results Table (4-cell: cache state × hardware)
+## Results Table (6-cell: cache state × hardware)
 
 | Cache state | Hardware | median\_ms | p95\_ms | p99\_ms | n |
 |-------------|----------|-----------|---------|---------|---|
 | warm | Windows / Node v22.x | **1804.5** | 4893 | 6133 | 288 |
 | warm | ubuntu-latest / Node v22.x | pending CI | — | — | — |
+| warm | rocky-linux-10.1-x86\_64-amd-epyc-9845 / Node v22.x | 3108 | 9177 | 11560 | 320 |
 | cold | Windows / Node v22.x | 2705 | 8870 | 9297 | 320 |
 | cold | ubuntu-latest / Node v22.x | pending CI | — | — | — |
+| cold | rocky-linux-10.1-x86\_64-amd-epyc-9845 / Node v22.x | 3898.5 | 9942 | 14292 | 320 |
 
 > Windows results from `results-windows-2026-05-12.json` (committed, 2026-05-12).  
+> Rocky Linux results from `results-rocky-linux-10.1-x86_64-amd-epyc-9845-2026-05-12.json` (committed, 2026-05-12).  
 > ubuntu-latest results from CI nightly run via `bench-b7-commit.yml` — see artifact `b7-commit-<run_number>` or issue #191 comment.  
 > Single-run verification accepted per operator decision (subprocess correctness is structural; cost trade-off vs 3-consecutive-run protocol).
+
+### Rocky Linux hardware note
+
+Rocky Linux cell run on a 2-vCPU AMD EPYC 9845 cloud VM, Node v22.22.2. Verdict: **PASS-hard-cap** (warm median 3.108s clears the ≤10s hard-cap; just over the ≤3s aspirational bar). Cross-hardware variance is honest measurement data: Rocky's warm median is ~1.7× the Windows Ryzen 9 9950X result (1.804s), reflecting CPU and vCPU count differences — not a regression. Does not change the published B7 verdict tier (sister's PASS-aspirational verdict from Windows data stands).
+
+`parse-cron-expression` atomized 10/10 cold reps on Rocky — Linux empirical confirmation that subprocess isolation (commit 165bf59, closes #393) defeats the cross-utility contamination bug on Linux too.
 
 ## What it measures
 

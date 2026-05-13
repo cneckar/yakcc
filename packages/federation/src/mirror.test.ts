@@ -517,7 +517,7 @@ describe("mirrorRegistry — schema-version mismatch", () => {
     expect(caughtError).toBeInstanceOf(SchemaVersionMismatchError);
     const err = caughtError as SchemaVersionMismatchError;
     expect(err.remoteSchemaVersion).toBe(999);
-    expect(err.localSchemaVersion).toBe(8); // local SCHEMA_VERSION (bumped to 8 in WI-V2-WORKSPACE-PLUMBING-GLUE-CAPTURE #333)
+    expect(err.localSchemaVersion).toBe(9); // local SCHEMA_VERSION (bumped to 9 in issue-411-federation-drift #411)
   });
 });
 

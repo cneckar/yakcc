@@ -1,0 +1,28 @@
+{
+  "name": "@yakcc-bench/b4-tokens",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B4 — Token-expenditure A/B harness: measures LLM output-token reduction from yakcc hook layer.",
+  "notes": [
+    "This package.json is NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is a bench-local dep — it MUST NOT appear in the root package.json.",
+    "Install bench deps: pnpm --dir bench/B4-tokens install",
+    "Dry-run mode works without install (no API calls). Real-run requires ANTHROPIC_API_KEY and pnpm install.",
+    "Oracle tests require vitest: pnpm --dir bench/B4-tokens install"
+  ],
+  "scripts": {
+    "test:oracles": "vitest run --config vitest.config.mjs",
+    "test:oracle:lru": "vitest run --config vitest.config.mjs tasks/lru-cache-with-ttl/oracle.test.ts",
+    "test:oracle:csv": "vitest run --config vitest.config.mjs tasks/csv-parser-quoted/oracle.test.ts",
+    "test:oracle:debounce": "vitest run --config vitest.config.mjs tasks/debounce-with-cancel/oracle.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "vitest": "^4.1.5"
+  }
+}
