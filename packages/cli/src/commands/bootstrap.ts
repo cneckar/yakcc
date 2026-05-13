@@ -151,6 +151,12 @@ const DEFAULT_MANIFEST_PATH = join("bootstrap", "expected-roots.json");
 const DEFAULT_REPORT_PATH = join("bootstrap", "report.json");
 const DEFAULT_EXPECTED_FAILURES_PATH = join("bootstrap", "expected-failures.json");
 
+// Module-level TextEncoder: reused across all per-file hash computations in
+// the bootstrap loop (avoids constructing a new instance per file).
+// contractIdFromBytes accepts Uint8Array; this encoder converts UTF-8 strings.
+// @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+const TEXT_ENCODER = new TextEncoder();
+
 // ---------------------------------------------------------------------------
 // File-walking helpers
 // ---------------------------------------------------------------------------
@@ -290,7 +296,25 @@ interface FileOutcomeExpectedFailure {
   readonly rationale: string;
 }
 
-type FileOutcome = FileOutcomeSuccess | FileOutcomeFailure | FileOutcomeExpectedFailure;
+/**
+ * A file that was skipped because its content hash matched the stored value in
+ * source_file_state — the file's bytes are identical to the last successful shave.
+ *
+ * @decision DEC-V2-SHAVE-CACHE-STORAGE-001 — source_file_state is the cache authority.
+ * @decision DEC-V2-SHAVE-CACHE-VERIFY-FLAG-001 — cache hits only occur when !--verify.
+ */
+interface FileOutcomeCacheHit {
+  readonly path: string;
+  readonly outcome: "cache-hit";
+  /** Number of atom occurrences already in block_occurrences for this file. */
+  readonly atomCount: number;
+}
+
+type FileOutcome =
+  | FileOutcomeSuccess
+  | FileOutcomeFailure
+  | FileOutcomeExpectedFailure
+  | FileOutcomeCacheHit;
 
 // ---------------------------------------------------------------------------
 // VerifyDiff — structured diff result for --verify mode
@@ -1057,6 +1081,47 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       // glue so that reconstruction emits the correct verbatim text.
       // DEC-V2-POINTER-OCCURRENCE-LENGTH-001
       const sourceText = readFileSync(absPath, "utf-8");
+
+      // ---------------------------------------------------------------------------
+      // Cache-check (issue #363 / DEC-V2-SHAVE-CACHE-STORAGE-001)
+      //
+      // Compute BLAKE3-256 of the source file's UTF-8 bytes.  The hash is computed
+      // AFTER readFileSync above — both the cache check and the subsequent shave
+      // operate on the same in-memory string, so there is no TOCTOU race.
+      //
+      // fileContentHash is hoisted outside the if-block so it is available after
+      // a successful shave to write back to source_file_state (cache miss write).
+      //
+      // @decision DEC-V2-SHAVE-CACHE-VERIFY-FLAG-001
+      //   --verify bypasses the cache entirely; the guard is here so that future
+      //   refactors cannot accidentally cache under --verify.  Today --verify uses
+      //   a :memory: registry and never reaches this path; the guard is forward-safety.
+      //
+      // @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+      //   Cache key = BLAKE3-256 hex of UTF-8 bytes.  NOT mtime/size/ctime.
+      //   The single call site contract: exactly one getSourceFileContentHash() call
+      //   per source file per bootstrap run (evaluation contract RP-3 / forbidden shortcut).
+      // ---------------------------------------------------------------------------
+      const fileContentHash = contractIdFromBytes(TEXT_ENCODER.encode(sourceText));
+      if (!parsed.values.verify) {
+        const storedHash = await registry.getSourceFileContentHash(sourcePkg, sourceFileNorm);
+
+        if (storedHash === fileContentHash) {
+          // Cache hit: byte-identical to last shave — skip full shave.
+          // Atoms are already in blocks + block_occurrences from the prior run.
+          const occurrences = await registry.listOccurrencesBySourceFile(sourceFileNorm);
+          rawOutcomes.push({
+            path: relPath,
+            outcome: "cache-hit",
+            atomCount: occurrences.length,
+          });
+          continue;
+        }
+        // Cache miss: fall through to full shave below.
+        // After a successful shave, storeSourceFileContentHash is called to record
+        // the current hash so the next run can cache-hit this file.
+      }
+
       const result = await shaveImpl(absPath, shaveRegistry, {
         offline: true,
         intentStrategy: "static",
@@ -1199,6 +1264,27 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       // Errors are logged but do not fail the file outcome.
       await captureSourceFileGlue(registry, absPath, sourcePkg, sourceFileNorm, logger);
 
+      // Pass C: cache-miss write — record the file's content hash in source_file_state
+      // so the next bootstrap run can cache-hit this file if its bytes are unchanged.
+      //
+      // Only written on the on-disk (non-verify) path. --verify uses :memory: and
+      // the guard below is the explicit forward-safety check.
+      //
+      // Non-fatal: a write failure means the cache row is missing and the next run
+      // will re-shave this file (correct, just slightly slower). F1 failure mode per plan.
+      //
+      // @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+      // @decision DEC-V2-SHAVE-CACHE-VERIFY-FLAG-001
+      if (!parsed.values.verify) {
+        try {
+          await registry.storeSourceFileContentHash(sourcePkg, sourceFileNorm, fileContentHash);
+        } catch (cacheWriteErr) {
+          logger.error(
+            `warning: failed to write source_file_state for ${sourceFileNorm} (next run will re-shave): ${(cacheWriteErr as Error).message}`,
+          );
+        }
+      }
+
       rawOutcomes.push({
         path: relPath,
         outcome: "success",
@@ -1299,12 +1385,14 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
 
   // Summarise.
   const successCount = outcomes.filter((o) => o.outcome === "success").length;
+  const cacheHitCount = outcomes.filter((o) => o.outcome === "cache-hit").length;
   const expectedFailureCount = outcomes.filter((o) => o.outcome === "expected-failure").length;
   const failureCount = outcomes.filter((o) => o.outcome === "failure").length;
 
   logger.log("Bootstrap complete:");
   logger.log(`  files processed:   ${outcomes.length}`);
-  logger.log(`  successful:        ${successCount}`);
+  logger.log(`  cache hits:        ${cacheHitCount}`);
+  logger.log(`  shaved:            ${successCount}`);
   if (expectedFailureCount > 0) {
     logger.log(`  expected-failures: ${expectedFailureCount} (license-refused, documented)`);
   }
@@ -1313,6 +1401,8 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   logger.log(
     `bootstrap: prior=${priorCount}, shaved=${shavedCount}, added=${addedCount}, total=${totalCount}`,
   );
+  // Cache summary line (issue #363 / DEC-V2-SHAVE-CACHE-STORAGE-001).
+  logger.log(`bootstrap: cache_hits=${cacheHitCount}, shaved=${successCount}`);
   logger.log(`  manifest:          ${manifestPath} (${totalCount} entries)`);
   logger.log(`  report:            ${reportPath}`);
 
