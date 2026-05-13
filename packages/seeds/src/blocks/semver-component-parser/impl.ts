@@ -97,24 +97,18 @@ export function parseSemver(input: string): SemverComponents {
   const minorStr = parts[1] ?? "";
   const patchStr = parts[2] ?? "";
 
-  const major = parseInt(majorStr, 10);
-  const minor = parseInt(minorStr, 10);
-  const patch = parseInt(patchStr, 10);
+  const major = Number.parseInt(majorStr, 10);
+  const minor = Number.parseInt(minorStr, 10);
+  const patch = Number.parseInt(patchStr, 10);
 
   if (Number.isNaN(major) || major < 0) {
-    throw new SyntaxError(
-      `parseSemver: invalid MAJOR component ${JSON.stringify(majorStr)}`,
-    );
+    throw new SyntaxError(`parseSemver: invalid MAJOR component ${JSON.stringify(majorStr)}`);
   }
   if (Number.isNaN(minor) || minor < 0) {
-    throw new SyntaxError(
-      `parseSemver: invalid MINOR component ${JSON.stringify(minorStr)}`,
-    );
+    throw new SyntaxError(`parseSemver: invalid MINOR component ${JSON.stringify(minorStr)}`);
   }
   if (Number.isNaN(patch) || patch < 0) {
-    throw new SyntaxError(
-      `parseSemver: invalid PATCH component ${JSON.stringify(patchStr)}`,
-    );
+    throw new SyntaxError(`parseSemver: invalid PATCH component ${JSON.stringify(patchStr)}`);
   }
 
   return { major, minor, patch, prerelease, build };

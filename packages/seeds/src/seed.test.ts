@@ -689,8 +689,16 @@ describe("property-test corpora", () => {
   describe("queue-drain", () => {
     it("queue-drain-linear: linear chain A->B->C visits all 3 nodes in order", () => {
       const visited: string[] = [];
-      const inDegree = new Map([["A", 0], ["B", 1], ["C", 1]]);
-      const adjacency = new Map([["A", ["B"]], ["B", ["C"]], ["C", []]]);
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 1],
+        ["C", 1],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B"]],
+        ["B", ["C"]],
+        ["C", []],
+      ]);
       const queue = ["A"];
       const count = queueDrain(queue, inDegree, adjacency, (n) => visited.push(n));
       expect(count).toBe(3);
@@ -715,8 +723,18 @@ describe("property-test corpora", () => {
     it("queue-drain-diamond: diamond DAG visits all 4 nodes, visitCount === 4", () => {
       // A -> B, A -> C, B -> D, C -> D
       const visited: string[] = [];
-      const inDegree = new Map([["A", 0], ["B", 1], ["C", 1], ["D", 2]]);
-      const adjacency = new Map([["A", ["B", "C"]], ["B", ["D"]], ["C", ["D"]], ["D", []]]);
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 1],
+        ["C", 1],
+        ["D", 2],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B", "C"]],
+        ["B", ["D"]],
+        ["C", ["D"]],
+        ["D", []],
+      ]);
       const count = queueDrain(["A"], inDegree, adjacency, (n) => visited.push(n));
       expect(count).toBe(4);
       expect(visited).toContain("A");
@@ -728,16 +746,34 @@ describe("property-test corpora", () => {
     it("queue-drain-cycle-detected: cycle produces visitCount < total nodes", () => {
       // B -> C -> B (cycle); A -> B
       const visited: string[] = [];
-      const inDegree = new Map([["A", 0], ["B", 2], ["C", 1]]);
-      const adjacency = new Map([["A", ["B"]], ["B", ["C"]], ["C", ["B"]]]);
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 2],
+        ["C", 1],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B"]],
+        ["B", ["C"]],
+        ["C", ["B"]],
+      ]);
       const count = queueDrain(["A"], inDegree, adjacency, (n) => visited.push(n));
       expect(count).toBeLessThan(3);
     });
     it("queue-drain-parallel: two independent chains each process correctly", () => {
       // A -> B and C -> D (parallel)
       const visited: string[] = [];
-      const inDegree = new Map([["A", 0], ["B", 1], ["C", 0], ["D", 1]]);
-      const adjacency = new Map([["A", ["B"]], ["B", []], ["C", ["D"]], ["D", []]]);
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 1],
+        ["C", 0],
+        ["D", 1],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B"]],
+        ["B", []],
+        ["C", ["D"]],
+        ["D", []],
+      ]);
       const count = queueDrain(["A", "C"], inDegree, adjacency, (n) => visited.push(n));
       expect(count).toBe(4);
       expect(visited).toContain("A");
@@ -785,7 +821,13 @@ describe("property-test corpora", () => {
 
   describe("semver-component-parser", () => {
     it("semver-simple: parseSemver('1.2.3') returns correct components", () => {
-      expect(parseSemver("1.2.3")).toEqual({ major: 1, minor: 2, patch: 3, prerelease: null, build: null });
+      expect(parseSemver("1.2.3")).toEqual({
+        major: 1,
+        minor: 2,
+        patch: 3,
+        prerelease: null,
+        build: null,
+      });
     });
     it("semver-prerelease: parseSemver('1.0.0-alpha.1') returns prerelease 'alpha.1'", () => {
       const r = parseSemver("1.0.0-alpha.1");
@@ -803,7 +845,13 @@ describe("property-test corpora", () => {
       expect(r.build).toBe("exp.sha.5114f85");
     });
     it("semver-zeros: parseSemver('0.0.0') returns all-zero components", () => {
-      expect(parseSemver("0.0.0")).toEqual({ major: 0, minor: 0, patch: 0, prerelease: null, build: null });
+      expect(parseSemver("0.0.0")).toEqual({
+        major: 0,
+        minor: 0,
+        patch: 0,
+        prerelease: null,
+        build: null,
+      });
     });
     it("semver-large-numbers: parseSemver('100.200.300') returns major=100, minor=200, patch=300", () => {
       const r = parseSemver("100.200.300");

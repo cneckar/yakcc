@@ -63,9 +63,7 @@ const URL_SAFE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0
  */
 export function base64Encode(bytes: number[], urlSafe: boolean): string {
   if (bytes.length % 3 !== 0) {
-    throw new RangeError(
-      `base64Encode: input length must be a multiple of 3, got ${bytes.length}`,
-    );
+    throw new RangeError(`base64Encode: input length must be a multiple of 3, got ${bytes.length}`);
   }
 
   const alphabet = urlSafe ? URL_SAFE_ALPHABET : STANDARD_ALPHABET;
@@ -80,9 +78,7 @@ export function base64Encode(bytes: number[], urlSafe: boolean): string {
     const b2 = bytes[i + 2] ?? 0;
 
     if (b0 > 255 || b1 > 255 || b2 > 255) {
-      throw new RangeError(
-        `base64Encode: byte value out of range [0, 255] at index ${i}`,
-      );
+      throw new RangeError(`base64Encode: byte value out of range [0, 255] at index ${i}`);
     }
 
     // Extract four 6-bit groups from three 8-bit bytes (MSB-first, RFC 4648 Section 3)
@@ -94,7 +90,8 @@ export function base64Encode(bytes: number[], urlSafe: boolean): string {
     // alphabet[n] is string | undefined per noUncheckedIndexedAccess.
     // Indices i0-i3 are in [0, 63] by construction (6-bit values), and alphabet
     // has exactly 64 characters, so these lookups always succeed.
-    result += (alphabet[i0] ?? "") + (alphabet[i1] ?? "") + (alphabet[i2] ?? "") + (alphabet[i3] ?? "");
+    result +=
+      (alphabet[i0] ?? "") + (alphabet[i1] ?? "") + (alphabet[i2] ?? "") + (alphabet[i3] ?? "");
   }
 
   return result;
