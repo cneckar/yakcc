@@ -1429,13 +1429,16 @@ export function decTwo(a: number): number { return a - 2; }
   it("T6: property — editing a random subset of files produces that many cache misses", async () => {
     const files = ["packages/foo/src/a.ts", "packages/foo/src/b.ts", "packages/foo/src/c.ts"];
     const contents = [
-      `// SPDX-License-Identifier: MIT\n/** inc */ export function inc(a: number): number { return a + 1; }\n`,
-      `// SPDX-License-Identifier: MIT\n/** dec */ export function dec(a: number): number { return a - 1; }\n`,
-      `// SPDX-License-Identifier: MIT\n/** dbl */ export function dbl(a: number): number { return a * 2; }\n`,
+      "// SPDX-License-Identifier: MIT\n/** inc */ export function inc(a: number): number { return a + 1; }\n",
+      "// SPDX-License-Identifier: MIT\n/** dec */ export function dec(a: number): number { return a - 1; }\n",
+      "// SPDX-License-Identifier: MIT\n/** dbl */ export function dbl(a: number): number { return a * 2; }\n",
     ];
 
     // A fast-check arbitrary that produces a subset mask (array of booleans, one per file).
-    const subsetArbitrary = fc.array(fc.boolean(), { minLength: files.length, maxLength: files.length });
+    const subsetArbitrary = fc.array(fc.boolean(), {
+      minLength: files.length,
+      maxLength: files.length,
+    });
 
     let iteration = 0;
     await fc.assert(
