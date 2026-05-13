@@ -43,6 +43,7 @@ import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { init } from "./commands/init.js";
 import { propose } from "./commands/propose.js";
 import { query } from "./commands/query.js";
+import { registryExport } from "./commands/registry-export.js";
 import { registryInit } from "./commands/registry-init.js";
 import { registryRebuild } from "./commands/registry-rebuild.js";
 import { search } from "./commands/search.js";
@@ -128,6 +129,7 @@ COMMANDS
   init [--target <dir>] [--peer <url>] Initialize yakcc in a project directory
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
   registry rebuild [--path <p>]       Re-embed all blocks after an embedding model swap
+  registry export --to <p>            Export registry as canonical SQLite (VACUUM INTO)
   compile <entry> [--registry <p>]    Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
   propose <contract-file>             Check registry for a matching contract
@@ -209,8 +211,14 @@ export async function runCli(
         // (DEC-EMBED-MODEL-DEFAULT-002, PR #336). See rebuild.ts and registry-rebuild.ts.
         return registryRebuild(rest, logger, { embeddings: opts?.embeddings });
       }
+      if (subcommand === "export") {
+        // @decision DEC-CLI-REGISTRY-EXPORT-001
+        // `yakcc registry export --to <path> [--from <path>]` — emits a clean
+        // VACUUM-INTO copy of the source registry for federation publishing (#371).
+        return registryExport(rest, logger);
+      }
       logger.error(
-        `error: unknown registry subcommand: ${subcommand ?? "(none)"}. Did you mean 'registry init' or 'registry rebuild'?`,
+        `error: unknown registry subcommand: ${subcommand ?? "(none)"}. Did you mean 'registry init', 'registry rebuild', or 'registry export'?`,
       );
       return 1;
     }
