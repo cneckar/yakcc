@@ -1,7 +1,8 @@
 // @decision DEC-SEEDS-TEST-T05-001: seed.test.ts updated for WI-T05 triplet migration.
 // Status: implemented (WI-T05)
 // Rationale: Block source is now in <name>/impl.ts; imports come from <name>/impl.js.
-// Suite 1 (registry loading) asserts 20 rows via seedRegistry() returning merkleRoots.
+// Suite 1 (registry loading) asserts 21 rows via seedRegistry() returning merkleRoots.
+// timer-handle (WI-460 / closes #454) added as block 21.
 // Suite 2 (content-address round-trip) uses parseBlockTriplet on block directories.
 // Suite 3 (strict-subset validation) reads impl.ts from the triplet directory.
 // Suite 4 (property-test corpora) exercises functions imported from impl.js paths.
@@ -35,6 +36,7 @@ import { peekChar } from "./blocks/peek-char/impl.js";
 import { positionStep } from "./blocks/position-step/impl.js";
 import { signedInteger } from "./blocks/signed-integer/impl.js";
 import { stringFromPosition } from "./blocks/string-from-position/impl.js";
+import { timerHandle } from "./blocks/timer-handle/impl.js";
 import { whitespace } from "./blocks/whitespace/impl.js";
 import { type SeedResult, seedRegistry } from "./seed.js";
 
@@ -74,6 +76,7 @@ const BLOCK_DIRS = [
   "position-step",
   "signed-integer",
   "string-from-position",
+  "timer-handle",
   "whitespace",
 ] as const;
 
@@ -82,7 +85,7 @@ const BLOCK_DIRS = [
 // ---------------------------------------------------------------------------
 
 describe("seedRegistry", () => {
-  it("stores all 20 blocks and returns their merkleRoots", async () => {
+  it("stores all 21 blocks and returns their merkleRoots", async () => {
     const registry = await openRegistry(":memory:", {
       embeddings: createOfflineEmbeddingProvider(),
     });
@@ -92,8 +95,8 @@ describe("seedRegistry", () => {
     } finally {
       await registry.close();
     }
-    expect(result.stored).toBe(20);
-    expect(result.merkleRoots).toHaveLength(20);
+    expect(result.stored).toBe(21);
+    expect(result.merkleRoots).toHaveLength(21);
   });
 
   it("is idempotent — calling seedRegistry twice does not throw or double-count", async () => {
@@ -123,8 +126,8 @@ describe("seedRegistry", () => {
       const r1 = await seedRegistry(registry1);
       const r2 = await seedRegistry(registry2);
       expect(r1.merkleRoots).toEqual(r2.merkleRoots);
-      expect(r1.stored).toBe(20);
-      expect(r2.stored).toBe(20);
+      expect(r1.stored).toBe(21);
+      expect(r2.stored).toBe(21);
     } finally {
       await registry1.close();
       await registry2.close();
@@ -545,6 +548,32 @@ describe("property-test corpora", () => {
       expect(charCode("[", 0)).toBe(91);
     });
   });
+
+  describe("timer-handle", () => {
+    it("timer-fires: timerHandle returns object with cancel function", () => {
+      // Verify the API shape; timer fires after delayMs (tested with fake timers in unit tests)
+      let fired = false;
+      const handle = timerHandle(() => { fired = true; }, 10_000);
+      expect(typeof handle.cancel).toBe("function");
+      // cancel immediately — fires must be false (timer not elapsed)
+      handle.cancel();
+      expect(fired).toBe(false);
+    });
+    it("timer-cancel-prevents-fire: cancel() called synchronously prevents callback", () => {
+      let callCount = 0;
+      const handle = timerHandle(() => { callCount++; }, 10_000);
+      handle.cancel();
+      // After cancel, callCount should remain 0 (timer cleared)
+      expect(callCount).toBe(0);
+    });
+    it("timer-cancel-idempotent: cancel() called twice does not throw", () => {
+      const handle = timerHandle(() => {}, 10_000);
+      // First cancel
+      handle.cancel();
+      // Second cancel — must not throw
+      expect(() => handle.cancel()).not.toThrow();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -630,8 +659,8 @@ describe("end-to-end: seed → selectBlocks → getBlock → parse → compose",
 
     // Step 1: Seed the registry
     const { stored, merkleRoots } = await seedRegistry(registry);
-    expect(stored).toBe(20);
-    expect(merkleRoots.length).toBe(20);
+    expect(stored).toBe(21);
+    expect(merkleRoots.length).toBe(21);
 
     // Step 2: Parse list-of-ints triplet to get its specHash
     const { parseBlockTriplet } = await import("@yakcc/ir");
@@ -675,7 +704,10 @@ describe("end-to-end: seed → selectBlocks → getBlock → parse → compose",
       expect(result.spec, `${name} missing spec`).toBeDefined();
       expect(result.merkleRoot, `${name} missing merkleRoot`).toBeTruthy();
       expect(result.spec.level).toBe("L0");
-      expect(result.spec.effects).toEqual([]);
+      // timer-handle has effects (timer scheduling); other blocks are pure with empty effects
+      if (name !== "timer-handle") {
+        expect(result.spec.effects, `${name} effects should be empty for pure blocks`).toEqual([]);
+      }
 
       // Verify block is findable in registry
       const roots = await registry.selectBlocks(result.specHashValue);
