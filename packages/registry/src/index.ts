@@ -1056,6 +1056,51 @@ export interface Registry {
     }[],
   ): Promise<void>;
 
+  // ---------------------------------------------------------------------------
+  // #363: source_file_state accessors — per-file content-hash cache
+  // (DEC-V2-SHAVE-CACHE-STORAGE-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write (or overwrite) the BLAKE3-256 hex content hash for a source file in
+   * the `source_file_state` table (schema v10, issue #363).
+   *
+   * Called by `yakcc bootstrap` after a successful cache-miss shave, so the
+   * next bootstrap run can short-circuit re-shaving this file if its bytes are
+   * unchanged.
+   *
+   * Uses INSERT OR REPLACE semantics: a second call for the same
+   * `(sourcePkg, sourceFile)` overwrites the stored hash and updates
+   * `last_shave_time`. This is intentional — the most-recent shave wins.
+   *
+   * Throws if:
+   *   - `sourcePkg` or `sourceFile` is empty.
+   *   - `sourceFile` is an absolute path (starts with '/') or contains '..'.
+   *   - `contentHash` is empty.
+   *
+   * @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+   */
+  storeSourceFileContentHash(
+    sourcePkg: string,
+    sourceFile: string,
+    contentHash: string,
+  ): Promise<void>;
+
+  /**
+   * Retrieve the stored BLAKE3-256 hex content hash for a source file from the
+   * `source_file_state` table (schema v10, issue #363).
+   *
+   * Returns `null` when no row exists for `(sourcePkg, sourceFile)` — meaning
+   * the file has never been successfully shaved with cache support, so the next
+   * bootstrap pass must perform a full shave (cache miss).
+   *
+   * Returns the stored hex string when a row exists — the bootstrap caller
+   * compares it against the current file's BLAKE3 hash to decide cache hit vs miss.
+   *
+   * @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+   */
+  getSourceFileContentHash(sourcePkg: string, sourceFile: string): Promise<string | null>;
+
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;
 }

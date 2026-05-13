@@ -56,8 +56,8 @@
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  *
  * L2-I2 invariant: this constant must equal the highest MIGRATION_N_DDL number
- * (currently 9 after the v8 → v9 migration for per-occurrence offset tracking;
- * DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001 / WI-V2-STORAGE-IDEMPOTENT-RECOMPILE #355).
+ * (currently 10 after the v9 → v10 migration adding source_file_state table;
+ * DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / issue #363).
  *
  * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001
  * @title SCHEMA_VERSION 8 → 9; single-phase additive migration adding block_occurrences table
@@ -67,8 +67,17 @@
  *   Atom content (blocks table) stays monotonic with INSERT OR IGNORE.
  *   Atom occurrences (block_occurrences) are refreshed per-file on every
  *   bootstrap pass via atomic delete-then-insert (DEC-V2-OCCURRENCE-DELETE-INSERT-001).
+ *
+ * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001
+ * @title SCHEMA_VERSION 9 → 10; single-phase additive migration adding source_file_state table
+ * @status decided (issue #363 / wi-363-shave-cache)
+ * @rationale Pure DDL addition; no backfill required (new table starts empty;
+ *   rows accrete on each cache-miss shave write during bootstrap). The table
+ *   stores per-file BLAKE3-256 content hashes enabling the bootstrap fast path
+ *   to skip re-shaving unchanged files (DEC-V2-SHAVE-CACHE-STORAGE-001).
+ *   Two-phase migration is over-engineered: starting empty, no partial-state risk.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -709,6 +718,64 @@ const MIGRATION_9_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 9 → 10: add source_file_state table + index
+// (DEC-V2-SHAVE-CACHE-STORAGE-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 /
+//  issue #363 / wi-363-shave-cache)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-V2-SHAVE-CACHE-STORAGE-001
+ * @title New source_file_state table (Option B) — NOT a new column on source_file_glue
+ * @status decided (issue #363 / wi-363-shave-cache)
+ * @rationale source_file_glue.content_hash already stores BLAKE3 of the glue blob,
+ *   a different domain from per-source-file content. Single-authority-per-fact
+ *   (Sacred Practice #12) requires these two domains to live in separate tables.
+ *   Reusing the column creates a dual-meaning cell: glue-blob hash for glue rows,
+ *   source-file-content hash for a cache hit — both keyed identically, different
+ *   semantics. The extra CREATE TABLE is cheap compared to the correctness risk.
+ *   Option A (ALTER TABLE source_file_glue ADD COLUMN) was rejected because:
+ *     (a) files with zero atoms have a glue row but would need the cache column
+ *         for different reasons, blurring the row invariant,
+ *     (b) the dual-meaning cell violates Sacred Practice #12.
+ *
+ * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001
+ * @title SCHEMA_VERSION 9 → 10; single-phase additive migration adding source_file_state table
+ * @status decided (issue #363 / wi-363-shave-cache)
+ * @rationale Pure DDL addition; no backfill required (table starts empty; rows
+ *   accrete on each cache-miss bootstrap pass). Same idempotent pattern as
+ *   migrations 8 and 9. No partial-state risk because there are no rows to migrate.
+ */
+const MIGRATION_10_DDL: readonly string[] = [
+  // source_file_state: one row per source file, storing the BLAKE3-256 hex content
+  // hash of the file's UTF-8 bytes at the time of the most recent successful shave.
+  //
+  // source_pkg:      Workspace package directory (e.g. 'packages/cli'). Part of PK.
+  // source_file:     Workspace-relative path (e.g. 'packages/cli/src/commands/foo.ts').
+  //                  Part of PK. Must be workspace-relative, not absolute.
+  // content_hash:    BLAKE3-256 hex of the source file's UTF-8 bytes at shave time.
+  //                  Compared on next bootstrap: match = cache hit, skip shave.
+  //                  NOT the same as source_file_glue.content_hash (which is
+  //                  BLAKE3 of the glue blob — a different domain entirely).
+  // last_shave_time: Unix epoch milliseconds of the last successful shave write.
+  //                  Informational only; not used in cache-key comparison.
+  //
+  // PRIMARY KEY (source_pkg, source_file): one row per source file.
+  // INSERT OR REPLACE semantics for idempotent re-bootstrap (storeSourceFileContentHash).
+  // No ownership columns — DEC-NO-OWNERSHIP-011.
+  `CREATE TABLE IF NOT EXISTS source_file_state (
+    source_pkg      TEXT    NOT NULL,
+    source_file     TEXT    NOT NULL,
+    content_hash    TEXT    NOT NULL,
+    last_shave_time INTEGER NOT NULL,
+    PRIMARY KEY (source_pkg, source_file)
+  )`,
+
+  // Non-unique index on content_hash for future dedup/scan use (e.g. finding all
+  // files that share the same content hash, or bulk invalidation by hash prefix).
+  "CREATE INDEX IF NOT EXISTS idx_source_file_state_hash ON source_file_state(content_hash)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -749,6 +816,8 @@ export interface MigrationsDb {
  *   8 → 9: add block_occurrences table + indexes for per-occurrence offset tracking
  *           (DEC-V2-STORAGE-IDEMPOTENT-RECOMPILE-001 / DEC-V2-BLOCK-OCCURRENCES-SCHEMA-001 /
  *            DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001).
+ *   9 → 10: add source_file_state table + content_hash index for per-file content-hash caching
+ *            (DEC-V2-SHAVE-CACHE-STORAGE-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / issue #363).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -987,5 +1056,22 @@ export function applyMigrations(db: MigrationsDb): void {
       db.exec(sql);
     }
     db.prepare("UPDATE schema_version SET version = ?").run(9);
+  }
+
+  // Migration 9 → 10: add source_file_state table + content_hash index
+  // (DEC-V2-SHAVE-CACHE-STORAGE-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / issue #363).
+  //
+  // Pure DDL — CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS are both
+  // naturally idempotent. No ADD COLUMN statements, no try/catch needed.
+  // No backfill: source_file_state starts empty; rows accrete on each cache-miss
+  // bootstrap pass via storeSourceFileContentHash() after a successful shave.
+  // A crash between the first DDL statement and the version bump leaves the table
+  // present at version=9; re-entry runs CREATE TABLE IF NOT EXISTS as a no-op
+  // and bumps to 10 normally.
+  if (currentVersion < 10) {
+    for (const sql of MIGRATION_10_DDL) {
+      db.exec(sql);
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(10);
   }
 }
