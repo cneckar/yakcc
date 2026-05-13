@@ -1,0 +1,13 @@
+# @decision DEC-BENCH-B8-SHA-001
+# @title Force LF line endings for JSONL transcript corpus files
+# @status accepted
+# @rationale
+#   B8-synthetic run.mjs computes a SHA-256 over raw bytes of the JSONL corpus files.
+#   Without this, Windows git (core.autocrlf=true) converts LF->CRLF on checkout,
+#   making the SHA-256 in corpus-spec.json (computed from LF bytes, as stored in git)
+#   not match the bytes on disk. This caused #443 / #452.
+#   Forcing eol=lf ensures all platforms see identical bytes, keeping the SHA stable.
+#   See also: bench/B8-synthetic/transcripts/corpus-spec.json _decision field.
+
+# Force LF line endings for JSONL benchmark corpus files (platform-stable SHA)
+bench/B8-synthetic/transcripts/*.jsonl text eol=lf
