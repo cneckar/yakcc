@@ -184,11 +184,22 @@ export interface RecursionOptions extends AtomTestOptions {
 // fixture files (L5), dynamic import() classification (deferred per L3-I2).
 
 import type { IntentCard } from "../intent/types.js";
+import type { VarianceScoreEntry } from "./variance-rank.js";
+
+// Re-export so callers can reference the type from this sub-module path.
+export type { VarianceScoreEntry };
 
 /**
  * A node in the recursion tree that matched an existing primitive in the registry
  * by canonicalAstHash. The entire subtree rooted here is replaced by a pointer
  * to the registered block — no synthesis required.
+ *
+ * `varianceScores` is populated only when the registry returned more than one
+ * candidate BlockMerkleRoot for this node's canonicalAstHash and variance scoring
+ * was used to select the best match (DEC-VARIANCE-WIRING-001). The array is
+ * sorted by descending score; the first entry corresponds to the selected
+ * `merkleRoot`. Absent (undefined) for single-candidate matches — zero overhead
+ * for the common case.
  */
 export interface PointerEntry {
   readonly kind: "pointer";
@@ -196,6 +207,12 @@ export interface PointerEntry {
   readonly merkleRoot: BlockMerkleRoot;
   readonly canonicalAstHash: CanonicalAstHash;
   readonly matchedBy: "canonical_ast_hash";
+  /**
+   * Per-candidate variance scores, populated only when the registry returned
+   * multiple candidates and variance ranking was applied (DEC-VARIANCE-WIRING-001).
+   * Sorted descending by score. Undefined for single-candidate matches.
+   */
+  readonly varianceScores?: readonly VarianceScoreEntry[];
 }
 
 /**

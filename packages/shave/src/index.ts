@@ -420,7 +420,8 @@ import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./univers
  * NovelGlueEntry for multi-leaf trees.
  *
  * "decomposition" is removed from diagnostics.stubbed — decomposition is now
- * live. "variance" and "license-gate" remain stubbed (WI-013/014).
+ * live. "license-gate" is removed — gate is now live (WI-013-02).
+ * "variance" is removed — variance ranking is now live (WI-011 / #374).
  *
  * @decision DEC-LICENSE-WIRING-002
  * title: License gate runs first in universalize() (WI-013-02)
@@ -668,8 +669,8 @@ export async function universalize(
     diagnostics: {
       // "decomposition" removed — decompose() is now live (WI-012-06).
       // "license-gate" removed — gate is now live (WI-013-02).
-      // "variance" remains stubbed (WI-014).
-      stubbed: ["variance"],
+      // "variance" removed — variance ranking is now live (WI-011 / #374).
+      stubbed: [],
       cacheHits: 0,
       cacheMisses: 0,
     },

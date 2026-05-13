@@ -178,8 +178,8 @@ describe("universalize() wiring — no registry matches", () => {
 
     // "decomposition" must no longer appear in stubbed (it is live).
     expect(result.diagnostics.stubbed).not.toContain("decomposition");
-    // "variance" remains stubbed; "license-gate" is now live (WI-013-02).
-    expect(result.diagnostics.stubbed).toContain("variance");
+    // variance is now live (#374) and license-gate is live (WI-013-02).
+    expect(result.diagnostics.stubbed).not.toContain("variance");
     expect(result.diagnostics.stubbed).not.toContain("license-gate");
   });
 });

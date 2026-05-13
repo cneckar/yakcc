@@ -134,7 +134,8 @@ describe("universalize() — wired to extractIntent + decompose + slice", () => 
     expect(result.matchedPrimitives).toEqual([]);
     // "decomposition" removed from stubbed — it is now live.
     expect(result.diagnostics.stubbed).not.toContain("decomposition");
-    expect(result.diagnostics.stubbed).toContain("variance");
+    // variance ranking is now live (#374) — must NOT appear in stubbed.
+    expect(result.diagnostics.stubbed).not.toContain("variance");
     // license-gate is now live (WI-013-02) — no longer in stubbed.
     expect(result.diagnostics.stubbed).not.toContain("license-gate");
   });
@@ -217,8 +218,8 @@ describe("shave() — live wiring (WI-014-01)", () => {
       expect(result.atoms[0]?.placeholderId).toMatch(/^shave-atom-/);
       // "decomposition" is live — not in stubbed
       expect(result.diagnostics.stubbed).not.toContain("decomposition");
-      // "variance" is still stubbed (WI-014)
-      expect(result.diagnostics.stubbed).toContain("variance");
+      // variance ranking is now live (#374) — must NOT appear in stubbed.
+      expect(result.diagnostics.stubbed).not.toContain("variance");
     } finally {
       await rmFile(tmpPath, { force: true });
     }
