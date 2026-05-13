@@ -114,16 +114,28 @@ const { values: cliArgs } = parseArgs({
     "reps":            { type: "string",  default: "3" },
     "output":          { type: "string" },
     "sweep-positions": { type: "string" }, // informational only; matrix.mjs controls shape
+    // WI-479 engagement investigation flags:
+    // --force-tool-call: force tool_choice={type:"tool",name:"atom-lookup"} for H2 hypothesis test.
+    // Forces at least 1 tool invocation per hooked cell regardless of model preference.
+    "force-tool-call": { type: "boolean", default: false },
+    // --prompt-variant: select system prompt variant for H1 hypothesis test.
+    // Values: "baseline" (current), "motivated" (add value selling), "chain-of-thought" (structured query).
+    "prompt-variant":  { type: "string",  default: "baseline" },
+    // --tasks: comma-separated list of task IDs to run (subset for Phase 3 small slices)
+    "tasks":           { type: "string" },
   },
   strict: false,
   allowPositionals: false,
 });
 
-const DRY_RUN      = cliArgs["dry-run"] === true;
-const NO_NETWORK   = cliArgs["no-network"] === true;
-const DRIVER_FILTER = cliArgs["driver"] ?? "all";
-const TIER          = cliArgs["tier"] ?? "min";
-const N_REPS        = parseInt(cliArgs["reps"] ?? "3", 10);
+const DRY_RUN        = cliArgs["dry-run"] === true;
+const NO_NETWORK     = cliArgs["no-network"] === true;
+const DRIVER_FILTER  = cliArgs["driver"] ?? "all";
+const TIER           = cliArgs["tier"] ?? "min";
+const N_REPS         = parseInt(cliArgs["reps"] ?? "3", 10);
+const FORCE_TOOL     = cliArgs["force-tool-call"] === true;
+const PROMPT_VARIANT = cliArgs["prompt-variant"] ?? "baseline";
+const TASK_FILTER    = cliArgs["tasks"] ? cliArgs["tasks"].split(",").map((t) => t.trim()) : null;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -135,11 +147,18 @@ const SCRATCH_DIR     = join(ARTIFACT_DIR, "oracle-scratch");
 const MCP_SERVER_PATH = join(BENCH_B4_ROOT, "harness", "mcp-server.mjs");
 
 const DATE_STAMP = new Date().toISOString().replace(/T/, "-").replace(/[:.]/g, "-").slice(0, 16);
-const RUN_ID     = `${TIER}-${DATE_STAMP}-${randomUUID().slice(0, 8)}`;
+// Include engagement variant tags in RUN_ID so artifacts are unambiguous
+const VARIANT_TAG = [
+  FORCE_TOOL    ? "forced"  : "",
+  PROMPT_VARIANT !== "baseline" ? `prompt-${PROMPT_VARIANT}` : "",
+  TASK_FILTER   ? `tasks-${TASK_FILTER.join("-")}` : "",
+].filter(Boolean).join("-");
+const RUN_ID = [TIER, DATE_STAMP, VARIANT_TAG, randomUUID().slice(0, 8)]
+  .filter(Boolean).join("-");
 
 const ARTIFACT_PATH = cliArgs["output"] ??
-  join(ARTIFACT_DIR, `results-${TIER}-${DATE_STAMP}.json`);
-const SUMMARY_PATH  = join(ARTIFACT_DIR, `summary-${TIER}-${DATE_STAMP}.md`);
+  join(ARTIFACT_DIR, `results-${TIER}-${DATE_STAMP}${VARIANT_TAG ? "-" + VARIANT_TAG : ""}.json`);
+const SUMMARY_PATH  = join(ARTIFACT_DIR, `summary-${TIER}-${DATE_STAMP}${VARIANT_TAG ? "-" + VARIANT_TAG : ""}.md`);
 
 const MAX_TOKENS  = 2048;
 const TEMPERATURE = 1.0;
@@ -169,9 +188,56 @@ class MissingDriverKeyError extends Error {
 
 const SYSTEM_PROMPT_VANILLA = `You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a \`\`\`typescript code block. Do not include explanation before or after the code block.`;
 
-const SYSTEM_PROMPT_HOOK_SUFFIX = `
+// WI-479 H1 hypothesis: three prompt variants testing engagement motivation strength.
+//
+// @decision DEC-V0-B4-ENGAGEMENT-002
+// @title H1 prompt variants: three levels of tool-use motivation for engagement hypothesis test
+// @status accepted
+// @rationale
+//   The matrix-1 run showed models invoke the atom-lookup tool ~1x/cell but get empty results.
+//   Before testing H1 (prompt under-motivation), we confirmed from Phase 2 re-analysis that
+//   invocation rate IS ~100% (tool_invocation_rate=1.0). So H1 is partially disproved —
+//   models DO call the tool. The remaining question is whether stronger prompting produces
+//   different intents or more targeted queries that might hit future atoms.
+//   These variants are kept for H1 measurement even though H4 is the confirmed root cause.
+//
+// Variant A (baseline): current suffix verbatim — establishes control.
+// Variant B (motivated): adds explicit preference instruction + value proposition.
+// Variant C (chain-of-thought): adds structured 2-step query protocol before coding.
+
+const SYSTEM_PROMPT_HOOK_SUFFIX_BASELINE = `
 
 You are working in a codebase that uses the yakcc registry for common atomic implementations. When implementing code, prefer token-efficient implementations that compose proven patterns (state machines, data structures, parsing primitives) rather than verbose from-scratch approaches. Output only the implementation code in a \`\`\`typescript code block.`;
+
+const SYSTEM_PROMPT_HOOK_SUFFIX_MOTIVATED = `
+
+You are working in a codebase backed by the yakcc atom registry. IMPORTANT: Before implementing any function, you MUST call atom-lookup to check if a pre-tested atom already exists. Atoms are content-addressed, pre-verified, and composable — using them reduces your output token cost and increases correctness.
+
+PREFER yakcc atoms over inline implementation whenever a candidate exists. Query atom-lookup before emitting any function body. Only write inline code when atom-lookup confirms no useful atom exists (returns { atoms: [] }).
+
+Output only the implementation code in a \`\`\`typescript code block.`;
+
+const SYSTEM_PROMPT_HOOK_SUFFIX_CHAIN_OF_THOUGHT = `
+
+You are working in a codebase backed by the yakcc atom registry. Use this protocol:
+
+STEP 1: Before writing any code, identify 2-3 atomic building blocks the task needs (e.g., "doubly-linked list node", "TTL timestamp tracker", "hash map lookup").
+STEP 2: Call atom-lookup for each building block with a specific behavioral description.
+STEP 3: For each query result — if atoms are found, incorporate them; if { atoms: [] }, note it and implement inline.
+STEP 4: Emit the final implementation.
+
+Output only the implementation code in a \`\`\`typescript code block.`;
+
+// Resolve prompt suffix based on --prompt-variant flag
+function resolveHookSuffix(variant) {
+  switch (variant) {
+    case "motivated":      return SYSTEM_PROMPT_HOOK_SUFFIX_MOTIVATED;
+    case "chain-of-thought": return SYSTEM_PROMPT_HOOK_SUFFIX_CHAIN_OF_THOUGHT;
+    default:               return SYSTEM_PROMPT_HOOK_SUFFIX_BASELINE;
+  }
+}
+
+const SYSTEM_PROMPT_HOOK_SUFFIX = resolveHookSuffix(PROMPT_VARIANT);
 
 /**
  * @decision DEC-V0-B4-HOOK-WIRING-001
@@ -425,11 +491,22 @@ async function callAnthropicForCell(taskId, taskManifest, cell, budget, billingL
     });
     budget.checkBeforeCall(estCost);
 
+    // @decision DEC-V0-B4-ENGAGEMENT-003
+    // @title H2 forced tool-call: tool_choice forces at least 1 invocation per cell
+    // @status accepted
+    // @rationale
+    //   WI-479 Phase 3 H2 test: with tool_choice={type:"tool",name:"atom-lookup"},
+    //   the model MUST invoke the tool before it can emit text. This rules out
+    //   H1 (prompt motivation) as a factor and isolates whether forced invocations
+    //   produce better atom queries or better intents.
+    //   Note: tool_choice is ONLY supported for Anthropic API >= claude-3-x models.
+    //   Set --force-tool-call flag to enable.
     const apiParams = {
       model: cell.model_id, max_tokens: MAX_TOKENS, temperature: TEMPERATURE,
       system: systemPrompt,
       messages: [{ role: "user", content: promptText }],
       ...(isHooked ? { tools: [ATOM_LOOKUP_TOOL_DEF] } : {}),
+      ...(isHooked && FORCE_TOOL ? { tool_choice: { type: "tool", name: "atom-lookup" } } : {}),
     };
 
     let response = await client.messages.create(apiParams);
@@ -508,7 +585,8 @@ async function callAnthropicForCell(taskId, taskManifest, cell, budget, billingL
     budget.addSpend(billingEntry.cost_usd_estimated);
     budget.logRollingSpend({ cellId: cell.cell_id, taskId, rep, callCost: billingEntry.cost_usd_estimated });
 
-    return { response, wallMs, toolCycles, hookNonEng, subEvents, billingEntry };
+    return { response, wallMs, toolCycles, hookNonEng, subEvents, billingEntry,
+             stopReason: response.stop_reason ?? "unknown" };
   } finally {
     if (mcpServer) mcpServer.close();
   }
@@ -674,7 +752,8 @@ async function main() {
 
   const activeDriverShortNames = [...new Set(activeCells.map((c) => c.driver))];
   const activeDrivers = DRIVERS.filter((d) => activeDriverShortNames.includes(d.short_name));
-  const estimatedTotalCalls = activeCells.length * 8 * N_REPS;
+  // estimatedTotalCalls updated after manifest load if TASK_FILTER is active
+  let estimatedTotalCalls = activeCells.length * 8 * N_REPS;
 
   console.log("=".repeat(70));
   console.log("B4-tokens — Matrix Token-Expenditure Harness (Slice 2)");
@@ -682,9 +761,15 @@ async function main() {
   console.log(`  Tier:     ${TIER.toUpperCase()} (${activeCells.length} cells/task)`);
   console.log(`  Drivers:  ${DRIVER_FILTER === "all" ? "all 3" : DRIVER_FILTER}`);
   console.log(`  N:        ${N_REPS} reps per (task × cell)`);
-  console.log(`  Est. runs: ${estimatedTotalCalls} (${activeCells.length} × 8 tasks × ${N_REPS})`);
+  const preFilterNTasks = TASK_FILTER ? TASK_FILTER.length : 8;
+  const preFilterEstRuns = activeCells.length * preFilterNTasks * N_REPS;
+  console.log(`  Tasks:    ${TASK_FILTER ? TASK_FILTER.join(", ") : "all 8"}`);
+  console.log(`  Est. runs: ${preFilterEstRuns} (${activeCells.length} × ${preFilterNTasks} tasks × ${N_REPS})`);
   console.log(`  Cap:      $${SLICE2_CAP_USD} USD (DEC-V0-B4-SLICE2-COST-CEILING-004)`);
   console.log(`  Run ID:   ${RUN_ID}`);
+  // WI-479 engagement investigation flags
+  if (FORCE_TOOL)            console.log(`  [H2]     --force-tool-call=ON (tool_choice forces invocation)`);
+  if (PROMPT_VARIANT !== "baseline") console.log(`  [H1]     --prompt-variant=${PROMPT_VARIANT}`);
   console.log("=".repeat(70));
   console.log();
 
@@ -712,7 +797,21 @@ async function main() {
   mkdirSync(SCRATCH_DIR,  { recursive: true });
 
   const manifest = loadAndVerifyTasks();
-  const tasks    = manifest.tasks;
+  // Apply --tasks filter if specified (Phase 3 hypothesis test slices)
+  const allTasks = manifest.tasks;
+  const tasks = TASK_FILTER
+    ? allTasks.filter((t) => TASK_FILTER.includes(t.id))
+    : allTasks;
+  if (TASK_FILTER) {
+    const unknown = TASK_FILTER.filter((id) => !allTasks.find((t) => t.id === id));
+    if (unknown.length > 0) {
+      console.error(`[B4] Unknown task IDs in --tasks filter: ${unknown.join(", ")}`);
+      process.exit(1);
+    }
+    console.log(`[B4] Task filter applied: ${tasks.map((t) => t.id).join(", ")}\n`);
+    // Recompute estimated total calls with filtered task count
+    estimatedTotalCalls = activeCells.length * tasks.length * N_REPS;
+  }
 
   const budget     = new BudgetTracker({ cap_usd: SLICE2_CAP_USD });
   const billingLog = new BillingLog({ dir: ARTIFACT_DIR, runId: RUN_ID });
@@ -733,18 +832,19 @@ async function main() {
       for (let rep = 1; rep <= N_REPS; rep++) {
         console.log(`    rep ${rep}/${N_REPS}...`);
 
-        let outputTokens   = 0;
-        let inputTokens    = 0;
-        let cacheReadTok   = 0;
-        let wallMs         = 0;
-        let costUsd        = 0;
-        let toolCycles     = 0;
-        let hookNonEng     = false;
-        let subEvents      = [];
-        let oraclePass     = false;
-        let oraclePassed   = 0;
-        let oracleTotal    = 0;
+        let outputTokens    = 0;
+        let inputTokens     = 0;
+        let cacheReadTok    = 0;
+        let wallMs          = 0;
+        let costUsd         = 0;
+        let toolCycles      = 0;
+        let hookNonEng      = false;
+        let subEvents       = [];
+        let oraclePass      = false;
+        let oraclePassed    = 0;
+        let oracleTotal     = 0;
         let responseContent = [];
+        let finalStopReason = "end_turn"; // WI-479: final stop_reason after tool relay
 
         if (DRY_RUN) {
           const fixture   = loadFixtureOrStub(task.id, cell.arm);
@@ -783,6 +883,8 @@ async function main() {
           hookNonEng      = callResult.hookNonEng;
           subEvents       = callResult.subEvents;
           costUsd         = callResult.billingEntry.cost_usd_estimated;
+          // WI-479: capture final stop_reason for engagement analysis
+          finalStopReason = callResult.stopReason;
         }
 
         // Extract code and run oracle
@@ -816,10 +918,14 @@ async function main() {
           wall_ms:            wallMs,
           cost_usd_estimated: costUsd,
           dry_run:            DRY_RUN,
+          // WI-479 engagement fields (always present for hooked arm)
           ...(cell.arm === "hooked" ? {
             tool_cycle_count:    toolCycles,
             hook_non_engaged:    hookNonEng,
             substitution_events: subEvents,
+            stop_reason_final:   finalStopReason,
+            force_tool_call:     FORCE_TOOL,
+            prompt_variant:      PROMPT_VARIANT,
           } : {}),
         });
       }
@@ -912,6 +1018,10 @@ async function main() {
       nCellsPerTask: activeCells.length,
       totalCalls:    estimatedTotalCalls,
       costCapUsd:    SLICE2_CAP_USD,
+      // WI-479 engagement investigation config
+      forceToolCall: FORCE_TOOL,
+      promptVariant: PROMPT_VARIANT,
+      taskFilter:    TASK_FILTER ?? "all",
     },
     cells:         activeCells,
     summary,
