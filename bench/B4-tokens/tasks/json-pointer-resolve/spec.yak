@@ -1,0 +1,24 @@
+id: json-pointer-resolve
+title: JSON Pointer Resolve (RFC 6901)
+version: 1
+export: named:jsonPointerResolve
+
+adversarial_framing: |
+  The trap is RFC 6901 escape-rule correctness. The ~0/~1 escape sequences have a specific
+  decode ORDER that is counter-intuitive: ~1 must be decoded to / BEFORE ~0 is decoded to ~.
+  This prevents the ambiguous sequence ~01 from being decoded as / (wrong) instead of ~1
+  (correct). Models trained on common JSON pointer implementations often get the order right
+  in simple cases but hallucinate that ~01 should decode to / (applying ~0 first). This is
+  the killer test case. Additionally, the "-" token (end-of-array reference) is frequently
+  either ignored or treated as a valid in-bounds index by models that have seen only basic
+  JSON pointer examples.
+
+spec: |
+  function jsonPointerResolve(doc: unknown, pointer: string): unknown
+
+  Semantics: RFC 6901 JSON Pointer resolution.
+  Empty pointer: returns doc.
+  Escape decoding: ~1 → / then ~0 → ~ (ORDER MATTERS for ~01).
+  Array indexing: non-negative integer tokens only; "-" always throws.
+  Error: throws Error for invalid pointer, missing keys, bad escapes.
+  No external libraries.

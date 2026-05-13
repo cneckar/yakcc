@@ -1,0 +1,25 @@
+id: topological-sort-kahns
+title: Topological Sort (Kahn's Algorithm)
+version: 1
+export: named:topologicalSort
+
+adversarial_framing: |
+  The trap is multi-block decomposition. Kahn's algorithm has three distinct computational
+  blocks that must be composed correctly: (1) in-degree computation across all nodes,
+  (2) queue initialization from zero-in-degree nodes, (3) queue drain loop updating
+  in-degrees and re-enqueuing newly-zero nodes. Models frequently produce a DFS-based
+  topological sort instead (which is correct for ordering but wrong pattern), or they
+  compute in-degree only from explicit edges (missing nodes with no outgoing edges that
+  still have incoming edges), or they fail to handle cycle detection (stop-condition check
+  is result.length vs node count). The deterministic queue-ordering requirement (ascending
+  numeric sort) further filters implementations that use an unsorted set instead of a
+  sorted queue structure.
+
+spec: |
+  function topologicalSort(graph: Map<number, number[]>): number[] | null
+
+  Semantics: Kahn's algorithm topological sort. Returns null on cycle.
+  Queue: ascending-numeric-order for determinism.
+  Empty graph: returns [].
+  Cycle detection: result.length < node count → null.
+  No external libraries.
