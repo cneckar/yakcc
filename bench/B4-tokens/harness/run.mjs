@@ -90,13 +90,42 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BENCH_B4_ROOT = resolve(__dirname, "..");
-const REPO_ROOT = resolve(__dirname, "../../..");
+
+// REPO_ROOT: find the main git repository root (not a worktree root) by looking
+// for a directory named ".git" (worktrees have a .git FILE, not a directory).
+// This correctly handles both main repo and feature worktree invocations.
+import { statSync } from "node:fs";
+
+function findRepoRootSync(startDir) {
+  let current = startDir;
+  for (let i = 0; i < 12; i++) {
+    const gitPath = join(current, ".git");
+    if (existsSync(gitPath)) {
+      try {
+        const stat = statSync(gitPath);
+        if (stat.isDirectory()) {
+          // This is the main git repo (not a worktree)
+          return current;
+        }
+        // .git is a file (worktree) — keep walking up
+      } catch (_) {}
+    }
+    const parent = resolve(current, "..");
+    if (parent === current) break; // filesystem root
+    current = parent;
+  }
+  // Fallback: ../../.. from harness dir
+  return resolve(startDir, "../../..");
+}
+
+const REPO_ROOT = findRepoRootSync(__dirname);
 
 // ---------------------------------------------------------------------------
 // CLI arguments
@@ -106,6 +135,8 @@ const { values: cliArgs } = parseArgs({
   args: process.argv.slice(2),
   options: {
     "dry-run": { type: "boolean", default: false },
+    "no-network": { type: "boolean", default: false },
+    "mcp": { type: "boolean", default: false },
     "reps": { type: "string", default: "3" },
     "output": { type: "string" },
   },
@@ -114,7 +145,13 @@ const { values: cliArgs } = parseArgs({
 });
 
 const DRY_RUN = cliArgs["dry-run"] === true;
+const NO_NETWORK = cliArgs["no-network"] === true;
 const N_REPS = parseInt(cliArgs["reps"] ?? "3", 10);
+
+// MCP_ENABLED: when true, Arm A uses the real MCP atom-lookup tool instead of
+// the system-prompt-suffix-only approach from Slice 1. Enables substitution
+// aggressiveness as a real sweep dimension (DEC-V0-B4-HOOK-WIRING-001).
+const MCP_ENABLED = cliArgs["mcp"] === true;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -125,6 +162,7 @@ const ARTIFACT_DIR = join(REPO_ROOT, "tmp", "B4-tokens");
 const SCRATCH_DIR = join(ARTIFACT_DIR, "oracle-scratch");
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, "-");
 const ARTIFACT_PATH = cliArgs["output"] ?? join(ARTIFACT_DIR, `slice1-${DRY_RUN ? "dry-" : ""}${TIMESTAMP}.json`);
+const MCP_SERVER_PATH = join(BENCH_B4_ROOT, "harness", "mcp-server.mjs");
 
 // Verdict gates per #188 / issue #402
 const VERDICT_PASS_STRETCH_THRESHOLD = 0.80; // >=80% reduction
@@ -218,6 +256,161 @@ function loadFixture(taskId, arm) {
 }
 
 // ---------------------------------------------------------------------------
+// MCP subprocess: start, query, and stop the atom-lookup server
+//
+// @decision DEC-V0-B4-HOOK-WIRING-001
+// @title Arm A hook wiring: subprocess MCP server with real tool_use cycle relay
+// @status accepted
+// @rationale
+//   Slice 2 Arm A declares `atom-lookup` as a real Anthropic tool (not a phantom).
+//   When the model issues a tool_use block (stop_reason=tool_use), the harness:
+//     1. Parses the tool input from the response content block.
+//     2. Sends the query to the MCP server subprocess via JSON-RPC over stdin.
+//     3. Reads the MCP response from stdout.
+//     4. Returns the tool result to the Anthropic API as a follow-up messages call.
+//   This relay continues until stop_reason=end_turn (model produces TypeScript code)
+//   or until MAX_TOOL_CYCLES is reached (hook_non_engaged: true logged).
+//
+//   WHY SUBPROCESS (not in-process):
+//   The MCP spec requires the server to be a distinct process communicating over
+//   stdio. This matches the production MCP pattern and avoids embedding the SQLite
+//   registry in the harness's address space (which would require different build
+//   configuration). The subprocess starts once per (task × rep) and is reused
+//   for all tool_use cycles in that rep.
+//
+//   EMPTY RESULT HANDLING:
+//   When the MCP server returns { atoms: [] }, the harness returns the empty result
+//   to the model (no phantom substitution). The model then generates the code
+//   directly. This is correct behavior — a miss in the registry is not a harness
+//   error. Documented as hook_non_engaged: true in the rep result.
+//
+//   REPLACING THE PHANTOM TOOL:
+//   Slice 1 cut the yakccResolve tool entirely (DEC-BENCH-B4-HARNESS-002) because
+//   it had no real backend. Slice 2 re-introduces the tool via the real MCP server.
+//   The tool is now named "atom-lookup" (not "yakccResolve") to avoid confusion.
+// ---------------------------------------------------------------------------
+
+/** Maximum tool_use cycles per rep before declaring hook_non_engaged. */
+const MAX_TOOL_CYCLES = 5;
+
+/** Anthropic tool definition for the MCP atom-lookup server. */
+const ATOM_LOOKUP_TOOL_DEF = {
+  name: "atom-lookup",
+  description:
+    "Query the yakcc atom registry for candidate implementations matching an intent. " +
+    "Returns atoms with atom_id, atom_signature, match_confidence, atom_body_sha256. " +
+    "Returns { atoms: [] } when no candidates match -- generate the implementation directly.",
+  input_schema: {
+    type: "object",
+    properties: {
+      intent: {
+        type: "string",
+        description: "Behavioral description of the desired atom.",
+      },
+      substitution_aggressiveness: {
+        type: "string",
+        enum: ["conservative", "default", "aggressive"],
+        description: "Threshold mode: conservative=0.95, default=0.7, aggressive=all.",
+        default: "default",
+      },
+    },
+    required: ["intent"],
+  },
+};
+
+/**
+ * Start the MCP server subprocess and return a handle for querying it.
+ * The handle's close() method terminates the server.
+ */
+async function startMcpServer() {
+  // Pass REPO_ROOT as YAKCC_REGISTRY_PATH env so the MCP server finds the correct
+  // registry regardless of whether it's running from the main worktree or a feature
+  // worktree. The registry lives at REPO_ROOT/.yakcc/registry.sqlite.
+  const registryPath = process.env["YAKCC_REGISTRY_PATH"]
+    ?? join(REPO_ROOT, ".yakcc", "registry.sqlite");
+
+  const server = spawn("node", [MCP_SERVER_PATH], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      YAKCC_REGISTRY_PATH: registryPath,
+      YAKCC_REPO_ROOT: REPO_ROOT,
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  server.stderr.on("data", (d) => {
+    console.log(`  [MCP] ${d.toString().trim()}`);
+  });
+
+  let stdoutBuf = Buffer.alloc(0);
+  let pendingResolves = new Map();
+  let reqId = 100;
+
+  server.stdout.on("data", (chunk) => {
+    stdoutBuf = Buffer.concat([stdoutBuf, chunk]);
+    // Parse Content-Length framed messages
+    while (true) {
+      const hEnd = stdoutBuf.indexOf("\r\n\r\n");
+      if (hEnd === -1) break;
+      const hText = stdoutBuf.slice(0, hEnd).toString("utf8");
+      const m = hText.match(/Content-Length:\s*(\d+)/i);
+      if (!m) { stdoutBuf = stdoutBuf.slice(hEnd + 4); break; }
+      const cl = parseInt(m[1], 10);
+      const bStart = hEnd + 4;
+      if (stdoutBuf.length < bStart + cl) break;
+      const body = stdoutBuf.slice(bStart, bStart + cl).toString("utf8");
+      stdoutBuf = stdoutBuf.slice(bStart + cl);
+      try {
+        const msg = JSON.parse(body);
+        const resolve = pendingResolves.get(msg.id);
+        if (resolve) {
+          pendingResolves.delete(msg.id);
+          resolve(msg);
+        }
+      } catch (_) {}
+    }
+  });
+
+  function sendMcpRequest(method, params) {
+    const id = reqId++;
+    return new Promise((resolve, reject) => {
+      pendingResolves.set(id, resolve);
+      const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
+      const header = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n`;
+      server.stdin.write(header + body);
+      // Timeout after 10s
+      setTimeout(() => {
+        if (pendingResolves.has(id)) {
+          pendingResolves.delete(id);
+          reject(new Error(`MCP request timeout: ${method}`));
+        }
+      }, 10000);
+    });
+  }
+
+  // Handshake
+  await sendMcpRequest("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
+
+  return {
+    async callTool(toolInput) {
+      const response = await sendMcpRequest("tools/call", {
+        name: "atom-lookup",
+        arguments: toolInput,
+      });
+      if (response.error) {
+        throw new Error(`MCP tool error: ${response.error.message}`);
+      }
+      const text = response.result?.content?.[0]?.text ?? '{"atoms":[]}';
+      return JSON.parse(text);
+    },
+    close() {
+      server.kill("SIGTERM");
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Real API call (requires ANTHROPIC_API_KEY)
 // ---------------------------------------------------------------------------
 
@@ -264,37 +457,129 @@ async function callAnthropicAPI(taskId, taskManifest, arm) {
     ? SYSTEM_PROMPT_VANILLA + SYSTEM_PROMPT_HOOK_SUFFIX
     : SYSTEM_PROMPT_VANILLA;
 
-  // Slice 1: No tool declarations. Arm A vs B difference is system-prompt text only.
-  // Slice 2 will add real yakccResolve tool with MCP server wiring (issue #188).
-  // See DEC-BENCH-B4-HARNESS-002 for why declaring tools in Slice 1 caused semantic_eq=0.
+  // Arm A with MCP enabled: start the MCP server and declare the real atom-lookup tool.
+  // Arm A without MCP (Slice 1 mode): system-prompt suffix only, no tool declaration.
+  // Arm B: vanilla system prompt, no tool.
+  // See DEC-V0-B4-HOOK-WIRING-001 for the full relay decision.
+  const useRealMcp = arm === "A" && MCP_ENABLED;
 
-  const t0 = Date.now();
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    temperature: TEMPERATURE,
-    system: systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: promptText,
-      },
-    ],
-  });
-  const wallMs = Date.now() - t0;
+  let mcpServer = null;
+  let toolCycleCount = 0;
+  let hookNonEngaged = false;
+  const substitutionEvents = []; // Records which atoms were proposed per cycle
 
-  // Defensive: if the model calls a tool despite no tool declaration, warn loudly.
-  // This should not happen in Slice 1 (no tools declared), but is a belt-and-suspenders
-  // guard for future Slice 2 integration when tools are re-introduced.
-  if (response.stop_reason === "tool_use") {
-    console.warn(
-      `  [WARN] ${arm} got stop_reason=tool_use despite no tool declaration. ` +
-      "This indicates a harness configuration error. The code extraction will produce " +
-      "an empty file and oracle will fail. Check DEC-BENCH-B4-HARNESS-002 in run.mjs."
-    );
+  if (useRealMcp) {
+    console.log("  [MCP] Starting atom-lookup MCP server...");
+    mcpServer = await startMcpServer();
+    console.log("  [MCP] Server ready.");
   }
 
-  return { response, wallMs };
+  try {
+    const t0 = Date.now();
+
+    // Build initial API call parameters
+    const apiParams = {
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      temperature: TEMPERATURE,
+      system: systemPrompt,
+      messages: [{ role: "user", content: promptText }],
+      ...(useRealMcp ? { tools: [ATOM_LOOKUP_TOOL_DEF] } : {}),
+    };
+
+    let response = await client.messages.create(apiParams);
+
+    // Tool-use relay loop (Slice 2 Arm A with MCP only)
+    // Per DEC-V0-B4-HOOK-WIRING-001: relay tool_use cycles back to MCP server.
+    if (useRealMcp) {
+      const conversationMessages = [...apiParams.messages];
+
+      while (response.stop_reason === "tool_use" && toolCycleCount < MAX_TOOL_CYCLES) {
+        toolCycleCount++;
+        console.log(`  [MCP] tool_use cycle ${toolCycleCount} detected.`);
+
+        // Collect all tool_use blocks from the response
+        const toolUseBlocks = response.content.filter((c) => c.type === "tool_use");
+        const toolResults = [];
+
+        for (const toolUse of toolUseBlocks) {
+          console.log(`  [MCP] Model called tool: ${toolUse.name} with intent="${JSON.stringify(toolUse.input).slice(0, 80)}..."`);
+
+          let toolResult;
+          try {
+            toolResult = await mcpServer.callTool(toolUse.input);
+          } catch (err) {
+            console.warn(`  [MCP] Tool call failed: ${err.message}. Returning empty result.`);
+            toolResult = { atoms: [] };
+          }
+
+          // Record substitution event
+          substitutionEvents.push({
+            cycle: toolCycleCount,
+            tool_name: toolUse.name,
+            intent: toolUse.input?.intent ?? "",
+            atoms_proposed: toolResult.atoms?.length ?? 0,
+            atoms: toolResult.atoms ?? [],
+          });
+
+          if (!toolResult.atoms || toolResult.atoms.length === 0) {
+            console.log("  [MCP] No atoms returned (registry miss or below threshold) -- model will generate directly.");
+          } else {
+            console.log(`  [MCP] ${toolResult.atoms.length} atom(s) returned to model.`);
+          }
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUse.id,
+            content: JSON.stringify(toolResult),
+          });
+        }
+
+        // Extend conversation with assistant response + tool results
+        conversationMessages.push({ role: "assistant", content: response.content });
+        conversationMessages.push({ role: "user", content: toolResults });
+
+        // Continue the conversation
+        response = await client.messages.create({
+          model: MODEL,
+          max_tokens: MAX_TOKENS,
+          temperature: TEMPERATURE,
+          system: systemPrompt,
+          messages: conversationMessages,
+          tools: [ATOM_LOOKUP_TOOL_DEF],
+        });
+      }
+
+      // If we still have tool_use after max cycles, log hook_non_engaged
+      if (response.stop_reason === "tool_use") {
+        console.warn(`  [MCP] Reached MAX_TOOL_CYCLES (${MAX_TOOL_CYCLES}). Force-stopping tool relay.`);
+        hookNonEngaged = true;
+      }
+
+      // If model never called the tool at all, log hook_non_engaged
+      if (toolCycleCount === 0) {
+        console.log("  [MCP] Model did not call atom-lookup tool (hook_non_engaged: true).");
+        hookNonEngaged = true;
+      }
+    } else {
+      // Slice 1 mode: no MCP server. Defensive guard for unexpected tool_use.
+      if (response.stop_reason === "tool_use") {
+        console.warn(
+          `  [WARN] ${arm} got stop_reason=tool_use despite no tool declaration. ` +
+          "This indicates a harness configuration error. The code extraction will produce " +
+          "an empty file and oracle will fail. Check DEC-BENCH-B4-HARNESS-002 in run.mjs."
+        );
+      }
+    }
+
+    const wallMs = Date.now() - t0;
+    return { response, wallMs, toolCycleCount, hookNonEngaged, substitutionEvents };
+
+  } finally {
+    if (mcpServer !== null) {
+      mcpServer.close();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +663,10 @@ async function runArm(task, arm, nReps, dryRun) {
     let response;
     let wallMs;
 
+    let toolCycleCount = 0;
+    let hookNonEngaged = false;
+    let substitutionEvents = [];
+
     if (dryRun) {
       // Load canned fixture
       const fixture = loadFixture(task.id, arm);
@@ -389,6 +678,9 @@ async function runArm(task, arm, nReps, dryRun) {
       const result = await callAnthropicAPI(task.id, task, arm);
       response = result.response;
       wallMs = result.wallMs;
+      toolCycleCount = result.toolCycleCount ?? 0;
+      hookNonEngaged = result.hookNonEngaged ?? false;
+      substitutionEvents = result.substitutionEvents ?? [];
     }
 
     const telemetry = extractTelemetry(response, wallMs);
@@ -411,6 +703,15 @@ async function runArm(task, arm, nReps, dryRun) {
       `(${oracleResult.passed}/${oracleResult.total} tests passed)`
     );
 
+    // Log hook engagement status for MCP mode
+    if (MCP_ENABLED && arm === "A") {
+      if (hookNonEngaged) {
+        console.log(`    hook_non_engaged: true (tool called ${toolCycleCount} times)`);
+      } else if (toolCycleCount > 0) {
+        console.log(`    hook_engaged: true (${toolCycleCount} tool cycle(s), ${substitutionEvents.reduce((s, e) => s + e.atoms_proposed, 0)} atoms proposed)`);
+      }
+    }
+
     results.push({
       rep,
       arm,
@@ -418,6 +719,12 @@ async function runArm(task, arm, nReps, dryRun) {
       telemetry,
       oracle: oracleResult,
       dry_run: dryRun,
+      // MCP Slice 2 fields (undefined in Slice 1 / non-MCP mode)
+      ...(MCP_ENABLED && arm === "A" ? {
+        tool_cycle_count: toolCycleCount,
+        hook_non_engaged: hookNonEngaged,
+        substitution_events: substitutionEvents,
+      } : {}),
     });
   }
 
@@ -432,11 +739,23 @@ async function main() {
   const runStart = Date.now();
 
   console.log("=".repeat(70));
-  console.log("B4-tokens — Slice 1: Token-Expenditure A/B Harness");
-  console.log(`  Mode: ${DRY_RUN ? "DRY-RUN (canned fixtures, no API calls)" : "REAL (API calls required)"}`);
-  console.log(`  N=${N_REPS} reps per (task × arm) | 3 tasks | ${3 * 2 * N_REPS} total calls`);
+  console.log("B4-tokens — Token-Expenditure A/B Harness");
+  console.log(`  Mode: ${DRY_RUN ? "DRY-RUN (canned fixtures, no API calls)" : NO_NETWORK ? "NO-NETWORK (MCP server smoke test only)" : "REAL (API calls required)"}`);
+  console.log(`  MCP: ${MCP_ENABLED ? "ENABLED (Slice 2 — real atom-lookup tool for Arm A)" : "DISABLED (Slice 1 — system-prompt suffix only)"}`);
+  console.log(`  N=${N_REPS} reps per (task × arm) | tasks loaded from tasks.json`);
   console.log("=".repeat(70));
   console.log();
+
+  // --no-network: verify MCP server starts and responds, then exit (no API calls)
+  if (NO_NETWORK) {
+    console.log("[--no-network] Verifying MCP server starts and responds...");
+    const testServer = await startMcpServer();
+    const result = await testServer.callTool({ intent: "schedule timer callback with cancel", substitution_aggressiveness: "aggressive" });
+    testServer.close();
+    console.log(`[--no-network] MCP server OK. ${result.atoms?.length ?? 0} candidate(s) returned for test query.`);
+    console.log("[--no-network] Smoke test passed. Exiting without API calls.");
+    process.exit(0);
+  }
 
   // Real-mode guard: abort early with clear error if no API key
   if (!DRY_RUN && !process.env["ANTHROPIC_API_KEY"]) {

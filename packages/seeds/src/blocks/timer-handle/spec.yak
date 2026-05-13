@@ -1,0 +1,67 @@
+{
+  "name": "timer-handle",
+  "inputs": [
+    {
+      "name": "callback",
+      "type": "() => void",
+      "description": "The function to call when the timer fires."
+    },
+    {
+      "name": "delayMs",
+      "type": "number",
+      "description": "Delay in milliseconds before the callback is invoked."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "{ readonly cancel: () => void }",
+      "description": "Handle with a cancel() method. Calling cancel() clears the pending timer and prevents callback invocation."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [
+    {
+      "description": "Schedules a timer via setTimeout. Cancellation via clearTimeout."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Schedule a one-shot timer that invokes callback after delayMs milliseconds. Returns a handle object with a single cancel() method. Calling cancel() before the timer fires prevents the callback from being invoked. Calling cancel() after the timer has already fired is a no-op. Multiple cancel() calls are safe (idempotent).",
+  "guarantees": [
+    {
+      "id": "one-shot",
+      "description": "The callback is invoked at most once."
+    },
+    {
+      "id": "cancel-idempotent",
+      "description": "Calling cancel() multiple times does not throw and has no additional effect after the first call."
+    },
+    {
+      "id": "cancel-after-fire-noop",
+      "description": "Calling cancel() after the callback has already fired is a safe no-op."
+    }
+  ],
+  "errorConditions": [],
+  "nonFunctional": {
+    "time": "O(1)",
+    "space": "O(1)",
+    "purity": "impure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "timer-fires",
+      "description": "timerHandle(fn, 0).cancel is a function; callback fires after delayMs elapses (fake timer)"
+    },
+    {
+      "id": "timer-cancel-prevents-fire",
+      "description": "cancel() called before timer elapses prevents callback from firing"
+    },
+    {
+      "id": "timer-cancel-idempotent",
+      "description": "cancel() called twice does not throw"
+    }
+  ]
+}
