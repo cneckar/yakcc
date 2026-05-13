@@ -553,7 +553,9 @@ describe("property-test corpora", () => {
     it("timer-fires: timerHandle returns object with cancel function", () => {
       // Verify the API shape; timer fires after delayMs (tested with fake timers in unit tests)
       let fired = false;
-      const handle = timerHandle(() => { fired = true; }, 10_000);
+      const handle = timerHandle(() => {
+        fired = true;
+      }, 10_000);
       expect(typeof handle.cancel).toBe("function");
       // cancel immediately — fires must be false (timer not elapsed)
       handle.cancel();
@@ -561,7 +563,9 @@ describe("property-test corpora", () => {
     });
     it("timer-cancel-prevents-fire: cancel() called synchronously prevents callback", () => {
       let callCount = 0;
-      const handle = timerHandle(() => { callCount++; }, 10_000);
+      const handle = timerHandle(() => {
+        callCount++;
+      }, 10_000);
       handle.cancel();
       // After cancel, callCount should remain 0 (timer cleared)
       expect(callCount).toBe(0);
