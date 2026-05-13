@@ -239,10 +239,19 @@ describe("decompose — DidNotReachAtomError", () => {
    *
    * With maxCF=-1, every node is non-atomic (CF count 0 > -1 is false... wait,
    * the check is cfCount > maxCF, so 0 > -1 = true → non-atomic). Then
-   * decomposableChildrenOf(expressionStatement) = [] → DidNotReachAtomError.
+   * decomposableChildrenOf(VariableStatement with no initializer) = [] AND
+   * it is not a CallExpression → DidNotReachAtomError.
+   *
+   * Note: "console.log(1);" was the original fixture but is now glue-routed by
+   * DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001 (CallExpression with empty children
+   * emits a forced AtomLeaf instead of throwing). "let x;" (VariableStatement
+   * with no initializer) still throws because decomposableChildrenOf returns []
+   * and it is not a CallExpression.
    */
   it("throws DidNotReachAtomError when every node is non-atomic and a leaf has no children", async () => {
-    const source = "console.log(1);";
+    // "let x;" — VariableStatement with no initializer → decomposableChildrenOf returns []
+    // and it is not a CallExpression → still throws (unlike console.log which glue-routes)
+    const source = "let x;";
     // maxControlFlowBoundaries: -1 makes every node non-atomic (0 > -1)
     const options: RecursionOptions = { maxControlFlowBoundaries: -1 };
 
@@ -250,7 +259,8 @@ describe("decompose — DidNotReachAtomError", () => {
   });
 
   it("DidNotReachAtomError carries node kind, source, and range", async () => {
-    const source = "console.log(42);";
+    // "let x;" — same reasoning as test above; VariableStatement with no initializer still throws
+    const source = "let x;";
     const options: RecursionOptions = { maxControlFlowBoundaries: -1 };
 
     let caught: DidNotReachAtomError | undefined;
@@ -637,6 +647,144 @@ export async function shave(argv: ReadonlyArray<string>, logger: { log: (s: stri
 
     expect(tree.leafCount).toBeGreaterThan(0);
     expect(tree.root).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001: CallExpression glue-routing (WI-399)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests for the WI-399 fix: CallExpression nodes with no decomposable children
+ * (neither function-like args nor an unwrappable callee) are now glue-routed
+ * as forced AtomLeaf entries (carrying atomTest.isAtom=false) instead of
+ * throwing DidNotReachAtomError.
+ *
+ * Production sequence: shave() → universalize() → decompose() → CallExpression
+ * node (non-atomic, maxCF=-1) → decomposableChildrenOf returns [] → new guard:
+ * getKind() === SyntaxKind.CallExpression → emit AtomLeaf with atomTest from
+ * isAtom() (isAtom=false). Previously threw DidNotReachAtomError.
+ *
+ * The 4 test fixtures are minimal repros of the 4 affected files reported in
+ * bootstrap/report.json for issue #399. All use maxControlFlowBoundaries=-1 to
+ * force every node non-atomic, ensuring the CallExpression with no children
+ * reaches the new guard. Each asserts no throw and AtomLeaf with isAtom=false.
+ *
+ * Note: byte ranges [13744,14068) / [4975,5389) / [11723,11956) / [26144,26424)
+ * recorded in the plan had drifted by the time of implementation. Synthetic
+ * repros that capture the same CallExpression shape (plain callee + simple args,
+ * no function-like args) are used instead.
+ */
+describe("decompose — CallExpression glue-route (DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001)", () => {
+  /**
+   * Helper: walk the recursion tree and find all AtomLeaf nodes.
+   */
+  function collectAtomLeaves(
+    node: { kind: string; atomTest?: { isAtom: boolean }; children?: unknown[] },
+  ): Array<{ isAtom: boolean }> {
+    if (node.kind === "atom" && node.atomTest !== undefined) {
+      return [node.atomTest as { isAtom: boolean }];
+    }
+    if (node.kind === "branch" && Array.isArray(node.children)) {
+      return node.children.flatMap((c) =>
+        collectAtomLeaves(c as { kind: string; atomTest?: { isAtom: boolean }; children?: unknown[] }),
+      );
+    }
+    return [];
+  }
+
+  /**
+   * Test 1 — hooks-base/src/index.ts pattern.
+   * A method call with simple identifier args (no function-like args, no OLE).
+   * Represents the captureTelemetry-style call site where args are plain
+   * identifiers and the callee is a PropertyAccessExpression.
+   * Pattern: `logger.emit(intent, toolName, response, candidateCount)`.
+   *
+   * Source is a bare ExpressionStatement — no ambient declarations, to avoid
+   * VariableStatement/FunctionDeclaration nodes with no initializer that would
+   * hit DidNotReachAtomError for different reasons.
+   */
+  it("1: hooks-base/index plain method call with simple args — glue-routed as AtomLeaf(isAtom=false)", async () => {
+    // Bare call statement: callee is PropertyAccessExpression (logger.emit),
+    // args are plain identifiers. unwrapCalleeToDecomposable(PropertyAccessExpression)
+    // returns undefined (no IIFE/chain), and no args are function-like → result=[].
+    // New guard: getKind() === CallExpression → emit AtomLeaf(isAtom=false).
+    const src = "logger.emit(intent, toolName, response, candidateCount);";
+    const options = { maxControlFlowBoundaries: -1 as const };
+
+    // Must not throw DidNotReachAtomError
+    const tree = await decompose(src, emptyRegistry, options);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    // At least one atom leaf must carry isAtom=false (the glue-routed CallExpression)
+    const leaves = collectAtomLeaves(tree.root as Parameters<typeof collectAtomLeaves>[0]);
+    expect(leaves.some((l) => l.isAtom === false)).toBe(true);
+  });
+
+  /**
+   * Test 2 — hooks-base/src/telemetry.ts pattern.
+   * A telemetry event emitter call with numeric/string args but no function-like arg.
+   * Pattern: `emit(eventName, phase, outcome, latencyMs)` — a plain function call
+   * whose arguments are identifiers and a numeric literal.
+   *
+   * Source is a bare ExpressionStatement (no ambient declarations) — decompose()
+   * does not require type-correct TS, just syntactically valid. Using identifiers
+   * directly avoids ambient FunctionDeclarations which have no decomposable children
+   * and would throw for unrelated reasons.
+   */
+  it("2: hooks-base/telemetry plain emit call — glue-routed as AtomLeaf(isAtom=false)", async () => {
+    // Bare call statement: callee is Identifier, args are identifiers + number literal.
+    // ExpressionStatement → decomposableChildrenOf → [CallExpression]
+    // CallExpression → callee=Identifier (no ParenExpr/PAE), args=identifiers → []
+    // → new guard: getKind() === CallExpression → emit AtomLeaf(isAtom=false)
+    const src = "emitTelemetryEvent(evtName, phase, outcome, 0);";
+    const options = { maxControlFlowBoundaries: -1 as const };
+
+    const tree = await decompose(src, emptyRegistry, options);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    const leaves = collectAtomLeaves(tree.root as Parameters<typeof collectAtomLeaves>[0]);
+    expect(leaves.some((l) => l.isAtom === false)).toBe(true);
+  });
+
+  /**
+   * Test 3 — hooks-claude-code/src/index.ts pattern.
+   * A registry query call that returns a substitution — callee is a plain
+   * Identifier and args are identifiers with no function-like args.
+   * Pattern: `executeRegistryQuery(registry, ctx, originalCode, toolName, threshold)`
+   */
+  it("3: hooks-claude-code plain registry query call — glue-routed as AtomLeaf(isAtom=false)", async () => {
+    // Bare call statement: callee is Identifier, 5 identifier args.
+    // Same structural path as test 2.
+    const src = "executeRegistryQuery(registry, ctx, originalCode, toolName, threshold);";
+    const options = { maxControlFlowBoundaries: -1 as const };
+
+    const tree = await decompose(src, emptyRegistry, options);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    const leaves = collectAtomLeaves(tree.root as Parameters<typeof collectAtomLeaves>[0]);
+    expect(leaves.some((l) => l.isAtom === false)).toBe(true);
+  });
+
+  /**
+   * Test 4 — registry/src/discovery-eval-helpers.ts pattern.
+   * A scoring/analysis call with numeric constants and identifiers — no
+   * function-like args. Pattern: `computeScore(entry, threshold, hitCount)`.
+   */
+  it("4: registry/discovery-eval-helpers scoring call — glue-routed as AtomLeaf(isAtom=false)", async () => {
+    // Bare call statement: callee is Identifier, 3 identifier args (no function-like).
+    const src = "computeScore(entry, M1_HIT_THRESHOLD, hitCount);";
+    const options = { maxControlFlowBoundaries: -1 as const };
+
+    const tree = await decompose(src, emptyRegistry, options);
+
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    const leaves = collectAtomLeaves(tree.root as Parameters<typeof collectAtomLeaves>[0]);
+    expect(leaves.some((l) => l.isAtom === false)).toBe(true);
   });
 });
 
