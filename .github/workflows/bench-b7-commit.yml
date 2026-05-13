@@ -79,12 +79,37 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build required packages (skip @yakcc/shave — pre-existing broken, DEC-SHAVE-SKIP-001)
-        run: |
-          pnpm --filter @yakcc/contracts build || true
-          pnpm --filter @yakcc/registry build || true
-          pnpm --filter @yakcc/hooks-base build || true
-          pnpm --filter @yakcc/cli build || true
+      - name: Build workspace (pnpm -r build)
+        # @decision DEC-CI-FRESH-BUILD-B7-001
+        # @title bench-b7-commit: replace per-package selective build with pnpm -r build
+        # @status accepted (WI-B7-WORKSPACE-RESOLUTION-FIX, issue #449)
+        # @rationale
+        #   The prior step built four packages selectively and explicitly skipped
+        #   @yakcc/shave with a stale "pre-existing broken" annotation
+        #   (DEC-SHAVE-SKIP-001 — never formally filed; shave has compiled cleanly since
+        #   PR #383/#388). This caused bench-b7-commit to be RED for 3 consecutive runs:
+        #   TS2307 errors from @yakcc/shave, @yakcc/ir, @yakcc/seeds, @yakcc/compile,
+        #   @yakcc/federation — all transitive deps of @yakcc/hooks-base that were
+        #   absent from the selective build list.
+        #
+        #   The root cause is two-layered:
+        #   (1) The selective build skipped shave, so hooks-base (which imports shave)
+        #       could never compile. The TS2307 cascade follows from this.
+        #   (2) TypeScript composite/incremental mode reads tsconfig.tsbuildinfo to
+        #       determine input freshness but does NOT verify that declared output files
+        #       actually exist. When dist/ is absent (fresh CI runner, no cache) but a
+        #       stale tsbuildinfo is present, tsc short-circuits "no inputs changed" and
+        #       exits 0 WITHOUT emitting any output files. All 9 composite packages
+        #       (contracts, registry, ir, seeds, compile, federation, cli, shave,
+        #       hooks-base) are now fixed with `rm -f tsconfig.tsbuildinfo && tsc -p .`
+        #       in their build scripts (mirroring PR #440's fix for @yakcc/variance).
+        #
+        #   Fix: replace the per-package selective build with `pnpm -r build`.
+        #   pnpm owns dependency-topological ordering; this eliminates the class of
+        #   build-order regressions that caused #390, #391, and now #449. Mirrors the
+        #   pattern from bootstrap.yml (line 96), bootstrap-accumulate.yml (line 68),
+        #   and v0-release-smoke.yml (DEC-V0-RELEASE-SMOKE-BUILD-RECURSIVE-001 / WI-391).
+        run: pnpm -r build
 
       - name: Run B7 commit-latency benchmark
         run: node bench/B7-commit/harness/run.mjs --hardware-label ubuntu-latest-node22

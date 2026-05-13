@@ -13,7 +13,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

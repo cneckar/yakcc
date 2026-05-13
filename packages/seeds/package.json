@@ -11,7 +11,7 @@
     "./blocks/*": "./dist/blocks/*/impl.js"
   },
   "scripts": {
-    "build": "tsc -p . && node src/_scripts/copy-triplets.mjs",
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p . && node src/_scripts/copy-triplets.mjs",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",
     "lint": "biome check src/",
