@@ -146,17 +146,20 @@ examples/
 - [`MANIFESTO.md`](MANIFESTO.md) — the project's voice and intent
 - [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — defensive publication consolidating the substrate's novel mechanisms as prior art for the public commons
 
-## v2 self-hosting demo
+## v2 self-shave demo
 
-`yakcc bootstrap --verify` shaves the entire codebase into an in-memory registry, exports a deterministic manifest sorted by `BlockMerkleRoot`, and byte-compares it to the committed `bootstrap/expected-roots.json`. A clean exit proves every yakcc atom on disk is content-addressed by the same hash the registry would assign on a fresh shave.
+yakcc shaves the meaningfully-reusable parts of arbitrary TypeScript — including its own source — recompiles itself from those atoms, and the recompiled yakcc produces the same manifest. Reproducible from a fresh clone in 6 commands.
 
-```sh
-pnpm install --frozen-lockfile
-pnpm -r build
-node packages/cli/dist/bin.js bootstrap --verify
-```
+The two-pass self-shave cycle is:
 
-See [docs/V2_SELF_HOSTING_DEMO.md](docs/V2_SELF_HOSTING_DEMO.md) for the fresh-clone reproduction, manifest semantics, and CI integration.
+1. `pnpm install --frozen-lockfile && pnpm -r build` — install and build
+2. `node packages/cli/dist/bin.js bootstrap --verify` — pass 1: verify yakcc shaves itself into a content-addressed manifest (3,807 atoms)
+3. `node packages/cli/dist/bin.js compile-self --output=dist-recompiled/` — recompile yakcc from its own atoms
+4. `YAKCC_TWO_PASS=1 pnpm --filter @yakcc/v2-self-shave-poc test two-pass-equivalence` — pass 2 + byte-identity assertion
+
+See [docs/V2_SELF_SHAVE_DEMO.md](docs/V2_SELF_SHAVE_DEMO.md) for the full fresh-clone reproduction with captured output, what each pass proves, and the "If equivalence fails" taxonomy.
+
+For pass-1 internals (bootstrap mechanics, manifest semantics, CI integration) see [docs/V2_SELF_HOSTING_DEMO.md](docs/V2_SELF_HOSTING_DEMO.md).
 
 ## License
 
