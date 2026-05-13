@@ -29,6 +29,13 @@
     "SHA-256 computed over the raw bytes of all three JSONL files concatenated in the order listed in 'files'.",
     "Recompute: node -e \"const {createHash}=require('crypto'),{readFileSync}=require('fs'); const files=['bench/B8-synthetic/transcripts/substrate-001.jsonl','bench/B8-synthetic/transcripts/glue-001.jsonl','bench/B8-synthetic/transcripts/application-001.jsonl']; console.log(createHash('sha256').update(Buffer.concat(files.map(f=>readFileSync(f)))).digest('hex'))\"",
     "Slice 1 uses f=1.0 only (full corpus). Slice 2 adds f-sweep with stratified sampling.",
-    "Emission blocks are authored as a competent engineer would write them — hit/miss is measured, not pre-determined."
-  ]
+    "Emission blocks are authored as a competent engineer would write them — hit/miss is measured, not pre-determined.",
+    "IMPORTANT: The SHA is computed over LF-normalized bytes (not CRLF). .gitattributes enforces eol=lf for *.jsonl files. See DEC-BENCH-B8-SHA-001."
+  ],
+  "_decision": {
+    "id": "DEC-BENCH-B8-SHA-001",
+    "title": "Force LF line endings for JSONL corpus files to stabilize SHA across platforms",
+    "status": "accepted",
+    "rationale": "The SHA-256 in this file is computed over raw bytes of the JSONL corpus files. On Windows with core.autocrlf=true, git converts LF to CRLF on checkout, causing the SHA to drift. This was the root cause of #443 / #452. Fix: .gitattributes sets eol=lf for bench/B8-synthetic/transcripts/*.jsonl, ensuring all platforms see identical LF bytes. Path A (regen SHA) was rejected because the CRLF SHA would break on Linux CI; Path B (revert corpus) was not needed since content was not deliberately changed. The chosen path is: enforce LF via .gitattributes, keep the existing SHA which was always correct for LF-stored bytes."
+  }
 }
