@@ -1,46 +1,51 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 // @decision DEC-V2-PROPTEST-PATH-A-001: hand-authored property-test corpus for
 // @yakcc/shave corpus/documented-usage.ts atoms. Two-file pattern: this file
 // (.props.ts) is vitest-free and holds the corpus; the sibling .props.test.ts
 // is the vitest harness.
-// Status: accepted (WI-V2-07-PREFLIGHT L3i)
-// Rationale: See tmp/wi-v2-07-preflight-layer-plan.md — the corpus file must
+// Status: accepted (WI-V2-07-PREFLIGHT L3i, revised WI-376)
+// Rationale: See tmp/wi-v2-07-preflight-layer-plan.md -- the corpus file must
 // be runtime-independent so L10 can hash it as a manifest artifact.
 //
-// Atoms covered (named exports from documented-usage.ts):
-//   extractFromDocumentedUsage (DU1.1–DU1.19) — synthesizes fast-check from JSDoc examples.
-//   extractJsDocExamples (DU1.27) — exercised through extractFromDocumentedUsage.
-//   typeHintToArbitrary (DU1.19–DU1.26) — exercised through extractFromDocumentedUsage.
-//   inferFunctionName (DU1.6–DU1.7) — exercised through extractFromDocumentedUsage.
+// WI-376 revision: extractFromDocumentedUsage now returns CorpusResult | undefined
+// per DEC-PROPTEST-DOCUMENTED-USAGE-001 (loud refusal over silent placeholder).
+// The type-signature catch-all test (signatureTest) is removed; fc.property bodies
+// are replaced by deterministic expect() assertions derived from Option-A parsing.
 //
-// Properties covered (27 atoms):
-//   1.  return.source === 'documented-usage'
-//   2.  return.path === 'property-tests.fast-check.ts'
+// Atoms covered (named exports from documented-usage.ts):
+//   extractFromDocumentedUsage (DU1.1-DU1.15) -- synthesizes expect() assertions from
+//     parseable @example blocks; returns undefined on loud refusal.
+//   extractJsDocExamples (DU1.27) -- exercised through extractFromDocumentedUsage.
+//   typeHintToArbitrary (DU1.16-DU1.26) -- exercised through extractFromDocumentedUsage
+//     (output appears in comment-header section of generated file, not property body).
+//   inferFunctionName (DU1.6-DU1.7) -- exercised through extractFromDocumentedUsage.
+//
+// Properties covered:
+//   1.  parseable source returns source="documented-usage"
+//   2.  parseable source returns path="property-tests.fast-check.ts"
 //   3.  bytes round-trip through UTF-8
-//   4.  contentHash is 64-char hex matching BLAKE3
-//   5.  determinism: same inputs → byte-identical output
+//   4.  contentHash is 64-char BLAKE3 hex
+//   5.  determinism: same inputs -> byte-identical output
 //   6.  describe block uses inferred function name
-//   7.  describe falls back to 'atom' when no function/const decl
-//   8.  one it() per example plus one signature test
-//   9.  empty examples still emits signature test
-//   10. example labels are JSON.stringify'd
-//   11. example comment lines are prefixed '   * '
-//   12. signature test label truncated to 60 chars
-//   13. postconditions are rendered as '// Postcondition: <text>'
-//   14. input argument names are prefixed with '_'
-//   15. arbitrary list joined by ', '
-//   16. empty inputs → 'fc.anything()' fallback
-//   17. input comment block shows name: typeHint → arbitrary
-//   18. empty inputs → '// (no typed inputs found)' comment
-//   19. typeHintToArbitrary: 'string' → 'fc.string()'
-//   20. typeHintToArbitrary: 'number' → 'fc.float()'
-//   21. typeHintToArbitrary: 'integer'/'int' → 'fc.integer()'
-//   22. typeHintToArbitrary: 'boolean' → 'fc.boolean()'
-//   23. typeHintToArbitrary: 'bigint' → 'fc.bigInt()'
-//   24. typeHintToArbitrary: ending '[]' → 'fc.array(fc.anything())'
-//   25. typeHintToArbitrary: starting 'array<' → 'fc.array(fc.anything())'
-//   26. typeHintToArbitrary: unknown type → 'fc.anything()'
-//   27. extractJsDocExamples: empty source → zero examples → one it() block
+//   7.  describe falls back to 'atom' when no function/const decl (with parseable @example)
+//   8.  parseable @example produces one it() with expect() assertion
+//   9.  source with no @example blocks returns undefined (loud refusal)
+//   10. source where all @examples are unstructured returns undefined (loud refusal)
+//   11. example labels include call expression: "example N: callExpr"
+//   12. example comment lines are prefixed '   * '
+//   13. expect call uses callExpr and toEqual with expectedExpr
+//   14. input comment block shows name: typeHint -> arbitrary
+//   15. empty inputs -> '// (no typed inputs found)' comment
+//   16. typeHintToArbitrary: 'string' -> 'fc.string()'
+//   17. typeHintToArbitrary: 'number' -> 'fc.float()'
+//   18. typeHintToArbitrary: 'integer'/'int' -> 'fc.integer()'
+//   19. typeHintToArbitrary: 'boolean' -> 'fc.boolean()'
+//   20. typeHintToArbitrary: 'bigint' -> 'fc.bigInt()'
+//   21. typeHintToArbitrary: ending '[]' -> 'fc.array(fc.anything())'
+//   22. typeHintToArbitrary: starting 'array<' -> 'fc.array(fc.anything())'
+//   23. typeHintToArbitrary: unknown type -> 'fc.anything()'
+//   24. source with only multi-line @examples returns undefined
+//   25. source with mixed parseable+unparseable emits only parseable as it() blocks
 
 // ---------------------------------------------------------------------------
 // Property-test corpus for corpus/documented-usage.ts
@@ -90,55 +95,91 @@ const intentCardInputArb: fc.Arbitrary<IntentCardInput> = fc.record({
   promptVersion: nonEmptyStr,
 });
 
-/** Source string with a function declaration. */
-const sourceFnDeclArb: fc.Arbitrary<string> = fc
+/**
+ * Source string with a function declaration AND a parseable @example block.
+ * The @example uses Option-A format: fn(arg) // => expected
+ */
+const sourceFnDeclWithParseableExampleArb: fc.Arbitrary<string> = fc
   .string({ minLength: 1, maxLength: 20 })
   .filter((s) => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(s))
-  .map((name) => `export function ${name}(x: string): string { return x; }`);
+  .map(
+    (name) =>
+      `/**\n * @example\n * ${name}("x") // => "x"\n */\nexport function ${name}(x: string): string { return x; }`,
+  );
 
-/** Source string with only a const declaration. */
-const sourceConstDeclArb: fc.Arbitrary<string> = fc
+/**
+ * Source string with only a const declaration AND a parseable @example block.
+ */
+const sourceConstDeclWithParseableExampleArb: fc.Arbitrary<string> = fc
   .string({ minLength: 1, maxLength: 20 })
   .filter((s) => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(s))
-  .map((name) => `export const ${name} = (x: string): string => x;`);
+  .map(
+    (name) =>
+      `/**\n * @example\n * ${name}("x") // => "x"\n */\nexport const ${name} = (x: string): string => x;`,
+  );
 
-/** Source string with no function or const declaration. */
-const sourceNoDeclArb: fc.Arbitrary<string> = fc
-  .string({ minLength: 0, maxLength: 40 })
-  .filter((s) => !/(?:^|\s)function\s+[a-zA-Z_$]/.test(s) && !/(?:^|\s)const\s+[a-zA-Z_$]/.test(s));
+/** Source string with no function or const declaration, but parseable @example. */
+const sourceNoDeclWithParseableExampleArb: fc.Arbitrary<string> = fc.constant(
+  '/**\n * @example\n * fn("x") // => "x"\n */\n// no function declaration',
+);
 
-/** Source string with N @example blocks embedded in a JSDoc comment. */
-function sourceWithExamplesArb(n: number): fc.Arbitrary<string> {
-  const exampleTexts = Array.from({ length: n }, (_, i) => `example text ${i + 1}`);
-  const examples = exampleTexts.map((t) => ` * @example\n * ${t}\n`).join("");
-  return fc.constant(`/**\n${examples} */\nexport function fn() {}`);
-}
+/** A fixed parseable source: fn("1,2,3") // => [1, 2, 3] */
+const PARSEABLE_SOURCE = `/**
+ * Parse a comma-separated list.
+ *
+ * @example
+ * parseList("1,2,3") // => [1, 2, 3]
+ */
+export function parseList(raw: string): number[] { return []; }`;
+
+/** A fixed unstructured source (prose-only @example, no => arrow) */
+const UNSTRUCTURED_SOURCE = `/**
+ * Parse a comma-separated list.
+ *
+ * @example
+ * parseList takes a string and returns an array
+ */
+export function parseList(raw: string): number[] { return []; }`;
+
+/** Source with no @example blocks at all. */
+const NO_EXAMPLE_SOURCE = "export function parseList(raw: string): number[] { return []; }";
+
+/** Source with multi-line @example (should be refused). */
+const MULTILINE_EXAMPLE_SOURCE = `/**
+ * @example
+ * parseList("1,2,3")
+ * // => [1, 2, 3]
+ */
+export function parseList(raw: string): number[] { return []; }`;
 
 // ---------------------------------------------------------------------------
-// DU1.1: return.source === 'documented-usage'
+// DU1.1: parseable source returns source="documented-usage"
 // ---------------------------------------------------------------------------
 
 /**
- * @summary extractFromDocumentedUsage always returns source="documented-usage".
+ * @summary extractFromDocumentedUsage returns source="documented-usage" for parseable @example source.
  */
 export const prop_extractFromDocumentedUsage_returnsDocumentedUsageSource: fc.IPropertyWithHooks<
   [IntentCardInput, string]
-> = fc.property(intentCardInputArb, fc.string(), (card, source) => {
+> = fc.property(intentCardInputArb, sourceFnDeclWithParseableExampleArb, (card, source) => {
   const result = extractFromDocumentedUsage(card, source);
+  // Parseable source must produce a non-undefined result
+  if (result === undefined) return false;
   return result.source === "documented-usage";
 });
 
 // ---------------------------------------------------------------------------
-// DU1.2: return.path === canonical artifact path
+// DU1.2: parseable source returns path="property-tests.fast-check.ts"
 // ---------------------------------------------------------------------------
 
 /**
- * @summary extractFromDocumentedUsage always returns path="property-tests.fast-check.ts".
+ * @summary extractFromDocumentedUsage returns path="property-tests.fast-check.ts" for parseable source.
  */
 export const prop_extractFromDocumentedUsage_returnsCanonicalArtifactPath: fc.IPropertyWithHooks<
   [IntentCardInput, string]
-> = fc.property(intentCardInputArb, fc.string(), (card, source) => {
+> = fc.property(intentCardInputArb, sourceFnDeclWithParseableExampleArb, (card, source) => {
   const result = extractFromDocumentedUsage(card, source);
+  if (result === undefined) return false;
   return result.path === "property-tests.fast-check.ts";
 });
 
@@ -151,8 +192,9 @@ export const prop_extractFromDocumentedUsage_returnsCanonicalArtifactPath: fc.IP
  */
 export const prop_extractFromDocumentedUsage_bytesAreUtf8RoundTrip: fc.IPropertyWithHooks<
   [IntentCardInput, string]
-> = fc.property(intentCardInputArb, fc.string(), (card, source) => {
+> = fc.property(intentCardInputArb, sourceFnDeclWithParseableExampleArb, (card, source) => {
   const result = extractFromDocumentedUsage(card, source);
+  if (result === undefined) return false;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder("utf-8");
   const decoded = decoder.decode(result.bytes);
@@ -173,14 +215,15 @@ export const prop_extractFromDocumentedUsage_bytesAreUtf8RoundTrip: fc.IProperty
  */
 export const prop_extractFromDocumentedUsage_contentHashIsBlake3HexOf64Chars: fc.IPropertyWithHooks<
   [IntentCardInput, string]
-> = fc.property(intentCardInputArb, fc.string(), (card, source) => {
+> = fc.property(intentCardInputArb, sourceFnDeclWithParseableExampleArb, (card, source) => {
   const result = extractFromDocumentedUsage(card, source);
+  if (result === undefined) return false;
   const expectedHash = bytesToHex(blake3(result.bytes));
   return /^[0-9a-f]{64}$/.test(result.contentHash) && result.contentHash === expectedHash;
 });
 
 // ---------------------------------------------------------------------------
-// DU1.5: determinism — same inputs → byte-identical output
+// DU1.5: determinism -- same inputs -> byte-identical output
 // ---------------------------------------------------------------------------
 
 /**
@@ -188,9 +231,11 @@ export const prop_extractFromDocumentedUsage_contentHashIsBlake3HexOf64Chars: fc
  */
 export const prop_extractFromDocumentedUsage_determinismGivenSameInputs: fc.IPropertyWithHooks<
   [IntentCardInput, string]
-> = fc.property(intentCardInputArb, fc.string(), (card, source) => {
+> = fc.property(intentCardInputArb, sourceFnDeclWithParseableExampleArb, (card, source) => {
   const r1 = extractFromDocumentedUsage(card, source);
   const r2 = extractFromDocumentedUsage(card, source);
+  if (r1 === undefined && r2 === undefined) return true;
+  if (r1 === undefined || r2 === undefined) return false;
   if (r1.bytes.length !== r2.bytes.length) return false;
   for (let i = 0; i < r1.bytes.length; i++) {
     if (r1.bytes[i] !== r2.bytes[i]) return false;
@@ -203,12 +248,13 @@ export const prop_extractFromDocumentedUsage_determinismGivenSameInputs: fc.IPro
 // ---------------------------------------------------------------------------
 
 /**
- * @summary Generated content includes describe(...'<fnName> — documented usage properties'...) when source has function decl.
+ * @summary Generated content includes describe('fnName -- documented usage properties'...) when source has function decl.
  */
 export const prop_extractFromDocumentedUsage_describeBlockUsesInferredFnName: fc.IPropertyWithHooks<
   [IntentCardInput, string]
-> = fc.property(intentCardInputArb, sourceFnDeclArb, (card, source) => {
+> = fc.property(intentCardInputArb, sourceFnDeclWithParseableExampleArb, (card, source) => {
   const result = extractFromDocumentedUsage(card, source);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   const m = source.match(/(?:^|\s)function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
@@ -222,80 +268,93 @@ export const prop_extractFromDocumentedUsage_describeBlockUsesInferredFnName: fc
 // ---------------------------------------------------------------------------
 
 /**
- * @summary Generated content uses 'atom — documented usage properties' when source has no function/const decl.
+ * @summary Generated content uses 'atom -- documented usage properties' when source has no function/const decl.
  */
 export const prop_extractFromDocumentedUsage_describeFallsBackToAtom: fc.IPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.property(intentCardInputArb, sourceNoDeclArb, (card, source) => {
-  const result = extractFromDocumentedUsage(card, source);
+  [IntentCardInput]
+> = fc.property(intentCardInputArb, (card) => {
+  // Source with a parseable @example but no function/const declaration.
+  // Use a constant string (fc.Arbitrary doesn't have .sample()).
+  const noFnSource = '/**\n * @example\n * fn("x") // => "x"\n */\n// no named export here';
+  const result = extractFromDocumentedUsage(card, noFnSource);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("atom — documented usage properties");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.8: one it() per example plus one signature test
+// DU1.8: parseable @example produces one it() with expect() assertion
 // ---------------------------------------------------------------------------
 
 /**
- * @summary it() count equals examples.length + 1 (the signature test).
+ * @summary One parseable @example -> exactly one it() block with expect().toEqual().
  */
-export const prop_extractFromDocumentedUsage_oneItPerExamplePlusOneSignatureTest: fc.IPropertyWithHooks<
+export const prop_extractFromDocumentedUsage_parseableExampleProducesExpectAssertion: fc.IPropertyWithHooks<
   [IntentCardInput]
 > = fc.property(intentCardInputArb, (card) => {
-  // Use a source with exactly 2 @example blocks to verify the count
-  const source = "/**\n * @example\n * first\n * @example\n * second\n */\nexport function fn() {}";
-  const result = extractFromDocumentedUsage(card, source);
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
-  const itCount = (content.match(/\bit\(/g) ?? []).length;
-  // 2 examples + 1 signature test
-  return itCount === 3;
-});
-
-// ---------------------------------------------------------------------------
-// DU1.9: empty examples still emits signature test
-// ---------------------------------------------------------------------------
-
-/**
- * @summary Source with zero @example blocks produces exactly one it() block.
- */
-export const prop_extractFromDocumentedUsage_emptyExamplesStillEmitsSignatureTest: fc.IPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.property(intentCardInputArb, sourceNoDeclArb, (card, source) => {
-  // sourceNoDeclArb produces strings with no function/const and typically no @example
-  const result = extractFromDocumentedUsage(card, source);
-  const decoder = new TextDecoder("utf-8");
-  const content = decoder.decode(result.bytes);
-  const itCount = (content.match(/\bit\(/g) ?? []).length;
-  // No @example blocks in sourceNoDeclArb → exactly 1 it() (the signature test)
-  return itCount === 1;
-});
-
-// ---------------------------------------------------------------------------
-// DU1.10: example labels are JSON.stringify'd
-// ---------------------------------------------------------------------------
-
-/**
- * @summary Each @example uses JSON.stringify(`example ${i+1}`) as the it() label.
- */
-export const prop_extractFromDocumentedUsage_exampleLabelsAreJsonStringified: fc.IPropertyWithHooks<
-  [IntentCardInput]
-> = fc.property(intentCardInputArb, (card) => {
-  void sourceWithExamplesArb; // referenced to satisfy linter; fixed string below avoids arbitrary overhead
-  const sourceStr =
-    "/**\n * @example\n * first example\n * @example\n * second example\n */\nexport function fn() {}";
-  const result = extractFromDocumentedUsage(card, sourceStr);
-  const decoder = new TextDecoder("utf-8");
-  const content = decoder.decode(result.bytes);
-  // Labels must be JSON.stringify'd
+  // Count it() calls using line-anchored pattern to avoid matching "it()" in comment text
+  const itCount = (content.match(/^ {2}it\(/gm) ?? []).length;
+  // Exactly one parseable example -> exactly one it() block
+  if (itCount !== 1) return false;
+  // Must use expect().toEqual() not fc.property() / return true
   return (
-    content.includes(JSON.stringify("example 1")) && content.includes(JSON.stringify("example 2"))
+    content.includes("expect(") && content.includes(".toEqual(") && !content.includes("return true")
   );
 });
 
 // ---------------------------------------------------------------------------
-// DU1.11: example comment lines are prefixed '   * '
+// DU1.9: source with no @example blocks returns undefined (loud refusal)
+// ---------------------------------------------------------------------------
+
+/**
+ * @summary Source with zero @example blocks returns undefined (loud refusal per DEC-PROPTEST-DOCUMENTED-USAGE-001).
+ */
+export const prop_extractFromDocumentedUsage_noExamplesReturnsUndefined: fc.IPropertyWithHooks<
+  [IntentCardInput]
+> = fc.property(intentCardInputArb, (card) => {
+  const result = extractFromDocumentedUsage(card, NO_EXAMPLE_SOURCE);
+  return result === undefined;
+});
+
+// ---------------------------------------------------------------------------
+// DU1.10: source where all @examples are unstructured returns undefined
+// ---------------------------------------------------------------------------
+
+/**
+ * @summary Source with only unstructured (prose) @example blocks returns undefined.
+ */
+export const prop_extractFromDocumentedUsage_unstructuredExamplesReturnUndefined: fc.IPropertyWithHooks<
+  [IntentCardInput]
+> = fc.property(intentCardInputArb, (card) => {
+  const result = extractFromDocumentedUsage(card, UNSTRUCTURED_SOURCE);
+  return result === undefined;
+});
+
+// ---------------------------------------------------------------------------
+// DU1.11: example labels include call expression
+// ---------------------------------------------------------------------------
+
+/**
+ * @summary The it() label is "example N: callExpr" for Option-A parsed examples.
+ */
+export const prop_extractFromDocumentedUsage_exampleLabelIncludesCallExpr: fc.IPropertyWithHooks<
+  [IntentCardInput]
+> = fc.property(intentCardInputArb, (card) => {
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
+  const decoder = new TextDecoder("utf-8");
+  const content = decoder.decode(result.bytes);
+  // Label contains "example 1: parseList(..." - check without args since JSON.stringify escapes the quotes
+  return content.includes("example 1: parseList(");
+});
+
+// ---------------------------------------------------------------------------
+// DU1.12: example comment lines are prefixed '   * '
 // ---------------------------------------------------------------------------
 
 /**
@@ -304,134 +363,51 @@ export const prop_extractFromDocumentedUsage_exampleLabelsAreJsonStringified: fc
 export const prop_extractFromDocumentedUsage_exampleCommentsAreLinePrefixed: fc.IPropertyWithHooks<
   [IntentCardInput]
 > = fc.property(intentCardInputArb, (card) => {
-  // Place example text inline with @example so the extracted text has no JSDoc '*' prefix.
-  // "@example some code here" → ex.text = "some code here" → commentLine = "   * some code here"
-  const sourceStr = "/**\n * @example some code here\n */\nexport function fn() {}";
-  const result = extractFromDocumentedUsage(card, sourceStr);
-  const decoder = new TextDecoder("utf-8");
-  const content = decoder.decode(result.bytes);
-  return content.includes("   * some code here");
-});
-
-// ---------------------------------------------------------------------------
-// DU1.12: signature test label truncated to 60 chars
-// ---------------------------------------------------------------------------
-
-/**
- * @summary The signature test it() label includes intentCard.behavior.slice(0, 60).
- */
-export const prop_extractFromDocumentedUsage_signatureTestLabelTruncatedTo60: fc.IPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.property(intentCardInputArb, fc.string(), (card, source) => {
+  // Use a parseable @example with clear text so the comment line is predictable
+  const source = `/**\n * @example\n * myFn("x") // => "x"\n */\nexport function myFn(x: string) { return x; }`;
   const result = extractFromDocumentedUsage(card, source);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
-  const truncated = card.behavior.slice(0, 60);
-  return content.includes(truncated);
+  // The @example text appears prefixed with "   * " in the JSDoc comment block.
+  // The exampleText is "* myFn(\"x\") // => \"x\"" so the comment line is "   * * myFn(\"x\") // => \"x\""
+  // Check for the prefix pattern without the double-quote args (JSON-escaped in content).
+  return content.includes("   * * myFn(");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.13: postconditions are rendered as '// Postcondition: <text>'
+// DU1.13: expect call uses callExpr and toEqual with expectedExpr
 // ---------------------------------------------------------------------------
 
 /**
- * @summary Each postcondition is rendered as '// Postcondition: <text>' in the signature test.
+ * @summary Generated assertion is expect(callExpr).toEqual(expectedExpr).
  */
-export const prop_extractFromDocumentedUsage_postconditionsAreCommentedInSignatureTest: fc.IPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.property(
-  intentCardInputArb.filter((c) => c.postconditions.length > 0),
-  fc.string(),
-  (card, source) => {
-    const result = extractFromDocumentedUsage(card, source);
-    const decoder = new TextDecoder("utf-8");
-    const content = decoder.decode(result.bytes);
-    return card.postconditions.every((p) => content.includes(`// Postcondition: ${p}`));
-  },
-);
-
-// ---------------------------------------------------------------------------
-// DU1.14: input argument names are prefixed with '_'
-// ---------------------------------------------------------------------------
-
-/**
- * @summary Input names render as `_${name}` in the generated arrow-function parameter list.
- */
-export const prop_extractFromDocumentedUsage_inputArbitraryPrefixesAreUnderscored: fc.IPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.property(
-  intentCardInputArb.filter((c) => c.inputs.length > 0),
-  fc.string(),
-  (card, source) => {
-    const result = extractFromDocumentedUsage(card, source);
-    const decoder = new TextDecoder("utf-8");
-    const content = decoder.decode(result.bytes);
-    return card.inputs.every((inp) => content.includes(`_${inp.name}`));
-  },
-);
-
-// ---------------------------------------------------------------------------
-// DU1.15: arbitrary list joined by ', '
-// ---------------------------------------------------------------------------
-
-/**
- * @summary Multiple input arbitraries are joined with ', ' in the fc.property arg list.
- */
-export const prop_extractFromDocumentedUsage_arbListJoinedByCommaSpace: fc.IPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.property(
-  intentCardInputArb.filter((c) => c.inputs.length >= 2),
-  fc.string(),
-  (card, source) => {
-    const result = extractFromDocumentedUsage(card, source);
-    const decoder = new TextDecoder("utf-8");
-    const content = decoder.decode(result.bytes);
-    // The arbitraries are joined with ', ' — check for the multi-arg pattern
-    return content.includes(", fc.");
-  },
-);
-
-// ---------------------------------------------------------------------------
-// DU1.16: empty inputs → 'fc.anything()' fallback
-// ---------------------------------------------------------------------------
-
-/**
- * @summary When inputs.length === 0, generated arbList is 'fc.anything()' and arg is '_input'.
- */
-export const prop_extractFromDocumentedUsage_emptyInputsUseAnythingFallback: fc.IPropertyWithHooks<
-  [string, string]
-> = fc.property(nonEmptyStr, fc.string(), (behavior, source) => {
-  const card: IntentCardInput = {
-    behavior,
-    inputs: [],
-    outputs: [],
-    preconditions: [],
-    postconditions: [],
-    notes: [],
-    sourceHash: "a".repeat(64),
-    modelVersion: "v1",
-    promptVersion: "p1",
-  };
-  const result = extractFromDocumentedUsage(card, source);
+export const prop_extractFromDocumentedUsage_assertionUsesExpectToEqual: fc.IPropertyWithHooks<
+  [IntentCardInput]
+> = fc.property(intentCardInputArb, (card) => {
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
-  return content.includes("fc.anything()") && content.includes("_input");
+  // Must contain expect(parseList("1,2,3")).toEqual([1, 2, 3])
+  return content.includes('expect(parseList("1,2,3")).toEqual([1, 2, 3])');
 });
 
 // ---------------------------------------------------------------------------
-// DU1.17: input comment block shows 'name: typeHint — description → arbitrary'
+// DU1.14: input comment block shows name: typeHint -> arbitrary
 // ---------------------------------------------------------------------------
 
 /**
- * @summary Each input renders as '  // <name>: <typeHint> — <description> → <arbitrary>' in comment block.
+ * @summary Each input renders as '  // <name>: <typeHint> ...' in comment block.
  */
 export const prop_extractFromDocumentedUsage_inputCommentsBlockShowsArbitraryMapping: fc.IPropertyWithHooks<
   [IntentCardInput, string]
 > = fc.property(
   intentCardInputArb.filter((c) => c.inputs.length > 0),
-  fc.string(),
+  sourceFnDeclWithParseableExampleArb,
   (card, source) => {
     const result = extractFromDocumentedUsage(card, source);
+    if (result === undefined) return false;
     const decoder = new TextDecoder("utf-8");
     const content = decoder.decode(result.bytes);
     return card.inputs.every((inp) => content.includes(`// ${inp.name}: ${inp.typeHint}`));
@@ -439,15 +415,15 @@ export const prop_extractFromDocumentedUsage_inputCommentsBlockShowsArbitraryMap
 );
 
 // ---------------------------------------------------------------------------
-// DU1.18: empty inputs → '// (no typed inputs found)' comment
+// DU1.15: empty inputs -> '// (no typed inputs found)' comment
 // ---------------------------------------------------------------------------
 
 /**
  * @summary When inputs.length === 0, content includes '// (no typed inputs found)'.
  */
 export const prop_extractFromDocumentedUsage_emptyInputsRenderNoTypedInputsComment: fc.IPropertyWithHooks<
-  [string, string]
-> = fc.property(nonEmptyStr, fc.string(), (behavior, source) => {
+  [string]
+> = fc.property(nonEmptyStr, (behavior) => {
   const card: IntentCardInput = {
     behavior,
     inputs: [],
@@ -459,18 +435,19 @@ export const prop_extractFromDocumentedUsage_emptyInputsRenderNoTypedInputsComme
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, source);
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("// (no typed inputs found)");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.19: typeHintToArbitrary: 'string' → 'fc.string()'
+// DU1.16: typeHintToArbitrary: 'string' -> 'fc.string()'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary typeHint='string' (case-insensitive trim) maps to 'fc.string()' in generated content.
+ * @summary typeHint='string' maps to 'fc.string()' in generated content comment block.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_string: fc.IPropertyWithHooks<
   [string]
@@ -486,18 +463,19 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_string: fc.IPro
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.string()");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.20: typeHintToArbitrary: 'number' → 'fc.float()'
+// DU1.17: typeHintToArbitrary: 'number' -> 'fc.float()'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary typeHint='number' maps to 'fc.float()' in generated content.
+ * @summary typeHint='number' maps to 'fc.float()' in generated content comment block.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_number: fc.IPropertyWithHooks<
   [string]
@@ -513,18 +491,19 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_number: fc.IPro
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.float()");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.21: typeHintToArbitrary: 'integer'/'int' → 'fc.integer()'
+// DU1.18: typeHintToArbitrary: 'integer'/'int' -> 'fc.integer()'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary typeHint='integer' or 'int' maps to 'fc.integer()' in generated content.
+ * @summary typeHint='integer' or 'int' maps to 'fc.integer()' in generated content comment block.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_integerOrInt: fc.IPropertyWithHooks<
   [string, string]
@@ -540,18 +519,19 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_integerOrInt: f
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.integer()");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.22: typeHintToArbitrary: 'boolean' → 'fc.boolean()'
+// DU1.19: typeHintToArbitrary: 'boolean' -> 'fc.boolean()'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary typeHint='boolean' maps to 'fc.boolean()' in generated content.
+ * @summary typeHint='boolean' maps to 'fc.boolean()' in generated content comment block.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_boolean: fc.IPropertyWithHooks<
   [string]
@@ -567,18 +547,19 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_boolean: fc.IPr
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.boolean()");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.23: typeHintToArbitrary: 'bigint' → 'fc.bigInt()'
+// DU1.20: typeHintToArbitrary: 'bigint' -> 'fc.bigInt()'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary typeHint='bigint' maps to 'fc.bigInt()' in generated content.
+ * @summary typeHint='bigint' maps to 'fc.bigInt()' in generated content comment block.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_bigint: fc.IPropertyWithHooks<
   [string]
@@ -594,14 +575,15 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_bigint: fc.IPro
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.bigInt()");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.24: typeHintToArbitrary: ending '[]' → 'fc.array(fc.anything())'
+// DU1.21: typeHintToArbitrary: ending '[]' -> 'fc.array(fc.anything())'
 // ---------------------------------------------------------------------------
 
 /**
@@ -621,18 +603,19 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_arrayBracket: f
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.array(fc.anything())");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.25: typeHintToArbitrary: starting 'array<' → 'fc.array(fc.anything())'
+// DU1.22: typeHintToArbitrary: starting 'array<' -> 'fc.array(fc.anything())'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary typeHint starting 'array<' (case-insensitive) maps to 'fc.array(fc.anything())'.
+ * @summary typeHint starting 'array<' maps to 'fc.array(fc.anything())' in generated content.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_arrayAngle: fc.IPropertyWithHooks<
   [string]
@@ -648,18 +631,19 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_arrayAngle: fc.
     modelVersion: "v1",
     promptVersion: "p1",
   };
-  const result = extractFromDocumentedUsage(card, "");
+  const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
   return content.includes("fc.array(fc.anything())");
 });
 
 // ---------------------------------------------------------------------------
-// DU1.26: typeHintToArbitrary: unknown type → 'fc.anything()'
+// DU1.23: typeHintToArbitrary: unknown type -> 'fc.anything()'
 // ---------------------------------------------------------------------------
 
 /**
- * @summary Unknown typeHint strings map to 'fc.anything()' in generated content.
+ * @summary Unknown typeHint strings map to 'fc.anything()' in generated content comment block.
  */
 export const prop_extractFromDocumentedUsage_typeHintToArbitrary_unknownFallsBackToAnything: fc.IPropertyWithHooks<
   [string, string]
@@ -691,7 +675,8 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_unknownFallsBac
       modelVersion: "v1",
       promptVersion: "p1",
     };
-    const result = extractFromDocumentedUsage(card, "");
+    const result = extractFromDocumentedUsage(card, PARSEABLE_SOURCE);
+    if (result === undefined) return false;
     const decoder = new TextDecoder("utf-8");
     const content = decoder.decode(result.bytes);
     return content.includes("fc.anything()");
@@ -699,20 +684,43 @@ export const prop_extractFromDocumentedUsage_typeHintToArbitrary_unknownFallsBac
 );
 
 // ---------------------------------------------------------------------------
-// DU1.27: extractJsDocExamples: empty source → zero examples → one it() block
+// DU1.24: source with only multi-line @examples returns undefined
 // ---------------------------------------------------------------------------
 
 /**
- * @summary Source with no JSDoc blocks yields zero examples, producing exactly one it() block.
+ * @summary Multi-line @example blocks cannot be parsed into assertions -> loud refusal (undefined).
  */
-export const prop_extractFromDocumentedUsage_extractJsDocExamples_emptySourceReturnsEmptyArray: fc.IPropertyWithHooks<
+export const prop_extractFromDocumentedUsage_multilineExamplesReturnUndefined: fc.IPropertyWithHooks<
   [IntentCardInput]
 > = fc.property(intentCardInputArb, (card) => {
-  // Plain source with no /** ... */ JSDoc blocks
-  const result = extractFromDocumentedUsage(card, "export function fn() {}");
+  const result = extractFromDocumentedUsage(card, MULTILINE_EXAMPLE_SOURCE);
+  return result === undefined;
+});
+
+// ---------------------------------------------------------------------------
+// DU1.25: source with mixed parseable+unparseable emits only parseable as it() blocks
+// ---------------------------------------------------------------------------
+
+/**
+ * @summary When source has one parseable and one prose @example, only the parseable one
+ * produces an it() block; the prose one is refused.
+ */
+export const prop_extractFromDocumentedUsage_mixedExamplesEmitsOnlyParseable: fc.IPropertyWithHooks<
+  [IntentCardInput]
+> = fc.property(intentCardInputArb, (card) => {
+  const mixedSource = `/**
+ * @example
+ * fn("x") // => "x"
+ * @example
+ * fn takes a string and returns a string
+ */
+export function fn(x: string): string { return x; }`;
+  const result = extractFromDocumentedUsage(card, mixedSource);
+  if (result === undefined) return false;
   const decoder = new TextDecoder("utf-8");
   const content = decoder.decode(result.bytes);
-  const itCount = (content.match(/\bit\(/g) ?? []).length;
-  // No @example blocks → zero examples → 0 + 1 = 1 it() (the signature test only)
+  // Count it() calls using line-anchored pattern to avoid matching "it()" in comment text
+  const itCount = (content.match(/^ {2}it\(/gm) ?? []).length;
+  // Only the first (parseable) example produces an it() block
   return itCount === 1;
 });

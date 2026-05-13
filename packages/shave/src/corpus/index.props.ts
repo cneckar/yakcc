@@ -328,18 +328,33 @@ export const prop_extractCorpusCascade_returnsPropsFileSourceWhenAvailable: fc.I
 // ---------------------------------------------------------------------------
 
 /**
- * @summary extractCorpusCascade returns source='documented-usage' when enableUpstreamTest=false.
+ * Parseable source for IDX1.10: contains a single @example matching the Option-A pattern.
+ * Per DEC-PROPTEST-DOCUMENTED-USAGE-001, source (b) only produces a CorpusResult when
+ * the @example is parseable as fn(args) // => expected.
+ */
+const PARSEABLE_SOURCE_FOR_CASCADE = `/**
+ * @example
+ * fn("x") // => "x"
+ */
+export function fn(x: string): string { return x; }`;
+
+/**
+ * @summary extractCorpusCascade returns source='documented-usage' when enableUpstreamTest=false
+ * and the source contains a parseable @example block (DEC-PROPTEST-DOCUMENTED-USAGE-001).
+ *
+ * Note: source (b) returns undefined for unparseable sources; this test uses a fixed
+ * parseable source to guarantee the documented-usage path produces a CorpusResult.
  */
 export const prop_extractCorpusCascade_fallsThroughBToA: fc.IAsyncPropertyWithHooks<
-  [IntentCardInput, string]
-> = fc.asyncProperty(intentCardInputArb, fc.string(), async (card, source) => {
+  [IntentCardInput]
+> = fc.asyncProperty(intentCardInputArb, async (card) => {
   const options: CorpusExtractionOptions = {
     enablePropsFile: false,
     enableUpstreamTest: false,
     enableDocumentedUsage: true,
     enableAiDerived: false,
   };
-  const atomSpec = makeAtomSpec(card, source);
+  const atomSpec = makeAtomSpec(card, PARSEABLE_SOURCE_FOR_CASCADE);
   const result = await extractCorpusCascade(atomSpec, options);
   return result.source === "documented-usage";
 });
