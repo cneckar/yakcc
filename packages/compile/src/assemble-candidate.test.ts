@@ -251,10 +251,7 @@ export const gplFn = (n: number): number => n + 42;`;
     // derivable from the refused source.
     const hash = canonicalAstHash(gplSource);
     const stored = await registry.findByCanonicalAstHash(hash);
-    expect(
-      stored.length,
-      "No block must be stored for a license-refused source",
-    ).toBe(0);
+    expect(stored.length, "No block must be stored for a license-refused source").toBe(0);
   });
 });
 
