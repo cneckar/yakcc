@@ -68,6 +68,13 @@ not a marketplace; F4 is what makes the commons *expand* in adversarial
 conditions, but a private registry that never grows is a perfectly valid
 yakcc deployment.
 
+**License policy.** The global registry hosted at `registry.yakcc.com`
+accepts only atoms shaved from upstreams with permissive licenses (MIT,
+Apache-2.0, BSD-*, ISC, Unlicense, 0BSD). The full policy — including
+rejected licenses, canonical aliases, MPL-2.0 rationale, and the audit-log
+row format — lives in
+[`docs/REGISTRY_LICENSE_POLICY.md`](docs/REGISTRY_LICENSE_POLICY.md).
+
 ### What each level changes for a single user
 
 A worked example: `parse-int-list-co`, an enthusiast running yakcc on a
