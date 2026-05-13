@@ -22,7 +22,10 @@
     "bench:v0-smoke": "node bench/v0-release-smoke/smoke.mjs",
     "bench:commit": "node bench/B7-commit/harness/run.mjs",
     "bench:tokens": "node bench/B4-tokens/harness/run.mjs",
-    "bench:tokens:dry": "node bench/B4-tokens/harness/run.mjs --dry-run"
+    "bench:tokens:dry": "node bench/B4-tokens/harness/run.mjs --dry-run",
+    "bench:min-surface": "node bench/B9-min-surface/harness/run.mjs",
+    "bench:min-surface:dry": "node bench/B9-min-surface/harness/run.mjs --dry-run",
+    "bench:min-surface:no-network": "node bench/B9-min-surface/harness/run.mjs --no-network"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

@@ -1,0 +1,72 @@
+{
+  "attack_class_id": "prototype-pollution",
+  "description": "Inputs that attempt to exploit JSON.parse prototype pollution vectors. A JSON.parse-based emit is vulnerable to __proto__ / constructor.prototype key injection. The atomic emit has no JSON.parse call path and should refuse early on shape mismatch.",
+  "inputs": [
+    {
+      "label": "proto-key-bracket-notation",
+      "payload": "[\"__proto__\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Non-integer element; atomic emit should throw SyntaxError before any parse-body atom runs on this content"
+    },
+    {
+      "label": "proto-key-constructor",
+      "payload": "[\"constructor\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Non-integer element; shape refusal before atom body"
+    },
+    {
+      "label": "proto-numeric-looking",
+      "payload": "[1, \"__proto__\", 2]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Mixed element types; SyntaxError on second element before full list parsed"
+    },
+    {
+      "label": "proto-json-shape",
+      "payload": "{\"__proto__\":{\"polluted\":true}}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Not a bracket-list at all; leading '{' should trigger SyntaxError at position 0"
+    },
+    {
+      "label": "proto-nested-object",
+      "payload": "[{\"a\":1}]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Object element in integer list; SyntaxError on '{'"
+    },
+    {
+      "label": "proto-empty-string-element",
+      "payload": "[\"\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Empty string element; SyntaxError on '\"'"
+    },
+    {
+      "label": "proto-constructor-prototype",
+      "payload": "{\"constructor\":{\"prototype\":{\"polluted\":true}}}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Classic constructor.prototype pollution vector via JSON shape; '{' triggers immediate SyntaxError"
+    },
+    {
+      "label": "proto-array-with-proto-key",
+      "payload": "[1,\"__proto__\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Array with string element targeting __proto__; second element is non-integer"
+    },
+    {
+      "label": "proto-null-prototype-obj",
+      "payload": "[null]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "null element is not an integer literal; SyntaxError on 'n'"
+    },
+    {
+      "label": "proto-hasownproperty-key",
+      "payload": "[\"hasOwnProperty\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "String element targeting Object.prototype.hasOwnProperty; SyntaxError on '\"'"
+    },
+    {
+      "label": "proto-valid-baseline",
+      "payload": "[1,2,3]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Valid integer list — control input to verify non-adversarial path still works"
+    }
+  ]
+}

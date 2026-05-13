@@ -1,0 +1,73 @@
+{
+  "attack_class_id": "circular-reference",
+  "description": "Inputs that attempt to trigger circular reference handling. JSON.parse cannot produce circular references from a string (circular refs are a JavaScript object graph property, not a JSON text property), but some implementations have bugs around reference tracking. All inputs here are string-level anomalies that are shape violations.",
+  "inputs": [
+    {
+      "label": "repeated-open-brackets",
+      "payload": "[[[[[",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Nested open brackets — first inner '[' is non-integer at position 1; SyntaxError"
+    },
+    {
+      "label": "self-referential-notation",
+      "payload": "[1,[2,[3]]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Nested array elements — second element '[2,[3]]' is not an integer; SyntaxError on '['",
+      "clarification": "Tests that nested structure is refused, not just deeply nested"
+    },
+    {
+      "label": "mismatched-brackets",
+      "payload": "[1,2,3}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Closing '}' instead of ']'; SyntaxError on '}' at closing position"
+    },
+    {
+      "label": "double-close-bracket",
+      "payload": "[1,2,3]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Trailing ']' after valid close — eofCheck fires with trailing content"
+    },
+    {
+      "label": "unclosed-bracket",
+      "payload": "[1,2,3",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "No closing bracket — SyntaxError at EOF when expecting ']'"
+    },
+    {
+      "label": "only-open-bracket",
+      "payload": "[",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Single '[' with no content — EOF before ']' triggers SyntaxError"
+    },
+    {
+      "label": "alternating-brackets",
+      "payload": "[][][]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Three empty bracket pairs — first '[]' might parse as empty list, but trailing '[]' is caught by eofCheck"
+    },
+    {
+      "label": "bracket-in-middle",
+      "payload": "[1,2,[],3]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Empty array element '[]' in integer list; SyntaxError on '[' at third element"
+    },
+    {
+      "label": "reversed-brackets",
+      "payload": "]1,2,3[",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Reversed brackets — ']' at position 0 is not '['; SyntaxError immediately"
+    },
+    {
+      "label": "nested-empty-arrays",
+      "payload": "[[],[],[]]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Array of empty arrays — first element '[]' triggers SyntaxError on inner '['"
+    },
+    {
+      "label": "valid-empty-list-benign",
+      "payload": "[]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Empty list is valid per spec — control input"
+    }
+  ]
+}

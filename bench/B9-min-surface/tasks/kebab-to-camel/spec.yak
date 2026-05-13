@@ -1,0 +1,47 @@
+{
+  "name": "kebab-to-camel",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "A kebab-case string matching /^[a-z]+(-[a-z]+)*$/."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "string",
+      "description": "The camelCase equivalent."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Convert a kebab-case string to camelCase. The input must match /^[a-z]+(-[a-z]+)*$/. Returns the camelCase equivalent (e.g., 'foo-bar-baz' becomes 'fooBarBaz'). Throws SyntaxError for inputs that do not match the pattern.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "narrow-alphabet",
+      "description": "Only lowercase ASCII a-z and hyphens are valid. All other characters are refused."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input is empty.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains characters outside [a-z-].",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input starts or ends with a hyphen.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input contains consecutive hyphens.",
+      "errorType": "SyntaxError"
+    }
+  ]
+}

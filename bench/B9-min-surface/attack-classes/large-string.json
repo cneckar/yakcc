@@ -1,0 +1,66 @@
+{
+  "attack_class_id": "large-string-dos",
+  "description": "Inputs designed to trigger excessive memory allocation or CPU time via large string inputs. JSON.parse may allocate large internal structures. The atomic emit processes characters linearly with O(n) behavior; all large non-conforming inputs hit shape refusal quickly. Large conforming inputs test the O(n) claim.",
+  "inputs": [
+    {
+      "label": "large-string-element",
+      "payload": "[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "256-char string element; SyntaxError on opening '\"' before any string content is examined"
+    },
+    {
+      "label": "very-long-non-conforming-prefix",
+      "payload": "not-a-list-at-all-but-a-very-long-string-that-goes-on-and-on-and-on-and-on-and-on-and-on-and-on-and-on-and-on",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "No leading '['; SyntaxError at position 0 — refuses immediately without scanning content"
+    },
+    {
+      "label": "repeated-comma-flood",
+      "payload": "[,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,]",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Empty elements (commas without values); SyntaxError at position 1 on first ',' (expects digit)"
+    },
+    {
+      "label": "whitespace-flood-valid",
+      "payload": "[   1   ,   2   ,   3   ]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Lots of whitespace around valid integers — optionalWhitespace handles this correctly; parses as [1,2,3]"
+    },
+    {
+      "label": "deeply-long-integer",
+      "payload": "[12345678901234567890123456789012345678901234567890123456789012345678901234567890]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "Very long single integer — 80 digits; both arms parse digits until end. Result is imprecise but no shape violation."
+    },
+    {
+      "label": "thousand-digit-integer",
+      "payload": "[11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "1000 digit integer — maximum stress test for digit parsing loop; valid shape, result is Infinity"
+    },
+    {
+      "label": "large-list-of-elements",
+      "payload": "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "50 valid integer elements — tests O(n) parsing without triggering any shape violation"
+    },
+    {
+      "label": "non-list-large-json",
+      "payload": "{\"key1\":\"value1\",\"key2\":\"value2\",\"key3\":\"value3\",\"key4\":\"value4\",\"key5\":\"value5\",\"key6\":\"value6\",\"key7\":\"value7\",\"key8\":\"value8\",\"key9\":\"value9\",\"key10\":\"value10\"}",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Large JSON object; leading '{' is immediate SyntaxError at position 0"
+    },
+    {
+      "label": "space-only-input",
+      "payload": "     ",
+      "expected_outcome": "REFUSED-EARLY",
+      "rationale": "Only whitespace — no '['; SyntaxError at position 0"
+    },
+    {
+      "label": "repeated-valid-pattern",
+      "payload": "[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]",
+      "expected_outcome": "BENIGN-PASS",
+      "rationale": "20 zeros — valid, tests list parsing efficiency"
+    }
+  ]
+}
