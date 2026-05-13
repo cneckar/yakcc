@@ -38,10 +38,36 @@
 //   - ANTHROPIC_API_KEY must be set. Harness aborts with clear error if absent.
 //   - Each (task × arm × rep) makes one real Anthropic Messages API call.
 //   - N=3 reps per (task × arm) in Slice 1 = 18 calls minimum.
-//   - arm A: claude-sonnet model + yakccResolve MCP tool enabled (hook integration).
-//   - arm B: same model, no MCP tools, no hook integration text in system prompt.
+//   - arm A: claude-sonnet model + yakcc hook system-prompt enabled.
+//   - arm B: same model, no hook system-prompt text.
 //   This is the one benchmark in the suite that exits the B6 air-gap.
 //   See README.md for B6 air-gap caveat documentation.
+//
+//   ARM A TOOL DECLARATION — WHY REMOVED IN SLICE 1 (issue #450 fix)
+//   @decision DEC-BENCH-B4-HARNESS-002
+//   @title Slice 1 must NOT declare yakccResolve as a callable tool
+//   @status accepted
+//   @rationale
+//     The original Slice 1 implementation declared a `yakccResolve` tool in the Arm A
+//     API call. The intent was to simulate hook-assisted generation using only a system
+//     prompt suffix. However, declaring a tool in the Anthropic API means the model CAN
+//     call it — and claude-sonnet-4-5 does call it aggressively on CSV/parsing tasks.
+//     When the model issues a tool_use block (stop_reason: "tool_use"), the response has
+//     no text content block. extractCode("") returns "". The oracle-scratch file has no
+//     exports. All oracle tests fail with "must export parseCSV".
+//
+//     Root cause: Slice 1 has no real MCP server to service tool calls. The declared
+//     tool is unserviceable. The model calling it produces an incomplete response.
+//
+//     Fix: Remove the `tools` array from Arm A's API call. The system prompt suffix
+//     already communicates the yakcc hook context. Slice 1 measures "hook system prompt
+//     presence vs absence" — real tool infrastructure belongs in Slice 2 when the MCP
+//     server is wired (see issue #188 Slice 2 spec).
+//
+//     Observed failure (2026-05-13 run): Arm A reps 2 and 3 for csv-parser-quoted had
+//     stop_reason=tool_use, 65-71 output tokens, 0/39 oracle tests passing. Arm A rep 1
+//     (end_turn, 1036 tokens) passed 36/39. After fix, all Arm A reps should produce
+//     TypeScript code directly (end_turn) with semantic_eq ≥ Arm B baseline.
 //
 //   WHY 3 TASKS (SLICE 1 FLOOR)
 //   3 tasks provides minimum statistical surface to detect signal:
@@ -114,12 +140,17 @@ const TEMPERATURE = 1.0;
 // System prompt for Arm B (vanilla — no hook integration)
 const SYSTEM_PROMPT_VANILLA = `You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a \`\`\`typescript code block. Do not include explanation before or after the code block.`;
 
-// Additional system prompt text for Arm A (hook-enabled)
-// This represents the text that yakccResolve MCP integration adds.
-// Document the integration-text diff so future runs use the same baseline.
+// Additional system prompt text for Arm A (hook-enabled).
+// Represents the context injected by the yakcc hook layer.
+// Slice 1 measures system-prompt presence only — no real MCP tool is declared.
+// Slice 2 will wire real MCP tool calls when the MCP server is ready (issue #188).
+//
+// NOTE (issue #450): The previous version declared a real `yakccResolve` Anthropic
+// tool here. This caused the model to call the tool (stop_reason=tool_use), producing
+// no code output and failing all oracle tests. Removed — see DEC-BENCH-B4-HARNESS-002.
 const SYSTEM_PROMPT_HOOK_SUFFIX = `
 
-You have access to the yakccResolve MCP tool. When implementing code that uses common patterns (data structures, algorithms, parsing primitives), you SHOULD use this tool to retrieve relevant atomic implementations from the yakcc registry and compose them into your solution. This produces more token-efficient implementations by referencing proven atoms rather than regenerating them from scratch.`;
+You are working in a codebase that uses the yakcc registry for common atomic implementations. When implementing code, prefer token-efficient implementations that compose proven patterns (state machines, data structures, parsing primitives) rather than verbose from-scratch approaches. Output only the implementation code in a \`\`\`typescript code block.`;
 
 // ---------------------------------------------------------------------------
 // Task manifest loading and SHA-256 verification
@@ -233,23 +264,9 @@ async function callAnthropicAPI(taskId, taskManifest, arm) {
     ? SYSTEM_PROMPT_VANILLA + SYSTEM_PROMPT_HOOK_SUFFIX
     : SYSTEM_PROMPT_VANILLA;
 
-  // Arm A tools: yakccResolve MCP (hook integration)
-  // In Slice 1, the MCP tool is declared but the real MCP server integration
-  // would be wired in Slice 2. For now, Arm A = hook system prompt presence.
-  // The measurable difference in Slice 1 dry-run is the fixture token counts.
-  const tools = arm === "A" ? [
-    {
-      name: "yakccResolve",
-      description: "Resolve a yakcc atom reference to its implementation. Use this to retrieve proven atomic implementations from the yakcc registry.",
-      input_schema: {
-        type: "object",
-        properties: {
-          intent: { type: "string", description: "The intent or behavior of the atom to resolve" },
-        },
-        required: ["intent"],
-      },
-    },
-  ] : undefined;
+  // Slice 1: No tool declarations. Arm A vs B difference is system-prompt text only.
+  // Slice 2 will add real yakccResolve tool with MCP server wiring (issue #188).
+  // See DEC-BENCH-B4-HARNESS-002 for why declaring tools in Slice 1 caused semantic_eq=0.
 
   const t0 = Date.now();
   const response = await client.messages.create({
@@ -263,9 +280,19 @@ async function callAnthropicAPI(taskId, taskManifest, arm) {
         content: promptText,
       },
     ],
-    ...(tools ? { tools } : {}),
   });
   const wallMs = Date.now() - t0;
+
+  // Defensive: if the model calls a tool despite no tool declaration, warn loudly.
+  // This should not happen in Slice 1 (no tools declared), but is a belt-and-suspenders
+  // guard for future Slice 2 integration when tools are re-introduced.
+  if (response.stop_reason === "tool_use") {
+    console.warn(
+      `  [WARN] ${arm} got stop_reason=tool_use despite no tool declaration. ` +
+      "This indicates a harness configuration error. The code extraction will produce " +
+      "an empty file and oracle will fail. Check DEC-BENCH-B4-HARNESS-002 in run.mjs."
+    );
+  }
 
   return { response, wallMs };
 }
