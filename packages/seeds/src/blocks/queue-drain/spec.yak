@@ -1,0 +1,119 @@
+{
+  "name": "queue-drain",
+  "inputs": [
+    {
+      "name": "queue",
+      "type": "string[]",
+      "description": "Mutable queue of node IDs to process. Consumed (shifted) in-place during the drain."
+    },
+    {
+      "name": "inDegree",
+      "type": "Map<string, number>",
+      "description": "Mutable in-degree map. Each processed node decrements successors; nodes reaching zero are enqueued."
+    },
+    {
+      "name": "adjacency",
+      "type": "Map<string, string[]>",
+      "description": "Adjacency list: adjacency.get(u) is the list of nodes that u points to (u -> v edges)."
+    },
+    {
+      "name": "onVisit",
+      "type": "(node: string) => void",
+      "description": "Called in topological order as each node is dequeued."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "visitCount",
+      "type": "number",
+      "description": "Number of nodes visited. If visitCount < total nodes in graph, a cycle was detected."
+    }
+  ],
+  "preconditions": [
+    {
+      "description": "queue contains all nodes with initial in-degree 0."
+    },
+    {
+      "description": "inDegree maps every node in the graph to its current in-degree."
+    },
+    {
+      "description": "adjacency maps every node to its outgoing neighbour list (may be empty or absent)."
+    }
+  ],
+  "postconditions": [
+    {
+      "description": "queue is empty after the call."
+    },
+    {
+      "description": "onVisit was called once per visited node, in topological order."
+    },
+    {
+      "description": "visitCount equals the number of onVisit calls made."
+    }
+  ],
+  "invariants": [
+    {
+      "description": "A node is enqueued at most once (inDegree reaches 0 at most once per node)."
+    }
+  ],
+  "effects": [
+    {
+      "description": "Mutates queue (shifts elements, pushes newly-zero nodes)."
+    },
+    {
+      "description": "Mutates inDegree (decrements successor counts)."
+    },
+    {
+      "description": "Calls onVisit for each dequeued node."
+    }
+  ],
+  "level": "L0",
+  "behavior": "Drain the BFS queue using Kahn's algorithm for topological sort. While the queue is non-empty: dequeue the front node, call onVisit(node), then for each successor v in adjacency.get(node): decrement inDegree[v]; if inDegree[v] reaches 0, push v onto the queue. Return the total visit count. If the graph has a cycle, some nodes never reach in-degree 0 and visitCount will be less than the total node count.",
+  "guarantees": [
+    {
+      "id": "kahn-correct",
+      "description": "Produces a valid topological ordering for DAGs (Kahn 1962)."
+    },
+    {
+      "id": "cycle-detectable",
+      "description": "visitCount < |V| iff the graph contains at least one cycle."
+    },
+    {
+      "id": "each-node-once",
+      "description": "onVisit is called at most once per node."
+    }
+  ],
+  "errorConditions": [],
+  "nonFunctional": {
+    "time": "O(V + E) where V is vertices and E is edges",
+    "space": "O(1) additional (mutates caller-supplied structures)",
+    "purity": "impure (mutates queue, inDegree; calls onVisit)",
+    "threadSafety": "safe (single-threaded JS)"
+  },
+  "propertyTests": [
+    {
+      "id": "queue-drain-linear",
+      "description": "Linear chain A->B->C visits all 3 nodes in order A, B, C"
+    },
+    {
+      "id": "queue-drain-empty",
+      "description": "Empty queue returns visitCount 0 and calls onVisit zero times"
+    },
+    {
+      "id": "queue-drain-single",
+      "description": "Single node with no edges visits that node and returns 1"
+    },
+    {
+      "id": "queue-drain-diamond",
+      "description": "Diamond DAG visits all 4 nodes, visitCount === 4"
+    },
+    {
+      "id": "queue-drain-cycle-detected",
+      "description": "Graph with a cycle produces visitCount < total nodes"
+    },
+    {
+      "id": "queue-drain-parallel",
+      "description": "Two independent chains each process correctly (visitCount === total)"
+    }
+  ]
+}

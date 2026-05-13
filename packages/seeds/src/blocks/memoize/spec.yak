@@ -1,0 +1,91 @@
+{
+  "name": "memoize",
+  "inputs": [
+    {
+      "name": "fn",
+      "type": "(...args: unknown[]) => unknown",
+      "description": "A pure function whose return value depends only on its arguments."
+    },
+    {
+      "name": "keyFn",
+      "type": "(...args: unknown[]) => string",
+      "description": "Serialises the argument list to a string cache key. Caller supplies this to control key space."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "memoized",
+      "type": "(...args: unknown[]) => unknown",
+      "description": "A wrapped version of fn that returns the cached result on repeat calls with equal keys."
+    }
+  ],
+  "preconditions": [
+    {
+      "description": "fn must be referentially transparent: same arguments must always produce the same return value."
+    }
+  ],
+  "postconditions": [
+    {
+      "description": "memoized(...args) === fn(...args) for any args (return value identity)."
+    },
+    {
+      "description": "fn is called at most once per unique key string produced by keyFn."
+    }
+  ],
+  "invariants": [
+    {
+      "description": "The internal cache grows monotonically; entries are never evicted."
+    }
+  ],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Wrap a pure function fn with a Map-backed cache. On each call, compute the cache key via keyFn. If the key is present in the cache, return the stored value without calling fn. Otherwise call fn, store the result, and return it. The returned function is a closure that shares one cache across all invocations.",
+  "guarantees": [
+    {
+      "id": "pure-result",
+      "description": "The returned value is identical to what fn would return for the same arguments."
+    },
+    {
+      "id": "call-once",
+      "description": "fn is called at most once per unique key."
+    },
+    {
+      "id": "cache-hit",
+      "description": "Second call with same key returns the same object reference (no recomputation)."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "If fn throws, the exception propagates and no entry is stored in the cache.",
+      "errorType": "Error"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(1) amortized per call (Map lookup)",
+    "space": "O(k) where k is the number of distinct keys seen",
+    "purity": "impure (closes over mutable Map)",
+    "threadSafety": "safe (single-threaded JS)"
+  },
+  "propertyTests": [
+    {
+      "id": "memoize-returns-same-value",
+      "description": "memoized(2, 3) returns the same value as fn(2, 3)"
+    },
+    {
+      "id": "memoize-calls-fn-once",
+      "description": "fn is called exactly once for repeated identical arguments"
+    },
+    {
+      "id": "memoize-different-keys-call-fn",
+      "description": "fn is called for each distinct key"
+    },
+    {
+      "id": "memoize-cache-hit-identity",
+      "description": "Second call with same args returns the exact same object reference"
+    },
+    {
+      "id": "memoize-exception-not-cached",
+      "description": "If fn throws, the exception propagates and next call re-invokes fn"
+    }
+  ]
+}
