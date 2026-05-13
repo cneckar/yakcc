@@ -50,6 +50,25 @@
 //     no migrations (registry already exists) and the offline embedding provider
 //     is deterministic (no network calls required).
 //
+//   @decision DEC-V0-B4-EMBED-REAL-001
+//   @title Real semantic embedding provider for B4 MCP runtime path
+//   @status accepted
+//   @rationale
+//     Provider: Xenova/bge-small-en-v1.5 via @xenova/transformers (createLocalEmbeddingProvider).
+//     Dimension: 384-dim Float32Array, L2-normalized, cosine-distance compatible with vec0 index.
+//     License: MIT (confirmed, DEC-EMBED-010).
+//     Model size: ~25MB quantized ONNX; downloads from HuggingFace on first call, then cached
+//       at ~/.cache/huggingface/ (or $HF_HOME). Subsequent calls are fully local.
+//     Cache strategy: lazy singleton via closure (DEC-EMBED-SINGLETON-CLOSURE-001). The model
+//       loads on first ensureRegistry() call and is reused for the lifetime of the MCP server
+//       process. Since the server is a long-running subprocess (spawned by the harness), the
+//       per-run model-load cost (~1-2s cold, ~0s warm) is paid once per bench cell, not per query.
+//     Network behavior: outbound HuggingFace download on first cold boot ONLY. Steady-state
+//       (warm cache) is network-free. Air-gap note: see DEC-V0-B4-EMBED-SWAP-001.
+//     Why this model: Per DEC-EMBED-MODEL-DEFAULT-002, bge-small-en-v1.5 benchmarked at
+//       M2=70%, M3=100%, M4=0.823 against the yakcc seed corpus — highest semantic retrieval
+//       quality among tested 384-dim models. It is the production default for all registry paths.
+//
 // Cross-reference:
 //   bench/B4-tokens/harness/run.mjs DEC-V0-B4-HOOK-WIRING-001 (hook arm wiring)
 //   packages/seeds/src/blocks/timer-handle/ DEC-SEED-TIMER-001 (timer atom closes #454)
@@ -128,6 +147,43 @@ function logError(msg) {
 
 let registry = null;
 
+// @decision DEC-V0-B4-EMBED-SWAP-001
+// @title MCP server swaps offline BLAKE3 stub for real semantic embedding provider
+// @status accepted
+// @rationale
+//   Investigation #188 (comment 4444935370, PR #482) diagnosed that every B4 hooked-arm
+//   tool_use cycle returned {atoms:[]} because:
+//     1. Seed atoms in the registry were stored with LOCAL semantic embeddings
+//        (createLocalEmbeddingProvider → Xenova/bge-small-en-v1.5, 384-dim).
+//     2. Query text was being embedded with the BLAKE3 offline stub
+//        (createOfflineEmbeddingProvider), which produces cryptographic-hash vectors
+//        with no semantic structure whatsoever.
+//     3. Cosine similarity between a BLAKE3 vector and a transformer vector is
+//        effectively random, always landing below the 0.7 default threshold.
+//   Result: 0% substitution rate across all B4 runs — the +8.8% to +27.0% overhead
+//   measured was pure tool_use conversation overhead with zero atom reuse.
+//
+//   FIX: Use createLocalEmbeddingProvider() (Xenova/bge-small-en-v1.5) for the MCP
+//   runtime path. Query vectors are now produced by the same model that embedded the
+//   seed atoms, making cosine similarity semantically meaningful.
+//
+//   STUB PRESERVED: createOfflineEmbeddingProvider() remains exported from
+//   @yakcc/contracts for deterministic unit tests and bootstrap (air-gap) paths.
+//   The stub is intentionally NOT used here — only the MCP runtime path changes.
+//
+//   AIR-GAP NOTE (B6 compatibility): createLocalEmbeddingProvider() downloads the
+//   Xenova/bge-small-en-v1.5 model (~25MB) from HuggingFace on first use, then
+//   caches it locally. Air-gap deployments (B6) must pre-warm the model cache before
+//   going offline. The offline stub cannot replace this for semantic search — its
+//   vectors are incompatible with the seed atom embeddings in the registry.
+//   B6 workaround: YAKCC_MCP_OFFLINE=1 env var (future WI) to skip semantic search
+//   and fall back to structural matching. Track as a sub-followup on issue #480.
+//
+//   Cross-references:
+//     Issue #480 (this fix), #188 (investigation), PR #482 (instrumentation)
+//     DEC-V0-B4-EMBED-REAL-001 (provider choice)
+//     DEC-EMBED-OFFLINE-PROVIDER-001 (why stub exists)
+
 async function ensureRegistry() {
   if (registry !== null) return registry;
 
@@ -142,13 +198,17 @@ async function ensureRegistry() {
   const { openRegistry } = await import(
     new URL(`file://${resolve(REPO_ROOT, "packages/registry/dist/index.js")}`).href
   );
-  const { createOfflineEmbeddingProvider } = await import(
+  // DEC-V0-B4-EMBED-SWAP-001: use the local semantic provider (bge-small-en-v1.5),
+  // NOT createOfflineEmbeddingProvider(). The offline BLAKE3 stub produces vectors
+  // that are incompatible with the seed atom embeddings stored in the registry.
+  const { createLocalEmbeddingProvider } = await import(
     new URL(`file://${resolve(REPO_ROOT, "packages/contracts/dist/index.js")}`).href
   );
 
   log(`Opening registry at: ${REGISTRY_PATH}`);
+  log("Loading local embedding provider (Xenova/bge-small-en-v1.5) for semantic search...");
   registry = await openRegistry(REGISTRY_PATH, {
-    embeddings: createOfflineEmbeddingProvider(),
+    embeddings: createLocalEmbeddingProvider(),
   });
   log("Registry opened successfully.");
   return registry;
