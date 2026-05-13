@@ -276,11 +276,12 @@ export const prop_RecursionDepthExceededError_depth_exceeds_maxDepth = fc.asyncP
 export const prop_DidNotReachAtomError_node_range_is_valid = fc.asyncProperty(
   fc.constant<undefined>(undefined),
   async () => {
-    // maxControlFlowBoundaries: -1 makes every node non-atomic (CF count 0 > -1).
-    // ExpressionStatement has no decomposable children → DidNotReachAtomError.
+    // VariableStatement with no initializer → decomposableChildrenOf returns [] AND
+    // not a CallExpression → DidNotReachAtomError. (Previously used "console.log(1);"
+    // which now glue-routes per DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001.)
     let caught: DidNotReachAtomError | undefined;
     try {
-      await decompose("console.log(1);", emptyRegistry, {
+      await decompose("let x;", emptyRegistry, {
         maxControlFlowBoundaries: -1,
       });
     } catch (e) {

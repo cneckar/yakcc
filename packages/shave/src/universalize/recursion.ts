@@ -1232,6 +1232,33 @@ export async function decompose(
     const children = decomposableChildrenOf(node);
 
     if (children.length === 0) {
+      // @decision DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001
+      // status: decided
+      // rationale:
+      //   Per DEC-V2-GLUE-AWARE-SHAVE-001 (the glue-aware framing), constructs
+      //   that don't decompose into atomic units can be verbatim-preserved as
+      //   forced AtomLeaf entries (carrying atomTest.isAtom=false). Downstream
+      //   atom-persist / universalize pipelines route these as glue rather than
+      //   failing the entire file shave. This unblocks 4 CallExpression files
+      //   reported in issue #399 (bootstrap/report.json):
+      //     - packages/hooks-base/src/index.ts [13744,14068)
+      //     - packages/hooks-base/src/telemetry.ts [4975,5389)
+      //     - packages/hooks-claude-code/src/index.ts [11723,11956)
+      //     - packages/registry/src/discovery-eval-helpers.ts [26144,26424)
+      //   Rejected alternatives (per #399 body):
+      //     1. Refactor each CallExpression to be decomposable (source-level edits, risk subtle behavior change)
+      //     2. Extend decomposableChildrenOf() (unknown surface area, risks regressing currently-working files)
+      if (node.getKind() === SyntaxKind.CallExpression) {
+        leafCount += 1;
+        const leaf: AtomLeaf = {
+          kind: "atom",
+          sourceRange: { start, end },
+          source: nodeSource,
+          canonicalAstHash: computeHash(),
+          atomTest: atomResult,
+        };
+        return leaf;
+      }
       throw new DidNotReachAtomError(
         `Node at [${start},${end}) (kind=${node.getKindName()}) is not atomic and has no decomposable children`,
         {
