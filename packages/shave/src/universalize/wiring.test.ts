@@ -224,13 +224,14 @@ describe("universalize() wiring — decomposition error propagation", () => {
   it("propagates DidNotReachAtomError when decompose() cannot reach atoms", async () => {
     // Strategy: pass maxControlFlowBoundaries: -1 via recursionOptions.
     // With this setting, cfCount (always ≥ 0) > -1 is always true, so every
-    // node is classified as non-atomic. For a SourceFile with one expression
-    // statement (console.log(1)), decomposableChildrenOf(SourceFile) returns
-    // [ExpressionStatement]. The ExpressionStatement has no decomposable
-    // children → DidNotReachAtomError.
+    // node is classified as non-atomic. For a SourceFile with one variable
+    // statement ("let x;"), decomposableChildrenOf returns []. The
+    // VariableStatement has no decomposable children → DidNotReachAtomError.
+    // (Previously used "console.log(1);" which now glue-routes per
+    // DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001.)
     //
     // We seed the cache so extractIntent succeeds before decompose() runs.
-    const source = "// SPDX-License-Identifier: MIT\nconsole.log(1);";
+    const source = "// SPDX-License-Identifier: MIT\nlet x;";
     await seedCache(source);
 
     // WI-022: intentStrategy: "llm" + offline — seedCache() uses LLM-mode tags.
