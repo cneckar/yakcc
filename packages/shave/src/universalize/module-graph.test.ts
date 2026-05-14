@@ -71,7 +71,7 @@ import { slice } from "./slicer.js";
  * Whether to use the local semantic embedding provider for quality tests.
  * Set DISCOVERY_EVAL_PROVIDER=local to enable. Without this, the combinedScore
  * quality test is skipped (offline BLAKE3 provider produces non-semantic vectors;
- * KNN scores are degenerate and do not meet the >= 0.70 threshold).
+ * KNN scores are degenerate and do not meet the >= 0.7 threshold).
  *
  * @decision DEC-WI510-ENGINE-ORCHESTRATION-LAYER-001
  * Per §6.6 #5 of the Evaluation Contract: if the local provider is absent so
@@ -85,7 +85,7 @@ const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === "local";
 // ---------------------------------------------------------------------------
 
 /**
- * Verifies that a real ms parse() atom achieves combinedScore >= 0.70 when
+ * Verifies that a real ms parse() atom achieves combinedScore >= 0.7 when
  * queried with the corpus behavioral description. This test requires the local
  * semantic embedding provider (Xenova/all-MiniLM-L6-v2, 384-dim); the offline
  * BLAKE3 provider produces non-semantic vectors that cannot meet this threshold.
@@ -99,7 +99,7 @@ const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === "local";
  */
 describe("shavePackage — combinedScore quality gate (§6.6 #5, DISCOVERY_EVAL_PROVIDER=local)", () => {
   it.skipIf(!USE_LOCAL_PROVIDER)(
-    "ms parse() atom achieves combinedScore >= 0.70 for the corpus query (local semantic embedder)",
+    "ms parse() atom achieves combinedScore >= 0.7 for the corpus query (local semantic embedder)",
     { timeout: 120_000 },
     async () => {
       const pkgRoot = join(FIXTURES_DIR, "ms-2.1.3");
