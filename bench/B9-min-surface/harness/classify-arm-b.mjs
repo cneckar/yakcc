@@ -120,7 +120,16 @@ export function loadAttackClasses(attackDir) {
 // Run Arm B classification on a single emit (one rep)
 // ---------------------------------------------------------------------------
 
-export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName) {
+/**
+ * Classify a single Arm B emit against all attack classes.
+ *
+ * @param {string} emitPath
+ * @param {Array<{attack_class_id: string, inputs: Array<{label:string,payload:string,expected_outcome:string}>}>} attackClasses
+ * @param {string} entryFuncName
+ * @param {string[]|null} [applicableClasses] - array of applicable attack_class_id values,
+ *   or null/undefined to apply all classes. Per DEC-B9-APPLICABILITY-001.
+ */
+export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName, applicableClasses) {
   let loadPath = emitPath;
   if (!existsSync(loadPath)) throw new Error(`Emit not found: ${loadPath}`);
 
@@ -131,14 +140,35 @@ export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName) {
     throw new Error(`Entry function '${entryFuncName}' not found in ${loadPath}. Available: ${Object.keys(mod).join(", ")}`);
   }
 
+  // Build a fast lookup set; null means "all applicable"
+  const applicableSet = (applicableClasses != null) ? new Set(applicableClasses) : null;
+
   const byClass = {};
-  let totalAll = 0, refusedEarlyAll = 0, executedAll = 0, shapeEscapesAll = 0;
+  let totalAll = 0, refusedEarlyAll = 0, executedAll = 0, shapeEscapesAll = 0, notApplicableAll = 0;
 
   for (const attackClass of attackClasses) {
     const classId = attackClass.attack_class_id;
-    const classResult = { total: 0, refused_early: 0, executed: 0, contained_exception: 0, benign_pass: 0, unexpected_refusal: 0, shape_escapes: 0, inputs: [] };
+    const isApplicable = applicableSet === null || applicableSet.has(classId);
+    const classResult = { total: 0, refused_early: 0, executed: 0, contained_exception: 0, benign_pass: 0, unexpected_refusal: 0, shape_escapes: 0, not_applicable: 0, applicable: isApplicable, inputs: [] };
 
     for (const input of attackClass.inputs) {
+      classResult.total++;
+      totalAll++;
+
+      if (!isApplicable) {
+        classResult.not_applicable++;
+        notApplicableAll++;
+        classResult.inputs.push({
+          label: input.label,
+          expected_outcome: input.expected_outcome,
+          classification: "not-applicable",
+          threw: null,
+          error_type: null,
+          error_message: null,
+        });
+        continue;
+      }
+
       let threw = false, thrownError = null, returnValue;
       try {
         returnValue = entryFn(input.payload);
@@ -149,9 +179,6 @@ export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName) {
 
       const invokeResult = { threw, thrownError, returnValue };
       const classification = classifyArmBResult(invokeResult, input.expected_outcome);
-
-      classResult.total++;
-      totalAll++;
 
       switch (classification) {
         case "refused-early": classResult.refused_early++; refusedEarlyAll++; break;
@@ -175,14 +202,16 @@ export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName) {
     byClass[classId] = classResult;
   }
 
+  // Only count applicable inputs toward refused_early_targets
   const refusedEarlyTargets = Object.values(byClass).reduce(
-    (acc, c) => acc + c.inputs.filter(i => i.expected_outcome === "REFUSED-EARLY").length, 0
+    (acc, c) => acc + c.inputs.filter(i => i.expected_outcome === "REFUSED-EARLY" && i.classification !== "not-applicable").length, 0
   );
 
   return {
     by_class: byClass,
     summary: {
       total_inputs: totalAll,
+      not_applicable: notApplicableAll,
       refused_early_targets: refusedEarlyTargets,
       refused_early: refusedEarlyAll,
       executed: executedAll,
