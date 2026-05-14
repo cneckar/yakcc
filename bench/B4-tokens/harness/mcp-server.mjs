@@ -273,12 +273,22 @@ async function atomLookup(input) {
     return { atoms: [] };
   }
 
-  // Convert cosineDistance to match_confidence: 1 - cosineDistance/2
-  // cosineDistance in [0,2]: 0=identical, 2=opposite; maps confidence to [0,1].
+  // Convert L2 distance to match_confidence using the correct formula per
+  // DEC-V3-DISCOVERY-CALIBRATION-FIX-002 (#500).
+  //
+  // sqlite-vec vec0 returns L2 Euclidean distance by default (NOT cosine distance).
+  // For unit-normalized vectors, cosine_distance = L2² / 2, so the correct mapping
+  // from L2 distance d ∈ [0, 2] to a [0, 1] confidence score is:
+  //   match_confidence = 1 - d²/4 = (1 + cos(θ)) / 2
+  //
+  // The retracted formula (1 - d/2) treated d as cosine distance, mapping an LRU
+  // intent at L2=0.662 to 0.669 (below the 0.7 threshold). The correct formula
+  // maps it to 0.890 (above threshold). See packages/registry/src/discovery-eval-helpers.ts
+  // cosineDistanceToCombinedScore() for the canonical implementation.
   const withConfidence = candidates
     .map((c) => ({
       block: c.block,
-      match_confidence: 1 - (c.cosineDistance / 2),
+      match_confidence: Math.max(0, Math.min(1, 1 - (c.cosineDistance * c.cosineDistance) / 4)),
     }))
     .filter((c) => c.match_confidence >= effectiveThreshold)
     .slice(0, topK);
