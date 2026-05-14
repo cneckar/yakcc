@@ -339,6 +339,35 @@ async function measureTask(taskId, harness, rollingCostUsd) {
 }
 
 // ---------------------------------------------------------------------------
+// Deterministic hash helper (B10-S1-SMOKE-FIXTURE-NONDETERMINISM-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively replace every "measured_at" field in a plain object/array with
+ * the sentinel string "DETERMINISTIC" so the content-hash used to name the
+ * smoke-fixture file is stable across reruns.
+ *
+ * The resolver (measure-transitive-surface.mjs) embeds measured_at in every
+ * result object it returns.  The top-level artifact also carries measured_at.
+ * Replacing them all before hashing ensures reruns on the same corpus+inputs
+ * always produce the same hash and therefore overwrite the same file in-place.
+ * The sentinel value makes it obvious in diffs that timestamps were redacted.
+ */
+function stripMeasuredAt(value) {
+  if (Array.isArray(value)) {
+    return value.map(stripMeasuredAt);
+  }
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = k === "measured_at" ? "DETERMINISTIC" : stripMeasuredAt(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -373,10 +402,26 @@ async function main() {
     taskResults.map((r) => r.classification ?? { task_id: r.task_id, verdict: "PENDING", reason: r.error ?? "unknown" })
   );
 
-  // Build the artifact
-  const artifactBody = {
+  // Build the artifact.
+  //
+  // @decision B10-S1-SMOKE-FIXTURE-NONDETERMINISM-001
+  // @title Exclude measured_at from the content-hash that names the smoke-fixture file
+  // @status accepted
+  // @rationale
+  //   The smoke-fixture filename is derived from a SHA256 of the artifact body so that
+  //   reruns on identical inputs overwrite the same file in-place rather than accumulating
+  //   stale copies in the repo.  Including the live timestamp in the hash caused every
+  //   run to produce a distinct filename — the repo accumulated four smoke-fixture-*.json
+  //   files that were numerically identical except for measured_at.
+  //   Fix: compute the hash over a stable projection of the body (measured_at replaced with
+  //   the sentinel string "DETERMINISTIC"), then inject the real ISO-8601 timestamp into the
+  //   final JSON *after* the hash is settled.  The committed fixture still carries
+  //   measured_at for provenance; it just does not influence the filename.
+  //   (Finding B10-S1-SMOKE-FIXTURE-NONDETERMINISM-001 from the Slice 1 reviewer.)
+  const measuredAt = new Date().toISOString();
+  const stableBody = {
     schema_version:  "b10-s1-v1",
-    measured_at:     new Date().toISOString(),
+    measured_at:     "DETERMINISTIC",        // sentinel keeps key order stable; excluded from hash
     platform:        process.platform,
     node_version:    process.version,
     mode:            DRY_RUN ? "dry-run" : NO_NETWORK ? "no-network" : "live",
@@ -387,10 +432,20 @@ async function main() {
     total_cost_usd:  rollingCostUsd.value,
   };
 
-  // Compute sha for smoke output path
-  const artifactJson = JSON.stringify(artifactBody, null, 2);
-  const artifactSha  = createHash("sha256").update(artifactJson, "utf8").digest("hex");
-  artifactBody.artifact_sha256 = artifactSha;
+  // Hash the timestamp-free body so reruns on the same inputs always produce the
+  // same SHA and overwrite the same smoke-fixture file.  stripMeasuredAt()
+  // recursively replaces every measured_at field (top-level AND nested inside
+  // task_results[*].arm_a.transitive, arm_b.reps[*].transitive, etc.) with the
+  // sentinel string already set on the top-level key, making the hash stable.
+  const stableJson   = JSON.stringify(stripMeasuredAt(stableBody), null, 2);
+  const artifactSha  = createHash("sha256").update(stableJson, "utf8").digest("hex");
+
+  // Build the final artifact: inject the real timestamp and content-hash.
+  const artifactBody = {
+    ...stableBody,
+    measured_at:      measuredAt,
+    artifact_sha256:  artifactSha,
+  };
 
   const finalJson    = JSON.stringify(artifactBody, null, 2);
   const outputPath   = cliArgs["output"] ?? defaultOutputPath(artifactSha);

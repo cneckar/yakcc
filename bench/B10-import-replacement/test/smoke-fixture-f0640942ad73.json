@@ -1,6 +1,6 @@
 {
   "schema_version": "b10-s1-v1",
-  "measured_at": "2026-05-14T17:28:25.666Z",
+  "measured_at": "2026-05-14T18:59:56.500Z",
   "platform": "win32",
   "node_version": "v22.14.0",
   "mode": "dry-run",
@@ -119,7 +119,7 @@
           },
           "ts_morph_version": "23.0.0",
           "excluded_stdlib_files_seen": 0,
-          "measured_at": "2026-05-14T17:28:25.597Z",
+          "measured_at": "2026-05-14T18:59:56.421Z",
           "source": "b9-reference"
         },
         "axis1": {
@@ -162,7 +162,7 @@
               },
               "ts_morph_version": "23.0.0",
               "excluded_stdlib_files_seen": 0,
-              "measured_at": "2026-05-14T17:28:25.613Z"
+              "measured_at": "2026-05-14T18:59:56.440Z"
             },
             "reachable_functions": 1,
             "reachable_bytes": 1371,
@@ -240,7 +240,7 @@
           },
           "ts_morph_version": "23.0.0",
           "excluded_stdlib_files_seen": 0,
-          "measured_at": "2026-05-14T17:28:25.620Z",
+          "measured_at": "2026-05-14T18:59:56.449Z",
           "source": "b9-reference"
         },
         "axis1": {
@@ -283,7 +283,7 @@
               },
               "ts_morph_version": "23.0.0",
               "excluded_stdlib_files_seen": 0,
-              "measured_at": "2026-05-14T17:28:25.628Z"
+              "measured_at": "2026-05-14T18:59:56.458Z"
             },
             "reachable_functions": 1,
             "reachable_bytes": 1025,
@@ -359,7 +359,7 @@
           },
           "ts_morph_version": "23.0.0",
           "excluded_stdlib_files_seen": 0,
-          "measured_at": "2026-05-14T17:28:25.631Z",
+          "measured_at": "2026-05-14T18:59:56.461Z",
           "source": "b9-reference"
         },
         "axis1": {
@@ -402,7 +402,7 @@
               },
               "ts_morph_version": "23.0.0",
               "excluded_stdlib_files_seen": 0,
-              "measured_at": "2026-05-14T17:28:25.637Z"
+              "measured_at": "2026-05-14T18:59:56.467Z"
             },
             "reachable_functions": 1,
             "reachable_bytes": 688,
@@ -479,7 +479,7 @@
           },
           "ts_morph_version": "23.0.0",
           "excluded_stdlib_files_seen": 0,
-          "measured_at": "2026-05-14T17:28:25.642Z",
+          "measured_at": "2026-05-14T18:59:56.472Z",
           "source": "b9-reference"
         },
         "axis1": {
@@ -522,7 +522,7 @@
               },
               "ts_morph_version": "23.0.0",
               "excluded_stdlib_files_seen": 0,
-              "measured_at": "2026-05-14T17:28:25.653Z"
+              "measured_at": "2026-05-14T18:59:56.484Z"
             },
             "reachable_functions": 2,
             "reachable_bytes": 714,
@@ -598,7 +598,7 @@
           },
           "ts_morph_version": "23.0.0",
           "excluded_stdlib_files_seen": 0,
-          "measured_at": "2026-05-14T17:28:25.655Z",
+          "measured_at": "2026-05-14T18:59:56.486Z",
           "source": "b9-reference"
         },
         "axis1": {
@@ -641,7 +641,7 @@
               },
               "ts_morph_version": "23.0.0",
               "excluded_stdlib_files_seen": 0,
-              "measured_at": "2026-05-14T17:28:25.659Z"
+              "measured_at": "2026-05-14T18:59:56.490Z"
             },
             "reachable_functions": 1,
             "reachable_bytes": 436,
@@ -716,7 +716,7 @@
           },
           "ts_morph_version": "23.0.0",
           "excluded_stdlib_files_seen": 0,
-          "measured_at": "2026-05-14T17:28:25.661Z",
+          "measured_at": "2026-05-14T18:59:56.493Z",
           "source": "b9-reference"
         },
         "axis1": {
@@ -759,7 +759,7 @@
               },
               "ts_morph_version": "23.0.0",
               "excluded_stdlib_files_seen": 0,
-              "measured_at": "2026-05-14T17:28:25.666Z"
+              "measured_at": "2026-05-14T18:59:56.499Z"
             },
             "reachable_functions": 2,
             "reachable_bytes": 482,
@@ -778,5 +778,5 @@
     }
   ],
   "total_cost_usd": 0,
-  "artifact_sha256": "18771f03cdf6a3ff9a8d0c4e91a373a457eac4d1afd1d91bede280b5b8963352"
+  "artifact_sha256": "f0640942ad735960982f966112d0f5fd8aba344fae2ef1e2852fccf6f9f1aee5"
 }

@@ -340,7 +340,12 @@ A reviewer declares S1 `ready_for_guardian` **iff every item below is satisfied 
 - `pnpm --dir bench/B10-import-replacement install` succeeds (installs ts-morph, fast-check, @anthropic-ai/sdk).
 - `node --test bench/B10-import-replacement/test/measure-transitive-surface.test.mjs bench/B10-import-replacement/test/run.test.mjs` — all green.
 - `pnpm bench:import-replacement:dry` (or `node bench/B10-import-replacement/harness/run.mjs --dry-run`) exits `0`, prints a tabular per-task summary, and writes `bench/B10-import-replacement/test/smoke-fixture-<sha>.json`.
-- The committed `smoke-fixture-<sha>.json` shows, for every B9 task: Arm A `reachable_functions == 0` (B9 reference emits have no npm imports) and Arm B `reachable_functions` is a small finite number with `JSON.parse`-style edges resolving to `0` via the stdlib-exclusion rule — i.e. the resolver does NOT explode on stdlib (live proof of the U4 mitigation on real B9 inputs).
+- The committed `smoke-fixture-<sha>.json` shows, for every B9 task: Arm A `reachable_files == 1` (only the emit file was traversed — no npm `node_modules` entered, stdlib-exclusion proven) and Arm B `reachable_functions` is a small finite number with `JSON.parse`-style edges resolving to `0` via the stdlib-exclusion rule — i.e. the resolver does NOT explode on stdlib (live proof of the U4 mitigation on real B9 inputs).
+  <!-- Code-is-Truth correction: the S10 test always asserted reachable_files == 1, not reachable_functions == 0.
+       B9 reference emits do contain body-bearing functions (e.g. parse-int-list has reachable_functions = 9)
+       so the meaningful invariant is that no extra files were traversed (reachable_files == 1), not that
+       the function count is zero.  The test was always right; this text was wrong.
+       Finding B10-S1-EC-TEXT-ERROR-001 from the Slice 1 reviewer. -->
 
 **Required authority invariants (must hold):**
 - The harness MUST NOT import or call the production registry (`packages/registry/**`) or the compile pipeline as a library. It reads emit *files* only.
