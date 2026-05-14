@@ -1,0 +1,110 @@
+{
+  "name": "base64-alphabet",
+  "inputs": [
+    {
+      "name": "bytes",
+      "type": "number[]",
+      "description": "Array of byte values (each in range 0-255). Length must be a multiple of 3; if not, caller must pad."
+    },
+    {
+      "name": "urlSafe",
+      "type": "boolean",
+      "description": "When true, uses URL-safe alphabet (+/ replaced with -_). When false uses standard RFC 4648 alphabet."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "encoded",
+      "type": "string",
+      "description": "Base64 encoded string without padding characters. Caller appends '=' padding if required."
+    }
+  ],
+  "preconditions": [
+    {
+      "description": "Each element of bytes is an integer in [0, 255]."
+    },
+    {
+      "description": "bytes.length is a multiple of 3 (padding is caller's responsibility)."
+    }
+  ],
+  "postconditions": [
+    {
+      "description": "encoded.length === (bytes.length / 3) * 4"
+    },
+    {
+      "description": "Every character in encoded is from the selected RFC 4648 alphabet."
+    }
+  ],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Encode a byte array to base64 using the RFC 4648 alphabet. Groups bytes in triplets, extracts four 6-bit values via bit-shift, maps each to the alphabet character at that index, and concatenates. When urlSafe is true, replaces '+' with '-' and '/' with '_'. Padding ('=') is not appended; the caller is responsible for padding if the byte count is not a multiple of 3.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "rfc4648-standard",
+      "description": "Standard alphabet: A-Z, a-z, 0-9, +, / (RFC 4648 Section 4)."
+    },
+    {
+      "id": "rfc4648-url-safe",
+      "description": "URL-safe alphabet: A-Z, a-z, 0-9, -, _ (RFC 4648 Section 5)."
+    },
+    {
+      "id": "output-length",
+      "description": "Output length is exactly (bytes.length / 3) * 4 characters."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "bytes.length is not a multiple of 3.",
+      "errorType": "RangeError"
+    },
+    {
+      "description": "A byte value is outside [0, 255].",
+      "errorType": "RangeError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n) where n is bytes.length",
+    "space": "O(n) for the output string",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "base64-empty",
+      "description": "base64Encode([], false) returns empty string"
+    },
+    {
+      "id": "base64-standard-known",
+      "description": "base64Encode([77,97,110], false) returns 'TWFu' (RFC 4648 example)"
+    },
+    {
+      "id": "base64-url-safe-known",
+      "description": "base64Encode bytes that produce + or / in standard mode returns - or _ in url-safe mode"
+    },
+    {
+      "id": "base64-output-length",
+      "description": "Output length === (bytes.length / 3) * 4 for any valid input"
+    },
+    {
+      "id": "base64-invalid-length",
+      "description": "bytes.length not a multiple of 3 throws RangeError"
+    },
+    {
+      "id": "base64-byte-out-of-range",
+      "description": "Byte value 256 throws RangeError"
+    },
+    {
+      "id": "base64-all-zeros",
+      "description": "base64Encode([0,0,0], false) returns 'AAAA'"
+    },
+    {
+      "id": "base64-all-255",
+      "description": "base64Encode([255,255,255], false) returns '////' (three max-value bytes)"
+    }
+  ]
+}

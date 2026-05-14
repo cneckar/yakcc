@@ -11,3 +11,16 @@
 
 # Force LF line endings for JSONL benchmark corpus files (platform-stable SHA)
 bench/B8-synthetic/transcripts/*.jsonl text eol=lf
+
+# @decision DEC-SEEDS-LF-001
+# @title Force LF line endings for all TypeScript/MJS source files
+# @status accepted
+# @rationale
+#   Windows git (core.autocrlf=true) converts LF->CRLF on checkout, which causes
+#   Biome to reject files with "format" errors (CRLF not permitted). The 5 new seed
+#   atom files added in WI-481 triggered this on CI (PR #493). Pinning *.ts and *.mjs
+#   to eol=lf ensures Biome never sees CRLF regardless of developer platform.
+#   This mirrors the approach used for B8 JSONL files (DEC-BENCH-B8-SHA-001).
+*.ts text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf

@@ -1,0 +1,109 @@
+{
+  "name": "semver-component-parser",
+  "inputs": [
+    {
+      "name": "input",
+      "type": "string",
+      "description": "A semver version string of the form MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "{ major: number; minor: number; patch: number; prerelease: string | null; build: string | null }",
+      "description": "Parsed semver components. prerelease is null when no '-' suffix is present. build is null when no '+' suffix is present."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [
+    {
+      "description": "result.major >= 0 and is the integer parsed from the MAJOR field."
+    },
+    {
+      "description": "result.minor >= 0 and is the integer parsed from the MINOR field."
+    },
+    {
+      "description": "result.patch >= 0 and is the integer parsed from the PATCH field (before any pre-release or build suffix)."
+    }
+  ],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Parse a semver version string into its numeric components (major, minor, patch) and optional string suffixes (prerelease, build). Parsing stops at the first '-' for prerelease and the first '+' for build metadata. No semantic validation of prerelease or build identifiers is performed -- they are captured as raw strings. Throws SyntaxError for strings that do not match the MAJOR.MINOR.PATCH structure.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects."
+    },
+    {
+      "id": "numeric-components",
+      "description": "major, minor, patch are non-negative integers parsed from the first three dot-separated fields."
+    },
+    {
+      "id": "prerelease-captured",
+      "description": "prerelease is the raw string after the first '-' and before any '+'; null if absent."
+    },
+    {
+      "id": "build-captured",
+      "description": "build is the raw string after the first '+'; null if absent."
+    }
+  ],
+  "errorConditions": [
+    {
+      "description": "Input does not contain exactly two dots in the MAJOR.MINOR.PATCH prefix (e.g. '1.2' or '1.2.3.4').",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "MAJOR, MINOR, or PATCH component is not a non-negative integer.",
+      "errorType": "SyntaxError"
+    },
+    {
+      "description": "Input is an empty string.",
+      "errorType": "SyntaxError"
+    }
+  ],
+  "nonFunctional": {
+    "time": "O(n) where n is input.length",
+    "space": "O(n) for substrings",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "semver-simple",
+      "description": "parseSemver('1.2.3') returns { major:1, minor:2, patch:3, prerelease:null, build:null }"
+    },
+    {
+      "id": "semver-prerelease",
+      "description": "parseSemver('1.0.0-alpha.1') returns prerelease 'alpha.1'"
+    },
+    {
+      "id": "semver-build",
+      "description": "parseSemver('1.0.0+build.42') returns build 'build.42'"
+    },
+    {
+      "id": "semver-prerelease-and-build",
+      "description": "parseSemver('1.2.3-beta+exp.sha.5114f85') captures both prerelease and build"
+    },
+    {
+      "id": "semver-zeros",
+      "description": "parseSemver('0.0.0') returns { major:0, minor:0, patch:0, prerelease:null, build:null }"
+    },
+    {
+      "id": "semver-large-numbers",
+      "description": "parseSemver('100.200.300') returns major=100, minor=200, patch=300"
+    },
+    {
+      "id": "semver-invalid-no-dots",
+      "description": "parseSemver('1') throws SyntaxError"
+    },
+    {
+      "id": "semver-invalid-non-numeric",
+      "description": "parseSemver('a.b.c') throws SyntaxError"
+    },
+    {
+      "id": "semver-empty",
+      "description": "parseSemver('') throws SyntaxError"
+    }
+  ]
+}

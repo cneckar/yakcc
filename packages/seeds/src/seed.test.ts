@@ -9,6 +9,21 @@
 // Suite 5 (composition) exercises listOfInts end-to-end.
 // Suite 6 (E2E compound-interaction) seeds registry and round-trips via selectBlocks
 //   + getBlock — the new T03 API — instead of the removed registry.match() path.
+//
+// @decision DEC-V0-B4-CORPUS-EXPAND-001
+// @title WI-481: 5 algorithm seed atoms for B4 GAP tasks
+// @status accepted
+// @rationale
+//   The B4 benchmark matrix was producing zero active_substitutions because the
+//   registry contained only parser-combinator atoms misaligned with the 5 GAP tasks.
+//   WI-481 adds 5 hand-authored atoms directly targeting those tasks:
+//     - lru-node        -> lru-cache-with-ttl (doubly-linked list node, O(1) eviction)
+//     - memoize         -> levenshtein-with-memo (Map-backed memoization wrapper)
+//     - queue-drain     -> dependency-resolver (Kahn's topological sort inner loop)
+//     - base64-alphabet -> base64-encode (RFC 4648 alphabet + bit-shift encoder)
+//     - semver-component-parser -> semver-range-satisfies (version string parser)
+//   Block count increases from 21 to 26. All tests updated accordingly.
+//   Per DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001 — no LLM-generated tests.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,6 +34,7 @@ import { openRegistry } from "@yakcc/registry";
 import { afterEach, describe, expect, it } from "vitest";
 import { asciiChar } from "./blocks/ascii-char/impl.js";
 import { isAsciiDigit } from "./blocks/ascii-digit-set/impl.js";
+import { base64Encode } from "./blocks/base64-alphabet/impl.js";
 import { bracket } from "./blocks/bracket/impl.js";
 import { charCode } from "./blocks/char-code/impl.js";
 import { commaSeparatedIntegers } from "./blocks/comma-separated-integers/impl.js";
@@ -29,11 +45,15 @@ import { emptyListContent } from "./blocks/empty-list-content/impl.js";
 import { eofCheck } from "./blocks/eof-check/impl.js";
 import { integer } from "./blocks/integer/impl.js";
 import { listOfInts } from "./blocks/list-of-ints/impl.js";
+import { makeLruNode } from "./blocks/lru-node/impl.js";
+import { memoize } from "./blocks/memoize/impl.js";
 import { nonAsciiRejector } from "./blocks/non-ascii-rejector/impl.js";
 import { nonemptyListContent } from "./blocks/nonempty-list-content/impl.js";
 import { optionalWhitespace } from "./blocks/optional-whitespace/impl.js";
 import { peekChar } from "./blocks/peek-char/impl.js";
 import { positionStep } from "./blocks/position-step/impl.js";
+import { queueDrain } from "./blocks/queue-drain/impl.js";
+import { parseSemver } from "./blocks/semver-component-parser/impl.js";
 import { signedInteger } from "./blocks/signed-integer/impl.js";
 import { stringFromPosition } from "./blocks/string-from-position/impl.js";
 import { timerHandle } from "./blocks/timer-handle/impl.js";
@@ -59,6 +79,7 @@ function blockDir(blockName: string): string {
 const BLOCK_DIRS = [
   "ascii-char",
   "ascii-digit-set",
+  "base64-alphabet",
   "bracket",
   "char-code",
   "comma",
@@ -69,11 +90,15 @@ const BLOCK_DIRS = [
   "eof-check",
   "integer",
   "list-of-ints",
+  "lru-node",
+  "memoize",
   "non-ascii-rejector",
   "nonempty-list-content",
   "optional-whitespace",
   "peek-char",
   "position-step",
+  "queue-drain",
+  "semver-component-parser",
   "signed-integer",
   "string-from-position",
   "timer-handle",
@@ -81,11 +106,12 @@ const BLOCK_DIRS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Suite 1: Registry loading — seedRegistry stores all 20 blocks
+// Suite 1: Registry loading — seedRegistry stores all 26 blocks
+// (21 original parser-combinator atoms + 5 B4 algorithm seed atoms, WI-481)
 // ---------------------------------------------------------------------------
 
 describe("seedRegistry", () => {
-  it("stores all 21 blocks and returns their merkleRoots", async () => {
+  it("stores all 26 blocks and returns their merkleRoots", async () => {
     const registry = await openRegistry(":memory:", {
       embeddings: createOfflineEmbeddingProvider(),
     });
@@ -95,8 +121,8 @@ describe("seedRegistry", () => {
     } finally {
       await registry.close();
     }
-    expect(result.stored).toBe(21);
-    expect(result.merkleRoots).toHaveLength(21);
+    expect(result.stored).toBe(26);
+    expect(result.merkleRoots).toHaveLength(26);
   });
 
   it("is idempotent — calling seedRegistry twice does not throw or double-count", async () => {
@@ -126,8 +152,8 @@ describe("seedRegistry", () => {
       const r1 = await seedRegistry(registry1);
       const r2 = await seedRegistry(registry2);
       expect(r1.merkleRoots).toEqual(r2.merkleRoots);
-      expect(r1.stored).toBe(21);
-      expect(r2.stored).toBe(21);
+      expect(r1.stored).toBe(26);
+      expect(r2.stored).toBe(26);
     } finally {
       await registry1.close();
       await registry2.close();
@@ -578,6 +604,271 @@ describe("property-test corpora", () => {
       expect(() => handle.cancel()).not.toThrow();
     });
   });
+
+  // WI-481: B4 algorithm seed atoms
+  describe("lru-node", () => {
+    it("lru-node-key-stored: makeLruNode('k', 1).key === 'k'", () => {
+      expect(makeLruNode("k", 1).key).toBe("k");
+    });
+    it("lru-node-value-stored: makeLruNode('k', 42).value === 42", () => {
+      expect(makeLruNode("k", 42).value).toBe(42);
+    });
+    it("lru-node-prev-null: makeLruNode('k', 1).prev === null", () => {
+      expect(makeLruNode("k", 1).prev).toBeNull();
+    });
+    it("lru-node-next-null: makeLruNode('k', 1).next === null", () => {
+      expect(makeLruNode("k", 1).next).toBeNull();
+    });
+    it("lru-node-independent: two makeLruNode calls produce distinct objects", () => {
+      const a = makeLruNode("a", 1);
+      const b = makeLruNode("b", 2);
+      expect(a).not.toBe(b);
+      expect(a.key).toBe("a");
+      expect(b.key).toBe("b");
+    });
+    it("lru-node-mutable-prev: node.prev can be assigned to another node", () => {
+      const a = makeLruNode("a", 1);
+      const b = makeLruNode("b", 2);
+      a.prev = b;
+      expect(a.prev).toBe(b);
+    });
+  });
+
+  describe("memoize", () => {
+    it("memoize-returns-same-value: memoized(2, 3) returns same value as fn(2, 3)", () => {
+      const fn = (a: unknown, b: unknown) => (a as number) + (b as number);
+      const keyFn = (a: unknown, b: unknown) => `${a},${b}`;
+      const mem = memoize(fn, keyFn);
+      expect(mem(2, 3)).toBe(5);
+    });
+    it("memoize-calls-fn-once: fn called exactly once for repeated identical arguments", () => {
+      let callCount = 0;
+      const fn = (x: unknown) => {
+        callCount++;
+        return x;
+      };
+      const mem = memoize(fn, (x) => String(x));
+      mem(42);
+      mem(42);
+      mem(42);
+      expect(callCount).toBe(1);
+    });
+    it("memoize-different-keys-call-fn: fn called for each distinct key", () => {
+      let callCount = 0;
+      const fn = (x: unknown) => {
+        callCount++;
+        return x;
+      };
+      const mem = memoize(fn, (x) => String(x));
+      mem(1);
+      mem(2);
+      mem(3);
+      expect(callCount).toBe(3);
+    });
+    it("memoize-cache-hit-identity: second call returns same object reference", () => {
+      const obj = { value: 99 };
+      const fn = () => obj;
+      const mem = memoize(fn, () => "k");
+      const r1 = mem();
+      const r2 = mem();
+      expect(r1).toBe(r2);
+    });
+    it("memoize-exception-not-cached: if fn throws, next call re-invokes fn", () => {
+      let callCount = 0;
+      const fn = () => {
+        callCount++;
+        throw new Error("boom");
+      };
+      const mem = memoize(fn, () => "k");
+      expect(() => mem()).toThrow("boom");
+      expect(() => mem()).toThrow("boom");
+      expect(callCount).toBe(2);
+    });
+  });
+
+  describe("queue-drain", () => {
+    it("queue-drain-linear: linear chain A->B->C visits all 3 nodes in order", () => {
+      const visited: string[] = [];
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 1],
+        ["C", 1],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B"]],
+        ["B", ["C"]],
+        ["C", []],
+      ]);
+      const queue = ["A"];
+      const count = queueDrain(queue, inDegree, adjacency, (n) => visited.push(n));
+      expect(count).toBe(3);
+      expect(visited).toEqual(["A", "B", "C"]);
+    });
+    it("queue-drain-empty: empty queue returns 0 and calls onVisit zero times", () => {
+      const visited: string[] = [];
+      const inDegree: Map<string, number> = new Map();
+      const adjacency: Map<string, string[]> = new Map();
+      const count = queueDrain([], inDegree, adjacency, (n) => visited.push(n));
+      expect(count).toBe(0);
+      expect(visited).toEqual([]);
+    });
+    it("queue-drain-single: single node with no edges visits once and returns 1", () => {
+      const visited: string[] = [];
+      const inDegree = new Map([["X", 0]]);
+      const adjacency: Map<string, string[]> = new Map();
+      const count = queueDrain(["X"], inDegree, adjacency, (n) => visited.push(n));
+      expect(count).toBe(1);
+      expect(visited).toEqual(["X"]);
+    });
+    it("queue-drain-diamond: diamond DAG visits all 4 nodes, visitCount === 4", () => {
+      // A -> B, A -> C, B -> D, C -> D
+      const visited: string[] = [];
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 1],
+        ["C", 1],
+        ["D", 2],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B", "C"]],
+        ["B", ["D"]],
+        ["C", ["D"]],
+        ["D", []],
+      ]);
+      const count = queueDrain(["A"], inDegree, adjacency, (n) => visited.push(n));
+      expect(count).toBe(4);
+      expect(visited).toContain("A");
+      expect(visited).toContain("D");
+      // D must come after both B and C
+      expect(visited.indexOf("B")).toBeLessThan(visited.indexOf("D"));
+      expect(visited.indexOf("C")).toBeLessThan(visited.indexOf("D"));
+    });
+    it("queue-drain-cycle-detected: cycle produces visitCount < total nodes", () => {
+      // B -> C -> B (cycle); A -> B
+      const visited: string[] = [];
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 2],
+        ["C", 1],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B"]],
+        ["B", ["C"]],
+        ["C", ["B"]],
+      ]);
+      const count = queueDrain(["A"], inDegree, adjacency, (n) => visited.push(n));
+      expect(count).toBeLessThan(3);
+    });
+    it("queue-drain-parallel: two independent chains each process correctly", () => {
+      // A -> B and C -> D (parallel)
+      const visited: string[] = [];
+      const inDegree = new Map([
+        ["A", 0],
+        ["B", 1],
+        ["C", 0],
+        ["D", 1],
+      ]);
+      const adjacency = new Map([
+        ["A", ["B"]],
+        ["B", []],
+        ["C", ["D"]],
+        ["D", []],
+      ]);
+      const count = queueDrain(["A", "C"], inDegree, adjacency, (n) => visited.push(n));
+      expect(count).toBe(4);
+      expect(visited).toContain("A");
+      expect(visited).toContain("B");
+      expect(visited).toContain("C");
+      expect(visited).toContain("D");
+    });
+  });
+
+  describe("base64-alphabet", () => {
+    it("base64-empty: base64Encode([], false) returns empty string", () => {
+      expect(base64Encode([], false)).toBe("");
+    });
+    it("base64-standard-known: base64Encode([77,97,110], false) returns 'TWFu' (RFC 4648 example)", () => {
+      // 'Man' in ASCII is [77, 97, 110]; RFC 4648 Table 1 example
+      expect(base64Encode([77, 97, 110], false)).toBe("TWFu");
+    });
+    it("base64-url-safe-known: bytes that produce '+' in standard return '-' in url-safe", () => {
+      // Find input that produces '+' in standard base64. '+' is index 62 in standard alphabet.
+      // We need 6-bit group == 62. E.g., [0xfb, 0xff, 0xff]:
+      // i0 = 0xfb >> 2 = 0x3e = 62 -> '+'
+      const standard = base64Encode([0xfb, 0xff, 0xff], false);
+      expect(standard[0]).toBe("+");
+      const urlSafe = base64Encode([0xfb, 0xff, 0xff], true);
+      expect(urlSafe[0]).toBe("-");
+    });
+    it("base64-output-length: output length === (bytes.length / 3) * 4 for valid input", () => {
+      expect(base64Encode([1, 2, 3], false)).toHaveLength(4);
+      expect(base64Encode([1, 2, 3, 4, 5, 6], false)).toHaveLength(8);
+    });
+    it("base64-invalid-length: bytes.length not a multiple of 3 throws RangeError", () => {
+      expect(() => base64Encode([1, 2], false)).toThrow(RangeError);
+      expect(() => base64Encode([1], false)).toThrow(RangeError);
+    });
+    it("base64-byte-out-of-range: byte value 256 throws RangeError", () => {
+      expect(() => base64Encode([256, 0, 0], false)).toThrow(RangeError);
+    });
+    it("base64-all-zeros: base64Encode([0,0,0], false) returns 'AAAA'", () => {
+      expect(base64Encode([0, 0, 0], false)).toBe("AAAA");
+    });
+    it("base64-all-255: base64Encode([255,255,255], false) returns '////'", () => {
+      expect(base64Encode([255, 255, 255], false)).toBe("////");
+    });
+  });
+
+  describe("semver-component-parser", () => {
+    it("semver-simple: parseSemver('1.2.3') returns correct components", () => {
+      expect(parseSemver("1.2.3")).toEqual({
+        major: 1,
+        minor: 2,
+        patch: 3,
+        prerelease: null,
+        build: null,
+      });
+    });
+    it("semver-prerelease: parseSemver('1.0.0-alpha.1') returns prerelease 'alpha.1'", () => {
+      const r = parseSemver("1.0.0-alpha.1");
+      expect(r.prerelease).toBe("alpha.1");
+      expect(r.build).toBeNull();
+    });
+    it("semver-build: parseSemver('1.0.0+build.42') returns build 'build.42'", () => {
+      const r = parseSemver("1.0.0+build.42");
+      expect(r.build).toBe("build.42");
+      expect(r.prerelease).toBeNull();
+    });
+    it("semver-prerelease-and-build: parseSemver captures both prerelease and build", () => {
+      const r = parseSemver("1.2.3-beta+exp.sha.5114f85");
+      expect(r.prerelease).toBe("beta");
+      expect(r.build).toBe("exp.sha.5114f85");
+    });
+    it("semver-zeros: parseSemver('0.0.0') returns all-zero components", () => {
+      expect(parseSemver("0.0.0")).toEqual({
+        major: 0,
+        minor: 0,
+        patch: 0,
+        prerelease: null,
+        build: null,
+      });
+    });
+    it("semver-large-numbers: parseSemver('100.200.300') returns major=100, minor=200, patch=300", () => {
+      const r = parseSemver("100.200.300");
+      expect(r.major).toBe(100);
+      expect(r.minor).toBe(200);
+      expect(r.patch).toBe(300);
+    });
+    it("semver-invalid-no-dots: parseSemver('1') throws SyntaxError", () => {
+      expect(() => parseSemver("1")).toThrow(SyntaxError);
+    });
+    it("semver-invalid-non-numeric: parseSemver('a.b.c') throws SyntaxError", () => {
+      expect(() => parseSemver("a.b.c")).toThrow(SyntaxError);
+    });
+    it("semver-empty: parseSemver('') throws SyntaxError", () => {
+      expect(() => parseSemver("")).toThrow(SyntaxError);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -663,8 +954,8 @@ describe("end-to-end: seed → selectBlocks → getBlock → parse → compose",
 
     // Step 1: Seed the registry
     const { stored, merkleRoots } = await seedRegistry(registry);
-    expect(stored).toBe(21);
-    expect(merkleRoots.length).toBe(21);
+    expect(stored).toBe(26);
+    expect(merkleRoots.length).toBe(26);
 
     // Step 2: Parse list-of-ints triplet to get its specHash
     const { parseBlockTriplet } = await import("@yakcc/ir");
@@ -708,8 +999,10 @@ describe("end-to-end: seed → selectBlocks → getBlock → parse → compose",
       expect(result.spec, `${name} missing spec`).toBeDefined();
       expect(result.merkleRoot, `${name} missing merkleRoot`).toBeTruthy();
       expect(result.spec.level).toBe("L0");
-      // timer-handle has effects (timer scheduling); other blocks are pure with empty effects
-      if (name !== "timer-handle") {
+      // timer-handle has effects (timer scheduling); queue-drain and memoize also have effects
+      // (mutation and closure). All other blocks are pure with empty effects.
+      const hasEffects = name === "timer-handle" || name === "queue-drain" || name === "memoize";
+      if (!hasEffects) {
         expect(result.spec.effects, `${name} effects should be empty for pure blocks`).toEqual([]);
       }
 

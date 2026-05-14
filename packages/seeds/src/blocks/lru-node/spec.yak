@@ -1,0 +1,92 @@
+{
+  "name": "lru-node",
+  "inputs": [
+    {
+      "name": "key",
+      "type": "string",
+      "description": "Cache key identifying this entry."
+    },
+    {
+      "name": "value",
+      "type": "unknown",
+      "description": "Cached value held by this node."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "node",
+      "type": "{ key: string; value: unknown; prev: LruNode | null; next: LruNode | null }",
+      "description": "A new doubly-linked list node with prev and next initialised to null."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [
+    {
+      "description": "Returned node.key === key"
+    },
+    {
+      "description": "Returned node.value === value"
+    },
+    {
+      "description": "Returned node.prev === null"
+    },
+    {
+      "description": "Returned node.next === null"
+    }
+  ],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Allocate a doubly-linked list node that carries a key-value pair. Both prev and next are initialised to null; the caller is responsible for wiring pointers when inserting the node into a list. The function is pure — it only allocates and returns a plain object.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; allocates and returns a plain object with no side effects."
+    },
+    {
+      "id": "null-pointers",
+      "description": "node.prev and node.next are null immediately after construction."
+    },
+    {
+      "id": "key-identity",
+      "description": "node.key === the key argument passed in (strict identity, not a copy)."
+    },
+    {
+      "id": "value-identity",
+      "description": "node.value === the value argument passed in (strict identity, not a copy)."
+    }
+  ],
+  "errorConditions": [],
+  "nonFunctional": {
+    "time": "O(1)",
+    "space": "O(1)",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "lru-node-key-stored",
+      "description": "makeLruNode('k', 1).key === 'k'"
+    },
+    {
+      "id": "lru-node-value-stored",
+      "description": "makeLruNode('k', 42).value === 42"
+    },
+    {
+      "id": "lru-node-prev-null",
+      "description": "makeLruNode('k', 1).prev === null"
+    },
+    {
+      "id": "lru-node-next-null",
+      "description": "makeLruNode('k', 1).next === null"
+    },
+    {
+      "id": "lru-node-independent",
+      "description": "Two separate makeLruNode calls produce distinct objects"
+    },
+    {
+      "id": "lru-node-mutable-prev",
+      "description": "node.prev can be assigned to another node (pointer wiring works)"
+    }
+  ]
+}
