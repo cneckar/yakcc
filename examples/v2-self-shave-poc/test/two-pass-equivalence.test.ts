@@ -196,7 +196,11 @@ function findRepoRoot(startDir: string): string {
   return startDir;
 }
 
-const THIS_FILE = resolve(import.meta.url.replace("file://", ""));
+// Use fileURLToPath for correct Windows path handling (import.meta.url on Windows
+// is file:///C:/... — stripping "file://" leaves /C:/... which resolve() then
+// double-prefixes with the drive letter). fileURLToPath handles all platforms.
+import { fileURLToPath } from "node:url";
+const THIS_FILE = fileURLToPath(import.meta.url);
 const EXAMPLES_DIR = resolve(THIS_FILE, "../../..");
 const REPO_ROOT = findRepoRoot(EXAMPLES_DIR);
 
@@ -880,6 +884,103 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
       // The load-bearing assertion is S1 ⊆ S3 (T3 above).
       expect(true).toBe(true);
     });
+
+    // -------------------------------------------------------------------------
+    // T3b: Seed-atom sidecar presence in recompiled workspace
+    //
+    // @decision DEC-V2-HARNESS-SEED-SIDECAR-CHECK-001
+    // @title Two-pass harness asserts seed-triplet sidecar presence in recompiled workspace
+    // @status accepted (WI-FIX-494-TWOPASS-NONDETERM, 2026-05-13)
+    // @rationale When compile-self materialises the recompiled workspace it must
+    //   include not only impl.ts for each seed atom but also the sibling spec.yak
+    //   and proof/manifest.json files (declared as plumbing via Fix A,
+    //   DEC-V2-WORKSPACE-PLUMBING-SEED-TRIPLETS-001).  Without those sidecars
+    //   the pass-2 shave pipeline diverges from pass-1, producing symmetric
+    //   BlockMerkleRoot divergence.  This upstream assertion gives faster, clearer
+    //   diagnosis than waiting for the downstream root-divergence failure: it
+    //   names the missing sidecar and seed atom rather than reporting abstract
+    //   root hashes.  If a new sidecar file type is added to the triplet shape
+    //   and not added to PLUMBING_INCLUDE_GLOBS, this test fails immediately.
+    // -------------------------------------------------------------------------
+
+    it(
+      "T3b: recompiled workspace contains spec.yak and proof/manifest.json for every seed atom",
+      () => {
+        // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+        if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+          throw new Error(
+            `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+              `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+              `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+              `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+          );
+        }
+
+        // The seed blocks directory in the original workspace.
+        const seedBlocksDir = join(REPO_ROOT, "packages", "seeds", "src", "blocks");
+
+        if (!existsSync(seedBlocksDir)) {
+          // No seed blocks directory means no seed atoms — nothing to check.
+          console.info("[two-pass] T3b: no seed blocks directory found; skipping sidecar check.");
+          expect(true).toBe(true);
+          return;
+        }
+
+        const seedEntries = readdirSync(seedBlocksDir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+          .sort();
+
+        if (seedEntries.length === 0) {
+          console.info("[two-pass] T3b: no seed atom directories found; nothing to check.");
+          expect(true).toBe(true);
+          return;
+        }
+
+        // Required sidecars that must travel with impl.ts into the recompiled workspace.
+        // Each entry is a workspace-relative sub-path under the atom directory;
+        // forward slashes are intentional — join() handles platform conversion below.
+        const REQUIRED_SIDECARS: readonly string[] = ["spec.yak", "proof/manifest.json"];
+
+        const missing: string[] = [];
+
+        for (const atomName of seedEntries) {
+          const recompiledAtomDir = join(
+            DIST_RECOMPILED_DIR,
+            "packages",
+            "seeds",
+            "src",
+            "blocks",
+            atomName,
+          );
+
+          for (const sidecar of REQUIRED_SIDECARS) {
+            // sidecar may contain a path separator (proof/manifest.json).
+            const sidecarPath = join(recompiledAtomDir, ...sidecar.split("/"));
+            if (!existsSync(sidecarPath)) {
+              missing.push(`${atomName}/${sidecar}`);
+            }
+          }
+        }
+
+        if (missing.length > 0) {
+          console.error(
+            `[two-pass] T3b FAIL: ${missing.length} seed-atom sidecar(s) missing from recompiled workspace.\n` +
+              `  Missing (atom/sidecar): ${missing.join(", ")}\n` +
+              `  Root cause: these sidecars are not in PLUMBING_INCLUDE_GLOBS\n` +
+              `  (packages/cli/src/commands/plumbing-globs.ts).\n` +
+              `  Fix: add the missing pattern(s) to PLUMBING_INCLUDE_GLOBS and re-run bootstrap.\n` +
+              `  (DEC-V2-WORKSPACE-PLUMBING-SEED-TRIPLETS-001)`,
+          );
+        } else {
+          console.info(
+            `[two-pass] T3b PASS: all ${seedEntries.length} seed atom(s) have required sidecars in recompiled workspace.`,
+          );
+        }
+
+        expect(missing).toHaveLength(0);
+      },
+    );
 
     // -------------------------------------------------------------------------
     // T4: Root counts, coverage, and summary
