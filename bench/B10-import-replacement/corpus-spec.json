@@ -1,0 +1,7 @@
+{
+  "$schema": "corpus-spec/v2",
+  "note": "B10-import-replacement task corpus. Slice 1 ships empty (tasks: []). Slice 2/3 populate with import-heavy tasks + sha256 fingerprints. See plans/wi-512-b10-import-heavy-bench.md §3b.2.",
+  "benchmark": "B10-import-replacement",
+  "slice": "slice-1",
+  "tasks": []
+}
