@@ -743,6 +743,16 @@
       },
       "expectedAtom": null,
       "rationale": "Negative-space multi-aspect entry. RFC 4180 CSV parsing is not in the seed registry. The complex multi-aspect query should still produce a low score against all seed atoms."
+    },
+    {
+      "id": "cat1-ms-duration-parse-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse a human-readable duration string such as '2 days' or '1h' into a number of milliseconds"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 1: ms fixture entry. The ms package's parse() behavior — convert a duration string to milliseconds. Atoms are produced by the dependency-following shave engine decomposing ms/index.js, not hand-authored. This entry is synthetic-tasks in the bootstrap corpus (no seed block); combinedScore >= 0.70 is verified by module-graph.test.ts §10 quality test (local provider + in-memory registry populated by the engine's storeBlock output)."
     }
   ]
 }
