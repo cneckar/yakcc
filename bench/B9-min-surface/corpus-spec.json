@@ -11,6 +11,17 @@
       "spec_sha256_lf": "30c66d30a118d1eb025f6b87c8847974ff4a409d5a67ceda667ad3f625a464d6",
       "spec_sha256_note": "LF-normalized sha256. Computed via: Buffer CRLF->LF then sha256. See B7 canonical-LF discipline (DEC-BENCH-B7-CORPUS-CANONICAL-LF-001).",
       "entry_function": "listOfInts",
+      "applicable_attack_classes": [
+        "circular-reference",
+        "deep-nesting-dos",
+        "escape-sequence-abuse",
+        "integer-overflow",
+        "large-string-dos",
+        "nan-infinity-injection",
+        "prototype-pollution",
+        "reviver-callback-abuse"
+      ],
+      "applicable_attack_classes_note": "parse-int-list input shape is JSON-array string '[1,2,3]'. All 8 attack classes are meaningful. integer-overflow [007] case is a DEC-SEEDS-INTEGER-001 spec-disagreement finding (benign-leading-zero acceptance), not a harness false positive.",
       "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
@@ -39,6 +50,13 @@
       "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
       "spec_sha256_note": "Authored in Slice 1. sha256 computed by harness at first run and locked thereafter.",
       "entry_function": "parseCoordPair",
+      "applicable_attack_classes": [
+        "escape-sequence-abuse",
+        "integer-overflow",
+        "large-string-dos",
+        "nan-infinity-injection"
+      ],
+      "applicable_attack_classes_note": "parse-coord-pair input shape is string '(x,y)' — not a JSON array. JSON-structure attacks (circular-reference, deep-nesting-dos, prototype-pollution, reviver-callback-abuse) use JSON-array payloads that are inapplicable to this grammar. Numeric (integer-overflow, nan-infinity-injection), size (large-string-dos), and character-escape (escape-sequence-abuse) attacks are meaningful for the coordinate string shape.",
       "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
@@ -66,6 +84,11 @@
       "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
       "spec_sha256_note": "Authored in Slice 1. Deliberately separate from B4's csv-parser-quoted to avoid cross-contamination.",
       "entry_function": "parseCsvRowNarrow",
+      "applicable_attack_classes": [
+        "escape-sequence-abuse",
+        "large-string-dos"
+      ],
+      "applicable_attack_classes_note": "csv-row-narrow input shape is plain string 'f1,f2,f3' — not a JSON array. circular-reference, deep-nesting-dos, nan-infinity-injection, prototype-pollution, and reviver-callback-abuse all use JSON-array payloads inapplicable to this grammar. integer-overflow is inapplicable (no numeric parsing). Size (large-string-dos) and character-escape (escape-sequence-abuse) attacks are meaningful for the CSV string shape. Fixes 13 false-positive shape_escapes (#515).",
       "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
@@ -93,6 +116,10 @@
       "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
       "spec_sha256_note": "Authored in Slice 1. Narrow string-transformation task.",
       "entry_function": "kebabToCamel",
+      "applicable_attack_classes": [
+        "escape-sequence-abuse"
+      ],
+      "applicable_attack_classes_note": "kebab-to-camel input shape is a kebab-case string matching /^[a-z]+(-[a-z]+)*$/. All JSON-structure attacks (circular-reference, deep-nesting-dos, prototype-pollution, reviver-callback-abuse, nan-infinity-injection, integer-overflow) use JSON-array payloads inapplicable to this grammar. large-string-dos payloads include 'very-long-non-conforming-prefix' which is valid kebab-case (accepted by the grammar) — expected_outcome=REFUSED-EARLY was authored for parse-int-list context, making it inapplicable. Only escape-sequence-abuse (non-ASCII and control characters) probes a real rejection boundary in the kebab grammar. Fixes 1 false-positive shape_escape (#515).",
       "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
@@ -120,6 +147,13 @@
       "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
       "spec_sha256_note": "Authored in Slice 1. Narrow numeric-reduction task.",
       "entry_function": "digitsToSum",
+      "applicable_attack_classes": [
+        "escape-sequence-abuse",
+        "integer-overflow",
+        "large-string-dos",
+        "nan-infinity-injection"
+      ],
+      "applicable_attack_classes_note": "digits-to-sum input shape is a digit string matching /^\\d+$/. JSON-structure attacks (circular-reference, deep-nesting-dos, prototype-pollution, reviver-callback-abuse) use JSON-array payloads inapplicable to this grammar. Numeric (integer-overflow, nan-infinity-injection), size (large-string-dos), and character-escape (escape-sequence-abuse) attacks are meaningful for the digit-string shape.",
       "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
@@ -147,6 +181,16 @@
       "spec_sha256_lf": "COMPUTED-AT-RUNTIME",
       "spec_sha256_note": "Authored in Slice 1. Narrow collection-filtering task.",
       "entry_function": "evenOnlyFilter",
+      "applicable_attack_classes": [
+        "circular-reference",
+        "deep-nesting-dos",
+        "integer-overflow",
+        "large-string-dos",
+        "nan-infinity-injection",
+        "prototype-pollution",
+        "reviver-callback-abuse"
+      ],
+      "applicable_attack_classes_note": "even-only-filter input shape is readonly number[] — an actual array. JSON-structure attacks (circular-reference, deep-nesting-dos, prototype-pollution, reviver-callback-abuse) are applicable since the input IS an array. Numeric (integer-overflow, nan-infinity-injection) and size (large-string-dos) attacks are applicable. escape-sequence-abuse uses JSON-array-of-strings payloads ([\"\\u0041\"], [АБВ]) that are inapplicable to a number[] input — a string element would be rejected as non-safe-integer, but the attack class's expected_outcome=REFUSED-EARLY is based on the JSON-string context, not the number[] type check.",
       "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
