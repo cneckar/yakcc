@@ -294,15 +294,23 @@ async function measureOneArmAStrategy(taskId, strategy, armAEmitPath, spec) {
     axis1 = { error: err.message };
   }
 
-  // Axis 2
+  // Axis 2 — pass applicable_attack_classes from corpus-spec if defined
   let axis2 = null;
   try {
-    axis2 = runSubprocess(join(__dirname, "measure-axis2.mjs"), [
+    const axis2Args = [
       "--emit", mjsPath,
       "--attack-classes", join(BENCH_B9_ROOT, "attack-classes"),
       "--entry", entryFunction,
       "--json",
-    ], 60_000);
+    ];
+    // Per DEC-B9-APPLICABILITY-001: pass applicable_attack_classes so the classifier
+    // skips inapplicable attack shapes (not-applicable, not shape-escape).
+    // When absent, all classes remain applicable (backwards-compatible default).
+    const taskApplicableClasses = spec.tasks.find(t => t.id === taskId)?.applicable_attack_classes;
+    if (Array.isArray(taskApplicableClasses)) {
+      axis2Args.push("--applicable-classes", taskApplicableClasses.join(","));
+    }
+    axis2 = runSubprocess(join(__dirname, "measure-axis2.mjs"), axis2Args, 60_000);
   } catch (err) {
     axis2 = { error: err.message };
   }
@@ -541,10 +549,12 @@ async function main() {
       }
 
       // Axis 2 for Arm B (classify each rep, compute median+range)
+      // Pass applicable_attack_classes from corpus-spec per DEC-B9-APPLICABILITY-001
       const armBAxis2Reps = [];
+      const taskApplicableClassesArmB = taskSpec.applicable_attack_classes ?? null;
       for (const { mjsPath } of armBMjsPaths) {
         try {
-          const repResult = await classifyArmBEmit(mjsPath, attackClasses, entryFunction);
+          const repResult = await classifyArmBEmit(mjsPath, attackClasses, entryFunction, taskApplicableClassesArmB);
           armBAxis2Reps.push(repResult);
         } catch (err) {
           console.warn(`[B9]   WARN: Arm B axis2 classification failed: ${err.message}`);
