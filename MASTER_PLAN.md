@@ -1934,6 +1934,37 @@ The 3 carry-forward tasks remain bit-identical (manifest fields may be added). T
 
 ---
 
+#### Slice 2.5 — B4 validation & post-merge bug-fix sprint
+
+Status: **active 2026-05-14.** Opened by operator decision 2026-05-14 ("benchmarks running in a way that means something … all these bugs fixed to get there"). Slice 2's harness + atom + embedder work landed on `main` across PRs #470 (#460 backend), #478 (#473 matrix), #482 (#479 instrumentation), #488 (#480 real embeddings), and #493 (#481 5 GAP atoms). The dry-run matrix is healthy (144/144 cells green at 66s) but uses fixtures/stubs — it cannot observe `engagement.active_substitutions` because it does not invoke real LLMs against the real MCP backend. This slice is the validation phase: run the matrix with real API calls, then resolve the bugs the previous slice surfaced.
+
+**Why a separate slice and not Slice 2 carry-over.** Slice 2's evaluation contract closed when its harness landed. The questions "did the embedder fix actually flip the matrix?" and "does the compiler non-determinism reproduce under load?" are evaluation questions, not harness-construction questions. Per the initiative's Principle 6 (bugs vs tuning), correctness regressions surfaced by Slice 2's instrumentation get filed as separate bug-class WIs — that's what this slice is for.
+
+**Slice 2.5 work items.**
+
+| ID | Title | Weight | Deps | Gate | Wave |
+|----|-------|--------|------|------|------|
+| WI-B4-MATRIX-REAL-RUN-001 | Execute `bench/B4-tokens/harness/run.mjs --tier=full` with valid `ANTHROPIC_API_KEY` against post-merge `main` (≥`d22d8b9`). 3 drivers × 4 arms × 8 tasks × N=3 = 288 cells. Capture `engagement.active_substitutions` per cell; verify >0 on the 5 GAP tasks (`lru-cache-with-ttl`, `levenshtein-with-memo`, `dependency-resolver`, `base64-encode`, `semver-range-satisfies`). Tester appends observed verdict to `DEC-V0-B4-SLICE2-MATRIX-002`. **No source writes** — execution + reporting only. | M | — | review | 1 |
+| WI-FIX-494-TWOPASS-NONDETERM | Root-cause yakcc compile pipeline non-determinism exposed by 5 new atoms in PR #493 — 45 divergent block-merkle-roots across two compile passes on the same source (issue #494). Enumerate all 45 SHAs by rerunning `examples/v2-self-shave-poc/test/two-pass-equivalence.test.ts` locally with `YAKCC_TWO_PASS=1`. Diff pass-1 vs pass-2 block contents for the first divergent block to identify the non-determinism axis (likely candidates: readdir ordering, Map/Set iteration order, source-map paths, build-info timestamps, IR canonicalisation). Ship fix; restore `DEC-V2-HARNESS-STRICT-EQUALITY-001` byte-identity invariant. | L | WI-B4-MATRIX-REAL-RUN-001 (so validation isn't blocked) | review | 2 |
+| WI-FIX-444-RETRIEVAL-THRESHOLD | v0-release-smoke Step 9 — round-trip atom retrieval combinedScore 0.779 vs threshold (issue #444). Investigate retrieval ranker behavior; either raise score above threshold via embedder/index improvements OR document the threshold revision with measurement justification. Load-bearing per `fuckgoblin,load-bearing,benchmarks,v0.5` labels. | M | — | review | 2 |
+| WI-FIX-485-CLOSER-PARITY-TIMEOUT | `closer-parity-as.test.ts` beforeAll exceeds 60-min hookTimeout on 4119-atom corpus (issue #485) — blocks #143 Phase 2 gate-flip. Parallelize `asc` invocations OR partition the corpus OR raise the budget with documented justification. | M | — | review | 2 |
+| WI-FIX-495-PUSHINFRA | `bootstrap-accumulate` workflow tries to push directly to protected `main` on PR commits and always fails (issue #495). Gate the push step on `github.event_name == 'push'` OR change trigger to `push` on main only. Cleanup item; not blocking. | S | — | review | 3 |
+
+**Critical path:** WI-B4-MATRIX-REAL-RUN-001 is the proof gate — it produces the data that either confirms #480+#481 closed the engagement gap or surfaces additional findings. The three FIX WIs run in parallel after Wave 1 lands (or in parallel with Wave 1 — none depend on the matrix data). WI-FIX-495 is cleanup, lowest priority.
+
+**Slice 2.5 directional outcomes** (per Principle 1 — no KILL pre-data):
+- Matrix real-run produces `engagement.active_substitutions > 0` on the 5 GAP tasks for the hooked-default arm across ≥2 of 3 drivers. **Directional only** — observed distribution is the headline. A cell with zero engagement is signal (means the embedder still misses despite #480) and gets filed as a new bug WI per Principle 6.
+- Byte-identity invariant restored: pass-1 ≡ pass-2 strict-Set equality across all included blockMerkleRoots. **Correctness floor** — DEC-V2-HARNESS-STRICT-EQUALITY-001 is invariant authority.
+- v0-release-smoke Step 9 passes OR threshold is explicitly revised with measurement justification.
+
+**Honesty clause (universal per Principle 4).** Tester records the verbatim per-cell `engagement.active_substitutions` count, per-task token-reduction, and per-cell cost. Any cell where the embedder fix did not produce substitutions is documented, not suppressed.
+
+**Forbidden shortcuts.** No mock LLM calls — real-run uses live Anthropic API per `DEC-V0-B4-SLICE2-COST-CEILING-004` ($75 cap, real currency). No partial-matrix data — `MissingDriverKeyError` aborts before any call if any driver key is absent. No "fix #494 by relaxing the test" — the byte-identity invariant is the contract; relaxing it requires a `DEC` amendment, not a planner workaround. No bundling unrelated cleanup into the FIX WIs (each WI's Scope Manifest is bounded to the file set the bug actually touches).
+
+**Out of scope for Slice 2.5.** Slice 3 mechanical relabel work (B1/B5/B6/B7/B8); WI-GRANULARITY-DIAL (#463 — properly gated on Slice 2.5 data); Slice 4 orchestrator + full-pass run; further atom additions to seed registry (post-validation if matrix reveals additional gaps).
+
+---
+
 #### Slice 3 — first-pass relabel + repair (B1 / B5 / B6 / B7 / B8)
 
 Mechanical work to make each runnable + relabel pass-bars as directional targets. Per-bench actions:
