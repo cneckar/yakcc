@@ -520,13 +520,15 @@ async function step7() {
     console.log(`  [INFO] Seeded ${seedResult.stored} atoms into registry`);
 
     // Query for parse-int-list intent.
-    const intentQuery = {
+    // @decision DEC-VECTOR-RETRIEVAL-002 — symmetric API (findCandidatesByQuery) so
+    // query text is canonicalized the same way as storeBlock. topK goes in queryCard.
+    const queryCard = {
       behavior: "parse json int list",
-      inputs: [],
-      outputs: [],
+      topK: 5,
     };
 
-    const candidates = await registry.findCandidatesByIntent(intentQuery, { k: 5 });
+    const queryResult = await registry.findCandidatesByQuery(queryCard);
+    const candidates = queryResult.candidates;
     await registry.close();
 
     if (candidates.length === 0) {
@@ -767,13 +769,16 @@ async function step9() {
 
     // Query for arrayMedian's behavior — the JSDoc text used as the intent in Step 8b.
     // This is the load-bearing assertion: the corpus grows on emission.
-    const intentQuery = {
+    // @decision DEC-VECTOR-RETRIEVAL-002 — symmetric API (findCandidatesByQuery) so
+    // query text is canonicalized the same way as storeBlock. topK goes in queryCard.
+    // Fixes #444 (Step 9 BMR-in-top-K failure). See PR #285.
+    const queryCard = {
       behavior: "Compute the median of a numeric array using O(n log n) sort. Returns NaN for empty arrays.",
-      inputs: [],
-      outputs: [],
+      topK: 5,
     };
 
-    const candidates = await registry.findCandidatesByIntent(intentQuery, { k: 5 });
+    const queryResult = await registry.findCandidatesByQuery(queryCard);
+    const candidates = queryResult.candidates;
     await registry.close();
 
     if (candidates.length === 0) {

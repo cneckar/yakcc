@@ -1,0 +1,28 @@
+{
+  "name": "@yakcc-bench/b10-import-replacement",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B10 — Import-replacement benchmark: transitive reachable surface (functions, bytes, files) vs natural-import baseline.",
+  "notes": [
+    "This package.json is NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is a bench-local dep — it MUST NOT appear in the root package.json.",
+    "Install bench deps: pnpm --dir bench/B10-import-replacement install",
+    "Dry-run mode works without API calls. Real-run requires ANTHROPIC_API_KEY and pnpm install.",
+    "ts-morph: required for transitive-surface resolver. Install via: pnpm --dir bench/B10-import-replacement install"
+  ],
+  "scripts": {
+    "test": "node --test test/measure-transitive-surface.test.mjs test/run.test.mjs",
+    "run:dry": "node harness/run.mjs --dry-run",
+    "run:no-network": "node harness/run.mjs --no-network",
+    "run:live": "node harness/run.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "ts-morph": "^23.0.0",
+    "fast-check": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

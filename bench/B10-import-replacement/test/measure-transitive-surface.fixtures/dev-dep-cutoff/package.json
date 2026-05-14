@@ -1,0 +1,10 @@
+{
+  "name": "dev-dep-cutoff-fixture",
+  "version": "1.0.0",
+  "dependencies": {
+    "prod-dep": "1.0.0"
+  },
+  "devDependencies": {
+    "dev-dep": "1.0.0"
+  }
+}

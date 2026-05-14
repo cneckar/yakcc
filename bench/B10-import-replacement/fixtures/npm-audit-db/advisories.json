@@ -1,0 +1,18 @@
+[
+  {
+    "id": "GHSA-TEST-0001",
+    "package_name": "vuln-pkg",
+    "vulnerable_versions": ">=1.0.0 <2.0.0",
+    "severity": "high",
+    "cve": "CVE-2024-99999",
+    "title": "Test vulnerability in vuln-pkg"
+  },
+  {
+    "id": "GHSA-TEST-0002",
+    "package_name": "other-pkg",
+    "vulnerable_versions": ">=3.0.0 <4.0.0",
+    "severity": "medium",
+    "cve": "CVE-2024-88888",
+    "title": "Test vulnerability in other-pkg (not traversed)"
+  }
+]

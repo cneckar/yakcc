@@ -25,7 +25,10 @@
     "bench:tokens:dry": "node bench/B4-tokens/harness/run.mjs --dry-run",
     "bench:min-surface": "node bench/B9-min-surface/harness/run.mjs",
     "bench:min-surface:dry": "node bench/B9-min-surface/harness/run.mjs --dry-run",
-    "bench:min-surface:no-network": "node bench/B9-min-surface/harness/run.mjs --no-network"
+    "bench:min-surface:no-network": "node bench/B9-min-surface/harness/run.mjs --no-network",
+    "bench:import-replacement": "node bench/B10-import-replacement/harness/run.mjs",
+    "bench:import-replacement:dry": "node bench/B10-import-replacement/harness/run.mjs --dry-run",
+    "bench:import-replacement:no-network": "node bench/B10-import-replacement/harness/run.mjs --no-network"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
