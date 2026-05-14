@@ -1,0 +1,437 @@
+{
+  "_meta": {
+    "benchmark": "B8-SYNTHETIC",
+    "slice": 1,
+    "fraction_f": 1,
+    "timestamp": "2026-05-14T04:48:49.981Z",
+    "corpus_sha256": "40788cc0403036ea7b562eccfa1c2be73bc812ac8dffb0fbe5c8fb355a4477a3",
+    "corpus_n": 10,
+    "registry_path": "/Users/cris/src/yakcc/bootstrap/yakcc.registry.sqlite",
+    "decision": "DEC-BENCH-B8-SYNTHETIC-SLICE1-001",
+    "note": "Slice 1 f=1.0 ceiling point only. Slice 2 fills in the f-sweep curve."
+  },
+  "per_task": [
+    {
+      "task_id": "substrate-001-sort-integers",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000298023215,
+          "raw_tokens": 32
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000298023215,
+          "raw_tokens": 68
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 28
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 128,
+      "task_estimated_hook_tokens": 135
+    },
+    {
+      "task_id": "substrate-002-parse-int",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 52
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499998211860337,
+          "raw_tokens": 22
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499999403953517,
+          "raw_tokens": 18
+        },
+        {
+          "block_id": "b4",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499999403953517,
+          "raw_tokens": 22
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 114,
+      "task_estimated_hook_tokens": 180
+    },
+    {
+      "task_id": "substrate-003-hash-map",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 48
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 72
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 68
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 188,
+      "task_estimated_hook_tokens": 135
+    },
+    {
+      "task_id": "substrate-004-string-ops",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499998807906962,
+          "raw_tokens": 36
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 30
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 30
+        },
+        {
+          "block_id": "b4",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 36
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 132,
+      "task_estimated_hook_tokens": 180
+    },
+    {
+      "task_id": "glue-001-http-router",
+      "tier": "glue",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 115
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499999403953517,
+          "raw_tokens": 110
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499998807906962,
+          "raw_tokens": 35
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 260,
+      "task_estimated_hook_tokens": 135
+    },
+    {
+      "task_id": "glue-002-error-mapper",
+      "tier": "glue",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000894069592,
+          "raw_tokens": 55
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000894069592,
+          "raw_tokens": 42
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499999403953517,
+          "raw_tokens": 98
+        },
+        {
+          "block_id": "b4",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000894069592,
+          "raw_tokens": 35
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 230,
+      "task_estimated_hook_tokens": 180
+    },
+    {
+      "task_id": "glue-003-config-loader",
+      "tier": "glue",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 50
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000894069592,
+          "raw_tokens": 42
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 130
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 222,
+      "task_estimated_hook_tokens": 135
+    },
+    {
+      "task_id": "application-001-crud-endpoint",
+      "tier": "application",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000894069592,
+          "raw_tokens": 42
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 52
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 22
+        },
+        {
+          "block_id": "b4",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7499999403953517,
+          "raw_tokens": 28
+        },
+        {
+          "block_id": "b5",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 52
+        },
+        {
+          "block_id": "b6",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000894069592,
+          "raw_tokens": 22
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 218,
+      "task_estimated_hook_tokens": 270
+    },
+    {
+      "task_id": "application-002-cli-subcommand",
+      "tier": "application",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000298023215,
+          "raw_tokens": 100
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 70
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000298023215,
+          "raw_tokens": 85
+        },
+        {
+          "block_id": "b4",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 85
+        },
+        {
+          "block_id": "b5",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000596046412,
+          "raw_tokens": 38
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 378,
+      "task_estimated_hook_tokens": 225
+    },
+    {
+      "task_id": "application-003-event-emitter",
+      "tier": "application",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000298023215,
+          "raw_tokens": 170
+        },
+        {
+          "block_id": "b2",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.7500000298023215,
+          "raw_tokens": 25
+        },
+        {
+          "block_id": "b3",
+          "hit": true,
+          "match_atom": "00cacace",
+          "top1_score": 0.75,
+          "raw_tokens": 24
+        }
+      ],
+      "task_hit_rate": 1,
+      "task_has_coverage": true,
+      "task_total_raw_tokens": 219,
+      "task_estimated_hook_tokens": 135
+    }
+  ],
+  "per_tier": {
+    "substrate": {
+      "n": 4,
+      "mean_hit_rate": 1,
+      "mean_savings_pct": -0.17883908461009876
+    },
+    "glue": {
+      "n": 3,
+      "mean_hit_rate": 1,
+      "mean_savings_pct": 0.3633508090029829
+    },
+    "application": {
+      "n": 3,
+      "mean_hit_rate": 1,
+      "mean_savings_pct": 0.18326381283525936
+    }
+  },
+  "aggregate": {
+    "all_tasks": {
+      "n": 10,
+      "mean_hit_rate": 1,
+      "mean_savings_pct": 0.09244875270743318,
+      "total_raw_tokens": 2089,
+      "total_hook_tokens": 1710,
+      "total_savings_pct": 0.1814265198659646
+    },
+    "tasks_with_coverage": {
+      "n": 10,
+      "mean_hit_rate": 1,
+      "mean_savings_pct": 0.09244875270743318,
+      "total_raw_tokens": 2089,
+      "total_hook_tokens": 1710,
+      "total_savings_pct": 0.1814265198659646
+    }
+  },
+  "curve_points": [
+    {
+      "f": 1,
+      "curve": "all_tasks",
+      "hit_rate": 1,
+      "mean_savings_pct": 0.09244875270743318,
+      "total_savings_pct": 0.1814265198659646
+    },
+    {
+      "f": 1,
+      "curve": "tasks_with_coverage",
+      "hit_rate": 1,
+      "mean_savings_pct": 0.09244875270743318,
+      "total_savings_pct": 0.1814265198659646,
+      "n_tasks": 10
+    }
+  ],
+  "verdict": {
+    "verdict": "KILL",
+    "reason": "mean savings 9.2% < 50% KILL bar — architecture fundamentally limited; production cannot exceed this ceiling"
+  }
+}
