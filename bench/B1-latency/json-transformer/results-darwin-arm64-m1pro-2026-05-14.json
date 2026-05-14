@@ -1,0 +1,94 @@
+{
+  "slice": "json-transformer",
+  "timestamp": "2026-05-14T04:54:07.055Z",
+  "corpus": {
+    "sha256": "591bcbcbcbe6ebe17b940ae6df3586b78928e3171d6a31fe4ebc8fb12007d0f7",
+    "size_bytes": 106968932
+  },
+  "algorithm": "sum-of-all-numeric-leaves (DFS); camelCase fallback — see algorithm.md",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M1 Pro",
+    "cpu_count": 10,
+    "total_mem_gb": 16,
+    "node": "v22.22.0",
+    "rust": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "yakcc_head": "af003f1"
+  },
+  "correctness_check": {
+    "passed": true,
+    "checksums": [
+      {
+        "name": "rust-accelerated",
+        "sum": 657.5
+      },
+      {
+        "name": "rust-software",
+        "sum": 657.5
+      },
+      {
+        "name": "ts-node",
+        "sum": 657.5
+      },
+      {
+        "name": "yakcc-as",
+        "sum": 657.5
+      }
+    ],
+    "note": "All 4 comparators verified to produce byte-equivalent output on 10KB fixed test input before timing"
+  },
+  "results": [
+    {
+      "comparator": "rust-accelerated",
+      "p50_ms": 66.544917,
+      "p95_ms": 76.905833,
+      "p99_ms": 99.681916,
+      "mean_ms": 68.308874,
+      "throughput_mb_per_sec": 1493.42,
+      "iterations": 1000,
+      "checksum": 8195471001.645
+    },
+    {
+      "comparator": "rust-software",
+      "p50_ms": 67.693209,
+      "p95_ms": 79.3885,
+      "p99_ms": 121.829083,
+      "mean_ms": 70.245174,
+      "throughput_mb_per_sec": 1452.25,
+      "iterations": 1000,
+      "checksum": 8195471001.645
+    },
+    {
+      "comparator": "ts-node",
+      "p50_ms": 243.73937500000466,
+      "p95_ms": 286.0379580000008,
+      "p99_ms": 398.7296669999778,
+      "mean_ms": 251.3235629980003,
+      "throughput_mb_per_sec": 405.9051283727755,
+      "iterations": 1000,
+      "checksum": 8195471001.645
+    },
+    {
+      "comparator": "yakcc-as",
+      "p50_ms": 89.54929200000333,
+      "p95_ms": 94.9345420000027,
+      "p99_ms": 119.97620800000004,
+      "mean_ms": 90.72725857500026,
+      "throughput_mb_per_sec": 1124.397724609705,
+      "iterations": 1000,
+      "checksum": 8195471001.645
+    }
+  ],
+  "verdict": {
+    "primary_comparison": "yakcc-as vs rust-software",
+    "yakcc_vs_rust_software_degradation_pct": 29.16,
+    "vs_pass_bar_15pct": "warn",
+    "note": "serde_json has no force-soft feature analog; rust-accelerated and rust-software are functionally identical — see algorithm.md",
+    "ceiling_reference": {
+      "rust_accelerated_throughput_mb_per_sec": 1493.42,
+      "speedup_vs_software_pct": 2.83,
+      "note": "serde_json: no feature-gated hardware acceleration; both Rust bins are functionally identical"
+    }
+  }
+}
