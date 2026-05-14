@@ -1,0 +1,66 @@
+{
+  "slice": "integer-math",
+  "timestamp": "2026-05-14T04:44:52.154Z",
+  "corpus": {
+    "sha256": "8751f00ea8b4ed625888fb5a89a96e584eb0a941d452879f642c6b3d98b8569f",
+    "size_bytes": 104857600
+  },
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M1 Pro",
+    "cpu_count": 10,
+    "total_mem_gb": 16,
+    "node": "v22.22.0",
+    "rust": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "yakcc_head": "af003f1"
+  },
+  "results": [
+    {
+      "comparator": "rust-accelerated",
+      "p50_ms": 307.752,
+      "p95_ms": 368.22875,
+      "p99_ms": 449.78325,
+      "mean_ms": 316.505679,
+      "throughput_mb_per_sec": 315.95,
+      "iterations": 1000
+    },
+    {
+      "comparator": "rust-software",
+      "p50_ms": 309.304083,
+      "p95_ms": 358.818875,
+      "p99_ms": 511.272291,
+      "mean_ms": 317.963505,
+      "throughput_mb_per_sec": 314.5,
+      "iterations": 1000
+    },
+    {
+      "comparator": "ts-node",
+      "p50_ms": 44.38050000000021,
+      "p95_ms": 49.24524999999994,
+      "p99_ms": 72.02529200000208,
+      "mean_ms": 45.44162191800001,
+      "throughput_mb_per_sec": 2200.625677059927,
+      "iterations": 1000
+    },
+    {
+      "comparator": "yakcc-as",
+      "p50_ms": 565.6854999999923,
+      "p95_ms": 665.8126670000202,
+      "p99_ms": 833.5476659999695,
+      "mean_ms": 580.9635306829986,
+      "throughput_mb_per_sec": 172.12784403598783,
+      "iterations": 1000
+    }
+  ],
+  "verdict": {
+    "primary_comparison": "yakcc-as vs rust-software",
+    "yakcc_vs_rust_software_degradation_pct": 82.71,
+    "vs_pass_bar_15pct": "kill",
+    "ceiling_reference": {
+      "rust_accelerated_throughput_mb_per_sec": 315.95,
+      "speedup_vs_software_pct": 0.46,
+      "note": "SHA-NI hardware acceleration — informational only, not the verdict gate"
+    }
+  }
+}

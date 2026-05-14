@@ -1,0 +1,6050 @@
+{
+  "benchmark": "B5-coherence",
+  "slice": "slice2",
+  "runAt": "2026-05-14T04:49:07.360Z",
+  "totalConversations": 50,
+  "judge_status": "judged",
+  "corpus_hash": "a499f3b832677ebf5c3a7cd091de78310a5637e5069dbd7909ad698274d88e94",
+  "conversations": [
+    {
+      "id": "conv-iter-001",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "parseIntList"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-002",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "sortAscending"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-001",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "isValidEmail"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-002",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "tokenizeString",
+        "countWordFrequency"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom countWordFrequency hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom countWordFrequency hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-debug-001",
+      "category": "debugging",
+      "expectedAtoms": [
+        "getNestedField"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-002",
+      "category": "debugging",
+      "expectedAtoms": [
+        "binarySearch"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-001",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "computeBlake3Hash"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-002",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "sanitizeSqlLike",
+        "parsePaginationPage"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom sanitizeSqlLike hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom sanitizeSqlLike hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-001",
+      "category": "composition",
+      "expectedAtoms": [
+        "celsiusToFahrenheit",
+        "fahrenheitToKelvin"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fahrenheitToKelvin hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom celsiusToFahrenheit hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 4,
+          "subsequentTurnRate": 0.5,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fahrenheitToKelvin hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom celsiusToFahrenheit hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 4,
+          "subsequentTurnRate": 0.5,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-002",
+      "category": "composition",
+      "expectedAtoms": [
+        "normalizeString",
+        "deduplicate"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom deduplicate hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom normalizeString hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 4,
+          "subsequentTurnRate": 0.5,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom deduplicate hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 4.5,
+          "subsequentTurnRate": 0.75,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-iter-003",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "formatDateISO"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-004",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "truncateString"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-005",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "generateUUIDv4"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-006",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "createTokenBucket"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-007",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "levenshteinDistance"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-008",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "deepClone"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-009",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "memoize"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-iter-010",
+      "category": "iterative-refinement",
+      "expectedAtoms": [
+        "flattenArray"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 0,
+              "failureMode": "context-collapse",
+              "details": "no topic signal in emission",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 1
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0.333,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 1,
+          "failureModeCounts": {
+            "context-collapse": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 0,
+              "failureMode": "context-collapse",
+              "details": "no topic signal in emission",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 1
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0.333,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 1,
+          "failureModeCounts": {
+            "context-collapse": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-xref-003",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "chunkArray",
+        "slidingWindow"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom slidingWindow hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom slidingWindow hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-xref-004",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "stripHtmlTags",
+        "collapseWhitespace",
+        "truncateToWordCount"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom collapseWhitespace hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom stripHtmlTags hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom stripHtmlTags hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 3,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 3.5,
+          "subsequentTurnRate": 0.25,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 3
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom collapseWhitespace hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom stripHtmlTags hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom stripHtmlTags hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 3,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 3.5,
+          "subsequentTurnRate": 0.25,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-xref-005",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "padNumber",
+        "formatFileSize",
+        "formatUnixTimestamp"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom formatFileSize hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom padNumber hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom padNumber hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 3,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 3.5,
+          "subsequentTurnRate": 0.25,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 3
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom formatUnixTimestamp hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": true,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom padNumber hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom padNumber hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 3,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 3.5,
+          "subsequentTurnRate": 0.25,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-xref-006",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "clamp",
+        "lerp"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom lerp hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom lerp hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-xref-007",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "isValidURL"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-008",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "escapeRegex"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-009",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "roundToDecimals",
+        "truncateToDecimals"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-xref-010",
+      "category": "cross-reference",
+      "expectedAtoms": [
+        "isValidIPv4"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 4,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-003",
+      "category": "debugging",
+      "expectedAtoms": [
+        "fetchWithTimeout"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-004",
+      "category": "debugging",
+      "expectedAtoms": [
+        "groupBy"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-005",
+      "category": "debugging",
+      "expectedAtoms": [
+        "createConnectionPool"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-006",
+      "category": "debugging",
+      "expectedAtoms": [
+        "formatPhoneUS"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-007",
+      "category": "debugging",
+      "expectedAtoms": [
+        "fibonacci"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-008",
+      "category": "debugging",
+      "expectedAtoms": [
+        "parseCSV"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-debug-009",
+      "category": "debugging",
+      "expectedAtoms": [
+        "encodeBase64",
+        "decodeBase64"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom decodeBase64 hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom encodeBase64 hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom decodeBase64 hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom encodeBase64 hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-debug-010",
+      "category": "debugging",
+      "expectedAtoms": [
+        "median"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-003",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "formatNumberWithCommas"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 2,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 2,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 2,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 2,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-004",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "isPowerOf2"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-005",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "luhnCheck",
+        "isCardExpired"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom isCardExpired hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom isCardExpired hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom isCardExpired hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom isCardExpired hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-006",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "uppercaseStreet",
+        "expandStreetAbbreviations",
+        "isValidZip",
+        "expandStateAbbreviation"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom expandStateAbbreviation hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom uppercaseStreet hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 2,
+          "tier2_used": 0,
+          "mean": 3,
+          "subsequentTurnRate": 0,
+          "catastrophicRate": 0,
+          "totalTurns": 2,
+          "coherentTurns": 0,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom expandStateAbbreviation hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom uppercaseStreet hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 2,
+          "tier2_used": 0,
+          "mean": 3,
+          "subsequentTurnRate": 0,
+          "catastrophicRate": 0,
+          "totalTurns": 2,
+          "coherentTurns": 0,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-007",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "isValidSlug"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-008",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "camelToSnake"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-009",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "isValidISODate",
+        "isValidISODatetime"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom isValidISODatetime hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom isValidISODatetime hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-refactor-010",
+      "category": "refactoring",
+      "expectedAtoms": [
+        "randomAlphanumeric"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 0,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 5,
+          "subsequentTurnRate": 1,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 3,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {}
+        }
+      }
+    },
+    {
+      "id": "conv-compose-003",
+      "category": "composition",
+      "expectedAtoms": [
+        "stringToCodeUnits",
+        "xorArray"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom xorArray hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom stringToCodeUnits hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom xorArray hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom stringToCodeUnits hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-004",
+      "category": "composition",
+      "expectedAtoms": [
+        "rleEncode",
+        "rleDecode"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom rleDecode hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom rleDecode hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 1,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 4.333,
+          "subsequentTurnRate": 0.667,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 2,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-005",
+      "category": "composition",
+      "expectedAtoms": [
+        "lz77Compress",
+        "aesGcmEncrypt"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom aesGcmEncrypt hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom lz77Compress hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom aesGcmEncrypt hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom lz77Compress hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-006",
+      "category": "composition",
+      "expectedAtoms": [
+        "createEventEmitter",
+        "createBoundedQueue"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom createBoundedQueue hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom createEventEmitter hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom createBoundedQueue hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom createEventEmitter hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-007",
+      "category": "composition",
+      "expectedAtoms": [
+        "countUniqueConsonants",
+        "filterByLength"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom filterByLength hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom countUniqueConsonants hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom filterByLength hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom countUniqueConsonants hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-008",
+      "category": "composition",
+      "expectedAtoms": [
+        "parseWithSchema",
+        "fetchJson"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fetchJson hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom parseWithSchema hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fetchJson hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom parseWithSchema hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-009",
+      "category": "composition",
+      "expectedAtoms": [
+        "fibonacciGenerator",
+        "takeN"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom takeN hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fibonacciGenerator hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        },
+        "arm-B": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom takeN hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom fibonacciGenerator hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 2,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 3,
+          "tier2_used": 0,
+          "mean": 3.667,
+          "subsequentTurnRate": 0.333,
+          "catastrophicRate": 0,
+          "totalTurns": 3,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "conv-compose-010",
+      "category": "composition",
+      "expectedAtoms": [
+        "generateSecureToken",
+        "hashPassword",
+        "signJWT"
+      ],
+      "arms": {
+        "arm-A": {
+          "condition": "hook-enabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom hashPassword hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom generateSecureToken hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-enabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom generateSecureToken hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-enabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 3,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 3.5,
+          "subsequentTurnRate": 0.25,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 3
+          }
+        },
+        "arm-B": {
+          "condition": "hook-disabled",
+          "turnScores": [
+            {
+              "turnIndex": 1,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom hashPassword hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 3,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom generateSecureToken hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 5,
+              "condition": "hook-disabled",
+              "score": 3,
+              "failureMode": "opaque-hash",
+              "details": "atom generateSecureToken hash/import present but no semantic usage",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            },
+            {
+              "turnIndex": 7,
+              "condition": "hook-disabled",
+              "score": 5,
+              "failureMode": null,
+              "details": "correct",
+              "tier1_used": true,
+              "tier2_used": false,
+              "substitutionApplied": false,
+              "judgeResult": null
+            }
+          ],
+          "failureModes": {
+            "opaque-hash": 3,
+            "hallucinated": 0,
+            "re-emission": 0,
+            "context-collapse": 0
+          },
+          "tier1_used": 4,
+          "tier2_used": 0,
+          "mean": 3.5,
+          "subsequentTurnRate": 0.25,
+          "catastrophicRate": 0,
+          "totalTurns": 4,
+          "coherentTurns": 1,
+          "catastrophicTurns": 0,
+          "failureModeCounts": {
+            "opaque-hash": 3
+          }
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "hookEnabled": {
+      "mean": 4.506,
+      "subsequentTurnRate": 0.763,
+      "catastrophicRate": 0.006,
+      "totalTurns": 156,
+      "coherentTurns": 119,
+      "catastrophicTurns": 1,
+      "failureModeCounts": {
+        "opaque-hash": 36,
+        "context-collapse": 1
+      },
+      "assessment": {
+        "pass": false,
+        "kill": false,
+        "reasons": [
+          "BELOW-BAR: subsequent-turn coherence 76.3% < 90%"
+        ]
+      }
+    },
+    "hookDisabled": {
+      "mean": 4.494,
+      "subsequentTurnRate": 0.756,
+      "catastrophicRate": 0.006,
+      "totalTurns": 156,
+      "coherentTurns": 118,
+      "catastrophicTurns": 1,
+      "failureModeCounts": {
+        "opaque-hash": 37,
+        "context-collapse": 1
+      },
+      "assessment": {
+        "pass": false,
+        "kill": false,
+        "reasons": [
+          "BELOW-BAR: subsequent-turn coherence 75.6% < 90%"
+        ]
+      }
+    }
+  },
+  "notes": [
+    "Slice 2: N=50 corpus (5 categories x 10 seeds each)",
+    "Tier-2 LLM judge (claude-opus-4-7) applied to score-2 and score-4 Tier-1 cases",
+    "Tier-1: offline programmatic classifier (reliable for score 1, 3; unreliable for 2, 4)",
+    "Blind discipline: arm letters randomized per run; judge received only arm_A/arm_B labels",
+    "platform: darwin",
+    "node: v22.22.0"
+  ]
+}
