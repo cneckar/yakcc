@@ -833,37 +833,36 @@ class SqliteRegistry implements Registry {
     // Stage 1 — Vector KNN retrieval with K' candidates
     // -----------------------------------------------------------------------
 
-    // @decision DEC-V3-DISCOVERY-D3-FILTER-STRICTNESS-FIX-001
-    // @title Stage 1 KNN uses plain behavior text for retrieval (issue #319)
-    // @status accepted
+    // @decision DEC-VECTOR-RETRIEVAL-002
+    // @title Stage 1 KNN uses canonicalizeQueryText for symmetric query-text derivation
+    // @status accepted (supersedes DEC-V3-DISCOVERY-D3-FILTER-STRICTNESS-FIX-001 Stage-1 rationale)
     // @rationale
-    //   "No-op when one side is missing" rule (issue #319 §Correct semantics):
-    //   optional query fields (guarantees, errorConditions) present only on the
-    //   query side must NOT penalize candidates that phrase those dimensions
-    //   differently or don't declare them. Embedding the full canonicalizeQueryText
-    //   in Stage 1 violates this rule: the guarantees text shifts the query vector
-    //   toward source-fragment atoms whose names contain matching keywords
-    //   (e.g., "function-digit-s-number" for a "Parse a decimal digit" query),
-    //   pushing the semantically-correct atom to rank 43/50 in Stage 1.
+    //   Round-trip requirement (issues #444, #502): a spec stored via storeBlock must appear
+    //   in the top-K results of findCandidatesByQuery called with the same behavior text.
+    //   storeBlock embeds canonicalizeText(spec) — full canonical SpecYak JSON. Stage 1 must
+    //   use the canonicalizeQueryText() path so query and document vectors are derived from
+    //   the same structural space (DEC-V3-IMPL-QUERY-001 — symmetric query-text derivation).
     //
-    //   Fix: Stage 1 embeds the plain behavior string (no JSON wrapper, no optional
-    //   dimensions). This is identical to findCandidatesByIntent's embedding path,
-    //   which achieves M2=62.5% vs query-mode-with-full-text M2=20.0% on the
-    //   full-corpus harness (issue #309 measurements).
+    //   Prior state (DEC-V3-DISCOVERY-D3-FILTER-STRICTNESS-FIX-001, commit dc0bed6):
+    //   Stage 1 used query.behavior ?? "" (plain string), matching findCandidatesByIntent's
+    //   text path. That change fixed M2=20%→62.5% on the full-corpus harness (issue #309)
+    //   but introduced a store/query asymmetry that breaks round-trip BMR-in-top-K for
+    //   freshly atomized atoms (B7 commit slice 3: 22/32 failures; v0-smoke Step 9 FAIL).
     //
-    //   Why plain string (not canonicalizeQueryText({behavior}))?
-    //   canonicalizeQueryText({behavior}) produces {"behavior":"..."} (JSON), while
-    //   findCandidatesByIntent embeds the plain behavior string directly. The JSON
-    //   wrapper adds structural tokens that degrade similarity vs stored specs
-    //   (measured: plain string intent mode 62.5% M2 vs JSON behavior-only 20% M2).
+    //   The round-trip failure mode: the atomized spec's embedding is full canonical JSON;
+    //   the plain-string query vector lives in a different region of L2 space. Nearby seed
+    //   atoms (also full-JSON embedded) outrank the exact atom at K=5.
     //
-    //   The full canonicalizeQueryText is intentionally NOT used for Stage 1 KNN.
-    //   Optional dimensions serve as context for Stage 2+ structural filtering, not
-    //   for Stage 1 retrieval where the no-op rule must hold.
-    //   Per-dimension KNN is deferred to DEC-V3-IMPL-QUERY-003 (migration 7,
-    //   5-column schema). Until then, behavior-driven retrieval is the correct
-    //   single-column approach.
-    const stage1QueryText = query.behavior ?? "";
+    //   canonicalizeQueryText(query) projects only the dimensions present in the card into
+    //   SpecYak-shaped canonical JSON (absent optional fields are omitted per D1 absent-
+    //   dimension rule). A behavior-only query produces {"behavior":"..."} — structurally
+    //   closer to the stored full JSON than the plain string, placing the query vector
+    //   in the same structural token-space as document vectors.
+    //
+    //   The no-op rule (issue #319 §Correct semantics) is preserved: optional dimensions
+    //   absent from the query are omitted by canonicalizeQueryText, so they cannot bias
+    //   Stage 1 ranking. Only dimensions present in the query card shift the vector.
+    const stage1QueryText = canonicalizeQueryText(query);
     const queryEmbedding = await this.embeddings.embed(stage1QueryText);
     const queryBuf = serializeEmbedding(queryEmbedding);
 
