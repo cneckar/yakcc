@@ -72,7 +72,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, normalize } from "node:path";
 import type { ShaveRegistryView } from "../types.js";
-import { decompose } from "./recursion.js";
 import {
   UNRESOLVABLE,
   extractImportSpecifiers,
@@ -81,6 +80,7 @@ import {
   resolveModuleEdge,
   resolvePackageEntry,
 } from "./module-resolver.js";
+import { decompose } from "./recursion.js";
 import type { RecursionTree, SlicePlan } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -286,7 +286,10 @@ export async function shavePackage(
   while (queue.length > 0 && moduleCount + stubCount < maxModules) {
     // Dequeue in FIFO order for BFS. Sort the queue entries at each level for
     // determinism when multiple entries are enqueued simultaneously.
-    const filePath = queue.shift()!;
+    const filePath = queue.shift();
+    if (filePath === undefined) {
+      break;
+    }
 
     // Read source
     const source = tryReadSource(filePath);
@@ -306,7 +309,7 @@ export async function shavePackage(
       nodes.push({
         kind: "stub",
         specifier: filePath,
-        reason: `.d.ts-only declaration file — no runtime implementation to shave`,
+        reason: ".d.ts-only declaration file — no runtime implementation to shave",
       });
       stubCount++;
       continue;

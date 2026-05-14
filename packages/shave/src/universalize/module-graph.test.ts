@@ -39,8 +39,8 @@ import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow } from "@yakcc/registry";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ShaveRegistryView } from "../types.js";
 import { buildTriplet } from "../persist/triplet.js";
+import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
   forestModules,
@@ -78,7 +78,7 @@ import { slice } from "./slicer.js";
  * the quality block skips, the slice is BLOCKED, not ready. This flag controls
  * that skip gate explicitly rather than silently passing with a degenerate score.
  */
-const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === 'local';
+const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === "local";
 
 // ---------------------------------------------------------------------------
 // §10: combinedScore quality gate (§6.6 #5)
@@ -97,104 +97,117 @@ const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === 'local';
  * @decision DEC-WI510-ENGINE-ORCHESTRATION-LAYER-001
  * @decision DEC-WI510-MS-FIXTURE-FIRST-001
  */
-describe(
-  "shavePackage — combinedScore quality gate (§6.6 #5, DISCOVERY_EVAL_PROVIDER=local)",
-  () => {
-    it.skipIf(!USE_LOCAL_PROVIDER)(
-      "ms parse() atom achieves combinedScore >= 0.70 for the corpus query (local semantic embedder)",
-      { timeout: 120_000 },
-      async () => {
-        const pkgRoot = join(FIXTURES_DIR, "ms-2.1.3");
-        const forest = await shavePackage(pkgRoot, { registry: emptyRegistry });
-        expect(forest.moduleCount).toBeGreaterThan(0);
+describe("shavePackage — combinedScore quality gate (§6.6 #5, DISCOVERY_EVAL_PROVIDER=local)", () => {
+  it.skipIf(!USE_LOCAL_PROVIDER)(
+    "ms parse() atom achieves combinedScore >= 0.70 for the corpus query (local semantic embedder)",
+    { timeout: 120_000 },
+    async () => {
+      const pkgRoot = join(FIXTURES_DIR, "ms-2.1.3");
+      const forest = await shavePackage(pkgRoot, { registry: emptyRegistry });
+      expect(forest.moduleCount).toBeGreaterThan(0);
 
-        // Get the entry module source
-        const entryMod = forestModules(forest)[0];
-        expect(entryMod).toBeDefined();
-        const msSource = entryMod!.tree.root.source ?? "";
-        expect(msSource.length).toBeGreaterThan(0);
+      // Get the entry module source
+      const entryMod = forestModules(forest)[0];
+      expect(entryMod).toBeDefined();
+      if (entryMod === undefined) {
+        throw new Error("expected entry module for ms fixture");
+      }
+      const msSource = entryMod.tree.root.source ?? "";
+      expect(msSource.length).toBeGreaterThan(0);
 
-        // Compute canonical AST hash of the source
-        const astHash = computeCanonicalAstHash(msSource) as CanonicalAstHash;
+      // Compute canonical AST hash of the source
+      const astHash = computeCanonicalAstHash(msSource) as CanonicalAstHash;
 
-        // Build a synthetic IntentCard representing the ms parse() behavior
-        const msParseIntentCard = {
-          schemaVersion: 1 as const,
-          behavior:
-            "Parse a human-readable duration string (e.g. '2 days', '1h', '30m') into its" +
-            " equivalent number of milliseconds. Also formats milliseconds into a human-readable string.",
-          inputs: [
-            { name: "str", type: "string", description: "Duration string like '2 days', '1h', or '500'", optional: false },
-          ],
-          outputs: [
-            { name: "result", type: "number | string", description: "Milliseconds as a number, or formatted string if no precision given", optional: false },
-          ],
-          preconditions: [],
-          postconditions: [],
-          notes: ["Returns undefined for invalid input", "Supports short form (1h) and long form (1 hour)"],
-          modelVersion: "test-synthetic",
-          promptVersion: "wi510-quality-test-v1",
-          sourceHash: astHash,
-          extractedAt: new Date().toISOString(),
+      // Build a synthetic IntentCard representing the ms parse() behavior
+      const msParseIntentCard = {
+        schemaVersion: 1 as const,
+        behavior:
+          "Parse a human-readable duration string (e.g. '2 days', '1h', '30m') into its" +
+          " equivalent number of milliseconds. Also formats milliseconds into a human-readable string.",
+        inputs: [
+          {
+            name: "str",
+            type: "string",
+            description: "Duration string like '2 days', '1h', or '500'",
+            optional: false,
+          },
+        ],
+        outputs: [
+          {
+            name: "result",
+            type: "number | string",
+            description: "Milliseconds as a number, or formatted string if no precision given",
+            optional: false,
+          },
+        ],
+        preconditions: [],
+        postconditions: [],
+        notes: [
+          "Returns undefined for invalid input",
+          "Supports short form (1h) and long form (1 hour)",
+        ],
+        modelVersion: "test-synthetic",
+        promptVersion: "wi510-quality-test-v1",
+        sourceHash: astHash,
+        extractedAt: new Date().toISOString(),
+      };
+
+      // Build the triplet (bootstrap path: no corpus extraction needed for this test)
+      const triplet = buildTriplet(msParseIntentCard, msSource, astHash, undefined, {
+        bootstrap: true,
+      });
+
+      // Open an in-memory registry with the local semantic embedding provider
+      const embeddingProvider = createLocalEmbeddingProvider("Xenova/all-MiniLM-L6-v2", 384);
+      const registry = await openRegistry(":memory:", { embeddings: embeddingProvider });
+
+      try {
+        // Store the triplet
+        const row: BlockTripletRow = {
+          blockMerkleRoot: triplet.merkleRoot,
+          specHash: triplet.specHash,
+          specCanonicalBytes: triplet.specCanonicalBytes,
+          implSource: triplet.impl,
+          proofManifestJson: JSON.stringify(triplet.manifest),
+          level: "L0",
+          createdAt: Date.now(),
+          canonicalAstHash: astHash,
+          parentBlockRoot: null,
+          artifacts: triplet.artifacts as Map<string, Uint8Array>,
+          kind: "local",
+          foreignPkg: null,
+          foreignExport: null,
+          foreignDtsHash: null,
         };
+        await registry.storeBlock(row);
 
-        // Build the triplet (bootstrap path: no corpus extraction needed for this test)
-        const triplet = buildTriplet(msParseIntentCard, msSource, astHash, undefined, { bootstrap: true });
+        // Query with the corpus behavior description (from corpus.json cat1-ms-duration-parse-001)
+        const corpusQuery =
+          "Parse a human-readable duration string such as '2 days' or '1h' into a number of milliseconds";
+        const result = await registry.findCandidatesByQuery({ behavior: corpusQuery, topK: 10 });
 
-        // Open an in-memory registry with the local semantic embedding provider
-        const embeddingProvider = createLocalEmbeddingProvider("Xenova/all-MiniLM-L6-v2", 384);
-        const registry = await openRegistry(":memory:", { embeddings: embeddingProvider });
+        // Evidence for reviewer: log the actual scores
+        console.log(
+          "[§10 quality gate] candidates:",
+          result.candidates.map((c) => ({ score: c.combinedScore, rank: c.rank })),
+        );
 
-        try {
-          // Store the triplet
-          const row: BlockTripletRow = {
-            blockMerkleRoot: triplet.merkleRoot,
-            specHash: triplet.specHash,
-            specCanonicalBytes: triplet.specCanonicalBytes,
-            implSource: triplet.impl,
-            proofManifestJson: JSON.stringify(triplet.manifest),
-            level: "L0",
-            createdAt: Date.now(),
-            canonicalAstHash: astHash,
-            parentBlockRoot: null,
-            artifacts: triplet.artifacts as Map<string, Uint8Array>,
-            kind: "local",
-            foreignPkg: null,
-            foreignExport: null,
-            foreignDtsHash: null,
-          };
-          await registry.storeBlock(row);
-
-          // Query with the corpus behavior description (from corpus.json cat1-ms-duration-parse-001)
-          const corpusQuery =
-            "Parse a human-readable duration string such as '2 days' or '1h' into a number of milliseconds";
-          const result = await registry.findCandidatesByQuery({ behavior: corpusQuery, topK: 10 });
-
-          // Evidence for reviewer: log the actual scores
-          console.log(
-            "[§10 quality gate] candidates:",
-            result.candidates.map((c) => ({ score: c.combinedScore, rank: c.rank })),
-          );
-
-          expect(result.candidates.length).toBeGreaterThan(0);
-          const topScore = result.candidates[0]?.combinedScore ?? 0;
-          console.log("[§10 quality gate] top combinedScore:", topScore);
-          expect(topScore).toBeGreaterThanOrEqual(0.70);
-        } finally {
-          await registry.close();
-        }
-      },
-    );
-  },
-);
+        expect(result.candidates.length).toBeGreaterThan(0);
+        const topScore = result.candidates[0]?.combinedScore ?? 0;
+        console.log("[§10 quality gate] top combinedScore:", topScore);
+        expect(topScore).toBeGreaterThanOrEqual(0.7);
+      } finally {
+        await registry.close();
+      }
+    },
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const FIXTURES_DIR = join(
-  fileURLToPath(new URL("../__fixtures__/module-graph", import.meta.url)),
-);
+const FIXTURES_DIR = join(fileURLToPath(new URL("../__fixtures__/module-graph", import.meta.url)));
 
 /** Registry with no matches — all nodes will become NovelGlueEntry. */
 const emptyRegistry: Pick<ShaveRegistryView, "findByCanonicalAstHash"> = {
@@ -243,8 +256,8 @@ describe("module-resolver — readPackageJson", () => {
     const pkgPath = join(FIXTURES_DIR, "three-module-pkg/package.json");
     const result = readPackageJson(pkgPath);
     expect(result).toBeDefined();
-    expect(result?.["name"]).toBe("three-module-pkg");
-    expect(result?.["main"]).toBe("./index.js");
+    expect(result?.name).toBe("three-module-pkg");
+    expect(result?.main).toBe("./index.js");
   });
 
   it("returns undefined for a non-existent path", () => {
@@ -417,7 +430,7 @@ describe("isInPackageBoundary — B-scope predicate", () => {
 
 describe("extractRequireSpecifiers", () => {
   it("extracts require() specifiers from CJS source", () => {
-    const src = `var a = require('./lib/a');\nvar b = require('external-pkg');\n`;
+    const src = "var a = require('./lib/a');\nvar b = require('external-pkg');\n";
     const result = extractRequireSpecifiers(src, "index.js");
     expect(result).toContain("./lib/a");
     expect(result).toContain("external-pkg");
@@ -425,7 +438,7 @@ describe("extractRequireSpecifiers", () => {
   });
 
   it("returns empty array for source with no require() calls", () => {
-    const src = `function foo(x) { return x + 1; }\nmodule.exports = { foo };\n`;
+    const src = "function foo(x) { return x + 1; }\nmodule.exports = { foo };\n";
     expect(extractRequireSpecifiers(src, "index.js")).toHaveLength(0);
   });
 
@@ -525,9 +538,12 @@ describe("shavePackage — connected forest (three-module-pkg)", () => {
 
     const entryNode = forestModules(forest).find((m) => m.filePath.includes("index.js"));
     expect(entryNode).toBeDefined();
-    expect(entryNode!.inPackageEdges.length).toBe(2);
-    expect(entryNode!.inPackageEdges.some((e) => e.includes("parse.js"))).toBe(true);
-    expect(entryNode!.inPackageEdges.some((e) => e.includes("format.js"))).toBe(true);
+    if (entryNode === undefined) {
+      throw new Error("expected entry module node for three-module-pkg");
+    }
+    expect(entryNode.inPackageEdges.length).toBe(2);
+    expect(entryNode.inPackageEdges.some((e) => e.includes("parse.js"))).toBe(true);
+    expect(entryNode.inPackageEdges.some((e) => e.includes("format.js"))).toBe(true);
   });
 
   it("leaf modules (parse.js, format.js) have no in-package edges", async () => {
@@ -538,8 +554,11 @@ describe("shavePackage — connected forest (three-module-pkg)", () => {
     const format = forestModules(forest).find((m) => m.filePath.includes("format.js"));
     expect(parse).toBeDefined();
     expect(format).toBeDefined();
-    expect(parse!.inPackageEdges.length).toBe(0);
-    expect(format!.inPackageEdges.length).toBe(0);
+    if (parse === undefined || format === undefined) {
+      throw new Error("expected parse.js and format.js module nodes");
+    }
+    expect(parse.inPackageEdges.length).toBe(0);
+    expect(format.inPackageEdges.length).toBe(0);
   });
 
   it("every module node has a non-empty RecursionTree with at least one leaf", async () => {
@@ -607,7 +626,10 @@ describe("shavePackage — best-effort degradation (unresolvable edge)", () => {
 
     const entryMod = forestModules(forest).find((m) => m.filePath.includes("index.js"));
     expect(entryMod).toBeDefined();
-    expect(entryMod!.externalSpecifiers).toContain("some-external-pkg");
+    if (entryMod === undefined) {
+      throw new Error("expected entry module node for degradation-pkg");
+    }
+    expect(entryMod.externalSpecifiers).toContain("some-external-pkg");
   });
 
   it("forest does NOT fail wholesale — shave result is partial-but-useful, not empty", async () => {
@@ -661,12 +683,12 @@ describe("shavePackage — two-pass determinism (ms fixture)", () => {
       expect(paths1).toEqual(paths2);
 
       // Same canonicalAstHash for each leaf — byte-identical atom identity
-      const hashes1 = forestModules(forest1).flatMap((m) =>
-        collectLeafHashes(m.tree.root),
-      ).sort();
-      const hashes2 = forestModules(forest2).flatMap((m) =>
-        collectLeafHashes(m.tree.root),
-      ).sort();
+      const hashes1 = forestModules(forest1)
+        .flatMap((m) => collectLeafHashes(m.tree.root))
+        .sort();
+      const hashes2 = forestModules(forest2)
+        .flatMap((m) => collectLeafHashes(m.tree.root))
+        .sort();
       expect(hashes1).toEqual(hashes2);
     },
   );
@@ -677,18 +699,14 @@ describe("shavePackage — two-pass determinism (ms fixture)", () => {
 // ---------------------------------------------------------------------------
 
 describe("shavePackage — ms fixture end-to-end (DEC-WI510-MS-FIXTURE-FIRST-001)", () => {
-  it(
-    "produces a non-empty connected forest from ms/index.js",
-    { timeout: 30000 },
-    async () => {
-      const pkgRoot = join(FIXTURES_DIR, "ms-2.1.3");
-      const forest = await shavePackage(pkgRoot, { registry: emptyRegistry });
+  it("produces a non-empty connected forest from ms/index.js", { timeout: 30000 }, async () => {
+    const pkgRoot = join(FIXTURES_DIR, "ms-2.1.3");
+    const forest = await shavePackage(pkgRoot, { registry: emptyRegistry });
 
-      // ms is a single-file package — exactly 1 module
-      expect(forest.moduleCount).toBe(1);
-      expect(forest.stubCount).toBe(0);
-    },
-  );
+    // ms is a single-file package — exactly 1 module
+    expect(forest.moduleCount).toBe(1);
+    expect(forest.stubCount).toBe(0);
+  });
 
   it(
     "ms forest is not ForeignLeafEntry-dominated — leafCount > 0",
@@ -752,10 +770,13 @@ describe("shavePackage — ms fixture end-to-end (DEC-WI510-MS-FIXTURE-FIRST-001
 
       const entryMod = forestModules(forest).find((m) => m.filePath.includes("index.js"));
       expect(entryMod).toBeDefined();
+      if (entryMod === undefined) {
+        throw new Error("expected entry module node for degradation-pkg");
+      }
       // some-external-pkg must NOT appear in inPackageEdges
-      expect(entryMod!.inPackageEdges.every((e) => !e.includes("some-external-pkg"))).toBe(true);
+      expect(entryMod.inPackageEdges.every((e) => !e.includes("some-external-pkg"))).toBe(true);
       // It appears in externalSpecifiers instead
-      expect(entryMod!.externalSpecifiers).toContain("some-external-pkg");
+      expect(entryMod.externalSpecifiers).toContain("some-external-pkg");
     },
   );
 });
@@ -821,13 +842,17 @@ describe("shavePackage — compound interaction (real production sequence)", () 
 // ---------------------------------------------------------------------------
 
 /** Recursively collect all leaf canonicalAstHash values from a RecursionNode tree. */
-function collectLeafHashes(node: { kind: string; canonicalAstHash?: string; children?: unknown[] }): string[] {
+function collectLeafHashes(node: {
+  kind: string;
+  canonicalAstHash?: string;
+  children?: unknown[];
+}): string[] {
   if (node.kind === "atom") {
     return [node.canonicalAstHash ?? ""];
   }
   if (node.kind === "branch" && Array.isArray(node.children)) {
     return node.children.flatMap((c) =>
-      collectLeafHashes(c as { kind: string; canonicalAstHash?: string; children?: unknown[] })
+      collectLeafHashes(c as { kind: string; canonicalAstHash?: string; children?: unknown[] }),
     );
   }
   return [];

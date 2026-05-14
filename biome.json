@@ -25,6 +25,8 @@
     "ignore": [
       "dist/**",
       "node_modules/**",
+      "src/__fixtures__/module-graph/**",
+      "packages/shave/src/__fixtures__/module-graph/**",
       "**/__fixtures__/**/proof/*.json",
       ".worktrees/**",
       "tmp/**",

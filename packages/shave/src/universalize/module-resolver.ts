@@ -50,7 +50,16 @@ export type UnresolvableSignal = typeof UNRESOLVABLE;
 // ---------------------------------------------------------------------------
 
 /** Ordered list of candidate extensions to try when a specifier has no extension. */
-const EXTENSION_PROBE_ORDER = [".ts", ".js", ".mts", ".mjs", ".cjs", ".cts", ".tsx", ".jsx"] as const;
+const EXTENSION_PROBE_ORDER = [
+  ".ts",
+  ".js",
+  ".mts",
+  ".mjs",
+  ".cjs",
+  ".cts",
+  ".tsx",
+  ".jsx",
+] as const;
 
 /**
  * When a specifier ends in .js or .mjs, also probe the TypeScript equivalent
@@ -199,7 +208,7 @@ export function isInPackageBoundary(resolvedPath: string, packageRoot: string): 
   // on Windows (NTFS is case-insensitive; backslash/forward-slash mixing is common).
   // Add a trailing slash to packageRoot to prevent prefix false-positives:
   //   /pkg/root-extra/foo.js must NOT match /pkg/root/
-  const normalRoot = normalize(packageRoot).replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+  const normalRoot = `${normalize(packageRoot).replace(/\\/g, "/").replace(/\/+$/, "")}/`;
   const normalPath = normalize(resolvedPath).replace(/\\/g, "/");
   return normalPath.toLowerCase().startsWith(normalRoot.toLowerCase());
 }
@@ -249,16 +258,16 @@ export function resolveModuleEdge(
     if (pkgJson === undefined) return UNRESOLVABLE;
 
     // Only resolve if the specifier matches this package's own name (self-reference)
-    const pkgName = pkgJson["name"];
+    const pkgName = pkgJson.name;
     if (specifier !== pkgName) return UNRESOLVABLE;
 
     // Resolve via exports > main > index
-    const exportsField = pkgJson["exports"];
+    const exportsField = pkgJson.exports;
     if (exportsField !== undefined) {
       const via = resolveFromExports(exportsField, ".", packageRoot);
       if (via !== undefined) return via;
     }
-    const main = pkgJson["main"];
+    const main = pkgJson.main;
     if (typeof main === "string") {
       const mainPath = probeFile(join(packageRoot, main));
       if (mainPath !== undefined) return mainPath;
@@ -284,12 +293,12 @@ export function resolvePackageEntry(packageRoot: string): string | UnresolvableS
     const pkgJson = readPackageJson(pkgJsonPath);
     if (pkgJson === undefined) return UNRESOLVABLE;
 
-    const exportsField = pkgJson["exports"];
+    const exportsField = pkgJson.exports;
     if (exportsField !== undefined) {
       const via = resolveFromExports(exportsField, ".", packageRoot);
       if (via !== undefined) return via;
     }
-    const main = pkgJson["main"];
+    const main = pkgJson.main;
     if (typeof main === "string") {
       const mainPath = probeFile(join(packageRoot, main));
       if (mainPath !== undefined) return mainPath;
