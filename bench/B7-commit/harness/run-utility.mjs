@@ -159,8 +159,14 @@ async function measureOneRep({ emittedCode, intent, registry, atomizeEmission })
       ? atomizeResult.atomsCreated[0].blockMerkleRoot
       : null;
 
-  const intentQuery = { behavior: intent, inputs: [], outputs: [] };
-  const candidates = await registry.findCandidatesByIntent(intentQuery, { k: TOP_K });
+  // @decision DEC-VECTOR-RETRIEVAL-002 — use findCandidatesByQuery (symmetric API) so
+  // the query text is canonicalized via the same path as storeBlock's generateEmbedding().
+  // findCandidatesByIntent embeds raw `behavior + "\n" + params` and is asymmetric with
+  // the store path. topK moves into QueryIntentCard; no options object needed.
+  // Fixes #502 (22/32 BMR-in-top-K failures in B7 commit slice 3). See PR #285.
+  const queryCard = { behavior: intent, topK: TOP_K };
+  const queryResult = await registry.findCandidatesByQuery(queryCard);
+  const candidates = queryResult.candidates;
 
   const t3_query_hit = Date.now();
 

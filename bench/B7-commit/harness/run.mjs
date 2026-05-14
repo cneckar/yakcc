@@ -349,8 +349,11 @@ async function validateNovelty(spec, openRegistry) {
   const collisions = [];
 
   for (const entry of spec.files) {
-    const intentQuery = { behavior: entry.intent, inputs: [], outputs: [] };
-    const candidates = await noveltyRegistry.findCandidatesByIntent(intentQuery, { k: 1 });
+    // @decision DEC-VECTOR-RETRIEVAL-002 — symmetric API (findCandidatesByQuery) so
+    // query text is canonicalized the same way as storeBlock. topK goes in queryCard.
+    const queryCard = { behavior: entry.intent, topK: 1 };
+    const queryResult = await noveltyRegistry.findCandidatesByQuery(queryCard);
+    const candidates = queryResult.candidates;
     if (candidates.length > 0) {
       const top = candidates[0];
       const score = Math.max(0, Math.min(1, 1 - (top.cosineDistance * top.cosineDistance) / 4));
