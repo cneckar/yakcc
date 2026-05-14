@@ -90,6 +90,30 @@ jobs:
         run: node packages/cli/dist/bin.js bootstrap
 
       - name: Push updated manifest to main if changed
+        # @decision DEC-BOOTSTRAP-ACCUMULATE-PUSH-GATE-001
+        # @title Gate manifest push to push-on-main events only
+        # @status accepted
+        # @rationale
+        #   This workflow triggers on both `pull_request` and `push: branches: [main]`.
+        #   On PR runs the push step always fails: branch protection rejects the direct
+        #   push to main with "GH006: Protected branch update failed — 5 of 5 required
+        #   status checks are expected." The retry-with-rebase loop cannot help because
+        #   branch protection blocks the identical push on every attempt.
+        #
+        #   Fix (#495): gate this step on `github.event_name == 'push' && github.ref ==
+        #   'refs/heads/main'`. PR runs still execute the bootstrap shave (smoke value —
+        #   exercises the full bootstrap path and surfaces shave failures early) but skip
+        #   the push that always fails.
+        #
+        #   Trade-off: atoms discovered exclusively on an abandoned PR (one that never
+        #   merges) will NOT accumulate into main's manifest.  Per
+        #   DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001, accumulation is best-effort/eventual,
+        #   not gate-blocking.  Abandoned-PR-only atoms are rare; the constant red noise
+        #   on every PR is a larger cost than the occasional missed atom.  The invariant
+        #   is eventually satisfied: when a PR merges to main, the subsequent push event
+        #   triggers a fresh bootstrap that shaves main's HEAD and accumulates any atoms
+        #   that survived into the merged state.
+        #
         # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-PUSH-RACE (#364)
         # Wraps push in retry-with-rebase so non-fast-forward races against sister
         # merges resolve cleanly. The accumulator is monotonically additive per
@@ -97,6 +121,7 @@ jobs:
         # produces the correct final state. NO --force-with-lease (could overwrite
         # sister merges per issue body Option C rejection). Follow-up to WI-339,
         # WI-348 in the bootstrap-accumulate triage chain.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           git diff --quiet bootstrap/expected-roots.json && echo "No new atoms — manifest unchanged." && exit 0
           git config user.name  "ci-bootstrap"

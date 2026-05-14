@@ -52,7 +52,7 @@
 //   pnpm bench:tokens --dry-run --tier=full
 
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -735,11 +735,127 @@ function buildMarkdownSummary(artifact) {
 }
 
 // ---------------------------------------------------------------------------
+// Registry freshness check (#497)
+//
+// @decision DEC-V0-B4-REGISTRY-FRESHNESS-CHECK-001
+// @title B4 startup guard: abort when workspace registry is stale vs. seed blocks on disk
+// @status accepted
+// @rationale
+//   Issue #497: A $11 B4 run produced all-zero atoms_proposed values because
+//   .yakcc/registry.sqlite had 20 atoms while packages/seeds/src/blocks/ contained
+//   26 (6 added by PRs #470 and #493 were never seeded locally). The matrix ran to
+//   completion, output artifacts, and appeared successful — but every hooked cell
+//   returned {atoms:[]} because the missing atoms simply weren't there to find.
+//
+//   The guard counts seed block directories that contain a spec.yak file (source of
+//   truth: what the registry SHOULD hold) and compares that to SELECT COUNT(*) FROM
+//   blocks (what the registry ACTUALLY holds). Any discrepancy aborts before the
+//   first API call, saving the entire run budget.
+//
+//   Design choices:
+//   - Abort-on-mismatch, NOT auto-seed: auto-seeding masks the root cause and can
+//     silently corrupt a shared registry. The operator must see the gap explicitly.
+//   - Skip if registry does not exist: handled upstream by ensureRegistry() in
+//     mcp-server.mjs with a clear error; no need to duplicate.
+//   - Skip in dry-run mode: fixture-based runs do not need a populated registry.
+//     Adding this check to dry-run would break CI that runs dry-run without seeding.
+//   - Use better-sqlite3 directly: avoids importing the full @yakcc/registry stack
+//     (which triggers embedding model loading) just for a COUNT(*).
+//
+//   Cross-reference: issue #497, PR that introduced timer-handle seed (#470),
+//   PR that introduced GAP atoms (#493), DEC-V0-B4-MCP-001 (MCP server design).
+// ---------------------------------------------------------------------------
+
+/**
+ * Checks that the workspace registry is fresh relative to seed blocks on disk.
+ * Aborts the process with a clear remediation message if counts differ.
+ *
+ * @param {string} registryPath - Path to the .yakcc/registry.sqlite file.
+ * @param {string} repoRoot     - Path to the repository root.
+ * @param {boolean} dryRun      - Skip the check in dry-run mode (no registry needed).
+ */
+async function assertRegistryFreshness(registryPath, repoRoot, dryRun) {
+  // Dry-run uses fixtures, not the real registry. Skip to avoid false failures in CI.
+  if (dryRun) return;
+
+  // Skip if registry does not exist — ensureRegistry() in mcp-server.mjs provides a
+  // clear error on first tool call; we don't want to duplicate or preempt that message.
+  if (!existsSync(registryPath)) return;
+
+  // Count seed block directories that contain a spec.yak file.
+  const blocksDir = join(repoRoot, "packages", "seeds", "src", "blocks");
+  let diskAtomCount = 0;
+  if (existsSync(blocksDir)) {
+    const entries = readdirSync(blocksDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const specPath = join(blocksDir, entry.name, "spec.yak");
+        if (existsSync(specPath)) diskAtomCount++;
+      }
+    }
+  }
+
+  // Count atoms in the registry using better-sqlite3, loaded from the packages path
+  // to avoid pulling in the full @yakcc/registry stack and its embedding model.
+  // This is the same SQLite binary used by @yakcc/registry production code.
+  let registryAtomCount;
+  try {
+    const sqlitePath = join(
+      repoRoot, "packages", "registry", "node_modules", "better-sqlite3"
+    );
+    // createRequire is needed to load a CommonJS native module from ESM context.
+    const { createRequire } = await import("node:module");
+    const req = createRequire(import.meta.url);
+    const Database = req(sqlitePath);
+    const db = new Database(registryPath, { readonly: true });
+    const row = db.prepare("SELECT COUNT(*) AS n FROM blocks").get();
+    db.close();
+    registryAtomCount = row?.n ?? 0;
+  } catch (err) {
+    // If the registry schema is unexpected (e.g. empty/corrupt), surface the error
+    // but don't abort — the MCP server will produce a clearer error on first call.
+    console.warn(`[B4] WARNING: registry freshness check failed (${err.message}). Continuing.`);
+    return;
+  }
+
+  if (registryAtomCount !== diskAtomCount) {
+    console.error(`
+${"!".repeat(70)}
+[B4] FATAL: workspace registry is stale.
+  Atoms on disk:     ${diskAtomCount} (spec.yak files in packages/seeds/src/blocks/)
+  Atoms in registry: ${registryAtomCount} (SELECT COUNT(*) FROM blocks at ${registryPath})
+
+  Run the following command to refresh the registry, then re-run B4:
+
+    node packages/cli/dist/bin.js seed
+
+  If the CLI is not built yet:
+    pnpm -r build && node packages/cli/dist/bin.js seed
+
+  Do NOT run B4 with a stale registry — every hooked cell will return
+  atoms_proposed: 0 and the run will produce silent nonsense results.
+  (Issue #497: a stale registry cost $11 in wasted API calls.)
+${"!".repeat(70)}
+`);
+    process.exit(1);
+  }
+
+  console.log(`[B4] Registry freshness OK — ${registryAtomCount} atoms (disk=${diskAtomCount}).`);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main() {
   const runStart = Date.now();
+
+  // Registry freshness guard — must run before any cell/matrix setup or API call.
+  // Aborts with a clear remediation message if the workspace registry is stale.
+  // (DEC-V0-B4-REGISTRY-FRESHNESS-CHECK-001, issue #497)
+  const registryPath = process.env["YAKCC_REGISTRY_PATH"] ??
+    join(REPO_ROOT, ".yakcc", "registry.sqlite");
+  await assertRegistryFreshness(registryPath, REPO_ROOT, DRY_RUN);
 
   // Parse cell space
   let activeCells;
