@@ -579,7 +579,16 @@ function expandPlumbingGlob(pattern: string, repoRoot: string): string[] {
       if (!existsSync(currentDir)) return;
       let entries: import("node:fs").Dirent[];
       try {
-        entries = readdirSync(currentDir, { withFileTypes: true }) as import("node:fs").Dirent[];
+        // @decision DEC-V2-PLUMBING-WALK-DETERMINISM-001
+        // @title expandPlumbingGlob sorts readdir results before walking
+        // @status accepted (WI-FIX-494-TWOPASS-NONDETERM)
+        // @rationale Aligns with the "sort before iterate" convention at
+        //   seeds/src/seed.ts:75 and bootstrap.ts:387.  Eliminates latent
+        //   platform-readdir-order risk even though registry SELECTs are
+        //   ORDER BY workspace_path ASC and currently make order non-load-bearing.
+        entries = (
+          readdirSync(currentDir, { withFileTypes: true }) as import("node:fs").Dirent[]
+        ).sort((a, b) => a.name.localeCompare(b.name));
       } catch {
         return;
       }

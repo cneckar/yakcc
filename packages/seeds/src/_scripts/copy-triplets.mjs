@@ -68,7 +68,13 @@ async function main() {
   let blockNames;
   try {
     const entries = await readdir(SRC_BLOCKS, { withFileTypes: true });
-    blockNames = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    // Sort for deterministic iteration order (aligns with "sort before iterate"
+    // convention used throughout the codebase; cosmetic here but prevents
+    // platform-readdir-order surprises in log output and future callers).
+    blockNames = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
   } catch (err) {
     process.stderr.write(`[copy-triplets] ERROR: cannot read ${SRC_BLOCKS}: ${err.message}\n`);
     process.exit(1);

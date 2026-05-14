@@ -68,14 +68,21 @@
 //     --emit <path-to-ts-compiled-mjs> \
 //     --attack-classes <dir> \
 //     [--entry <funcName>] \
+//     [--applicable-classes <comma-separated-class-ids>] \
 //     [--json]
 //
 // Output: JSON {
 //   by_class: {
-//     <attack_class_id>: { total, refused_early, executed, contained_exception, benign_pass, shape_escapes, inputs: [...] }
+//     <attack_class_id>: { total, refused_early, executed, contained_exception, benign_pass, shape_escapes, not_applicable, inputs: [...] }
 //   },
-//   summary: { total, refused_early, executed, shape_escapes, refused_early_rate }
+//   summary: { total, refused_early, executed, shape_escapes, not_applicable, refused_early_rate }
 // }
+//
+// When --applicable-classes is provided (or applicableClasses is passed to measureAxis2()),
+// inputs from non-applicable attack classes are classified as "not-applicable" and do NOT
+// contribute to shape_escapes or refused_early_rate. They are still recorded in by_class
+// for transparency. When absent, defaults to ALL classes (current behavior).
+// Per fix for #515 (DEC-B9-APPLICABILITY-001).
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -95,6 +102,7 @@ const { values: cliArgs } = parseArgs({
     emit: { type: "string" },
     "attack-classes": { type: "string", default: resolve(BENCH_B9_ROOT, "attack-classes") },
     entry: { type: "string", default: "listOfInts" },
+    "applicable-classes": { type: "string" },  // comma-separated class IDs; absent = all
     json: { type: "boolean", default: false },
   },
   strict: false,
@@ -105,6 +113,10 @@ const EMIT_PATH = cliArgs["emit"];
 const ATTACK_DIR = cliArgs["attack-classes"] ?? resolve(BENCH_B9_ROOT, "attack-classes");
 const ENTRY_FUNCTION = cliArgs["entry"] ?? "listOfInts";
 const JSON_ONLY = cliArgs["json"] === true;
+// CLI applicable-classes: parse comma-separated list, or null = all classes
+const CLI_APPLICABLE_CLASSES = cliArgs["applicable-classes"]
+  ? cliArgs["applicable-classes"].split(",").map(s => s.trim()).filter(Boolean)
+  : null;
 
 if (!EMIT_PATH) {
   console.error(
@@ -317,19 +329,55 @@ function loadAttackClasses(attackDir) {
 // Main
 // ---------------------------------------------------------------------------
 
-async function measureAxis2({ emitPath, attackDir, entryFuncName } = {}) {
+// @decision DEC-B9-APPLICABILITY-001
+// @title Per-task attack-class applicability filter for Axis 2
+// @status accepted
+// @rationale
+//   The 8 attack-class JSON files were authored for parse-int-list whose input shape
+//   is a JSON-array string. When applied to tasks with different input shapes (csv-row-narrow
+//   takes "f1,f2,f3"; kebab-to-camel takes "foo-bar"; digits-to-sum takes "123"), the
+//   JSON-array attack payloads are semantically inapplicable: the task correctly accepts
+//   or rejects them based on its own grammar, but expected_outcome=REFUSED-EARLY was
+//   authored for the parse-int-list context. Classifying them as shape-escape is a harness
+//   false positive.
+//
+//   Fix: measureAxis2() accepts an optional applicableClasses array. When provided, inputs
+//   from non-applicable classes are classified "not-applicable" and excluded from shape_escapes
+//   and refused_early counts. They are still recorded in by_class for transparency. When
+//   absent, all classes are applicable (preserves existing behavior for external callers).
+//
+//   Fixes #515. Cross-reference: corpus-spec.json applicable_attack_classes field.
+
+/**
+ * @param {object} options
+ * @param {string} [options.emitPath]        - path to .mjs emit (defaults to CLI arg)
+ * @param {string} [options.attackDir]       - path to attack-classes dir (defaults to CLI arg)
+ * @param {string} [options.entryFuncName]   - entry function name (defaults to CLI arg)
+ * @param {string[]|null} [options.applicableClasses] - array of applicable attack_class_id values,
+ *   or null/undefined to apply all classes. When absent, defaults to CLI_APPLICABLE_CLASSES
+ *   (from --applicable-classes flag) or null (all classes).
+ */
+async function measureAxis2({ emitPath, attackDir, entryFuncName, applicableClasses } = {}) {
   const _emitPath = emitPath ?? emitAbsPath;
   const _attackDir = attackDir ?? ATTACK_DIR;
   const _entryFuncName = entryFuncName ?? ENTRY_FUNCTION;
+  // applicableClasses: explicit arg > CLI flag > null (all)
+  const _applicableClasses = applicableClasses !== undefined
+    ? applicableClasses
+    : CLI_APPLICABLE_CLASSES;
+  // Build a fast lookup set; null means "all applicable"
+  const applicableSet = _applicableClasses ? new Set(_applicableClasses) : null;
 
   const { invokeInstrumented } = await loadAndInstrumentEmit(_emitPath, _entryFuncName);
   const attackClasses = loadAttackClasses(_attackDir);
 
   const byClass = {};
-  let totalAll = 0, refusedEarlyAll = 0, executedAll = 0, shapeEscapesAll = 0;
+  let totalAll = 0, refusedEarlyAll = 0, executedAll = 0, shapeEscapesAll = 0, notApplicableAll = 0;
 
   for (const attackClass of attackClasses) {
     const classId = attackClass.attack_class_id;
+    const isApplicable = applicableSet === null || applicableSet.has(classId);
+
     const classResult = {
       total: 0,
       refused_early: 0,
@@ -338,10 +386,31 @@ async function measureAxis2({ emitPath, attackDir, entryFuncName } = {}) {
       benign_pass: 0,
       unexpected_refusal: 0,
       shape_escapes: 0,
+      not_applicable: 0,
+      applicable: isApplicable,
       inputs: [],
     };
 
     for (const input of attackClass.inputs) {
+      classResult.total++;
+      totalAll++;
+
+      // Not-applicable inputs: record but exclude from scoring counters
+      if (!isApplicable) {
+        classResult.not_applicable++;
+        notApplicableAll++;
+        classResult.inputs.push({
+          label: input.label,
+          payload_preview: input.payload.slice(0, 80) + (input.payload.length > 80 ? "..." : ""),
+          expected_outcome: input.expected_outcome,
+          classification: "not-applicable",
+          threw: null,
+          error_type: null,
+          error_message: null,
+        });
+        continue;
+      }
+
       const invokeResult = invokeInstrumented(input.payload);
       const classification = classifyResult(invokeResult, input.expected_outcome);
 
@@ -356,9 +425,6 @@ async function measureAxis2({ emitPath, attackDir, entryFuncName } = {}) {
           : null,
         error_message: invokeResult.thrownError?.message?.slice(0, 200) ?? null,
       };
-
-      classResult.total++;
-      totalAll++;
 
       switch (classification) {
         case "refused-early":
@@ -390,13 +456,15 @@ async function measureAxis2({ emitPath, attackDir, entryFuncName } = {}) {
     byClass[classId] = classResult;
   }
 
+  // Only count applicable inputs toward refused_early_targets
   const refusedEarlyTargets = Object.values(byClass).reduce(
-    (acc, c) => acc + c.inputs.filter((i) => i.expected_outcome === "REFUSED-EARLY").length,
+    (acc, c) => acc + c.inputs.filter((i) => i.expected_outcome === "REFUSED-EARLY" && i.classification !== "not-applicable").length,
     0
   );
 
   const summary = {
     total_inputs: totalAll,
+    not_applicable: notApplicableAll,
     refused_early_targets: refusedEarlyTargets,
     refused_early: refusedEarlyAll,
     executed: executedAll,
@@ -431,14 +499,21 @@ async function main() {
   console.log();
 
   for (const [classId, classResult] of Object.entries(result.by_class)) {
-    const refusedTargets = classResult.inputs.filter((i) => i.expected_outcome === "REFUSED-EARLY").length;
+    if (!classResult.applicable) {
+      console.log(`  [${classId}] (not-applicable — skipped per applicable_attack_classes)`);
+      console.log(`    not_applicable=${classResult.not_applicable}`);
+      console.log();
+      continue;
+    }
+    const refusedTargets = classResult.inputs.filter((i) => i.expected_outcome === "REFUSED-EARLY" && i.classification !== "not-applicable").length;
     const refusedRate = refusedTargets > 0 ? (classResult.refused_early / refusedTargets * 100).toFixed(0) : "N/A";
     console.log(`  [${classId}]`);
     console.log(`    total=${classResult.total} refused_early=${classResult.refused_early}/${refusedTargets} (${refusedRate}%) shape_escapes=${classResult.shape_escapes}`);
     for (const inp of classResult.inputs) {
-      const icon = inp.classification === "refused-early" ? "✓" :
+      const icon = inp.classification === "refused-early" ? "+" :
                    inp.classification === "shape-escape" ? "!SHAPE-ESCAPE!" :
-                   inp.classification === "benign-pass" ? "~" : "✗";
+                   inp.classification === "benign-pass" ? "~" :
+                   inp.classification === "not-applicable" ? "-" : "x";
       console.log(`    ${icon} [${inp.label}] ${inp.classification} (expected=${inp.expected_outcome}) err=${inp.error_type ?? "none"}`);
     }
     console.log();
@@ -446,6 +521,7 @@ async function main() {
 
   const s = result.summary;
   console.log(`  SUMMARY:`);
+  console.log(`    not_applicable: ${s.not_applicable} (excluded from scoring)`);
   console.log(`    refused_early: ${s.refused_early}/${s.refused_early_targets} (${s.refused_early_rate.toFixed(1)}%)`);
   console.log(`    shape_escapes: ${s.shape_escapes} (pass bar: 0)`);
   console.log(`    pass_bar_95: ${s.refused_early_rate >= 95 ? "PASS" : "FAIL"}`);
