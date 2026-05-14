@@ -1,278 +1,300 @@
-# WI-510 — Shadow-NPM Atom Corpus Expansion
+# WI-510 — Dependency-Following Shave Engine
 
 **Status:** Planning pass (read-only research output). Not Guardian readiness for any code slice.
-**Scope:** Implements [#510](https://github.com/cneckar/yakcc/issues/510) — expand the seed registry corpus with shadow-npm atoms for the top LLM-imported packages.
+**Scope:** Implements [#510](https://github.com/cneckar/yakcc/issues/510). **REFRAMED 2026-05-14** — see below.
 **Branch:** `feature/wi-510-shadow-npm-corpus`
 **Worktree:** `C:/src/yakcc/.worktrees/wi-510-shadow-npm-corpus`
 **Authored:** 2026-05-14 (planner stage, workflow `WI-510-SHADOW-NPM-CORPUS`)
-**Parent coordination doc:** `plans/import-replacement-triad.md` (PR #517, merged). This plan is the **#510-specific expansion** of that triad's P2a + P3 lanes. Where the triad doc and this doc conflict, the triad doc's cross-cutting decisions (`DEC-IRT-*`) win; this doc only refines the #510-internal authoring process, slicing, and evaluation contract.
+**Parent coordination doc:** `plans/import-replacement-triad.md` (reframed in the same pass; supersedes the pre-#517 version).
+
+> **THIS DOCUMENT REPLACES THE STALE ORIGINAL.** The first WI-510 plan (commit `5344541`) framed #510 as "hand-author ~30 shadow-npm atoms across 11 packages, validators-first." That framing is **retired.** The operator adjudicated, through a steering session, that hand-authoring a flat atom list alongside the real shave engine is a Sacred-Practice-12 (single-source-of-truth) violation — it builds a parallel mechanism for "what an atom is" next to the engine that already produces atoms.
+>
+> **#510's real deliverable is a `@yakcc/shave` ENGINE change:** teach the shave pipeline to follow dependency/import edges across the package boundary, so it recurses into a target package's own source and decomposes it down to a connected call-graph atom forest. The 11 npm packages in the issue body become **graduated acceptance fixtures** that prove the engine works — they are not the deliverable themselves.
 
 This document changes no TypeScript source, does not modify `MASTER_PLAN.md` permanent sections, and does not constitute Guardian readiness for any code-bearing slice.
 
 ---
 
-## 1. Root Cause / Motivation
+## 1. Root Cause / The Verified Capability Gap
 
-**The problem, restated:** yakcc's headline value proposition is dependency replacement — "instead of `import { isEmail } from 'validator'`, compose content-addressed atoms that do the same thing with a tiny reachable surface." Issue #508 (import-intercept hook, demand side) and #512 (B10 import-heavy bench, measurement side) both **structurally depend on a supply of atoms** that implement the behaviors LLMs actually reach for. Today that supply does not exist.
+**The problem, restated.** yakcc's headline value proposition is dependency replacement — "instead of `import { isEmail } from 'validator'`, compose content-addressed atoms that do the same thing with a tiny reachable surface." For that to fire, the registry needs atoms that implement the behaviors LLMs reach for. The original plan proposed *hand-authoring* those atoms. But yakcc **already has an engine that produces atoms from source** — `@yakcc/shave`. The right move is not to hand-author a parallel corpus; it is to teach that engine to cross the package boundary so it can produce the corpus itself, deterministically, content-addressed, from real package source.
 
-**Current state (verified):** `packages/seeds/src/blocks/` contains exactly **26** atoms. Every one is a parsing-character primitive (`digit`, `comma`, `optional-whitespace`, `bracket`, `peek-char`, …) or a small generic utility (`memoize`, `lru-node`, `queue-drain`, `timer-handle`). The single most "shadow-npm-shaped" atom is `semver-component-parser` — and even that was authored to support a *B4 internal task*, not to shadow the `semver` npm package's public surface.
+**The verified gap (confirmed against the worktree at planning time):**
 
-**Consequence:** The import-intercept hook (`packages/hooks-base/src/yakcc-resolve.ts` / `substitute.ts`), when handed `import { isEmail } from 'validator'`, queries the registry and gets `{atoms:[]}` — not because the hook is broken, but because there is nothing to find. The corpus is the gating bottleneck for the entire import-replacement triad.
+`packages/shave/src/universalize/recursion.ts :: decompose(source, registry, options)` takes **one source string**. It creates **one** ts-morph `Project` (`new Project({ useInMemoryFileSystem: true, ... })`) and **one** `SourceFile` (`project.createSourceFile("anonymous.ts", source, ...)`), then walks that file's AST top-down. At each node it calls `isAtom()`; if non-atomic it descends into `decomposableChildrenOf(node)`.
 
-**What "done" means for #510 (from the issue):**
-1. Each top-20 npm package has **≥1 atom** for its most-imported function.
-2. The registry answers atom-lookup for any of those queries with **`combinedScore >= 0.7`** against the bge-small-en-v1.5 embedder.
+`decomposableChildrenOf()` is the structural-descent policy. It has rich cases for descending into syntactic structure **within a file**: `SourceFile`/`Block` → statements; function-likes → body statements; `IfStatement` → branches; loops → body (with escaping-CF guard); `SwitchStatement`, `TryStatement`, `ClassDeclaration`, `ExpressionStatement`, `VariableStatement`, `CallExpression`, `NewExpression`, `ConditionalExpression`, `BinaryExpression`, `ReturnStatement`, `ObjectLiteralExpression`. **There is NO case for an `ImportDeclaration` / `require()` that resolves the module and descends into the imported file's AST.** `ImportDeclaration` falls through to the default `return []`.
 
-This plan treats criterion (2) as the load-bearing, mechanically-verifiable acceptance gate and pins the exact measurement procedure in §6 (Evaluation Contract).
+The slicer (`packages/shave/src/universalize/slicer.ts`) is where static `import` edges are handled — and where they **stop**. `classifyForeign(source)` parses the source, walks `ImportDeclaration` nodes, skips type-only / relative / `@yakcc/` workspace imports, and emits one `ForeignLeafEntry` per binding for everything else. In both `walkNodeStrict` and `walkNodeGlueAware`, an unmatched `AtomLeaf` runs `classifyForeign()` **before** falling through to `NovelGlueEntry`: if it is a foreign import, the slicer pushes `ForeignLeafEntry` records and **`return`s** — it never recurses across the edge into the imported module's source.
 
----
+`--foreign-policy` (`ShaveOptions.foreignPolicy`, values `allow` / `reject` / `tag`, default `tag` per `FOREIGN_POLICY_DEFAULT`) governs what `shave()` *does* with the `ForeignLeafEntry` records **after** `slice()` returns (the foreign-policy gate is enforced in `index.ts`, not inside the slicer). **None of `allow`/`reject`/`tag` means "decompose the foreign package's source."**
 
-## 2. How the Existing Substrate Works (System Map)
+**Consequence.** Pointed at `validator/index.js`, `shave()` would: read that one file, `decompose()` its glue into a recursion tree, `slice()` it — and treat every `require('./lib/isEmail')` as a `ForeignLeafEntry`. It would **not** produce the granular `isEmail` atom tree. The capability to descend across the import edge does not exist.
 
-Every claim below was verified against the worktree at planning time.
+**The signature is the constraint.** `decompose()`'s `(source: string, ...)` signature, its single `Project`, and its single `createSourceFile` are *themselves* what blocks module recursion. To follow edges you need:
+- a **module resolver** — given the importing module's path and a specifier, resolve to an on-disk source file (respecting `package.json#exports` / `main`, `.js`/`.ts`/`.mjs`/`.cjs`, index files);
+- a **visited-set cycle guard** — npm packages have circular imports; without a visited-set keyed by resolved module path, recursion does not terminate;
+- a **per-module `Project`** (or per-module `SourceFile` in a shared `Project`) — not a single in-memory `createSourceFile("anonymous.ts", ...)`.
 
-### 2.1 Atom = 4-file triplet directory
-
-A seed atom is a directory `packages/seeds/src/blocks/<atom-name>/` containing:
-
-| File | Role | Authority |
-|------|------|-----------|
-| `impl.ts` | The implementation. Must pass the **strict-TS-subset validator** (`packages/ir/src/strict-subset.ts`). Carries a `@decision` annotation block. | `parseBlockTriplet` (`@yakcc/ir`) validates it; `seedRegistry` stores `implSource`. |
-| `spec.yak` | JSON contract: `name`, `inputs`, `outputs`, `preconditions`, `postconditions`, `invariants`, `effects`, `level`, `behavior`, `guarantees`, `errorConditions`, `nonFunctional`, `propertyTests`. **The `behavior` string is what gets embedded** and is therefore the lever for `combinedScore`. | `validateSpecYak` (`@yakcc/ir`); `canonicalize` (`@yakcc/contracts`) produces `specCanonicalBytes`; `storeBlock` embeds it. |
-| `proof/manifest.json` | `{ "artifacts": [{ "kind": "property_tests", "path": "tests.fast-check.ts" }] }` | Parsed by `parseBlockTriplet`; bytes feed `blockMerkleRoot`. |
-| `proof/tests.fast-check.ts` | Property-test artifact. **Note:** in the current 26 atoms this file is just `export * from "../impl.js";` plus a header listing the `propertyTests` IDs declared in `spec.yak`. The declared `propertyTests` array in `spec.yak` is the actual contract; the `.ts` file is a re-export shell so runners can import the impl. | `parseBlockTriplet` captures it as an artifact; bytes feed `blockMerkleRoot`. |
-
-`blockMerkleRoot = hash(specHash ‖ implHash ‖ proofRoot)` — all three sidecar files are content-addressed into the atom's identity.
-
-### 2.2 Loading path
-
-`packages/seeds/src/seed.ts :: seedRegistry(registry)` enumerates `blocks/` directories (sorted, deterministic), calls `parseBlockTriplet(blockDir)` on each — which (a) reads the 3 sidecar files, (b) runs `validateSpecYak`, (c) runs the strict-subset validator on `impl.ts`, (d) derives `blockMerkleRoot`, `specHash`, `canonicalAstHash` — then builds a `BlockTripletRow` and calls `registry.storeBlock(row)` (idempotent `INSERT OR IGNORE`). Adding a new atom directory means it is **automatically** picked up; no registration list to edit. `index.ts` re-exports each block function by name — a new atom that needs a public re-export adds one line here (optional; only needed if other yakcc code imports the function directly).
-
-### 2.3 Workspace-plumbing interaction with PR #520 (verified — NO collision)
-
-PR #520 (`feature/wi-fix-494-twopass-nondeterm`) declares `packages/*/src/blocks/*/{spec.yak,proof/manifest.json,proof/tests.fast-check.ts}` as `PLUMBING_INCLUDE_GLOBS` in `packages/cli/src/commands/plumbing-globs.ts`, so `compile-self` materializes the sidecars into `dist-recompiled/`. These are **pattern globs** — any new atom directory under `packages/seeds/src/blocks/` that ships exactly those three sidecar filenames is covered for free. **The only obligation #520 imposes on WI-510:** every new atom MUST ship `spec.yak`, `proof/manifest.json`, and `proof/tests.fast-check.ts` with exactly those names (no extra/renamed sidecars), or two-pass equivalence regresses. This is already the required triplet shape, so the constraint is "follow the existing pattern." PR #520 also sorts `readdir` for deterministic walk — new directories slot in alphabetically with no action needed. **WI-510 must not touch `plumbing-globs.ts` or `copy-triplets.mjs`.**
-
-### 2.4 Discovery-eval harness — how `combinedScore` is actually measured
-
-`packages/registry/src/discovery-eval-helpers.ts` is the metric authority. Verified facts:
-
-- **`combinedScore` band boundaries** (`assignScoreBand`): `strong ≥ 0.85`, `confident ≥ 0.70`, `weak ≥ 0.50`, `poor < 0.50`. The issue's `>= 0.7` acceptance threshold is **exactly the `confident` band floor.**
-- `findCandidatesByQuery(card: QueryIntentCard)` returns `QueryCandidate[]` each carrying a `combinedScore` already in `[0,1]` (computed inside `storage.ts` via the corrected L2→score formula `1 - d²/4`, `DEC-V3-DISCOVERY-CALIBRATION-FIX-002`). This is the path WI-510's eval must use — **not** `findCandidatesByIntent` (asymmetric text derivation, legacy smoke-test path).
-- **Provider:** the issue names `bge-small-en-v1.5`. The harness's local provider is `createLocalEmbeddingProvider(modelId, dim)` and the full-corpus test reads `DISCOVERY_EMBED_MODEL` / `DISCOVERY_EMBED_DIM` env vars (default `Xenova/all-MiniLM-L6-v2`, 384-dim). bge-small-en-v1.5 is a 384-dim model, so it fits the existing `FLOAT[384]` schema (`DEC-EMBED-010`) — **no schema migration needed.** The Xenova mirror is `Xenova/bge-small-en-v1.5`. (See §5 open question — confirm the model ID string the operator wants pinned.)
-- `discovery-eval-full-corpus.test.ts` is the natural home for WI-510's acceptance queries: it loads the full bootstrap registry, re-embeds with the semantic provider, **loads referenced seed atoms by `expectedAtomName`** (resolving `blockMerkleRoot` from the on-disk seed files at test time — no hardcoded hashes), and runs the corpus through `findCandidatesByQuery`. WI-510 extends `packages/registry/test/discovery-benchmark/corpus.json` with one entry per shadow-npm atom.
-- The corpus query entries with `expectedAtomName` resolve the atom by its **seed directory name**, so the atom directory name is the join key between the corpus query and the atom.
-
-### 2.5 Strict-TS-subset constraint on `impl.ts`
-
-`packages/ir/src/strict-subset.ts` rejects `any` (explicit, `as any`, `<any>`, generic-arg, return, param). The worked examples (`memoize/impl.ts`) show the discipline: inputs/outputs typed as `unknown` where generics would otherwise need `any`, with callers casting at the use site. **Every WI-510 atom `impl.ts` must pass `pnpm --filter @yakcc/seeds strict-subset` (or the `parseBlockTriplet` validation that `seedRegistry` runs).** Atoms must use the `@yakcc/...` workspace alias for any cross-package import, never `../../../packages/...` (MEMORY: tsc rootDir constraint).
+**Build on what exists.** `glue-aware` mode already applies the IR strict-subset predicate **per-subgraph** instead of per-file (`DEC-V2-SLICER-SEARCH-001`, `DEC-V2-GLUE-AWARE-SHAVE-001`). That best-effort partial-tolerance substrate — "this subgraph shaves, that one becomes a `GlueLeafEntry`, the file still produces a useful plan" — is exactly the discipline module recursion needs across module boundaries. #510 Slice 1 extends that discipline from per-subgraph-within-a-file to per-module-across-an-edge.
 
 ---
 
-## 3. Atom Selection — Packages, Functions, Priority
+## 2. The Connected-Forest Architecture
 
-The issue's methodology is "harvest call sites from a corpus of real TS/JS projects, rank by frequency, seed atoms for top-N." Running a full GitHub-corpus harvest is itself a multi-day data-engineering task and is **out of scope as a blocking prerequisite** — see §3.2. Instead this plan uses the issue's own explicitly-enumerated target set as the ranked list (the issue author already did the frequency triage; the bullet order in the issue *is* the priority order), and defines a *lightweight, reproducible* harvesting check (§3.2) that an implementer runs to confirm each chosen function is genuinely the most-imported binding of its package before authoring its atom.
+The output of the dependency-following engine is **one connected call-graph atom forest**, not a monolithic tree and not N disconnected per-module trees.
 
-### 3.1 Target set, decomposed by package family
+When shave follows an import edge from `validator/index.js` into `validator/lib/isEmail.js`, that module's call-graph subgraphs **join the same selectable forest**. Concretely:
 
-Priority tier follows the issue's ordering. "Headline function" = the single most-imported binding (the ≥1-atom acceptance target); "extended" = additional bindings authored within the same slice if the family is small.
+- **Every internal node is independently selectable.** A consumer can select `parse-local-part` at fine grain, or `validate-domain`, or the whole `validate-rfc5321-email` root at coarse grain — all from the *same* decomposition. Each function/subgraph is a content-addressed (`blockMerkleRoot`), independently-addressable root.
+- **Subgraphs recompose into NEW merkle roots expressing arbitrary subsets.** A URL validator that needs only "reject consecutive dots" composes a new root from that subtree **without dragging in the rest of email validation**. This is the whole point of call-graph-derived decomposition over file-derived decomposition.
+- **The package boundary is NOT a wall in the OUTPUT.** It only governs how far the *resolver* walks (the B-scope predicate, §3). In the forest itself, an atom from `validator/lib/isFQDN.js` and an atom from `validator/lib/isEmail.js` are peer nodes in the same connected structure — `isEmail`'s subgraph references `isFQDN`'s subgraph the same way it would if they were in one file.
 
-| # | Package | Headline function (≥1-atom target) | Extended bindings (same slice) | Family | Notes |
-|---|---------|-----------------------------------|-------------------------------|--------|-------|
-| 1 | `validator` | `isEmail` (RFC 5321 default-options) | `isURL`, `isUUID`, `isAlphanumeric` | **validators** | Slice 1 anchor. Triad doc §5 names `validator.isEmail` as the demo binding. |
-| 2 | `semver` | `satisfies` | `coerce`, `compare`, `valid`/`parse` | **versioning** | `semver-component-parser` already exists — reuse as a *composition input*, do not duplicate. |
-| 3 | `uuid` | `v4` (generate) | `validate` (v4), `v7` (generate) | **identifiers** | v4 generate is non-pure (RNG effect) — declare the `effects` field honestly in `spec.yak`. |
-| 4 | `nanoid` | `nanoid` (generate, default 21-char) | — | **identifiers** | Single binding; pairs with `uuid` family slice. |
-| 5 | `ms` | `parseDuration` (`ms('2h')` → number) | `format` (number → `'2h'`) | **time** | Pure, small, well-defined grammar — good early win. |
-| 6 | `date-fns` | `parseISO` | `formatISO`, `addDays`, `differenceInMilliseconds` | **time** | `parse-tz-offset` is a useful sub-atom that the others compose. |
-| 7 | `lodash` (subset) | `cloneDeep` | `get`, `set`, `merge`, `debounce`, `throttle` | **collection/fn** | Largest family; `debounce`/`throttle` carry timer effects — reuse `timer-handle` seed atom. |
-| 8 | `jsonwebtoken` | `verify` (HS256) | `decode` (base64url), `parseJoseHeader` | **crypto/token** | HS256-verify composes a constant-time-compare sub-atom (see `bcrypt` family). |
-| 9 | `bcrypt` | `compare` (constant-time verify) | `hash` | **crypto/token** | Constant-time compare is a shared sub-atom for `jsonwebtoken` HS256-verify. |
-| 10 | `zod` / `joi` (subset) | `string().min()` validator | `string().max()`, `regex`, `number().int()`, `array().each()` | **validators** | Author as standalone predicate atoms, not a schema-builder DSL. |
-| 11 | `p-limit` / `p-throttle` | `pLimit` (sliding-window concurrency cap) | — | **async/fn** | Effectful; declare honestly. Lowest priority — depends on a promise-orchestration sub-atom. |
-
-**Acceptance arithmetic:** the issue says "each top-20 npm package has ≥1 atom." The 11 packages above are the issue's explicit set. The headline-function column gives the ≥1-atom guarantee per package. If the operator's "top-20" is strictly 20 packages, the long-tail 9 (e.g. `axios`/`node-fetch`, `chalk`, `commander`, `glob`, `dotenv`, `csv-parse`, `ajv`, `jsonpointer`, `pino`) are folded into a continuation initiative (§4, P3-tail) — flagged as an open question in §5 because some of those (`axios`, `chalk`) are I/O-bound or terminal-bound and may not be atom-shaped at all.
-
-### 3.2 Lightweight harvesting check (per-function, reproducible, non-blocking)
-
-The implementer, before authoring each atom, runs this check to confirm the chosen function is genuinely the package's most-imported binding. This replaces a full GitHub-corpus crawl with a fast, reproducible proxy:
-
-1. **npm-registry signal:** `npm view <pkg>` for the package's own docs ordering is a weak signal; stronger:
-2. **Typed-surface signal:** read the package's `.d.ts` (`node_modules/<pkg>/index.d.ts`) — the export ordering and the JSDoc `@example` blocks reveal the maintainer's view of the primary surface.
-3. **Issue-set anchor:** the issue body already enumerates the target functions per package. Treat the issue's named function as the default; the check only needs to *not contradict* it.
-4. **Record the evidence:** each atom's `spec.yak` `behavior` string, and its `@decision` annotation in `impl.ts`, cite *why this binding* (e.g. "`validator.isEmail` is the first-listed export and the only one with a dedicated RFC backing"). The `@decision` block is the durable harvest record — no separate harvest doc.
-
-This keeps "harvesting" honest and reproducible without making a data-engineering crawl a blocking dependency. If the operator wants a real frequency-ranked crawl, that is a **separate, parallel WI** feeding a *future* re-prioritization — it does not block authoring the issue's already-named set.
+This is consistent with the existing substrate: `slice()` already produces a `SlicePlan` of `PointerEntry | NovelGlueEntry | ForeignLeafEntry | GlueLeafEntry` with `matchedPrimitives` deduplicated by `canonicalAstHash`, and persistence (`persist/triplet.ts`, `persist/atom-persist.ts`) threads `parentBlockRoot` lineage. The forest is the natural multi-module generalization of the single-file `RecursionTree` → `SlicePlan` the engine already builds. `storeBlock` is idempotent (`INSERT OR IGNORE` keyed by the content-derived `blockMerkleRoot`), so the same atom reached via two import paths dedups for free.
 
 ---
 
-## 4. Slicing Recommendation
+## 3. Recursion Scope = B (within-package boundary)
 
-This WI is large (≈30+ atoms across 11 packages). It is sliced **by package family**, smallest-and-most-self-contained first, so each slice is an independently shippable PR that moves the acceptance counter and de-risks the next slice.
+**#510 Slice 1's scope is B:** follow import edges **WITHIN the target package boundary only**; treat EXTERNAL npm deps as foreign leaves still.
+
+- Shaving `validator` recurses through all of `validator/lib/**` (validator's own source) but **stops at validator's own `dependencies`** — those edges remain `ForeignLeafEntry` records, exactly as today.
+- A dep that is itself later named as a shave target gets shaved then; because identity is content-addressed and `storeBlock` is idempotent, **a dep shaved later retroactively benefits everything** that referenced it.
+- The B-scope predicate is literally: *"is this resolved edge inside the target package's own directory tree?"* If yes, recurse. If no, `ForeignLeafEntry`.
+
+**Options A and C are explicit follow-on issues, not this slice.** A = whole-`node_modules` transitive (follow every resolvable edge). C = depth/budget-bounded transitive. The B→C boundary is **one predicate** ("inside the package boundary?" becomes "inside the package boundary OR within depth/budget?") — the resolver, visited-set, per-module Project, and connected-forest structure are all unchanged. C-track follow-on issue detail is in §8.
+
+**The operator may revisit B→A/C.** This is the one remaining point in the reframed architecture the operator reserved the right to change. Even if they do, it does not invalidate Slice 1 — it extends it. Slice 1 is written as B; A/C are additive.
+
+---
+
+## 4. Alternatives Gate — Where Module-Resolution-Aware Recursion Lives
+
+Two reasonable architectures for *where* the module-resolution recursion lives. They differ significantly in blast radius and in whether they touch the (possibly constitutional) `decompose()` signature.
+
+### Option 1 — Extend `decompose()` to be resolver-driven
+
+`decompose()` gains an optional resolver/context parameter. When present, `decomposableChildrenOf` (or a sibling policy) gets an `ImportDeclaration` case that resolves the module, parses it into a `SourceFile`, and yields its top-level nodes as decomposable children — recursing across the edge inside the existing `recurse()` loop. The visited-set and per-module `Project`/`SourceFile` management live inside `decompose()`.
+
+- **Pro:** one engine, one recursion loop; the forest is naturally connected because it is one `recurse()` call tree; reuses all of `safeCanonicalAstHash`, the escaping-CF guards, depth limiting.
+- **Con:** `decompose()`'s `(source: string, ...)` signature changes — and `packages/shave/src/types.ts` carries a **"frozen-for-L5" constraint** the prior planner flagged. **CONFIRMED:** `types.ts` is the public-surface authority for `@yakcc/shave` (`ShaveOptions`, `ShaveResult`, `UniversalizeResult`, `UniversalizeOptions`, `ShaveRegistryView`, `CandidateBlock`, `IntentExtractionHook`) — every type is heavily `@decision`-annotated and several are explicitly described as stable public API (e.g. `DEC-UNIVERSALIZE-WIRING-001`, `DEC-UNIVERSALIZE-PERSIST-API-001`). `decompose()` itself is **not** exported from `types.ts` — it is an internal function in `recursion.ts` with `RecursionOptions` from `universalize/types.ts`. So a `decompose()` signature change is **internal to `@yakcc/shave`**, not a `types.ts` public-surface break — **provided** the change stays in `recursion.ts` + `universalize/types.ts` and does not alter `ShaveOptions`/`ShaveResult`/`UniversalizeResult`. The "frozen-for-L5" constraint applies to the *public* `types.ts` surface; the implementer must design the resolver parameter as a `RecursionOptions` extension (or a new internal context type) and NOT widen the public `ShaveOptions`/`UniversalizeOptions` shape unless a follow-up explicitly re-opens it. If the engine genuinely needs a new *public* option (e.g. `ShaveOptions.followDependencies`), that single additive optional field is the maximum permitted public-surface change and must be `@decision`-annotated as such.
+
+### Option 2 — A new orchestration layer above `decompose()`
+
+A new module (e.g. `packages/shave/src/universalize/module-graph.ts`) owns module resolution, the visited-set, and per-module `Project` creation. It calls the *existing* `decompose(source, ...)` once per module, then stitches the per-module `RecursionTree`s into one connected forest by resolving `ForeignLeafEntry` records that point inside the package boundary into edges to the corresponding module's tree.
+
+- **Pro:** `decompose()` is untouched — zero risk to the per-file engine and its large `@decision` history; the new layer is a clean, separately-testable unit; cycle guard and resolver are isolated.
+- **Con:** "stitch per-module trees into a connected forest" is real work — the connectivity has to be *constructed* rather than falling out of one recursion; risk of producing N-trees-with-edges that is subtly not the same as one forest (the §2 requirement that every internal node is independently selectable from the *same* decomposition must be explicitly preserved by the stitching logic).
+
+### Recommendation: **Option 2 — new orchestration layer**, with one carefully-designed seam.
+
+Rationale: `decompose()` carries an extraordinary `@decision` history (`DEC-RECURSION-005` and ~8 slicer-policy DECs, each documenting a hard-won self-shave success-rate gain). Reaching into its `recurse()` loop to add cross-module descent risks regressing that. Option 2 keeps the per-file engine frozen and proven, and isolates the genuinely new concern (module graph traversal) in its own testable module. The Option 2 "con" — constructing connectivity rather than getting it for free — is mitigated by making the orchestration layer emit a **single forest data structure** (not a list of trees) whose nodes are the union of all per-module recursion-tree nodes, with in-package `ForeignLeafEntry` records *replaced* by direct edges to the resolved module's subtree root. The slicer then runs over the forest, and `matchedPrimitives` dedup by `canonicalAstHash` does the rest. The implementer designs that forest type in `universalize/types.ts` (internal surface — allowed).
+
+**Implementer latitude:** if, during implementation, the stitching seam proves to require a `decompose()` internal change after all (e.g. `decompose()` must expose per-node resolved-module provenance), that is an internal `recursion.ts` change and is permitted **within the Scope Manifest** — but it must NOT touch the public `types.ts` surface, and any such change must be `@decision`-annotated explaining why Option 2's pure-orchestration seam was insufficient.
+
+---
+
+## 5. Slicing Plan
+
+**Slice 1 = the engine.** Slices 2-N = the 11 packages as graduated fixtures, ordered by call-graph complexity.
 
 ```
-Slice 1 (THIS PLAN, fully specified below)  — validators family: validator
-        ├─ atoms: validate-rfc5321-email (+ isURL, isUUID, isAlphanumeric behaviors)
-        ├─ corpus.json query entries for each
-        └─ proves the end-to-end authoring + eval loop on the triad's demo library
-                  │
-                  ▼  (loop proven; subsequent slices parallelizable)
-Slice 2 — time family: ms + date-fns        (pure, well-defined grammars)
-Slice 3 — identifiers family: uuid + nanoid (introduces honest `effects` declaration)
-Slice 4 — versioning family: semver          (reuses semver-component-parser as composition input)
-Slice 5 — crypto/token family: bcrypt + jsonwebtoken (shared constant-time-compare sub-atom)
-Slice 6 — collection/fn family: lodash subset (largest; reuses timer-handle)
-Slice 7 — validators family wave 2: zod/joi predicate subset
-Slice 8 — async/fn family: p-limit/p-throttle (lowest priority; promise-orchestration sub-atom)
-Slice T (continuation initiative) — long-tail packages to reach "top-20" if operator requires it
+Slice 1 (THIS PLAN, fully specified §6-§7)
+   The module-resolution-aware recursion engine — B-scope.
+   - module resolver + visited-set cycle guard + per-module Project
+   - connected call-graph forest output (Option 2 orchestration layer)
+   - best-effort degradation throughout
+   - two-pass byte-identical determinism
+   - single gentle real fixture: `ms` (pure, near-single-file)
+        │
+        ▼  (engine proven on `ms`)
+Slice 2 — validator        (the triad's named demo library; unblocks #508 + #512)
+Slice 3 — semver           (small, mostly-pure version-range logic)
+Slice 4 — uuid + nanoid    (identifiers; introduces honest effect declaration on the forest)
+Slice 5 — date-fns subset  (larger call graph; many small pure modules)
+Slice 6 — jsonwebtoken + bcrypt  (crypto/token; shared constant-time-compare subgraph)
+Slice 7 — lodash subset    (largest call graph)
+Slice 8 — zod/joi subset   (validator-builder DSL; deepest call graphs)
+Slice 9 — p-limit/p-throttle (async orchestration; effectful)
 ```
 
-**Dependency edges:** Slices 2–8 each depend only on Slice 1 (loop proven) and are otherwise mutually independent — they can be dispatched to parallel implementers. Slice 5's `jsonwebtoken` HS256-verify atom depends on Slice 5's own `bcrypt` constant-time-compare sub-atom (intra-slice ordering, not a cross-slice edge). Slice 4 reads the existing `semver-component-parser` atom but does not modify it.
+**Why `ms` before `validator` for Slice 1's fixture.** Slice 1's job is to prove the *engine*, not to ship a headline package. `ms` is pure, near-single-file, with a tiny well-defined grammar and at most a shallow internal structure — it exercises "resolve an edge, decompose the resolved module, join the forest, terminate" without the call-graph breadth of `validator/lib/**`. If the engine works on `ms` it works; `validator` (Slice 2) then stress-tests breadth. (The triad coordination doc names `validator` as the *demo library* — that is Slice 2's role; Slice 1 uses `ms` as the gentle engine-proof fixture.)
 
-**Critical path:** Slice 1 → (any of 2–8). Max width after Slice 1: 7 parallel slices.
+**Ordering rationale (Slices 2-N).** `validator` first because it is the triad's MVDP demo binding and unblocks #508/#512. Then ascending call-graph complexity: `semver` → `uuid`/`nanoid` → `date-fns` (many small modules) → `jsonwebtoken`/`bcrypt` (crypto, shared subgraph) → `lodash` (largest) → `zod`/`joi` (deepest DSL graphs) → `p-limit`/`p-throttle` (effectful async). The exact per-fixture binding list inherits the issue body's enumeration.
 
-**Per-slice gate:** `review` (reviewer verifies the Evaluation Contract). No slice needs `approve` *unless* `DEC-IRT-ATOM-NAMING-001` (§5) lands as Option C, which adds a registry-schema field — that schema change, if it happens, is a `guardian`-bound constitutional edit and gets its own `approve` gate in whichever slice first needs the field.
+**Dependency edges.** Slices 2-N each depend only on Slice 1 (engine proven) and are otherwise mutually independent — parallelizable across implementers, touching disjoint registry rows and disjoint test fixtures. **Slices 2-N do NOT change `@yakcc/shave` engine source** — the engine is frozen after Slice 1. A fixture slice that hits an engine gap files a bug against the engine; it does not patch the engine in-slice.
 
----
+**Per-slice gate.** `review` (reviewer verifies the Evaluation Contract). Slice 1 may warrant `approve` if the implementer's design ends up touching the public `types.ts` surface (see §4) — that is a constitutional edit. If Slice 1 stays within `recursion.ts` + `universalize/**` internal surface (the recommended Option 2 path), `review` suffices.
 
-## 5. Open Questions — Operator Decision Required (posted to issue #510)
-
-Two genuine product-judgment boundaries block *full* specification. They are posted as a comment on issue #510. Slice 1 is specified below in a way that **holds regardless of the answers**, so planning is not stalled — but the answers determine atom *naming* and the *top-20 ceiling*.
-
-1. **`DEC-IRT-ATOM-NAMING-001` is still unadjudicated.** The triad coordination doc (`plans/import-replacement-triad.md` §5) lists three options (A: per-binding `validator::isEmail`; B: per-behavior `validate-rfc5321-email`; C: per-behavior **plus** an `npm_aliases` registry-schema field). #508 is closed but shipped no separate implementation PR — it was folded into the triad plan, so the decision was never actually made. This decision determines: (a) every atom's directory name, (b) whether WI-510 ships a `schema.ts` field addition (a constitutional edit needing `approve`), (c) how #508's eventual intercept hook joins an `import` specifier to an atom. **Slice 1 below is authored against Option B** (the planner's recommendation: it aligns with yakcc's content-addressed worldview — the atom is the behavior, not the npm endpoint — and needs no schema change) **with a documented migration note**: if the operator picks C, Slice 1's atoms gain an `npm_aliases` field and the schema addition is pulled forward into Slice 1. If A, the directory names are re-keyed to `validator__isEmail` form. The corpus-query `expectedAtomName` join key adjusts mechanically either way.
-2. **"Top-20" ceiling.** The issue says "each top-20 npm package." This plan's §3.1 names 11 packages (the issue's own explicit set). Does the acceptance bar require literally 20 distinct packages — pulling in long-tail packages some of which (`axios`, `chalk`, `commander`) are I/O-/terminal-bound and arguably *not atom-shaped* — or is "the enumerated target set, fully covered" the real bar, with a documented carve-out for non-atom-shaped packages?
-
-These are posted to #510, not surfaced as chat questions, per the orchestration contract.
+**Critical path:** Slice 1 → Slice 2 (validator) → [#508 Slice 1, #512 Slice 2]. Max width after Slice 1: 8 parallel fixture slices.
 
 ---
 
-## 6. Evaluation Contract — Slice 1 (validator family)
+## 6. Evaluation Contract — Slice 1 (the engine)
 
-This is the exact, executable acceptance target. A reviewer runs every check; "ready for guardian" is defined at the end.
+This is the exact, executable acceptance target. A reviewer runs every check. "Ready for guardian" is defined at the end.
 
 ### 6.1 Required tests
 
-- **`pnpm --filter @yakcc/seeds test`** — `seed.test.ts` must pass with the new atom count. The current suite asserts a fixed row count from `seedRegistry()`; Slice 1 updates that assertion to `26 + <new atom count>` and the suite must be green. This proves every new atom passes `parseBlockTriplet` (spec-yak validation + strict-subset validation + merkle derivation).
-- **`pnpm --filter @yakcc/seeds strict-subset`** (or equivalent `parseBlockTriplet` path) — every new `impl.ts` passes the strict-TS-subset validator with zero violations.
-- **`pnpm --filter @yakcc/seeds build`** — `tsc -p .` compiles clean and `copy-triplets.mjs` materializes the new triplets (proves the `@yakcc/...` alias discipline held and the sidecars are well-formed).
-- **`pnpm --filter @yakcc/seeds typecheck`** — no type errors.
-- **Per-atom property tests** — the `propertyTests` array in each new `spec.yak` declares ≥6 named property cases covering: nominal-true, nominal-false, boundary, malformed-input, empty-input, and one adversarial case. The reviewer confirms each declared `propertyTests[].id` corresponds to a real, meaningful assertion (the `tests.fast-check.ts` re-export shell pattern is followed; the contract lives in `spec.yak` per the existing 26-atom convention).
-- **Registry build + corpus-schema test** — `pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts` passes its **infrastructure-correctness** describe blocks (corpus.json parseable, IDs unique, required fields present, ≥50 entries, all 5 categories ≥8 entries) with the new corpus entries added.
+- **`pnpm --filter @yakcc/shave test`** — the full shave suite passes, including the existing `recursion.test.ts`, `slicer.test.ts`, `wiring.test.ts`, `atom-test.test.ts`. **No existing test regresses** — the per-file engine behavior is unchanged when no resolver/module-graph context is supplied (Option 2: `decompose()` is literally untouched; the new orchestration layer is additive).
+- **`pnpm --filter @yakcc/shave build`** — `tsc -p .` compiles clean.
+- **`pnpm --filter @yakcc/shave typecheck`** — no type errors.
+- **New unit tests for the module resolver** — cover: resolve a relative `./lib/x` edge; resolve via `package.json#main`; resolve via `package.json#exports`; resolve an index file; an unresolvable specifier returns the "unresolvable" signal (does NOT throw — best-effort discipline).
+- **New unit tests for the cycle guard** — a fixture with a deliberate circular import (`a.js` imports `b.js` imports `a.js`) terminates and produces a finite forest; the visited-set prevents re-descent.
+- **New unit tests for the connected forest** — given a 3-module in-package graph, the emitted forest has every function/subgraph as an independently-addressable node; a node in module B is reachable as a peer in the same forest as a node in module A; in-package `ForeignLeafEntry` records are replaced by edges, external ones are retained.
+- **New determinism test** — `shave`/decompose the `ms` fixture twice; the emitted forest (and its serialized atom set / merkle roots) is **byte-identical** across the two passes.
+- **New best-effort degradation test** — a fixture package with one deliberately unresolvable edge and one `.d.ts`-only dep still produces a forest for the resolvable remainder; the unresolvable/`.d.ts` edges become foreign leaves or stubs; the shave does NOT fail wholesale.
 
 ### 6.2 Required real-path checks
 
-- **The acceptance measurement (the issue's `combinedScore >= 0.7`):** run the full-corpus discovery eval with the semantic provider against the bootstrap registry:
-  ```
-  # from packages/registry/
-  DISCOVERY_EVAL_PROVIDER=local \
-  DISCOVERY_EMBED_MODEL=Xenova/bge-small-en-v1.5 \
-  DISCOVERY_EMBED_DIM=384 \
-  pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts
-  ```
-  Prerequisite: `bootstrap/yakcc.registry.sqlite` exists (run `pnpm bootstrap` if absent — the test skips gracefully without it, so the reviewer MUST confirm it is present and the quality describe blocks actually ran, not skipped).
-  **Pass condition:** for each Slice 1 atom, its `corpus.json` query entry's top-1 result resolves to that atom's `blockMerkleRoot` (`top1Correct === true`) **and** `top1Score >= 0.70` (`confident` band or better). The reviewer reads the emitted `tmp/discovery-eval/baseline-single-vector-full-corpus-*.json` and confirms the per-entry scores for the `validator`-family entries.
-- **The atom is reachable through the production seed-load path:** `seedRegistry()` stores the new atoms (proven by the updated `seed.test.ts` row count) — i.e. the atom is not just on disk, it is in the registry the bootstrap process produces.
+- **The `ms` fixture, end-to-end through the production shave path:** run the dependency-following engine against the real `ms` package source (vendored as a test fixture or resolved from `node_modules`). It must produce a connected forest of behavior atoms for `ms`'s parse/format behaviors — not a single `ForeignLeafEntry`-dominated plan. The reviewer inspects the emitted forest and confirms it contains granular atoms (e.g. a duration-parsing subgraph), not just glue.
+- **`combinedScore >= 0.7` is emergent.** With `ms`'s atoms in the registry (via the production `storeBlock` persist path), a `findCandidatesByQuery` for the natural-prose query describing `ms`'s duration-parsing behavior returns an `ms` atom with `combinedScore >= 0.70` (the discovery-eval `confident` band floor). This is the issue's acceptance criterion — but in the reframe it is **emergent from the shaved forest**, not from a hand-authored `behavior` string. The atoms are findable because they are real, content-addressed registry rows produced by the engine.
+- **Two-pass determinism on the real path.** The `ms` shave run, executed twice via the real entry point, is byte-identical (this is the production-sequence verification of the §6.1 determinism unit test). This aligns with the WI-V2-09 byte-identical-bootstrap discipline.
 
 ### 6.3 Required authority invariants
 
-- **One atom = one triplet directory, picked up by directory enumeration.** No edit to a hand-maintained block list (there is none — `seed.ts` enumerates). `index.ts` re-export is optional and only added if yakcc code imports the function directly.
-- **`blockMerkleRoot` integrity:** the atom's identity is `hash(specHash ‖ implHash ‖ proofRoot)`. The reviewer does not hand-edit any merkle root anywhere; corpus entries reference atoms by `expectedAtomName` (directory name), resolved to the root at test time.
-- **Workspace-plumbing globs are derived, not authored:** Slice 1 ships exactly the three sidecars (`spec.yak`, `proof/manifest.json`, `proof/tests.fast-check.ts`) with those exact names so PR #520's pattern globs cover them. The reviewer confirms `plumbing-globs.ts` and `copy-triplets.mjs` are **untouched**.
-- **Embedding schema unchanged:** bge-small-en-v1.5 is 384-dim; the `FLOAT[384]` schema (`DEC-EMBED-010`) is not migrated. The reviewer confirms `schema.ts` is untouched **unless** `DEC-IRT-ATOM-NAMING-001 == C` was chosen, in which case the `npm_aliases` field addition is the *only* schema delta and is independently `approve`-gated.
+- **One engine, one decomposition authority.** The dependency-following recursion is an extension of the existing `@yakcc/shave` engine — NOT a parallel mechanism. There is exactly one path from "package target" to "atom forest." If Option 2 is taken, `decompose()` remains the single per-module decomposition authority and the orchestration layer is the single module-graph authority.
+- **`blockMerkleRoot` integrity.** Atom identity is `hash(specHash ‖ implHash ‖ proofRoot)`, derived by `blockMerkleRoot()` in `@yakcc/contracts`. The engine never writes a merkle root directly; it produces triplets and the existing `persist/triplet.ts` / `persist/atom-persist.ts` path derives identity. Cross-package dedup is the existing idempotent `storeBlock` (`INSERT OR IGNORE`), not new dedup code.
+- **The public `types.ts` surface is frozen-for-L5.** `ShaveResult`, `UniversalizeResult`, `UniversalizeOptions`, `ShaveRegistryView`, `CandidateBlock`, `IntentExtractionHook` MUST NOT change shape. The single permitted public-surface change is an additive optional `ShaveOptions` field IF the engine genuinely needs a public follow-dependencies switch — and that must be independently `@decision`-annotated. The recommended Option 2 path needs no public-surface change at all.
+- **Glue-aware substrate is reused, not reinvented.** Best-effort partial tolerance across module edges builds on the existing `glue-aware` per-subgraph predicate discipline (`DEC-V2-SLICER-SEARCH-001`). The engine does not introduce a second partial-tolerance mechanism.
+- **B-scope predicate is explicit and single-sourced.** "Is this edge inside the target package boundary?" is one named predicate function — not an inline check duplicated at multiple sites. C-track will extend exactly that predicate.
 
 ### 6.4 Required integration points
 
-- `packages/seeds/src/blocks/` — new atom directories slot in alphabetically; `seedRegistry` enumeration covers them.
-- `packages/registry/test/discovery-benchmark/corpus.json` — new query entries, one per Slice 1 atom, `source: "seed-derived"`, with `expectedAtomName` set to the new atom's directory name and `expectedAtom: null` (resolved at test time, per the existing corpus convention). Each new entry MUST be assigned a `category` and the per-category ≥8-entry / has-positive-and-negative invariants in `discovery-eval-full-corpus.test.ts` MUST still hold.
-- `packages/seeds/src/seed.test.ts` — row-count assertion updated to the new total.
-- `packages/seeds/src/index.ts` — re-export lines added **only if** another yakcc package imports the atom function directly (Slice 1: not required; the atoms are consumed via composition/registry, not direct import).
+- `packages/shave/src/universalize/` — the new module-graph orchestration layer (Option 2) or the `decompose()` extension (Option 1) lives here.
+- `packages/shave/src/universalize/types.ts` — internal types for the connected-forest data structure and the resolver context. Internal surface — additions allowed.
+- `packages/shave/src/persist/` — the engine's forest output flows through the **existing** `persist/triplet.ts` / `persist/atom-persist.ts` path unchanged. If the forest's multi-module lineage needs `parentBlockRoot` threading beyond what exists, that is a reviewer-flagged integration point — but the expectation is the existing lineage threading suffices.
+- `packages/registry/test/discovery-benchmark/corpus.json` — one query entry for the `ms` headline behavior, `expectedAtomName` set to the `ms` atom's directory/identity, so the §6.2 `combinedScore` check is mechanized. Must satisfy the per-category invariants of `discovery-eval-full-corpus.test.ts` (category assignment, ≥8-per-category, positive+negative).
+- Test fixtures — the `ms` package source and the synthetic resolver/cycle/degradation fixtures live under `packages/shave/src/__fixtures__/` (the existing fixtures directory) or `packages/shave/test/fixtures/`.
 
 ### 6.5 Forbidden shortcuts
 
-- **No `any`** anywhere in `impl.ts` — the strict-subset validator must pass with zero violations. Typing escape hatches use `unknown` + caller-side cast, per `memoize/impl.ts`.
-- **No vendoring the npm package's source.** Atoms are *re-implementations* of the behavior from the spec/RFC, not copy-pastes of `node_modules/validator/src/lib/isEmail.js`. The `@decision` annotation must state the behavioral reference (RFC 5321 for email, etc.), not "ported from validator."
-- **No hardcoded `blockMerkleRoot` hashes** in `corpus.json` or tests — `expectedAtomName` resolution only.
-- **No `tests.fast-check.ts` that asserts nothing** — the file follows the re-export-shell pattern, but the `spec.yak` `propertyTests` array MUST declare real, specific cases (not placeholder IDs).
-- **No edits to `plumbing-globs.ts`, `copy-triplets.mjs`, `bootstrap.ts`, or `schema.ts`** (the last unless Option C, independently gated).
-- **No new embedding provider, no schema-dimension change.**
-- **No frequency-crawl data-engineering** smuggled into this slice — the lightweight §3.2 check is the bar; a real crawl is a separate WI.
+- **No parallel decomposition mechanism.** The dependency-following engine extends the existing shave engine. Building a separate "npm package shaver" beside `decompose()`/`slice()` is the exact Sacred-Practice-12 violation this reframe exists to avoid.
+- **No regex-based import detection.** Module edges are found via the AST (`getImportDeclarations()` / ts-morph), exactly as `classifyForeign()` already does. Regex-on-source for import edges is a maintenance hazard and silently fails on edge cases.
+- **No throw-on-unresolvable.** An unresolvable edge, a non-strict-subset module, or a `.d.ts`-only dep degrades to a foreign leaf or stub — the rest of the package still shaves. Wholesale failure on one bad edge violates the best-effort discipline. (Genuinely unparseable source that makes ts-morph throw still propagates — best-effort is not a blanket exception handler, per `DEC-V2-SLICER-SEARCH-001` point 5.)
+- **No public `types.ts` surface break.** See §6.3. The recommended path needs zero public-surface change.
+- **No cycle-guard-by-depth-limit alone.** The depth limit (`DEFAULT_MAX_DEPTH = 24`) is a pathological-shape backstop, not a cycle guard. Module recursion needs a real visited-set keyed by resolved module path — npm circular imports are common and legitimate, not pathological.
+- **No non-determinism.** `readdir`-order dependence, `Map`-iteration-order dependence, or timestamp/path-absolute leakage into the forest breaks two-pass byte-identical bootstrap. The resolver and forest construction must be deterministic.
+- **No hand-authored atoms smuggled in.** Slice 1 ships the engine and proves it on `ms`. It does NOT hand-author `ms` atoms — the atoms are the engine's output. (This is the whole reframe.)
+- **No edits to `packages/ir/**` (strict-subset validator) or `packages/contracts/**` (`blockMerkleRoot`).** Those are constitutional and the engine *uses* them.
 
 ### 6.6 Ready-for-Guardian definition (Slice 1)
 
 Slice 1 is ready for Guardian when **all** of the following are simultaneously true on the current HEAD:
 
-1. `pnpm --filter @yakcc/seeds build && pnpm --filter @yakcc/seeds typecheck && pnpm --filter @yakcc/seeds test` all green, with `seed.test.ts` asserting the new row count.
-2. `pnpm --filter @yakcc/seeds strict-subset` reports zero violations across the new `impl.ts` files.
-3. `pnpm --filter @yakcc/registry test -- src/discovery-eval-full-corpus.test.ts` infrastructure-correctness blocks green with the new corpus entries.
-4. The semantic-provider full-corpus run (§6.2) was executed against a **present** `bootstrap/yakcc.registry.sqlite` with `DISCOVERY_EMBED_MODEL=Xenova/bge-small-en-v1.5`, the quality describe blocks **ran (not skipped)**, and the emitted baseline JSON shows, for **every** Slice 1 `validator`-family corpus entry, `top1Correct === true` AND `top1Score >= 0.70`. The reviewer pastes the relevant per-entry rows from the baseline JSON as evidence.
-5. Every new `impl.ts` carries a `@decision` annotation block citing the behavioral reference and (per §3.2) why this binding was chosen.
-6. `plumbing-globs.ts`, `copy-triplets.mjs`, `bootstrap.ts`, `schema.ts` are confirmed untouched (or, if `DEC-IRT-ATOM-NAMING-001 == C`, `schema.ts` carries *only* the `npm_aliases` field addition and that change passed its own `approve` gate).
-7. New `@decision` IDs are recorded (see §8).
-
-If criterion 4 cannot be met because the bootstrap registry is absent or the model cannot be fetched, the slice is **blocked**, not ready — the reviewer reports the blocker; it is not waved through on infrastructure-test-only evidence.
+1. `pnpm --filter @yakcc/shave build && pnpm --filter @yakcc/shave typecheck && pnpm --filter @yakcc/shave test` all green, with **zero regressions** in the existing shave suite.
+2. The new resolver / cycle-guard / connected-forest / determinism / best-effort-degradation unit tests (§6.1) are present and green.
+3. The `ms` fixture, run through the real dependency-following path, produces a **connected forest of granular behavior atoms** — the reviewer inspects the emitted forest and confirms it is not `ForeignLeafEntry`-dominated glue.
+4. Two-pass determinism: the `ms` shave run is **byte-identical** across two passes (forest structure + atom set + merkle roots).
+5. `combinedScore >= 0.70` for the `ms` headline-behavior corpus query, measured via `findCandidatesByQuery` against a registry populated by the engine's own `storeBlock` output — the quality describe blocks **ran (not skipped)**, and the reviewer pastes the per-entry score as evidence. If the bootstrap registry / embedder is absent so the quality blocks skip, the slice is **blocked**, not ready.
+6. Best-effort degradation proven: a fixture with an unresolvable edge still shaves the resolvable remainder (§6.1 test green + reviewer confirms the forest is partial-but-useful, not empty).
+7. Cycle-guard proven: the circular-import fixture terminates with a finite forest.
+8. The B-scope predicate is a single named function; external-package edges remain `ForeignLeafEntry`; in-package edges are followed. Reviewer confirms `validator`-style external deps would NOT be recursed (B-scope, not A).
+9. The public `packages/shave/src/types.ts` surface is confirmed unchanged, OR carries exactly one additive optional `ShaveOptions` field with its own `@decision` annotation and an `approve` gate was applied.
+10. New `@decision` annotations are present at the engine modification points, recording the design choice (Option 1 vs Option 2 as built, the resolver strategy, the cycle-guard key, the B-scope predicate). New DEC IDs recorded — see §9.
 
 ---
 
-## 7. Scope Manifest — Slice 1 (validator family)
+## 7. Scope Manifest — Slice 1 (the engine)
 
 **Allowed paths (implementer may touch):**
-- `packages/seeds/src/blocks/<validator-family-atom-dirs>/**` — new atom triplet directories (the `impl.ts`, `spec.yak`, `proof/manifest.json`, `proof/tests.fast-check.ts` for each).
-- `packages/seeds/src/seed.test.ts` — row-count assertion update only.
-- `packages/seeds/src/index.ts` — re-export additions, **only if** required by a direct importer (Slice 1: expected untouched).
-- `packages/registry/test/discovery-benchmark/corpus.json` — new query entries for the new atoms.
-- `plans/wi-510-shadow-npm-corpus.md` — this plan (status updates only).
+- `packages/shave/src/universalize/**` — the new module-graph orchestration layer, internal types, and (if Option 1 / a proven-necessary seam) internal `recursion.ts` changes.
+- `packages/shave/src/persist/**` — ONLY if the forest's multi-module lineage threading provably needs it; default expectation is untouched.
+- `packages/shave/src/__fixtures__/**` (or `packages/shave/test/fixtures/**`) — new test fixtures (`ms` source, synthetic resolver/cycle/degradation fixtures).
+- `packages/shave/src/**/*.test.ts`, `packages/shave/src/**/*.props.ts`, `packages/shave/src/**/*.props.test.ts` — new and updated tests for the engine.
+- `packages/registry/test/discovery-benchmark/corpus.json` — one `ms` headline-behavior query entry (append only).
+- `plans/wi-510-shadow-npm-corpus.md`, `plans/import-replacement-triad.md` — status updates only.
 
 **Required paths (implementer MUST modify):**
-- `packages/seeds/src/blocks/<validator-family-atom-dirs>/**` — at minimum the `validator.isEmail` headline atom; per §3.1 also `isURL`, `isUUID`, `isAlphanumeric` behaviors.
-- `packages/seeds/src/seed.test.ts` — the row count WILL change.
-- `packages/registry/test/discovery-benchmark/corpus.json` — one entry per new atom.
+- `packages/shave/src/universalize/**` — at minimum the new module-resolution-aware recursion layer and its internal types.
+- `packages/shave/src/universalize/**/*.test.ts` — the new resolver / cycle-guard / connected-forest / determinism / best-effort tests.
+- `packages/shave/src/__fixtures__/**` (or `test/fixtures/**`) — the `ms` fixture and synthetic fixtures.
+- `packages/registry/test/discovery-benchmark/corpus.json` — the `ms` query entry.
 
 **Forbidden touch points (must not change without re-approval):**
-- `packages/cli/src/commands/plumbing-globs.ts`, `packages/seeds/src/_scripts/copy-triplets.mjs`, `packages/cli/src/commands/bootstrap.ts` — owned by PR #520; pattern globs already cover new atoms.
-- `packages/registry/src/schema.ts`, `packages/registry/src/storage.ts`, `packages/registry/src/discovery-eval-helpers.ts`, `packages/registry/src/discovery-eval-full-corpus.test.ts` — the discovery-eval harness and registry schema are constitutional; Slice 1 *uses* them, does not modify them. (Exception: `schema.ts` `npm_aliases` field iff `DEC-IRT-ATOM-NAMING-001 == C`, independently `approve`-gated.)
-- `packages/seeds/src/seed.ts`, `packages/seeds/src/index.ts` barrel mechanics, `packages/ir/src/**` (strict-subset validator, block parser).
-- `packages/seeds/src/blocks/semver-component-parser/**` and all 25 other existing atoms — not modified.
+- `packages/shave/src/types.ts` — the frozen-for-L5 public surface. Exception: exactly one additive optional `ShaveOptions` field IF genuinely required, independently `approve`-gated and `@decision`-annotated.
+- `packages/ir/**` — the strict-subset validator and block parser are constitutional; the engine *uses* `validateStrictSubset`, does not modify it.
+- `packages/contracts/**` — `blockMerkleRoot`, `canonicalAstHash` are constitutional.
+- `packages/registry/src/schema.ts`, `packages/registry/src/storage.ts`, `packages/registry/src/discovery-eval-helpers.ts`, `packages/registry/src/discovery-eval-full-corpus.test.ts` — the registry schema and discovery-eval harness are constitutional; Slice 1 *uses* them. **No `npm_aliases` field — the reframe eliminates the need for it.**
+- `packages/hooks-*/**`, `packages/compile/**`, `bench/**` — those are #508's and #512's lanes.
+- `packages/seeds/src/blocks/**` and all 26 existing seed atoms — NOT modified. Slice 1 produces atoms via the engine from `ms` source; it does not hand-author seed atoms.
+- `packages/cli/src/commands/plumbing-globs.ts`, `packages/seeds/src/_scripts/copy-triplets.mjs`, `packages/cli/src/commands/bootstrap.ts` — workspace plumbing owned elsewhere.
 - `MASTER_PLAN.md` — permanent sections untouched.
-- `bootstrap/expected-roots.json` — regenerated by the bootstrap process, not hand-edited; if the seed atom count change shifts it, that regeneration is a Guardian-stage concern, not an implementer hand-edit.
 
 **Expected state authorities touched:**
-- **Seed atom corpus** — canonical authority: the `packages/seeds/src/blocks/` directory tree, enumerated by `seedRegistry()` in `seed.ts`. Slice 1 adds rows; it does not change the enumeration mechanism.
-- **Discovery-eval query corpus** — canonical authority: `packages/registry/test/discovery-benchmark/corpus.json`, consumed by `discovery-eval-full-corpus.test.ts`. Slice 1 appends entries.
-- **Registry block store** — canonical authority: the SQLite `blocks` + `contract_embeddings` tables via `storeBlock()`. Slice 1 touches this only *transitively* (the seed-load and the eval test write to in-memory / bootstrap registries); no direct schema or storage-code change.
-- **Atom identity** — canonical authority: `blockMerkleRoot` derived by `parseBlockTriplet`/`blockMerkleRoot()`. Slice 1 produces new identities by adding triplets; it never writes a root directly.
+- **Shave decomposition engine** — canonical authority: `decompose()` in `packages/shave/src/universalize/recursion.ts` (per-module) and the NEW module-graph orchestration layer (cross-module). Slice 1 adds the cross-module authority; it does not fork the per-module one.
+- **Slice plan / atom forest** — canonical authority: `slice()` in `slicer.ts` consuming the recursion structure. Slice 1 feeds it a connected forest instead of a single-file `RecursionTree`; the slicer's `PointerEntry`/`NovelGlueEntry`/`ForeignLeafEntry`/`GlueLeafEntry` discrimination is unchanged.
+- **Atom identity + registry block store** — canonical authority: `blockMerkleRoot()` (`@yakcc/contracts`) and the idempotent `storeBlock()` (`@yakcc/registry`). Slice 1 produces new identities by shaving `ms`; it never writes a root directly and relies on existing content-addressed dedup.
+- **Discovery-eval query corpus** — canonical authority: `packages/registry/test/discovery-benchmark/corpus.json`. Slice 1 appends one entry.
+- **Module resolution** — a NEW state-adjacent concern owned solely by the new orchestration layer's resolver. There is no pre-existing module-resolution authority in `@yakcc/shave` to diverge from; the implementer must ensure exactly one resolver exists after this slice.
 
 ---
 
-## 8. Decision Log Entries (new — to be recorded at implementation)
+## 8. C-Track Follow-On Issue(s) — to be filed by the orchestrator
+
+#510 Slice 1 is **B-scope**. The operator explicitly tracks transitive cross-package recursion as follow-on work. The orchestrator should file the following GitHub issue(s) once #510 Slice 1 lands. Enough detail is given here that the orchestrator can file them directly.
+
+### C-track issue (file this)
+
+**Title:** `WI: Depth/budget-bounded transitive cross-package shave recursion (C-scope)`
+
+**Body:**
+> #510 Slice 1 shipped the dependency-following shave engine at **B-scope**: it follows import edges *within* a target package's own boundary and treats the package's external `dependencies` as foreign leaves. This issue extends the engine to **C-scope**: follow those external-dependency edges too, **bounded** by a depth limit and/or a byte/atom budget.
+>
+> **Why bounded (C) and not unbounded (A):** unbounded transitive recursion can pull a large fraction of `node_modules` into a single `shave()` call — useful but expensive and harder to keep deterministic. C adds `maxPackageDepth` and/or `maxAtoms`/`maxBytes` so a single shave is predictable and budget-capped.
+>
+> **The boundary is one predicate.** Slice 1's B-scope predicate ("is this resolved edge inside the target package boundary?") becomes C-scope's ("...inside the package boundary OR within the configured depth/budget?"). The resolver, visited-set cycle guard, per-module Project handling, and connected-forest output structure from Slice 1 are all **unchanged** — C is a predicate change plus a budget accumulator.
+>
+> **Dependencies:** #510 Slice 1 (the B-scope engine). Cannot start before it.
+>
+> **Acceptance sketch:** `shave('validator', { transitive: { maxPackageDepth: 2, maxAtoms: 500 } })` produces a connected forest that includes atoms from `validator`'s direct dependencies, terminates within budget, remains two-pass byte-identical deterministic, and the budget cutoff degrades cleanly to foreign leaves (Slice 1's best-effort discipline preserved). Existing B-scope behavior is unchanged when no `transitive` option is supplied.
+>
+> **Scope hint:** `packages/shave/src/universalize/**` — extends the Slice 1 orchestration layer's boundary predicate and adds a budget accumulator. The public `types.ts` surface may need one additive optional `transitive` field on `ShaveOptions` (constitutional, `approve`-gated).
+
+### A-track issue (file ONLY if the operator revisits OD-1 to A)
+
+**Title:** `WI: Unbounded whole-node_modules transitive shave recursion (A-scope)`
+
+**Body sketch:** Same engine as B/C; the boundary predicate is relaxed to "follow every resolvable edge." Likely subsumed by C-scope with a very large budget. File only if the operator explicitly upgrades the recursion scope decision (triad doc OD-1) from B to A.
+
+---
+
+## 9. Decision Log Entries (new — to be recorded at implementation)
 
 | DEC-ID | Title | Rationale summary |
 |--------|-------|-------------------|
-| `DEC-WI510-SLICE-BY-FAMILY-001` | WI-510 sliced by npm package family, validators-first | Each family is an independently shippable PR; smallest-self-contained-first (validators) proves the authoring + eval loop before parallel fan-out. Validator is also the triad's named demo library, so Slice 1 doubles as the #512/#508 unblocker. |
-| `DEC-WI510-HARVEST-LIGHTWEIGHT-001` | Lightweight per-function harvesting check, not a blocking GitHub crawl | A full frequency crawl is multi-day data engineering. The issue already enumerated the target set (the author did the triage). The `.d.ts`-surface + issue-anchor check (§3.2) is a fast, reproducible proxy; the per-atom `@decision` block is the durable harvest record. A real crawl, if wanted, is a separate parallel WI feeding future re-prioritization. |
-| `DEC-WI510-ATOM-NAMING-INHERIT-001` | WI-510 atom naming inherits `DEC-IRT-ATOM-NAMING-001`; Slice 1 authored against Option B with a documented A/C migration path | `DEC-IRT-ATOM-NAMING-001` is the triad-level authority and is still unadjudicated (§5). WI-510 does not re-decide it; Slice 1 is built to be mechanically re-keyable if the operator picks A or C. |
-| `DEC-WI510-EVAL-VIA-FULL-CORPUS-001` | `combinedScore >= 0.7` measured by extending `discovery-eval-full-corpus.test.ts` corpus.json with semantic-provider runs, not a new harness | The full-corpus eval already does exactly the needed thing: full registry + `findCandidatesByQuery` + semantic provider + `expectedAtomName` resolution. Reusing it avoids a parallel measurement authority (Sacred Practice #12). The `0.7` threshold is exactly the harness's `confident` band floor. |
+| `DEC-WI510-DEP-FOLLOWING-ENGINE-001` | #510 is a `@yakcc/shave` engine change (dependency-following recursion), not a hand-authored atom corpus | Hand-authoring ~30 npm-function atoms beside the real shave engine is a Sacred-Practice-12 (single-source-of-truth) violation — two authorities for "what an atom is." #510's deliverable is teaching `@yakcc/shave` to follow import edges across the package boundary and emit a connected call-graph atom forest. The 11 npm packages are graduated acceptance fixtures, not the deliverable. Operator-adjudicated reframe. |
+| `DEC-WI510-RECURSION-SCOPE-B-001` | Slice 1 recursion scope is B (within-package boundary); A/C are follow-on issues | Follow import edges within the target package's own source; external `dependencies` remain `ForeignLeafEntry`. Content-addressed identity means a dep shaved later retroactively benefits all referrers. The B→C boundary is one predicate. Operator reserved the right to revisit B→A/C; doing so extends Slice 1, does not invalidate it. |
+| `DEC-WI510-ENGINE-ORCHESTRATION-LAYER-001` | Module-resolution-aware recursion lives in a new orchestration layer above `decompose()`, not inside it | `decompose()` carries an extraordinary `@decision` history (`DEC-RECURSION-005` + ~8 slicer-policy DECs, each a hard-won self-shave success gain). A new `universalize/module-graph.ts`-style layer owns module resolution, the visited-set cycle guard, and per-module Project creation, calling the *unchanged* `decompose()` per module and stitching results into one connected forest. Keeps the proven per-file engine frozen; isolates the new concern. Option 1 (extend `decompose()`'s signature) rejected as higher blast radius. Implementer may make a proven-necessary internal `recursion.ts` seam change within scope, but not a public `types.ts` break. |
+| `DEC-WI510-FOREST-CONNECTED-NOT-NESTED-001` | Engine output is one connected call-graph forest; every internal node independently selectable | Not a monolithic tree, not N disconnected per-module trees. In-package `ForeignLeafEntry` edges are replaced by direct edges to the resolved module's subtree; the slicer runs over the unified forest; `matchedPrimitives` dedup by `canonicalAstHash` handles shared subgraphs. Subgraphs recompose into new merkle roots expressing arbitrary subsets. The package boundary governs resolver reach, not output topology. |
+| `DEC-WI510-BEST-EFFORT-MODULE-DEGRADATION-001` | Unresolvable edge / non-strict-subset module / `.d.ts`-only dep degrades to foreign leaf or stub; the rest still shaves | Extends the existing `glue-aware` per-subgraph best-effort discipline (`DEC-V2-SLICER-SEARCH-001`) from per-subgraph-within-a-file to per-module-across-an-edge. No throw-on-bad-edge. Genuinely unparseable source still propagates — best-effort is not a blanket exception handler. |
+| `DEC-WI510-MS-FIXTURE-FIRST-001` | Slice 1's engine-proof fixture is `ms`, not `validator` | Slice 1 proves the engine, not a headline package. `ms` is pure and near-single-file with a shallow internal structure — it exercises resolve-decompose-join-terminate without `validator/lib/**`'s call-graph breadth. `validator` is Slice 2, where it stress-tests breadth and serves as the triad MVDP demo binding. |
 
-These are recorded in the relevant `impl.ts` `@decision` blocks and, if the operator wants them in the project-level log, appended to `MASTER_PLAN.md` `## Decision Log` as a separate doc-only change — not part of a source slice.
+These are recorded in the relevant `@decision` annotation blocks at the engine modification points and, if the operator wants them in the project-level log, appended to `MASTER_PLAN.md` `## Decision Log` as a separate doc-only change — not part of a source slice.
 
 ---
 
-## 9. Risks
+## 10. Risks
 
 | Risk | Mitigation |
 |------|-----------|
-| `combinedScore >= 0.7` not reached for a given atom because the `behavior` string is too terse or too jargon-heavy for bge-small-en-v1.5. | The `behavior` string is the embedding lever. Author it as natural prose describing *what the function does for the caller* (mirror the issue's own phrasings: "validate that a string is a well-formed email address"). If a specific atom still under-scores, that is a *corpus-authoring* fix (reword `behavior`), surfaced by the per-entry baseline JSON — not a harness change. |
-| `bootstrap/yakcc.registry.sqlite` absent in the reviewer's environment → quality describe blocks skip silently → false "green." | Ready-for-Guardian criterion 4 explicitly requires the reviewer to confirm the blocks **ran**, with pasted per-entry evidence. A skipped quality block is a blocked slice, not a passed one. |
-| bge-small-en-v1.5 model ID / Xenova mirror name is wrong → local provider fails to load. | §5 open question 1 asks the operator to confirm the exact model ID string to pin. Default assumption `Xenova/bge-small-en-v1.5`; if the operator's harness already pins a different MiniLM model and bge is a *change*, that is itself worth confirming before Slice 1. |
-| `DEC-IRT-ATOM-NAMING-001 == C` lands mid-WI → schema change needed. | Slice 1 is Option-B-authored and re-keyable. The `npm_aliases` schema field, if chosen, is pulled into whichever slice first needs it as an independently `approve`-gated constitutional edit — it does not retroactively invalidate earlier slices' atoms (the field is additive). |
-| New `corpus.json` entries violate the per-category invariants (`≥8 entries each`, `has positive and negative`) enforced by `discovery-eval-full-corpus.test.ts`. | Each new entry is assigned a `category` deliberately; the Evaluation Contract §6.1 makes the infrastructure-correctness test a required gate, so a violation fails the slice loudly. |
-| Effectful atoms (`uuid.v4`, `debounce`, `pLimit`) tempt an implementer to fudge purity in `spec.yak`. | The `spec.yak` `effects` and `nonFunctional.purity` fields must be declared honestly (`semver-component-parser` shows the pure case; effectful atoms declare their effect). This is a forbidden-shortcut item in later slices' contracts. |
+| Connected-forest construction (Option 2 stitching) produces "N trees with edges" that is subtly NOT one forest — some internal nodes not independently selectable from the same decomposition. | §6.1 connected-forest unit test explicitly asserts cross-module peer-addressability; §6.6 criterion 3 makes the reviewer inspect the emitted forest. The forest is a single data structure (union of per-module nodes with in-package edges resolved), not a list — designed in `universalize/types.ts`. |
+| The implementer reaches into `decompose()`'s `recurse()` loop and regresses one of the ~8 hard-won slicer-policy DECs. | Recommended Option 2 keeps `decompose()` untouched. §6.1 requires zero regressions in the existing shave suite; any internal `recursion.ts` seam change must be `@decision`-annotated justifying why pure orchestration was insufficient. |
+| Module resolver mishandles `package.json#exports` conditional maps / dual ESM-CJS packages → wrong file resolved or unresolvable. | §6.1 resolver unit tests cover `main`, `exports`, index, relative; unresolvable returns a signal (not a throw) → best-effort degradation. `ms` (Slice 1 fixture) is deliberately simple to de-risk; `exports`-map stress comes with later fixture slices. |
+| npm circular imports cause non-termination. | Real visited-set keyed by resolved module path is a §6.5 forbidden-shortcut-to-omit and a §6.6 criterion-7 gate; dedicated circular-import fixture test in §6.1. |
+| Non-determinism (readdir order, Map iteration, absolute-path leakage) breaks two-pass byte-identical bootstrap. | §6.5 forbidden shortcut; §6.1 + §6.2 two-pass determinism tests; §6.6 criterion 4. Mirrors the existing WI-V2-09 discipline the per-file engine already honors. |
+| `combinedScore >= 0.7` not reached for `ms` because the engine-derived `behavior`/intent text is too terse for the embedder. | The intent text is produced by the existing `extractIntent` path (static strategy), which the per-file engine already uses successfully. If `ms`'s atom under-scores, that surfaces in the discovery-eval per-entry JSON — investigate the intent-extraction output, not the recursion engine. The threshold is the harness's `confident` band floor. |
+| The engine genuinely needs a public `ShaveOptions` field (e.g. `followDependencies`) → `types.ts` frozen-for-L5 break. | §6.3 / §7 permit exactly one additive optional field, independently `approve`-gated and `@decision`-annotated. The recommended Option 2 path needs none — the orchestration layer is a new entry point, not a flag on the old one. |
+| A fixture slice (2-N) discovers an engine gap and an implementer patches the engine in-slice, forking the authority. | §5: fixture slices do NOT change engine source; an engine gap is a bug filed against the engine. Each fixture slice's Scope Manifest forbids `packages/shave/src/universalize/**` engine source edits. |
 
 ---
 
-## 10. What This Plan Does NOT Cover (Non-Goals)
+## 11. What This Plan Does NOT Cover (Non-Goals)
 
-- **The import-intercept hook (#508 / triad P2b/P4).** WI-510 is supply-side only. It produces atoms; it does not make the hook fire on them.
-- **The B10 bench (#512 / triad P1/P3/P5).** WI-510 produces the corpus B10 consumes; it does not run or build B10.
-- **A real GitHub-corpus frequency crawl.** Explicitly deferred to a separate parallel WI (§3.2, `DEC-WI510-HARVEST-LIGHTWEIGHT-001`).
-- **Schema migration for non-384-dim embedders.** bge-small-en-v1.5 is 384-dim; no migration. Larger models are out of scope.
-- **Adjudicating `DEC-IRT-ATOM-NAMING-001` or the "top-20" ceiling.** Those are operator decisions, posted to #510.
-- **Modifying the discovery-eval harness or registry schema/storage.** WI-510 *uses* the harness; the harness is constitutional.
+- **The import-intercept hook (#508).** #510 produces the shaved forest; #508 intercepts the `import` and queries the registry for it. Separate WI.
+- **The B10 bench (#512).** #512 Slice 1 (harness + transitive-reachability resolver) is already merged (`950afdc`); Slices 2-3 consume #510's forest. Separate WI.
+- **A-scope and C-scope transitive recursion.** B-scope only for Slice 1; A/C are §8 follow-on issues.
+- **Hand-authoring any atoms.** The entire reframe: atoms are the engine's output, not hand-written. The 26 existing seed atoms are untouched.
+- **`npm_aliases` registry schema field.** The reframe eliminates the hand-naming step that field existed to support — shave produces behavior atoms; #508 queries by `QueryIntentCard` semantics.
+- **Modifying the discovery-eval harness, registry schema/storage, the strict-subset validator, or `blockMerkleRoot`.** All constitutional; the engine *uses* them.
+- **Adjudicating B vs A vs C.** Slice 1 is B by operator decision; the operator may revisit (triad doc OD-1). That is the one remaining operator-relevant point and it extends, not invalidates, Slice 1.
