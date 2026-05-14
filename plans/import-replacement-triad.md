@@ -6,6 +6,11 @@
 **Worktree:** `/Users/cris/src/yakcc/.worktrees/feature-plan-import-replacement-triad`
 **Authored:** 2026-05-13 (planner stage, workflow `plan-import-replacement-triad`)
 
+> **STATUS — 2026-05-14: this version is SUPERSEDED by the reframe.** A reframed version of this triad doc was authored on 2026-05-14 on `feature/wi-510-shadow-npm-corpus` (it retires the "hand-author ~30 npm atoms" framing and `DEC-IRT-ATOM-NAMING-001`; #510 becomes a `@yakcc/shave` engine change emitting a connected call-graph atom forest). The reframed version is the authority for triad coordination. Slice-level planning has now started:
+> - **#510** — `plans/wi-510-shadow-npm-corpus.md` (Slice 1 = the dependency-following shave engine; reframed).
+> - **#512** — `plans/wi-512-b10-import-heavy-bench.md` (Slice 1 harness merged, PR #521 / `950afdc`).
+> - **#508** — `plans/wi-508-import-intercept-hook.md` (planning started 2026-05-14; Slice 1 = the import-intercept mechanism, provable now against synthetic fixture atoms, NOT gated on #510; Slice 2 = the end-to-end validator demo, gated on #510 Slice 2). The #508 slice plan is written to be consistent with the **reframed** triad doc — if this pre-#517 version and the reframed version disagree, the reframed version governs.
+
 This document is a planning artifact. It does not change `MASTER_PLAN.md`, does not modify any TypeScript source, and does not constitute Guardian readiness for any code-bearing slice. Downstream slices implement against the contracts named here.
 
 ---
