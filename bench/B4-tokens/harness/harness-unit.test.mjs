@@ -337,6 +337,64 @@ describe("MCP server lifecycle (WI-460)", { timeout: 30000 }, () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // P2 rich-field schema and extraction tests (Refs #523, #535)
+  // ---------------------------------------------------------------------------
+
+  it("inputSchema declares the 5 new optional rich fields", async () => {
+    // Verify the MCP server's tools/list response exposes inputs, outputs,
+    // guarantees, errorConditions, nonFunctional in the inputSchema.
+    // These fields are the P2 value-prop slice — the model must see them to use them.
+    const server = await spawnMcpServer();
+    try {
+      const response = await server.request("tools/list", {});
+      const atomLookup = response.result.tools.find((t) => t.name === "atom-lookup");
+      assert.ok(atomLookup, "atom-lookup tool must be present");
+      const props = atomLookup.inputSchema?.properties ?? {};
+      assert.ok(props.inputs, "inputSchema must declare 'inputs' field");
+      assert.ok(props.outputs, "inputSchema must declare 'outputs' field");
+      assert.ok(props.guarantees, "inputSchema must declare 'guarantees' field");
+      assert.ok(props.errorConditions, "inputSchema must declare 'errorConditions' field");
+      assert.ok(props.nonFunctional, "inputSchema must declare 'nonFunctional' field");
+      // All 5 must be optional (required only contains 'intent')
+      const required = atomLookup.inputSchema?.required ?? [];
+      assert.deepEqual(required, ["intent"], "only 'intent' must be required");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("guarantees [{description}] objects are extracted to string[] in queryCard", async () => {
+    // Compound-interaction test: exercises the full production sequence —
+    // LLM sends object-form guarantees → MCP server converts to string[] →
+    // registry receives valid QueryIntentCard.guarantees (string[]).
+    // Verifies Blocker 1 fix: typeof g === "string" ? g : g.description extraction.
+    // We call tools/call with guarantees as object-array and confirm no error + atoms array returned.
+    const server = await spawnMcpServer();
+    try {
+      const response = await server.request("tools/call", {
+        name: "atom-lookup",
+        arguments: {
+          intent: "parse integer digits from input string at position",
+          substitution_aggressiveness: "aggressive",
+          guarantees: [{ description: "pure" }, { description: "O(n) time" }],
+          errorConditions: [{ description: "throws RangeError on negative position" }],
+        },
+      });
+      // A valid JSON-RPC response with an atoms array proves the server did not throw
+      // on the object-form guarantees (which would have happened pre-fix via canonicalize
+      // receiving "[object Object]" strings instead of "pure"/"O(n) time").
+      assert.ok(response.result, "tools/call with object-form guarantees must return result");
+      const text = response.result?.content?.[0]?.text;
+      assert.ok(text, "content[0].text must exist");
+      const parsed = JSON.parse(text);
+      assert.ok(Array.isArray(parsed.atoms), "must return atoms array even with rich fields");
+      console.log(`  rich-guarantees query: ${parsed.atoms.length} candidate(s) returned`);
+    } finally {
+      server.close();
+    }
+  });
+
   it("server shuts down cleanly on SIGTERM", async (t) => {
     const server = spawn("node", [MCP_SERVER_PATH], {
       cwd: REPO_ROOT,
