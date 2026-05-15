@@ -8,7 +8,7 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./src/import-classifier.js": "./src/import-classifier.js"
+    "./src/import-classifier.js": "./dist/import-classifier.js"
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
