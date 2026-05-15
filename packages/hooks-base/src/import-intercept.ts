@@ -5,10 +5,16 @@
 // rationale:
 //   scanImportsForIntercept() uses ts-morph in-memory parsing to extract non-builtin
 //   external imports from emitted code. It mirrors the classifyForeign() discipline
-//   from packages/shave/src/universalize/slicer.ts: skip type-only, relative, node:
-//   builtins, bare Node core modules, and @yakcc/ workspace imports.
-//   Only Slice 1 allowlist ("validator") is intercepted. All other foreign imports
-//   are logged to importedDynamic (for future slices) without triggering intercept.
+//   from packages/shave/src/universalize/slicer.ts with one deliberate divergence:
+//   classifyForeign() classifies "node:" builtins as FOREIGN (to track them as
+//   opaque dependencies), whereas this module SKIPS them (excludes them from
+//   intercept candidates). The divergence is intentional -- the import-intercept goal
+//   is to surface npm packages for which the registry has coverage; node: built-ins
+//   have no registry coverage and must never be intercepted. All other classification
+//   rules (type-only, relative, @yakcc/ workspace, bare Node core modules) are
+//   mirrored exactly. Only Slice 1 allowlist ("validator") is intercepted. All other
+//   foreign imports are logged to importedDynamic (for future slices) without
+//   triggering intercept.
 
 // @decision DEC-WI508-INTERCEPT-002
 // title: CONFIDENT_THRESHOLD (0.70) reused as intercept threshold
@@ -54,12 +60,12 @@
 //   atomize did not fire. This preserves all earlier response paths and makes the intercept
 //   branch reachable only for raw passthrough emissions.
 
-import { Project, ScriptKind } from "ts-morph";
 import type { QueryIntentCard } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
+import { Project, ScriptKind } from "ts-morph";
 import type { EmissionContext } from "./index.js";
 import type { HookResponseWithSubstitution } from "./index.js";
-import { yakccResolve, CONFIDENT_THRESHOLD } from "./yakcc-resolve.js";
+import { CONFIDENT_THRESHOLD, yakccResolve } from "./yakcc-resolve.js";
 
 // ---------------------------------------------------------------------------
 // Classification constants -- mirror classifyForeign() from slicer.ts
@@ -239,9 +245,14 @@ export function scanImportsForIntercept(source: string): ImportScanResult {
     // Skip bare Node core modules
     if (BARE_NODE_CORE_MODULES.has(bareName)) continue;
 
-    // Foreign import -- build binding
+    // Foreign import -- build binding.
+    // Filter out inline type-only specifiers (e.g. "type T" in "import { type T, isEmail }").
+    // isTypeOnly() returns true for specifiers with the inline "type" modifier.
+    // This mirrors the classifyForeign() discipline: type-only bindings have no runtime
+    // dependency and must not contribute to the intercept candidates.
     const namedImports = decl
       .getNamedImports()
+      .filter((ni) => !ni.isTypeOnly())
       .map((ni) => ni.getName());
 
     const nsNode = decl.getNamespaceImport();
