@@ -15,6 +15,10 @@ export default defineConfig({
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),
       "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
       "@yakcc/federation": resolve(__dirname, "../federation/src/index.ts"),
+      "@yakcc/hooks-base/src/import-classifier.js": resolve(
+        __dirname,
+        "../hooks-base/src/import-classifier.ts",
+      ),
       "@yakcc/hooks-base": resolve(__dirname, "../hooks-base/src/index.ts"),
       "@yakcc/hooks-claude-code": resolve(__dirname, "../hooks-claude-code/src/index.ts"),
     },

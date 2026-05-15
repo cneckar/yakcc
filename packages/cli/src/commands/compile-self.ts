@@ -612,7 +612,24 @@ async function _runPipeline(
         //   - Walk atoms in sourceOffset order; for each atom, extract the glue chars
         //     between the end of the previous atom and the start of this atom
         //   - Append any trailing glue chars after the last atom
-        const glueString = new TextDecoder().decode(glueEntry.contentBlob);
+        // @decision DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001
+        // @title compile-self glue decode preserves UTF-8 BOM bytes
+        // @status decided (WI-FIX-543, issue #543)
+        // @rationale
+        //   `new TextDecoder()` defaults to `ignoreBOM: false`, which silently strips
+        //   a leading UTF-8 BOM (U+FEFF) from the decoded string. That breaks the
+        //   round-trip invariant the reconstruction algorithm depends on: glueString
+        //   length must equal the sum of all glue-span lengths in original-source
+        //   coordinates. A BOM-carrying source file would otherwise produce a
+        //   reconstructed string one UTF-16 code unit shorter than the original,
+        //   shifting every cross-atom glue slice by one position past the BOM region
+        //   and yielding invalid TypeScript. `ignoreBOM: true` preserves the BOM as a
+        //   U+FEFF code unit in the decoded string, exactly mirroring the bytes
+        //   `bootstrap.captureSourceFileGlue` stored. Files without a BOM are
+        //   unaffected. Validates: issue #543, packages/hooks-base/src/import-intercept.ts.
+        const glueString = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+          glueEntry.contentBlob,
+        );
 
         // @decision DEC-V2-COMPILE-SELF-GLUE-INTERLEAVING-001 (overlap handling)
         // @title Reconstruction uses merged intervals to mirror computeGlueBlob's behaviour
