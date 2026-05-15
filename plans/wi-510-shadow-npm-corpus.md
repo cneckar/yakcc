@@ -128,6 +128,8 @@ Slice 9 — p-limit/p-throttle (async orchestration; effectful)
 
 **Critical path:** Slice 1 → Slice 2 (validator) → [#508 Slice 1, #512 Slice 2]. Max width after Slice 1: 8 parallel fixture slices.
 
+**Slice 2 reframe (2026-05-14).** A first attempt at Slice 2 (`plans/wi-510-s2-validator.md` on the now-retired `feature/wi-510-s2-validator` branch, last commit `f9c93f0`) shaved the *whole* `validator` package by calling `shavePackage()` against `validator-13.15.35/` with no `entryPath` override. The default entry resolution lands on `validator/index.js`, which re-exports all ~100 behaviors; the BFS produced `moduleCount=113, leafCount=1987`, ran for 44 minutes, and forced `testTimeout=3_600_000` on `packages/shave/vitest.config.ts`. The operator killed that approach: *"we only need to prove what's used in yakcc, the rest will get added later when we do a full shave into the production registry of validator etc."* The reframed Slice 2 is specified in `plans/wi-510-s2-headline-bindings.md` — it shaves **only the four headline bindings the triad demonstrates** (`isEmail`, `isURL`, `isUUID`, `isAlphanumeric`), each as its own ~2-10-module subgraph via `shavePackage({ entryPath: <validator>/lib/<binding>.js })`. The landed engine's `ShavePackageOptions.entryPath` field already supports this; Slice 2 remains a pure fixture-and-test slice (`review` gate, no engine source change). Broader validator coverage (the other ~96 behaviors) and the other graduated Slices 3-N (`semver` through `p-limit`) remain out of Slice 2's scope and are deferred to a later "full shave into the production registry" initiative the operator named explicitly.
+
 ---
 
 ## 6. Evaluation Contract — Slice 1 (the engine)

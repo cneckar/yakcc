@@ -208,6 +208,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/hooks-base':
+        specifier: workspace:*
+        version: link:../hooks-base
       '@yakcc/ir':
         specifier: workspace:*
         version: link:../ir
@@ -301,6 +304,9 @@ importers:
       '@yakcc/shave':
         specifier: workspace:*
         version: link:../shave
+      ts-morph:
+        specifier: ^24.0.0
+        version: 24.0.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

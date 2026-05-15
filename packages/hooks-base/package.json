@@ -7,7 +7,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./src/import-classifier.js": "./dist/import-classifier.js"
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
@@ -20,7 +21,8 @@
     "@yakcc/contracts": "workspace:*",
     "@yakcc/ir": "workspace:*",
     "@yakcc/registry": "workspace:*",
-    "@yakcc/shave": "workspace:*"
+    "@yakcc/shave": "workspace:*",
+    "ts-morph": "^24.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

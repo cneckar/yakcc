@@ -171,9 +171,7 @@ function detectFunctionShape(code: string): FunctionShape {
 
   // Find the first function declaration line.
   const fnLineIdx = trimmed.findIndex(
-    (l) =>
-      /^export\s+(async\s+)?function\s+\w/.test(l) ||
-      /^(async\s+)?function\s+\w/.test(l),
+    (l) => /^export\s+(async\s+)?function\s+\w/.test(l) || /^(async\s+)?function\s+\w/.test(l),
   );
 
   if (fnLineIdx === -1) {
@@ -224,11 +222,11 @@ function detectFunctionShape(code: string): FunctionShape {
  *   body opener. The fix strips all block JSDoc comments (`/** ... *\/`) before
  *   the scan, then locates the first `{` in the comment-free code. This is the
  *   preferred approach over full AST parsing because:
- *     (a) ts-morph is NOT a direct dependency of @yakcc/hooks-base (would balloon scope)
+ *     (a) ts-morph IS now a direct dependency of @yakcc/hooks-base (DEC-WI508-INTERCEPT-TSMORPH-DEP-001)
  *     (b) JSDoc block comments have a fixed shape `/** ... *\/` — the regex is robust
  *     (c) Strip-then-scan preserves line/offset fidelity for statement counting
- *   Future maintainers: if ts-morph is ever added to hooks-base, consider upgrading
- *   to `getBody()?.getStatements().length` for exact AST-level statement counting.
+ *   Future maintainers: ts-morph is now a direct dep (DEC-WI508-INTERCEPT-TSMORPH-DEP-001);
+ *   consider upgrading to `getBody()?.getStatements().length` for exact AST-level statement counting.
  */
 function countBodyStatements(code: string): number {
   // Strip JSDoc and other block comments before scanning for `{`.
@@ -262,13 +260,8 @@ function countBodyStatements(code: string): number {
     .slice(bodyStart, bodyEnd)
     .split("\n")
     .map((l) => l.trim())
-    .filter(
-      (l) =>
-        l.length > 0 &&
-        !l.startsWith("//") &&
-        !l.startsWith("/*") &&
-        !l.startsWith("*"),
-    ).length;
+    .filter((l) => l.length > 0 && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*"))
+    .length;
 }
 
 /** Extract the first exported function name from code. Returns null if none. */
@@ -364,13 +357,8 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
   // Import lazily — avoids circular-reference issues in tests that stub shave.
   // The static strategy is B6-safe: pure AST analysis, no network calls.
   try {
-    const {
-      detectLicense,
-      licenseGate,
-      universalize,
-      LicenseRefusedError,
-      DidNotReachAtomError,
-    } = await import("@yakcc/shave");
+    const { detectLicense, licenseGate, universalize, LicenseRefusedError, DidNotReachAtomError } =
+      await import("@yakcc/shave");
 
     // License pre-check — fast, fail-early before AST parsing.
     const detection = detectLicense(codeForShave);
@@ -419,22 +407,20 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
        *   SQLite writes via the same maybePersistNovelGlueAtom primitive run either
        *   way. No additional I/O, network calls, or synchronization is introduced.
        */
-      universalizeResult = await universalize(
-        { source: codeForShave },
-        registryAsShaveView,
-        {
-          intentStrategy: "static",
-          offline: true,
-          persist: true,
-        },
-      );
+      universalizeResult = await universalize({ source: codeForShave }, registryAsShaveView, {
+        intentStrategy: "static",
+        offline: true,
+        persist: true,
+      });
     } catch (e) {
       if (e instanceof DidNotReachAtomError) {
         return { atomized: false, atomsCreated: [], reason: "shave-rejected" };
       }
       if (
         e instanceof LicenseRefusedError ||
-        (e !== null && typeof e === "object" && "name" in e &&
+        (e !== null &&
+          typeof e === "object" &&
+          "name" in e &&
           (e as { name: unknown }).name === "LicenseRefusedError")
       ) {
         return { atomized: false, atomsCreated: [], reason: "license-missing" };
@@ -463,10 +449,7 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
       const behaviorText = entry.intentCard?.behavior ?? "";
       const atomName =
         extractFunctionName(entry.source) ??
-        deriveAtomNameFallback(
-          behaviorText,
-          entry.canonicalAstHash as unknown as string,
-        );
+        deriveAtomNameFallback(behaviorText, entry.canonicalAstHash as unknown as string);
 
       atomsCreated.push({
         blockMerkleRoot: entry.merkleRoot as unknown as string,
@@ -488,7 +471,7 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
       e !== null &&
       typeof e === "object" &&
       "name" in e &&
-      ((e as { name: unknown }).name === "LicenseRefusedError")
+      (e as { name: unknown }).name === "LicenseRefusedError"
     ) {
       return { atomized: false, atomsCreated: [], reason: "license-missing" };
     }
