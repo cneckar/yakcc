@@ -301,6 +301,9 @@ importers:
       '@yakcc/shave':
         specifier: workspace:*
         version: link:../shave
+      ts-morph:
+        specifier: ^24.0.0
+        version: 24.0.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
