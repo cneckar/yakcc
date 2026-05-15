@@ -68,6 +68,13 @@ assert(typeof spec.description === "string", "spec has description field");
 assert(typeof spec.schema_version === "number", "spec has schema_version field");
 assert(Array.isArray(spec.tasks), "spec has tasks array");
 
+// Test 2b: Triage completion fields (added when #442 Slice 1 triage was closed)
+assert(spec.triage_status === "complete", "spec.triage_status is 'complete'");
+assert(typeof spec.triage_summary === "object" && spec.triage_summary !== null, "spec.triage_summary exists");
+assert(typeof spec.triage_summary.kill_verdict === "string", "triage_summary.kill_verdict is documented");
+assert(typeof spec.triage_summary.csv_parser_correctness === "string", "triage_summary.csv_parser_correctness is documented");
+assert(typeof spec.triage_summary.debounce_non_engagement === "string", "triage_summary.debounce_non_engagement is documented");
+
 // Test 3: debounce-with-cancel entry exists
 const debounceEntry = spec.tasks.find((t) => t.id === "debounce-with-cancel");
 assert(debounceEntry !== undefined, "tasks array contains debounce-with-cancel entry");
