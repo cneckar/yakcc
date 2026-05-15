@@ -199,9 +199,14 @@ async function _executeRegistryQueryInternal(
   const query = buildIntentCardQuery(ctx);
 
   try {
-    // Phase 2: fetch top-2 so decideToSubstitute() can compute the gap.
-    // Phase 1 callers only used k=1; k=2 is a superset and backward-compatible.
-    const candidates = await registry.findCandidatesByIntent(query, { k: 2, rerank: "structural" });
+    // P1a: API-identity migration to symmetric findCandidatesByQuery (#535 / #523 plan).
+    // Query card shape unchanged from previous IntentCard — behavior-only with topK:2.
+    // Enrichment via queryIntentCardFromSource is P1b's job.
+    const result = await registry.findCandidatesByQuery({
+      behavior: query.behavior,
+      topK: 2,
+    });
+    const candidates = result.candidates;
 
     const best = candidates[0];
     if (best !== undefined && best.cosineDistance < options.threshold) {
