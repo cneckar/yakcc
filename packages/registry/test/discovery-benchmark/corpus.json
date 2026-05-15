@@ -753,6 +753,46 @@
       },
       "expectedAtom": null,
       "rationale": "WI-510 Slice 1: ms fixture entry. The ms package's parse() behavior — convert a duration string to milliseconds. Atoms are produced by the dependency-following shave engine decomposing ms/index.js, not hand-authored. This entry is synthetic-tasks in the bootstrap corpus (no seed block); combinedScore >= 0.70 is verified by module-graph.test.ts §10 quality test (local provider + in-memory registry populated by the engine's storeBlock output)."
+    },
+    {
+      "id": "cat1-validator-is-email-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate whether a string is a valid email address, with support for display names, UTF-8 local parts, and configurable TLD requirements"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isEmail behavior — validates email address strings per RFC standards with configurable options. Atoms are produced by the dependency-following shave engine decomposing validator/lib/isEmail.js from the vendored Babel-transpiled CJS fixture (Path A). synthetic-tasks with expectedAtom:null mirrors the Slice 1 ms precedent. combinedScore >= 0.70 is verified by validator-fixture.test.ts §F quality test (local provider + in-memory registry)."
+    },
+    {
+      "id": "cat1-validator-is-url-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate whether a string is a valid URL, supporting multiple protocols, authentication, IP addresses, and configurable options for TLD and underscores"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isURL behavior — validates URL strings with flexible protocol and host options. Atoms produced by shave engine from validator/lib/isURL.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
+    },
+    {
+      "id": "cat1-validator-is-uuid-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate whether a string is a valid UUID (universally unique identifier) in versions 1 through 5, nil UUID, or max UUID format"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isUUID behavior — validates UUID strings across all versions including nil and max. Atoms produced by shave engine from validator/lib/isUUID.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
+    },
+    {
+      "id": "cat1-validator-is-alphanumeric-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate whether a string contains only alphanumeric characters, with optional locale support for language-specific character sets"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isAlphanumeric behavior — validates that a string is alphanumeric with locale-aware character set support. Atoms produced by shave engine from validator/lib/isAlphanumeric.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
     }
   ]
 }
