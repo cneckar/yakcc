@@ -265,3 +265,20 @@ export {
   CanonicalAstParseError,
   type CanonicalAstHash,
 } from "./canonical-ast.js";
+export {
+  queryIntentCardFromSource,
+  type QueryIntentCardFromSourceOptions,
+} from "./query-from-source.js";
+// Sub-path extraction primitives — re-exported from the barrel so that
+// workspace consumers that alias @yakcc/contracts → src/index.ts (vitest
+// workspace-source mode) can import these via "@yakcc/contracts" directly
+// without needing additional sub-path aliases in their vitest configs.
+export {
+  extractJsDoc,
+  extractSignatureFromNode,
+  findExportedDeclarationByName,
+  type ExtractedJsDoc,
+  type ExtractedParam,
+  type ExtractedSignature,
+} from "./source-extract.js";
+export { pickPrimaryDeclaration, type PrimaryDeclaration } from "./source-pick.js";
