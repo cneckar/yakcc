@@ -983,6 +983,132 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
     );
 
     // -------------------------------------------------------------------------
+    // T3c: *.props.ts corpus files present in recompiled workspace
+    //
+    // @decision DEC-V2-HARNESS-PROPS-CORPUS-CHECK-001
+    // @title Two-pass harness asserts every *.props.ts corpus file is present in
+    //   the recompiled workspace
+    // @status accepted (WI-FIX-545-TWOPASS-VALIDATOR, 2026-05-15)
+    // @rationale When compile-self materialises the recompiled workspace it must
+    //   include not only atom impl.ts source files but also the sibling *.props.ts
+    //   corpus files (declared as plumbing via Fix E,
+    //   DEC-V2-WORKSPACE-PLUMBING-PROPS-CORPUS-001). Without those corpus files
+    //   the pass-2 shave pipeline's props-file extractor
+    //   (packages/shave/src/corpus/props-file.ts:extractFromPropsFile) falls
+    //   through to a generic path fallback, producing a different proof_manifest
+    //   and therefore a different block_merkle_root — exactly the ~45-root
+    //   divergence fixed by WI-FIX-545. This upstream assertion gives faster,
+    //   clearer diagnosis than waiting for the downstream root-divergence failure:
+    //   it names the missing *.props.ts file(s) rather than reporting abstract
+    //   root hashes. Uses a recursive filesystem walk (not the two PLUMBING_INCLUDE_GLOBS
+    //   patterns) so a depth->=2 props file that the glob patterns would silently
+    //   miss is caught immediately, naming the missed file and citing the decision
+    //   that requires a third pattern to be added.
+    //   Same hard-fail precondition pattern as T3b (DEC-V2-TWO-PASS-PRECONDITION-001).
+    //   Sibling of T3b (seed sidecars, DEC-V2-HARNESS-SEED-SIDECAR-CHECK-001).
+    // -------------------------------------------------------------------------
+
+    it(
+      "T3c: recompiled workspace contains every *.props.ts corpus file",
+      () => {
+        // @decision DEC-V2-TWO-PASS-PRECONDITION-001 — hard-fail, not soft-skip
+        if (!registryAAvailable || !reportAAvailable || !cliBinAvailable) {
+          throw new Error(
+            `Precondition FAILED [YAKCC_TWO_PASS=1]: one or more prerequisite artifacts are missing ` +
+              `(registryA=${registryAAvailable}, reportA=${reportAAvailable}, cliBin=${cliBinAvailable}). ` +
+              `Run 'pnpm -r build' and 'yakcc bootstrap' before running the two-pass test. ` +
+              `(DEC-V2-TWO-PASS-PRECONDITION-001)`,
+          );
+        }
+
+        // Recursively enumerate every *.props.ts under packages/*/src/ in the
+        // canonical workspace. We walk the filesystem directly (not via the
+        // two PLUMBING_INCLUDE_GLOBS patterns) so a future *.props.ts at depth
+        // >= 2 below src/ that the glob patterns would miss is caught by this
+        // guard rather than surfacing as an abstract root-divergence failure.
+        //
+        // @decision DEC-V2-HARNESS-PROPS-CORPUS-CHECK-001 (enumeration site)
+        const packagesDir = join(REPO_ROOT, "packages");
+
+        if (!existsSync(packagesDir)) {
+          console.info("[two-pass] T3c: no packages/ directory found; skipping props-corpus check.");
+          expect(true).toBe(true);
+          return;
+        }
+
+        // Collect all *.props.ts workspace-relative paths (forward-slash convention).
+        const propsRelPaths: string[] = [];
+
+        const pkgEntries = readdirSync(packagesDir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        for (const pkgEntry of pkgEntries) {
+          const srcDir = join(packagesDir, pkgEntry.name, "src");
+          if (!existsSync(srcDir)) continue;
+
+          // Node 18.17+ supports recursive: true in readdirSync.
+          const srcEntries = readdirSync(srcDir, {
+            recursive: true,
+            withFileTypes: true,
+          }) as import("node:fs").Dirent[];
+
+          for (const e of srcEntries) {
+            if (!e.isFile() || !e.name.endsWith(".props.ts")) continue;
+            // Build workspace-relative path using forward slashes.
+            const absPath = join(e.parentPath, e.name);
+            const relPath = absPath
+              .slice(REPO_ROOT.length)
+              .replace(/\\/g, "/")
+              .replace(/^\//, "");
+            propsRelPaths.push(relPath);
+          }
+        }
+
+        if (propsRelPaths.length === 0) {
+          console.info("[two-pass] T3c: no *.props.ts files found in packages/*/src/; nothing to check.");
+          expect(true).toBe(true);
+          return;
+        }
+
+        console.info(
+          `[two-pass] T3c: found ${propsRelPaths.length} *.props.ts file(s) in canonical workspace.`,
+        );
+
+        // For each props file, assert it exists in the recompiled workspace.
+        const missing: string[] = [];
+
+        for (const relPath of propsRelPaths) {
+          // Build the absolute path inside dist-recompiled using the segments of
+          // the workspace-relative path (join handles platform path separators).
+          const recompiledPath = join(DIST_RECOMPILED_DIR, ...relPath.split("/"));
+          if (!existsSync(recompiledPath)) {
+            missing.push(relPath);
+          }
+        }
+
+        if (missing.length > 0) {
+          console.error(
+            `[two-pass] T3c FAIL: ${missing.length} *.props.ts corpus file(s) missing from recompiled workspace.\n` +
+              `  Missing workspace-relative path(s):\n` +
+              missing.map((p) => `    - ${p}`).join("\n") +
+              `\n  Root cause: these files are not in PLUMBING_INCLUDE_GLOBS\n` +
+              `  (packages/cli/src/commands/plumbing-globs.ts).\n` +
+              `  Fix: add the missing depth-level glob pattern to PLUMBING_INCLUDE_GLOBS\n` +
+              `  and re-run 'yakcc bootstrap' to regenerate bootstrap/expected-roots.json.\n` +
+              `  (DEC-V2-WORKSPACE-PLUMBING-PROPS-CORPUS-001)`,
+          );
+        } else {
+          console.info(
+            `[two-pass] T3c PASS: all ${propsRelPaths.length} *.props.ts corpus file(s) present in recompiled workspace.`,
+          );
+        }
+
+        expect(missing).toHaveLength(0);
+      },
+    );
+
+    // -------------------------------------------------------------------------
     // T4: Root counts, coverage, and summary
     // -------------------------------------------------------------------------
 

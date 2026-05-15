@@ -85,6 +85,38 @@ export const PLUMBING_INCLUDE_GLOBS: readonly string[] = [
   "packages/*/src/blocks/*/spec.yak",
   "packages/*/src/blocks/*/proof/manifest.json",
   "packages/*/src/blocks/*/proof/tests.fast-check.ts",
+
+  // @decision DEC-V2-WORKSPACE-PLUMBING-PROPS-CORPUS-001
+  // @title *.props.ts hand-authored property-test corpus files are workspace plumbing
+  // @status accepted (WI-FIX-545-TWOPASS-VALIDATOR, 2026-05-15)
+  // @rationale Props files are corpus inputs to the shave pipeline's props-file
+  //   extractor (packages/shave/src/corpus/props-file.ts:extractFromPropsFile),
+  //   not atoms — bootstrap.ts:200 explicitly skips them from shaving via the
+  //   .props.ts filename guard, so capturing them as plumbing never conflicts with
+  //   atom reconstruction (compile-self's "TS source wins" rule from
+  //   DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001 cannot trigger because props files
+  //   are never shaved into the blocks table in the first place).
+  //   The extractor records a filesystem-presence-dependent `path` in the proof
+  //   manifest (<atomName>.props.ts when present; a generic fallback when absent),
+  //   so proof_root and block_merkle_root depend on whether the recompiled
+  //   workspace rematerialises the props file. Capturing them as plumbing makes
+  //   compile-self rematerialise them, closing the ~45-root divergence (#545).
+  //
+  //   WHY TWO PATTERNS NOT **: expandPlumbingGlob (bootstrap.ts:561-615) supports
+  //   single-segment * only (each * → regex [^/]*). A ** segment would match a
+  //   literal directory named ** and expand to zero files (the v2-of-#494 trap,
+  //   codified as forbidden shortcut FS-5). All 73 *.props.ts files live at
+  //   exactly two depths under packages/*/src/ (42 at depth 4 matching the first
+  //   pattern, 31 at depth 5 matching the second), so two literal-depth patterns
+  //   are exhaustive. If a future *.props.ts is added at depth >= 2 below src/,
+  //   a third pattern must be added here — the T3c regression guard
+  //   (DEC-V2-HARNESS-PROPS-CORPUS-CHECK-001) will catch this because it uses
+  //   a recursive filesystem walk rather than these globs.
+  //
+  //   Amends DEC-V2-WORKSPACE-PLUMBING-CAPTURE-001 and is a sibling of
+  //   DEC-V2-WORKSPACE-PLUMBING-SEED-TRIPLETS-001.
+  "packages/*/src/*.props.ts",
+  "packages/*/src/*/*.props.ts",
 ];
 
 /**
