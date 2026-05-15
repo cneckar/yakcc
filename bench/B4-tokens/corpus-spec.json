@@ -3,6 +3,14 @@
   "schema_version": 1,
   "slice": 1,
   "n_tasks": 3,
+  "triage_status": "complete",
+  "triage_completed_at": "2026-05-15",
+  "triage_summary": {
+    "kill_verdict": "withdrawn — reclassified as first data point on B4 sweep (see issue #442 comment, 2026-05-13)",
+    "csv_parser_correctness": "resolved — hook-substitution correctness regression fixed in #450 (closed 2026-05-13); arm-A oracle now matches arm-B baseline",
+    "debounce_non_engagement": "root-caused in #451, remediated in #454 (both closed 2026-05-13); timer-handle atom seeded; registry rebuild surfaces it as PARTIAL in REGISTRY_COVERAGE.md",
+    "open_items": "none — all Slice 1 triage actions landed; Slice 2 sweep continues under #167 characterisation initiative"
+  },
   "tasks": [
     {
       "id": "lru-cache-with-ttl",
