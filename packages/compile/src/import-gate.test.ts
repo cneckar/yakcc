@@ -10,7 +10,7 @@ import {
   GATE_INTERCEPT_ALLOWLIST,
   UnexpandedImportError,
   assertNoUnexpandedImports,
-} from "./import-gate.js";
+} from "./index.js";
 
 describe("assertNoUnexpandedImports", () => {
   it("passes when source has no imports", () => {
@@ -101,6 +101,26 @@ describe("UnexpandedImportError", () => {
   it("message includes named imports when present", () => {
     const err = new UnexpandedImportError("validator", ["isEmail"]);
     expect(err.message).toContain("isEmail");
+  });
+  it("mixed type/value import: namedImports only includes value binding (not type-only specifier)", () => {
+    // Regression: before the isTypeOnly() filter fix, "T" would appear in namedImports.
+    // After the fix, only "isEmail" (a value binding) is captured.
+    // DEC-WI508-INTERCEPT-CLASSIFIER-SHARED-001: mirrors the filter in import-intercept.ts.
+    const src = `import { type T, isEmail } from "validator";
+`;
+    let err: UnexpandedImportError | null = null;
+    try {
+      assertNoUnexpandedImports(src);
+    } catch (e) {
+      err = e as UnexpandedImportError;
+    }
+    expect(err).not.toBeNull();
+    expect(err?.moduleSpecifier).toBe("validator");
+    // "T" is a type-only specifier -- must NOT appear in namedImports
+    expect(err?.namedImports).not.toContain("T");
+    // "isEmail" is a value binding -- must appear in namedImports
+    expect(err?.namedImports).toContain("isEmail");
+    expect(err?.namedImports).toEqual(["isEmail"]);
   });
 });
 

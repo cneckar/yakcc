@@ -4,12 +4,26 @@
     "composite": true,
     "outDir": "dist",
     "rootDir": "src",
-    "lib": ["ES2022", "dom"]
+    "lib": [
+      "ES2022",
+      "dom"
+    ]
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../contracts" },
-    { "path": "../registry" },
-    { "path": "../ir" }
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../registry"
+    },
+    {
+      "path": "../ir"
+    },
+    {
+      "path": "../hooks-base"
+    }
   ]
 }

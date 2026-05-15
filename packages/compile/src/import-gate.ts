@@ -7,53 +7,13 @@
 //   the runtime import-intercept hook in @yakcc/hooks-base.
 //   Classification mirrors import-intercept.ts. Any divergence is a bug.
 
+import {
+  BARE_NODE_CORE_MODULES,
+  NODE_BUILTIN_PREFIX,
+  WORKSPACE_PREFIX,
+  extractBareName,
+} from "@yakcc/hooks-base/src/import-classifier.js";
 import { Project, ScriptKind } from "ts-morph";
-
-const NODE_BUILTIN_PREFIX = "node:";
-const WORKSPACE_PREFIX = "@yakcc/";
-
-const BARE_NODE_CORE_MODULES = new Set([
-  "assert",
-  "buffer",
-  "child_process",
-  "cluster",
-  "console",
-  "constants",
-  "crypto",
-  "dgram",
-  "dns",
-  "domain",
-  "events",
-  "fs",
-  "http",
-  "http2",
-  "https",
-  "inspector",
-  "module",
-  "net",
-  "os",
-  "path",
-  "perf_hooks",
-  "process",
-  "punycode",
-  "querystring",
-  "readline",
-  "repl",
-  "stream",
-  "string_decoder",
-  "sys",
-  "timers",
-  "tls",
-  "trace_events",
-  "tty",
-  "url",
-  "util",
-  "v8",
-  "vm",
-  "wasi",
-  "worker_threads",
-  "zlib",
-]);
 
 export const GATE_INTERCEPT_ALLOWLIST = new Set(["validator"]);
 
@@ -80,14 +40,6 @@ export class UnexpandedImportError extends Error {
   }
 }
 
-function extractBareName(spec: string): string {
-  if (spec.startsWith("@")) {
-    const parts = spec.slice(1).split("/");
-    return parts[1] ?? spec;
-  }
-  return spec.split("/")[0] ?? spec;
-}
-
 function collectCoveredImports(
   source: string,
 ): Array<{ moduleSpecifier: string; namedImports: readonly string[] }> {
@@ -111,7 +63,12 @@ function collectCoveredImports(
     const bareName = extractBareName(spec);
     if (BARE_NODE_CORE_MODULES.has(bareName)) continue;
     if (!GATE_INTERCEPT_ALLOWLIST.has(bareName)) continue;
-    const namedImports = decl.getNamedImports().map((ni) => ni.getName());
+    // Filter out inline type-only specifiers (e.g. "type T" in "import { type T, isEmail }").
+    // Mirrors the isTypeOnly() filter in import-intercept.ts (DEC-WI508-INTERCEPT-CLASSIFIER-SHARED-001).
+    const namedImports = decl
+      .getNamedImports()
+      .filter((ni) => !ni.isTypeOnly())
+      .map((ni) => ni.getName());
     found.push({ moduleSpecifier: spec, namedImports });
   }
   return found;

@@ -60,70 +60,44 @@
 //   atomize did not fire. This preserves all earlier response paths and makes the intercept
 //   branch reachable only for raw passthrough emissions.
 
+// @decision DEC-WI508-INTERCEPT-TSMORPH-DEP-001
+// title: ts-morph is a direct dependency of @yakcc/hooks-base
+// status: decided (WI-508-IMPORT-INTERCEPT Slice 1)
+// rationale:
+//   import-intercept needs AST-level parsing of import statements to correctly
+//   classify type-only specifiers and namespace imports. ts-morph is already used
+//   across the workspace (shave, compile) and its in-memory Project API is the
+//   lowest-friction way to parse TS/TSX without a tsconfig. Accepting it as a direct
+//   dep is lower cost than reimplementing AST parsing or vendoring a lighter parser.
+//   Cross-reference EC §4.6.11.
+
+// @decision DEC-WI508-INTERCEPT-DYNAMIC-LIMITATION-001
+// title: Slice 1 covers static ImportDeclaration nodes only -- dynamic import() not intercepted
+// status: decided (WI-508-IMPORT-INTERCEPT Slice 1)
+// rationale:
+//   ts-morph getImportDeclarations() returns only static import ... from "..." declarations.
+//   Dynamic import("...") call expressions are CallExpression AST nodes and are invisible
+//   to getImportDeclarations(). Intercepting CallExpression-based dynamic imports is
+//   deferred to a future slice. Static ImportDeclaration coverage is sufficient for the
+//   Slice 1 mechanism proof. Off-allowlist bindings (including those that could correspond
+//   to dynamic imports in the same file) are logged to importedDynamic for telemetry.
+
 import type { QueryIntentCard } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
+// @decision DEC-WI508-INTERCEPT-TSMORPH-DEP-001
 import { Project, ScriptKind } from "ts-morph";
+import {
+  BARE_NODE_CORE_MODULES,
+  NODE_BUILTIN_PREFIX,
+  WORKSPACE_PREFIX,
+  extractBareName,
+} from "./import-classifier.js";
 import type { EmissionContext } from "./index.js";
 import type { HookResponseWithSubstitution } from "./index.js";
 import { CONFIDENT_THRESHOLD, yakccResolve } from "./yakcc-resolve.js";
 
-// ---------------------------------------------------------------------------
-// Classification constants -- mirror classifyForeign() from slicer.ts
-// ---------------------------------------------------------------------------
-
-/** Prefix for Node built-in modules (e.g. "node:fs"). */
-const NODE_BUILTIN_PREFIX = "node:";
-
-/** Prefix for workspace-internal packages. */
-const WORKSPACE_PREFIX = "@yakcc/";
-
-/**
- * Bare Node core module names (without "node:" prefix).
- * Mirrors BARE_NODE_CORE_MODULES in packages/shave/src/universalize/slicer.ts.
- * Any divergence from slicer.ts is a bug -- tracked in DEC-WI508-INTERCEPT-001.
- */
-const BARE_NODE_CORE_MODULES = new Set([
-  "assert",
-  "buffer",
-  "child_process",
-  "cluster",
-  "console",
-  "constants",
-  "crypto",
-  "dgram",
-  "dns",
-  "domain",
-  "events",
-  "fs",
-  "http",
-  "http2",
-  "https",
-  "inspector",
-  "module",
-  "net",
-  "os",
-  "path",
-  "perf_hooks",
-  "process",
-  "punycode",
-  "querystring",
-  "readline",
-  "repl",
-  "stream",
-  "string_decoder",
-  "sys",
-  "timers",
-  "tls",
-  "trace_events",
-  "tty",
-  "url",
-  "util",
-  "v8",
-  "vm",
-  "wasi",
-  "worker_threads",
-  "zlib",
-]);
+// Classification constants and extractBareName are in the shared classifier module.
+// DEC-WI508-INTERCEPT-CLASSIFIER-SHARED-001
 
 /**
  * Slice 1 intercept allowlist.
@@ -281,21 +255,6 @@ export function scanImportsForIntercept(source: string): ImportScanResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the bare package name from a module specifier.
- * "@scope/pkg/subpath" => "pkg"
- * "pkg/subpath" => "pkg"
- * "pkg" => "pkg"
- */
-function extractBareName(spec: string): string {
-  if (spec.startsWith("@")) {
-    // Scoped package: "@scope/name" or "@scope/name/subpath"
-    const parts = spec.slice(1).split("/");
-    return parts[1] ?? spec;
-  }
-  return spec.split("/")[0] ?? spec;
-}
-
-/**
  * Build a QueryIntentCard for a foreign import binding.
  *
  * The behavior field describes what the import is used for based on the
@@ -355,9 +314,10 @@ export async function runImportIntercept(
   for (const candidate of candidates) {
     try {
       // Enrich the intent card with the emission context when available
-      const enrichedCard: QueryIntentCard = ctx.intent.length > 0
-        ? { behavior: `${candidate.intentCard.behavior} for: ${ctx.intent}` }
-        : candidate.intentCard;
+      const enrichedCard: QueryIntentCard =
+        ctx.intent.length > 0
+          ? { behavior: `${candidate.intentCard.behavior} for: ${ctx.intent}` }
+          : candidate.intentCard;
 
       const resolveResult = await yakccResolve(registry, enrichedCard);
 

@@ -21,7 +21,8 @@
     "@yakcc/registry": "workspace:*",
     "@yakcc/shave": "workspace:*",
     "assemblyscript": "^0.28.17",
-    "ts-morph": "^24.0.0"
+    "ts-morph": "^24.0.0",
+    "@yakcc/hooks-base": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

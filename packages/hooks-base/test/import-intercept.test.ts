@@ -24,46 +24,61 @@ function makeStubRegistry(status: StubResolveStatus, score = 0.8): Registry {
     async findCandidatesByQuery(_intentCard: import("@yakcc/contracts").QueryIntentCard) {
       if (status === "matched") {
         return {
-          candidates: [{
-            combinedScore: score,
-            cosineDistance: 1 - score,
-            autoAccepted: score > 0.85,
-            perDimensionScores: {},
-            block: {
-              blockMerkleRoot: "aabbccdd1122" as import("@yakcc/contracts").BlockMerkleRoot,
-              specCanonicalBytes: new TextEncoder().encode(JSON.stringify({ behavior: "validate email" })),
-              canonicalAstHash: "hash1",
-              specHash: "spechash1",
-              proofManifestJson: JSON.stringify({ artifacts: [{}, {}] }),
-              embeddings: [],
-              glueLeafEntries: [],
-              wasmArtifact: null,
-              implSource: "export function isEmail() {}",
-              level: "L0" as const,
-              createdAt: 0,
-              artifacts: new Map(),
+          candidates: [
+            {
+              combinedScore: score,
+              cosineDistance: 1 - score,
+              autoAccepted: score > 0.85,
+              perDimensionScores: {},
+              block: {
+                blockMerkleRoot: "aabbccdd1122" as import("@yakcc/contracts").BlockMerkleRoot,
+                specCanonicalBytes: new TextEncoder().encode(
+                  JSON.stringify({ behavior: "validate email" }),
+                ),
+                canonicalAstHash: "hash1",
+                specHash: "spechash1",
+                proofManifestJson: JSON.stringify({ artifacts: [{}, {}] }),
+                embeddings: [],
+                glueLeafEntries: [],
+                wasmArtifact: null,
+                implSource: "export function isEmail() {}",
+                level: "L0" as const,
+                createdAt: 0,
+                artifacts: new Map(),
+              },
             },
-          }],
+          ],
           nearMisses: [],
         } as unknown as import("@yakcc/registry").FindCandidatesByQueryResult;
       }
       return {
-        candidates: status === "weak_only"
-          ? [{ combinedScore: 0.55, cosineDistance: 0.45, autoAccepted: false, perDimensionScores: {}, block: {
-              blockMerkleRoot: "ddccbbaa1122" as import("@yakcc/contracts").BlockMerkleRoot,
-              specCanonicalBytes: new TextEncoder().encode(JSON.stringify({ behavior: "weak" })),
-              canonicalAstHash: "hash2",
-              specHash: "spechash2",
-              proofManifestJson: JSON.stringify({ artifacts: [] }),
-              embeddings: [],
-              glueLeafEntries: [],
-              wasmArtifact: null,
-              implSource: "export function f() {}",
-              level: "L0" as const,
-              createdAt: 0,
-              artifacts: new Map(),
-            }}]
-          : [],
+        candidates:
+          status === "weak_only"
+            ? [
+                {
+                  combinedScore: 0.55,
+                  cosineDistance: 0.45,
+                  autoAccepted: false,
+                  perDimensionScores: {},
+                  block: {
+                    blockMerkleRoot: "ddccbbaa1122" as import("@yakcc/contracts").BlockMerkleRoot,
+                    specCanonicalBytes: new TextEncoder().encode(
+                      JSON.stringify({ behavior: "weak" }),
+                    ),
+                    canonicalAstHash: "hash2",
+                    specHash: "spechash2",
+                    proofManifestJson: JSON.stringify({ artifacts: [] }),
+                    embeddings: [],
+                    glueLeafEntries: [],
+                    wasmArtifact: null,
+                    implSource: "export function f() {}",
+                    level: "L0" as const,
+                    createdAt: 0,
+                    artifacts: new Map(),
+                  },
+                },
+              ]
+            : [],
         nearMisses: [],
       } as unknown as import("@yakcc/registry").FindCandidatesByQueryResult;
     },
@@ -271,7 +286,9 @@ describe("runImportIntercept", () => {
 
   it("returns intercepted=false when registry throws", async () => {
     const brokenRegistry = {
-      async findCandidatesByQuery() { throw new Error("db down"); },
+      async findCandidatesByQuery() {
+        throw new Error("db down");
+      },
     } as unknown as Registry;
     const results = await runImportIntercept([validatorCandidate], brokenRegistry, CTX);
     expect(results[0]?.intercepted).toBe(false);
@@ -326,7 +343,9 @@ describe("applyImportIntercept", () => {
     const registry = makeStubRegistry("matched", 0.85) as Registry;
     const result = await applyImportIntercept(BASE_RESPONSE, VALIDATOR_SOURCE, CTX, registry);
     expect(result).not.toBe(BASE_RESPONSE);
-    const r = result as HookResponseWithSubstitution & { importInterceptResults?: ImportInterceptResult[] };
+    const r = result as HookResponseWithSubstitution & {
+      importInterceptResults?: ImportInterceptResult[];
+    };
     expect(r.importInterceptResults).toBeDefined();
     expect(r.importInterceptResults?.[0]?.intercepted).toBe(true);
     expect(r.importInterceptResults?.[0]?.binding.moduleSpecifier).toBe("validator");
@@ -334,7 +353,9 @@ describe("applyImportIntercept", () => {
 
   it("returns base unchanged when registry throws", async () => {
     const brokenRegistry = {
-      async findCandidatesByQuery() { throw new Error("db error"); },
+      async findCandidatesByQuery() {
+        throw new Error("db error");
+      },
     } as unknown as Registry;
     const result = await applyImportIntercept(BASE_RESPONSE, VALIDATOR_SOURCE, CTX, brokenRegistry);
     expect(result.kind).toBe("passthrough");
