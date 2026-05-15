@@ -430,7 +430,14 @@ export async function _runWithRegistry(
       //        b. Emit atoms within the interval in sourceOffset order, skipping overlapping ones.
       //        c. Advance prevMergedEnd = interval.end.
       //     3. Emit trailing glue after the last merged interval.
-      const glueString = new TextDecoder().decode(glueEntry.contentBlob);
+      // @decision DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001 (parity — same fix as compile-self.ts)
+      // @title compile-pipeline glue decode preserves UTF-8 BOM bytes
+      // @status decided (WI-FIX-543, issue #543)
+      // @rationale See compile-self.ts DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001.
+      //   Identical BOM-strip defect via default TextDecoder options; same mechanical fix.
+      const glueString = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+        glueEntry.contentBlob,
+      );
 
       // Step 1: compute merged intervals (same merge as computeGlueBlob).
       interface MergedInterval {

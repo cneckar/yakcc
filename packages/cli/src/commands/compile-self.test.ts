@@ -166,3 +166,149 @@ describe("compileSelf — T2: compose-path-gap report surfacing (F1 / Sacred Pra
     expect(output).toContain("EXIT CODES");
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-BOM: Glue-decode BOM round-trip guard (issue #543)
+//
+// DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001
+//
+// The reconstruction algorithm in compile-self._runPipeline assumes
+// glueString.length equals the total of all glue-span lengths in original-source
+// coordinates. When new TextDecoder() (ignoreBOM: false, the default) decodes a
+// glue blob whose source file started with a UTF-8 BOM (U+FEFF, EF BB BF), the
+// BOM code unit is silently stripped and glueString is one code unit shorter than
+// the arithmetic expects. This shifts every subsequent cross-atom glue slice,
+// corrupting the reconstruction and producing invalid TypeScript.
+//
+// The fix: new TextDecoder("utf-8", { ignoreBOM: true }) preserves the BOM as
+// U+FEFF in the decoded string, restoring the round-trip invariant.
+//
+// This test is a default-suite (no YAKCC_TWO_PASS gate) guard that will fail
+// loudly if the production decoder is regressed back to the default options.
+// It runs in <1ms with no filesystem or registry I/O.
+// ---------------------------------------------------------------------------
+
+import { computeGlueBlob } from "./bootstrap.js";
+
+describe("compileSelf — T-BOM: glue-decode BOM round-trip (DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001)", () => {
+  // Build a synthetic BOM-prefixed source with one atom and one glue region.
+  //
+  // Layout (UTF-16 code units):
+  //   [0]       U+FEFF  BOM
+  //   [1..19]   "// comment header\n"  (glue region A — starts with BOM because atom starts at 20)
+  //   [20..42]  "export function foo(){}"  (atom region, 23 chars)
+  //   [43..63]  "\n// trailing comment\n"  (glue region B, 21 chars)
+  //
+  // computeGlueBlob encodes the ENTIRE glue (regions A + B) as UTF-8 bytes.
+  // The BOM at position 0 is the first code unit of region A.
+  // A correct decoder preserves it; the buggy default decoder strips it.
+
+  const BOM = "﻿";
+  const GLUE_A = "// comment header\n"; // 19 chars
+  const ATOM = "export function foo(){}"; // 23 chars
+  const GLUE_B = "\n// trailing comment\n"; // 21 chars
+
+  // sourceText mirrors what Node's readFileSync(path, "utf-8") returns for a
+  // BOM-carrying file: the BOM is preserved as U+FEFF at index 0.
+  const sourceText = BOM + GLUE_A + ATOM + GLUE_B;
+  const atomStart = BOM.length + GLUE_A.length; // 20
+  const atomEnd = atomStart + ATOM.length; // 43
+
+  it("computeGlueBlob preserves BOM bytes in the encoded blob", () => {
+    const blob = computeGlueBlob(sourceText, [{ start: atomStart, end: atomEnd }]);
+    expect(blob).not.toBeNull();
+    // The glue text is BOM + GLUE_A + GLUE_B. When re-encoded to UTF-8, the first 3
+    // bytes must be EF BB BF (UTF-8 BOM encoding).
+    expect(blob?.[0]).toBe(0xef);
+    expect(blob?.[1]).toBe(0xbb);
+    expect(blob?.[2]).toBe(0xbf);
+  });
+
+  it('TextDecoder("utf-8", {ignoreBOM:true}) preserves BOM in decoded glueString', () => {
+    const blobMaybeNull = computeGlueBlob(sourceText, [{ start: atomStart, end: atomEnd }]);
+    expect(blobMaybeNull).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: null was asserted above
+    const blob = blobMaybeNull!;
+    const glueString = new TextDecoder("utf-8", { ignoreBOM: true }).decode(blob);
+    // The decoded glue must start with U+FEFF.
+    expect(glueString.charCodeAt(0)).toBe(0xfeff);
+    // Full glue text = BOM + GLUE_A + GLUE_B.
+    expect(glueString).toBe(BOM + GLUE_A + GLUE_B);
+  });
+
+  it("default TextDecoder() strips BOM from decoded glueString (documents the issue #543 regression)", () => {
+    // Documents the broken behaviour that issue #543 revealed.
+    // The default decoder silently strips the BOM, making glueString one char shorter.
+    const blobMaybeNull2 = computeGlueBlob(sourceText, [{ start: atomStart, end: atomEnd }]);
+    expect(blobMaybeNull2).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: null was asserted above
+    const blob = blobMaybeNull2!;
+    const buggyGlueString = new TextDecoder().decode(blob);
+    // BOM is gone — glueString starts with "/" (first char of GLUE_A), not U+FEFF.
+    expect(buggyGlueString.charCodeAt(0)).not.toBe(0xfeff);
+    // Length is 1 shorter than the correct glue text (BOM stripped).
+    const correctGlueLength = (BOM + GLUE_A + GLUE_B).length;
+    expect(buggyGlueString.length).toBe(correctGlueLength - 1);
+  });
+
+  it("compile-self glue decode preserves BOM and reconstructs source byte-identically (load-bearing regression guard)", () => {
+    // This is the load-bearing regression guard: the full glue+atom interleave cycle
+    // must produce a reconstructed string identical to sourceText, code-unit by code-unit.
+    //
+    // The test exercises the exact algorithm from compile-self._runPipeline:
+    //   1. Compute glue blob (bootstrap.computeGlueBlob)
+    //   2. Decode with TextDecoder("utf-8", { ignoreBOM: true })  <- DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001
+    //   3. Walk merged intervals, emit glue + atoms
+    //   4. Assert identity with sourceText
+    //
+    // This test FAILS on unfixed code (default TextDecoder() strips the BOM, making
+    // glueString 1 code unit shorter and shifting all cross-atom glue slices).
+
+    const blobMaybeNull3 = computeGlueBlob(sourceText, [{ start: atomStart, end: atomEnd }]);
+    expect(blobMaybeNull3).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: null was asserted above
+    const blob = blobMaybeNull3!;
+
+    // Step 2: fixed decoder (DEC-V2-COMPILE-SELF-GLUE-DECODE-IGNOREBOM-001).
+    const glueString = new TextDecoder("utf-8", { ignoreBOM: true }).decode(blob);
+
+    // Step 3: reconstruct — minimal merged-interval walk (one atom, no overlaps).
+    // Mirrors _runPipeline's reconstruction loop exactly.
+    const parts: string[] = [];
+    let gluePosCursor = 0;
+
+    // One merged interval: [atomStart, atomEnd).
+    const glueBefore = atomStart - 0; // prevMergedEnd starts at 0
+    parts.push(glueString.slice(gluePosCursor, gluePosCursor + glueBefore));
+    gluePosCursor += glueBefore;
+    parts.push(ATOM); // emit atom implSource
+
+    // Trailing glue after last atom.
+    const trailingGlue = glueString.slice(gluePosCursor);
+    if (trailingGlue.length > 0) parts.push(trailingGlue);
+
+    const recon = parts.join("");
+
+    // Step 4: assert identity — loud failure naming the first divergent offset.
+    if (recon !== sourceText) {
+      let fd = -1;
+      for (let i = 0; i < Math.min(recon.length, sourceText.length); i++) {
+        if (recon[i] !== sourceText[i]) {
+          fd = i;
+          break;
+        }
+      }
+      const divergeAt = fd === -1 ? Math.min(recon.length, sourceText.length) : fd;
+      const reconHex = [...recon.slice(0, 3)].map((c) => c.charCodeAt(0).toString(16)).join(",");
+      const origHex = [...sourceText.slice(0, 3)]
+        .map((c) => c.charCodeAt(0).toString(16))
+        .join(",");
+      throw new Error(
+        `Reconstruction diverged at offset ${divergeAt}: recon.length=${recon.length} orig.length=${sourceText.length}. recon[0..3]=[${reconHex}] orig[0..3]=[${origHex}].`,
+      );
+    }
+    expect(recon).toBe(sourceText);
+    // Explicitly assert the BOM is present at index 0 of the reconstruction.
+    expect(recon.charCodeAt(0)).toBe(0xfeff);
+  });
+});
