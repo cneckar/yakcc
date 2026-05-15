@@ -252,19 +252,61 @@ async function atomLookup(input) {
 
   const reg = await ensureRegistry();
 
-  // Build minimal IntentQuery for findCandidatesByIntent.
+  // Build query card from intent plus optional rich ContractSpec fields.
+  // Passing inputs/outputs/guarantees/errorConditions/nonFunctional narrows the
+  // candidate pool to atoms whose stored ContractSpec aligns with what the caller
+  // is implementing. These are all optional — the intent-only path is unchanged.
+  // (Refs #523, #444, #535 — DEC-V0-B4-RICH-QUERY-001)
+  const queryCard = {
+    behavior: intent,
+    topK: DEFAULT_TOP_K,
+  };
+  if (Array.isArray(input.inputs) && input.inputs.length > 0) {
+    queryCard.signature = { ...(queryCard.signature ?? {}), inputs: input.inputs };
+  }
+  if (Array.isArray(input.outputs) && input.outputs.length > 0) {
+    queryCard.signature = { ...(queryCard.signature ?? {}), outputs: input.outputs };
+  }
+  if (Array.isArray(input.guarantees) && input.guarantees.length > 0) {
+    // QueryIntentCard.guarantees is typed as readonly string[]. Convert object-form
+    // {description: string} items (as the LLM may send) to plain strings.
+    // The typeof guard handles callers that pass strings directly (backwards compat).
+    queryCard.guarantees = input.guarantees.map((g) => (typeof g === "string" ? g : g.description));
+  }
+  if (Array.isArray(input.errorConditions) && input.errorConditions.length > 0) {
+    // Same string-extraction as guarantees — QueryIntentCard.errorConditions is string[].
+    queryCard.errorConditions = input.errorConditions.map((ec) => (typeof ec === "string" ? ec : ec.description));
+  }
+  if (input.nonFunctional && typeof input.nonFunctional === "object") {
+    queryCard.nonFunctional = input.nonFunctional;
+  }
+
+  // Fallback to the IntentQuery shape expected by findCandidatesByIntent when the
+  // registry does not yet expose findCandidatesByQuery (backwards compat with older
+  // registry builds that only have the intent-only path).
   const intentQuery = {
     behavior: intent,
-    inputs: [],
-    outputs: [],
+    inputs: queryCard.signature?.inputs ?? [],
+    outputs: queryCard.signature?.outputs ?? [],
   };
 
   const topK = DEFAULT_TOP_K;
   let candidates;
   try {
-    candidates = await reg.findCandidatesByIntent(intentQuery, { k: topK * 5 });
+    // Prefer findCandidatesByQuery (rich path) when available; fall back to
+    // findCandidatesByIntent (intent-only) for older registry builds.
+    //
+    // findCandidatesByQuery returns { candidates: [...], nearMisses: [...] };
+    // findCandidatesByIntent returns a raw array. Both item shapes include
+    // { block, cosineDistance } which the downstream confidence mapping uses.
+    if (typeof reg.findCandidatesByQuery === "function") {
+      const result = await reg.findCandidatesByQuery(queryCard);
+      candidates = result.candidates ?? [];
+    } else {
+      candidates = await reg.findCandidatesByIntent(intentQuery, { k: topK * 5 });
+    }
   } catch (err) {
-    logError(`findCandidatesByIntent failed: ${err.message}`);
+    logError(`findCandidates failed: ${err.message}`);
     return { atoms: [] };
   }
 
@@ -377,6 +419,36 @@ const ATOM_LOOKUP_TOOL = {
         enum: ["conservative", "default", "aggressive"],
         description: "Threshold mode: 'conservative'=0.95, 'default'=0.7, 'aggressive'=all.",
         default: "default",
+      },
+      inputs: {
+        type: "array",
+        description: "Optional: function parameters as [{name, type}, ...]. Pass when you know the signature you're implementing — produces tighter atom matches.",
+        items: { type: "object", properties: { name: { type: "string" }, type: { type: "string" } }, required: ["name", "type"] },
+      },
+      outputs: {
+        type: "array",
+        description: "Optional: function return values as [{name, type}, ...]. Same purpose as inputs.",
+        items: { type: "object", properties: { name: { type: "string" }, type: { type: "string" } }, required: ["name", "type"] },
+      },
+      guarantees: {
+        type: "array",
+        description: "Optional: invariants the implementation must satisfy, as [{description}, ...] (e.g. 'pure', 'idempotent', 'O(n) time').",
+        items: { type: "object", properties: { description: { type: "string" } }, required: ["description"] },
+      },
+      errorConditions: {
+        type: "array",
+        description: "Optional: error conditions the implementation must handle, as [{description}, ...] (e.g. 'RangeError on negative input').",
+        items: { type: "object", properties: { description: { type: "string" } }, required: ["description"] },
+      },
+      nonFunctional: {
+        type: "object",
+        description: "Optional: non-functional properties (e.g. {purity: 'pure', timeComplexity: 'O(n)', spaceComplexity: 'O(1)'}).",
+        properties: {
+          purity: { type: "string" },
+          timeComplexity: { type: "string" },
+          spaceComplexity: { type: "string" },
+          threadSafety: { type: "string" },
+        },
       },
     },
     required: ["intent"],

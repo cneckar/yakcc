@@ -207,7 +207,9 @@ const SYSTEM_PROMPT_VANILLA = `You are an expert TypeScript developer. When give
 
 const SYSTEM_PROMPT_HOOK_SUFFIX_BASELINE = `
 
-You are working in a codebase that uses the yakcc registry for common atomic implementations. When implementing code, prefer token-efficient implementations that compose proven patterns (state machines, data structures, parsing primitives) rather than verbose from-scratch approaches. Output only the implementation code in a \`\`\`typescript code block.`;
+You are working in a codebase that uses the yakcc registry for common atomic implementations. When implementing code, prefer token-efficient implementations that compose proven patterns (state machines, data structures, parsing primitives) rather than verbose from-scratch approaches. Output only the implementation code in a \`\`\`typescript code block.
+
+When you call atom-lookup, you can provide more than just intent text — passing inputs (array of {name, type}), outputs (array of {name, type}), guarantees (array of {description}), errorConditions (array of {description}), or nonFunctional ({purity, timeComplexity, etc.}) produces tighter matches by narrowing the candidate pool to atoms whose stored ContractSpec aligns with what you're implementing. When you know the function signature you're writing, pass inputs/outputs. When you know specific guarantees or error contracts, pass those too. Richer queries return more relevant atoms.`;
 
 const SYSTEM_PROMPT_HOOK_SUFFIX_MOTIVATED = `
 
@@ -253,6 +255,13 @@ const ATOM_LOOKUP_TOOL_DEF = {
     "Query the yakcc atom registry for candidate implementations matching an intent. " +
     "Returns atoms with atom_id, atom_signature, match_confidence, atom_body_sha256. " +
     "Returns { atoms: [] } when no candidates match -- generate the implementation directly.",
+  // NOTE: Anthropic Messages API uses snake_case `input_schema`; MCP protocol uses
+  // camelCase `inputSchema`. Both are correct for their respective callers.
+  // The 5 optional rich fields (inputs/outputs/guarantees/errorConditions/nonFunctional)
+  // are declared here so the model can include them in tool_use payloads. The MCP server
+  // converts the object-form guarantees/errorConditions to string[] before forwarding to
+  // QueryIntentCard. All fields are optional — intent-only callers are unchanged.
+  // (Refs #523, #444, #535 — DEC-V0-B4-RICH-QUERY-001)
   input_schema: {
     type: "object",
     properties: {
@@ -265,6 +274,61 @@ const ATOM_LOOKUP_TOOL_DEF = {
         enum: ["conservative", "default", "aggressive"],
         description: "Threshold mode: conservative=0.95, default=0.7, aggressive=all.",
         default: "default",
+      },
+      inputs: {
+        type: "array",
+        description:
+          "Optional: function parameters as [{name, type}, ...]. " +
+          "Pass when you know the signature -- produces tighter atom matches.",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, type: { type: "string" } },
+          required: ["name", "type"],
+        },
+      },
+      outputs: {
+        type: "array",
+        description:
+          "Optional: function return values as [{name, type}, ...]. Same purpose as inputs.",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, type: { type: "string" } },
+          required: ["name", "type"],
+        },
+      },
+      guarantees: {
+        type: "array",
+        description:
+          "Optional: invariants the implementation must satisfy, as [{description}, ...] " +
+          "(e.g. [{description: 'pure'}, {description: 'idempotent'}]).",
+        items: {
+          type: "object",
+          properties: { description: { type: "string" } },
+          required: ["description"],
+        },
+      },
+      errorConditions: {
+        type: "array",
+        description:
+          "Optional: error conditions the implementation must handle, as [{description}, ...] " +
+          "(e.g. [{description: 'RangeError on negative input'}]).",
+        items: {
+          type: "object",
+          properties: { description: { type: "string" } },
+          required: ["description"],
+        },
+      },
+      nonFunctional: {
+        type: "object",
+        description:
+          "Optional: non-functional constraints (e.g. {purity: 'pure', timeComplexity: 'O(n)', " +
+          "spaceComplexity: 'O(1)', threadSafety: 'safe'}).",
+        properties: {
+          purity: { type: "string" },
+          timeComplexity: { type: "string" },
+          spaceComplexity: { type: "string" },
+          threadSafety: { type: "string" },
+        },
       },
     },
     required: ["intent"],
