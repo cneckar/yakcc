@@ -54,3 +54,12 @@ export {
 // Candidate assembly entry point (WI-014-05)
 export type { AssembleCandidateOptions } from "./assemble-candidate.js";
 export { assembleCandidate, CandidateNotResolvableError } from "./assemble-candidate.js";
+
+// Import gate -- compile-time enforcement of covered foreign imports (WI-508)
+// DEC-WI508-IMPORT-GATE-001
+export {
+  assertNoUnexpandedImports,
+  UnexpandedImportError,
+  GATE_INTERCEPT_ALLOWLIST,
+} from "./import-gate.js";
+export type { AssertNoUnexpandedImportsOptions } from "./import-gate.js";

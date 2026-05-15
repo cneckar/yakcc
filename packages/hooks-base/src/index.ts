@@ -596,6 +596,23 @@ export async function executeRegistryQueryWithSubstitution(
     }
   }
 
+
+  // -- WI-508 / D-HOOK-8: import-intercept path --------------------------------
+  // When substitution and atomize did not fire, scan emitted code for foreign imports
+  // and query the registry for each one on the SLICE1_INTERCEPT_ALLOWLIST.
+  // The intercept path is ADDITIVE -- it never changes the response kind on failure.
+  // @decision DEC-WI508-INTERCEPT-006
+  if (!substituted && atomizeResult?.atomized !== true && originalCode.trim().length > 0) {
+    try {
+      const { applyImportIntercept } = await import("./import-intercept.js");
+      const baseResponse: HookResponseWithSubstitution = { ...response, substituted: false };
+      const intercepted = await applyImportIntercept(baseResponse, originalCode, ctx, registry);
+      return intercepted;
+    } catch {
+      // Import-intercept failure must not affect the hook outcome (DEC-WI508-INTERCEPT-004).
+    }
+  }
+
   return { ...response, substituted: false };
 }
 
@@ -626,6 +643,12 @@ export type HookResponseWithSubstitution = HookResponse & (
         readonly atomName: string;
         readonly spec: { readonly name: string; readonly behavior: string };
       }>;
+      /**
+       * Import-intercept results (WI-508, DEC-WI508-INTERCEPT-006).
+       * Present when at least one foreign import matched a registry candidate
+       * with score >= CONFIDENT_THRESHOLD (0.70). Undefined when intercept did not fire.
+       */
+      readonly importInterceptResults?: ReadonlyArray<import("./import-intercept.js").ImportInterceptResult>;
     }
   | { readonly substituted: true; readonly substitutedCode: string; readonly atomHash: string }
 );
@@ -649,3 +672,20 @@ export {
   TIEBREAKER_EPSILON,
 } from "./yakcc-resolve.js";
 
+// ---------------------------------------------------------------------------
+// WI-508 -- import-intercept types (public surface for consumers)
+// ---------------------------------------------------------------------------
+
+export type {
+  ImportBinding,
+  InterceptCandidate,
+  ImportScanResult,
+  ImportInterceptResult,
+} from "./import-intercept.js";
+export {
+  scanImportsForIntercept,
+  buildImportIntentCard,
+  runImportIntercept,
+  applyImportIntercept,
+  SLICE1_INTERCEPT_ALLOWLIST,
+} from "./import-intercept.js";

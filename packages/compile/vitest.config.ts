@@ -2,6 +2,8 @@
 // Original -001 (seeds), -002 (shave); -003 extends to other workspace packages
 // per #352 follow-up. See packages/registry/vitest.config.ts DEC-REGISTRY-VITEST-CONFIG-001
 // for full rationale on @yakcc/contracts.
+// DEC-WI508-INTERCEPT-CLASSIFIER-SHARED-001: add deep-path alias for import-classifier.ts
+// so vitest can resolve the shared classifier without a dist build.
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
@@ -13,6 +15,11 @@ export default defineConfig({
       "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),
       "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
+      "@yakcc/hooks-base/src/import-classifier.js": resolve(
+        __dirname,
+        "../hooks-base/src/import-classifier.ts",
+      ),
+      "@yakcc/hooks-base": resolve(__dirname, "../hooks-base/src/index.ts"),
     },
   },
   test: {
