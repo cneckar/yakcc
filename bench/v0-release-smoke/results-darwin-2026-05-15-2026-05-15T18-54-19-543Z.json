@@ -1,0 +1,104 @@
+{
+  "runId": "1778871259543-3hqz7y",
+  "timestamp": "2026-05-15T18:54:29.592Z",
+  "platform": "darwin",
+  "node": "v22.22.0",
+  "repoRoot": "/Users/cris/src/yakcc/.worktrees/feature-fix-549-p1-bench-verify",
+  "keepScratch": false,
+  "steps": [
+    {
+      "step": 1,
+      "name": "Scratch project setup",
+      "expected": "scratch dir created, contains a 3-file TS project",
+      "actual": "scratch dir created with package.json + tsconfig.json + src/index.ts",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 2,
+      "name": "yakcc init --target <scratch>",
+      "expected": ".yakcc/registry.sqlite exists, .yakccrc.json exists, idempotent re-run",
+      "actual": ".yakcc/registry.sqlite + .yakccrc.json present; idempotent re-run OK",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 3,
+      "name": "yakcc hooks claude-code install --target <scratch>",
+      "expected": ".claude/settings.json references yakcc hook-intercept",
+      "actual": ".claude/settings.json written with hooks block",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 4,
+      "name": "Verify hook installed in .claude/settings.json",
+      "expected": "parse-clean JSON, yakcc PreToolUse entry present pointing to hook-intercept",
+      "actual": "PreToolUse entry with yakcc hook-intercept command found",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 5,
+      "name": "Substitution trigger simulation (known-match.ts)",
+      "expected": "substitution fires OR synthesis-required (registry may be empty) — response kind recorded",
+      "actual": "substituted=false, kind=synthesis-required",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 6,
+      "name": "yakcc_resolve MCP tool surface",
+      "expected": "yakccResolve returns valid envelope; absent hash → no_match",
+      "actual": "absent hash→no_match=true; intent query→status=matched candidates=1",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 7,
+      "name": "yakcc query returns seed atoms after seeding",
+      "expected": "at least one candidate returned for 'parse json int list', top-1 is a recognizable atom",
+      "actual": "5 candidates; top behavior=\"Parse a string of the form '[i1,i2,...,iN]' where each element is a non-negative\" plausible=true",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": "8a",
+      "name": "Shape-filter graceful rejection on generic-typed code (novel-glue.ts / chunkArray)",
+      "expected": "substitution=false (no match), atomize skipped (generic type param declined by static strategy), non-fatal",
+      "actual": "substituted=false, atomized=true (unexpected but not wrong), atoms=[chunkArray], @atom-new present=true",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": "8b",
+      "name": "LOAD-BEARING: flywheel atomization (novel-glue-flywheel.ts / arrayMedian)",
+      "expected": "substitution=false, atomized=true, atomsCreated non-empty, @atom-new comment emitted",
+      "actual": "substituted=false, atomized=true, atoms=[arrayMedian], BMR[:8]=c8b64955, @atom-new present=true",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 9,
+      "name": "LOAD-BEARING round-trip: query registry for arrayMedian atom created in Step 8b",
+      "expected": "top-K candidates include the BMR from Step 8b; top-1 combinedScore >= 0.70 (CONFIDENT_THRESHOLD)",
+      "actual": "5 candidates; BMR[c8b64955] in top-K=true; top-1 combinedScore=0.8954 (threshold=0.7, confident=true); behavior=\"b73a771f7e58fcc15fc3197a9f37c500d2fda5ee5bd32a764692d2ca68686724\"",
+      "pass": true,
+      "warn": false
+    },
+    {
+      "step": 10,
+      "name": "Cleanup scratch directory",
+      "expected": "scratch dir removed (unless --keep-scratch)",
+      "actual": "scratch dir removed",
+      "pass": true,
+      "warn": false
+    }
+  ],
+  "summary": {
+    "passed": 11,
+    "warned": 0,
+    "failed": 0,
+    "allPass": true
+  }
+}

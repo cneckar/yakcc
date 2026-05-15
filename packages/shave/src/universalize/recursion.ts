@@ -145,6 +145,7 @@ import { canonicalAstHash } from "@yakcc/contracts";
 import { type Node, Project, ScriptKind, SyntaxKind } from "ts-morph";
 import type { ShaveRegistryView } from "../types.js";
 import { isAtom } from "./atom-test.js";
+import { matchesStefPredicate } from "./stef.js";
 import type {
   AtomLeaf,
   AtomTestResult,
@@ -1158,6 +1159,35 @@ export async function decompose(
   });
 
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DEPTH;
+
+  // P0 #549 STEF fast-path: when the SourceFile IS a single typed exported
+  // function with JSDoc (and only permitted noise: imports/type aliases/
+  // interfaces), preserve the whole file as one atom instead of fragmenting
+  // into statement-level expressions. This is a refinement of
+  // DEC-V2-GLUE-AWARE-SHAVE-001 — STEF is the degenerate case where
+  // fragmentation strictly destroys signal; all non-STEF files continue
+  // through the glue-aware fragmentation path unchanged.
+  // See plans/wi-fix-549-shave-fragmentation.md §3.3.
+  if (matchesStefPredicate(file)) {
+    // getFullStart() is always 0 for a SourceFile — it includes leading trivia
+    // (the JSDoc comment bytes). getStart() skips trivia and would exclude the
+    // JSDoc, producing a non-zero start offset that makes the range incomplete.
+    const start = file.getFullStart();
+    const end = file.getEnd();
+    const nodeSource = source.slice(start, end);
+    const leaf: AtomLeaf = {
+      kind: "atom",
+      sourceRange: { start, end },
+      source: nodeSource,
+      canonicalAstHash: safeCanonicalAstHash(file, nodeSource, source, start, end),
+      atomTest: {
+        isAtom: true,
+        reason: "single-typed-exported-function",
+        controlFlowBoundaryCount: 0,
+      },
+    };
+    return { root: leaf, leafCount: 1, maxDepth: 0 };
+  }
 
   let leafCount = 0;
   let maxObservedDepth = 0;

@@ -67,7 +67,8 @@ export type AtomTestReason =
   | "too-many-cf-boundaries"
   | "contains-known-primitive"
   | "non-decomposable-non-atom"
-  | "loop-with-escaping-cf";
+  | "loop-with-escaping-cf"
+  | "single-typed-exported-function";
 
 /**
  * The result returned by isAtom().
