@@ -19,11 +19,11 @@
  */
 
 import type { BlockMerkleRoot } from "@yakcc/contracts";
-import { describe, expect, it } from "vitest";
 import { Project } from "ts-morph";
+import { describe, expect, it } from "vitest";
 import type { ShaveRegistryView } from "../types.js";
-import { matchesStefPredicate } from "./stef.js";
 import { decompose } from "./recursion.js";
+import { matchesStefPredicate } from "./stef.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -175,8 +175,7 @@ export function arrayMedian(values: readonly number[]): number {
     // "single-typed-exported-function". The exact leaf count and branch/atom
     // shape are determined by the existing isAtom() classification and are not
     // our invariant here.
-    const reason =
-      tree.root.kind === "atom" ? tree.root.atomTest.reason : "branch";
+    const reason = tree.root.kind === "atom" ? tree.root.atomTest.reason : "branch";
     expect(reason).not.toBe("single-typed-exported-function");
   });
 

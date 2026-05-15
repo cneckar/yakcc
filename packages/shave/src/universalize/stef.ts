@@ -90,9 +90,7 @@ function isExportedArrowOrFnConstDeclaration(node: Node): boolean {
   const vs = node as Node & {
     hasModifier(kind: SyntaxKind): boolean;
     getDeclarationList(): Node & {
-      getDeclarations(): Array<
-        Node & { getInitializer(): Node | undefined }
-      >;
+      getDeclarations(): Array<Node & { getInitializer(): Node | undefined }>;
     };
   };
   if (!vs.hasModifier(SyntaxKind.ExportKeyword)) return false;
@@ -109,14 +107,14 @@ function isExportedArrowOrFnConstDeclaration(node: Node): boolean {
  * `isExportedFunctionDeclaration` or `isExportedArrowOrFnConstDeclaration`.
  * Returns `undefined` if the node is neither.
  */
-function extractFunctionLike(
-  node: Node,
-): (Node & {
-  getParameters(): Array<Node & { getTypeNode(): Node | undefined }>;
-  getReturnTypeNode(): Node | undefined;
-  getJsDocs(): Node[];
-  getBody(): Node | undefined;
-}) | undefined {
+function extractFunctionLike(node: Node):
+  | (Node & {
+      getParameters(): Array<Node & { getTypeNode(): Node | undefined }>;
+      getReturnTypeNode(): Node | undefined;
+      getJsDocs(): Node[];
+      getBody(): Node | undefined;
+    })
+  | undefined {
   if (node.getKind() === SyntaxKind.FunctionDeclaration) {
     return node as Node & {
       getParameters(): Array<Node & { getTypeNode(): Node | undefined }>;
@@ -128,9 +126,7 @@ function extractFunctionLike(
   if (node.getKind() === SyntaxKind.VariableStatement) {
     const vs = node as Node & {
       getDeclarationList(): Node & {
-        getDeclarations(): Array<
-          Node & { getInitializer(): Node | undefined }
-        >;
+        getDeclarations(): Array<Node & { getInitializer(): Node | undefined }>;
       };
     };
     const init = vs.getDeclarationList().getDeclarations()[0]?.getInitializer();
