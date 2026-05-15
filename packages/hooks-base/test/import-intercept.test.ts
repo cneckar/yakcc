@@ -239,7 +239,8 @@ describe("applyImportIntercept", () => {
   const VALIDATOR_SOURCE = `import { isEmail } from "validator";\nconst ok = isEmail(email);\n`;
 
   afterEach(() => {
-    delete process.env["YAKCC_HOOK_DISABLE_SUBSTITUTE"];
+    // biome-ignore lint/performance/noDelete: env-var removal is intentional; setting to undefined leaves the key present
+    delete process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE;
   });
 
   it("returns base when emittedCode is empty", async () => {
@@ -249,7 +250,7 @@ describe("applyImportIntercept", () => {
   });
 
   it("returns base when YAKCC_HOOK_DISABLE_SUBSTITUTE=1", async () => {
-    process.env["YAKCC_HOOK_DISABLE_SUBSTITUTE"] = "1";
+    process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE = "1";
     const registry = makeStubRegistry("matched") as Registry;
     const result = await applyImportIntercept(BASE_RESPONSE, VALIDATOR_SOURCE, CTX, registry);
     expect(result).toBe(BASE_RESPONSE);

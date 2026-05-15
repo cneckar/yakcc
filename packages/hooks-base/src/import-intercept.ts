@@ -430,7 +430,7 @@ export async function applyImportIntercept(
   registry: Registry,
 ): Promise<HookResponseWithSubstitution> {
   // Disable knob check (DEC-WI508-INTERCEPT-003)
-  if (process.env["YAKCC_HOOK_DISABLE_SUBSTITUTE"] === "1") {
+  if (process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE === "1") {
     return base;
   }
 

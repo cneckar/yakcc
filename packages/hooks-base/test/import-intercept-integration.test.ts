@@ -102,11 +102,12 @@ describe("executeRegistryQueryWithSubstitution -- import-intercept integration",
   const embedProv = mockEmbeddingProvider();
 
   afterEach(() => {
-    delete process.env["YAKCC_HOOK_DISABLE_SUBSTITUTE"];
+    // biome-ignore lint/performance/noDelete: env-var removal is intentional; setting to undefined leaves the key present
+    delete process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE;
   });
 
-  const VALIDATOR_SOURCE = `import { isEmail } from "validator";\nconst ok = isEmail("test@example.com");\n`;
-  const NO_IMPORT_SOURCE = `function add(a: number, b: number): number { return a + b; }\n`;
+  const VALIDATOR_SOURCE = 'import { isEmail } from "validator";\nconst ok = isEmail("test@example.com");\n';
+  const NO_IMPORT_SOURCE = "function add(a: number, b: number): number { return a + b; }\n";
 
   it("import-intercept fires when emitted code has validator import and registry has a match", async () => {
     const registry = await openRegistry(":memory:", { embeddings: embedProv });
@@ -175,7 +176,7 @@ describe("executeRegistryQueryWithSubstitution -- import-intercept integration",
   });
 
   it("disable knob YAKCC_HOOK_DISABLE_SUBSTITUTE=1 skips import-intercept", async () => {
-    process.env["YAKCC_HOOK_DISABLE_SUBSTITUTE"] = "1";
+    process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE = "1";
     const registry = await openRegistry(":memory:", { embeddings: embedProv });
     const atom = buildValidatorAtom();
     await registry.storeBlock(atom);
