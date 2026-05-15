@@ -68,12 +68,8 @@
  *     ExtractedJsDoc.notes (remarks/example/note) → appended to notes[] as-is
  */
 
+import { extractJsDoc, extractSignatureFromNode, pickPrimaryDeclaration } from "@yakcc/contracts";
 import { Project } from "ts-morph";
-import {
-  extractJsDoc,
-  extractSignatureFromNode,
-  pickPrimaryDeclaration,
-} from "@yakcc/contracts";
 import type { IntentParam } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -165,10 +161,7 @@ export function staticExtract(unitSource: string, envelope: StaticExtractEnvelop
   ];
 
   // Notes: @throws entries (with "throws: " prefix) + remarks/example/note entries.
-  const notes: string[] = [
-    ...jsdoc.throwDescriptions.map((d) => `throws: ${d}`),
-    ...jsdoc.notes,
-  ];
+  const notes: string[] = [...jsdoc.throwDescriptions.map((d) => `throws: ${d}`), ...jsdoc.notes];
 
   return {
     schemaVersion: 1,
@@ -187,10 +180,7 @@ export function staticExtract(unitSource: string, envelope: StaticExtractEnvelop
 // ---------------------------------------------------------------------------
 
 /** Fragment fallback behavior string when there's no declaration. */
-function buildFragmentFallback(
-  sourceFile: import("ts-morph").SourceFile,
-  src: string,
-): string {
+function buildFragmentFallback(sourceFile: import("ts-morph").SourceFile, src: string): string {
   const stmtCount = sourceFile.getStatements().length;
   return `source fragment (${stmtCount} statements, ${src.length} bytes)`;
 }
