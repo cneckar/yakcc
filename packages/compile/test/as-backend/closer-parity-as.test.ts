@@ -19,14 +19,26 @@
 //        implSource contains ≥1 `export function`, asc produces callable WASM.
 //        The 86 wave-3 "missing-export" atoms compile cleanly under asc.
 //
+// @decision DEC-AS-CLOSER-PARITY-CONCURRENCY-001
+// Title: Promise pool with computeAscConcurrency(); default 4 (CI) / 6 (dev).
+//        Recovers the parallelization work lost from WI-FIX-485-CLOSER-PARITY-TIMEOUT.
+//        YAKCC_AS_PARITY_CONCURRENCY env override for serial baseline (rollback proof).
+// Status: decided (plans/wi-531-asc-compile-cache.md §DEC-AS-CLOSER-PARITY-CONCURRENCY-001)
+//
+// @decision DEC-AS-COMPILE-CACHE-001
+// Title: Content-addressed compile cache keyed on (canonicalAstHash, ascVersion,
+//        ascFlagsHash). Warm runs skip asc invocations entirely. Sole cache authority.
+// Status: decided (plans/wi-531-asc-compile-cache.md §DEC-AS-COMPILE-CACHE-001)
+//
 // Production sequence exercised:
 //   regenerateCorpus()                          [corpus loader: shave() over packages/src]
-//   -> beforeAll: for each atom in corpus:
+//   -> beforeAll: for each atom in corpus (PARALLEL, bounded by computeAscConcurrency()):
 //      makeSingleBlockResolution(implSource)    [synthetic ResolutionResult]
-//      -> assemblyScriptBackend().emit()        [WASM bytes or AS compile error]
+//      -> cachedAsEmit(backend, resolution, atomHash)  [cache hit or fresh asc compile]
 //      -> WebAssembly.validate(bytes)           [foundation invariant]
 //      -> count export symbols                  [coverage: ≥1 export = covered]
 //      -> record covered or pending with AS category
+//   -> aggregate phase (order-independent; sets/maps populated after pool drains)
 //   -> assert coverage ≥ 30% (first-slice minimum)
 //   -> it.fails(coverage >= 80%)               [forcing function — DO NOT lower threshold]
 //   -> persist pending-atoms-as.json
@@ -41,7 +53,7 @@
 // DO NOT filter the corpus (DEC-V1-WAVE-3-WASM-DEMO-CORPUS-LOADER-001).
 // DO NOT use it.skip() or it.todo() to bypass the acceptance assertion.
 
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -60,6 +72,8 @@ import {
   writePendingAtoms,
 } from "../../../../examples/v1-wave-3-wasm-lower-demo/test/corpus-loader.js";
 import { assemblyScriptBackend } from "../../src/as-backend.js";
+import { cachedAsEmit } from "../../src/as-compile-cache.js";
+import { computeAscConcurrency, processAtomsInParallel } from "../../src/as-parity-runner.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -181,9 +195,12 @@ interface ValidatedAtom {
 const validatedAtoms: ValidatedAtom[] = [];
 
 // ---------------------------------------------------------------------------
-// beforeAll: regenerate corpus, run AS emit pass
+// beforeAll: regenerate corpus, run AS emit pass (PARALLEL + CACHED)
 //
-// Budget: 30 minutes (same as wave-3 closer-parity.test.ts).
+// Budget: 60 minutes (hookTimeout at bottom of this file — must NOT be raised).
+//
+// @decision DEC-AS-CLOSER-PARITY-CONCURRENCY-001 — parallel pool replaces serial loop.
+// @decision DEC-AS-COMPILE-CACHE-001 — cachedAsEmit wraps backend.emit().
 // ---------------------------------------------------------------------------
 
 beforeAll(
@@ -218,68 +235,118 @@ beforeAll(
       });
     }
 
-    // Step 2: AS emit pass — attempt assemblyScriptBackend().emit() for each atom.
+    // Step 2: AS emit pass — attempt cachedAsEmit() for each atom in PARALLEL.
+    //
     // @decision DEC-AS-MULTI-EXPORT-001 — asc handles multi-export natively.
+    // @decision DEC-AS-CLOSER-PARITY-CONCURRENCY-001 — processAtomsInParallel replaces serial for-loop.
+    // @decision DEC-AS-COMPILE-CACHE-001 — cachedAsEmit wraps backend.emit() with disk cache.
+    //
     // An atom is "covered" when asc compiles it AND the resulting WASM has ≥1 export.
     // An atom is "pending" when asc throws OR WASM has zero exports.
-    //
-    // Note: the 86 wave-3 "missing-export" atoms compile cleanly here because asc
-    // does NOT require a single exported entry point. However, atoms whose source
-    // is a code snippet (not a full function) or uses unsupported TS constructs will
-    // fail with as-compile-error and go to pending. This is the expected first-slice
-    // outcome — the pending list categorizes them for future Phase 2B-2I work.
     const backend = assemblyScriptBackend();
+    const concurrency = computeAscConcurrency();
+    console.log(`[corpus-as] AS-emit concurrency: ${concurrency}`);
 
-    for (const state of allAtomStates) {
+    // Per-atom result discriminated union.
+    interface PerAtomResult {
+      readonly state: AtomState;
+      readonly outcome:
+        | { kind: "pre-seeded" }
+        | {
+            kind: "covered";
+            bytes: Uint8Array<ArrayBuffer>;
+            cacheStatus: "hit" | "miss" | "disabled";
+          }
+        | { kind: "no-exports" }
+        | { kind: "compile-error"; reason: string };
+    }
+
+    let cacheHits = 0;
+    let cacheMisses = 0;
+    let cacheDisabled = 0;
+
+    // Parallel worker: one invocation per atom.
+    // All try/catch is inside the worker so processAtomsInParallel never sees a rejection
+    // from expected compile failures; unexpected throws (internal errors) propagate normally.
+    async function perAtomWorker(state: AtomState): Promise<PerAtomResult> {
       // Respect pre-seeded pending registry (from prior runs).
       if (preSeededPendingSet.has(state.hash)) {
-        pendingHashes.add(state.hash);
-        continue;
+        return { state, outcome: { kind: "pre-seeded" } };
       }
 
       try {
         const resolution = makeSingleBlockResolution(state.source);
-        const bytes = (await backend.emit(resolution)) as Uint8Array<ArrayBuffer>;
+        const { bytes, cacheStatus } = await cachedAsEmit(backend, resolution, state.hash);
 
         // Count exports in the WASM module.
         // @decision DEC-AS-MULTI-EXPORT-001: ≥1 export = covered (structural coverage).
-        // The wave-3 closer treats this the same for P-OTHER atoms.
         const exportCount = countWasmExports(bytes);
 
         if (exportCount >= 1) {
           // Covered: WASM validates and has at least one callable export.
-          validatedAtoms.push({ hash: state.hash, bytes });
-          coveredHashes.add(state.hash);
-        } else {
-          // Compiled but zero exports — counts as pending.
-          // This can happen when source has only unexported helper functions.
-          runtimePending.push({
-            canonicalAstHash: state.hash,
-            sourcePath: state.sourcePath,
-            reason:
-              "asc compiled OK but WASM has zero exports — no callable surface for parity testing",
-            category: "as-no-exports",
-          });
-          pendingHashes.add(state.hash);
+          return { state, outcome: { kind: "covered", bytes, cacheStatus } };
         }
+        // Compiled but zero exports — counts as pending.
+        return { state, outcome: { kind: "no-exports" } };
       } catch (err: unknown) {
         // asc compile error — categorize and record.
         const errMsg = err instanceof Error ? err.message : String(err);
         // Truncate to first 200 chars for readability in pending registry.
         const shortReason = errMsg.slice(0, 200).replace(/\n/g, " ").trim();
-        runtimePending.push({
-          canonicalAstHash: state.hash,
-          sourcePath: state.sourcePath,
+        return {
+          state,
           // reason must be ≥ 10 chars (Sacred Practice #5)
-          reason: `asc compile error: ${shortReason}`.slice(0, 300),
-          category: "as-compile-error",
-        });
-        pendingHashes.add(state.hash);
+          outcome: {
+            kind: "compile-error",
+            reason: `asc compile error: ${shortReason}`.slice(0, 300),
+          },
+        };
       }
     }
 
+    const perAtomResults = await processAtomsInParallel(allAtomStates, perAtomWorker, concurrency);
+
+    // Aggregate phase: runs AFTER all workers finish.
+    // @decision DEC-AS-COMPILE-CACHE-005 — aggregate runs post-parallel for determinism.
+    // No shared mutable state is accessed during workers; no race condition possible.
+    for (const r of perAtomResults) {
+      if (r.outcome.kind === "pre-seeded") {
+        pendingHashes.add(r.state.hash);
+        continue;
+      }
+      if (r.outcome.kind === "covered") {
+        if (r.outcome.cacheStatus === "hit") cacheHits++;
+        else if (r.outcome.cacheStatus === "miss") cacheMisses++;
+        else cacheDisabled++;
+        validatedAtoms.push({ hash: r.state.hash, bytes: r.outcome.bytes });
+        coveredHashes.add(r.state.hash);
+      } else if (r.outcome.kind === "no-exports") {
+        runtimePending.push({
+          canonicalAstHash: r.state.hash,
+          sourcePath: r.state.sourcePath,
+          reason:
+            "asc compiled OK but WASM has zero exports — no callable surface for parity testing",
+          category: "as-no-exports",
+        });
+        pendingHashes.add(r.state.hash);
+      } else {
+        // compile-error
+        runtimePending.push({
+          canonicalAstHash: r.state.hash,
+          sourcePath: r.state.sourcePath,
+          reason: r.outcome.reason,
+          category: "as-compile-error",
+        });
+        pendingHashes.add(r.state.hash);
+      }
+    }
+
+    console.log(`[as-cache] hits=${cacheHits} misses=${cacheMisses} disabled=${cacheDisabled}`);
+
     // Step 3: Write updated pending-atoms-as.json (merge pre-seeded + runtime discovered).
     // Sacred Practice #5: every uncovered atom MUST appear with a category and reason.
+    // UNCHANGED from serial version — this path is deterministic (sort + write).
+    // @decision DEC-AS-COMPILE-CACHE-005
     const mergedPending: AsPendingAtom[] = [...preSeededPending];
     const existingHashes = new Set(preSeededPending.map((p) => p.canonicalAstHash));
     for (const p of runtimePending) {
