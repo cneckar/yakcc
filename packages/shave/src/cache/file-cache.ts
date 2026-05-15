@@ -8,9 +8,10 @@
 // Rationale: Atomic rename is the standard POSIX durability pattern. The
 // two-level sharding mirrors content-addressable stores like Git's object DB.
 
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { IntentCard } from "../intent/types.js";
+import { renameWithRetry } from "./atomic-write.js";
 
 /**
  * Compute the shard directory (first 3 hex chars of the key) and full file
@@ -91,7 +92,7 @@ export async function writeIntent(
   await writeFile(tmpPath, json, "utf-8");
 
   try {
-    await rename(tmpPath, filePath);
+    await renameWithRetry(tmpPath, filePath);
   } catch (err) {
     // Rename failed — clean up the tmp file to avoid orphaned partials.
     await unlink(tmpPath).catch(() => {
