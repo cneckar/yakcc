@@ -371,7 +371,7 @@ describe("executeRegistryQuery — synthesis-required path", () => {
 
 describe("executeRegistryQuery — passthrough (error) path", () => {
   it(
-    "returns kind=passthrough when the registry throws on findCandidatesByIntent",
+    "returns kind=passthrough when the registry throws on findCandidatesByQuery",
     async () => {
       const brokenRegistry: Registry = {
         storeBlock: registry.storeBlock.bind(registry),
@@ -381,10 +381,10 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
         getProvenance: registry.getProvenance.bind(registry),
         enumerateSpecs: registry.enumerateSpecs.bind(registry),
         close: registry.close.bind(registry),
-        findCandidatesByIntent: async () => {
+        findCandidatesByIntent: registry.findCandidatesByIntent.bind(registry),
+        findCandidatesByQuery: async () => {
           throw new Error("simulated DB failure");
         },
-        findCandidatesByQuery: registry.findCandidatesByQuery.bind(registry),
         exportManifest: registry.exportManifest.bind(registry),
         getForeignRefs: registry.getForeignRefs.bind(registry),
         storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),

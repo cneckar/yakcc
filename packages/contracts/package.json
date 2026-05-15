@@ -7,7 +7,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./source-extract": "./dist/source-extract.js",
+    "./source-pick": "./dist/source-pick.js"
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",

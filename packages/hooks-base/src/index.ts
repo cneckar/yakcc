@@ -23,11 +23,11 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { contractIdFromBytes } from "@yakcc/contracts";
-import type { ContractId, ContractSpec } from "@yakcc/contracts";
+import { contractIdFromBytes, queryIntentCardFromSource } from "@yakcc/contracts";
+import type { ContractId, ContractSpec, QueryIntentCard } from "@yakcc/contracts";
 import type { CandidateMatch, Registry } from "@yakcc/registry";
 
-export type { ContractId, ContractSpec };
+export type { ContractId, ContractSpec, QueryIntentCard };
 
 // ---------------------------------------------------------------------------
 // Threshold configuration
@@ -121,6 +121,62 @@ export function buildIntentCardQuery(ctx: EmissionContext): IntentCardQuery {
 }
 
 /**
+ * Build a QueryIntentCard for the registry query, enriched via queryIntentCardFromSource
+ * when originalCode is available.
+ *
+ * @decision DEC-HOOK-P1B-ENRICH-001
+ * @title P1b: enrich registry queries with structural dims from originalCode
+ * @status accepted
+ * @rationale
+ *   P0 (queryIntentCardFromSource) and P1a (findCandidatesByQuery API rename) are merged.
+ *   P1b closes the query-side field-coverage gap: when the emitted code is available,
+ *   extract signature.inputs / signature.outputs / errorConditions from it so the
+ *   registry embedding ranks on comparable vectors to the stored ContractSpec.
+ *
+ *   Design decisions:
+ *   (1) ctx.intent ALWAYS wins as the behavior dimension — user intent is canonical,
+ *       not the JSDoc summary extracted from potentially-stale emitted code.
+ *   (2) topK=2 is hardcoded here (same as P1a) — structural filter needs the runner-up
+ *       for the D2 auto-accept gap check.
+ *   (3) TypeError fallback: queryIntentCardFromSource throws TypeError on parse failure
+ *       or when source has no function declarations. We catch ONLY TypeError and fall
+ *       through to the fuzzy behavior-only path — other exception types propagate.
+ *       This is intentional: unexpected errors (e.g. OOM) must NOT be silently swallowed.
+ *   (4) Empty originalCode ("" or undefined) always takes the fuzzy path without calling
+ *       the helper, keeping the hot path allocation-free when no code is available.
+ *
+ *   Cross-references:
+ *   - DEC-EMBED-QUERY-ENRICH-HELPER-001 (P0 helper, @yakcc/contracts query-from-source.ts)
+ *   - DEC-HOOK-BASE-001 (package extraction rationale)
+ *   - plans/wi-fix-523-p1b-enrich.md
+ *
+ * @param ctx          - Emission context whose intent ALWAYS becomes the behavior field.
+ * @param originalCode - Optional emitted source; when provided, triggers structural enrichment.
+ * @returns QueryIntentCard with behavior=ctx.intent + optional signature/errorConditions dims.
+ */
+export function buildQueryCardFromEmission(
+  ctx: EmissionContext,
+  originalCode?: string,
+): QueryIntentCard {
+  if (originalCode !== undefined && originalCode.length > 0) {
+    try {
+      const derivedCard = queryIntentCardFromSource(originalCode);
+      // ctx.intent wins over JSDoc-derived behavior (design decision 1 above).
+      return { ...derivedCard, behavior: ctx.intent, topK: 2 };
+    } catch (err) {
+      // Only swallow TypeError — that's the documented failure mode for malformed source
+      // or source with no function declarations. All other errors propagate.
+      if (!(err instanceof TypeError)) {
+        throw err;
+      }
+      // Fall through to fuzzy path.
+    }
+  }
+  // Fuzzy path: behavior-only card, no structural dims.
+  return { behavior: ctx.intent, topK: 2 };
+}
+
+/**
  * Build a minimal ContractSpec skeleton from a prose intent string.
  *
  * The skeleton carries the intent as the behavior field and empty collections
@@ -190,18 +246,26 @@ type RegistryQueryInternalResult = {
  * Both executeRegistryQuery() and executeRegistryQueryWithTelemetry() delegate
  * here so candidate metadata is available to the telemetry wrapper without
  * duplicating the query logic.
+ *
+ * @param originalCode - Optional emitted source code forwarded from
+ *   executeRegistryQueryWithSubstitution; when provided, triggers P1b enrichment
+ *   via buildQueryCardFromEmission (DEC-HOOK-P1B-ENRICH-001).
  */
 async function _executeRegistryQueryInternal(
   registry: Registry,
   ctx: EmissionContext,
   options: { threshold: number },
+  originalCode?: string,
 ): Promise<RegistryQueryInternalResult> {
-  const query = buildIntentCardQuery(ctx);
+  // P1b: build an enriched QueryIntentCard when originalCode is available;
+  // falls back to the fuzzy behavior-only card when it is absent or helper throws.
+  const queryCard = buildQueryCardFromEmission(ctx, originalCode);
 
   try {
-    // Phase 2: fetch top-2 so decideToSubstitute() can compute the gap.
-    // Phase 1 callers only used k=1; k=2 is a superset and backward-compatible.
-    const candidates = await registry.findCandidatesByIntent(query, { k: 2, rerank: "structural" });
+    // P1a: API-identity migration to symmetric findCandidatesByQuery (#535 / #523 plan).
+    // P1b: queryCard now carries structural dims when originalCode was provided.
+    const result = await registry.findCandidatesByQuery(queryCard);
+    const candidates = result.candidates;
 
     const best = candidates[0];
     if (best !== undefined && best.cosineDistance < options.threshold) {
@@ -417,8 +481,9 @@ export async function executeRegistryQueryWithSubstitution(
   const start = Date.now();
 
   // Run the registry query (rerank="structural" so structural filter gates candidates).
+  // P1b: thread originalCode through so buildQueryCardFromEmission can enrich the query card.
   const { response, candidateCount, topScore, candidates } =
-    await _executeRegistryQueryInternalWithCandidates(registry, ctx, options);
+    await _executeRegistryQueryInternalWithCandidates(registry, ctx, options, originalCode);
 
   // Attempt substitution if not disabled.
   let substitutionResult: import("./substitute.js").SubstitutionResult | null = null;

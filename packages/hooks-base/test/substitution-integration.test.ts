@@ -118,7 +118,19 @@ function makeHighConfidenceRegistry(
 ): Registry {
   return {
     ...baseRegistry,
+    // Keep findCandidatesByIntent for backwards-compat with any baseRegistry usage;
+    // hooks-base source now only calls findCandidatesByQuery (P1a migration).
     findCandidatesByIntent: async () => overrideCandidates,
+    findCandidatesByQuery: async () => ({
+      candidates: overrideCandidates.map((c) => ({
+        ...c,
+        // QueryCandidate fields beyond CandidateMatch
+        combinedScore: Math.max(0, Math.min(1, 1 - (c.cosineDistance * c.cosineDistance) / 4)),
+        perDimensionScores: { unified: Math.max(0, Math.min(1, 1 - (c.cosineDistance * c.cosineDistance) / 4)) },
+        autoAccepted: false as const,
+      })),
+      nearMisses: [],
+    }),
   };
 }
 
