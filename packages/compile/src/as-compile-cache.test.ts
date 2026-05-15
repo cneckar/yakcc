@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assemblyScriptBackend, type WasmBackend } from "./as-backend.js";
+import { type WasmBackend, assemblyScriptBackend } from "./as-backend.js";
 import {
   ASC_FLAGS_HASH,
   ASC_VERSION,
@@ -481,7 +481,10 @@ describe("cachedAsEmit — end-to-end with real asc (DEC-AS-COMPILE-CACHE-003/00
 
   it("cold run calls asc, writes wasm to cache dir, returns valid WASM bytes", async () => {
     const backend = assemblyScriptBackend();
-    const resolution = syntheticResolution("id-i32", "export function id(x: i32): i32 { return x; }");
+    const resolution = syntheticResolution(
+      "id-i32",
+      "export function id(x: i32): i32 { return x; }",
+    );
     const atomHash = "e2e-id-i32-cold";
 
     const result = await cachedAsEmit(backend, resolution, atomHash, {
@@ -504,7 +507,10 @@ describe("cachedAsEmit — end-to-end with real asc (DEC-AS-COMPILE-CACHE-003/00
 
   it("warm run returns byte-identical result without invoking asc (DEC-AS-COMPILE-CACHE-005)", async () => {
     const backend = assemblyScriptBackend();
-    const resolution = syntheticResolution("add-i32", "export function add(a: i32, b: i32): i32 { return a + b; }");
+    const resolution = syntheticResolution(
+      "add-i32",
+      "export function add(a: i32, b: i32): i32 { return a + b; }",
+    );
     const atomHash = "e2e-add-i32-warm";
     const opts: CachedAsEmitOpts = { cacheDir: perTestCacheDir };
 
