@@ -281,7 +281,9 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       findCandidatesByIntent: async () => {
         throw new Error("simulated DB failure");
       },
-      findCandidatesByQuery: registry.findCandidatesByQuery.bind(registry),
+      findCandidatesByQuery: async () => {
+        throw new Error("simulated DB failure");
+      },
       exportManifest: registry.exportManifest.bind(registry),
       getForeignRefs: registry.getForeignRefs.bind(registry),
       storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
