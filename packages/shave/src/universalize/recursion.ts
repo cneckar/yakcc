@@ -111,6 +111,36 @@
  *   - Compatible with WI-V2-09 byte-identical bootstrap: deterministic node
  *     enumeration, same shape on every pass.
  *
+ * @decision DEC-SLICER-ARROW-RETURNS-ARROW-001
+ * title: Expression-body ArrowFunction whose body is itself a function-like
+ *        descends into the inner function rather than returning []
+ * status: decided
+ * rationale:
+ *   The `hyphenReplace` pattern in semver's range.js (and similar HOF patterns
+ *   in the wild) produces an ArrowFunction whose expression body is another
+ *   ArrowFunction: `incPr => ($0, ...) => { if ... }`. The outer arrow has
+ *   cfCount > maxCF because forEachDescendant bleeds through the inner
+ *   function boundary, so isAtom() returns false. But the old expression-body
+ *   path returned `[]` unconditionally, causing DidNotReachAtomError.
+ *   The fix: when an expression-body arrow/function-expression has a body that
+ *   is itself a function-like node, return [body] so the slicer can descend
+ *   into the inner function's body block and find atomic leaves there.
+ * alternatives:
+ *   A. Don't cross function boundaries in countControlFlowBoundaries — rejected
+ *      because other call sites depend on the inclusive count for correctness;
+ *      scoping the change to decomposableChildrenOf is lower risk.
+ *   B. Treat the outer arrow as an atom regardless of CF count — rejected
+ *      because it would prevent the inner function from being decomposed,
+ *      producing a coarser-than-necessary atom tree.
+ * consequences:
+ *   - semver range.js (and any other higher-order arrow patterns) decompose
+ *     correctly, enabling satisfies subgraph moduleCount ≥ 8.
+ *   - No existing passing tests are affected: the branch only fires when
+ *     isAtom() already returned false AND the body is a function-like, a case
+ *     that previously always threw DidNotReachAtomError.
+ *   - Compatible with WI-V2-09 byte-identical bootstrap: descent order is
+ *     deterministic (single child = the inner function-like).
+ *
  * @decision DEC-SLICER-CHILDREN-EXPR-LEVEL-001
  * title: ConditionalExpression / BinaryExpression / ReturnStatement decompose
  *        to natural sub-expressions
@@ -752,7 +782,17 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     if (body !== undefined && body.getKind() === SyntaxKind.Block) {
       return (body as Node & { getStatements(): Node[] }).getStatements();
     }
-    // Expression-body arrow function — not further decomposable.
+    // Expression-body: if the body is itself a function-like (arrow-returns-arrow
+    // pattern), descend into it so the inner function can be atomized.
+    // (DEC-SLICER-ARROW-RETURNS-ARROW-001)
+    if (
+      body !== undefined &&
+      (body.getKind() === SyntaxKind.ArrowFunction ||
+        body.getKind() === SyntaxKind.FunctionExpression)
+    ) {
+      return [body];
+    }
+    // Expression-body arrow function with non-function-like body — not further decomposable.
     return [];
   }
 
