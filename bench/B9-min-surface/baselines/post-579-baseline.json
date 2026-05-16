@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ref": "post-579",
+  "commitSha": "TBD-post-merge",
+  "status": "placeholder",
+  "note": "Filled by separate bench-run WI; full B9-min-surface benchmark suite is heavy compute and deferred per #594 acceptance. B9 measures minimum surface area of atoms substituted per call site. Post-#579 baseline expected to show smaller atom surfaces due to L3 ratio gate blocking oversized atoms and L4 descent discipline encouraging tighter atom selection.",
+  "dimensions": {
+    "atom_surface_median": null,
+    "atom_surface_p90": null,
+    "l3_reject_rate": null,
+    "l4_bypass_warning_rate": null
+  }
+}

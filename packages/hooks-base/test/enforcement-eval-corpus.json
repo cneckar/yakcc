@@ -49,6 +49,27 @@
     "notes": "action verb (convert) + I/O specifics (to single byte) — high-quality specific intent"
   },
   {
+    "id": "L1-008",
+    "input": "misc things processor",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "meta_word (misc) + stop_word (things, processor); 3 words below MIN_WORDS=4; triple rejection"
+  },
+  {
+    "id": "L1-009",
+    "input": "parse ISO 8601 datetime string into UTC epoch milliseconds",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "action verb (parse) + I/O specifics (ISO 8601 → UTC epoch ms) — excellent specificity"
+  },
+  {
+    "id": "L1-010",
+    "input": "encode binary buffer as base64url without padding",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "action verb (encode) + specific target encoding (base64url) + constraint (no padding) — fully qualified"
+  },
+  {
     "id": "L2-001",
     "input": "result-set-too-large",
     "candidateCount": 12,
@@ -98,6 +119,56 @@
     "expectedLayer": 2,
     "expectedOutcome": "accept",
     "notes": "YAKCC_RESULT_SET_MAX=5 env override raises maxConfident to 5; 4 confident < 5 → accept"
+  },
+  {
+    "id": "L2-006",
+    "input": "result-set-too-large",
+    "candidateCount": 11,
+    "confidentCount": 0,
+    "weakCount": 11,
+    "expectedLayer": 2,
+    "expectedOutcome": "result-set-too-large",
+    "notes": "11 total candidates (all weak) exceeds maxOverall=10 — too_many_overall fires even with 0 confident"
+  },
+  {
+    "id": "L2-007",
+    "input": "accept",
+    "candidateCount": 0,
+    "confidentCount": 0,
+    "weakCount": 0,
+    "expectedLayer": 2,
+    "expectedOutcome": "accept",
+    "notes": "empty result set (zero candidates) — trivially within all thresholds; accept"
+  },
+  {
+    "id": "L2-008",
+    "input": "accept",
+    "candidateCount": 1,
+    "confidentCount": 1,
+    "weakCount": 0,
+    "expectedLayer": 2,
+    "expectedOutcome": "accept",
+    "notes": "single confident candidate — ideal single-match scenario; well within maxConfident=3"
+  },
+  {
+    "id": "L2-009",
+    "input": "result-set-too-large",
+    "candidateCount": 8,
+    "confidentCount": 8,
+    "weakCount": 0,
+    "expectedLayer": 2,
+    "expectedOutcome": "result-set-too-large",
+    "notes": "8 confident candidates — both too_many_confident (>3) and too_many_overall (>10 not triggered here, but confident gate fires first)"
+  },
+  {
+    "id": "L2-010",
+    "input": "accept",
+    "candidateCount": 10,
+    "confidentCount": 0,
+    "weakCount": 10,
+    "expectedLayer": 2,
+    "expectedOutcome": "accept",
+    "notes": "10 total candidates (all weak) — exactly at maxOverall=10 boundary, not over it; accept"
   },
   {
     "id": "L3-001",
@@ -155,6 +226,61 @@
     "notes": "large need-complexity reduces ratio to safe zone: atomComplexity=110, needComplexity=50 (bindingsUsed=10, statementCount=5) → ratio=2.2 < ratioThreshold=10 → accept even for lodash-shaped atom"
   },
   {
+    "id": "L3-006",
+    "input": "atom-size-ratio-check",
+    "expectedLayer": 3,
+    "expectedOutcome": "atom-oversized",
+    "atomComplexity": 50,
+    "needComplexity": 1,
+    "ratioThreshold": 10,
+    "minFloor": 20,
+    "notes": "moderate atom heavily exceeds ratio: atomComplexity=50, needComplexity=1 → ratio=50 >> 10; reject"
+  },
+  {
+    "id": "L3-007",
+    "input": "atom-size-ratio-check",
+    "expectedLayer": 3,
+    "expectedOutcome": "accept",
+    "atomComplexity": 30,
+    "needComplexity": 4,
+    "ratioThreshold": 10,
+    "minFloor": 20,
+    "notes": "moderate atom with reasonable callsite: atomComplexity=30, needComplexity=4 → ratio=7.5 < ratioThreshold=10 → accept"
+  },
+  {
+    "id": "L3-008",
+    "input": "atom-size-ratio-check",
+    "expectedLayer": 3,
+    "expectedOutcome": "accept",
+    "atomComplexity": 19,
+    "needComplexity": 1,
+    "ratioThreshold": 10,
+    "minFloor": 20,
+    "notes": "below minFloor: atomComplexity=19 < minFloor=20; ratio check bypassed; accept regardless of high ratio"
+  },
+  {
+    "id": "L3-009",
+    "input": "atom-size-ratio-check",
+    "expectedLayer": 3,
+    "expectedOutcome": "atom-oversized",
+    "atomComplexity": 200,
+    "needComplexity": 3,
+    "ratioThreshold": 10,
+    "minFloor": 20,
+    "notes": "very large atom (joi/express-shaped): atomComplexity=200, needComplexity=3 → ratio≈66.7 >> 10; reject"
+  },
+  {
+    "id": "L3-010",
+    "input": "atom-size-ratio-check",
+    "expectedLayer": 3,
+    "expectedOutcome": "accept",
+    "atomComplexity": 100,
+    "needComplexity": 20,
+    "ratioThreshold": 10,
+    "minFloor": 20,
+    "notes": "large atom with large call-site: atomComplexity=100, needComplexity=20 → ratio=5.0 < ratioThreshold=10 → accept"
+  },
+  {
     "id": "L4-001",
     "input": "descent-depth-check",
     "expectedLayer": 4,
@@ -192,6 +318,97 @@
     "minDepth": 2,
     "shallowAllowPatterns": ["^add$", "^sub$", "^mul$", "^div$", "^mod$", "^abs$", "^min$", "^max$", "^clamp$", "^lerp$"],
     "notes": "shallow-allow bypass: 'add' matches ^add$ pattern; depth=0 < minDepth=2 but shallow-allowed → no warning regardless of depth"
+  },
+  {
+    "id": "L4-004",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "descent-bypass-warning",
+    "packageName": "date-fns",
+    "bindingName": "format",
+    "intent": "format Date object as YYYY-MM-DD string",
+    "priorMisses": 1,
+    "minDepth": 2,
+    "shallowAllowPatterns": [],
+    "notes": "one-miss scenario (depth=1 < minDepth=2): single prior miss is not enough to warm up the binding; warning emitted"
+  },
+  {
+    "id": "L4-005",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "accept",
+    "packageName": "date-fns",
+    "bindingName": "format",
+    "intent": "format Date object as YYYY-MM-DD string",
+    "priorMisses": 3,
+    "minDepth": 2,
+    "shallowAllowPatterns": [],
+    "notes": "over-threshold scenario: depth=3 > minDepth=2; fully warmed up → accept"
+  },
+  {
+    "id": "L4-006",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "accept",
+    "packageName": "crypto",
+    "bindingName": "abs",
+    "intent": "return absolute value of integer",
+    "priorMisses": 0,
+    "minDepth": 3,
+    "shallowAllowPatterns": ["^abs$", "^min$", "^max$"],
+    "notes": "shallow-allow with raised minDepth=3: 'abs' matches ^abs$ pattern; depth=0 still bypassed by shallow-allow"
+  },
+  {
+    "id": "L4-007",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "descent-bypass-warning",
+    "packageName": "lodash",
+    "bindingName": "debounce",
+    "intent": "debounce async function with 300ms trailing edge",
+    "priorMisses": 0,
+    "minDepth": 2,
+    "shallowAllowPatterns": ["^add$", "^sub$", "^mul$", "^div$"],
+    "notes": "'debounce' does not match any shallow-allow pattern; depth=0 < minDepth=2 → warning"
+  },
+  {
+    "id": "L4-008",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "accept",
+    "packageName": "lodash",
+    "bindingName": "debounce",
+    "intent": "debounce async function with 300ms trailing edge",
+    "priorMisses": 5,
+    "minDepth": 2,
+    "shallowAllowPatterns": [],
+    "notes": "well-warmed scenario: depth=5 >> minDepth=2; debounce with many prior misses → fully warmed; accept"
+  },
+  {
+    "id": "L4-009",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "descent-bypass-warning",
+    "packageName": "zod",
+    "bindingName": "safeParse",
+    "intent": "safe-parse JSON payload against schema without throwing",
+    "priorMisses": 1,
+    "minDepth": 3,
+    "shallowAllowPatterns": [],
+    "notes": "depth=1 < minDepth=3 (elevated threshold); single miss insufficient for a complex validation binding"
+  },
+  {
+    "id": "L4-010",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "accept",
+    "packageName": "zod",
+    "bindingName": "safeParse",
+    "intent": "safe-parse JSON payload against schema without throwing",
+    "priorMisses": 3,
+    "minDepth": 3,
+    "shallowAllowPatterns": [],
+    "notes": "depth=3 equals elevated minDepth=3; exactly warmed up → accept"
   },
   {
     "id": "L5-001",
@@ -295,5 +512,167 @@
       "disableDetection": false
     },
     "notes": "20 events with specificityScore=0.30 (< floor=0.55); mean=0.30 < 0.55 → specificity_floor alert; primary driftMetric=specificity_floor (canonical first dimension)"
+  },
+  {
+    "id": "L5-004",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "drift-alert",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 7 },
+      { "outcome": "registry-hit", "candidateCount": 8 },
+      { "outcome": "registry-hit", "candidateCount": 6 },
+      { "outcome": "registry-hit", "candidateCount": 9 },
+      { "outcome": "registry-hit", "candidateCount": 7 },
+      { "outcome": "registry-hit", "candidateCount": 8 },
+      { "outcome": "registry-hit", "candidateCount": 6 },
+      { "outcome": "registry-hit", "candidateCount": 7 },
+      { "outcome": "registry-hit", "candidateCount": 8 },
+      { "outcome": "registry-hit", "candidateCount": 7 }
+    ],
+    "expectedDriftMetric": "result_set_median",
+    "layer5Config": {
+      "rollingWindow": 10,
+      "specificityFloor": 0,
+      "descentBypassMax": 1.0,
+      "resultSetMedianMax": 5,
+      "ratioMedianMax": 999,
+      "disableDetection": false
+    },
+    "notes": "10 events with candidateCount in [6-9]; median=7 > resultSetMedianMax=5; result_set_median alert; specificity+bypass dimensions disabled to isolate"
+  },
+  {
+    "id": "L5-005",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "drift-alert",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 12.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 15.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 11.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 14.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 13.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 12.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 16.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 11.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 13.0 },
+      { "outcome": "registry-hit", "candidateCount": 1, "atomRatio": 12.0 }
+    ],
+    "expectedDriftMetric": "ratio_median",
+    "layer5Config": {
+      "rollingWindow": 10,
+      "specificityFloor": 0,
+      "descentBypassMax": 1.0,
+      "resultSetMedianMax": 999,
+      "ratioMedianMax": 4,
+      "disableDetection": false
+    },
+    "notes": "10 events all carrying atomRatio in [11-16]; median≈12.5 > ratioMedianMax=4; ratio_median alert; other dimensions disabled to isolate"
+  },
+  {
+    "id": "L5-006",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "accept",
+    "driftWindow": [
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "registry-hit", "candidateCount": 2 },
+      { "outcome": "registry-hit", "candidateCount": 2 },
+      { "outcome": "registry-hit", "candidateCount": 2 }
+    ],
+    "layer5Config": {
+      "rollingWindow": 5,
+      "specificityFloor": 0,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 999,
+      "ratioMedianMax": 999,
+      "disableDetection": false
+    },
+    "notes": "2/5 = 40% bypass rate exactly equals descentBypassMax=0.40; alert requires strictly > threshold; 0.40 > 0.40 is false → accept"
+  },
+  {
+    "id": "L5-007",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "accept",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 1 }
+    ],
+    "layer5Config": {
+      "rollingWindow": 20,
+      "specificityFloor": 0.55,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 5,
+      "ratioMedianMax": 4,
+      "disableDetection": false
+    },
+    "notes": "single event with no specificityScore and no atomRatio — insufficient data for mean/median calculations; NaN guards produce no alert; accept"
+  },
+  {
+    "id": "L5-008",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "accept",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 }
+    ],
+    "layer5Config": {
+      "rollingWindow": 20,
+      "specificityFloor": 0.55,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 5,
+      "ratioMedianMax": 4,
+      "disableDetection": true
+    },
+    "notes": "disableDetection=true: all threshold checks bypassed; forced accept regardless of window contents"
+  },
+  {
+    "id": "L5-009",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "drift-alert",
+    "driftWindow": [
+      { "outcome": "descent-bypass-warning", "candidateCount": 1, "specificityScore": 0.30 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1, "specificityScore": 0.30 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.60 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.60 }
+    ],
+    "layer5Config": {
+      "rollingWindow": 5,
+      "specificityFloor": 0.55,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 999,
+      "ratioMedianMax": 999,
+      "disableDetection": false
+    },
+    "notes": "dual-dimension alert scenario: 3/5=60% bypass > 40%; mean specificity=(0.30*3+0.60*2)/5=0.42 < 0.55 floor; both dimensions fire; primary driftMetric is the first triggered"
+  },
+  {
+    "id": "L5-010",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "accept",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 3, "specificityScore": 0.70, "atomRatio": 3.5 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.75, "atomRatio": 3.0 },
+      { "outcome": "registry-hit", "candidateCount": 4, "specificityScore": 0.65, "atomRatio": 4.0 },
+      { "outcome": "registry-hit", "candidateCount": 3, "specificityScore": 0.72, "atomRatio": 2.5 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80, "atomRatio": 3.8 }
+    ],
+    "layer5Config": {
+      "rollingWindow": 5,
+      "specificityFloor": 0.55,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 5,
+      "ratioMedianMax": 4,
+      "disableDetection": false
+    },
+    "notes": "all four dimensions healthy: mean specificity=0.724 > 0.55; bypass=0%; median candidateCount=3 < 5; median atomRatio=3.5 < 4; accept"
   }
 ]
