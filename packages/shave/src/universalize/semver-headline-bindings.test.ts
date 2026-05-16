@@ -160,7 +160,10 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
       // Engine limit: classes/range.js contains an ArrowFunction that decompose() cannot handle.
       // range.js degrades to a stub. Cycle guard proof deferred to a follow-on engine-capable slice.
       // DEC-WI510-S3-CYCLE-GUARD-REAL-WORLD-PROOF-001: updated to reflect actual engine output.
-      expect(forest.moduleCount, "satisfies moduleCount: only satisfies.js shaved (range.js stubs)").toBe(1);
+      expect(
+        forest.moduleCount,
+        "satisfies moduleCount: only satisfies.js shaved (range.js stubs)",
+      ).toBe(1);
       expect(forest.stubCount, "satisfies stubCount: range.js stubs due to engine limit").toBe(1);
       expect(rangeCount, "range.js not in module forest (stubs to engine limit)").toBe(0);
       expect(comparatorCount, "comparator.js not in module forest (unreachable via stub)").toBe(0);
@@ -264,7 +267,10 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
         }
         console.log("[satisfies sE] persisted atoms:", persistedCount);
         // satisfies.js alone (range.js stubs) produces 0 novel-glue atoms — assert pipeline ran.
-        expect(plans.length, "satisfies sE: collectForestSlicePlans must produce plans").toBeGreaterThan(0);
+        expect(
+          plans.length,
+          "satisfies sE: collectForestSlicePlans must produce plans",
+        ).toBeGreaterThan(0);
       } finally {
         await registry.close();
       }
@@ -899,7 +905,7 @@ describe("semver headline bindings -- compound interaction (real production sequ
           if (b.entry === "satisfies.js") {
             expect(forest.stubCount, "satisfies stubCount: range.js stubs").toBe(1);
           } else {
-            expect(forest.stubCount, b.name + " stubCount must be 0").toBe(0);
+            expect(forest.stubCount, `${b.name} stubCount must be 0`).toBe(0);
           }
           const firstNode = forest.nodes[0];
           expect(firstNode?.kind).toBe("module");
@@ -916,7 +922,10 @@ describe("semver headline bindings -- compound interaction (real production sequ
             }
           }
           if (b.entry !== "satisfies.js") {
-            expect(persistedCount, b.name + " compound: must persist at least one atom").toBeGreaterThan(0);
+            expect(
+              persistedCount,
+              `${b.name} compound: must persist at least one atom`,
+            ).toBeGreaterThan(0);
           }
           console.log(
             `[compound] ${b.name}: moduleCount=${forest.moduleCount} stubCount=${forest.stubCount} persisted=${persistedCount}`,
