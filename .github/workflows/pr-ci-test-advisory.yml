@@ -1,0 +1,66 @@
+# @decision DEC-CI-TEST-ADVISORY-SEPARATE-WORKFLOW-001
+# Title: test-advisory split from pr-ci.yml to escape cancel-in-progress
+# Status: accepted
+# Rationale: pr-ci.yml uses cancel-in-progress=true so new commits / origin/main
+# updates kill in-flight runs. The 20-min advisory test job was being killed
+# repeatedly (PRs #562/#566/#570/#571 all hit this; PR #570 merged with wrong
+# assertions because vitest never completed). Splitting the advisory test into
+# its own workflow with no cancel-in-progress lets it run to completion without
+# blocking the fast pr-ci.yml gates.
+# Per DEC-CI-MERGE-GATE-ENFORCE-001 this remains advisory (continue-on-error
+# at job level; not added to branch protection required checks).
+
+name: pr-ci-test-advisory
+
+on:
+  pull_request:
+    branches: [main]
+
+# DELIBERATELY NO cancel-in-progress. The whole point of this split is that
+# advisory tests should complete even when fast checks are re-fired on new
+# commits. Latest run wins per GitHub's natural queueing.
+# (Alternative considered: cancel-in-progress=true on a distinct group keyed
+# on github.run_id — but that defeats the purpose. Plain queue is correct.)
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # test-advisory — affected packages, NON-GATING
+  # DEC-CI-MERGE-GATE-ENFORCE-001: tests do NOT gate merges per operator policy
+  # ("tests that take this fucking long sure as fuck shouldn't be critical path
+  # for merges", 2026-05-11). `continue-on-error: true` at the JOB level surfaces
+  # failures in the PR UI for fast feedback but does NOT block the merge button.
+  # Slice C's branch protection MUST NOT include this job in required contexts.
+  # Moved here from pr-ci.yml by DEC-CI-TEST-ADVISORY-SEPARATE-WORKFLOW-001 to
+  # escape pr-ci.yml's cancel-in-progress, which was killing the 20-min job
+  # whenever a new commit pushed.
+  # ---------------------------------------------------------------------------
+  test-advisory:
+    name: test (affected packages, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build full workspace (required before tests can resolve workspace deps)
+        run: pnpm -r build
+
+      - name: Test affected packages (non-gating)
+        # Affected filter retained for cycle-time speed (DEC-CI-FAST-PATH-PHASE-1-001).
+        # Failure surfaces in PR UI but does NOT block merge (see continue-on-error
+        # at the job level above).
+        run: |
+          FILTER=$(bash scripts/affected-packages.sh)
+          echo "Affected filter: $FILTER"
+          eval "pnpm $FILTER test"
