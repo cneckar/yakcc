@@ -18,7 +18,13 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Artifact, assemble } from "@yakcc/compile";
-import { type BlockMerkleRoot, type SpecYak, specHash } from "@yakcc/contracts";
+import {
+  type BlockMerkleRoot,
+  type Granularity,
+  type SpecYak,
+  parseGranularity,
+  specHash,
+} from "@yakcc/contracts";
 import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
@@ -55,6 +61,7 @@ export async function compile(
     options: {
       registry: { type: "string", short: "r" },
       out: { type: "string", short: "o" },
+      granularity: { type: "string", short: "g" },
     },
     allowPositionals: true,
     strict: true,
@@ -66,6 +73,19 @@ export async function compile(
       "error: compile requires an <entry> argument (BlockMerkleRoot, spec file, or directory)",
     );
     return 1;
+  }
+
+  const granularityRaw = values.granularity;
+  let granularity: Granularity | undefined;
+  if (granularityRaw !== undefined) {
+    const parsed = parseGranularity(granularityRaw);
+    if (parsed === null) {
+      logger.error(
+        `error: --granularity must be an integer between 1 and 5 (got ${JSON.stringify(granularityRaw)})`,
+      );
+      return 1;
+    }
+    granularity = parsed;
   }
 
   const registryPath = values.registry ?? DEFAULT_REGISTRY_PATH;
@@ -147,6 +167,7 @@ export async function compile(
     try {
       artifact = await assemble(entryRoot, registry, undefined, {
         knownMerkleRoots: seedResult.merkleRoots,
+        ...(granularity !== undefined && { granularity }),
       });
     } catch (err) {
       logger.error(`error: assembly failed: ${String(err)}`);

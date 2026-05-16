@@ -226,6 +226,13 @@ export async function proposeContract(spec: ContractSpec): Promise<ProposalResul
 // ---------------------------------------------------------------------------
 
 export {
+  type Granularity,
+  DEFAULT_GRANULARITY,
+  MIN_GRANULARITY,
+  MAX_GRANULARITY,
+  parseGranularity,
+} from "./granularity.js";
+export {
   canonicalize,
   canonicalizeText,
   canonicalizeQueryText,
