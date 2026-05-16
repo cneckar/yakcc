@@ -82,6 +82,18 @@
 //   Slice 1 mechanism proof. Off-allowlist bindings (including those that could correspond
 //   to dynamic imports in the same file) are logged to importedDynamic for telemetry.
 
+// @decision DEC-WI508-S2-ASYNC-BACKGROUND-001
+// title: Miss branch wires applyShaveOnMiss() for background shave-on-miss (Slice 2)
+// status: decided (WI-508 Slice 2)
+// rationale:
+//   When intercept candidates exist but none matched (miss), Slice 2 enqueues a background
+//   shave for each missing binding via applyShaveOnMiss(). The response is enriched with
+//   shaveOnMissEnqueued=true on the per-binding ImportInterceptResult. importInterceptResults
+//   is now included even when intercepted=false (when shaveOnMissEnqueued=true), making the
+//   side-effect observable on the first-occurrence response.
+//   The observe-don't-mutate envelope (DEC-WI508-INTERCEPT-004) is preserved: the base
+//   response kind is unchanged; only shave-on-miss is fired as a side effect.
+
 import type { QueryIntentCard } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 // @decision DEC-WI508-INTERCEPT-TSMORPH-DEP-001
@@ -94,6 +106,7 @@ import {
 } from "./import-classifier.js";
 import type { EmissionContext } from "./index.js";
 import type { HookResponseWithSubstitution } from "./index.js";
+import type { ShaveOnMissResult } from "./shave-on-miss.js";
 import { CONFIDENT_THRESHOLD, yakccResolve } from "./yakcc-resolve.js";
 
 // Classification constants and extractBareName are in the shared classifier module.
@@ -148,6 +161,10 @@ export interface ImportScanResult {
 
 /**
  * Result of runImportIntercept() for a single candidate.
+ *
+ * Slice 2 adds shaveOnMissEnqueued (DEC-WI508-S2-RESPONSE-ENRICH-ADDITIVE-001):
+ * when intercepted=false and a background shave was enqueued, this field is true.
+ * Additive and backward-compatible -- Slice 1 consumers see it as undefined.
  */
 export interface ImportInterceptResult {
   readonly binding: ImportBinding;
@@ -163,6 +180,16 @@ export interface ImportInterceptResult {
   readonly behavior: string | null;
   /** The top candidate's score when intercepted=true, otherwise null. */
   readonly score: number | null;
+  /**
+   * Whether a background shave-on-miss was enqueued for this binding (Slice 2).
+   *
+   * @decision DEC-WI508-S2-RESPONSE-ENRICH-ADDITIVE-001
+   * Additive field: present when intercepted=false and applyShaveOnMiss() enqueued
+   * a background shave. Undefined when intercepted=true (no miss-path invoked) or
+   * when the miss path was not reached (Slice 1 callers, empty registry, etc.).
+   * Backward-compatible: Slice 1 consumers see this as undefined.
+   */
+  readonly shaveOnMissEnqueued?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -382,12 +409,15 @@ export function _logDynamicImports(_bindings: readonly ImportBinding[]): void {
  *   - atomize did not produce atomizedCode (Phase 3 did not fire)
  *   - emittedCode.trim().length > 0
  *
- * Sequence:
+ * Sequence (Slice 2 extension, DEC-WI508-S2-ASYNC-BACKGROUND-001):
  *   1. scanImportsForIntercept(emittedCode) -- extract foreign import bindings
  *   2. If no interceptCandidates, return base response unchanged
  *   3. runImportIntercept(candidates, registry, ctx) -- query registry per candidate
  *   4. If any intercepted=true, attach importInterceptResults to the response
- *   5. On any error, return base response unchanged
+ *   5. [NEW Slice 2] If no intercepted=true (miss), call applyShaveOnMiss() for each
+ *      candidate's first named binding. Attach importInterceptResults with
+ *      shaveOnMissEnqueued=true for enqueued bindings.
+ *   6. On any error, return base response unchanged
  *
  * @param base        - The base HookResponseWithSubstitution from substitution/atomize pass.
  * @param emittedCode - The agent's emitted source code.
@@ -427,17 +457,78 @@ export async function applyImportIntercept(
 
     const anyIntercepted = interceptResults.some((r) => r.intercepted);
 
-    if (!anyIntercepted) {
+    if (anyIntercepted) {
+      // Matched branch: attach intercept results additively -- base response kind is unchanged.
+      // The cast is safe: base.substituted is false at this call site.
+      return {
+        ...base,
+        importInterceptResults: interceptResults,
+      } as HookResponseWithSubstitution;
+    }
+
+    // -- Slice 2 miss branch (DEC-WI508-S2-ASYNC-BACKGROUND-001) -----------------
+    // No candidates matched. Enqueue background shave for each missed binding.
+    // applyShaveOnMiss() returns immediately (never blocks emission).
+    // DEC-WI508-S2-REGISTRY-IS-CANONICAL-001: same registry instance used for both paths.
+    // DEC-WI508-INTERCEPT-004: if shave-on-miss itself fails, it's caught inside
+    //   applyShaveOnMiss() — the observe-don't-mutate envelope is preserved at both levels.
+
+    const { applyShaveOnMiss } = await import("./shave-on-miss.js");
+
+    // Enrich each missed result with shaveOnMissEnqueued.
+    // anyEntryResolved tracks whether any binding had a corpus entry (resolved path).
+    // When entryResolved=false for all (corpus not found), return base unchanged to
+    // preserve pre-Slice-2 behavior for callers without the corpus installed.
+    // When entryResolved=true for at least one, attach enrichedResults so callers
+    // can observe the miss-path status (enqueued/already-queued/completed).
+    // DEC-WI508-S2-ASYNC-BACKGROUND-001.
+    const enrichedResults: ImportInterceptResult[] = [];
+    let anyEntryResolved = false;
+
+    for (const result of interceptResults) {
+      if (!result.intercepted) {
+        // Take the first named binding as the per-binding shave target.
+        const bindingName =
+          result.binding.namedImports[0] ??
+          result.binding.defaultImport ??
+          result.binding.moduleSpecifier;
+
+        let missResult: ShaveOnMissResult;
+        try {
+          missResult = applyShaveOnMiss(
+            result.binding.moduleSpecifier,
+            bindingName,
+            ctx,
+            registry,
+          );
+        } catch {
+          // applyShaveOnMiss failure must not affect hook outcome (DEC-WI508-INTERCEPT-004)
+          missResult = { shaveOnMissEnqueued: false, entryResolved: false, atomsCreated: [] };
+        }
+
+        if (missResult.entryResolved) {
+          anyEntryResolved = true;
+        }
+
+        enrichedResults.push({
+          ...result,
+          shaveOnMissEnqueued: missResult.shaveOnMissEnqueued,
+        });
+      } else {
+        enrichedResults.push(result);
+      }
+    }
+
+    // Only attach importInterceptResults when the corpus was found for at least one binding.
+    // When entryResolved=false for all (corpus not installed), return base unchanged.
+    // DEC-WI508-INTERCEPT-004: observe-don't-mutate envelope preserved.
+    if (!anyEntryResolved) {
       return base;
     }
 
-    // Attach intercept results additively -- base response kind is unchanged.
-    // The cast is safe: base.substituted is false at this call site (applyImportIntercept
-    // is only called from the substituted=false branch in executeRegistryQueryWithSubstitution).
-    // importInterceptResults lives exclusively on the substituted:false union member.
     return {
       ...base,
-      importInterceptResults: interceptResults,
+      importInterceptResults: enrichedResults,
     } as HookResponseWithSubstitution;
   } catch {
     // Any failure returns base unchanged (DEC-WI508-INTERCEPT-004)
