@@ -923,6 +923,56 @@
       },
       "expectedAtom": null,
       "rationale": "WI-510 Slice 5: date-fns@4.1.0 fixture entry. parseJSON headline binding (substitute for issue-body 'parse-tz-offset' per DEC-WI510-S5-PARSE-TZ-OFFSET-RESOLUTION-001 -- date-fns@4 ships no top-level parseTzOffset entry). Atoms produced by shave engine from date-fns/parseJSON.cjs (~4 modules). stubCount=0. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in date-fns-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-jsonwebtoken-verify-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Verify a JSON Web Token signature using the HS256 HMAC-SHA256 algorithm and return the decoded payload"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 6: jsonwebtoken@9.0.2 fixture entry. HS256-verify behavior (DEC-WI510-S6-JWT-HS256-VERIFY-BINDING-001) -- verify(token, secret, {algorithms:[HS256]}) dispatches on options.algorithms; no separate HS256-only file. Atoms produced by shave engine from jsonwebtoken/verify.js (~3-12 modules). DEC-WI510-S6-NPM-EXTERNAL-FAN-OUT-001: first WI-510 fixture with multi-element npm externalSpecifiers (jws, crypto, ms, semver). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in jsonwebtoken-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-jsonwebtoken-decode-base64url-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Decode the three base64url-encoded sections of a JSON Web Token into header, payload, and signature parts"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 6: jsonwebtoken@9.0.2 fixture entry. decode-base64url behavior (DEC-WI510-S6-JWT-DECODE-BASE64URL-BINDING-001) -- decode(token) returns {header,payload,signature}; base64url decoding is encapsulated by jws (external dep). Atoms produced by shave engine from jsonwebtoken/decode.js (1 module). Same atom as cat1-jsonwebtoken-parse-jose-header-001 (DEC-WI510-S6-JWT-PARSE-JOSE-HEADER-BINDING-001). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in jsonwebtoken-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-jsonwebtoken-parse-jose-header-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse the JOSE header of a JSON Web Token to extract the alg and kid fields for key selection"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 6: jsonwebtoken@9.0.2 fixture entry. parse-jose-header behavior (DEC-WI510-S6-JWT-PARSE-JOSE-HEADER-BINDING-001) -- decode(token, {complete:true}).header exposes the parsed JOSE header. Same source file as decode-base64url (decode.js); two issue-body headlines collapse to one atom. Same atom as cat1-jsonwebtoken-decode-base64url-001. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in jsonwebtoken-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-bcryptjs-hash-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compute a bcrypt password hash with a configurable cost factor producing a salted one-way hash for credential storage"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 6: bcryptjs@2.4.3 fixture entry. hash behavior (DEC-WI510-S6-BCRYPT-USE-BCRYPTJS-001 substitution; DEC-WI510-S6-BCRYPTJS-SINGLE-MODULE-PACKAGE-001) -- bcrypt.hashSync(s, salt) / bcrypt.hash(s, salt, cb) in dist/bcrypt.js UMD IIFE. First WI-510 single-module-package fixture. Same atom as cat1-bcryptjs-verify-001; both corpus rows point at the same merkle root. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in bcryptjs-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-bcryptjs-verify-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compare a plaintext password against a stored bcrypt hash using constant-time comparison to verify authentication"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 6: bcryptjs@2.4.3 fixture entry. verify (constant-time compare) behavior (DEC-WI510-S6-BCRYPTJS-SINGLE-MODULE-PACKAGE-001) -- bcrypt.compareSync(s, hash) / bcrypt.compare(s, hash, cb) in dist/bcrypt.js UMD IIFE. Same source file and atom as cat1-bcryptjs-hash-001 (both co-housed in the bcrypt namespace inside dist/bcrypt.js). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in bcryptjs-headline-bindings.test.ts section F."
     }
   ]
 }
