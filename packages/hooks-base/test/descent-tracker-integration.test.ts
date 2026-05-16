@@ -110,7 +110,7 @@ describe("Flow 1: zero-miss path — warning emitted", () => {
     expect(warning).not.toBeNull();
     expect(warning?.layer).toBe(4);
     expect(warning?.status).toBe("descent-bypass-warning");
-    expect(warning?.bindingKey).toBe("validator::isEmail");
+    expect(warning?.bindingKey).toBe("isEmail::isEmail"); // canonical atom-key (WI-600)
     expect(warning?.observedDepth).toBe(0);
     expect(warning?.minDepth).toBe(2);
     expect(warning?.intent).toBe("validate RFC 5321 email address");
@@ -118,11 +118,12 @@ describe("Flow 1: zero-miss path — warning emitted", () => {
     expect(warning!.suggestion.length).toBeGreaterThan(0);
   });
 
-  it("warning suggestion text references the binding key and depth values", () => {
+  it("warning suggestion text references the canonical binding key and depth values", () => {
     const cfg = makeL4Config({ minDepth: 3 });
     const warning = getAdvisoryWarning("zod", "parseAsync", "parse async input schema with zod", cfg);
 
-    expect(warning?.suggestion).toContain("zod::parseAsync");
+    // bindingKey is canonical: "parseAsync::parseAsync" (WI-600 — packageName ignored in key)
+    expect(warning?.suggestion).toContain("parseAsync::parseAsync");
     expect(warning?.suggestion).toContain("0"); // observedDepth
     expect(warning?.suggestion).toContain("3"); // minDepth
   });
@@ -179,7 +180,7 @@ describe("Flow 2: sufficient-miss path — no warning", () => {
 
     expect(warnForIsEmail).toBeNull();
     expect(warnForIsIP).not.toBeNull();
-    expect(warnForIsIP?.bindingKey).toBe("validator::isIP");
+    expect(warnForIsIP?.bindingKey).toBe("isIP::isIP"); // canonical atom-key (WI-600)
   });
 });
 
@@ -230,7 +231,7 @@ describe("Flow 3: shallow-allow bypass — no warning for primitives", () => {
     // "isEmail" is not shallow-allowed, even at depth 0
     const warning = getAdvisoryWarning("validator", "isEmail", "validate RFC 5321 email format", cfg);
     expect(warning).not.toBeNull();
-    expect(warning?.bindingKey).toBe("validator::isEmail");
+    expect(warning?.bindingKey).toBe("isEmail::isEmail"); // canonical atom-key (WI-600)
   });
 });
 
@@ -283,21 +284,28 @@ describe("Compound: import-intercept transitions → substitute advisory", () =>
     expect(warning).toBeNull();
   });
 
-  it("different packages for same binding name track independently", () => {
+  it("different packages for same binding name share the same canonical descent record (WI-600 atom-keying)", () => {
+    // After WI-600: canonicalKey ignores packageName and keys on atomName only.
+    // Two source imports of the same atomName from different packages merge into one record.
+    // This is the intended Layer 4 semantic: descent depth is per-atom, not per-import-path.
+    // See DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001 and plan §2 / §4 case 3.
     const cfg = makeL4Config({ minDepth: 2 });
     withL4Config(cfg);
 
-    // "validator" package: 2 misses — no warning
+    // Both misses go to the same canonical key "isEmail::isEmail"
     recordMiss("validator", "isEmail");
-    recordMiss("validator", "isEmail");
+    recordMiss("my-validator", "isEmail");
 
-    // "my-validator" package: 0 misses — warning expected
+    // Depth is 2 (merged) — both call sites agree the atom has been missed twice
+    expect(getDescentDepth("validator", "isEmail")).toBe(2);
+    expect(getDescentDepth("my-validator", "isEmail")).toBe(2); // same canonical key
+
+    // No warning from either call site: depth 2 >= minDepth 2
     const warnValidator = getAdvisoryWarning("validator", "isEmail", "validate RFC email address", cfg);
     const warnMyValidator = getAdvisoryWarning("my-validator", "isEmail", "validate email RFC format", cfg);
 
     expect(warnValidator).toBeNull();
-    expect(warnMyValidator).not.toBeNull();
-    expect(warnMyValidator?.bindingKey).toBe("my-validator::isEmail");
+    expect(warnMyValidator).toBeNull();
   });
 
   it("shouldWarn mirrors getAdvisoryWarning null/non-null across the minDepth boundary", () => {

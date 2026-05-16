@@ -305,7 +305,9 @@ function assertLayer4Row(row: CorpusRow): void {
     expect(warning, `[${row.id}] expected DescentBypassWarning for priorMisses=${priorMisses} (${row.notes ?? ""})`).not.toBeNull();
     expect(warning?.layer, `[${row.id}] layer discriminant must be 4`).toBe(4);
     expect(warning?.status, `[${row.id}] status must be descent-bypass-warning`).toBe("descent-bypass-warning");
-    expect(warning?.bindingKey, `[${row.id}] bindingKey format`).toBe(`${packageName}::${bindingName}`);
+    // WI-600: bindingKey is canonical atom-keyed — "bindingName::bindingName" (packageName ignored).
+    // See DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001.
+    expect(warning?.bindingKey, `[${row.id}] bindingKey format`).toBe(`${bindingName}::${bindingName}`);
     expect(warning?.observedDepth, `[${row.id}] observedDepth must equal priorMisses`).toBe(priorMisses);
     expect(warning?.minDepth, `[${row.id}] minDepth from config`).toBe(cfg.minDepth);
   } else if (row.expectedOutcome === "accept") {
