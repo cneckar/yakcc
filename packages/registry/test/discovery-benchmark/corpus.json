@@ -873,6 +873,56 @@
       },
       "expectedAtom": null,
       "rationale": "WI-510 Slice 4: nanoid@3.3.12 fixture entry. nanoid primary export behavior (DEC-WI510-S4-NANOID-PRIMARY-EXPORT-001) -- generates a compact, URL-safe ID. Atoms produced by shave engine from nanoid/index.cjs (~2 modules). DEC-WI510-S4-NODE-BUILTIN-FOREIGN-LEAF-001: crypto Node builtin emitted as ForeignLeafEntry. synthetic-tasks, expectedAtom:null, combinedScore >= 0.55 verified in nanoid-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-date-fns-parseISO-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse an ISO-8601 date-time string into a JavaScript Date object including the optional fractional seconds and timezone offset"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 5: date-fns@4.1.0 fixture entry. parseISO headline binding -- parses an ISO-8601 string into a Date. Atoms produced by shave engine from date-fns/parseISO.cjs (~4 modules: parseISO, toDate, constructFrom, constants). stubCount=0 (no external edges). DEC-WI510-S5-PER-ENTRY-SHAVE-001, DEC-WI510-S5-VERSION-PIN-001. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in date-fns-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-date-fns-formatISO-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Format a JavaScript Date object as an ISO-8601 string with optional date-only or time-only representation"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 5: date-fns@4.1.0 fixture entry. formatISO headline binding -- formats a Date as an ISO-8601 string. Atoms produced by shave engine from date-fns/formatISO.cjs (~5 modules: formatISO, _lib/addLeadingZeros, toDate, constructFrom, constants). stubCount=0. First WI-510 fixture to exercise subdirectory traversal (_lib/). DEC-WI510-S5-SUBDIRECTORY-TRAVERSAL-001. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in date-fns-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-date-fns-addDays-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Return a new Date that is the given number of days after the input Date preserving the time-of-day components"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 5: date-fns@4.1.0 fixture entry. addDays headline binding -- adds N days to a Date. Atoms produced by shave engine from date-fns/addDays.cjs (~4 modules: addDays, toDate, constructFrom, constants). stubCount=0. DEC-WI510-S5-PER-ENTRY-SHAVE-001, DEC-WI510-S5-RETURN-TO-ZERO-EXTERNAL-001. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in date-fns-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-date-fns-differenceInMs-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compute the difference in milliseconds between two Date objects as a signed integer"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 5: date-fns@4.1.0 fixture entry. differenceInMilliseconds headline binding (issue-body name 'differenceInMs' resolves to differenceInMilliseconds per DEC-WI510-S5-DIFFERENCE-IN-MS-BINDING-001). Atoms produced by shave engine from date-fns/differenceInMilliseconds.cjs (~4 modules). stubCount=0. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in date-fns-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-date-fns-parseJSON-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse an ISO-8601 date string with optional timezone offset suffix as produced by JSON.stringify(new Date()) into a Date object"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 5: date-fns@4.1.0 fixture entry. parseJSON headline binding (substitute for issue-body 'parse-tz-offset' per DEC-WI510-S5-PARSE-TZ-OFFSET-RESOLUTION-001 -- date-fns@4 ships no top-level parseTzOffset entry). Atoms produced by shave engine from date-fns/parseJSON.cjs (~4 modules). stubCount=0. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in date-fns-headline-bindings.test.ts section F."
     }
   ]
 }
