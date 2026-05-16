@@ -150,9 +150,17 @@ process.exit(code);
     "--input-type=module",
   ];
 
+  // @decision DEC-TELEMETRY-EXPORT-B6A-AUTO-DISABLE-007
+  // Inject YAKCC_TELEMETRY_DISABLED=1 into every yakcc child process spawned by B6a.
+  // This is the primary defense: selectSink() returns NoOpSink when disabled, so
+  // HttpsBatcherSink is never instantiated and no fetch() call is possible.
+  // The existing network interceptor (network-interceptor.cjs) is the secondary defense —
+  // belt-and-braces so either layer alone keeps B6a green.
+  // DEC-TELEMETRY-EXPORT-B6A-AUTO-DISABLE-007 (plans/wi-546-telemetry-export.md §2.2)
   const spawnEnv = {
     ...process.env,
     ...env,
+    YAKCC_TELEMETRY_DISABLED: "1",
     YAKCC_BENCH_INTERCEPT_OUT: interceptOut,
   };
 

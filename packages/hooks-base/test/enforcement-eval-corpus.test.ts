@@ -40,7 +40,13 @@ import {
   getAdvisoryWarning,
   resetSession,
 } from "../src/descent-tracker.js";
-import type { Layer4Config } from "../src/enforcement-config.js";
+import type { Layer4Config, Layer5Config } from "../src/enforcement-config.js";
+import {
+  recordTelemetryEvent,
+  checkDrift,
+  resetDriftSession,
+  type EventSnapshot,
+} from "../src/drift-detector.js";
 
 // ---------------------------------------------------------------------------
 // Corpus type
@@ -70,6 +76,15 @@ interface CorpusRow {
   priorMisses?: number;
   minDepth?: number;
   shallowAllowPatterns?: string[];
+  // Layer 5 fields — present only for L5-* rows
+  driftWindow?: Array<{
+    outcome: string;
+    candidateCount: number;
+    specificityScore?: number;
+    atomRatio?: number;
+  }>;
+  layer5Config?: Partial<Layer5Config>;
+  expectedDriftMetric?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +316,63 @@ function assertLayer4Row(row: CorpusRow): void {
 }
 
 // ---------------------------------------------------------------------------
+// Layer 5 assertion helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert a Layer 5 corpus row against the drift-detector module.
+ *
+ * The row encodes the window via `driftWindow` (array of EventSnapshot-like objects)
+ * and the config via `layer5Config` (partial Layer5Config merged with getDefaults().layer5).
+ *
+ * Uses the real drift-detector functions (no mocks).
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DRIFT-DETECTION-001
+ */
+const L5_CORPUS_SESSION = "corpus-l5-session";
+
+function assertLayer5Row(row: CorpusRow): void {
+  // Build the Layer5Config from row fields + defaults.
+  const defaults = getDefaults().layer5;
+  const cfg: Layer5Config = {
+    ...defaults,
+    ...(row.layer5Config ?? {}),
+  };
+
+  // Reset session state for this row.
+  resetDriftSession(L5_CORPUS_SESSION);
+
+  // Feed the window events into the rolling buffer.
+  for (const snap of row.driftWindow ?? []) {
+    const eventSnap: EventSnapshot = {
+      outcome: snap.outcome,
+      candidateCount: snap.candidateCount,
+      ...(snap.specificityScore !== undefined ? { specificityScore: snap.specificityScore } : {}),
+      ...(snap.atomRatio !== undefined ? { atomRatio: snap.atomRatio } : {}),
+    };
+    recordTelemetryEvent(L5_CORPUS_SESSION, eventSnap, cfg.rollingWindow);
+  }
+
+  const result = checkDrift(L5_CORPUS_SESSION, cfg);
+
+  if (row.expectedOutcome === "drift-alert") {
+    expect(result.status, `[${row.id}] expected drift_alert (${row.notes ?? ""})`).toBe("drift_alert");
+    expect(result.layer, `[${row.id}] layer discriminant must be 5`).toBe(5);
+    if (result.status === "drift_alert" && row.expectedDriftMetric !== undefined) {
+      expect(result.driftMetric, `[${row.id}] expected driftMetric=${row.expectedDriftMetric}`).toBe(row.expectedDriftMetric);
+    }
+  } else if (row.expectedOutcome === "accept") {
+    expect(result.status, `[${row.id}] expected ok (accept) (${row.notes ?? ""})`).toBe("ok");
+    expect(result.layer, `[${row.id}] layer discriminant must be 5`).toBe(5);
+  } else {
+    throw new Error(`[${row.id}] unexpected expectedOutcome="${row.expectedOutcome}" for a Layer 5 row`);
+  }
+
+  // Always reset after the row.
+  resetDriftSession(L5_CORPUS_SESSION);
+}
+
+// ---------------------------------------------------------------------------
 // Layer 2 assertion helper
 // ---------------------------------------------------------------------------
 
@@ -334,11 +406,13 @@ function assertLayer2Row(row: CorpusRow): void {
 beforeEach(() => {
   resetConfigOverride();
   resetSession();
+  resetDriftSession(L5_CORPUS_SESSION);
 });
 
 afterEach(() => {
   resetConfigOverride();
   resetSession();
+  resetDriftSession(L5_CORPUS_SESSION);
 });
 
 // ---------------------------------------------------------------------------
@@ -346,9 +420,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("Layer 6 eval corpus — structural invariants", () => {
-  it("corpus JSON loads successfully with ≥17 rows", async () => {
+  it("corpus JSON loads successfully with ≥20 rows", async () => {
     const rows = await loadCorpus();
-    expect(rows.length).toBeGreaterThanOrEqual(17);
+    expect(rows.length).toBeGreaterThanOrEqual(20);
   });
 
   it("every row has required fields: id, input, expectedLayer, expectedOutcome", async () => {
@@ -414,6 +488,20 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     const layer4Rows = rows.filter((r) => r.expectedLayer === 4);
     for (const row of layer4Rows) {
       expect(row.id, `id should match L4-NNN`).toMatch(/^L4-\d{3}$/);
+    }
+  });
+
+  it("S5 seeds exactly 3 Layer 5 rows", async () => {
+    const rows = await loadCorpus();
+    const layer5Rows = rows.filter((r) => r.expectedLayer === 5);
+    expect(layer5Rows.length).toBe(3);
+  });
+
+  it("all S5 row ids follow L5-NNN format", async () => {
+    const rows = await loadCorpus();
+    const layer5Rows = rows.filter((r) => r.expectedLayer === 5);
+    for (const row of layer5Rows) {
+      expect(row.id, `id should match L5-NNN`).toMatch(/^L5-\d{3}$/);
     }
   });
 });
@@ -575,9 +663,18 @@ describe("Layer 6 eval corpus — completeness gate", () => {
     expect(hasAccept, "corpus must contain at least one accept row for Layer 4").toBe(true);
   });
 
-  it("corpus has grown to 20 rows (S1=7 + S2=5 + S3=5 + S4=3)", async () => {
+  it("corpus has grown to 23 rows (S1=7 + S2=5 + S3=5 + S4=3 + S5=3)", async () => {
     const rows = await loadCorpus();
-    expect(rows.length).toBe(20);
+    expect(rows.length).toBe(23);
+  });
+
+  it("corpus covers both drift-alert and accept outcomes in Layer 5", async () => {
+    const rows = await loadCorpus();
+    const layer5Rows = rows.filter((r) => r.expectedLayer === 5);
+    const hasAlert = layer5Rows.some((r) => r.expectedOutcome === "drift-alert");
+    const hasAccept = layer5Rows.some((r) => r.expectedOutcome === "accept");
+    expect(hasAlert, "corpus must contain at least one drift-alert row").toBe(true);
+    expect(hasAccept, "corpus must contain at least one accept row for Layer 5").toBe(true);
   });
 });
 
@@ -663,6 +760,41 @@ describe("Layer 6 eval corpus — Layer 4 rows", () => {
       // Each row needs a fresh session — layer4 is stateful (miss accumulation).
       resetSession();
       assertLayer4Row(row);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer 5 eval gate — table-driven (S5 additive, wi-593-s5-layer5)
+// ---------------------------------------------------------------------------
+
+describe("Layer 6 eval corpus — Layer 5 rows", () => {
+  it("L5-001: 5/10 bypass events (50% > descentBypassMax=40%) → drift-alert (descent_bypass_rate)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-001");
+    expect(row, "L5-001 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-002: 20 clean events (specificity=0.80, candidateCount=2) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-002");
+    expect(row, "L5-002 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-003: 20 low-specificity events (score=0.30 < floor=0.55) → drift-alert (specificity_floor)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-003");
+    expect(row, "L5-003 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("all Layer 5 rows pass (catch-all sweep for future corpus additions)", async () => {
+    const rows = await loadCorpus();
+    const layer5Rows = rows.filter((r) => r.expectedLayer === 5);
+    for (const row of layer5Rows) {
+      assertLayer5Row(row);
     }
   });
 });
