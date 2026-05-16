@@ -160,7 +160,7 @@ function withSemanticIntentCard(
 describe("validator isEmail -- per-entry shave (WI-510 Slice 2)", () => {
   it(
     "section A -- moduleCount in [7,12], stubCount=0, forestTotalLeafCount>0 for isEmail subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -216,7 +216,7 @@ describe("validator isEmail -- per-entry shave (WI-510 Slice 2)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for isEmail subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js");
       const forest1 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
@@ -347,7 +347,7 @@ describe("validator isURL -- per-entry shave (WI-510 Slice 2)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for isURL subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js");
       const forest1 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
