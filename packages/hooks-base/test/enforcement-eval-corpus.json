@@ -192,5 +192,108 @@
     "minDepth": 2,
     "shallowAllowPatterns": ["^add$", "^sub$", "^mul$", "^div$", "^mod$", "^abs$", "^min$", "^max$", "^clamp$", "^lerp$"],
     "notes": "shallow-allow bypass: 'add' matches ^add$ pattern; depth=0 < minDepth=2 but shallow-allowed → no warning regardless of depth"
+  },
+  {
+    "id": "L5-001",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "drift-alert",
+    "driftWindow": [
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "descent-bypass-warning", "candidateCount": 1 },
+      { "outcome": "registry-hit", "candidateCount": 2 },
+      { "outcome": "registry-hit", "candidateCount": 2 },
+      { "outcome": "registry-hit", "candidateCount": 2 },
+      { "outcome": "registry-hit", "candidateCount": 2 },
+      { "outcome": "registry-hit", "candidateCount": 2 }
+    ],
+    "expectedDriftMetric": "descent_bypass_rate",
+    "layer5Config": {
+      "rollingWindow": 10,
+      "specificityFloor": 0,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 999,
+      "ratioMedianMax": 999,
+      "disableDetection": false
+    },
+    "notes": "5/10 = 50% bypass rate exceeds descentBypassMax=0.40; specificity and result-set dimensions disabled via floor=0 and high maxes to isolate the bypass dimension"
+  },
+  {
+    "id": "L5-002",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "accept",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.80 }
+    ],
+    "layer5Config": {
+      "rollingWindow": 20,
+      "specificityFloor": 0.55,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 5,
+      "ratioMedianMax": 4,
+      "disableDetection": false
+    },
+    "notes": "20 clean events: mean specificity=0.80 > floor=0.55; bypass rate=0%; median candidateCount=2 < 5; no ratio events. All four dimensions within thresholds → accept"
+  },
+  {
+    "id": "L5-003",
+    "input": "drift-detection-check",
+    "expectedLayer": 5,
+    "expectedOutcome": "drift-alert",
+    "driftWindow": [
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 },
+      { "outcome": "registry-hit", "candidateCount": 2, "specificityScore": 0.30 }
+    ],
+    "expectedDriftMetric": "specificity_floor",
+    "layer5Config": {
+      "rollingWindow": 20,
+      "specificityFloor": 0.55,
+      "descentBypassMax": 0.40,
+      "resultSetMedianMax": 5,
+      "ratioMedianMax": 4,
+      "disableDetection": false
+    },
+    "notes": "20 events with specificityScore=0.30 (< floor=0.55); mean=0.30 < 0.55 → specificity_floor alert; primary driftMetric=specificity_floor (canonical first dimension)"
   }
 ]

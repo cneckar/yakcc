@@ -232,5 +232,87 @@ export interface DescentBypassWarning {
   readonly suggestion: string;
 }
 
-// Layer 5 placeholder — additive per Sacred Practice 12.
-// S5 will export: DriftEnvelope (ok | drift_alert)
+// ---------------------------------------------------------------------------
+// Layer 5 — telemetry-driven drift detection (wi-593-s5-layer5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminant identifying which dimension triggered the drift alert.
+ *
+ * Each value corresponds to one of the five Layer 5 threshold dimensions:
+ *   - "specificity_floor": mean L1 specificity score fell below specificityFloor.
+ *   - "descent_bypass_rate": fraction of descent-bypass-warning events exceeded descentBypassMax.
+ *   - "result_set_median": median candidateCount over the window exceeded resultSetMedianMax.
+ *   - "ratio_median": median atom/need ratio over the window exceeded ratioMedianMax.
+ *
+ * Multiple dimensions may be violated in the same window — the alert reports the
+ * first violation encountered in the order above, plus all triggered dimensions
+ * in the `triggeredDimensions` array.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DRIFT-DETECTION-001
+ */
+export type DriftMetric =
+  | "specificity_floor"
+  | "descent_bypass_rate"
+  | "result_set_median"
+  | "ratio_median";
+
+/**
+ * Metrics computed from the rolling window at the time of a drift check.
+ *
+ * All fields are present regardless of whether an alert fires.
+ * Callers can use this for debugging and offline analysis.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DRIFT-DETECTION-001
+ */
+export interface DriftWindowMetrics {
+  /** Number of events currently in the rolling window (capped at rollingWindow). */
+  readonly windowSize: number;
+  /** Mean L1 specificity score across events that carry a score (NaN when none). */
+  readonly meanSpecificityScore: number;
+  /** Fraction of events with outcome === "descent-bypass-warning" (0..1). */
+  readonly descentBypassRate: number;
+  /** Median candidateCount across all events in the window. */
+  readonly medianResultSetSize: number;
+  /** Median atom/need ratio across events that carry a ratio (NaN when none). */
+  readonly medianAtomRatio: number;
+  /** Dimensions that crossed their configured threshold (empty = no alert). */
+  readonly triggeredDimensions: readonly DriftMetric[];
+}
+
+/**
+ * Layer 5 ACCEPT envelope: the rolling window metrics are within all thresholds.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DRIFT-DETECTION-001
+ */
+export interface DriftAcceptEnvelope {
+  readonly layer: 5;
+  readonly status: "ok";
+  readonly metrics: DriftWindowMetrics;
+}
+
+/**
+ * Layer 5 ALERT envelope: one or more rolling-window metrics crossed a threshold.
+ *
+ * When this envelope is returned, captureTelemetry emits an additional event
+ * with outcome="drift-alert" (additive — does not block the original event).
+ * The driftMetric field carries the primary triggered dimension.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DRIFT-DETECTION-001
+ */
+export interface DriftAlertEnvelope {
+  readonly layer: 5;
+  readonly status: "drift_alert";
+  /**
+   * Primary triggered dimension (first violation in the canonical check order:
+   * specificity_floor → descent_bypass_rate → result_set_median → ratio_median).
+   */
+  readonly driftMetric: DriftMetric;
+  /** Full metrics at the time of the alert (all dimensions, including non-triggering ones). */
+  readonly metrics: DriftWindowMetrics;
+  /** Advisory text for telemetry and future LLM-facing surfaces. */
+  readonly suggestion: string;
+}
+
+/** Discriminated union result of checkDrift(). */
+export type DriftResult = DriftAcceptEnvelope | DriftAlertEnvelope;
