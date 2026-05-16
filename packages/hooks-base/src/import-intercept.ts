@@ -460,6 +460,23 @@ export async function applyImportIntercept(
     if (anyIntercepted) {
       // Matched branch: attach intercept results additively -- base response kind is unchanged.
       // The cast is safe: base.substituted is false at this call site.
+      //
+      // WI-508 Slice 3: record registry hits for skip-shave heuristic.
+      // DEC-WI508-S3-SKIP-HIT-THRESHOLD-001: hit count drives skip-shave on subsequent misses.
+      for (const result of interceptResults) {
+        if (result.intercepted) {
+          const bindingName =
+            result.binding.namedImports[0] ??
+            result.binding.defaultImport ??
+            result.binding.moduleSpecifier;
+          try {
+            const { recordImportHit } = await import("./shave-on-miss-state.js");
+            recordImportHit(result.binding.moduleSpecifier, bindingName);
+          } catch {
+            // Hit recording failure must not affect the hook path (observe-don't-mutate).
+          }
+        }
+      }
       return {
         ...base,
         importInterceptResults: interceptResults,

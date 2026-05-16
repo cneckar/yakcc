@@ -28,7 +28,7 @@ export { assemblyScriptBackend } from "./as-backend.js";
 
 // Artifact type and assembly entry point
 export type { Artifact, AssembleOptions } from "./assemble.js";
-export { assemble } from "./assemble.js";
+export { assemble, resolveGranularity } from "./assemble.js";
 
 // Resolution types (exported for advanced callers and testing)
 export type { ResolvedBlock, ResolutionResult, SubBlockResolver } from "./resolve.js";

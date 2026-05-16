@@ -71,6 +71,17 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, normalize } from "node:path";
 import type { Registry } from "@yakcc/registry";
+import {
+  _resetShaveOnMissState,
+  getState,
+  listPackageBindings,
+  makeBindingKey,
+  resolvePreemptiveMissThreshold,
+  resolveSkipShaveHitThreshold,
+  updateState,
+  withCompletion,
+  withMissIncrement,
+} from "./shave-on-miss-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -193,9 +204,10 @@ async function runShaveWorker(entryPath: string, registry: Registry): Promise<re
     intentStrategy: "static",
     foreignPolicy: "allow",
   });
-  return result.atoms
-    .filter((a) => a.merkleRoot !== undefined)
-    .map((a) => (a.merkleRoot as string).slice(0, 8));
+  // biome-ignore lint/suspicious/noExplicitAny: @yakcc/shave atom type is unavailable at tsc typecheck time (workspace dep not built)
+  return (result.atoms as any[])
+    .filter((a: { merkleRoot?: string }) => a.merkleRoot !== undefined)
+    .map((a: { merkleRoot?: string }) => (a.merkleRoot as string).slice(0, 8));
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +284,25 @@ export function applyShaveOnMiss(
     return { shaveOnMissEnqueued: false, entryResolved: false, atomsCreated: [] };
   }
 
-  const key = makeQueueKey(packageName, entryPath);
-  const existing = _queue.get(key);
+  // ── WI-508 Slice 3: skip-shave heuristics (DEC-WI508-S3-SKIP-HIT-THRESHOLD-001) ──
+  // Check the persistent hot-set before touching the in-memory queue.
+  const bindingKey = makeBindingKey(packageName, binding);
+  const state = getState();
+
+  // Skip if this binding was already successfully shaved in a prior process run.
+  if (state.completedBindings.includes(bindingKey)) {
+    return { shaveOnMissEnqueued: false, entryResolved: true, atomsCreated: [] };
+  }
+
+  // Skip if we've seen N+ registry hits for this binding -- atom is stable in registry.
+  const hitCount = state.hitCounts[bindingKey] ?? 0;
+  if (hitCount >= resolveSkipShaveHitThreshold()) {
+    return { shaveOnMissEnqueued: false, entryResolved: true, atomsCreated: [] };
+  }
+
+  // ── In-memory queue dedup (DEC-WI508-S2-IN-PROC-BACKGROUND-001) ─────────────
+  const queueKey = makeQueueKey(packageName, entryPath);
+  const existing = _queue.get(queueKey);
 
   if (existing !== undefined) {
     if (existing.state === "completed") {
@@ -282,13 +311,27 @@ export function applyShaveOnMiss(
     return { shaveOnMissEnqueued: false, entryResolved: true, atomsCreated: [] };
   }
 
+  // ── Record miss and check preemptive shave trigger ────────────────────────────
+  // DEC-WI508-S3-PREEMPTIVE-MISS-THRESHOLD-001.
+  const updatedState = withMissIncrement(state, packageName);
+  updateState(updatedState);
+
+  const missCount = updatedState.missCounts[packageName] ?? 0;
+  if (missCount >= resolvePreemptiveMissThreshold()) {
+    // N+ misses for this package -- preemptively shave all known bindings.
+    // Runs in the background; dedup prevents re-shaving already-completed entries.
+    queueMicrotask(() => {
+      applyPreemptivePackageShave(packageName, ctx, registry, corpusDir);
+    });
+  }
+
   emitShaveOnMissTelemetry("shave-on-miss-enqueued", ctx.intent);
 
   let resolveDrain!: () => void;
   const drainPromise = new Promise<void>((resolve) => {
     resolveDrain = resolve;
   });
-  _queue.set(key, { state: "pending", drain: drainPromise });
+  _queue.set(queueKey, { state: "pending", drain: drainPromise });
 
   // Start the background worker. Deliberately not awaited.
   // DEC-WI508-S2-ASYNC-BACKGROUND-001.
@@ -300,18 +343,65 @@ export function applyShaveOnMiss(
   queueMicrotask(async () => {
     try {
       const atomsCreated = await runShaveWorker(entryPath, registry);
-      _queue.set(key, { state: "completed", atomsCreated });
+      _queue.set(queueKey, { state: "completed", atomsCreated });
       emitShaveOnMissTelemetry("shave-on-miss-completed", ctx.intent, { atomsCreated });
     } catch (err) {
-      _queue.set(key, { state: "error", error: err });
+      _queue.set(queueKey, { state: "error", error: err });
       const errorMsg = err instanceof Error ? err.message : String(err);
       emitShaveOnMissTelemetry("shave-on-miss-error", ctx.intent, { errorMsg });
     } finally {
+      // Persist completion regardless of success/error so future processes skip re-shaving.
+      // Rationale: if the shave errors (CJS format, missing deps, etc.), future attempts
+      // will likely also error -- recording the attempt prevents wasteful re-shave retries.
+      // Hit-count based skip (DEC-WI508-S3-SKIP-HIT-THRESHOLD-001) handles the case where
+      // the atom IS in the registry; this handles the "already tried" case.
+      // DEC-WI508-S3-STATE-PERSIST-001.
+      try {
+        updateState(withCompletion(getState(), bindingKey));
+      } catch {
+        // State update failure must not block drain resolution.
+      }
       resolveDrain();
     }
   });
 
   return { shaveOnMissEnqueued: true, entryResolved: true, atomsCreated: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Preemptive package shave (WI-508 Slice 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Enqueue background shaves for all known bindings in a package.
+ *
+ * Called when missCount[packageName] >= PREEMPTIVE_SHAVE_MISS_THRESHOLD.
+ * Scans the corpus lib/ directory and calls applyShaveOnMiss() for each binding.
+ * Existing queue dedup ensures already-queued or completed bindings are skipped.
+ *
+ * DEC-WI508-S3-PREEMPTIVE-SCAN-001.
+ * DEC-WI508-S3-PREEMPTIVE-MISS-THRESHOLD-001.
+ *
+ * @param packageName - NPM package name to scan.
+ * @param ctx         - Emission context (shared intent for telemetry).
+ * @param registry    - Registry instance.
+ * @param corpusDir   - Root of the corpus directory.
+ */
+export function applyPreemptivePackageShave(
+  packageName: string,
+  ctx: { readonly intent: string },
+  registry: Registry,
+  corpusDir: string,
+): void {
+  try {
+    const bindings = listPackageBindings(packageName, corpusDir);
+    for (const bindingName of bindings) {
+      // applyShaveOnMiss handles dedup (in-memory queue + completedBindings + hitCounts).
+      applyShaveOnMiss(packageName, bindingName, ctx, registry);
+    }
+  } catch {
+    // Preemptive shave failure must not affect the hook path.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -356,4 +446,9 @@ export async function awaitShaveOnMissDrain(timeoutMs = 60_000): Promise<void> {
 /** Reset the module-scope queue. Test-only. */
 export function _resetShaveOnMissQueue(): void {
   _queue.clear();
+  // Also reset the persistent state cache so tests start from a clean slate.
+  // DEC-WI508-S3-STATE-PERSIST-001.
+  _resetShaveOnMissState();
 }
+
+export { _resetShaveOnMissState } from "./shave-on-miss-state.js";
