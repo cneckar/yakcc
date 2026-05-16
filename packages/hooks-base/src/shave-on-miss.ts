@@ -292,7 +292,12 @@ export function applyShaveOnMiss(
 
   // Start the background worker. Deliberately not awaited.
   // DEC-WI508-S2-ASYNC-BACKGROUND-001.
-  void (async () => {
+  // @decision: Use queueMicrotask instead of void IIFE. The void (async () =>
+  // {...})() pattern produces a VoidExpression node the shave engine cannot
+  // decompose (DidNotReachAtomError), breaking two-pass bootstrap equivalence
+  // CI. queueMicrotask(async () => {...}) is a plain function-call expression
+  // the engine handles correctly, with identical fire-and-forget semantics.
+  queueMicrotask(async () => {
     try {
       const atomsCreated = await runShaveWorker(entryPath, registry);
       _queue.set(key, { state: "completed", atomsCreated });
@@ -304,7 +309,7 @@ export function applyShaveOnMiss(
     } finally {
       resolveDrain();
     }
-  })();
+  });
 
   return { shaveOnMissEnqueued: true, entryResolved: true, atomsCreated: [] };
 }
