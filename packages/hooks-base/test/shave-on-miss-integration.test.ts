@@ -27,11 +27,13 @@
  *   - No new SQLite tables
  */
 
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EmbeddingProvider } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImportInterceptResult } from "../src/import-intercept.js";
 import {
   type HookResponseWithSubstitution,
@@ -80,10 +82,23 @@ type ResponseWithMiss = HookResponseWithSubstitution & {
 };
 
 // ---------------------------------------------------------------------------
-// Suite teardown
+// Suite setup / teardown
 // ---------------------------------------------------------------------------
 
 const savedCorpusDir = process.env.YAKCC_SHAVE_ON_MISS_CORPUS_DIR;
+
+let tempDir: string;
+
+beforeEach(() => {
+  tempDir = join(tmpdir(), `shave-on-miss-integration-test-${process.pid}-${Date.now()}`);
+  mkdirSync(tempDir, { recursive: true });
+  // Isolate persistent state per test so tests never share the default
+  // ~/.yakcc/shave-on-miss-state.json path. DEC-WI508-S3-STATE-PERSIST-001.
+  process.env.YAKCC_SHAVE_ON_MISS_STATE_PATH = join(tempDir, "test-state.json");
+  // Disable preemptive shave to prevent cross-test state contamination.
+  // DEC-WI508-S3-PREEMPTIVE-MISS-THRESHOLD-001.
+  process.env.YAKCC_PREEMPTIVE_SHAVE_MISS_THRESHOLD = "999";
+});
 
 afterEach(() => {
   _resetShaveOnMissQueue();
@@ -95,6 +110,13 @@ afterEach(() => {
   }
   // biome-ignore lint/performance/noDelete: env-var removal is intentional
   delete process.env.YAKCC_HOOK_DISABLE_SUBSTITUTE;
+  // biome-ignore lint/performance/noDelete: env-var removal is intentional
+  delete process.env.YAKCC_SHAVE_ON_MISS_STATE_PATH;
+  // biome-ignore lint/performance/noDelete: env-var removal is intentional
+  delete process.env.YAKCC_PREEMPTIVE_SHAVE_MISS_THRESHOLD;
+  if (existsSync(tempDir)) {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

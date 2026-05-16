@@ -699,13 +699,35 @@ export {
  * applyShaveOnMiss and awaitShaveOnMissDrain are exported for consumers and tests.
  * ShaveOnMissResult is the result type for the miss-branch entry function.
  * _resetShaveOnMissQueue is exported as a test helper (test-only; production does not call it).
+ *
+ * @decision DEC-WI508-S3-STATE-PERSIST-001
+ * WI-508 Slice 3 exports: applyPreemptivePackageShave + state management helpers.
+ * State-management symbols (_resetShaveOnMissState, recordImportHit, etc.) are test-only
+ * or called internally from import-intercept; not intended for end-user consumption.
  */
 export type { ShaveOnMissResult } from "./shave-on-miss.js";
 export {
   applyShaveOnMiss,
+  applyPreemptivePackageShave,
   awaitShaveOnMissDrain,
   resolveCorpusDir,
   resolveEntryPath,
   _resetShaveOnMissQueue,
+  _resetShaveOnMissState,
 } from "./shave-on-miss.js";
+
+// WI-508 Slice 3 -- state management surface (test-only helpers + hit recording).
+export type { ShaveOnMissState } from "./shave-on-miss-state.js";
+export {
+  resolveStatePath,
+  loadShaveOnMissState,
+  saveShaveOnMissState,
+  resolveSkipShaveHitThreshold,
+  resolvePreemptiveMissThreshold,
+  makeBindingKey,
+  listPackageBindings,
+  recordImportHit,
+  getState,
+  updateState,
+} from "./shave-on-miss-state.js";
 
