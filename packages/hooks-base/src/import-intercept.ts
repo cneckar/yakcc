@@ -391,6 +391,13 @@ export async function runImportIntercept(
       // Layer 4 — descent-depth tracking (wi-592 S4, DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001)
       // Record miss or hit per binding so substitute.ts can read descent depth
       // at substitution time. Failures are swallowed (observe-don't-mutate).
+      //
+      // WI-600 / DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001: descent-tracker.ts canonicalizes
+      // keys internally on bindingName only ("bindingName::bindingName"), ignoring the
+      // moduleSpecifier argument. Do NOT change the call signature here — the canonical
+      // key derivation is internal to descent-tracker.ts. Both this site (recordMiss/
+      // recordHit with real moduleSpecifier) and substitute.ts (getAdvisoryWarning with
+      // atomName as proxy) converge on the same canonical key via canonicalKey().
       // -----------------------------------------------------------------------
       try {
         const { recordMiss: l4RecordMiss, recordHit: l4RecordHit } = await import("./descent-tracker.js");

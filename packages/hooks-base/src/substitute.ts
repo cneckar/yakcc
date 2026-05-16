@@ -211,6 +211,55 @@ export interface BindingShape {
 }
 
 // ---------------------------------------------------------------------------
+// Behavior-summary normalization — DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum rendered behavior-summary length, including ellipsis when truncated.
+ * Chosen to keep the contract comment under ~200 chars even with long atom names
+ * and guarantees — token-cost discipline per DEC-HOOK-PHASE-3-001.
+ *
+ * @decision DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001
+ * @title Append normalized spec.behavior as inline trailer on contract comment
+ * @status accepted
+ * @rationale
+ *   B5-coherence 2026-05-14 identified opaque-hash as the dominant failure mode
+ *   (36/37 of 156 turns). The LLM treats yakcc:<hash> as a token with no semantic
+ *   meaning in subsequent turns. Appending a normalized behavior summary binds
+ *   the behavior anchor to the same comment line as the atom name and hash,
+ *   enabling multi-turn LLM coherence without restructuring the existing token
+ *   boundary (yakcc:<hash> remains intact and contiguous). Capped at 80 chars
+ *   for token-cost discipline.
+ *   Cross-reference: #610, DEC-HOOK-PHASE-3-001.
+ */
+const MAX_BEHAVIOR_SUMMARY_LENGTH = 80;
+
+/**
+ * Normalize and truncate spec.behavior for inline rendering.
+ *
+ * Returns null when the behavior field is missing, empty after trim, or only
+ * whitespace — caller must omit the trailer in that case.
+ *
+ * Normalization steps (applied in order):
+ *   1. Replace embedded newlines (\r, \n) with a single space (defense-in-depth;
+ *      upstream canonicalization already prevents newlines, but we never trust it).
+ *   2. Collapse runs of whitespace to a single space.
+ *   3. Trim leading/trailing whitespace.
+ *   4. If length > MAX_BEHAVIOR_SUMMARY_LENGTH, truncate to 77 chars + "...".
+ *
+ * @decision DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001
+ * @param raw - The raw spec.behavior string (may be undefined).
+ * @returns Normalized behavior summary, or null when the field is absent/empty.
+ */
+export function normalizeBehaviorForEmit(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+  const collapsed = raw.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) return null;
+  if (collapsed.length <= MAX_BEHAVIOR_SUMMARY_LENGTH) return collapsed;
+  return `${collapsed.slice(0, MAX_BEHAVIOR_SUMMARY_LENGTH - 3)}...`;
+}
+
+// ---------------------------------------------------------------------------
 // Contract comment rendering — Phase 3 D-HOOK-4
 // ---------------------------------------------------------------------------
 
@@ -284,7 +333,13 @@ export function renderContractComment(atomName: string, atomHash: string, spec: 
   // Truncate hash to first 8 characters per DEC-HOOK-PHASE-3-001.
   const shortHash = atomHash.slice(0, 8);
 
-  return `// @atom ${atomName} ${parenthetical} — yakcc:${shortHash}`;
+  const base = `// @atom ${atomName} ${parenthetical} — yakcc:${shortHash}`;
+
+  // Append normalized behavior summary when present (DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001).
+  // The yakcc:<hash> token boundary is preserved — we only add trailing text inside the comment.
+  const behavior = normalizeBehaviorForEmit(spec.behavior);
+  if (behavior === null) return base;
+  return `${base} — ${behavior}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -485,14 +540,11 @@ export async function executeSubstitution(
   // Step 4: Layer 4 — descent-depth advisory warning (DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001).
   // Runs AFTER Layer 3 (which may reject) and BEFORE rendering. Advisory only: never rejects.
   // The binding name is the atomName from the extracted shape (most precise identifier).
-  // v1: packageName falls back to atomName — CandidateMatch does not expose a package-level
-  // address field. Import-intercept already recorded the miss/hit against the real module
-  // specifier, so the tracking key used by import-intercept may differ from this key.
-  // Both keys resolve to "pkg::binding" via makeBindingKey; the miss/hit recorded by
-  // import-intercept (using the real module specifier) is the authoritative descent signal.
-  // The advisory warning check here is best-effort: it re-reads whatever depth was
-  // accumulated by import-intercept for any (packageName, binding) pair matching the
-  // atomName. In practice the winning atom's name matches the import-intercept binding.
+  // WI-600 / DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001: descent-tracker.ts now canonicalizes keys
+  // internally on atomName only ("binding::binding"), so the packageName passed here is ignored
+  // in the actual storage key. Passing atomName as both packageName and binding is correct:
+  // import-intercept records misses via recordMiss(moduleSpecifier, bindingName) but the
+  // canonical key ignores moduleSpecifier. Both sides converge on "atomName::atomName".
   let descentBypassWarning: DescentBypassWarning | null = null;
   try {
     const l4cfg = getEnforcementConfig().layer4;
