@@ -1,0 +1,51 @@
+[
+  {
+    "id": "L1-001",
+    "input": "utility for handling stuff",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "stop_word (utility, stuff) + meta_word implied; classic vague-intent exemplar from #579 body"
+  },
+  {
+    "id": "L1-002",
+    "input": "validate input",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "too_short (2 words, below MIN_WORDS=4) — stop_word_present not triggered because 'input' is not a stop-word; rejected by length"
+  },
+  {
+    "id": "L1-003",
+    "input": "helper",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "single_word AND stop_word; single_word path takes priority and returns immediately"
+  },
+  {
+    "id": "L1-004",
+    "input": "isEmail RFC 5321 subset",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "4 words, no stop/meta words, implicit verb encoded in 'is' prefix — passes through correctly"
+  },
+  {
+    "id": "L1-005",
+    "input": "split string on first :// substring",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "action verb (split) + I/O hint (:// substring) — fully specific"
+  },
+  {
+    "id": "L1-006",
+    "input": "general parser",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "meta_word (general) + too_short (2 words) — dual rejection reasons"
+  },
+  {
+    "id": "L1-007",
+    "input": "convert hex pair %XX to single byte",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "action verb (convert) + I/O specifics (to single byte) — high-quality specific intent"
+  }
+]

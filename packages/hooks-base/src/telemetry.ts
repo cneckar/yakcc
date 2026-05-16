@@ -74,7 +74,16 @@ export type TelemetryEvent = {
     | "atomized"
     | "shave-on-miss-enqueued"
     | "shave-on-miss-completed"
-    | "shave-on-miss-error";
+    | "shave-on-miss-error"
+    // @decision DEC-HOOK-ENF-LAYER1-TELEMETRY-001
+    // title: "intent-too-broad" additive outcome for Layer 1 intent-specificity gate (wi-579 S1)
+    // status: decided (wi-579-hook-enforcement S1)
+    // rationale:
+    //   Additive expansion following the #569/#574 shave-on-miss pattern (Sacred Practice 12).
+    //   Emitted via outcomeOverride="intent-too-broad" at the Layer 1 gate in
+    //   executeRegistryQueryWithSubstitution (index.ts). outcomeFromResponse() unchanged.
+    //   Cross-reference: plans/wi-579-hook-enforcement-architecture.md ��7.6
+    | "intent-too-broad"; // S1 additive (DEC-HOOK-ENF-LAYER1-TELEMETRY-001)
   // ---------------------------------------------------------------------------
   // Phase 2 additions â€” additive fields (backwards-compatible per #217 spec).
   // Old telemetry consumers see these as optional (undefined in Phase 1 events).
@@ -212,8 +221,8 @@ export function hashIntent(intentText: string): string {
  */
 export function outcomeFromResponse(
   response: HookResponse,
-  outcomeOverride?: "atomized",
-): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" {
+  outcomeOverride?: "atomized" | "intent-too-broad",
+): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" | "intent-too-broad" {
   // Note: shave-on-miss outcome values are emitted directly via appendTelemetryEvent
   // from shave-on-miss.ts, not via this function. This function handles only the
   // four standard outcomes plus the atomized override.
@@ -292,7 +301,11 @@ export function captureTelemetry(opts: {
   latencyBudgetExceeded?: boolean;
   // Phase 3 / D-HOOK-7 additions â€” additive, all optional.
   /** Explicit outcome override â€” used by the atomize path to set "atomized". */
-  outcomeOverride?: "atomized";
+  /**
+   * Explicit outcome override. Used by the atomize path to set "atomized" and by
+   * the Layer 1 gate to set "intent-too-broad" (DEC-HOOK-ENF-LAYER1-TELEMETRY-001).
+   */
+  outcomeOverride?: "atomized" | "intent-too-broad";
   /** BMR prefixes of atoms created. Non-empty only for outcome === "atomized". */
   atomsCreated?: readonly string[];
   sessionId?: string;

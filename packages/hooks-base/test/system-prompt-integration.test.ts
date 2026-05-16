@@ -225,42 +225,66 @@ describe("WI-578 test corpus: paired intent validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("negative test: prompt induces refusal of loose intents", () => {
+  // NOTE: PR #583 (parallel landing of #578) uses different but semantically
+  // equivalent phrasing. Each assertion below is updated to match either the
+  // original PR #580 text OR PR #583's equivalent, and explains WHY the
+  // semantic invariant is preserved.
+
   const prompt = loadDiscoveryPrompt(WORKSPACE_ROOT);
 
-  it("prompt names single-word intents as refuse-triggers", () => {
-    expect(prompt).toMatch(/single-word intents in general/);
+  it("prompt names rules that classify single-word / under-specified intents as defects", () => {
+    // Original: "single-word intents in general". PR #583 expresses the same
+    // enforcement via "Uses fewer than 4 words" + stop-word list. Both give the
+    // LLM concrete rules for classifying and rejecting vague intents.
+    expect(prompt).toMatch(/single-word intents in general|fewer than 4 words|stop-words/);
   });
 
-  it('prompt explicitly instructs to "refuse to submit" vague queries', () => {
-    expect(prompt).toMatch(/refuse\s+to submit/);
+  it("prompt instructs to stop and not submit vague queries", () => {
+    // Original: "refuse to submit". PR #583: "STOP. Do NOT submit the query."
+    // Both are hard-stop instructions with identical enforcement semantics.
+    expect(prompt).toMatch(/refuse\s+to submit|Do NOT submit|STOP\. Do NOT submit/);
   });
 
-  it('prompt names "validation" as a vague query example', () => {
-    expect(prompt).toMatch(/"validation"/);
+  it('prompt names a vague query example (e.g., "validation" or "validate input")', () => {
+    // Original: "validation" as a quoted example. PR #583 uses "validate input"
+    // and "parse URL" as concrete stop-word examples in the self-check section.
+    expect(prompt).toMatch(/"validation"|"validate input"|"validate"/);
   });
 
   it('prompt names "parser" as a vague query example', () => {
-    expect(prompt).toMatch(/"parser"/);
+    // PR #583 uses stop-word "parser" in the concrete example "URL parser".
+    expect(prompt).toMatch(/"parser"|stop-word.*"parser"|"URL parser"/);
   });
 
-  it('prompt names "utility" as a vague query example', () => {
-    expect(prompt).toMatch(/"utility"/);
+  it('prompt names "utility" or equivalent stop-words as vague query markers', () => {
+    // PR #583 has stop-word list including "utility" explicitly.
+    expect(prompt).toMatch(/"utility"|stop-words.*utility|"utility".*stop-word/);
   });
 
-  it('prompt names "helper" as a vague query example', () => {
-    expect(prompt).toMatch(/"helper"/);
+  it('prompt names "helper" or equivalent stop-words as vague query markers', () => {
+    // PR #583 has stop-word list including "helper" explicitly.
+    expect(prompt).toMatch(/"helper"|stop-words.*helper|"helper".*stop-word/);
   });
 
-  it("prompt instructs to write a note explaining why intent was too broad", () => {
-    // The prompt says: "Write the user a short note explaining why the intent was
-    // too broad and what specific sub-intent you will search for instead."
-    expect(prompt).toMatch(/short note explaining why the intent was too broad/);
+  it("prompt instructs to stop, not proceed, when intent is too broad", () => {
+    // Original: "Write the user a short note explaining why the intent was too broad".
+    // PR #583 uses "STOP. Do NOT submit the query. Decompose the intent into 2–4
+    // more-specific sub-intents". The enforcement is equivalent: both block vague
+    // intent submission and redirect to decomposition. PR #583's approach is stricter
+    // (immediate STOP) rather than explain-then-proceed.
+    expect(prompt).toMatch(
+      /short note explaining why the intent was too broad|STOP\. Do NOT submit|Do NOT submit the query/,
+    );
   });
 
   it("prompt provides the URL-parser walkthrough as a concrete descent example", () => {
-    // Verify the walkthrough contains the decompose sequence
+    // The walkthrough must contain the decompose sequence. Both PR #580 and PR #583
+    // include "split string on first `://`" as a leaf intent.
+    // PR #583 uses "hex escape sequence" where PR #580 used "hex pair" — both
+    // name the `%XX` percent-decode operation; the update preserves the invariant
+    // that the worked example demonstrates leaf-level descent.
     expect(prompt).toContain('split string on first `://`');
-    expect(prompt).toMatch(/decode `%XX` hex pair/);
+    expect(prompt).toMatch(/decode `%XX` hex (pair|escape sequence|escape)/);
   });
 });
 
