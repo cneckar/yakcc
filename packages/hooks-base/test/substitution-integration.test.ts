@@ -505,7 +505,8 @@ describe("executeRegistryQueryWithSubstitution — telemetry", () => {
       const lines = result.substitutedCode.split("\n");
 
       // Line 0: contract comment in D-HOOK-4 format
-      expect(lines[0]).toMatch(/^\/\/ @atom listOfInts \(.* => .*\) — yakcc:[0-9a-f]{8}$/);
+      // Format (WI-610): `// @atom <name> (<sig>) — yakcc:<hash[:8]>` with optional ` — <behavior>` trailer.
+      expect(lines[0]).toMatch(/^\/\/ @atom listOfInts \(.* => .*\) — yakcc:[0-9a-f]{8}/);
 
       // The hash[:8] in the comment must match the first 8 chars of the block's merkleRoot
       const hashInComment = lines[0]?.match(/yakcc:([0-9a-f]{8})/)?.[1];
