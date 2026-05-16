@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ref": "post-579",
+  "commitSha": "TBD-post-merge",
+  "status": "placeholder",
+  "note": "Filled by separate bench-run WI; full B1-latency benchmark suite is heavy compute and deferred per #594 acceptance. B1 measures end-to-end hook latency (pre-query L1-L3 gates + result-set gate + substitution). Post-#579 baseline needed to quantify enforcement overhead introduced by S1-S5 layers.",
+  "dimensions": {
+    "p50_ms": null,
+    "p95_ms": null,
+    "p99_ms": null,
+    "gate_overhead_ms": null
+  }
+}

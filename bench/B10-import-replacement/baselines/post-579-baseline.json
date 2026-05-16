@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ref": "post-579",
+  "commitSha": "TBD-post-merge",
+  "status": "placeholder",
+  "note": "Filled by separate bench-run WI; full B10-import-replacement benchmark suite is heavy compute and deferred per #594 acceptance. B10 measures import-replacement success rate across the heavy-import corpus. Post-#579 baseline captures the effect of L4 descent tracking on import replacement accuracy — the descent tracker should reduce premature substitution on cold bindings.",
+  "dimensions": {
+    "replacement_success_rate": null,
+    "cold_binding_bypass_rate": null,
+    "warm_binding_bypass_rate": null,
+    "l4_warning_to_hit_ratio": null
+  }
+}
