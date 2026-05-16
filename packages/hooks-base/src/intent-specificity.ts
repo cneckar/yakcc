@@ -16,200 +16,100 @@
 //   Default behavior is ENFORCE. The env var is for breakglass and test isolation only.
 //   @decision DEC-HOOK-ENF-LAYER1-ESCAPE-HATCH-001
 //
-//   Cross-reference: plans/wi-579-hook-enforcement-architecture.md §5.2
+//   S2 retrofit (wi-590-s2-layer2, DEC-HOOK-ENF-CONFIG-001):
+//   All threshold constants were hardcoded here in S1. They are now DERIVED FROM
+//   the central enforcement-config.ts module at call time. The exported constants
+//   (MIN_WORDS, MAX_WORDS, STOP_WORDS, META_WORDS, ACTION_VERBS) are PRESERVED as
+//   snapshots of the default values for backward compatibility with existing callers
+//   and tests. Layer-module logic reads from the config via getEnforcementConfig()
+//   at call time; the exported constant snapshots serve as documentation and as the
+//   values used by callers that import them directly (which is fine — they match defaults).
+//
+//   Cross-reference: plans/wi-579-hook-enforcement-architecture.md §5.2,
+//                    docs/enforcement-config.md, enforcement-config.ts
 
 import type { IntentSpecificityResult } from "./enforcement-types.js";
+import { getDefaults, getEnforcementConfig } from "./enforcement-config.js";
+import type { EnforcementConfig } from "./enforcement-config.js";
 
 export type { IntentSpecificityResult } from "./enforcement-types.js";
 export type { IntentAcceptEnvelope, IntentRejectEnvelope, IntentRejectReason } from "./enforcement-types.js";
 
 // ---------------------------------------------------------------------------
-// Threshold constants — sole authority per plan §10 invariants
+// Exported constant snapshots — default values for backward compatibility.
+//
+// @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
+// title: Exported constants are snapshots of enforcement-config defaults (S2 retrofit)
+// status: decided (wi-590-s2-layer2)
+// rationale:
+//   S1 hardcoded thresholds directly in this file. S2 (wi-590-s2-layer2) introduces a
+//   central enforcement-config.ts module (DEC-HOOK-ENF-CONFIG-001) as the SOLE source
+//   of truth. The S1-exported constants (MIN_WORDS, MAX_WORDS, STOP_WORDS, META_WORDS,
+//   ACTION_VERBS) are retained as snapshots of the config defaults to preserve the public
+//   API for existing callers (index.ts exports, intent-specificity.test.ts imports).
+//
+//   IMPORTANT: the exported constants reflect DEFAULT values only. When a config file or
+//   env var overrides a threshold, scoreIntentSpecificity() uses the overridden values —
+//   but the exported constants retain the default snapshot. This is acceptable because:
+//   (a) Existing callers that import these constants use them for documentation/assertion
+//       purposes, not for gating decisions.
+//   (b) All production gating goes through scoreIntentSpecificity(), which reads from the
+//       live config at call time via getEnforcementConfig().
+//
+//   S3-S6: follow this same pattern — export default snapshots for API compat while all
+//   production logic reads from getEnforcementConfig().
 // ---------------------------------------------------------------------------
+
+const _defaults = getDefaults().layer1;
 
 /**
  * Minimum number of whitespace-tokenized words an intent must have.
- * Intents shorter than this are categorically underspecified.
+ * Snapshot of the enforcement-config default (4). Production gating reads from config.
  *
- * @decision DEC-HOOK-ENF-LAYER1-MIN-WORDS-001
- * Value 4 matches the lower bound in the #579 issue body.
+ * @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
  */
-export const MIN_WORDS = 4;
+export const MIN_WORDS: number = _defaults.minWords;
 
 /**
  * Maximum number of whitespace-tokenized words an intent may have.
- * Intents longer than this are likely copy-paste artifacts or doc blobs.
+ * Snapshot of the enforcement-config default (20). Production gating reads from config.
  *
- * @decision DEC-HOOK-ENF-LAYER1-MAX-WORDS-001
- * Value 20 matches the upper bound in the #579 issue body.
+ * @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
  */
-export const MAX_WORDS = 20;
-
-// ---------------------------------------------------------------------------
-// Stop-word list
-// ---------------------------------------------------------------------------
+export const MAX_WORDS: number = _defaults.maxWords;
 
 /**
- * Stop-words that signal a generic, non-specific intent.
- * Any intent whose token list contains one of these strings (exact token match,
- * lowercased) is rejected with reason "stop_word_present".
+ * Stop-words snapshot — the default set from enforcement-config.ts.
+ * Production gating reads from the live config at call time.
  *
  * @decision DEC-HOOK-ENF-LAYER1-STOP-WORDS-001
+ * @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
  * The base 8 from #579 body + `processor` and `worker` for additional breadth.
  * Do NOT add entries here without a companion corpus row in enforcement-eval-corpus.json.
  */
-export const STOP_WORDS: ReadonlySet<string> = new Set([
-  "things",
-  "stuff",
-  "utility",
-  "helper",
-  "manager",
-  "handler",
-  "service",
-  "system",
-  "processor",
-  "worker",
-]);
-
-// ---------------------------------------------------------------------------
-// Meta-word list
-// ---------------------------------------------------------------------------
+export const STOP_WORDS: ReadonlySet<string> = new Set(_defaults.stopWords);
 
 /**
- * Meta-words that signal vague, catch-all intent framing.
- * Any intent whose token list contains one of these strings (exact token match,
- * lowercased) is rejected with reason "meta_word_present".
+ * Meta-words snapshot — the default set from enforcement-config.ts.
+ * Production gating reads from the live config at call time.
  *
  * @decision DEC-HOOK-ENF-LAYER1-META-WORDS-001
+ * @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
  * The base 4 from #579 body + `any`, `several`, `misc`, `generic` for breadth.
  */
-export const META_WORDS: ReadonlySet<string> = new Set([
-  "various",
-  "general",
-  "common",
-  "some",
-  "any",
-  "several",
-  "misc",
-  "generic",
-]);
-
-// ---------------------------------------------------------------------------
-// Action-verb allowlist
-// ---------------------------------------------------------------------------
+export const META_WORDS: ReadonlySet<string> = new Set(_defaults.metaWords);
 
 /**
- * Curated set of action verbs. An intent must contain at least one token
- * that exactly matches (lowercased) an entry here to pass the action-verb check.
+ * Action-verb allowlist snapshot — the default set from enforcement-config.ts.
+ * Production gating reads from the live config at call time.
  *
  * @decision DEC-HOOK-ENF-LAYER1-ACTION-VERBS-001
+ * @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
  * Positive signal complements the negative stop/meta-word heuristics.
  * Verbs are all lowercase; comparison is done after lowercasing the token.
  * The list covers the most common atom operations in the yakcc registry corpus.
- * "isemail", "isuuid", etc. are not in this list because they are nouns used
- * as function names — they pass through the word-count and stop/meta checks
- * without needing an action verb (the intent "isEmail RFC 5321 subset" has
- * the implicit verb "validate" encoded in the "is-" prefix — it passes because
- * it has ≥4 words and no stop/meta words, not because of this check).
- *
- * If an intent consistently fails the action-verb check incorrectly, add the
- * verb here and add a companion corpus row.
  */
-export const ACTION_VERBS: ReadonlySet<string> = new Set([
-  "parse",
-  "validate",
-  "encode",
-  "decode",
-  "hash",
-  "compare",
-  "split",
-  "join",
-  "filter",
-  "map",
-  "reduce",
-  "sort",
-  "find",
-  "match",
-  "extract",
-  "convert",
-  "serialize",
-  "deserialize",
-  "normalize",
-  "sanitize",
-  "format",
-  "render",
-  "build",
-  "emit",
-  "read",
-  "write",
-  "append",
-  "prepend",
-  "trim",
-  "pad",
-  "slice",
-  "chunk",
-  "flatten",
-  "merge",
-  "diff",
-  "patch",
-  "compress",
-  "decompress",
-  "encrypt",
-  "decrypt",
-  "sign",
-  "verify",
-  "generate",
-  "create",
-  "delete",
-  "update",
-  "insert",
-  "select",
-  "query",
-  "scan",
-  "index",
-  "tokenize",
-  "lex",
-  "compile",
-  "transpile",
-  "transform",
-  "project",
-  "fold",
-  "unfold",
-  "group",
-  "partition",
-  "zip",
-  "unzip",
-  "pack",
-  "unpack",
-  "escape",
-  "unescape",
-  "quote",
-  "unquote",
-  "wrap",
-  "unwrap",
-  "resolve",
-  "reject",
-  "retry",
-  "throttle",
-  "debounce",
-  "batch",
-  "stream",
-  "pipe",
-  "fork",
-  "join",
-  "collect",
-  "drain",
-  "flush",
-  "reset",
-  "clamp",
-  "lerp",
-  "round",
-  "truncate",
-  "abs",
-  "sum",
-  "count",
-  "measure",
-]);
+export const ACTION_VERBS: ReadonlySet<string> = new Set(_defaults.actionVerbs);
 
 // ---------------------------------------------------------------------------
 // I/O hint detection helpers (advisory — raises score only)
@@ -240,7 +140,7 @@ function hasIoHint(intent: string): boolean {
 
 /**
  * Tokenize an intent string into lowercase words by splitting on whitespace.
- * Punctuation attached to words is stripped before matching (e.g. "string," → "string").
+ * Punctuation attached to words is stripped before matching (e.g. "string," -> "string").
  */
 function tokenize(intent: string): readonly string[] {
   return intent
@@ -260,22 +160,26 @@ function tokenize(intent: string): readonly string[] {
  * Score = clamp01(
  *   0.5
  *   + 0.1  if has_io_hint
- *   + 0.1  if wordCount ∈ [6, 14]
+ *   + 0.1  if wordCount in [6, 14]
  *   + min(0.3, 0.05 * count_of_specific_tokens)
  * )
  *
- * where specific_tokens = tokens that are in ACTION_VERBS or have length > 6.
+ * where specific_tokens = tokens that are in actionVerbs or have length > 6.
  * This rewards richer, more descriptive intents without blocking on word length.
  *
  * The score is telemetry-only; Layer 5 aggregates it in a rolling window.
  */
-function computeScore(intent: string, tokens: readonly string[]): number {
+function computeScore(
+  intent: string,
+  tokens: readonly string[],
+  actionVerbs: ReadonlySet<string>,
+): number {
   const wordCount = tokens.length;
   const ioBonus = hasIoHint(intent) ? 0.1 : 0;
   const lengthBonus = wordCount >= 6 && wordCount <= 14 ? 0.1 : 0;
 
   const specificTokenCount = tokens.filter(
-    (t) => ACTION_VERBS.has(t) || t.length > 6,
+    (t) => actionVerbs.has(t) || t.length > 6,
   ).length;
   const specificityBonus = Math.min(0.3, 0.05 * specificTokenCount);
 
@@ -291,7 +195,7 @@ const SUGGESTION_TEXT =
   "INTENT_TOO_BROAD: intent failed specificity gate.\n" +
   "Refusing to query the registry. Per docs/system-prompts/yakcc-discovery.md,\n" +
   "decompose this into specific sub-intents and resubmit each.\n" +
-  'Example: "validation" → "isEmail (RFC 5321 subset)", "isUUID v4",\n' +
+  'Example: "validation" -> "isEmail (RFC 5321 subset)", "isUUID v4",\n' +
   '"validateCreditCard (Luhn)".';
 
 // ---------------------------------------------------------------------------
@@ -306,16 +210,33 @@ const SUGGESTION_TEXT =
  *   - { layer: 1, status: "intent_too_broad", reasons, suggestion } — reject; do NOT query.
  *
  * This function is pure (no I/O, no async). It is safe to call synchronously
- * in the hot hook path. All threshold constants are declared in this file and
- * imported nowhere else — this file is the single authority.
+ * in the hot hook path.
+ *
+ * S2 retrofit: all thresholds are now read from the central enforcement-config.ts
+ * module via getEnforcementConfig() (DEC-HOOK-ENF-CONFIG-001). Pass a custom config
+ * in tests via setConfigOverride() / resetConfigOverride() (no param needed here).
  *
  * Escape hatch: YAKCC_HOOK_DISABLE_INTENT_GATE=1 bypasses this layer at the
  * call site in index.ts and import-intercept.ts; this function itself does NOT
  * check the env var (callers own the bypass check).
  *
  * @decision DEC-HOOK-ENF-LAYER1-INTENT-SPECIFICITY-001
+ * @decision DEC-HOOK-ENF-LAYER1-CONSTANTS-RETROFIT-001
  */
-export function scoreIntentSpecificity(intent: string): IntentSpecificityResult {
+export function scoreIntentSpecificity(
+  intent: string,
+  _config?: EnforcementConfig,
+): IntentSpecificityResult {
+  // Read the live config — honors setConfigOverride() in tests and env/file overrides
+  // in production. The optional _config param is accepted but ignored in favor of
+  // getEnforcementConfig() to ensure the shared memoization and override mechanism works.
+  const cfg = getEnforcementConfig().layer1;
+  const minWords = cfg.minWords;
+  const maxWords = cfg.maxWords;
+  const stopWords = new Set(cfg.stopWords);
+  const metaWords = new Set(cfg.metaWords);
+  const actionVerbs = new Set(cfg.actionVerbs);
+
   const tokens = tokenize(intent);
   const wordCount = tokens.length;
   const reasons: Array<import("./enforcement-types.js").IntentRejectReason> = [];
@@ -333,11 +254,11 @@ export function scoreIntentSpecificity(intent: string): IntentSpecificityResult 
   }
 
   // --- Length checks ---
-  if (wordCount === 0 || wordCount < MIN_WORDS) {
+  if (wordCount === 0 || wordCount < minWords) {
     // @decision DEC-HOOK-ENF-LAYER1-MIN-WORDS-001
     reasons.push("too_short");
   }
-  if (wordCount > MAX_WORDS) {
+  if (wordCount > maxWords) {
     // @decision DEC-HOOK-ENF-LAYER1-MAX-WORDS-001
     reasons.push("too_long");
   }
@@ -345,7 +266,7 @@ export function scoreIntentSpecificity(intent: string): IntentSpecificityResult 
   // --- Stop-word check ---
   // @decision DEC-HOOK-ENF-LAYER1-STOP-WORDS-001
   for (const token of tokens) {
-    if (STOP_WORDS.has(token)) {
+    if (stopWords.has(token)) {
       reasons.push("stop_word_present");
       break;
     }
@@ -354,7 +275,7 @@ export function scoreIntentSpecificity(intent: string): IntentSpecificityResult 
   // --- Meta-word check ---
   // @decision DEC-HOOK-ENF-LAYER1-META-WORDS-001
   for (const token of tokens) {
-    if (META_WORDS.has(token)) {
+    if (metaWords.has(token)) {
       reasons.push("meta_word_present");
       break;
     }
@@ -365,10 +286,10 @@ export function scoreIntentSpecificity(intent: string): IntentSpecificityResult 
   // reason set for telemetry — but it can only produce a reject if nothing
   // else already did AND the word-count bracket is valid.
   // @decision DEC-HOOK-ENF-LAYER1-ACTION-VERBS-001
-  const hasActionVerb = tokens.some((t) => ACTION_VERBS.has(t));
+  const hasActionVerb = tokens.some((t) => actionVerbs.has(t));
 
   // Boolean-predicate prefix signal: tokens starting with "is", "has", or "can"
-  // encode an implicit action verb ("isEmail" ≈ "validates email").
+  // encode an implicit action verb ("isEmail" ~= "validates email").
   // Per plan §5.2: "isEmail RFC 5321 subset" accepts because the 'is-' prefix
   // encodes the validation intent — it does not require a standalone action verb.
   // This check is separate from ACTION_VERBS so the list stays pure verb forms.
@@ -379,12 +300,12 @@ export function scoreIntentSpecificity(intent: string): IntentSpecificityResult 
   //   TypeScript boolean predicates (isEmail, isUUID, hasProperty, canRetry) encode
   //   the action verb as a morphological prefix. Requiring a standalone action verb
   //   for these intents would reject all "isX/hasX" registry queries, which contradicts
-  //   the plan §5.2 exemplar ("isEmail RFC 5321 subset" → accept).
+  //   the plan §5.2 exemplar ("isEmail RFC 5321 subset" -> accept).
   //   Cross-reference: plans/wi-579-hook-enforcement-architecture.md §5.2
   const hasBooleanPrefixVerb = tokens.some(
-    (t) => t.startsWith("is") && t.length > 2 ||
-           t.startsWith("has") && t.length > 3 ||
-           t.startsWith("can") && t.length > 3,
+    (t) => (t.startsWith("is") && t.length > 2) ||
+           (t.startsWith("has") && t.length > 3) ||
+           (t.startsWith("can") && t.length > 3),
   );
 
   // If no stop/meta/length reason yet, check for missing action verb.
@@ -406,7 +327,7 @@ export function scoreIntentSpecificity(intent: string): IntentSpecificityResult 
   return {
     layer: 1,
     status: "ok",
-    score: computeScore(intent, tokens),
+    score: computeScore(intent, tokens, actionVerbs),
   };
 }
 
