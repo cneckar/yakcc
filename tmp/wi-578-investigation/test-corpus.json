@@ -1,0 +1,86 @@
+{
+  "$schema": "https://yakcc.dev/schemas/prompt-test-corpus/v1",
+  "description": "WI-578 paired intent corpus: loose (pre-rewrite) vs tight (post-rewrite expected). Used by packages/hooks-base/test/system-prompt-integration.test.ts to verify the prompt rewrite changes observable behavior. Loose intents should be refused or self-corrected under the new prompt; tight intents are the expected specific search targets.",
+  "version": "1",
+  "workflowId": "wi-578-hook-prompt-rewrite",
+  "pairs": [
+    {
+      "id": 1,
+      "loose": "validation",
+      "tight": "validate email per RFC 5322 local-part subset, no display name",
+      "looseReason": "single-word generic intent; no verb, no specifics",
+      "tightReason": "specific verb 'validate', named standard RFC 5322, explicit constraint 'no display name'"
+    },
+    {
+      "id": 2,
+      "loose": "parser",
+      "tight": "parse RFC 3986 URL into {scheme, host, path, query, fragment}",
+      "looseReason": "single-word generic intent; no verb, no specifics",
+      "tightReason": "specific verb 'parse', named standard RFC 3986, explicit output shape"
+    },
+    {
+      "id": 3,
+      "loose": "date helper",
+      "tight": "format ISO 8601 timestamp to UTC string with millisecond precision",
+      "looseReason": "two-word noun phrase; 'helper' is generic; no verb, no format, no precision",
+      "tightReason": "specific verb 'format', named standard ISO 8601, explicit output format and precision"
+    },
+    {
+      "id": 4,
+      "loose": "sanitize input",
+      "tight": "strip HTML tags from string, preserve text content, decode &amp; entities",
+      "looseReason": "generic verb 'sanitize'; 'input' is not a noun specifying what kind or what output",
+      "tightReason": "specific verb 'strip', named target 'HTML tags', explicit preservation and decoding rules"
+    },
+    {
+      "id": 5,
+      "loose": "hash",
+      "tight": "BLAKE3-256 hex digest of a UTF-8 string",
+      "looseReason": "single-word generic intent; no algorithm, no input encoding, no output format",
+      "tightReason": "specific algorithm 'BLAKE3-256', explicit output format 'hex digest', explicit input encoding 'UTF-8'"
+    },
+    {
+      "id": 6,
+      "loose": "compare",
+      "tight": "deep structural equality for JSON values (no NaN, no functions)",
+      "looseReason": "single-word generic intent; compare what, how, edge cases unknown",
+      "tightReason": "specific adjective 'deep structural', named type 'JSON values', explicit exclusions 'no NaN, no functions'"
+    },
+    {
+      "id": 7,
+      "loose": "retry",
+      "tight": "retry async function with exponential backoff: base=100ms, factor=2, max=5 tries",
+      "looseReason": "single-word generic intent; no timing model, no limit, no async context",
+      "tightReason": "specific strategy 'exponential backoff', explicit parameters base, factor, max"
+    },
+    {
+      "id": 8,
+      "loose": "throttle",
+      "tight": "throttle a function: at most one call per N ms, drop intermediate calls",
+      "looseReason": "single-word generic intent; no rate, no drop/queue semantics",
+      "tightReason": "explicit rate constraint 'at most one call per N ms', explicit drop semantics"
+    },
+    {
+      "id": 9,
+      "loose": "format",
+      "tight": "format number with thousands separator and fixed 2 decimal places",
+      "looseReason": "single-word generic intent; format what, how, for what locale",
+      "tightReason": "specific formatting rules: thousands separator, fixed 2 decimal places"
+    },
+    {
+      "id": 10,
+      "loose": "slug",
+      "tight": "convert string to URL slug: lowercase, hyphenate spaces, strip non-ASCII",
+      "looseReason": "single-word noun; no transformations specified",
+      "tightReason": "specific verb 'convert', explicit transformations: lowercase, hyphenate, strip non-ASCII"
+    }
+  ],
+  "looseDefinition": {
+    "description": "A loose intent is one that: (a) is a single word or a generic noun phrase with no specific verb, (b) lacks named standards/algorithms, (c) lacks output shape or precision constraints, (d) would match many unrelated atoms in the registry.",
+    "requiredAbsence": ["specific verb", "named standard", "explicit constraint", "output format"]
+  },
+  "tightDefinition": {
+    "description": "A tight intent is one that: (a) contains a specific action verb, (b) names the relevant standard or algorithm where applicable, (c) specifies output shape and precision, (d) would produce a focused, discriminating registry query.",
+    "requiredPresence": ["specific verb or named algorithm"]
+  }
+}

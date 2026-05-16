@@ -430,6 +430,61 @@ rank-1 is surfaced.
 
 ---
 
+### Q8: Descent-and-Compose Discipline — WI-578 prompt rewrite (2026-05-15)
+
+**Decision:** Rewrite `docs/system-prompts/yakcc-discovery.md` from a polite suggestion into an
+imperative descent-and-compose discipline. This is a D4 ADR revision as required by the authority
+comment at the top of the prompt file.
+
+**What changed:**
+
+The original Q4 prompt (locked in this ADR) offered soft guidance:
+
+- "first call `yakcc_resolve` with a structured intent"
+- "Reserve hand-written code for project-specific business logic"
+- "(a) widen the query … and re-issue" on `no_match`
+
+The revised prompt (`docs/system-prompts/yakcc-discovery.md` as of WI-578) replaces that
+guidance with imperative rules:
+
+- "You MUST start every search with the most specific intent you can articulate"
+- "You MUST NOT widen an intent to make a search hit"
+- "There are NO carve-outs"
+- A mandatory self-check step before every `yakcc_resolve` call
+- Descent-on-miss rule: decompose, query each piece, compose upward
+- A verbatim URL-parser walkthrough as the canonical protocol
+- Explicit `refuse` instruction for single-word or vague intents
+
+**Why:** GH #578 (label: `load-bearing`) documented that the original prompt produced loose
+initial intents in practice — "validation," "parser," "helper" — resulting in oversized atoms
+that carry unused capabilities. The soft-suggestion framing allowed LLMs to rationalize skipping
+discovery by treating generic operations as "business logic." The imperative rewrite closes that
+escape hatch.
+
+**Invariants verified (grep-level, DEC-HOOK-PROMPT-DESCENT-001):**
+- `grep -c "You MUST" docs/system-prompts/yakcc-discovery.md` ≥ 4
+- `grep -c "You MUST NOT" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "NO carve-outs" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -ci "self-check" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "URL parser" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "You SHOULD consider\|Try to\|When possible\|Reserve hand-written code"` = 0
+- `grep -ci "business logic\|one-off\|application-specific"` = 0
+
+**What is NOT changed:** The D4 design decisions Q1–Q7 remain in force. The tool call shape,
+evidence rendering contract, 4-band protocol, `status` enum, `ConfidenceMode` type, failure mode
+shapes, and D4/D5 boundary are all unchanged. Only the system-prompt text (previously locked
+verbatim in Q4) is updated. The Q4 "locked text" section above is now superseded by the revised
+file at `docs/system-prompts/yakcc-discovery.md`.
+
+**Rollback:** `git revert` the WI-578 landing commit. The prompt file reverts to its previous
+49-line form; behavior reverts to the pre-#578 baseline.
+
+**Issue:** https://github.com/cneckar/yakcc/issues/578
+**Decision ID:** DEC-HOOK-PROMPT-DESCENT-001
+**Date:** 2026-05-15
+
+---
+
 ### Q7: Boundary with D5 (quality measurement)
 
 **Decision:** D4 pins **interaction shape** in v1; D5 measures and tunes **calibration knobs**.
@@ -835,6 +890,7 @@ The implementation split follows the WI assignments established by D1, D2, and D
 
 ## References
 
+- Issue #578 (WI-578 — Descent-and-Compose prompt rewrite; D4 ADR revision in Q8)
 - Issue #154 (this work item — V3-DISCOVERY-D4)
 - Issue #153 (D3 — V3-DISCOVERY-D3)
 - Issue #152 (D2 — V3-DISCOVERY-D2)
