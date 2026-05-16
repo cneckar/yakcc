@@ -144,6 +144,60 @@ export interface Layer2Config {
 }
 
 /**
+ * Configuration for Layer 4 (descent-depth tracker — advisory, non-blocking).
+ *
+ * Layer 4 tracks how many times a (packageName, binding) pair has been missed
+ * before a hit. When a substitution is attempted with fewer than minDepth prior
+ * misses AND the intent does not match any shallow-allow pattern, a
+ * DescentBypassWarning is attached to the SubstitutionResult. The substitution
+ * still proceeds — Layer 4 is advisory only (DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001).
+ *
+ * @decision DEC-HOOK-ENF-LAYER4-MIN-DEPTH-001
+ * title: minDepth default 2 — at least 2 misses required before substitution is "warm"
+ * status: decided (wi-592-s4-layer4)
+ * rationale:
+ *   Two prior misses signal that the LLM tried the binding at least twice and the
+ *   registry could not satisfy it. A substitution at depth 0 or 1 means the agent
+ *   jumped straight to compose/substitute without adequately exploring the descent
+ *   path. minDepth=2 is the minimum "warm" threshold — calibration-pending on B4/B9
+ *   sweep data exactly as per the shave-on-miss thresholds in DEC-WI508-S3-THRESHOLD-CALIBRATION-PENDING-001.
+ *   Env: YAKCC_DESCENT_MIN_DEPTH
+ *
+ * @decision DEC-HOOK-ENF-LAYER4-SHALLOW-ALLOW-001
+ * title: shallowAllowPatterns bootstrap with arithmetic primitives
+ * status: decided (wi-592-s4-layer4)
+ * rationale:
+ *   Primitive operations (add, sub, mul, div, mod, abs, min, max, clamp, lerp) are
+ *   so small and unambiguous that no descent exploration is needed before substituting.
+ *   These are the canonical "depth-0 is fine" cases. The list is intentionally short;
+ *   future slices can expand it as the registry matures.
+ *   Env: (no env override; config file only for list control)
+ */
+export interface Layer4Config {
+  /**
+   * Minimum number of prior misses for a binding before substitution is considered
+   * "warmed-up". When descent depth (miss count) < minDepth and the intent does not
+   * match any shallowAllowPattern, a DescentBypassWarning is attached.
+   * Default: 2 (DEC-HOOK-ENF-LAYER4-MIN-DEPTH-001).
+   * Env: YAKCC_DESCENT_MIN_DEPTH
+   */
+  readonly minDepth: number;
+  /**
+   * Regex patterns (case-insensitive) matching binding names that are allowed to
+   * substitute at any depth without a warning. Primitives like "add", "sub", etc.
+   * Default: ["^add$", "^sub$", "^mul$", "^div$", "^mod$", "^abs$", "^min$", "^max$", "^clamp$", "^lerp$"]
+   * (DEC-HOOK-ENF-LAYER4-SHALLOW-ALLOW-001).
+   */
+  readonly shallowAllowPatterns: readonly string[];
+  /**
+   * When true, descent tracking is disabled entirely (no warnings emitted).
+   * Equivalent to YAKCC_HOOK_DISABLE_DESCENT_TRACKING=1.
+   * Default: false.
+   */
+  readonly disableTracking: boolean;
+}
+
+/**
  * Central enforcement configuration shape.
  *
  * S4-S6 implementers: append layer4/layer5/layer6 keys here following
@@ -155,6 +209,7 @@ export interface EnforcementConfig {
   readonly layer1: Layer1Config;
   readonly layer2: Layer2Config;
   readonly layer3: Layer3Config;
+  readonly layer4: Layer4Config;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +354,23 @@ const DEFAULT_ACTION_VERBS: readonly string[] = [
  *
  * @decision DEC-HOOK-ENF-CONFIG-001
  */
+/**
+ * Default shallow-allow patterns (DEC-HOOK-ENF-LAYER4-SHALLOW-ALLOW-001).
+ * Primitives that are always safe to substitute at depth 0 — no descent needed.
+ */
+const DEFAULT_SHALLOW_ALLOW_PATTERNS: readonly string[] = [
+  "^add$",
+  "^sub$",
+  "^mul$",
+  "^div$",
+  "^mod$",
+  "^abs$",
+  "^min$",
+  "^max$",
+  "^clamp$",
+  "^lerp$",
+];
+
 export function getDefaults(): EnforcementConfig {
   return {
     layer1: {
@@ -318,6 +390,11 @@ export function getDefaults(): EnforcementConfig {
       ratioThreshold: 10,
       minFloor: 20,
       disableGate: false,
+    },
+    layer4: {
+      minDepth: 2,
+      shallowAllowPatterns: DEFAULT_SHALLOW_ALLOW_PATTERNS,
+      disableTracking: false,
     },
   };
 }
@@ -350,6 +427,11 @@ interface PartialEnforcementConfigFile {
     ratioThreshold: number;
     minFloor: number;
     disableGate: boolean;
+  }>;
+  layer4?: Partial<{
+    minDepth: number;
+    shallowAllowPatterns: string[];
+    disableTracking: boolean;
   }>;
 }
 
@@ -454,6 +536,45 @@ function validateConfigFile(raw: unknown, filePath: string): PartialEnforcementC
     }
   }
 
+  // Validate layer4 block
+  if ("layer4" in obj && obj.layer4 !== undefined) {
+    const l4 = obj.layer4;
+    if (typeof l4 !== "object" || l4 === null || Array.isArray(l4)) {
+      throw new TypeError(`enforcement-config: "${filePath}" layer4 must be an object`);
+    }
+    const l4obj = l4 as Record<string, unknown>;
+    if ("minDepth" in l4obj) {
+      if (typeof l4obj.minDepth !== "number") {
+        throw new TypeError(`enforcement-config: "${filePath}" layer4.minDepth must be a number`);
+      }
+      if (!Number.isInteger(l4obj.minDepth)) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer4.minDepth must be an integer`);
+      }
+      if ((l4obj.minDepth as number) < 0) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer4.minDepth must be >= 0`);
+      }
+    }
+    if ("shallowAllowPatterns" in l4obj) {
+      if (!Array.isArray(l4obj.shallowAllowPatterns)) {
+        throw new TypeError(
+          `enforcement-config: "${filePath}" layer4.shallowAllowPatterns must be an array of strings`,
+        );
+      }
+      for (const item of l4obj.shallowAllowPatterns as unknown[]) {
+        if (typeof item !== "string") {
+          throw new TypeError(
+            `enforcement-config: "${filePath}" layer4.shallowAllowPatterns must contain only strings`,
+          );
+        }
+      }
+    }
+    if ("disableTracking" in l4obj && typeof l4obj.disableTracking !== "boolean") {
+      throw new TypeError(
+        `enforcement-config: "${filePath}" layer4.disableTracking must be a boolean`,
+      );
+    }
+  }
+
   return raw as PartialEnforcementConfigFile;
 }
 
@@ -490,6 +611,10 @@ function loadFromFile(filePath: string, defaults: EnforcementConfig): Enforcemen
       ...defaults.layer3,
       ...partial.layer3,
     },
+    layer4: {
+      ...defaults.layer4,
+      ...partial.layer4,
+    },
   };
 }
 
@@ -508,6 +633,8 @@ function loadFromFile(filePath: string, defaults: EnforcementConfig): Enforcemen
  *   YAKCC_RESULT_SET_MAX=<int>         → layer2.maxConfident
  *   YAKCC_RESULT_SET_MAX_OVERALL=<int> → layer2.maxOverall
  *   YAKCC_RESULT_CONFIDENT_THRESHOLD=<float> → layer2.confidentThreshold
+ *   YAKCC_DESCENT_MIN_DEPTH=<int>      → layer4.minDepth
+ *   YAKCC_HOOK_DISABLE_DESCENT_TRACKING=1 → layer4.disableTracking = true
  *
  * @internal
  */
@@ -515,9 +642,11 @@ function applyEnvOverrides(config: EnforcementConfig, env: NodeJS.ProcessEnv): E
   let layer1 = { ...config.layer1 };
   let layer2 = { ...config.layer2 };
   let layer3 = { ...config.layer3 };
+  let layer4 = { ...config.layer4 };
   let l1Changed = false;
   let l2Changed = false;
   let l3Changed = false;
+  let l4Changed = false;
 
   // layer1 overrides
   if (env.YAKCC_HOOK_DISABLE_INTENT_GATE === "1") {
@@ -575,12 +704,26 @@ function applyEnvOverrides(config: EnforcementConfig, env: NodeJS.ProcessEnv): E
     l3Changed = true;
   }
 
-  if (!l1Changed && !l2Changed && !l3Changed) return config;
+  // layer4 overrides
+  if (env.YAKCC_DESCENT_MIN_DEPTH !== undefined) {
+    const v = Number.parseInt(env.YAKCC_DESCENT_MIN_DEPTH, 10);
+    if (!Number.isNaN(v) && v >= 0) {
+      layer4 = { ...layer4, minDepth: v };
+      l4Changed = true;
+    }
+  }
+  if (env.YAKCC_HOOK_DISABLE_DESCENT_TRACKING === "1") {
+    layer4 = { ...layer4, disableTracking: true };
+    l4Changed = true;
+  }
+
+  if (!l1Changed && !l2Changed && !l3Changed && !l4Changed) return config;
 
   return {
     layer1: l1Changed ? layer1 : config.layer1,
     layer2: l2Changed ? layer2 : config.layer2,
     layer3: l3Changed ? layer3 : config.layer3,
+    layer4: l4Changed ? layer4 : config.layer4,
   };
 }
 

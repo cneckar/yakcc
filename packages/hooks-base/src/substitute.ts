@@ -51,6 +51,7 @@ import type { SpecYak } from "@yakcc/contracts";
 import type { CandidateMatch } from "@yakcc/registry";
 import { enforceAtomSizeRatio, computeAtomComplexity, computeNeedComplexity } from "./atom-size-ratio.js";
 import { getEnforcementConfig } from "./enforcement-config.js";
+import type { DescentBypassWarning } from "./enforcement-types.js";
 
 // ---------------------------------------------------------------------------
 // Score constants — D2 auto-accept thresholds
@@ -376,6 +377,19 @@ export type SubstitutionResult =
       readonly top1Score: number;
       /** Gap between top-1 and top-2 combinedScore. */
       readonly top1Gap: number;
+      /**
+       * Layer 4 advisory warning (DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001).
+       *
+       * Present when the substitution succeeded but the descent depth for the
+       * winning candidate's binding was below minDepth and the intent did not
+       * match any shallowAllowPattern. null when no warning was triggered or
+       * when descent tracking is disabled.
+       *
+       * NON-BLOCKING: the substitution proceeds regardless of this field.
+       * Callers should forward this to telemetry and may surface it to
+       * observability tooling.
+       */
+      readonly descentBypassWarning: DescentBypassWarning | null;
     };
 
 /**
@@ -468,7 +482,32 @@ export async function executeSubstitution(
     return { substituted: false, reason: "binding-extract-failed" };
   }
 
-  // Step 4: Attempt to recover SpecYak from the winning candidate's specCanonicalBytes.
+  // Step 4: Layer 4 — descent-depth advisory warning (DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001).
+  // Runs AFTER Layer 3 (which may reject) and BEFORE rendering. Advisory only: never rejects.
+  // The binding name is the atomName from the extracted shape (most precise identifier).
+  // v1: packageName falls back to atomName — CandidateMatch does not expose a package-level
+  // address field. Import-intercept already recorded the miss/hit against the real module
+  // specifier, so the tracking key used by import-intercept may differ from this key.
+  // Both keys resolve to "pkg::binding" via makeBindingKey; the miss/hit recorded by
+  // import-intercept (using the real module specifier) is the authoritative descent signal.
+  // The advisory warning check here is best-effort: it re-reads whatever depth was
+  // accumulated by import-intercept for any (packageName, binding) pair matching the
+  // atomName. In practice the winning atom's name matches the import-intercept binding.
+  let descentBypassWarning: DescentBypassWarning | null = null;
+  try {
+    const l4cfg = getEnforcementConfig().layer4;
+    if (!l4cfg.disableTracking) {
+      const { getAdvisoryWarning } = await import("./descent-tracker.js");
+      // Use atomName as the packageName proxy (v1). Future: derive from candidate block metadata.
+      const packageName = binding.atomName;
+      descentBypassWarning = getAdvisoryWarning(packageName, binding.atomName, originalCode, l4cfg);
+    }
+  } catch {
+    // Layer 4 failure must not affect substitution (observe-don't-mutate).
+    descentBypassWarning = null;
+  }
+
+  // Step 5: Attempt to recover SpecYak from the winning candidate's specCanonicalBytes.
   // specCanonicalBytes is a UTF-8-encoded canonical JSON blob (see canonicalize.ts).
   // If parsing/validation fails we fall through to the two-line Phase 2 rendering
   // (no contract comment) rather than failing the substitution entirely.
@@ -485,7 +524,7 @@ export async function executeSubstitution(
     }
   }
 
-  // Step 5: Render the substitution (with contract comment if spec was recovered).
+  // Step 6: Render the substitution (with contract comment if spec was recovered).
   const substitutedCode = renderSubstitution(decision.atomHash, originalCode, binding, spec);
 
   return {
@@ -494,5 +533,6 @@ export async function executeSubstitution(
     atomHash: decision.atomHash,
     top1Score: decision.top1Score,
     top1Gap: decision.top1Gap,
+    descentBypassWarning,
   };
 }

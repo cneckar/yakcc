@@ -153,5 +153,44 @@
     "ratioThreshold": 10,
     "minFloor": 20,
     "notes": "large need-complexity reduces ratio to safe zone: atomComplexity=110, needComplexity=50 (bindingsUsed=10, statementCount=5) → ratio=2.2 < ratioThreshold=10 → accept even for lodash-shaped atom"
+  },
+  {
+    "id": "L4-001",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "descent-bypass-warning",
+    "packageName": "validator",
+    "bindingName": "isEmail",
+    "intent": "validate RFC 5321 email address format",
+    "priorMisses": 0,
+    "minDepth": 2,
+    "shallowAllowPatterns": [],
+    "notes": "classic zero-miss scenario: no prior import-intercept misses; depth=0 < minDepth=2; binding not shallow-allowed → advisory warning emitted"
+  },
+  {
+    "id": "L4-002",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "accept",
+    "packageName": "validator",
+    "bindingName": "isEmail",
+    "intent": "validate RFC 5321 email address format",
+    "priorMisses": 2,
+    "minDepth": 2,
+    "shallowAllowPatterns": [],
+    "notes": "sufficient-miss scenario: depth=2 equals minDepth=2; depth >= minDepth → no warning (substitution is warmed up)"
+  },
+  {
+    "id": "L4-003",
+    "input": "descent-depth-check",
+    "expectedLayer": 4,
+    "expectedOutcome": "accept",
+    "packageName": "math-utils",
+    "bindingName": "add",
+    "intent": "add two integers without overflow checking",
+    "priorMisses": 0,
+    "minDepth": 2,
+    "shallowAllowPatterns": ["^add$", "^sub$", "^mul$", "^div$", "^mod$", "^abs$", "^min$", "^max$", "^clamp$", "^lerp$"],
+    "notes": "shallow-allow bypass: 'add' matches ^add$ pattern; depth=0 < minDepth=2 but shallow-allowed → no warning regardless of depth"
   }
 ]
