@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * system-prompt.ts — Authority surface for the yakcc discovery system prompt.
  *
