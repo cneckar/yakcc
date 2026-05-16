@@ -375,6 +375,6 @@ describe("T5: cursor-specific session ID prefix", () => {
 
     const lines = readTelemetryLines(testTelemetryDir, autoId);
     expect(lines).toHaveLength(1);
-    expect(lines[0]?.outcome).toMatch(/^(registry-hit|synthesis-required|passthrough)$/);
+    expect(lines[0]?.outcome).toMatch(/^(registry-hit|synthesis-required|passthrough|intent-too-broad)$/);
   }, 10_000);
 });

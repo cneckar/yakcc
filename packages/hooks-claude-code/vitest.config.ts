@@ -15,5 +15,11 @@ export default defineConfig({
     environment: "node",
     include: ["test/**/*.test.ts"],
     pool: "forks",
+    // wi-579 S1: disable the Layer 1 intent-specificity gate globally in tests.
+    // IDE-adapter tests use short fixture intents that predate Layer 1 and test
+    // adapter mechanics, not intent validation. Mirrors hooks-base/vitest.config.ts pattern.
+    env: {
+      YAKCC_HOOK_DISABLE_INTENT_GATE: "1",
+    },
   },
 });
