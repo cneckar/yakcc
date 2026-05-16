@@ -151,10 +151,17 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
       const filePaths = forestModules(forest).map((m) => m.filePath);
       const rangeCount = filePaths.filter((p) => p.endsWith("range.js")).length;
       const comparatorCount = filePaths.filter((p) => p.endsWith("comparator.js")).length;
-      console.log("[satisfies sA] cycle guard: range.js:", rangeCount, "comparator.js:", comparatorCount);
+      console.log(
+        "[satisfies sA] cycle guard: range.js:",
+        rangeCount,
+        "comparator.js:",
+        comparatorCount,
+      );
       expect(rangeCount, "range.js must appear exactly once (cycle guard proof)").toBe(1);
       expect(comparatorCount, "comparator.js must appear exactly once (cycle guard proof)").toBe(1);
-      expect(forest.moduleCount, "satisfies moduleCount should be 14-22").toBeGreaterThanOrEqual(14);
+      expect(forest.moduleCount, "satisfies moduleCount should be 14-22").toBeGreaterThanOrEqual(
+        14,
+      );
       expect(forest.moduleCount, "satisfies moduleCount should be 14-22").toBeLessThanOrEqual(22);
       expect(forest.stubCount).toBe(0);
       expect(forestTotalLeafCount(forest)).toBeGreaterThan(0);
@@ -188,7 +195,10 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
       expect(filePaths.some((p) => p.endsWith("semver.js") && p.includes("classes"))).toBe(true);
       const unrelated = ["inc.js", "diff.js", "clean.js"];
       for (const u of unrelated) {
-        expect(filePaths.every((p) => !p.includes(u)), `${u} must NOT be in satisfies subgraph`).toBe(true);
+        expect(
+          filePaths.every((p) => !p.includes(u)),
+          `${u} must NOT be in satisfies subgraph`,
+        ).toBe(true);
       }
       expect(forestStubs(forest).length).toBe(0);
     },
@@ -199,14 +209,28 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
     { timeout: 120_000 },
     async () => {
       const entryPath = join(SEMVER_FIXTURE_ROOT, "functions", "satisfies.js");
-      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
-      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
+      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
+      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(forestModules(forest2).map((m) => m.filePath));
-      expect(forestModules(forest1).flatMap((m) => collectLeafHashes(m.tree.root)).sort()).toEqual(
-        forestModules(forest2).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(
+        forestModules(forest2).map((m) => m.filePath),
+      );
+      expect(
+        forestModules(forest1)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
+      ).toEqual(
+        forestModules(forest2)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       );
     },
   );
@@ -215,7 +239,9 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
     "section E -- satisfies forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
     { timeout: 120_000 },
     async () => {
-      const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
+      const registry = await openRegistry(":memory:", {
+        embeddings: createOfflineEmbeddingProvider(),
+      });
       try {
         const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
           registry,
@@ -299,7 +325,10 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
       expect(filePaths.some((p) => p.endsWith("re.js"))).toBe(true);
       const unrelated = ["satisfies.js", "inc.js", "diff.js"];
       for (const u of unrelated) {
-        expect(filePaths.every((p) => !p.includes(u)), `${u} must NOT be in coerce subgraph`).toBe(true);
+        expect(
+          filePaths.every((p) => !p.includes(u)),
+          `${u} must NOT be in coerce subgraph`,
+        ).toBe(true);
       }
       expect(forestStubs(forest).length).toBe(0);
     },
@@ -310,16 +339,28 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
     { timeout: 120_000 },
     async () => {
       const entryPath = join(SEMVER_FIXTURE_ROOT, "functions", "coerce.js");
-      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
-      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
+      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
+      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(forestModules(forest2).map((m) => m.filePath));
+      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(
+        forestModules(forest2).map((m) => m.filePath),
+      );
       expect(
-        forestModules(forest1).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+        forestModules(forest1)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       ).toEqual(
-        forestModules(forest2).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+        forestModules(forest2)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       );
     },
   );
@@ -328,7 +369,9 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
     "section E -- coerce forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
     { timeout: 120_000 },
     async () => {
-      const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
+      const registry = await openRegistry(":memory:", {
+        embeddings: createOfflineEmbeddingProvider(),
+      });
       try {
         const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
           registry,
@@ -410,7 +453,10 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
       expect(filePaths.some((p) => p.endsWith("semver.js") && p.includes("classes"))).toBe(true);
       const unrelated = ["satisfies.js", "coerce.js", "inc.js", "diff.js"];
       for (const u of unrelated) {
-        expect(filePaths.every((p) => !p.includes(u)), `${u} must NOT be in compare subgraph`).toBe(true);
+        expect(
+          filePaths.every((p) => !p.includes(u)),
+          `${u} must NOT be in compare subgraph`,
+        ).toBe(true);
       }
       expect(forestStubs(forest).length).toBe(0);
     },
@@ -421,16 +467,28 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
     { timeout: 120_000 },
     async () => {
       const entryPath = join(SEMVER_FIXTURE_ROOT, "functions", "compare.js");
-      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
-      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
+      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
+      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(forestModules(forest2).map((m) => m.filePath));
+      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(
+        forestModules(forest2).map((m) => m.filePath),
+      );
       expect(
-        forestModules(forest1).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+        forestModules(forest1)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       ).toEqual(
-        forestModules(forest2).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+        forestModules(forest2)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       );
     },
   );
@@ -439,7 +497,9 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
     "section E -- compare forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
     { timeout: 120_000 },
     async () => {
-      const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
+      const registry = await openRegistry(":memory:", {
+        embeddings: createOfflineEmbeddingProvider(),
+      });
       try {
         const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
           registry,
@@ -522,7 +582,10 @@ describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
       expect(filePaths.some((p) => p.endsWith("semver.js") && p.includes("classes"))).toBe(true);
       const unrelated = ["satisfies.js", "coerce.js", "inc.js", "diff.js"];
       for (const u of unrelated) {
-        expect(filePaths.every((p) => !p.includes(u)), `${u} must NOT be in parse subgraph`).toBe(true);
+        expect(
+          filePaths.every((p) => !p.includes(u)),
+          `${u} must NOT be in parse subgraph`,
+        ).toBe(true);
       }
       expect(forestStubs(forest).length).toBe(0);
     },
@@ -533,16 +596,28 @@ describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
     { timeout: 120_000 },
     async () => {
       const entryPath = join(SEMVER_FIXTURE_ROOT, "functions", "parse.js");
-      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
-      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, { registry: emptyRegistry, entryPath });
+      const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
+      const forest2 = await shavePackage(SEMVER_FIXTURE_ROOT, {
+        registry: emptyRegistry,
+        entryPath,
+      });
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(forestModules(forest2).map((m) => m.filePath));
+      expect(forestModules(forest1).map((m) => m.filePath)).toEqual(
+        forestModules(forest2).map((m) => m.filePath),
+      );
       expect(
-        forestModules(forest1).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+        forestModules(forest1)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       ).toEqual(
-        forestModules(forest2).flatMap((m) => collectLeafHashes(m.tree.root)).sort(),
+        forestModules(forest2)
+          .flatMap((m) => collectLeafHashes(m.tree.root))
+          .sort(),
       );
     },
   );
@@ -551,7 +626,9 @@ describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
     "section E -- parse forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
     { timeout: 120_000 },
     async () => {
-      const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
+      const registry = await openRegistry(":memory:", {
+        embeddings: createOfflineEmbeddingProvider(),
+      });
       try {
         const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
           registry,
@@ -618,10 +695,14 @@ describe("semver satisfies section F -- combinedScore quality gate", () => {
           }
         }
         const result = await registry.findCandidatesByQuery({
-          behavior: "Check whether a semantic version string satisfies a given semver range expression, returning true or false",
+          behavior:
+            "Check whether a semantic version string satisfies a given semver range expression, returning true or false",
           topK: 10,
         });
-        console.log("[satisfies sF] candidates:", result.candidates.map((c) => ({ score: c.combinedScore })));
+        console.log(
+          "[satisfies sF] candidates:",
+          result.candidates.map((c) => ({ score: c.combinedScore })),
+        );
         expect(result.candidates.length).toBeGreaterThan(0);
         const topScore = result.candidates[0]?.combinedScore ?? 0;
         console.log("[satisfies sF] top combinedScore:", topScore);
@@ -664,10 +745,14 @@ describe("semver coerce section F -- combinedScore quality gate", () => {
           }
         }
         const result = await registry.findCandidatesByQuery({
-          behavior: "Coerce a loose version string or number into a valid semver version object, extracting major, minor, and patch components",
+          behavior:
+            "Coerce a loose version string or number into a valid semver version object, extracting major, minor, and patch components",
           topK: 10,
         });
-        console.log("[coerce sF] candidates:", result.candidates.map((c) => ({ score: c.combinedScore })));
+        console.log(
+          "[coerce sF] candidates:",
+          result.candidates.map((c) => ({ score: c.combinedScore })),
+        );
         expect(result.candidates.length).toBeGreaterThan(0);
         const topScore = result.candidates[0]?.combinedScore ?? 0;
         console.log("[coerce sF] top combinedScore:", topScore);
@@ -710,10 +795,14 @@ describe("semver compare section F -- combinedScore quality gate", () => {
           }
         }
         const result = await registry.findCandidatesByQuery({
-          behavior: "Compare two semantic version strings and return -1, 0, or 1 indicating their relative ordering",
+          behavior:
+            "Compare two semantic version strings and return -1, 0, or 1 indicating their relative ordering",
           topK: 10,
         });
-        console.log("[compare sF] candidates:", result.candidates.map((c) => ({ score: c.combinedScore })));
+        console.log(
+          "[compare sF] candidates:",
+          result.candidates.map((c) => ({ score: c.combinedScore })),
+        );
         expect(result.candidates.length).toBeGreaterThan(0);
         const topScore = result.candidates[0]?.combinedScore ?? 0;
         console.log("[compare sF] top combinedScore:", topScore);
@@ -756,10 +845,14 @@ describe("semver parse section F -- combinedScore quality gate", () => {
           }
         }
         const result = await registry.findCandidatesByQuery({
-          behavior: "Parse a semantic version string into its component parts: major, minor, patch, prerelease, and build metadata",
+          behavior:
+            "Parse a semantic version string into its component parts: major, minor, patch, prerelease, and build metadata",
           topK: 10,
         });
-        console.log("[parse sF] candidates:", result.candidates.map((c) => ({ score: c.combinedScore })));
+        console.log(
+          "[parse sF] candidates:",
+          result.candidates.map((c) => ({ score: c.combinedScore })),
+        );
         expect(result.candidates.length).toBeGreaterThan(0);
         const topScore = result.candidates[0]?.combinedScore ?? 0;
         console.log("[parse sF] top combinedScore:", topScore);
@@ -786,12 +879,14 @@ describe("semver headline bindings -- compound interaction (real production sequ
     async () => {
       const bindings = [
         { name: "satisfies", entry: "satisfies.js", minMod: 14, maxMod: 22 },
-        { name: "coerce",    entry: "coerce.js",    minMod: 6,  maxMod: 12 },
-        { name: "compare",   entry: "compare.js",   minMod: 5,  maxMod: 10 },
-        { name: "parse",     entry: "parse.js",     minMod: 5,  maxMod: 10 },
+        { name: "coerce", entry: "coerce.js", minMod: 6, maxMod: 12 },
+        { name: "compare", entry: "compare.js", minMod: 5, maxMod: 10 },
+        { name: "parse", entry: "parse.js", minMod: 5, maxMod: 10 },
       ] as const;
       for (const b of bindings) {
-        const registry = await openRegistry(":memory:", { embeddings: createOfflineEmbeddingProvider() });
+        const registry = await openRegistry(":memory:", {
+          embeddings: createOfflineEmbeddingProvider(),
+        });
         try {
           const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
             registry,
