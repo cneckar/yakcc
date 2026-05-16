@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: MIT
 /**
- * telemetry.ts â€” Local-only telemetry capture for the yakcc hook layer (Phase 1 MVP).
+ * telemetry.ts â€" Local-only telemetry capture for the yakcc hook layer (Phase 1 MVP).
  *
  * @decision DEC-HOOK-PHASE-1-001
  * @title Telemetry capture: JSONL append-only writer with BLAKE3 intent hashing
@@ -16,7 +16,7 @@
  *     generated once per process so all events from the same process share an ID even when
  *     CLAUDE_SESSION_ID is absent (e.g. in tests or non-Claude IDEs).
  *   - Configurable telemetry dir via YAKCC_TELEMETRY_DIR env var (D-HOOK-5 spec).
- *   - Zero network I/O in this module â€” append to local file only (B6 air-gap compliance).
+ *   - Zero network I/O in this module â€" append to local file only (B6 air-gap compliance).
  *
  * Cross-reference: DEC-HOOK-LAYER-001 (parent ADR), D-HOOK-5, B6 (#190).
  *
@@ -40,9 +40,15 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { HookResponse } from "./index.js";
 import { selectSink } from "./telemetry-sink.js";
+import { getEnforcementConfig } from "./enforcement-config.js";
+import {
+  recordTelemetryEvent,
+  checkDrift,
+  type EventSnapshot,
+} from "./drift-detector.js";
 
 // ---------------------------------------------------------------------------
-// TelemetryEvent â€” schema per D-HOOK-5
+// TelemetryEvent â€" schema per D-HOOK-5
 // ---------------------------------------------------------------------------
 
 /**
@@ -125,9 +131,24 @@ export type TelemetryEvent = {
     //   outcomeFromResponse() unchanged — this override is passed explicitly by substitute.ts
     //   when descentBypassWarning is non-null.
     //   Cross-reference: plans/wi-579-s4-layer4-descent-tracker.md
-    | "descent-bypass-warning"; // S4 additive (DEC-HOOK-ENF-LAYER4-TELEMETRY-001)
+    | "descent-bypass-warning" // S4 additive (DEC-HOOK-ENF-LAYER4-TELEMETRY-001)
+    // @decision DEC-HOOK-ENF-LAYER5-TELEMETRY-001
+    // title: "drift-alert" additive outcome for Layer 5 drift detection (wi-593 S5)
+    // status: decided (wi-593-s5-layer5)
+    // rationale:
+    //   Additive expansion following the Layer 4 pattern (DEC-HOOK-ENF-LAYER4-TELEMETRY-001).
+    //   Emitted as a second telemetry event alongside the original event when the Layer 5
+    //   rolling-window drift detector crosses a threshold. The original event is always
+    //   written first; the drift-alert event is written after, carrying driftMetric details
+    //   in the intentHash field (encoded as "drift:<metric>:<sessionId>") and the suggestion
+    //   in a structured way via candidateCount=-1 sentinel.
+    //   captureTelemetry callers are NEVER blocked — drift detection is non-invasive.
+    //   outcomeFromResponse() unchanged — this outcome is emitted via a second direct call
+    //   to appendTelemetryEvent with an explicit outcome, not via outcomeOverride.
+    //   Cross-reference: plans/wi-579-s5-layer5-drift-detection.md §5.6
+    | "drift-alert"; // S5 additive (DEC-HOOK-ENF-LAYER5-TELEMETRY-001)
   // ---------------------------------------------------------------------------
-  // Phase 2 additions â€” additive fields (backwards-compatible per #217 spec).
+  // Phase 2 additions â€" additive fields (backwards-compatible per #217 spec).
   // Old telemetry consumers see these as optional (undefined in Phase 1 events).
   // Phase 2 events always populate all four fields.
   // ---------------------------------------------------------------------------
@@ -157,7 +178,7 @@ export type TelemetryEvent = {
    */
   readonly latencyBudgetExceeded?: boolean;
   // ---------------------------------------------------------------------------
-  // Phase 3 / atomize additions â€” additive fields (D-HOOK-7, issue #362).
+  // Phase 3 / atomize additions â€" additive fields (D-HOOK-7, issue #362).
   // Old telemetry consumers see these as optional (undefined in prior events).
   // Atomized events always populate atomsCreated; prior events omit it.
   // ---------------------------------------------------------------------------
@@ -166,7 +187,7 @@ export type TelemetryEvent = {
    * Non-empty only when outcome === "atomized".
    * Additive field: Phase 1/2 events do not carry this field (undefined).
    *
-   * @decision DEC-HOOK-ATOM-CAPTURE-001 (additive telemetry â€” D-HOOK-7)
+   * @decision DEC-HOOK-ATOM-CAPTURE-001 (additive telemetry â€" D-HOOK-7)
    * Adding atomsCreated as an optional field preserves backward compatibility:
    * old telemetry consumers see it as absent (undefined), while new consumers
    * can check outcome === "atomized" before reading atomsCreated.
@@ -280,7 +301,7 @@ export function outcomeFromResponse(
  * Append a single TelemetryEvent as one JSON line to the session's JSONL file.
  *
  * Creates the telemetry directory if it does not exist (idempotent).
- * Appends rather than rewrites: the file grows as a log â€” never truncated.
+ * Appends rather than rewrites: the file grows as a log â€" never truncated.
  *
  * @decision DEC-HOOK-PHASE-1-001
  * Append-only JSONL ensures: (a) no event is lost to a write race (atomic append
@@ -346,15 +367,15 @@ export function captureTelemetry(opts: {
   candidateCount: number;
   topScore: number | null;
   latencyMs: number;
-  // Phase 2 additions â€” all optional so Phase 1 callers need no changes.
+  // Phase 2 additions â€" all optional so Phase 1 callers need no changes.
   substituted?: boolean;
   substitutedAtomHash?: string | null;
   substitutionLatencyMs?: number | null;
   top1Score?: number | null;
   top1Gap?: number | null;
   latencyBudgetExceeded?: boolean;
-  // Phase 3 / D-HOOK-7 additions â€” additive, all optional.
-  /** Explicit outcome override â€” used by the atomize path to set "atomized". */
+  // Phase 3 / D-HOOK-7 additions â€" additive, all optional.
+  /** Explicit outcome override â€" used by the atomize path to set "atomized". */
   /**
    * Explicit outcome override. Used by the atomize path to set "atomized",
    * by the Layer 1 gate to set "intent-too-broad" (DEC-HOOK-ENF-LAYER1-TELEMETRY-001),
@@ -368,6 +389,7 @@ export function captureTelemetry(opts: {
 }): void {
   const sessionId = opts.sessionId ?? resolveSessionId();
   const dir = opts.telemetryDir ?? resolveTelemetryDir();
+  const resolvedOutcome = outcomeFromResponse(opts.response, opts.outcomeOverride);
 
   const event: TelemetryEvent = {
     t: Date.now(),
@@ -378,8 +400,8 @@ export function captureTelemetry(opts: {
     substituted: opts.substituted ?? false,
     substitutedAtomHash: opts.substitutedAtomHash ?? null,
     latencyMs: opts.latencyMs,
-    outcome: outcomeFromResponse(opts.response, opts.outcomeOverride),
-    // Phase 2 fields â€” spread only when defined so Phase 1 JSONL lines stay lean.
+    outcome: resolvedOutcome,
+    // Phase 2 fields — spread only when defined so Phase 1 JSONL lines stay lean.
     ...(opts.substitutionLatencyMs !== undefined
       ? { substitutionLatencyMs: opts.substitutionLatencyMs }
       : {}),
@@ -388,9 +410,65 @@ export function captureTelemetry(opts: {
     ...(opts.latencyBudgetExceeded !== undefined
       ? { latencyBudgetExceeded: opts.latencyBudgetExceeded }
       : {}),
-    // D-HOOK-7 / atomize fields â€” present only for outcome === "atomized".
+    // D-HOOK-7 / atomize fields — present only for outcome === "atomized".
     ...(opts.atomsCreated !== undefined ? { atomsCreated: opts.atomsCreated } : {}),
   };
 
+  // Write the primary event first (non-invasive: drift detection never delays this).
   appendTelemetryEvent(event, sessionId, dir);
+
+  // ---------------------------------------------------------------------------
+  // Layer 5: non-invasive drift detection wrap
+  //
+  // @decision DEC-HOOK-ENF-LAYER5-TELEMETRY-001
+  // Record the event snapshot in the session rolling window, then check whether
+  // any drift threshold has been crossed. If an alert fires, emit a second
+  // "drift-alert" telemetry event additively (does not replace or modify the
+  // original event). All drift work happens AFTER the primary append so that
+  // captureTelemetry callers are never blocked by drift detection errors.
+  // ---------------------------------------------------------------------------
+  try {
+    const cfg = getEnforcementConfig().layer5;
+    if (!cfg.disableDetection) {
+      // Build a compact EventSnapshot from the resolved event fields.
+      // specificityScore is approximated from topScore (cosine distance):
+      //   score = 1 - topScore/2 maps [0,2] distance to [1,0] score.
+      // Layer 1 "intent-too-broad" events have no meaningful registry score
+      // so specificityScore is omitted for those outcomes.
+      const snap: EventSnapshot = {
+        outcome: resolvedOutcome,
+        candidateCount: opts.candidateCount,
+        ...(opts.topScore !== null &&
+          opts.topScore !== undefined &&
+          resolvedOutcome !== "intent-too-broad"
+          ? { specificityScore: 1 - opts.topScore / 2 }
+          : {}),
+      };
+
+      recordTelemetryEvent(sessionId, snap, cfg.rollingWindow);
+
+      const driftResult = checkDrift(sessionId, cfg);
+      if (driftResult.status === "drift_alert") {
+        // Emit an additive drift-alert event. candidateCount = -1 is the
+        // sentinel distinguishing drift-alert events from real registry events.
+        const alertEvent: TelemetryEvent = {
+          t: Date.now(),
+          intentHash: `drift:${driftResult.driftMetric}:${sessionId.slice(0, 8)}`,
+          toolName: opts.toolName,
+          candidateCount: -1,
+          topScore: null,
+          substituted: false,
+          substitutedAtomHash: null,
+          latencyMs: 0,
+          outcome: "drift-alert",
+        };
+        appendTelemetryEvent(alertEvent, sessionId, dir);
+      }
+    }
+  } catch {
+    // Drift detection errors must NEVER propagate to callers.
+    // captureTelemetry is called in hot paths; a drift detector bug must not
+    // affect hook behavior. Errors are silently swallowed here per
+    // DEC-HOOK-ENF-LAYER5-TELEMETRY-001 (non-invasive wrap contract).
+  }
 }

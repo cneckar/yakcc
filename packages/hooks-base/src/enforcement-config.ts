@@ -144,6 +144,121 @@ export interface Layer2Config {
 }
 
 /**
+ * Configuration for Layer 5 (telemetry-driven drift detection — per-session rolling window).
+ *
+ * Layer 5 wraps captureTelemetry non-invasively and maintains an in-memory rolling
+ * window of the last N telemetry events per session. When aggregated metrics cross
+ * any configured threshold, a "drift-alert" telemetry event is emitted additively.
+ * The wrapping is transparent to existing callers — no blocking, no semantic change.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DRIFT-DETECTION-001
+ * title: Layer 5 drift detector — rolling-window aggregation of L1-L4 signals
+ * status: decided (wi-593-s5-layer5)
+ * rationale:
+ *   Five threshold dimensions aggregate the per-event signals from Layers 1-4:
+ *   (1) specificityFloor: mean L1 specificity score below floor → LLM is drifting
+ *       toward vague intents over the window. Default 0.55.
+ *   (2) descentBypassMax: fraction of events that were descent-bypass warnings above
+ *       max → LLM is skipping the required descent discipline. Default 0.40 (40%).
+ *   (3) resultSetMedianMax: median result-set size above max → LLM is using queries
+ *       too broad to produce focused results. Default 5.
+ *   (4) ratioMedianMax: median atom/need ratio above max → LLM is over-substituting
+ *       large atoms for simple call sites. Default 4.
+ *   All five keys are mandatory in EnforcementConfig.layer5. No threshold may be
+ *   hardcoded in drift-detector.ts — config is the sole authority per DEC-HOOK-ENF-CONFIG-001.
+ *
+ *   Env var mapping:
+ *     YAKCC_DRIFT_ROLLING_WINDOW       → layer5.rollingWindow (integer)
+ *     YAKCC_DRIFT_SPECIFICITY_FLOOR    → layer5.specificityFloor (float)
+ *     YAKCC_DRIFT_DESCENT_BYPASS_MAX   → layer5.descentBypassMax (float)
+ *     YAKCC_DRIFT_RESULT_SET_MEDIAN_MAX → layer5.resultSetMedianMax (integer)
+ *     YAKCC_DRIFT_RATIO_MEDIAN_MAX     → layer5.ratioMedianMax (float)
+ *     YAKCC_HOOK_DISABLE_DRIFT_DETECTION=1 → layer5.disableDetection = true
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-WINDOW-001
+ * title: rollingWindow default 20 — last 20 events is the analysis unit
+ * status: decided (wi-593-s5-layer5)
+ * rationale:
+ *   20 events is large enough to smooth single-event noise but small enough to
+ *   remain reactive to genuine session-level drift. Matches the bench corpus size
+ *   and the B5-coherence benchmark sweep unit from #579 acceptance criteria.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-SPECIFICITY-FLOOR-001
+ * title: specificityFloor default 0.55 — below this mean score indicates L1 drift
+ * status: decided (wi-593-s5-layer5)
+ * rationale:
+ *   0.55 is calibrated to the midpoint of the accept-zone specificity scores from
+ *   the L1 corpus (L1-004..L1-007 have scores in [0.6, 0.9]). A window mean below
+ *   0.55 indicates the LLM is consistently producing marginal-quality intents.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-DESCENT-MAX-001
+ * title: descentBypassMax default 0.40 — above 40% descent-bypass rate triggers alert
+ * status: decided (wi-593-s5-layer5)
+ * rationale:
+ *   40% is derived from the Layer 4 design: if more than 2 in 5 substitutions in the
+ *   window carry descent-bypass warnings, the LLM is systematically skipping the
+ *   descent-and-compose discipline. Below 40% the warnings are incidental.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-RESULT-MAX-001
+ * title: resultSetMedianMax default 5 — above median 5 candidates indicates over-broad queries
+ * status: decided (wi-593-s5-layer5)
+ * rationale:
+ *   The Layer 2 gate rejects at confidentCount > 3 (default). A median result-set size
+ *   of 5 over the window means the LLM is consistently reaching the gate boundary.
+ *   Above 5 the query patterns are persistently too broad.
+ *
+ * @decision DEC-HOOK-ENF-LAYER5-RATIO-MAX-001
+ * title: ratioMedianMax default 4 — above median ratio 4 indicates over-substitution pattern
+ * status: decided (wi-593-s5-layer5)
+ * rationale:
+ *   The Layer 3 hard reject is at ratio > 10 (default ratioThreshold). A median ratio
+ *   of 4 over the window is well below the hard reject but above "tightly matched"
+ *   (ratio ~1). Above 4 the LLM is consistently choosing atoms that are larger than
+ *   the call-site needs, even when individual substitutions pass the hard gate.
+ */
+export interface Layer5Config {
+  /**
+   * Number of events in the per-session rolling window.
+   * Default: 20 (DEC-HOOK-ENF-LAYER5-WINDOW-001).
+   * Env: YAKCC_DRIFT_ROLLING_WINDOW
+   */
+  readonly rollingWindow: number;
+  /**
+   * Mean Layer 1 specificity score floor across the window.
+   * When the mean falls below this value a drift-alert is emitted.
+   * Default: 0.55 (DEC-HOOK-ENF-LAYER5-SPECIFICITY-FLOOR-001).
+   * Env: YAKCC_DRIFT_SPECIFICITY_FLOOR
+   */
+  readonly specificityFloor: number;
+  /**
+   * Maximum fraction of events that may carry a descent-bypass-warning outcome
+   * before an alert fires. Range [0, 1].
+   * Default: 0.40 (DEC-HOOK-ENF-LAYER5-DESCENT-MAX-001).
+   * Env: YAKCC_DRIFT_DESCENT_BYPASS_MAX
+   */
+  readonly descentBypassMax: number;
+  /**
+   * Maximum median result-set size (candidateCount) over the window.
+   * Default: 5 (DEC-HOOK-ENF-LAYER5-RESULT-MAX-001).
+   * Env: YAKCC_DRIFT_RESULT_SET_MEDIAN_MAX
+   */
+  readonly resultSetMedianMax: number;
+  /**
+   * Maximum median atom/need ratio over the window.
+   * Only events that carry a ratio (Layer 3 events) contribute.
+   * Default: 4 (DEC-HOOK-ENF-LAYER5-RATIO-MAX-001).
+   * Env: YAKCC_DRIFT_RATIO_MEDIAN_MAX
+   */
+  readonly ratioMedianMax: number;
+  /**
+   * When true, drift detection is disabled entirely. No alerts are emitted.
+   * Default: false.
+   * Env: YAKCC_HOOK_DISABLE_DRIFT_DETECTION=1
+   */
+  readonly disableDetection: boolean;
+}
+
+/**
  * Configuration for Layer 4 (descent-depth tracker — advisory, non-blocking).
  *
  * Layer 4 tracks how many times a (packageName, binding) pair has been missed
@@ -200,8 +315,8 @@ export interface Layer4Config {
 /**
  * Central enforcement configuration shape.
  *
- * S4-S6 implementers: append layer4/layer5/layer6 keys here following
- * the same pattern. Do NOT add thresholds to layer modules directly.
+ * S6 implementers: append layer6 key here following the same pattern.
+ * Do NOT add thresholds to layer modules directly.
  *
  * @decision DEC-HOOK-ENF-CONFIG-001
  */
@@ -210,6 +325,7 @@ export interface EnforcementConfig {
   readonly layer2: Layer2Config;
   readonly layer3: Layer3Config;
   readonly layer4: Layer4Config;
+  readonly layer5: Layer5Config;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +512,14 @@ export function getDefaults(): EnforcementConfig {
       shallowAllowPatterns: DEFAULT_SHALLOW_ALLOW_PATTERNS,
       disableTracking: false,
     },
+    layer5: {
+      rollingWindow: 20,
+      specificityFloor: 0.55,
+      descentBypassMax: 0.40,
+      resultSetMedianMax: 5,
+      ratioMedianMax: 4,
+      disableDetection: false,
+    },
   };
 }
 
@@ -432,6 +556,14 @@ interface PartialEnforcementConfigFile {
     minDepth: number;
     shallowAllowPatterns: string[];
     disableTracking: boolean;
+  }>;
+  layer5?: Partial<{
+    rollingWindow: number;
+    specificityFloor: number;
+    descentBypassMax: number;
+    resultSetMedianMax: number;
+    ratioMedianMax: number;
+    disableDetection: boolean;
   }>;
 }
 
@@ -575,6 +707,52 @@ function validateConfigFile(raw: unknown, filePath: string): PartialEnforcementC
     }
   }
 
+  // Validate layer5 block
+  if ("layer5" in obj && obj.layer5 !== undefined) {
+    const l5 = obj.layer5;
+    if (typeof l5 !== "object" || l5 === null || Array.isArray(l5)) {
+      throw new TypeError(`enforcement-config: "${filePath}" layer5 must be an object`);
+    }
+    const l5obj = l5 as Record<string, unknown>;
+    if ("rollingWindow" in l5obj) {
+      if (typeof l5obj.rollingWindow !== "number") {
+        throw new TypeError(`enforcement-config: "${filePath}" layer5.rollingWindow must be a number`);
+      }
+      if (!Number.isInteger(l5obj.rollingWindow)) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer5.rollingWindow must be an integer`);
+      }
+      if ((l5obj.rollingWindow as number) < 1) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer5.rollingWindow must be >= 1`);
+      }
+    }
+    for (const key of ["specificityFloor", "descentBypassMax", "ratioMedianMax"] as const) {
+      if (key in l5obj) {
+        if (typeof l5obj[key] !== "number") {
+          throw new TypeError(`enforcement-config: "${filePath}" layer5.${key} must be a number`);
+        }
+        if ((l5obj[key] as number) < 0) {
+          throw new TypeError(`enforcement-config: "${filePath}" layer5.${key} must be >= 0`);
+        }
+      }
+    }
+    if ("resultSetMedianMax" in l5obj) {
+      if (typeof l5obj.resultSetMedianMax !== "number") {
+        throw new TypeError(`enforcement-config: "${filePath}" layer5.resultSetMedianMax must be a number`);
+      }
+      if (!Number.isInteger(l5obj.resultSetMedianMax)) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer5.resultSetMedianMax must be an integer`);
+      }
+      if ((l5obj.resultSetMedianMax as number) < 1) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer5.resultSetMedianMax must be >= 1`);
+      }
+    }
+    if ("disableDetection" in l5obj && typeof l5obj.disableDetection !== "boolean") {
+      throw new TypeError(
+        `enforcement-config: "${filePath}" layer5.disableDetection must be a boolean`,
+      );
+    }
+  }
+
   return raw as PartialEnforcementConfigFile;
 }
 
@@ -615,6 +793,10 @@ function loadFromFile(filePath: string, defaults: EnforcementConfig): Enforcemen
       ...defaults.layer4,
       ...partial.layer4,
     },
+    layer5: {
+      ...defaults.layer5,
+      ...partial.layer5,
+    },
   };
 }
 
@@ -643,10 +825,12 @@ function applyEnvOverrides(config: EnforcementConfig, env: NodeJS.ProcessEnv): E
   let layer2 = { ...config.layer2 };
   let layer3 = { ...config.layer3 };
   let layer4 = { ...config.layer4 };
+  let layer5 = { ...config.layer5 };
   let l1Changed = false;
   let l2Changed = false;
   let l3Changed = false;
   let l4Changed = false;
+  let l5Changed = false;
 
   // layer1 overrides
   if (env.YAKCC_HOOK_DISABLE_INTENT_GATE === "1") {
@@ -717,13 +901,55 @@ function applyEnvOverrides(config: EnforcementConfig, env: NodeJS.ProcessEnv): E
     l4Changed = true;
   }
 
-  if (!l1Changed && !l2Changed && !l3Changed && !l4Changed) return config;
+  // layer5 overrides
+  if (env.YAKCC_DRIFT_ROLLING_WINDOW !== undefined) {
+    const v = Number.parseInt(env.YAKCC_DRIFT_ROLLING_WINDOW, 10);
+    if (!Number.isNaN(v) && v >= 1) {
+      layer5 = { ...layer5, rollingWindow: v };
+      l5Changed = true;
+    }
+  }
+  if (env.YAKCC_DRIFT_SPECIFICITY_FLOOR !== undefined) {
+    const v = Number.parseFloat(env.YAKCC_DRIFT_SPECIFICITY_FLOOR);
+    if (!Number.isNaN(v) && v >= 0) {
+      layer5 = { ...layer5, specificityFloor: v };
+      l5Changed = true;
+    }
+  }
+  if (env.YAKCC_DRIFT_DESCENT_BYPASS_MAX !== undefined) {
+    const v = Number.parseFloat(env.YAKCC_DRIFT_DESCENT_BYPASS_MAX);
+    if (!Number.isNaN(v) && v >= 0 && v <= 1) {
+      layer5 = { ...layer5, descentBypassMax: v };
+      l5Changed = true;
+    }
+  }
+  if (env.YAKCC_DRIFT_RESULT_SET_MEDIAN_MAX !== undefined) {
+    const v = Number.parseInt(env.YAKCC_DRIFT_RESULT_SET_MEDIAN_MAX, 10);
+    if (!Number.isNaN(v) && v >= 1) {
+      layer5 = { ...layer5, resultSetMedianMax: v };
+      l5Changed = true;
+    }
+  }
+  if (env.YAKCC_DRIFT_RATIO_MEDIAN_MAX !== undefined) {
+    const v = Number.parseFloat(env.YAKCC_DRIFT_RATIO_MEDIAN_MAX);
+    if (!Number.isNaN(v) && v >= 0) {
+      layer5 = { ...layer5, ratioMedianMax: v };
+      l5Changed = true;
+    }
+  }
+  if (env.YAKCC_HOOK_DISABLE_DRIFT_DETECTION === "1") {
+    layer5 = { ...layer5, disableDetection: true };
+    l5Changed = true;
+  }
+
+  if (!l1Changed && !l2Changed && !l3Changed && !l4Changed && !l5Changed) return config;
 
   return {
     layer1: l1Changed ? layer1 : config.layer1,
     layer2: l2Changed ? layer2 : config.layer2,
     layer3: l3Changed ? layer3 : config.layer3,
     layer4: l4Changed ? layer4 : config.layer4,
+    layer5: l5Changed ? layer5 : config.layer5,
   };
 }
 
