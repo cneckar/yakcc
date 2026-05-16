@@ -17,8 +17,11 @@
 //       explicitly forbidden by the Layer 4 spec (wi-592 acceptance notes).
 //
 //   (B) BINDING KEY — reuses makeBindingKey("packageName", "binding") = "packageName::binding"
-//       from shave-on-miss-state.ts (DEC-WI508-S3-KEY-FORMAT-001). Same key format ensures
-//       consistent binding identity across all hook subsystems.
+//       from shave-on-miss-state.ts (DEC-WI508-S3-KEY-FORMAT-001). Storage keys are derived
+//       via canonicalKey() which keys on atomName only (DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001).
+//       This resolves the key-mismatch between substitute.ts (which has only atomName) and
+//       import-intercept.ts (which has moduleSpecifier). The packageName argument is retained
+//       in the public API for call-site stability but is IGNORED in the canonical key.
 //
 //   (C) ADVISORY ONLY — Layer 4 never rejects a substitution. It attaches a warning and
 //       returns the warning shape to substitute.ts, which decides whether to emit telemetry.
@@ -30,6 +33,29 @@
 //
 //   Cross-reference: plans/wi-579-s4-layer4-descent-tracker.md §5.5,
 //   DEC-HOOK-ENF-LAYER4-MIN-DEPTH-001, DEC-HOOK-ENF-LAYER4-SHALLOW-ALLOW-001
+//
+// @decision DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001
+// title: Layer 4 descent-tracker keys canonically derived from atomName only (WI-600)
+// status: decided (wi-600-layer4-key-parity)
+// rationale:
+//   Resolves #600: substitute.ts and import-intercept.ts were producing different storage
+//   keys for the same logical binding. import-intercept recorded "validator::isEmail"
+//   (moduleSpecifier::bindingName) while substitute.ts queried "isEmail::isEmail"
+//   (atomName used as packageName proxy). Keys never matched → Layer 4 warning was
+//   effectively always-on, poisoning the drift signal consumed by #593.
+//
+//   Fix: canonicalKey() uses makeBindingKey(binding, binding) = "binding::binding".
+//   Both call sites pass their own (packageName, binding) arguments; canonicalKey()
+//   ignores packageName and keys only on binding (the atomName). Two source imports
+//   of the same yakcc atom now share one descent record, which is the intended semantic:
+//   Layer 4 measures per-atom descent depth, not per-import-path depth.
+//
+//   Trade-off: cross-package imports with the same atomName collapse into one record.
+//   This is the intended Layer 4 semantic. If non-unique atom names across packages are
+//   introduced in future, revisit via a follow-up issue.
+//
+//   Cross-reference: plans/wi-600-layer4-key-parity.md §2,
+//   DEC-WI508-S3-KEY-FORMAT-001 (makeBindingKey shape preserved).
 
 import type { DescentBypassWarning } from "./enforcement-types.js";
 import type { Layer4Config } from "./enforcement-config.js";
@@ -55,12 +81,40 @@ export interface DescentRecord {
 
 /**
  * Module-scoped per-session descent tracking map.
- * Key: makeBindingKey(packageName, binding) — "packageName::binding"
+ * Key: canonicalKey(packageName, binding) — "binding::binding" (atom-canonical, WI-600).
  * Value: DescentRecord
  *
  * Reset via resetSession() between tests (and conceptually at session start).
  */
 const _sessionMap: Map<string, DescentRecord> = new Map();
+
+// ---------------------------------------------------------------------------
+// Canonical key derivation (DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the canonical storage key for a Layer 4 descent record.
+ *
+ * Keys on atomName only (binding::binding), ignoring packageName.
+ *
+ * Rationale: Layer 4 measures per-atom descent depth in the session, not per-import-path.
+ * Two source imports targeting the same atomName (e.g. "isEmail" from "validator" and
+ * from "is-email-validator") share one descent record — they are both descents toward the
+ * same yakcc atom. This resolves the key-mismatch between import-intercept.ts (which has
+ * the real moduleSpecifier) and substitute.ts (which has only the atomName as a proxy).
+ *
+ * The `_packageName` parameter is retained for public API call-site stability (both callers
+ * already pass it) but is explicitly unused in the key derivation.
+ *
+ * @param _packageName - NPM package name (retained for API stability; ignored in key).
+ * @param binding      - Named binding / atomName (e.g. "isEmail").
+ * @returns Canonical key string: "binding::binding".
+ */
+function canonicalKey(_packageName: string, binding: string): string {
+  // makeBindingKey(binding, binding) = "binding::binding"
+  // packageName is intentionally ignored — see DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001.
+  return makeBindingKey(binding, binding);
+}
 
 // ---------------------------------------------------------------------------
 // Session lifecycle
@@ -95,7 +149,7 @@ export function resetSession(): void {
  */
 export function recordMiss(packageName: string, binding: string): void {
   try {
-    const key = makeBindingKey(packageName, binding);
+    const key = canonicalKey(packageName, binding);
     const existing = _sessionMap.get(key);
     if (existing !== undefined) {
       existing.misses += 1;
@@ -120,7 +174,7 @@ export function recordMiss(packageName: string, binding: string): void {
  */
 export function recordHit(packageName: string, binding: string): void {
   try {
-    const key = makeBindingKey(packageName, binding);
+    const key = canonicalKey(packageName, binding);
     const existing = _sessionMap.get(key);
     if (existing !== undefined) {
       existing.hits += 1;
@@ -147,7 +201,7 @@ export function recordHit(packageName: string, binding: string): void {
  * @returns Miss count for this binding in the current session (0 if never seen).
  */
 export function getDescentDepth(packageName: string, binding: string): number {
-  const key = makeBindingKey(packageName, binding);
+  const key = canonicalKey(packageName, binding);
   return _sessionMap.get(key)?.misses ?? 0;
 }
 
@@ -160,7 +214,7 @@ export function getDescentDepth(packageName: string, binding: string): number {
  * @param binding     - Named binding.
  */
 export function getDescentRecord(packageName: string, binding: string): DescentRecord | null {
-  const key = makeBindingKey(packageName, binding);
+  const key = canonicalKey(packageName, binding);
   return _sessionMap.get(key) ?? null;
 }
 
@@ -240,7 +294,7 @@ export function getAdvisoryWarning(
 ): DescentBypassWarning | null {
   if (!shouldWarn(packageName, binding, config)) return null;
 
-  const bindingKey = makeBindingKey(packageName, binding);
+  const bindingKey = canonicalKey(packageName, binding);
   const observedDepth = getDescentDepth(packageName, binding);
 
   return {

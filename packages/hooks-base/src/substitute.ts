@@ -485,14 +485,11 @@ export async function executeSubstitution(
   // Step 4: Layer 4 — descent-depth advisory warning (DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001).
   // Runs AFTER Layer 3 (which may reject) and BEFORE rendering. Advisory only: never rejects.
   // The binding name is the atomName from the extracted shape (most precise identifier).
-  // v1: packageName falls back to atomName — CandidateMatch does not expose a package-level
-  // address field. Import-intercept already recorded the miss/hit against the real module
-  // specifier, so the tracking key used by import-intercept may differ from this key.
-  // Both keys resolve to "pkg::binding" via makeBindingKey; the miss/hit recorded by
-  // import-intercept (using the real module specifier) is the authoritative descent signal.
-  // The advisory warning check here is best-effort: it re-reads whatever depth was
-  // accumulated by import-intercept for any (packageName, binding) pair matching the
-  // atomName. In practice the winning atom's name matches the import-intercept binding.
+  // WI-600 / DEC-HOOK-ENF-LAYER4-KEY-CANONICAL-001: descent-tracker.ts now canonicalizes keys
+  // internally on atomName only ("binding::binding"), so the packageName passed here is ignored
+  // in the actual storage key. Passing atomName as both packageName and binding is correct:
+  // import-intercept records misses via recordMiss(moduleSpecifier, bindingName) but the
+  // canonical key ignores moduleSpecifier. Both sides converge on "atomName::atomName".
   let descentBypassWarning: DescentBypassWarning | null = null;
   try {
     const l4cfg = getEnforcementConfig().layer4;
