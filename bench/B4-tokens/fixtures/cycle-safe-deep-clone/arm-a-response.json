@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm A = hook-enabled (yakccResolve MCP active). Token counts represent hook-assisted output where the model substitutes lodash Slice 7 atoms (cloneDeep.js + _baseClone.js) instead of regenerating recursive type-dispatch from scratch. DEC-B4-FIXTURE-STUB-001: minimal stub — full pre-recorded response requires an actual API run (operator-initiated post-merge per DEC-BENCH-B4-REALIGN-NO-RERUN-001).",
+  "_decision": "DEC-B4-FIXTURE-STUB-001",
+  "_arm": "A",
+  "_task": "cycle-safe-deep-clone",
+  "_wi510_atoms": ["lodash/cloneDeep.js", "lodash/_baseClone.js"],
+  "id": "msg_dry_clone_arm_a_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1510,
+    "output_tokens": 224,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the cycle-safe deep clone implementation:\n\n```typescript\nfunction baseClone<T>(value: T, visited: WeakMap<object, unknown>): T {\n  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;\n  if (typeof value === 'function') return value;\n  const obj = value as object;\n  if (visited.has(obj)) return visited.get(obj) as T;\n  const tag = Object.prototype.toString.call(obj);\n  if (tag === '[object Date]') { const c = new Date((obj as Date).getTime()); visited.set(obj, c); return c as unknown as T; }\n  if (tag === '[object RegExp]') { const r = obj as RegExp; const c = new RegExp(r.source, r.flags); c.lastIndex = 0; visited.set(obj, c); return c as unknown as T; }\n  if (tag === '[object Map]') { const c = new Map(); visited.set(obj, c); for (const [k,v] of obj as Map<unknown,unknown>) c.set(baseClone(k,visited), baseClone(v,visited)); return c as unknown as T; }\n  if (tag === '[object Set]') { const c = new Set(); visited.set(obj, c); for (const v of obj as Set<unknown>) c.add(baseClone(v,visited)); return c as unknown as T; }\n  if (Array.isArray(obj)) { const c: unknown[] = []; visited.set(obj, c); for (let i=0;i<obj.length;i++) c[i]=baseClone(obj[i],visited); return c as unknown as T; }\n  const c = Object.create(Object.getPrototypeOf(obj));\n  visited.set(obj, c);\n  for (const k of Object.getOwnPropertyNames(obj)) c[k] = baseClone((obj as Record<string,unknown>)[k], visited);\n  for (const s of Object.getOwnPropertySymbols(obj)) c[s] = baseClone((obj as Record<symbol,unknown>)[s], visited);\n  return c;\n}\n\nexport default function deepClone<T>(value: T): T {\n  return baseClone(value, new WeakMap());\n}\n```"
+    }
+  ]
+}

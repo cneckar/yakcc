@@ -10,13 +10,25 @@
       "topological-sort-kahns": "DFS-based sort produces valid ordering but wrong pattern; in-degree computed only from outgoing edges misses sink-only nodes; cycle detection skipped (no result.length check)",
       "json-pointer-resolve": "~01 decoded as / (wrong order: apply ~0 first) instead of ~1 (correct: apply ~1 first then ~0); - token treated as valid in-bounds index instead of throwing",
       "base64-encode-rfc4648": "RFC 4648 §4 alphabet uses + at index 62 and / at index 63; models hallucinate URL-safe alphabet (-62, _63) in standard mode or swap the two alphabets",
-      "semver-range-satisfies": "whitespace between comparators is AND not OR; prerelease version less than same base without prerelease; tilde/caret operators must return null (not be parsed as unknown comparators)"
+      "semver-range-satisfies": "whitespace between comparators is AND not OR; prerelease version less than same base without prerelease; tilde/caret operators must return null (not be parsed as unknown comparators)",
+      "uuid-v4-generate-validate": "Math.random() instead of crypto.randomBytes (detectable via distribution test); version nibble at byte-6 high nibble omitted (always outputs version 0 or random version); variant nibble at byte-8 high bits omitted (RFC 4122 variant = 10xx not enforced); validateV4 accepts uppercase, URN prefix, or curly-brace forms that npm uuid's validate.js rejects",
+      "verify-jwt-hs256": "algorithm confusion attack: alg=none or alg=RS256 accepted without checking header.alg === 'HS256'; HMAC signed over decoded-and-re-encoded payload instead of original base64url strings (fails tokens with non-canonical encoding); signature comparison without timingSafeEqual (timing oracle); payload.exp not checked (expired tokens accepted)",
+      "cycle-safe-deep-clone": "naive recursive clone stack-overflows on a.self=a cycle; JSON.parse(JSON.stringify(x)) converts Date to ISO string (instanceof Date fails); Map/Set converted to plain Object/Array; symbol-keyed properties dropped (Object.keys misses symbols); undefined-valued properties dropped; prototype chain lost (clone is plain object, not class instance)"
+    },
+    "realign_slice3": {
+      "id": "DEC-B4-SLICE-3-TASKS-001",
+      "status": "accepted",
+      "rationale": "WI-609 Slice 1 adds 3 tasks targeting packages with shipped WI-510 shaves: uuid-v4-generate-validate (WI-510 S4, atoms v4.js+validate.js), verify-jwt-hs256 (WI-510 S6, atoms verify.js+decode.js), cycle-safe-deep-clone (WI-510 S7, atoms cloneDeep.js+_baseClone.js). Selection criteria: shipped WI-510 shave exists, high atom density, named adversarial failure modes, bounded oracle complexity, offline-reproducible. Pure-add variant chosen per DEC-BENCH-B4-REALIGN-PURE-ADD-001: existing 8 tasks preserved byte-identical for 2026-05-14 baseline comparability.",
+      "path_choice": "DEC-BENCH-B4-REALIGN-PATH-A-001: Path A (corpus realign with pure-add) chosen over Path B (extend WI-510 cascade for 6 missing packages). Path A operationalizes immediately; Path B is a multi-week effort.",
+      "no_rerun": "DEC-BENCH-B4-REALIGN-NO-RERUN-001: Slice ships measurement apparatus only. Actual B4 matrix run is operator-initiated post-merge (pnpm bench:tokens --tier=matrix). Run consumes ~$50+ API budget.",
+      "spec_yak_deferred": "DEC-BENCH-B4-REALIGN-SPEC-YAK-DEFERRED-001: No spec.yak files for 3 new tasks. Two existing tasks have spec.yak; 6 do not. Backfill uniformly in a future slice."
     }
   },
-  "note": "Frozen task manifest for B4-tokens benchmark. SHA-256 hashes content-address each task prompt file. Harness verifies these on startup and aborts on drift (mirrors B7/B6 discipline). Slice 2: 8 tasks.",
+  "note": "Frozen task manifest for B4-tokens benchmark. SHA-256 hashes content-address each task prompt file. Harness verifies these on startup and aborts on drift (mirrors B7/B6 discipline). Slice 2: 8 tasks. Slice 3 (WI-609): +3 tasks targeting WI-510-shaved packages (uuid, jsonwebtoken, lodash), n_tasks 8→11.",
+  "_note_ntasks": "DEC-B4-NTASKS-INFORMATIONAL-001: n_tasks is human-readable annotation only. Harness iterates manifest.tasks.length directly (harness/run.mjs:993,1197). Changing n_tasks has no behavioral impact.",
   "schema_version": 1,
-  "slice": 2,
-  "n_tasks": 8,
+  "slice": 3,
+  "n_tasks": 11,
   "tasks": [
     {
       "id": "lru-cache-with-ttl",
@@ -97,6 +109,36 @@
       "description": "Parse semver versions and ranges (OR via ||, AND via whitespace), check satisfaction with prerelease ordering.",
       "adversarial_framing": "Range-grammar composition: whitespace between comparators is AND (not OR); prerelease version less than same base without prerelease; tilde/caret must return null; requires three composed atoms (parseSemver, parseRange, compare).",
       "expected_export": "named:parseSemver,named:parseRange,named:satisfies"
+    },
+    {
+      "id": "uuid-v4-generate-validate",
+      "prompt_file": "tasks/uuid-v4-generate-validate/prompt.md",
+      "oracle_test": "tasks/uuid-v4-generate-validate/oracle.test.ts",
+      "reference_impl": "tasks/uuid-v4-generate-validate/reference-impl.ts",
+      "sha256": "12115ddf75f8598757b76864ea88c15ad7293f576cf0022283bb5a8a3e336a07",
+      "description": "Generate RFC 4122 v4 UUIDs with crypto RNG and validate canonical UUID string form.",
+      "adversarial_framing": "Cryptographic RNG trap: Math.random() is detectable via distribution test over 10000 samples; version nibble (byte-6 high nibble) and variant nibble (byte-8 high 2 bits) commonly omitted in naive implementations; validateV4 must reject uppercase, URN prefix, curly-brace, wrong-nibble forms. WI-510 S4 atoms: v4.js + validate.js.",
+      "expected_export": "named:generateV4,named:validateV4"
+    },
+    {
+      "id": "verify-jwt-hs256",
+      "prompt_file": "tasks/verify-jwt-hs256/prompt.md",
+      "oracle_test": "tasks/verify-jwt-hs256/oracle.test.ts",
+      "reference_impl": "tasks/verify-jwt-hs256/reference-impl.ts",
+      "sha256": "2d5393751dcd1aab799b549e61d396efd10a188aa478929d34f0283b1a429b0e",
+      "description": "Verify a JWT signed with HS256: structural split, base64url decode, alg check, HMAC-SHA256 with timingSafeEqual, exp check.",
+      "adversarial_framing": "Algorithm confusion attack: alg=none / alg=RS256 must be rejected (classic CVE class); HMAC must sign original base64url strings not re-encoded; timingSafeEqual required for constant-time comparison; exp field must be checked; base64url != base64. WI-510 S6 atoms: verify.js + decode.js.",
+      "expected_export": "named:verifyHs256"
+    },
+    {
+      "id": "cycle-safe-deep-clone",
+      "prompt_file": "tasks/cycle-safe-deep-clone/prompt.md",
+      "oracle_test": "tasks/cycle-safe-deep-clone/oracle.test.ts",
+      "reference_impl": "tasks/cycle-safe-deep-clone/reference-impl.ts",
+      "sha256": "ecb69fd4da9e5b51c95bed71a1e26d2c3d66253c95c2b11861d8e3e1b7836a0b",
+      "description": "Deep-clone a JS value with cycle safety (WeakMap visited set), preserving Date/RegExp/Map/Set/typed arrays and prototype chains.",
+      "adversarial_framing": "Cycle detection: naive recursion stack-overflows on a.self=a; JSON.stringify path converts Date to string; Map/Set become plain Object/Array; symbol-keyed properties dropped by Object.keys; undefined-valued properties lost; prototype chain erased to plain object. WI-510 S7 atoms: cloneDeep.js + _baseClone.js.",
+      "expected_export": "default"
     }
   ]
 }
