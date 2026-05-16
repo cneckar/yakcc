@@ -793,6 +793,46 @@
       },
       "expectedAtom": null,
       "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isAlphanumeric behavior — validates that a string is alphanumeric with locale-aware character set support. Atoms produced by shave engine from validator/lib/isAlphanumeric.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
+    },
+    {
+      "id": "cat1-semver-satisfies-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Check whether a semantic version string satisfies a given semver range expression, returning true or false"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. satisfies behavior -- tests whether a version string matches a version range. Atoms produced by shave engine from semver/functions/satisfies.js (largest subgraph ~18 modules, exercises classes/range <-> classes/comparator circular import via Slice 1 cycle guard). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-semver-coerce-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Coerce a loose version string or number into a valid semver version object, extracting major, minor, and patch components"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. coerce behavior -- converts loose version strings to normalized SemVer instances. Atoms produced by shave engine from semver/functions/coerce.js (~8 modules). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-semver-compare-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compare two semantic version strings and return -1, 0, or 1 indicating their relative ordering"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. compare behavior -- performs numeric version comparison returning a sort-compatible integer. Atoms produced by shave engine from semver/functions/compare.js (~7 modules). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-semver-parse-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse a semantic version string into its component parts: major, minor, patch, prerelease, and build metadata"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. parse behavior (resolves issue-body 'parse-component' per DEC-WI510-S3-PARSE-COMPONENT-BINDING-001) -- converts a version string into a SemVer object with structured fields. Atoms produced by shave engine from semver/functions/parse.js (~7 modules). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
     }
   ]
 }
