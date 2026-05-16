@@ -1,0 +1,102 @@
+[
+  {
+    "id": "L1-001",
+    "input": "utility for handling stuff",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "stop_word (utility, stuff) + meta_word implied; classic vague-intent exemplar from #579 body"
+  },
+  {
+    "id": "L1-002",
+    "input": "validate input",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "too_short (2 words, below MIN_WORDS=4) — stop_word_present not triggered because 'input' is not a stop-word; rejected by length"
+  },
+  {
+    "id": "L1-003",
+    "input": "helper",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "single_word AND stop_word; single_word path takes priority and returns immediately"
+  },
+  {
+    "id": "L1-004",
+    "input": "isEmail RFC 5321 subset",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "4 words, no stop/meta words, implicit verb encoded in 'is' prefix — passes through correctly"
+  },
+  {
+    "id": "L1-005",
+    "input": "split string on first :// substring",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "action verb (split) + I/O hint (:// substring) — fully specific"
+  },
+  {
+    "id": "L1-006",
+    "input": "general parser",
+    "expectedLayer": 1,
+    "expectedOutcome": "intent-too-broad",
+    "notes": "meta_word (general) + too_short (2 words) — dual rejection reasons"
+  },
+  {
+    "id": "L1-007",
+    "input": "convert hex pair %XX to single byte",
+    "expectedLayer": 1,
+    "expectedOutcome": "accept",
+    "notes": "action verb (convert) + I/O specifics (to single byte) — high-quality specific intent"
+  },
+  {
+    "id": "L2-001",
+    "input": "result-set-too-large",
+    "candidateCount": 12,
+    "confidentCount": 12,
+    "weakCount": 0,
+    "expectedLayer": 2,
+    "expectedOutcome": "result-set-too-large",
+    "notes": "12 confident candidates (d=0.5, score=0.9375 >= threshold=0.70) — far exceeds maxConfident=3; both too_many_confident and too_many_overall triggered"
+  },
+  {
+    "id": "L2-002",
+    "input": "result-set-too-large",
+    "candidateCount": 4,
+    "confidentCount": 4,
+    "weakCount": 0,
+    "expectedLayer": 2,
+    "expectedOutcome": "result-set-too-large",
+    "notes": "4 confident candidates — maxConfident=3, so 4 > 3 triggers too_many_confident (boundary +1 scenario)"
+  },
+  {
+    "id": "L2-003",
+    "input": "accept",
+    "candidateCount": 3,
+    "confidentCount": 3,
+    "weakCount": 0,
+    "expectedLayer": 2,
+    "expectedOutcome": "accept",
+    "notes": "exactly 3 confident candidates — at the boundary (maxConfident=3), not over it; accept"
+  },
+  {
+    "id": "L2-004",
+    "input": "accept",
+    "candidateCount": 5,
+    "confidentCount": 0,
+    "weakCount": 5,
+    "expectedLayer": 2,
+    "expectedOutcome": "accept",
+    "notes": "0 confident + 5 weak candidates — confidentCount=0 within maxConfident=3, totalCount=5 within maxOverall=10; surface (weak band informational)"
+  },
+  {
+    "id": "L2-005",
+    "input": "accept",
+    "candidateCount": 4,
+    "confidentCount": 4,
+    "weakCount": 0,
+    "envOverrides": { "YAKCC_RESULT_SET_MAX": "5" },
+    "expectedLayer": 2,
+    "expectedOutcome": "accept",
+    "notes": "YAKCC_RESULT_SET_MAX=5 env override raises maxConfident to 5; 4 confident < 5 → accept"
+  }
+]

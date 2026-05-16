@@ -509,10 +509,79 @@ export async function executeRegistryQueryWithSubstitution(
 ): Promise<HookResponseWithSubstitution> {
   const start = Date.now();
 
+  // ---------------------------------------------------------------------------
+  // Layer 1 — intent specificity gate (wi-579 S1, DEC-HOOK-ENF-LAYER1-INTENT-SPECIFICITY-001)
+  // Run before any registry I/O. On reject: emit telemetry + return passthrough immediately.
+  // Escape hatch: YAKCC_HOOK_DISABLE_INTENT_GATE=1 bypasses this layer (breakglass only).
+  // ---------------------------------------------------------------------------
+  if (process.env.YAKCC_HOOK_DISABLE_INTENT_GATE !== "1") {
+    const { scoreIntentSpecificity } = await import("./intent-specificity.js");
+    const intentCheck = scoreIntentSpecificity(ctx.intent);
+    if (intentCheck.status === "intent_too_broad") {
+      // Telemetry side-effect only — must not affect the passthrough return.
+      try {
+        const { captureTelemetry } = await import("./telemetry.js");
+        captureTelemetry({
+          intent: ctx.intent,
+          toolName,
+          response: { kind: "passthrough" },
+          candidateCount: 0,
+          topScore: null,
+          latencyMs: Date.now() - start,
+          outcomeOverride: "intent-too-broad",
+          ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+          ...(options.telemetryDir !== undefined ? { telemetryDir: options.telemetryDir } : {}),
+        });
+      } catch {
+        // Telemetry failure must never affect the hook outcome (observe-don't-mutate).
+      }
+      return {
+        kind: "passthrough",
+        substituted: false,
+        intentRejectEnvelope: intentCheck,
+      };
+    }
+  }
+
   // Run the registry query (rerank="structural" so structural filter gates candidates).
   // P1b: thread originalCode through so buildQueryCardFromEmission can enrich the query card.
   const { response, candidateCount, topScore, candidates } =
     await _executeRegistryQueryInternalWithCandidates(registry, ctx, options, originalCode);
+
+  // ---------------------------------------------------------------------------
+  // Layer 2 — result-set size enforcement (wi-590-s2-layer2, DEC-HOOK-ENF-LAYER2-RESULT-SET-SIZE-001)
+  // Run AFTER registry query resolves and BEFORE candidates are returned to the consumer.
+  // A large "confident" band means the intent is too broad for the registry to discriminate
+  // reliably. Escape hatch: YAKCC_HOOK_DISABLE_RESULT_SET_GATE=1 bypasses this check.
+  // ---------------------------------------------------------------------------
+  if (process.env.YAKCC_HOOK_DISABLE_RESULT_SET_GATE !== "1") {
+    const { scoreResultSetSize } = await import("./result-set-size.js");
+    const sizeCheck = scoreResultSetSize(candidates);
+    if (sizeCheck.status === "result_set_too_large") {
+      // Telemetry side-effect only — must not affect the passthrough return.
+      try {
+        const { captureTelemetry } = await import("./telemetry.js");
+        captureTelemetry({
+          intent: ctx.intent,
+          toolName,
+          response: { kind: "passthrough" },
+          candidateCount,
+          topScore,
+          latencyMs: Date.now() - start,
+          outcomeOverride: "result-set-too-large",
+          ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+          ...(options.telemetryDir !== undefined ? { telemetryDir: options.telemetryDir } : {}),
+        });
+      } catch {
+        // Telemetry failure must never affect the hook outcome (observe-don't-mutate).
+      }
+      return {
+        kind: "passthrough",
+        substituted: false,
+        resultSetRejectEnvelope: sizeCheck,
+      };
+    }
+  }
 
   // Attempt substitution if not disabled.
   let substitutionResult: import("./substitute.js").SubstitutionResult | null = null;
@@ -678,6 +747,20 @@ export type HookResponseWithSubstitution = HookResponse & (
        * with score >= CONFIDENT_THRESHOLD (0.70). Undefined when intercept did not fire.
        */
       readonly importInterceptResults?: ReadonlyArray<import("./import-intercept.js").ImportInterceptResult>;
+      /**
+       * Layer 1 intent-specificity reject envelope (wi-579 S1, DEC-HOOK-ENF-LAYER1-INTENT-SPECIFICITY-001).
+       * Present when Layer 1 refused the registry query due to a vague intent.
+       * When set, the registry was NOT queried and the response kind is "passthrough".
+       * Callers may surface intentRejectEnvelope.suggestion to the LLM as a forcing-function.
+       */
+      readonly intentRejectEnvelope?: import("./enforcement-types.js").IntentRejectEnvelope;
+      /**
+       * Layer 2 result-set size reject envelope (wi-590-s2-layer2, DEC-HOOK-ENF-LAYER2-RESULT-SET-SIZE-001).
+       * Present when Layer 2 rejected the result set as too large/ambiguous.
+       * When set, the registry WAS queried but returned too many confident candidates.
+       * Callers may surface resultSetRejectEnvelope.suggestion to the LLM as a forcing-function.
+       */
+      readonly resultSetRejectEnvelope?: import("./enforcement-types.js").ResultSetRejectEnvelope;
     }
   | { readonly substituted: true; readonly substitutedCode: string; readonly atomHash: string }
 );
@@ -759,4 +842,75 @@ export {
   getState,
   updateState,
 } from "./shave-on-miss-state.js";
+
+// ---------------------------------------------------------------------------
+// wi-579 S1 -- Layer 1 intent-specificity gate (public surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-HOOK-ENF-LAYER1-INTENT-SPECIFICITY-001
+ * Layer 1 enforcement module and shared envelope types exported from hooks-base
+ * so IDE adapters (hooks-claude-code, hooks-cursor, hooks-codex) can surface
+ * intentRejectEnvelope.suggestion to the LLM without importing internal modules.
+ * No enforcement logic lives in IDE adapters — they consume only these types.
+ */
+export type {
+  IntentAcceptEnvelope,
+  IntentRejectEnvelope,
+  IntentRejectReason,
+  IntentSpecificityResult,
+} from "./enforcement-types.js";
+export {
+  scoreIntentSpecificity,
+  isIntentSpecificEnough,
+  STOP_WORDS,
+  META_WORDS,
+  ACTION_VERBS,
+  MIN_WORDS,
+  MAX_WORDS,
+} from "./intent-specificity.js";
+
+// ---------------------------------------------------------------------------
+// wi-590-s2-layer2 -- Layer 2 result-set size gate (public surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-HOOK-ENF-LAYER2-RESULT-SET-SIZE-001
+ * Layer 2 enforcement module and shared envelope types exported from hooks-base
+ * so IDE adapters can surface resultSetRejectEnvelope.suggestion to the LLM.
+ * No enforcement logic lives in IDE adapters — they consume only these types.
+ */
+export type {
+  ResultSetAcceptEnvelope,
+  ResultSetRejectEnvelope,
+  ResultSetRejectReason,
+  ResultSetSizeResult,
+} from "./enforcement-types.js";
+export {
+  scoreResultSetSize,
+  isResultSetSizeOk,
+} from "./result-set-size.js";
+
+// ---------------------------------------------------------------------------
+// wi-590-s2-layer2 -- central enforcement config (public surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-HOOK-ENF-CONFIG-001
+ * Central enforcement config module exported from hooks-base.
+ * S3-S6 implementers: use getEnforcementConfig() for all threshold reads.
+ * IDE adapters: no direct config access needed — enforcement runs inside hooks-base.
+ */
+export type {
+  EnforcementConfig,
+  Layer1Config,
+  Layer2Config,
+} from "./enforcement-config.js";
+export {
+  getDefaults,
+  getEnforcementConfig,
+  loadEnforcementConfig,
+  setConfigOverride,
+  resetConfigOverride,
+} from "./enforcement-config.js";
 

@@ -29,5 +29,16 @@ export default defineConfig({
     environment: "node",
     include: ["test/**/*.test.ts"],
     pool: "forks",
+    // wi-579 S1: disable the Layer 1 intent-specificity gate globally in tests.
+    // Pre-existing integration tests (substitution-integration, import-intercept-integration,
+    // etc.) use short fixture intents ("Do something obscure", "some intent") that predate
+    // Layer 1 and are testing substitution/atomize mechanics — not intent validation.
+    // Tests that explicitly exercise Layer 1 (intent-specificity-integration.test.ts,
+    // layer1-vague-intent-gate.test.ts, enforcement-eval-corpus.test.ts) delete this env
+    // var in their own beforeEach() so the gate is active for those suites only.
+    // This mirrors the YAKCC_HOOK_DISABLE_SUBSTITUTE pattern used in existing tests.
+    env: {
+      YAKCC_HOOK_DISABLE_INTENT_GATE: "1",
+    },
   },
 });

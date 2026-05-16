@@ -190,6 +190,16 @@ export interface ImportInterceptResult {
    * Backward-compatible: Slice 1 consumers see this as undefined.
    */
   readonly shaveOnMissEnqueued?: boolean;
+  /**
+   * Layer 1 intent-specificity reject envelope for this binding (wi-579 S1).
+   *
+   * @decision DEC-HOOK-ENF-LAYER1-INTENT-SPECIFICITY-001
+   * Present when Layer 1 rejected the enriched behavior string for this binding,
+   * causing yakccResolve to be skipped entirely for the binding.
+   * intercepted is false when this field is present.
+   * Backward-compatible: consumers that predate wi-579 S1 see this as undefined.
+   */
+  readonly intentSpecificity?: import("./enforcement-types.js").IntentRejectEnvelope;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +355,32 @@ export async function runImportIntercept(
         ctx.intent.length > 0
           ? { behavior: `${candidate.intentCard.behavior} for: ${ctx.intent}` }
           : candidate.intentCard;
+
+      // -----------------------------------------------------------------------
+      // Layer 1 — intent specificity gate (wi-579 S1, DEC-HOOK-ENF-LAYER1-INTENT-SPECIFICITY-001)
+      // Gate the enriched behavior before calling yakccResolve. On reject, skip the
+      // registry query for this binding and surface the envelope on the result.
+      // No escape hatch here — applyImportIntercept already checks
+      // YAKCC_HOOK_DISABLE_SUBSTITUTE; if that is set, we never reach this loop.
+      //
+      // enrichedCard.behavior is QueryIntentCard.behavior (string | undefined).
+      // Fall back to empty string when undefined — scoreIntentSpecificity rejects
+      // empty strings with too_short, preserving the conservative gate behavior.
+      // -----------------------------------------------------------------------
+      const { scoreIntentSpecificity } = await import("./intent-specificity.js");
+      const behaviorText = enrichedCard.behavior ?? "";
+      const intentCheck = scoreIntentSpecificity(behaviorText);
+      if (intentCheck.status === "intent_too_broad") {
+        results.push({
+          binding: candidate.binding,
+          intercepted: false,
+          address: null,
+          behavior: null,
+          score: null,
+          intentSpecificity: intentCheck,
+        });
+        continue; // skip yakccResolve for this binding
+      }
 
       const resolveResult = await yakccResolve(registry, enrichedCard);
 
