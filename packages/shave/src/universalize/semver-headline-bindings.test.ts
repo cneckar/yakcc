@@ -41,6 +41,9 @@
  * rationale:
  *   semver classes/range.js <-> classes/comparator.js is a genuine circular import.
  *   Slice 1 cycle guard proven on synthetic circular-pkg/; this corroborates on real npm source.
+ *   After the DEC-SLICER-ARROW-RETURNS-ARROW-001 engine fix (issue #576), range.js decompose()
+ *   succeeds and the cycle guard proof is live: both range.js and comparator.js appear exactly
+ *   once in the module forest (moduleCount=18, stubCount=0).
  */
 
 import { join, normalize } from "node:path";
@@ -133,7 +136,7 @@ function withSemanticIntentCard(
 describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
   it(
     "section A -- moduleCount in [14,22], stubCount=0, forestTotalLeafCount>0 for satisfies subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -147,6 +150,7 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
         forestModules(forest).map((m) => normalize(m.filePath).split("semver-7.8.0")[1]),
       );
       // Cycle guard proof: range <-> comparator must not cause hang.
+      // DEC-WI510-S3-CYCLE-GUARD-REAL-WORLD-PROOF-001: proven live after engine fix #576.
       // Plan section 5.6 criterion 12: each must appear exactly once.
       const filePaths = forestModules(forest).map((m) => m.filePath);
       const rangeCount = filePaths.filter((p) => p.endsWith("range.js")).length;
@@ -157,21 +161,21 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
         "comparator.js:",
         comparatorCount,
       );
-      // Engine limit: classes/range.js contains an ArrowFunction that decompose() cannot handle.
-      // range.js degrades to a stub. Cycle guard proof deferred to a follow-on engine-capable slice.
-      // DEC-WI510-S3-CYCLE-GUARD-REAL-WORLD-PROOF-001: updated to reflect actual engine output.
       expect(
         forest.moduleCount,
-        "satisfies moduleCount: only satisfies.js shaved (range.js stubs)",
-      ).toBe(1);
-      expect(forest.stubCount, "satisfies stubCount: range.js stubs due to engine limit").toBe(1);
-      expect(rangeCount, "range.js not in module forest (stubs to engine limit)").toBe(0);
-      expect(comparatorCount, "comparator.js not in module forest (unreachable via stub)").toBe(0);
+        "satisfies moduleCount should be in [14,22]",
+      ).toBeGreaterThanOrEqual(14);
+      expect(forest.moduleCount, "satisfies moduleCount should be in [14,22]").toBeLessThanOrEqual(
+        22,
+      );
+      expect(forest.stubCount, "satisfies stubCount must be 0 after engine fix #576").toBe(0);
+      expect(rangeCount, "range.js must appear exactly once (cycle guard proof)").toBe(1);
+      expect(comparatorCount, "comparator.js must appear exactly once (cycle guard proof)").toBe(1);
       expect(forestTotalLeafCount(forest)).toBeGreaterThan(0);
     },
   );
 
-  it("section B -- forest.nodes[0] is satisfies.js", { timeout: 120_000 }, async () => {
+  it("section B -- forest.nodes[0] is satisfies.js", { timeout: 300_000 }, async () => {
     const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
       registry: emptyRegistry,
       entryPath: join(SEMVER_FIXTURE_ROOT, "functions", "satisfies.js"),
@@ -184,7 +188,7 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section C -- subgraph has only transitively-reachable modules; no unrelated semver behaviors",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -193,10 +197,10 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
       const filePaths = forestModules(forest).map((m) => m.filePath);
       for (const fp of filePaths) expect(fp).toContain("semver-7.8.0");
       expect(filePaths.some((p) => p.includes("satisfies.js"))).toBe(true);
-      // range.js stubs (engine limit) — NOT in module list
-      expect(filePaths.some((p) => p.endsWith("range.js"))).toBe(false);
-      expect(filePaths.some((p) => p.endsWith("comparator.js"))).toBe(false);
-      expect(filePaths.some((p) => p.endsWith("semver.js") && p.includes("classes"))).toBe(false);
+      // Engine fix #576: range.js and comparator.js now decompose successfully.
+      expect(filePaths.some((p) => p.endsWith("range.js"))).toBe(true);
+      expect(filePaths.some((p) => p.endsWith("comparator.js"))).toBe(true);
+      expect(filePaths.some((p) => p.endsWith("semver.js") && p.includes("classes"))).toBe(true);
       const unrelated = ["inc.js", "diff.js", "clean.js"];
       for (const u of unrelated) {
         expect(
@@ -204,13 +208,13 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
           `${u} must NOT be in satisfies subgraph`,
         ).toBe(true);
       }
-      expect(forestStubs(forest).length).toBe(1); // range.js stubs
+      expect(forestStubs(forest).length).toBe(0);
     },
   );
 
   it(
     "section D -- two-pass byte-identical determinism for satisfies subgraph",
-    { timeout: 120_000 },
+    { timeout: 600_000 },
     async () => {
       const entryPath = join(SEMVER_FIXTURE_ROOT, "functions", "satisfies.js");
       const forest1 = await shavePackage(SEMVER_FIXTURE_ROOT, {
@@ -241,7 +245,7 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section E -- satisfies forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
@@ -266,10 +270,14 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
           }
         }
         console.log("[satisfies sE] persisted atoms:", persistedCount);
-        // satisfies.js alone (range.js stubs) produces 0 novel-glue atoms — assert pipeline ran.
         expect(
           plans.length,
           "satisfies sE: collectForestSlicePlans must produce plans",
+        ).toBeGreaterThan(0);
+        // Engine fix #576: range.js decomposes now, so satisfies produces novel-glue atoms.
+        expect(
+          persistedCount,
+          "satisfies sE: must persist at least one atom after engine fix #576",
         ).toBeGreaterThan(0);
       } finally {
         await registry.close();
@@ -886,7 +894,7 @@ describe("semver headline bindings -- compound interaction (real production sequ
     { timeout: 300_000 },
     async () => {
       const bindings = [
-        { name: "satisfies", entry: "satisfies.js", minMod: 1, maxMod: 1 }, // range.js stubs (engine limit)
+        { name: "satisfies", entry: "satisfies.js", minMod: 14, maxMod: 22 }, // engine fix #576: range.js now decomposes
         { name: "coerce", entry: "coerce.js", minMod: 6, maxMod: 12 },
         { name: "compare", entry: "compare.js", minMod: 5, maxMod: 10 },
         { name: "parse", entry: "parse.js", minMod: 5, maxMod: 10 },
@@ -902,11 +910,7 @@ describe("semver headline bindings -- compound interaction (real production sequ
           });
           expect(forest.moduleCount).toBeGreaterThanOrEqual(b.minMod);
           expect(forest.moduleCount).toBeLessThanOrEqual(b.maxMod);
-          if (b.entry === "satisfies.js") {
-            expect(forest.stubCount, "satisfies stubCount: range.js stubs").toBe(1);
-          } else {
-            expect(forest.stubCount, `${b.name} stubCount must be 0`).toBe(0);
-          }
+          expect(forest.stubCount, `${b.name} stubCount must be 0`).toBe(0);
           const firstNode = forest.nodes[0];
           expect(firstNode?.kind).toBe("module");
           if (firstNode?.kind === "module") expect(firstNode.filePath).toContain(b.entry);
@@ -921,12 +925,10 @@ describe("semver headline bindings -- compound interaction (real production sequ
               }
             }
           }
-          if (b.entry !== "satisfies.js") {
-            expect(
-              persistedCount,
-              `${b.name} compound: must persist at least one atom`,
-            ).toBeGreaterThan(0);
-          }
+          expect(
+            persistedCount,
+            `${b.name} compound: must persist at least one atom`,
+          ).toBeGreaterThan(0);
           console.log(
             `[compound] ${b.name}: moduleCount=${forest.moduleCount} stubCount=${forest.stubCount} persisted=${persistedCount}`,
           );
