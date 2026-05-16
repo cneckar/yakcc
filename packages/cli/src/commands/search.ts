@@ -12,6 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { parseGranularity } from "@yakcc/contracts";
 import type { SpecYak } from "@yakcc/contracts";
 import { type RegistryOptions, openRegistry, structuralMatch } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
@@ -64,6 +65,7 @@ export async function search(
     options: {
       registry: { type: "string", short: "r" },
       top: { type: "string", short: "k" },
+      granularity: { type: "string", short: "g" },
     },
     allowPositionals: true,
     strict: true,
@@ -72,6 +74,14 @@ export async function search(
   const query = positionals[0];
   if (query === undefined || query === "") {
     logger.error("error: search requires a <query> argument (spec file path or free text)");
+    return 1;
+  }
+
+  const granularityRaw = values.granularity;
+  if (granularityRaw !== undefined && parseGranularity(granularityRaw) === null) {
+    logger.error(
+      `error: --granularity must be an integer between 1 and 5 (got ${JSON.stringify(granularityRaw)})`,
+    );
     return 1;
   }
 

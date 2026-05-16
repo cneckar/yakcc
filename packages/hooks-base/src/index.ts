@@ -24,10 +24,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { contractIdFromBytes, queryIntentCardFromSource } from "@yakcc/contracts";
-import type { ContractId, ContractSpec, QueryIntentCard } from "@yakcc/contracts";
+import type { ContractId, ContractSpec, Granularity, QueryIntentCard } from "@yakcc/contracts";
+import { DEFAULT_GRANULARITY } from "@yakcc/contracts";
 import type { CandidateMatch, Registry } from "@yakcc/registry";
 
-export type { ContractId, ContractSpec, QueryIntentCard };
+export type { ContractId, ContractSpec, Granularity, QueryIntentCard };
+export { DEFAULT_GRANULARITY };
 
 // ---------------------------------------------------------------------------
 // Threshold configuration
@@ -81,6 +83,18 @@ export type HookResponse =
  *
  * Each consumer package passes these through to the shared helpers below.
  */
+/**
+ * Controls how the hook responds to JIT per-pass granularity overrides.
+ *
+ * "fixed"    — honour the granularity value exactly; ignore JIT context signals.
+ * "adaptive" — allow the hook to override granularity per-pass based on registry
+ *              density, query specificity, and past task outcomes. JIT logic is
+ *              pending calibration data from B9 (#446) and B4 (#188).
+ *
+ * See @decision DEC-WI463-GRANULARITY-001(c) in @yakcc/contracts/src/granularity.ts.
+ */
+export type GranularityMode = "fixed" | "adaptive";
+
 export interface HookOptions {
   /**
    * Cosine-distance threshold below which a registry match is accepted as a hit.
@@ -94,6 +108,21 @@ export interface HookOptions {
    * Override in tests to avoid touching the home directory.
    */
   readonly markerDir?: string | undefined;
+
+  /**
+   * Atom-specificity dial (1 = tightest scoping, 5 = loosest scoping).
+   * Defaults to DEFAULT_GRANULARITY (3). Settable from CLI flag, hook config,
+   * or per-discovery-pass override. See @decision DEC-WI463-GRANULARITY-001.
+   */
+  readonly granularity?: Granularity | undefined;
+
+  /**
+   * Controls whether the hook may override granularity per-pass based on context.
+   * "fixed" (default) honours the granularity value exactly.
+   * "adaptive" allows JIT overrides; full logic pending B9/B4 sweep data.
+   * See @decision DEC-WI463-GRANULARITY-001(c) and WI-GRANULARITY-DIAL #463.
+   */
+  readonly granularityMode?: GranularityMode | undefined;
 }
 
 // ---------------------------------------------------------------------------
