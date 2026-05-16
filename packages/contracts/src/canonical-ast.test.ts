@@ -341,6 +341,68 @@ describe("canonicalAstHash – error handling", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WI-551 α-class regression: line-ending and BOM stability
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-WI551-001: regression coverage for the two-pass T3 byte-identity sweep.
+ *   Status: active
+ *   Rationale: #551 reported 82 divergent roots; empirical investigation showed those were
+ *   symptoms of two underlying bugs fixed in #552 and #556. These tests guard the α-class
+ *   (canonicalAstHash line-ending + BOM stability, fixed by #556's `ignoreBOM: true` and
+ *   prior canonicalizer work) so they cannot silently regress. If either mechanism regresses,
+ *   the two-pass T3 sweep will produce divergent roots for BOM-bearing or CRLF files.
+ */
+describe("canonicalAstHash – WI-551 α-class regression: line-ending stability", () => {
+  it("produces identical hash for CRLF vs LF source (guards #543/#556 regression)", () => {
+    // ts-morph normalizes line endings internally; if this ever regresses, two-pass
+    // compile-self reconstruction will produce divergent roots for any file with CRLF endings.
+    const lf = "export function foo() {\n  return 1;\n}\n";
+    const crlf = lf.replace(/\n/g, "\r\n");
+    expect(canonicalAstHash(crlf)).toBe(canonicalAstHash(lf));
+    assertHashFormat(canonicalAstHash(lf));
+  });
+
+  it("CRLF stability holds for multi-function file (compound)", () => {
+    const lf = [
+      "export function add(a: number, b: number): number { return a + b; }",
+      "export function sub(a: number, b: number): number { return a - b; }",
+    ].join("\n");
+    const crlf = lf.replace(/\n/g, "\r\n");
+    expect(canonicalAstHash(crlf)).toBe(canonicalAstHash(lf));
+  });
+});
+
+describe("canonicalAstHash – WI-551 α-class regression: UTF-8 BOM stability", () => {
+  it("produces identical hash for source with UTF-8 BOM vs without (guards #543/#556 regression)", () => {
+    // The #556 fix added `ignoreBOM: true` to TextDecoder in the compile-self glue decode.
+    // ts-morph itself may or may not strip BOM from source text; this test guards that
+    // the canonical hash is identical regardless of a leading BOM byte sequence.
+    // If this regresses, import-intercept.ts and other BOM-bearing files will produce
+    // divergent roots in the two-pass sweep.
+    const noBom = "export const X = 1;\n";
+    const withBom = `﻿${noBom}`; // U+FEFF is the UTF-8 BOM codepoint
+    expect(canonicalAstHash(withBom)).toBe(canonicalAstHash(noBom));
+  });
+
+  it("BOM stability holds for a function declaration (compound)", () => {
+    const noBom = "export function process(x: number): number { return x * 2; }";
+    const withBom = `﻿${noBom}`;
+    expect(canonicalAstHash(withBom)).toBe(canonicalAstHash(noBom));
+  });
+
+  it("CRLF + BOM combined: identical hash regardless of both variants (production sequence)", () => {
+    // Production sequence: compile-self reconstruction reads a file from dist-recompiled/
+    // which may carry a BOM and CRLF endings depending on platform/toolchain. Both variants
+    // must hash identically to the canonical LF/no-BOM form for the two-pass sweep to be clean.
+    const canonical = "export function encode(x: string): string {\n  return x;\n}\n";
+    const withCrlfAndBom = `﻿${canonical.replace(/\n/g, "\r\n")}`;
+    expect(canonicalAstHash(withCrlfAndBom)).toBe(canonicalAstHash(canonical));
+    assertHashFormat(canonicalAstHash(canonical));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Compound-interaction (production-sequence) test
 // ---------------------------------------------------------------------------
 
