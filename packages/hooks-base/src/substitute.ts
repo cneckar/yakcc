@@ -211,6 +211,55 @@ export interface BindingShape {
 }
 
 // ---------------------------------------------------------------------------
+// Behavior-summary normalization — DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum rendered behavior-summary length, including ellipsis when truncated.
+ * Chosen to keep the contract comment under ~200 chars even with long atom names
+ * and guarantees — token-cost discipline per DEC-HOOK-PHASE-3-001.
+ *
+ * @decision DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001
+ * @title Append normalized spec.behavior as inline trailer on contract comment
+ * @status accepted
+ * @rationale
+ *   B5-coherence 2026-05-14 identified opaque-hash as the dominant failure mode
+ *   (36/37 of 156 turns). The LLM treats yakcc:<hash> as a token with no semantic
+ *   meaning in subsequent turns. Appending a normalized behavior summary binds
+ *   the behavior anchor to the same comment line as the atom name and hash,
+ *   enabling multi-turn LLM coherence without restructuring the existing token
+ *   boundary (yakcc:<hash> remains intact and contiguous). Capped at 80 chars
+ *   for token-cost discipline.
+ *   Cross-reference: #610, DEC-HOOK-PHASE-3-001.
+ */
+const MAX_BEHAVIOR_SUMMARY_LENGTH = 80;
+
+/**
+ * Normalize and truncate spec.behavior for inline rendering.
+ *
+ * Returns null when the behavior field is missing, empty after trim, or only
+ * whitespace — caller must omit the trailer in that case.
+ *
+ * Normalization steps (applied in order):
+ *   1. Replace embedded newlines (\r, \n) with a single space (defense-in-depth;
+ *      upstream canonicalization already prevents newlines, but we never trust it).
+ *   2. Collapse runs of whitespace to a single space.
+ *   3. Trim leading/trailing whitespace.
+ *   4. If length > MAX_BEHAVIOR_SUMMARY_LENGTH, truncate to 77 chars + "...".
+ *
+ * @decision DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001
+ * @param raw - The raw spec.behavior string (may be undefined).
+ * @returns Normalized behavior summary, or null when the field is absent/empty.
+ */
+export function normalizeBehaviorForEmit(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+  const collapsed = raw.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) return null;
+  if (collapsed.length <= MAX_BEHAVIOR_SUMMARY_LENGTH) return collapsed;
+  return `${collapsed.slice(0, MAX_BEHAVIOR_SUMMARY_LENGTH - 3)}...`;
+}
+
+// ---------------------------------------------------------------------------
 // Contract comment rendering — Phase 3 D-HOOK-4
 // ---------------------------------------------------------------------------
 
@@ -284,7 +333,13 @@ export function renderContractComment(atomName: string, atomHash: string, spec: 
   // Truncate hash to first 8 characters per DEC-HOOK-PHASE-3-001.
   const shortHash = atomHash.slice(0, 8);
 
-  return `// @atom ${atomName} ${parenthetical} — yakcc:${shortHash}`;
+  const base = `// @atom ${atomName} ${parenthetical} — yakcc:${shortHash}`;
+
+  // Append normalized behavior summary when present (DEC-HOOK-BEHAVIOR-SUMMARY-EMIT-001).
+  // The yakcc:<hash> token boundary is preserved — we only add trailing text inside the comment.
+  const behavior = normalizeBehaviorForEmit(spec.behavior);
+  if (behavior === null) return base;
+  return `${base} — ${behavior}`;
 }
 
 // ---------------------------------------------------------------------------
