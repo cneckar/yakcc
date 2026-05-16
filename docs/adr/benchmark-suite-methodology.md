@@ -267,3 +267,51 @@ Sub-ticket implementation (each is its own WI):
   - WI-CI-FAST-PATH (#196)
   - WI-V3-DISCOVERY-SYSTEM (#150)
   - WI-AS-BACKEND-INTEGRATION (#143)
+
+---
+
+## DEC-BENCH-COVERAGE-SHAVE-FIRST-001 — Coverage gaps fill via shave, not hand-written seeds
+
+**Status:** Accepted (2026-05-16)
+**Issue:** [#607](https://github.com/cneckar/yakcc/issues/607)
+**Parent:** DEC-BENCHMARK-SUITE-001 (this ADR's root decision)
+**Supersedes (in part):** the implicit "GAP → file seed-writing issue" pipeline of the 2026-05-13 B4 scan (#465 / #467 / #468 / #469)
+
+### Context
+
+The B4-tokens registry-coverage scan (`bench/B4-tokens/REGISTRY_COVERAGE.md`, generated 2026-05-13) flagged gaps with the recommendation "file a seed-writing issue." This was the bootstrap-era model. Since then:
+- **WI-510 cascade** shipped headline bindings shaved from real npm packages: lodash, date-fns, uuid, nanoid, jsonwebtoken, bcryptjs (PRs #573, #584, #586, #598). Shave is the production fill-mechanism for real-world coverage.
+- **WI-508 Slice 2** (import-intercept hook with shave-on-miss) makes shave run automatically when consumers hit registry misses. The corpus grows from real usage.
+- **Seeds are L0 primitives only** (`level: "L0"` in `spec.yak`). They are parsing building blocks (ascii-char, bracket, comma, digit, peek-char, position-step, etc.) — not feature-level atoms.
+
+Adding feature functions (json-pointer-token-splitter, base64-alphabet, semver-component-parser, memoize) to L0 seeds is a categorical mismatch — those belong in the shaved-corpus tier.
+
+### Decision
+
+Coverage scans MUST classify gaps shave-first:
+- **L0-seed-gap** — true parsing primitive; no real-package equivalent; needed for bootstrap composition. Action: narrow seed-writing issue. Expected rare (<5/scan typical).
+- **shave-queue** — npm package-shaped gap; names candidate package(s). Action: feed WI-510-style shave-corpus expansion target list. NO seed-writing issue.
+- **shave-on-miss-eligible** — will fill automatically via WI-508 import-intercept hook when consumed. Action: none.
+
+Plus the existing FULL / PARTIAL bands (kept for confidence-threshold cases).
+
+### Audit (other benchmarks, 2026-05-16)
+
+- **B5-coherence** — measures LLM behavior across multi-turn conversations; not a coverage-gap benchmark. No reshape.
+- **B8-synthetic** — measures hit-rate via simulation; not a coverage-gap benchmark. No reshape.
+- **B10-import-replacement** — already shave-aligned by construction (designed around import-replacement, not seeds). No reshape.
+- **B1 / B6 / B7 / B9** — perf / correctness benchmarks. Orthogonal.
+- **Only B4 was misaligned** and is reshaped per this decision.
+
+### Consequences
+
+- The B4 scan recommendation pipeline produces shave-queue entries (with named npm candidates) instead of seed-writing issues.
+- Existing seed-gap issues #465 (memoize), #467 (json-pointer-token-splitter; already closed), #468 (base64-alphabet), #469 (semver-component-parser) are superseded; closed with shave-queue redirects post-merge of this decision.
+- The B4 harness (`bench/B4-tokens/harness/`) may need an update to produce shave-queue entries in machine-readable form; deferred to a future slice (this decision is methodology-only).
+- The 26 hand-written L0 seeds in `packages/seeds/src/blocks/` remain the bootstrap floor; new seeds are added only when a true L0 primitive is missing and no package equivalent exists.
+
+### Out of scope
+
+- Actually shaving the named npm candidates — downstream WI-510-cascade work, NOT this decision.
+- B4 harness machine-readable output update — future slice.
+- Changes to the shave engine — out of scope.
