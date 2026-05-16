@@ -32,6 +32,9 @@ import { scoreIntentSpecificity } from "../src/intent-specificity.js";
 import type { CandidateMatch } from "@yakcc/registry";
 import { resetConfigOverride, setConfigOverride, getDefaults, loadEnforcementConfig } from "../src/enforcement-config.js";
 import { scoreResultSetSize } from "../src/result-set-size.js";
+import { enforceAtomSizeRatio } from "../src/atom-size-ratio.js";
+import type { AtomLike, CallSiteAnalysis } from "../src/atom-size-ratio.js";
+import type { Layer3Config } from "../src/enforcement-config.js";
 
 // ---------------------------------------------------------------------------
 // Corpus type
@@ -39,6 +42,7 @@ import { scoreResultSetSize } from "../src/result-set-size.js";
 
 interface CorpusRow {
   id: string;
+  /** For Layer 1 rows: the intent text. For Layer 2/3 rows: descriptive label (not interpreted). */
   input: string;
   expectedLayer: number;
   expectedOutcome: "intent-too-broad" | "accept" | "result-set-too-large" | "atom-oversized" | "descent-bypass-warning" | "drift-alert";
@@ -48,6 +52,11 @@ interface CorpusRow {
   confidentCount?: number;
   weakCount?: number;
   envOverrides?: Record<string, string>;
+  // Layer 3 fields — present only for L3-* rows
+  atomComplexity?: number;
+  needComplexity?: number;
+  ratioThreshold?: number;
+  minFloor?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +153,90 @@ function buildCandidatesFromRow(row: CorpusRow): CandidateMatch[] {
 }
 
 // ---------------------------------------------------------------------------
+// Layer 3 helpers — build AtomLike + CallSiteAnalysis from corpus fields
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a minimal AtomLike from a corpus row's atomComplexity proxy fields.
+ *
+ * The corpus stores the pre-computed complexity values (atomComplexity, needComplexity)
+ * rather than the raw spec fields. We reconstruct an AtomLike that reproduces
+ * the documented atomComplexity via the standard formula:
+ *   atomComplexity = transitiveNodes + 5 * exportedSurface + 2 * transitiveDeps
+ *
+ * Strategy: encode all complexity in transitiveDeps (cleanest single-field control):
+ *   transitiveDeps = atomComplexity / 2  when atomComplexity is even,
+ *   otherwise use inputs = atomComplexity (transitiveNodes only, exportedSurface=0, deps=0).
+ * Both roundtrip exactly.
+ */
+function makeAtomLikeFromRow(row: CorpusRow): AtomLike {
+  const atomComplexity = row.atomComplexity ?? 0;
+  // Encode via transitiveDeps when divisible by 2; otherwise via inputs only.
+  if (atomComplexity % 2 === 0) {
+    const deps = atomComplexity / 2;
+    return {
+      spec: {
+        inputs: [],
+        outputs: [],
+        guarantees: [],
+      } as unknown as import("@yakcc/contracts").SpecYak,
+      exportedSurface: 0,
+      transitiveDeps: deps,
+    };
+  }
+  // Odd: encode all in transitiveNodes (inputs only, no exports or deps).
+  return {
+    spec: {
+      inputs: Array.from({ length: atomComplexity }, (_, i) => ({ name: `in${i}`, type: "string" })),
+      outputs: [],
+      guarantees: [],
+    } as unknown as import("@yakcc/contracts").SpecYak,
+    exportedSurface: 0,
+    transitiveDeps: 0,
+  };
+}
+
+/**
+ * Build a CallSiteAnalysis that produces the row's documented needComplexity.
+ *
+ * needComplexity = max(1, bindingsUsed * statementCount).
+ * We use bindingsUsed=needComplexity, statementCount=1 for simplicity.
+ */
+function makeCallSiteFromRow(row: CorpusRow): CallSiteAnalysis {
+  const needComplexity = row.needComplexity ?? 1;
+  return { bindingsUsed: needComplexity, statementCount: 1 };
+}
+
+/**
+ * Assert a Layer 3 corpus row against enforceAtomSizeRatio().
+ *
+ * Builds AtomLike + CallSiteAnalysis from row fields and verifies the gate verdict.
+ *
+ * @decision DEC-HOOK-ENF-LAYER3-ATOM-SIZE-RATIO-001
+ */
+function assertLayer3Row(row: CorpusRow): void {
+  const cfg: Layer3Config = {
+    ratioThreshold: row.ratioThreshold ?? 10,
+    minFloor: row.minFloor ?? 20,
+    disableGate: false,
+  };
+  const atomLike = makeAtomLikeFromRow(row);
+  const callSite = makeCallSiteFromRow(row);
+
+  const result = enforceAtomSizeRatio(atomLike, callSite, cfg);
+
+  if (row.expectedOutcome === "atom-oversized") {
+    expect(result.status, `[${row.id}] expected atom-size-too-large for atomComplexity=${row.atomComplexity ?? 0} (${row.notes ?? ""})`).toBe("atom-size-too-large");
+    expect(result.layer, `[${row.id}] layer discriminant must be 3`).toBe(3);
+  } else if (row.expectedOutcome === "accept") {
+    expect(result.status, `[${row.id}] expected ok (accept) for atomComplexity=${row.atomComplexity ?? 0} (${row.notes ?? ""})`).toBe("ok");
+    expect(result.layer, `[${row.id}] layer discriminant must be 3`).toBe(3);
+  } else {
+    throw new Error(`[${row.id}] unexpected expectedOutcome="${row.expectedOutcome}" for a Layer 3 row`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Layer 2 assertion helper
 // ---------------------------------------------------------------------------
 
@@ -214,6 +307,12 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     expect(layer2Rows.length).toBe(5);
   });
 
+  it("S3 seeds exactly 5 Layer 3 rows", async () => {
+    const rows = await loadCorpus();
+    const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
+    expect(layer3Rows.length).toBe(5);
+  });
+
   it("all S1 row ids follow L1-NNN format", async () => {
     const rows = await loadCorpus();
     const layer1Rows = rows.filter((r) => r.expectedLayer === 1);
@@ -227,6 +326,14 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     const layer2Rows = rows.filter((r) => r.expectedLayer === 2);
     for (const row of layer2Rows) {
       expect(row.id, `id should match L2-NNN`).toMatch(/^L2-\d{3}$/);
+    }
+  });
+
+  it("all S3 row ids follow L3-NNN format", async () => {
+    const rows = await loadCorpus();
+    const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
+    for (const row of layer3Rows) {
+      expect(row.id, `id should match L3-NNN`).toMatch(/^L3-\d{3}$/);
     }
   });
 });
@@ -368,5 +475,68 @@ describe("Layer 6 eval corpus — completeness gate", () => {
     const hasAccept = layer2Rows.some((r) => r.expectedOutcome === "accept");
     expect(hasReject, "corpus must contain at least one result-set-too-large row").toBe(true);
     expect(hasAccept, "corpus must contain at least one accept row for Layer 2").toBe(true);
+  });
+
+  it("corpus covers both reject and accept outcomes in Layer 3", async () => {
+    const rows = await loadCorpus();
+    const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
+    const hasReject = layer3Rows.some((r) => r.expectedOutcome === "atom-oversized");
+    const hasAccept = layer3Rows.some((r) => r.expectedOutcome === "accept");
+    expect(hasReject, "corpus must contain at least one atom-oversized row").toBe(true);
+    expect(hasAccept, "corpus must contain at least one accept row for Layer 3").toBe(true);
+  });
+
+  it("corpus has grown to 17 rows (S1=7 + S2=5 + S3=5)", async () => {
+    const rows = await loadCorpus();
+    expect(rows.length).toBe(17);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer 3 eval gate — table-driven (S3 additive, wi-591-s3-layer3)
+// ---------------------------------------------------------------------------
+
+describe("Layer 6 eval corpus — Layer 3 rows", () => {
+  it("L3-001: lodash-shaped atom (atomComplexity=110, needComplexity=1) → atom-oversized", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-001");
+    expect(row, "L3-001 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-002: micro-atom (atomComplexity=7 < minFloor=20) → accept (bypassed)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-002");
+    expect(row, "L3-002 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-003: boundary at ratioThreshold (ratio=10.0, not > 10) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-003");
+    expect(row, "L3-003 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-004: boundary +1 (ratio=10.5 > ratioThreshold=10) → atom-oversized", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-004");
+    expect(row, "L3-004 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-005: large needComplexity reduces ratio to safe zone (ratio=2.2 < 10) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-005");
+    expect(row, "L3-005 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("all Layer 3 rows pass (catch-all sweep for future corpus additions)", async () => {
+    const rows = await loadCorpus();
+    const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
+    for (const row of layer3Rows) {
+      assertLayer3Row(row);
+    }
   });
 });

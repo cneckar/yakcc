@@ -92,7 +92,16 @@ export type TelemetryEvent = {
     //   Emitted via outcomeOverride="result-set-too-large" at the Layer 2 gate in
     //   executeRegistryQueryWithSubstitution (index.ts). outcomeFromResponse() unchanged.
     //   Cross-reference: plans/wi-579-s2-layer2-result-set-size.md
-    | "result-set-too-large"; // S2 additive (DEC-HOOK-ENF-LAYER2-TELEMETRY-001)
+    | "result-set-too-large" // S2 additive (DEC-HOOK-ENF-LAYER2-TELEMETRY-001)
+    // @decision DEC-HOOK-ENF-LAYER3-TELEMETRY-001
+    // title: "atom-size-too-large" additive outcome for Layer 3 atom-size ratio gate (wi-591 S3)
+    // status: decided (wi-591-s3-layer3)
+    // rationale:
+    //   Additive expansion following the Layer 2 pattern (DEC-HOOK-ENF-LAYER2-TELEMETRY-001).
+    //   Emitted via outcomeOverride="atom-size-too-large" at the Layer 3 gate in
+    //   executeSubstitution (substitute.ts). outcomeFromResponse() unchanged.
+    //   Cross-reference: plans/wi-579-s3-layer3-atom-size-ratio.md
+    | "atom-size-too-large"; // S3 additive (DEC-HOOK-ENF-LAYER3-TELEMETRY-001)
   // ---------------------------------------------------------------------------
   // Phase 2 additions â€” additive fields (backwards-compatible per #217 spec).
   // Old telemetry consumers see these as optional (undefined in Phase 1 events).
@@ -230,8 +239,8 @@ export function hashIntent(intentText: string): string {
  */
 export function outcomeFromResponse(
   response: HookResponse,
-  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large",
-): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" | "intent-too-broad" | "result-set-too-large" {
+  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large",
+): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" {
   // Note: shave-on-miss outcome values are emitted directly via appendTelemetryEvent
   // from shave-on-miss.ts, not via this function. This function handles only the
   // four standard outcomes plus the override values.
@@ -315,7 +324,7 @@ export function captureTelemetry(opts: {
    * by the Layer 1 gate to set "intent-too-broad" (DEC-HOOK-ENF-LAYER1-TELEMETRY-001),
    * and by the Layer 2 gate to set "result-set-too-large" (DEC-HOOK-ENF-LAYER2-TELEMETRY-001).
    */
-  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large";
+  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large";
   /** BMR prefixes of atoms created. Non-empty only for outcome === "atomized". */
   atomsCreated?: readonly string[];
   sessionId?: string;

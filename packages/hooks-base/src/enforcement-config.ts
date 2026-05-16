@@ -2,7 +2,7 @@
 //
 // @decision DEC-HOOK-ENF-CONFIG-001
 // title: Central enforcement config module — sole authority for all layer thresholds
-// status: decided (wi-590-s2-layer2)
+// status: decided (wi-590-s2-layer2; extended wi-591-s3-layer3)
 // rationale:
 //   User directive (#590): "make the levels for rejection etc configurable via config.
 //   We want to be able to tune this to the right levels without having to rewrite code
@@ -22,6 +22,8 @@
 //     YAKCC_RESULT_CONFIDENT_THRESHOLD    → layer2.confidentThreshold (float)
 //     YAKCC_L1_MIN_WORDS                  → layer1.minWords (integer)
 //     YAKCC_L1_MAX_WORDS                  → layer1.maxWords (integer)
+//     YAKCC_ATOM_OVERSIZED_RATIO          → layer3.ratioThreshold (float; matches #579 issue body naming)
+//     YAKCC_HOOK_DISABLE_ATOM_SIZE_GATE   → layer3.disableGate = true
 //
 //   Config file: optional .yakcc/enforcement.json relative to the repo root,
 //   or the path pointed to by YAKCC_ENFORCEMENT_CONFIG_PATH.
@@ -30,9 +32,10 @@
 //   Memoization: the loaded config is cached after the first call.
 //   Tests can reset via setConfigOverride() / resetConfigOverride().
 //
-//   S3-S6 append their layer3/layer4/layer5/layer6 keys here following the same pattern.
+//   S4-S6 append their layer4/layer5/layer6 keys here following the same pattern.
 //
-//   Cross-reference: docs/enforcement-config.md, plans/wi-579-s2-layer2-result-set-size.md
+//   Cross-reference: docs/enforcement-config.md, plans/wi-579-s2-layer2-result-set-size.md,
+//   plans/wi-579-s3-layer3-atom-size-ratio.md
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,6 +80,47 @@ export interface Layer1Config {
 }
 
 /**
+ * Configuration for Layer 3 (atom-size ratio enforcement at substitution time).
+ *
+ * @decision DEC-HOOK-ENF-LAYER3-RATIO-THRESHOLD-001
+ * title: ratioThreshold default 10 matches #579 issue body "10x" spec
+ * status: decided (wi-591-s3-layer3)
+ * rationale:
+ *   The parent issue body explicitly calls out "10x" as the target ratio above which
+ *   an atom is considered oversized for an immediate need. Setting the default to 10
+ *   reproduces the spec intent without any file config present.
+ *
+ * @decision DEC-HOOK-ENF-LAYER3-MIN-FLOOR-001
+ * title: minFloor default 20 — small atoms skip ratio check entirely
+ * status: decided (wi-591-s3-layer3)
+ * rationale:
+ *   An atom with fewer than 20 complexity points is so small that any ratio check
+ *   would produce false positives (a pure 3-line function has atomComplexity ≈ 3;
+ *   ratio vs needComplexity=1 is always 3 — clearly not "oversized"). The floor
+ *   prevents spurious rejections on micro-atoms while keeping the gate meaningful
+ *   for substantial library-scale atoms (lodash-shaped, joi-shaped, etc.).
+ */
+export interface Layer3Config {
+  /**
+   * Maximum allowed ratio of atomComplexity / needComplexity before the gate fires.
+   * Default: 10 (DEC-HOOK-ENF-LAYER3-RATIO-THRESHOLD-001).
+   * Env: YAKCC_ATOM_OVERSIZED_RATIO
+   */
+  readonly ratioThreshold: number;
+  /**
+   * Atoms with atomComplexity strictly below this floor skip the ratio check entirely.
+   * Default: 20 (DEC-HOOK-ENF-LAYER3-MIN-FLOOR-001).
+   */
+  readonly minFloor: number;
+  /**
+   * When true, the Layer 3 atom-size ratio gate is disabled entirely.
+   * Equivalent to YAKCC_HOOK_DISABLE_ATOM_SIZE_GATE=1.
+   * Default: false.
+   */
+  readonly disableGate: boolean;
+}
+
+/**
  * Configuration for Layer 2 (result-set size enforcement).
  */
 export interface Layer2Config {
@@ -102,7 +146,7 @@ export interface Layer2Config {
 /**
  * Central enforcement configuration shape.
  *
- * S3-S6 implementers: append layer3/layer4/layer5/layer6 keys here following
+ * S4-S6 implementers: append layer4/layer5/layer6 keys here following
  * the same pattern. Do NOT add thresholds to layer modules directly.
  *
  * @decision DEC-HOOK-ENF-CONFIG-001
@@ -110,6 +154,7 @@ export interface Layer2Config {
 export interface EnforcementConfig {
   readonly layer1: Layer1Config;
   readonly layer2: Layer2Config;
+  readonly layer3: Layer3Config;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +314,11 @@ export function getDefaults(): EnforcementConfig {
       maxOverall: 10,
       confidentThreshold: 0.7,
     },
+    layer3: {
+      ratioThreshold: 10,
+      minFloor: 20,
+      disableGate: false,
+    },
   };
 }
 
@@ -295,6 +345,11 @@ interface PartialEnforcementConfigFile {
     maxConfident: number;
     maxOverall: number;
     confidentThreshold: number;
+  }>;
+  layer3?: Partial<{
+    ratioThreshold: number;
+    minFloor: number;
+    disableGate: boolean;
   }>;
 }
 
@@ -379,6 +434,26 @@ function validateConfigFile(raw: unknown, filePath: string): PartialEnforcementC
     }
   }
 
+  // Validate layer3 block
+  if ("layer3" in obj && obj.layer3 !== undefined) {
+    const l3 = obj.layer3;
+    if (typeof l3 !== "object" || l3 === null || Array.isArray(l3)) {
+      throw new TypeError(`enforcement-config: "${filePath}" layer3 must be an object`);
+    }
+    const l3obj = l3 as Record<string, unknown>;
+    for (const key of ["ratioThreshold", "minFloor"] as const) {
+      if (key in l3obj && typeof l3obj[key] !== "number") {
+        throw new TypeError(`enforcement-config: "${filePath}" layer3.${key} must be a number`);
+      }
+      if (key in l3obj && (l3obj[key] as number) <= 0) {
+        throw new TypeError(`enforcement-config: "${filePath}" layer3.${key} must be positive`);
+      }
+    }
+    if ("disableGate" in l3obj && typeof l3obj.disableGate !== "boolean") {
+      throw new TypeError(`enforcement-config: "${filePath}" layer3.disableGate must be a boolean`);
+    }
+  }
+
   return raw as PartialEnforcementConfigFile;
 }
 
@@ -411,6 +486,10 @@ function loadFromFile(filePath: string, defaults: EnforcementConfig): Enforcemen
       ...defaults.layer2,
       ...partial.layer2,
     },
+    layer3: {
+      ...defaults.layer3,
+      ...partial.layer3,
+    },
   };
 }
 
@@ -435,8 +514,10 @@ function loadFromFile(filePath: string, defaults: EnforcementConfig): Enforcemen
 function applyEnvOverrides(config: EnforcementConfig, env: NodeJS.ProcessEnv): EnforcementConfig {
   let layer1 = { ...config.layer1 };
   let layer2 = { ...config.layer2 };
+  let layer3 = { ...config.layer3 };
   let l1Changed = false;
   let l2Changed = false;
+  let l3Changed = false;
 
   // layer1 overrides
   if (env.YAKCC_HOOK_DISABLE_INTENT_GATE === "1") {
@@ -481,11 +562,25 @@ function applyEnvOverrides(config: EnforcementConfig, env: NodeJS.ProcessEnv): E
     }
   }
 
-  if (!l1Changed && !l2Changed) return config;
+  // layer3 overrides
+  if (env.YAKCC_ATOM_OVERSIZED_RATIO !== undefined) {
+    const v = Number.parseFloat(env.YAKCC_ATOM_OVERSIZED_RATIO);
+    if (!Number.isNaN(v) && v > 0) {
+      layer3 = { ...layer3, ratioThreshold: v };
+      l3Changed = true;
+    }
+  }
+  if (env.YAKCC_HOOK_DISABLE_ATOM_SIZE_GATE === "1") {
+    layer3 = { ...layer3, disableGate: true };
+    l3Changed = true;
+  }
+
+  if (!l1Changed && !l2Changed && !l3Changed) return config;
 
   return {
     layer1: l1Changed ? layer1 : config.layer1,
     layer2: l2Changed ? layer2 : config.layer2,
+    layer3: l3Changed ? layer3 : config.layer3,
   };
 }
 
