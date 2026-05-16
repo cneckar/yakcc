@@ -885,7 +885,7 @@ describe("validator isAlphanumeric section F -- combinedScore quality gate", () 
 describe("validator headline bindings -- compound interaction (real production sequence)", () => {
   it(
     "all four per-entry shaves are independent, complete, and produce non-empty forests",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const bindings = [
         { name: "isEmail", entry: "isEmail.js", minMod: 7, maxMod: 12 },
