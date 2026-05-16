@@ -11,7 +11,7 @@
  *   - One TelemetryEvent per emission event; JSONL (newline-delimited JSON) is the storage format
  *     so the file is append-only and trivially readable with standard tools.
  *   - EmissionContext.intent is BLAKE3-hashed before storage (no plaintext intents â€” privacy
- *     by default). The hash allows "did this exact intent recur?" analysis without storing PII.
+ *     by default). The hash allows “did this exact intent recur?” analysis without storing PII.
  *   - Session ID resolved from CLAUDE_SESSION_ID env var; falls back to a process-scoped UUID
  *     generated once per process so all events from the same process share an ID even when
  *     CLAUDE_SESSION_ID is absent (e.g. in tests or non-Claude IDEs).
@@ -19,6 +19,18 @@
  *   - Zero network I/O in this module â€” append to local file only (B6 air-gap compliance).
  *
  * Cross-reference: DEC-HOOK-LAYER-001 (parent ADR), D-HOOK-5, B6 (#190).
+ *
+ * WI-546 Slice 1 addition:
+ * @decision DEC-TELEMETRY-EXPORT-SINK-001
+ * @title Sink dispatcher hooks appendTelemetryEvent â€” single dispatch point
+ * @status accepted
+ * @rationale
+ *   After the existing JSONL append, `appendTelemetryEvent` now calls
+ *   `selectSink().send(event)` to fan out to the configured export sinks
+ *   (NoOp, File, HttpsBatcher, or Composite). The JSONL write is never removed
+ *   or bypassed â€” the sink dispatch is ADDITIVE. Errors from the sink are
+ *   caught at the sink boundary (DEC-TELEMETRY-EXPORT-FAIL-SILENT-005) and
+ *   the existing try/catch at call sites in index.ts is the outer safety net.
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
@@ -27,6 +39,7 @@ import { join } from "node:path";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { HookResponse } from "./index.js";
+import { selectSink } from "./telemetry-sink.js";
 
 // ---------------------------------------------------------------------------
 // TelemetryEvent â€” schema per D-HOOK-5
@@ -286,6 +299,18 @@ export function appendTelemetryEvent(event: TelemetryEvent, sessionId: string, d
   const filePath = join(dir, `${sessionId}.jsonl`);
   // One JSON object per line; newline-terminated for JSONL compliance.
   appendFileSync(filePath, `${JSON.stringify(event)}\n`, "utf-8");
+
+  // @decision DEC-TELEMETRY-EXPORT-SINK-001
+  // Dispatch to the configured export sink (NoOp/File/HttpsBatcher/Composite).
+  // This is ADDITIVE — the JSONL write above is never removed or bypassed.
+  // Errors are caught at the sink boundary (DEC-TELEMETRY-EXPORT-FAIL-SILENT-005);
+  // the try/catch at call sites in index.ts is the outer safety net.
+  try {
+    selectSink().send(event);
+  } catch {
+    // Backstop: sink implementations should catch their own errors, but if one
+    // throws anyway we swallow here so the JSONL write is never affected.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -369,4 +394,3 @@ export function captureTelemetry(opts: {
 
   appendTelemetryEvent(event, sessionId, dir);
 }
-
