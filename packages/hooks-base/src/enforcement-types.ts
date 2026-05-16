@@ -71,13 +71,80 @@ export interface IntentAcceptEnvelope {
 export type IntentSpecificityResult = IntentAcceptEnvelope | IntentRejectEnvelope;
 
 // ---------------------------------------------------------------------------
-// Layers 2–5 placeholders — additive per Sacred Practice 12
+// Layer 2 — result-set size enforcement (wi-590-s2-layer2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Layer 2 ACCEPT envelope: result-set size is within configured bounds.
+ *
+ * @decision DEC-HOOK-ENF-LAYER2-RESULT-SET-SIZE-001
+ */
+export interface ResultSetAcceptEnvelope {
+  readonly layer: 2;
+  readonly status: "ok";
+  /**
+   * Number of candidates in the "confident" band (combinedScore >= confidentThreshold).
+   * Zero when no candidates meet the threshold.
+   */
+  readonly confidentCount: number;
+  /**
+   * Total number of candidates evaluated (all score bands).
+   */
+  readonly totalCount: number;
+}
+
+/**
+ * Reasons a Layer 2 result-set size check can produce a REJECT verdict.
+ *
+ * @decision DEC-HOOK-ENF-LAYER2-RESULT-SET-SIZE-001
+ */
+export type ResultSetRejectReason =
+  | "too_many_confident" // confidentCount > maxConfident
+  | "too_many_overall";  // totalCount > maxOverall
+
+/**
+ * Layer 2 REJECT envelope: the result set was too large.
+ *
+ * When this envelope is returned, callers MUST NOT use the candidates as a
+ * direct match — the result set is ambiguous. The intent should be decomposed
+ * or narrowed before resubmitting.
+ *
+ * @decision DEC-HOOK-ENF-LAYER2-RESULT-SET-SIZE-001
+ */
+export interface ResultSetRejectEnvelope {
+  readonly layer: 2;
+  readonly status: "result_set_too_large";
+  /** All reject reasons that applied (at least one when status = result_set_too_large). */
+  readonly reasons: readonly ResultSetRejectReason[];
+  /**
+   * Number of candidates in the confident band at time of rejection.
+   */
+  readonly confidentCount: number;
+  /**
+   * Total number of candidates at time of rejection.
+   */
+  readonly totalCount: number;
+  /**
+   * Thresholds that were violated (for telemetry / debugging).
+   */
+  readonly maxConfident: number;
+  readonly maxOverall: number;
+  /**
+   * Forcing-function suggestion surfaced to the LLM.
+   */
+  readonly suggestion: string;
+}
+
+/** Discriminated union result of scoreResultSetSize(). */
+export type ResultSetSizeResult = ResultSetAcceptEnvelope | ResultSetRejectEnvelope;
+
+// ---------------------------------------------------------------------------
+// Layers 3–5 placeholders — additive per Sacred Practice 12
 //
-// S2..S5 implementers append their envelope types here. No existing shape
+// S3..S5 implementers append their envelope types here. No existing shape
 // changes. This comment block documents the extension point so future
 // implementers know where to add.
 //
-// S2 will export: ResultSetEnvelope (ok | result_set_too_large)
 // S3 will export: AtomSizeEnvelope (ok | atom_oversized)
 // S4 will export: DescentTrackingEnvelope (ok | descent_bypass_warning)
 // S5 will export: DriftEnvelope (ok | drift_alert)

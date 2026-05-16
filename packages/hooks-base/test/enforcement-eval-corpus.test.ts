@@ -25,11 +25,13 @@
  * Every PR touching packages/hooks-base/src/** will exercise it.
  */
 
-import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scoreIntentSpecificity } from "../src/intent-specificity.js";
+import type { CandidateMatch } from "@yakcc/registry";
+import { resetConfigOverride, setConfigOverride, getDefaults, loadEnforcementConfig } from "../src/enforcement-config.js";
+import { scoreResultSetSize } from "../src/result-set-size.js";
 
 // ---------------------------------------------------------------------------
 // Corpus type
@@ -41,6 +43,11 @@ interface CorpusRow {
   expectedLayer: number;
   expectedOutcome: "intent-too-broad" | "accept" | "result-set-too-large" | "atom-oversized" | "descent-bypass-warning" | "drift-alert";
   notes?: string;
+  // Layer 2 fields — present only for L2-* rows
+  candidateCount?: number;
+  confidentCount?: number;
+  weakCount?: number;
+  envOverrides?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +87,102 @@ function assertLayer1Row(row: CorpusRow): void {
 }
 
 // ---------------------------------------------------------------------------
+// Layer 2 helpers — build minimal CandidateMatch stubs
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a confident CandidateMatch stub (score >= 0.70, d=0.5, score=0.9375).
+ * combinedScore = 1 - d^2/4 = 1 - 0.25/4 = 0.9375 >= confidentThreshold=0.70.
+ */
+function makeConfidentStub(): CandidateMatch {
+  return {
+    cosineDistance: 0.5,
+    block: {
+      specCanonicalBytes: new Uint8Array(0),
+      spec: {
+        behavior: "stub",
+        inputs: [],
+        outputs: [],
+        guarantees: [],
+        errorConditions: [],
+        nonFunctional: { purity: "pure", threadSafety: "safe" },
+        propertyTests: [],
+      },
+    },
+  } as unknown as CandidateMatch;
+}
+
+/**
+ * Build a weak CandidateMatch stub (score < 0.70, d=1.2, score=0.64).
+ * combinedScore = 1 - 1.44/4 = 0.64 < confidentThreshold=0.70.
+ */
+function makeWeakStub(): CandidateMatch {
+  return {
+    cosineDistance: 1.2,
+    block: {
+      specCanonicalBytes: new Uint8Array(0),
+      spec: {
+        behavior: "stub",
+        inputs: [],
+        outputs: [],
+        guarantees: [],
+        errorConditions: [],
+        nonFunctional: { purity: "pure", threadSafety: "safe" },
+        propertyTests: [],
+      },
+    },
+  } as unknown as CandidateMatch;
+}
+
+/**
+ * Build the candidate list from a corpus row's confidentCount + weakCount fields.
+ */
+function buildCandidatesFromRow(row: CorpusRow): CandidateMatch[] {
+  const confident = Array.from({ length: row.confidentCount ?? 0 }, () => makeConfidentStub());
+  const weak = Array.from({ length: row.weakCount ?? 0 }, () => makeWeakStub());
+  return [...confident, ...weak];
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2 assertion helper
+// ---------------------------------------------------------------------------
+
+function assertLayer2Row(row: CorpusRow): void {
+  const candidates = buildCandidatesFromRow(row);
+
+  // Apply env overrides via setConfigOverride when envOverrides is present.
+  // This simulates what loadEnforcementConfig would do with the env vars.
+  if (row.envOverrides && Object.keys(row.envOverrides).length > 0) {
+    const cfg = loadEnforcementConfig({ env: { ...process.env, ...row.envOverrides } });
+    setConfigOverride(cfg);
+  }
+
+  const result = scoreResultSetSize(candidates);
+
+  if (row.expectedOutcome === "result-set-too-large") {
+    expect(result.status, `[${row.id}] expected result_set_too_large for confidentCount=${row.confidentCount ?? 0} (${row.notes ?? ""})`).toBe("result_set_too_large");
+    expect(result.layer, `[${row.id}] layer discriminant must be 2`).toBe(2);
+  } else if (row.expectedOutcome === "accept") {
+    expect(result.status, `[${row.id}] expected ok (accept) for confidentCount=${row.confidentCount ?? 0} (${row.notes ?? ""})`).toBe("ok");
+    expect(result.layer, `[${row.id}] layer discriminant must be 2`).toBe(2);
+  } else {
+    throw new Error(`[${row.id}] unexpected expectedOutcome="${row.expectedOutcome}" for a Layer 2 row`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Config reset between tests (needed for L2 env-override tests)
+// ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  resetConfigOverride();
+});
+
+afterEach(() => {
+  resetConfigOverride();
+});
+
+// ---------------------------------------------------------------------------
 // Structural invariants
 // ---------------------------------------------------------------------------
 
@@ -105,11 +208,25 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     expect(layer1Rows.length).toBe(7);
   });
 
+  it("S2 seeds exactly 5 Layer 2 rows", async () => {
+    const rows = await loadCorpus();
+    const layer2Rows = rows.filter((r) => r.expectedLayer === 2);
+    expect(layer2Rows.length).toBe(5);
+  });
+
   it("all S1 row ids follow L1-NNN format", async () => {
     const rows = await loadCorpus();
     const layer1Rows = rows.filter((r) => r.expectedLayer === 1);
     for (const row of layer1Rows) {
       expect(row.id, `id should match L1-NNN`).toMatch(/^L1-\d{3}$/);
+    }
+  });
+
+  it("all S2 row ids follow L2-NNN format", async () => {
+    const rows = await loadCorpus();
+    const layer2Rows = rows.filter((r) => r.expectedLayer === 2);
+    for (const row of layer2Rows) {
+      expect(row.id, `id should match L2-NNN`).toMatch(/^L2-\d{3}$/);
     }
   });
 });
@@ -181,6 +298,56 @@ describe("Layer 6 eval corpus — Layer 1 rows", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Layer 2 eval gate — table-driven
+// ---------------------------------------------------------------------------
+
+describe("Layer 6 eval corpus — Layer 2 rows", () => {
+  it("L2-001: 12 confident candidates → result-set-too-large", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-001");
+    expect(row, "L2-001 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-002: 4 confident candidates → result-set-too-large (boundary +1)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-002");
+    expect(row, "L2-002 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-003: 3 confident candidates → accept (at boundary)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-003");
+    expect(row, "L2-003 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-004: 0 confident + 5 weak candidates → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-004");
+    expect(row, "L2-004 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-005: YAKCC_RESULT_SET_MAX=5 env override + 4 confident → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-005");
+    expect(row, "L2-005 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("all Layer 2 rows pass (catch-all sweep for future corpus additions)", async () => {
+    const rows = await loadCorpus();
+    const layer2Rows = rows.filter((r) => r.expectedLayer === 2);
+    for (const row of layer2Rows) {
+      assertLayer2Row(row);
+      resetConfigOverride(); // reset between rows in the sweep
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Corpus completeness gate
 // ---------------------------------------------------------------------------
 
@@ -192,5 +359,14 @@ describe("Layer 6 eval corpus — completeness gate", () => {
     const hasAccept = layer1Rows.some((r) => r.expectedOutcome === "accept");
     expect(hasReject, "corpus must contain at least one intent-too-broad row").toBe(true);
     expect(hasAccept, "corpus must contain at least one accept row").toBe(true);
+  });
+
+  it("corpus covers both reject and accept outcomes in Layer 2", async () => {
+    const rows = await loadCorpus();
+    const layer2Rows = rows.filter((r) => r.expectedLayer === 2);
+    const hasReject = layer2Rows.some((r) => r.expectedOutcome === "result-set-too-large");
+    const hasAccept = layer2Rows.some((r) => r.expectedOutcome === "accept");
+    expect(hasReject, "corpus must contain at least one result-set-too-large row").toBe(true);
+    expect(hasAccept, "corpus must contain at least one accept row for Layer 2").toBe(true);
   });
 });

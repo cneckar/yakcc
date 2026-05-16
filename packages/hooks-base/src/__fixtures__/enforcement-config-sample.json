@@ -1,0 +1,25 @@
+{
+  "_comment": "Sample .yakcc/enforcement.json — place at repo root or set YAKCC_ENFORCEMENT_CONFIG_PATH. All fields optional; unspecified fields fall back to defaults. See docs/enforcement-config.md.",
+  "layer1": {
+    "minWords": 4,
+    "maxWords": 20,
+    "stopWords": [
+      "things", "stuff", "utility", "helper", "manager",
+      "handler", "service", "system", "processor", "worker"
+    ],
+    "metaWords": [
+      "various", "general", "common", "some", "any", "several", "misc", "generic"
+    ],
+    "actionVerbs": [
+      "parse", "validate", "encode", "decode", "hash", "compare",
+      "split", "join", "filter", "map", "reduce", "sort", "find",
+      "match", "extract", "convert", "serialize", "deserialize"
+    ],
+    "disableGate": false
+  },
+  "layer2": {
+    "maxConfident": 3,
+    "maxOverall": 10,
+    "confidentThreshold": 0.70
+  }
+}
