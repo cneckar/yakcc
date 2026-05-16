@@ -140,10 +140,7 @@
       "category": "guarantees-stressed",
       "query": {
         "behavior": "Get a character at a position in a string",
-        "guarantees": [
-          "pure — no mutation of input",
-          "returned string always has exactly length 1"
-        ]
+        "guarantees": ["pure — no mutation of input", "returned string always has exactly length 1"]
       },
       "expectedAtom": null,
       "expectedAtomName": "ascii-char",
@@ -155,10 +152,7 @@
       "category": "guarantees-stressed",
       "query": {
         "behavior": "Advance a parser position index by a fixed number of steps",
-        "guarantees": [
-          "monotonic — result is always >= input position",
-          "pure — no side effects"
-        ]
+        "guarantees": ["monotonic — result is always >= input position", "pure — no side effects"]
       },
       "expectedAtom": null,
       "expectedAtomName": "position-step",
@@ -288,9 +282,7 @@
       "category": "error-condition-stressed",
       "query": {
         "behavior": "Consume a comma character at a parser position",
-        "errorConditions": [
-          "throws SyntaxError if the character at position is not a comma"
-        ]
+        "errorConditions": ["throws SyntaxError if the character at position is not a comma"]
       },
       "expectedAtom": null,
       "expectedAtomName": "comma",
@@ -317,9 +309,7 @@
       "category": "error-condition-stressed",
       "query": {
         "behavior": "Check that parsing has consumed all input",
-        "errorConditions": [
-          "throws SyntaxError if any characters remain after the given position"
-        ]
+        "errorConditions": ["throws SyntaxError if any characters remain after the given position"]
       },
       "expectedAtom": null,
       "expectedAtomName": "eof-check",
@@ -374,9 +364,7 @@
       "category": "error-condition-stressed",
       "query": {
         "behavior": "Handle the case of an empty list in a parser",
-        "errorConditions": [
-          "throws SyntaxError if the next character is not a closing bracket"
-        ]
+        "errorConditions": ["throws SyntaxError if the next character is not a closing bracket"]
       },
       "expectedAtom": null,
       "expectedAtomName": "empty-list-content",
@@ -402,9 +390,7 @@
       "category": "error-condition-stressed",
       "query": {
         "behavior": "Divide one number by another",
-        "errorConditions": [
-          "throws RangeError if the divisor is zero"
-        ]
+        "errorConditions": ["throws RangeError if the divisor is zero"]
       },
       "expectedAtom": null,
       "rationale": "Negative-space error-stressed entry. Integer division is not in the seed registry."
@@ -550,10 +536,7 @@
       "category": "non-functional-stressed",
       "query": {
         "behavior": "Compute the factorial of a non-negative integer",
-        "guarantees": [
-          "pure — no side effects",
-          "O(n) time where n is the input value"
-        ]
+        "guarantees": ["pure — no side effects", "O(n) time where n is the input value"]
       },
       "expectedAtom": null,
       "rationale": "Negative-space non-functional entry. Factorial computation is not in the registry."
@@ -627,9 +610,7 @@
           "pure — position is unchanged after call",
           "returns null at end of input rather than throwing"
         ],
-        "errorConditions": [
-          "throws RangeError if position is negative"
-        ]
+        "errorConditions": ["throws RangeError if position is negative"]
       },
       "expectedAtom": null,
       "expectedAtomName": "peek-char",
@@ -646,9 +627,7 @@
           "monotonic — returned position is always >= input position",
           "idempotent — applying twice yields the same result as applying once"
         ],
-        "errorConditions": [
-          "throws RangeError if initial position is negative"
-        ]
+        "errorConditions": ["throws RangeError if initial position is negative"]
       },
       "expectedAtom": null,
       "expectedAtomName": "whitespace",
@@ -664,9 +643,7 @@
           "pure — O(1) time, no string traversal",
           "exact — asserts position == input.length precisely"
         ],
-        "errorConditions": [
-          "throws SyntaxError if any characters remain after position"
-        ]
+        "errorConditions": ["throws SyntaxError if any characters remain after position"]
       },
       "expectedAtom": null,
       "expectedAtomName": "eof-check",
@@ -719,9 +696,7 @@
           "pure — no side effects",
           "result equals lo if x < lo; result equals hi if x > hi; result equals x otherwise"
         ],
-        "errorConditions": [
-          "throws RangeError if lo is greater than hi"
-        ]
+        "errorConditions": ["throws RangeError if lo is greater than hi"]
       },
       "expectedAtom": null,
       "rationale": "Negative-space multi-aspect entry. Clamp is not in the seed registry. Tests that multi-dimensional queries don't produce false positives from partial matches."
@@ -732,10 +707,7 @@
       "category": "multi-aspect",
       "query": {
         "behavior": "Parse a single line of CSV into a list of field strings, handling quoted fields with embedded commas",
-        "guarantees": [
-          "pure — no mutation of input",
-          "handles RFC 4180 quoting rules"
-        ],
+        "guarantees": ["pure — no mutation of input", "handles RFC 4180 quoting rules"],
         "errorConditions": [
           "throws SyntaxError if a quoted field is not properly closed",
           "throws TypeError if input is null"
@@ -1039,6 +1011,61 @@
       "expectedAtom": null,
       "expectedAtomName": "lodash-merge",
       "rationale": "Behavior-only query for lodash/merge (WI-510 Slice 7). Tests whether the shaved merge atom can be retrieved by a description of deep recursive object merging."
+    },
+    {
+      "id": "cat1-zod-string-min-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate that a string has at least a specified minimum length using a chainable schema builder, producing a structured issue when the input is shorter than the minimum"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "zod-string-min",
+      "rationale": "Behavior-only query for zod/string-min (WI-510 Slice 8). ENGINE-GAP-MAPPED: string-min source lives in v3/types.cjs which the engine cannot atomize (DEC-WI510-S8-HELPER-FILE-MAPPING-001); the atom is the working helper file v3/helpers/util.cjs the binding semantically depends on. combinedScore empirical floor measured at implementation per DEC-WI510-S8-COMBINED-SCORE-EMPIRICAL-FLOOR-001."
+    },
+    {
+      "id": "cat1-zod-string-max-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate that a string does not exceed a specified maximum length using a chainable schema builder, producing a structured issue when the input is longer than the maximum"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "zod-string-max",
+      "rationale": "Behavior-only query for zod/string-max (WI-510 Slice 8). ENGINE-GAP-MAPPED: string-max source lives in v3/types.cjs which the engine cannot atomize (DEC-WI510-S8-HELPER-FILE-MAPPING-001); the atom is the working helper file v3/helpers/parseUtil.cjs the binding semantically depends on. combinedScore empirical floor measured at implementation per DEC-WI510-S8-COMBINED-SCORE-EMPIRICAL-FLOOR-001."
+    },
+    {
+      "id": "cat1-zod-regex-match-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate that a string matches a regular expression pattern using a chainable schema builder, producing a structured issue with a custom error message when the input does not match"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "zod-regex-match",
+      "rationale": "Behavior-only query for zod/regex-match (WI-510 Slice 8). ENGINE-GAP-MAPPED: regex-match source lives in v3/types.cjs which the engine cannot atomize (DEC-WI510-S8-HELPER-FILE-MAPPING-001); the atom is the working helper file v3/helpers/errorUtil.cjs the binding semantically depends on. combinedScore empirical floor measured at implementation per DEC-WI510-S8-COMBINED-SCORE-EMPIRICAL-FLOOR-001."
+    },
+    {
+      "id": "cat1-zod-number-int-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate that a number is an integer (no fractional component) using a chainable schema builder, producing a structured issue when the input is not an integer"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "zod-number-int",
+      "rationale": "Behavior-only query for zod/number-int (WI-510 Slice 8). ENGINE-GAP-MAPPED: number-int source lives in v3/types.cjs which the engine cannot atomize (DEC-WI510-S8-HELPER-FILE-MAPPING-001); the atom is the working helper file v3/ZodError.cjs (AMENDED per DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002: original enumUtil.cjs produced leafTotal=1 / zero novel-glue; ZodError.cjs is the error-payload authority for integer checks, mc=2, sc=0, leaf=76). combinedScore empirical floor measured at implementation per DEC-WI510-S8-COMBINED-SCORE-EMPIRICAL-FLOOR-001."
+    },
+    {
+      "id": "cat1-zod-array-each-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate each element of an array against a per-element schema using a chainable schema builder, producing per-index structured issues when individual elements fail validation"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "zod-array-each",
+      "rationale": "Behavior-only query for zod/array-each (WI-510 Slice 8). ENGINE-GAP-MAPPED: array-each source lives in v3/types.cjs which the engine cannot atomize (DEC-WI510-S8-HELPER-FILE-MAPPING-001). No viable Group B helper file exists: standard-schema.cjs is a 77-byte stub; en.cjs also stubs (moduleCount=0, stubCount=1) due to a module-level arrow function extending issue #576 beyond class bodies (DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002). array-each has no atom; this row is a pure behavior-only marker for future engine-fix attribution. When the engine recovers atoms from v3/types.cjs or a suitable helper, this row rationale will be updated to reference the new atom."
     }
   ]
 }

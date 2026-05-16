@@ -1,0 +1,39 @@
+# Provenance — zod@3.25.76 fixture
+
+- **Package:** zod
+- **Version:** 3.25.76 (head of v3 line; NOT the current `latest` 4.4.3)
+- **Source:** npm tarball (`npm pack zod@3.25.76`)
+- **Tarball SHA256:** 9e1f1a05f0dd0c1dab64ee91ceb9bf55cd44d35368c70edda80a2fdc70a88377
+- **Tarball bytes (packed):** 583600
+- **Tarball file count:** 596
+- **Unpacked size (disk):** ~3.6MB (on-disk; logical ~4.8MB before filesystem page rounding)
+- **File counts by extension:** 329 .ts (TypeScript source), 88 .cjs (CommonJS compiled), 88 .js (ESM compiled), 88 .cts (CJS types), 1 .json, 1 .md, 1 LICENSE
+- **Retrieved:** 2026-05-16
+- **Vendor strategy:** FULL tarball (NOT trimmed). Inherits Slice 3 DEC-WI510-S3-FIXTURE-FULL-TARBALL-001 / Slice 4 DEC-WI510-S4-FIXTURE-FULL-TARBALL-001 / Slice 6 DEC-WI510-S6-FIXTURE-FULL-TARBALL-001 rationale chain extended via DEC-WI510-S8-FIXTURE-FULL-TARBALL-001.
+- **package.json#main:** ./index.cjs
+- **package.json#module:** ./index.js
+- **package.json#types:** ./index.d.cts
+- **package.json#type:** module (FIRST ESM-default-typed WI-510 fixture; engine's ESM extractImportSpecifiers path exercises in production for the first time)
+- **package.json#exports:** rich conditional map with sub-paths . / ./v3 / ./v4 / ./v4-mini / ./v4/core / ./v4/locales / ./v4/locales/* and conditions @zod/source, types, import, require
+- **Runtime dependencies:** ZERO (`package.json#dependencies` is empty/absent).
+- **External edges (visible to engine):** none across the nine Slice 8 describes (4 Group A entry points + 5 Group B headline binding shaves). Documented in DEC-WI510-S8-EXTERNAL-SPECIFIERS-EMPTY-001.
+- **Engine-gap reality (CRITICAL — Slice 8 documents):**
+  - v3/types.cjs (3775 lines, 39 ZodSchema class declarations, 131 arrow tokens): `moduleCount=0, stubCount=1` after ~69s of ts-morph parse. The binding-bearing monolith. Failure mode: TS-compiled CJS prelude (__createBinding/__setModuleDefault/__importStar/__exportStar) + multi-class-monolith (extends issue #576's class-arrow-body gap at scale).
+  - index.cjs, v3/external.cjs, v3/index.cjs: all stub (moduleCount=0, stubCount=1) due to the same prelude pattern.
+  - v3/helpers/util.cjs (moduleCount=1, stubCount=0, leafTotal=45), v3/helpers/parseUtil.cjs (2/1/50), v3/helpers/errorUtil.cjs (1/0/6), v3/helpers/enumUtil.cjs (1/0/1), v3/standard-schema.cjs (1/0/1): the five WORKING helper files Slice 8 uses for binding-mapped atoms.
+  - v3/ZodError.cjs (138 lines, single class): moduleCount=2, stubCount=0, leafTotal=76 — confirms single-class files DO atomize; the gap is specifically the multi-class monolith + prelude combination.
+- **DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002** — Helper-file mapping amendment for number-int and array-each (two-stage):
+  - **Stage 1 — number-int recovery:** original `enumUtil.cjs` (77 bytes, leafTotal=1, zero novel-glue) → remapped to `v3/ZodError.cjs` (4576 bytes, mc=2, sc=0, leaf=76 per plan §3.5; error-payload authority for integer checks). Produces novel-glue entries. ✓
+  - **Stage 1 — array-each first attempt:** original `standard-schema.cjs` (77 bytes, same) → first recovery `v3/locales/en.cjs` (5971 bytes, default English error map).
+  - **Stage 2 — array-each second empirical finding:** `en.cjs` also stubs (`moduleCount=0, stubCount=1, ~7s`). Cause: top-level `const errorMap = (issue, _ctx) => { switch(issue.code) { ... } }` — a module-level arrow function. This extends issue #576 (ArrowFunctions in class bodies) to **module-level arrow-function declarations**, a new engine-gap data point.
+  - **Final resolution — array-each:** no viable v3 helper file available (`partialUtil.cjs`, `typeAliases.cjs` are also 77-byte stubs). Per plan §9: array-each moves to Group A stub-corroboration (5th Group A describe for `en.cjs`). Group B has 4 working bindings. Corpus row `cat1-zod-array-each-001` retains the behavior-only query with honest engine-gap rationale.
+- **Headline behaviors (this slice; ENGINE-GAP-MAPPED per DEC-WI510-S8-HELPER-FILE-MAPPING-001, with amendment per DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002):**
+  - string-min → v3/helpers/util.cjs (zod runtime helpers ZodString.min funnels through)
+  - string-max → v3/helpers/parseUtil.cjs (parse pipeline emitting too_big issues)
+  - regex-match → v3/helpers/errorUtil.cjs (error-shape helpers for .regex(re, {message}))
+  - number-int → v3/ZodError.cjs (AMENDED: remapped from enumUtil.cjs; enumUtil.cjs is 77 bytes / leafTotal=1 / zero novel-glue entries; ZodError.cjs is the error-payload authority for integer checks; mc=2, sc=0, leaf=76)
+  - array-each → NO GROUP B ATOM (DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002): standard-schema.cjs is 77 bytes / leafTotal=1; en.cjs (first recovery) also stubs (module-level arrow function extends #576); no other v3 helper available. array-each is in Group A stub-corroboration only (en.cjs, moduleCount=0, stubCount=1). corpus row cat1-zod-array-each-001 is a pure behavior-only marker.
+- **Path decision:** compiled .cjs (NOT TypeScript source under src/**) per DEC-WI510-S8-COMPILED-CJS-NOT-TS-SOURCE-001.
+- **Why pin 3.25.76:** Most-installed dominant version (consistent with lodash 4.17.21 precedent), cleaner structural shape than v4.4.3 (no nested v4/classic), v3 layout exists identically inside v4, "type":"module" ESM-default property exercises the engine's ESM extractor path in production for the first time. Per DEC-WI510-S8-VERSION-PIN-001.
+- **joi:** DEFERRED per DEC-WI510-S8-JOI-DEFERRED-001 (separate-DSL surface + 9-dep external fan-out + S8 wall-clock budget + clean S8b/production-corpus follow-on path).
+- **WI:** WI-510 Slice 8, workflow `wi-510-s8-zod`.
