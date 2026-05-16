@@ -11,7 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { type SpecYak, specHash } from "@yakcc/contracts";
+import { type SpecYak, parseGranularity, specHash } from "@yakcc/contracts";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
@@ -32,6 +32,7 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
     args: [...argv],
     options: {
       registry: { type: "string", short: "r" },
+      granularity: { type: "string", short: "g" },
     },
     allowPositionals: true,
     strict: true,
@@ -40,6 +41,14 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
   const specFilePath = positionals[0];
   if (specFilePath === undefined || specFilePath === "") {
     logger.error("error: propose requires a <contract-file> argument");
+    return 1;
+  }
+
+  const granularityRaw = values.granularity;
+  if (granularityRaw !== undefined && parseGranularity(granularityRaw) === null) {
+    logger.error(
+      `error: --granularity must be an integer between 1 and 5 (got ${JSON.stringify(granularityRaw)})`,
+    );
     return 1;
   }
 

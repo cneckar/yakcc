@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 /**
- * telemetry.ts — Local-only telemetry capture for the yakcc hook layer (Phase 1 MVP).
+ * telemetry.ts â€” Local-only telemetry capture for the yakcc hook layer (Phase 1 MVP).
  *
  * @decision DEC-HOOK-PHASE-1-001
  * @title Telemetry capture: JSONL append-only writer with BLAKE3 intent hashing
@@ -10,13 +10,13 @@
  *   - Telemetry is local-only by default; written to ~/.yakcc/telemetry/<session-id>.jsonl.
  *   - One TelemetryEvent per emission event; JSONL (newline-delimited JSON) is the storage format
  *     so the file is append-only and trivially readable with standard tools.
- *   - EmissionContext.intent is BLAKE3-hashed before storage (no plaintext intents — privacy
+ *   - EmissionContext.intent is BLAKE3-hashed before storage (no plaintext intents â€” privacy
  *     by default). The hash allows "did this exact intent recur?" analysis without storing PII.
  *   - Session ID resolved from CLAUDE_SESSION_ID env var; falls back to a process-scoped UUID
  *     generated once per process so all events from the same process share an ID even when
  *     CLAUDE_SESSION_ID is absent (e.g. in tests or non-Claude IDEs).
  *   - Configurable telemetry dir via YAKCC_TELEMETRY_DIR env var (D-HOOK-5 spec).
- *   - Zero network I/O in this module — append to local file only (B6 air-gap compliance).
+ *   - Zero network I/O in this module â€” append to local file only (B6 air-gap compliance).
  *
  * Cross-reference: DEC-HOOK-LAYER-001 (parent ADR), D-HOOK-5, B6 (#190).
  */
@@ -29,7 +29,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import type { HookResponse } from "./index.js";
 
 // ---------------------------------------------------------------------------
-// TelemetryEvent — schema per D-HOOK-5
+// TelemetryEvent â€” schema per D-HOOK-5
 // ---------------------------------------------------------------------------
 
 /**
@@ -56,9 +56,27 @@ export type TelemetryEvent = {
   /** End-to-end latency in milliseconds from intercept start to response. */
   readonly latencyMs: number;
   /** Outcome of the hook decision. */
-  readonly outcome: "registry-hit" | "synthesis-required" | "passthrough" | "atomized";
+  //
+  // @decision DEC-WI508-S2-TELEMETRY-OUTCOME-ADDITIVE-001
+  // title: Three new outcome values added for Slice 2 shave-on-miss telemetry
+  // status: decided (WI-508 Slice 2)
+  // rationale:
+  //   Backward-compatible additive expansion. Old JSONL consumers see the new values
+  //   as unrecognized strings; new consumers can branch on them. Downstream telemetry-
+  //   export WI (#546) cross-references this slice for the new event shapes.
+  //   "shave-on-miss-enqueued": first occurrence miss, background shave started.
+  //   "shave-on-miss-completed": background shave finished, atoms created.
+  //   "shave-on-miss-error": background shave failed (entry-path, engine, or persist error).
+  readonly outcome:
+    | "registry-hit"
+    | "synthesis-required"
+    | "passthrough"
+    | "atomized"
+    | "shave-on-miss-enqueued"
+    | "shave-on-miss-completed"
+    | "shave-on-miss-error";
   // ---------------------------------------------------------------------------
-  // Phase 2 additions — additive fields (backwards-compatible per #217 spec).
+  // Phase 2 additions â€” additive fields (backwards-compatible per #217 spec).
   // Old telemetry consumers see these as optional (undefined in Phase 1 events).
   // Phase 2 events always populate all four fields.
   // ---------------------------------------------------------------------------
@@ -69,7 +87,7 @@ export type TelemetryEvent = {
    */
   readonly substitutionLatencyMs?: number | null;
   /**
-   * D3 combinedScore of the top-1 candidate (1 - d²/4, per DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
+   * D3 combinedScore of the top-1 candidate (1 - dÂ²/4, per DEC-V3-DISCOVERY-CALIBRATION-FIX-002).
    * Null when no candidates were returned.
    * Phase 1 events: undefined (not present).
    */
@@ -88,7 +106,7 @@ export type TelemetryEvent = {
    */
   readonly latencyBudgetExceeded?: boolean;
   // ---------------------------------------------------------------------------
-  // Phase 3 / atomize additions — additive fields (D-HOOK-7, issue #362).
+  // Phase 3 / atomize additions â€” additive fields (D-HOOK-7, issue #362).
   // Old telemetry consumers see these as optional (undefined in prior events).
   // Atomized events always populate atomsCreated; prior events omit it.
   // ---------------------------------------------------------------------------
@@ -97,7 +115,7 @@ export type TelemetryEvent = {
    * Non-empty only when outcome === "atomized".
    * Additive field: Phase 1/2 events do not carry this field (undefined).
    *
-   * @decision DEC-HOOK-ATOM-CAPTURE-001 (additive telemetry — D-HOOK-7)
+   * @decision DEC-HOOK-ATOM-CAPTURE-001 (additive telemetry â€” D-HOOK-7)
    * Adding atomsCreated as an optional field preserves backward compatibility:
    * old telemetry consumers see it as absent (undefined), while new consumers
    * can check outcome === "atomized" before reading atomsCreated.
@@ -165,7 +183,7 @@ export function resolveTelemetryDir(): string {
  * of user work are written to disk. BLAKE3 (256-bit default) is used because:
  * (a) @noble/hashes is already a transitive dependency via @yakcc/contracts,
  *     so no new dependency is needed.
- * (b) BLAKE3 is fast (< 1µs for typical intent strings), keeping hash cost negligible
+ * (b) BLAKE3 is fast (< 1Âµs for typical intent strings), keeping hash cost negligible
  *     relative to the 200ms D-HOOK-3 latency budget.
  * (c) BLAKE3 produces deterministic output for identical input, enabling
  *     "did this exact intent recur?" analysis across sessions.
@@ -196,6 +214,9 @@ export function outcomeFromResponse(
   response: HookResponse,
   outcomeOverride?: "atomized",
 ): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" {
+  // Note: shave-on-miss outcome values are emitted directly via appendTelemetryEvent
+  // from shave-on-miss.ts, not via this function. This function handles only the
+  // four standard outcomes plus the atomized override.
   if (outcomeOverride !== undefined) return outcomeOverride;
   return response.kind;
 }
@@ -208,7 +229,7 @@ export function outcomeFromResponse(
  * Append a single TelemetryEvent as one JSON line to the session's JSONL file.
  *
  * Creates the telemetry directory if it does not exist (idempotent).
- * Appends rather than rewrites: the file grows as a log — never truncated.
+ * Appends rather than rewrites: the file grows as a log â€” never truncated.
  *
  * @decision DEC-HOOK-PHASE-1-001
  * Append-only JSONL ensures: (a) no event is lost to a write race (atomic append
@@ -262,15 +283,15 @@ export function captureTelemetry(opts: {
   candidateCount: number;
   topScore: number | null;
   latencyMs: number;
-  // Phase 2 additions — all optional so Phase 1 callers need no changes.
+  // Phase 2 additions â€” all optional so Phase 1 callers need no changes.
   substituted?: boolean;
   substitutedAtomHash?: string | null;
   substitutionLatencyMs?: number | null;
   top1Score?: number | null;
   top1Gap?: number | null;
   latencyBudgetExceeded?: boolean;
-  // Phase 3 / D-HOOK-7 additions — additive, all optional.
-  /** Explicit outcome override — used by the atomize path to set "atomized". */
+  // Phase 3 / D-HOOK-7 additions â€” additive, all optional.
+  /** Explicit outcome override â€” used by the atomize path to set "atomized". */
   outcomeOverride?: "atomized";
   /** BMR prefixes of atoms created. Non-empty only for outcome === "atomized". */
   atomsCreated?: readonly string[];
@@ -290,7 +311,7 @@ export function captureTelemetry(opts: {
     substitutedAtomHash: opts.substitutedAtomHash ?? null,
     latencyMs: opts.latencyMs,
     outcome: outcomeFromResponse(opts.response, opts.outcomeOverride),
-    // Phase 2 fields — spread only when defined so Phase 1 JSONL lines stay lean.
+    // Phase 2 fields â€” spread only when defined so Phase 1 JSONL lines stay lean.
     ...(opts.substitutionLatencyMs !== undefined
       ? { substitutionLatencyMs: opts.substitutionLatencyMs }
       : {}),
@@ -299,9 +320,10 @@ export function captureTelemetry(opts: {
     ...(opts.latencyBudgetExceeded !== undefined
       ? { latencyBudgetExceeded: opts.latencyBudgetExceeded }
       : {}),
-    // D-HOOK-7 / atomize fields — present only for outcome === "atomized".
+    // D-HOOK-7 / atomize fields â€” present only for outcome === "atomized".
     ...(opts.atomsCreated !== undefined ? { atomsCreated: opts.atomsCreated } : {}),
   };
 
   appendTelemetryEvent(event, sessionId, dir);
 }
+

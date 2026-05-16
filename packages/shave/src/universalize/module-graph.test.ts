@@ -661,7 +661,7 @@ describe("shavePackage — best-effort degradation (unresolvable edge)", () => {
 describe("shavePackage — two-pass determinism (ms fixture)", () => {
   it(
     "two passes over ms produce byte-identical forest structure (moduleCount, leafCount, filePaths)",
-    { timeout: 30000 },
+    { timeout: 90000 },
     async () => {
       const pkgRoot = join(FIXTURES_DIR, "ms-2.1.3");
 

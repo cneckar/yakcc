@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "stratified",
-  "lastUpdated": "2026-05-10",
+  "lastUpdated": "2026-05-16",
   "description": "Stratified benchmark corpus for WI-V3-DISCOVERY-D5-CORPUS-SEED (#269). Stored side: full yakcc self-shave registry (~1,773+ atoms). Query side: 50 queries across 5 categories designed to stress D1's multi-dimensional value proposition. Per-category M1..M5 numbers are the actual input for the DEC-V3-INITIATIVE-001 measurement-first gate.",
   "categories": [
     "behavior-only",
@@ -126,7 +126,7 @@
       "query": {
         "behavior": "Parse a decimal digit character into a number",
         "guarantees": [
-          "referentially transparent — same input always produces same output",
+          "referentially transparent \u2014 same input always produces same output",
           "no side effects of any kind"
         ]
       },
@@ -141,7 +141,7 @@
       "query": {
         "behavior": "Get a character at a position in a string",
         "guarantees": [
-          "pure — no mutation of input",
+          "pure \u2014 no mutation of input",
           "returned string always has exactly length 1"
         ]
       },
@@ -156,8 +156,8 @@
       "query": {
         "behavior": "Advance a parser position index by a fixed number of steps",
         "guarantees": [
-          "monotonic — result is always >= input position",
-          "pure — no side effects"
+          "monotonic \u2014 result is always >= input position",
+          "pure \u2014 no side effects"
         ]
       },
       "expectedAtom": null,
@@ -171,8 +171,8 @@
       "query": {
         "behavior": "Check whether a character is an ASCII digit",
         "guarantees": [
-          "total function — always returns a value, never throws",
-          "consistent — same character always produces same result"
+          "total function \u2014 always returns a value, never throws",
+          "consistent \u2014 same character always produces same result"
         ]
       },
       "expectedAtom": null,
@@ -187,7 +187,7 @@
         "behavior": "Read a character at a position without advancing the parser state",
         "guarantees": [
           "null at end of input rather than throwing",
-          "pure — position is unchanged after call"
+          "pure \u2014 position is unchanged after call"
         ]
       },
       "expectedAtom": null,
@@ -201,7 +201,7 @@
       "query": {
         "behavior": "Parse digit characters from a string starting at a given position",
         "guarantees": [
-          "greedy — always consumes as many digits as possible",
+          "greedy \u2014 always consumes as many digits as possible",
           "result value is always non-negative"
         ]
       },
@@ -216,8 +216,8 @@
       "query": {
         "behavior": "Skip whitespace characters in a string",
         "guarantees": [
-          "idempotent — applying twice is equivalent to applying once",
-          "monotonic — returned position is always >= input position"
+          "idempotent \u2014 applying twice is equivalent to applying once",
+          "monotonic \u2014 returned position is always >= input position"
         ]
       },
       "expectedAtom": null,
@@ -231,7 +231,7 @@
       "query": {
         "behavior": "Parse a list of integers from a string",
         "guarantees": [
-          "pure — no mutation of input string",
+          "pure \u2014 no mutation of input string",
           "composed from primitive parser blocks rather than a monolithic implementation"
         ]
       },
@@ -246,7 +246,7 @@
       "query": {
         "behavior": "Compute a fingerprint of a string",
         "guarantees": [
-          "deterministic — same input always produces same fingerprint",
+          "deterministic \u2014 same input always produces same fingerprint",
           "no side effects"
         ]
       },
@@ -260,8 +260,8 @@
       "query": {
         "behavior": "Sort a list of numbers",
         "guarantees": [
-          "pure — does not mutate the input array",
-          "stable sort — equal elements maintain their relative order"
+          "pure \u2014 does not mutate the input array",
+          "stable sort \u2014 equal elements maintain their relative order"
         ]
       },
       "expectedAtom": null,
@@ -416,9 +416,9 @@
       "query": {
         "behavior": "Get a character at an index in a string",
         "guarantees": [
-          "O(1) time complexity — constant time regardless of string length",
-          "O(1) space — no heap allocation",
-          "pure — side-effect-free"
+          "O(1) time complexity \u2014 constant time regardless of string length",
+          "O(1) space \u2014 no heap allocation",
+          "pure \u2014 side-effect-free"
         ]
       },
       "expectedAtom": null,
@@ -432,8 +432,8 @@
       "query": {
         "behavior": "Convert a character to an integer digit value",
         "guarantees": [
-          "constant time O(1) — single character operation",
-          "side-effect-free — no global state modified"
+          "constant time O(1) \u2014 single character operation",
+          "side-effect-free \u2014 no global state modified"
         ]
       },
       "expectedAtom": null,
@@ -448,7 +448,7 @@
         "behavior": "Parse decimal digits from a string",
         "guarantees": [
           "O(n) time where n is the number of digits consumed",
-          "O(1) space — no dynamic allocation"
+          "O(1) space \u2014 no dynamic allocation"
         ]
       },
       "expectedAtom": null,
@@ -462,8 +462,8 @@
       "query": {
         "behavior": "Test whether a character is a numeric digit",
         "guarantees": [
-          "thread-safe — no shared mutable state",
-          "deterministic — same character always produces same result"
+          "thread-safe \u2014 no shared mutable state",
+          "deterministic \u2014 same character always produces same result"
         ]
       },
       "expectedAtom": null,
@@ -477,8 +477,8 @@
       "query": {
         "behavior": "Inspect a character at the current position",
         "guarantees": [
-          "pure — calling with same arguments multiple times returns same result",
-          "O(1) time — no string traversal"
+          "pure \u2014 calling with same arguments multiple times returns same result",
+          "O(1) time \u2014 no string traversal"
         ]
       },
       "expectedAtom": null,
@@ -493,7 +493,7 @@
         "behavior": "Advance past whitespace characters in a string",
         "guarantees": [
           "O(n) worst-case where n is the length of the whitespace run",
-          "deterministic — same input always produces same output position"
+          "deterministic \u2014 same input always produces same output position"
         ]
       },
       "expectedAtom": null,
@@ -507,8 +507,8 @@
       "query": {
         "behavior": "Advance a position index by a fixed amount",
         "guarantees": [
-          "O(1) time — no string traversal",
-          "pure — no mutation of any external state"
+          "O(1) time \u2014 no string traversal",
+          "pure \u2014 no mutation of any external state"
         ]
       },
       "expectedAtom": null,
@@ -523,7 +523,7 @@
         "behavior": "Parse a list structure from a string",
         "guarantees": [
           "O(n) time and space proportional to input length",
-          "pure — no I/O or global state"
+          "pure \u2014 no I/O or global state"
         ]
       },
       "expectedAtom": null,
@@ -537,7 +537,7 @@
       "query": {
         "behavior": "Encode binary data as a text string",
         "guarantees": [
-          "deterministic — same bytes always produce same encoding",
+          "deterministic \u2014 same bytes always produce same encoding",
           "output length is exactly ceil(input.length * 4 / 3)"
         ]
       },
@@ -551,7 +551,7 @@
       "query": {
         "behavior": "Compute the factorial of a non-negative integer",
         "guarantees": [
-          "pure — no side effects",
+          "pure \u2014 no side effects",
           "O(n) time where n is the input value"
         ]
       },
@@ -565,9 +565,9 @@
       "query": {
         "behavior": "Convert a single decimal digit character to its integer value, rejecting any other input",
         "guarantees": [
-          "pure — referentially transparent",
+          "pure \u2014 referentially transparent",
           "result is always in the closed integer range [0, 9]",
-          "inverse property — digit(String.fromCharCode(48 + n)) === n for n in [0,9]"
+          "inverse property \u2014 digit(String.fromCharCode(48 + n)) === n for n in [0,9]"
         ],
         "errorConditions": [
           "throws RangeError if input length is not exactly 1",
@@ -585,7 +585,7 @@
       "query": {
         "behavior": "Return the ASCII character at a zero-based index in a string",
         "guarantees": [
-          "referentially transparent — no side effects",
+          "referentially transparent \u2014 no side effects",
           "returned string always has length exactly 1",
           "returned character has char code <= 127"
         ],
@@ -605,8 +605,8 @@
       "query": {
         "behavior": "Parse a maximal sequence of ASCII decimal digit characters starting at a position in a string",
         "guarantees": [
-          "pure — no mutation of input",
-          "greedy — always consumes as many consecutive digits as possible",
+          "pure \u2014 no mutation of input",
+          "greedy \u2014 always consumes as many consecutive digits as possible",
           "result value is always non-negative"
         ],
         "errorConditions": [
@@ -624,7 +624,7 @@
       "query": {
         "behavior": "Read the character at the current position without advancing the parser",
         "guarantees": [
-          "pure — position is unchanged after call",
+          "pure \u2014 position is unchanged after call",
           "returns null at end of input rather than throwing"
         ],
         "errorConditions": [
@@ -642,9 +642,9 @@
       "query": {
         "behavior": "Advance past zero or more ASCII space and tab characters at the current position",
         "guarantees": [
-          "pure — no mutation",
-          "monotonic — returned position is always >= input position",
-          "idempotent — applying twice yields the same result as applying once"
+          "pure \u2014 no mutation",
+          "monotonic \u2014 returned position is always >= input position",
+          "idempotent \u2014 applying twice yields the same result as applying once"
         ],
         "errorConditions": [
           "throws RangeError if initial position is negative"
@@ -661,8 +661,8 @@
       "query": {
         "behavior": "Assert that the parser has fully consumed the input string with no remaining characters",
         "guarantees": [
-          "pure — O(1) time, no string traversal",
-          "exact — asserts position == input.length precisely"
+          "pure \u2014 O(1) time, no string traversal",
+          "exact \u2014 asserts position == input.length precisely"
         ],
         "errorConditions": [
           "throws SyntaxError if any characters remain after position"
@@ -679,8 +679,8 @@
       "query": {
         "behavior": "Parse an optional minus sign followed by one or more decimal digits into a signed integer value",
         "guarantees": [
-          "pure — referentially transparent",
-          "greedy — consumes as many digit characters as possible after the sign"
+          "pure \u2014 referentially transparent",
+          "greedy \u2014 consumes as many digit characters as possible after the sign"
         ],
         "errorConditions": [
           "throws SyntaxError if a '-' sign is not followed by at least one digit",
@@ -698,7 +698,7 @@
       "query": {
         "behavior": "Scan an entire string and reject it if any character is not ASCII",
         "guarantees": [
-          "pure — no mutation of input",
+          "pure \u2014 no mutation of input",
           "reports the first violation rather than collecting all violations"
         ],
         "errorConditions": [
@@ -716,7 +716,7 @@
       "query": {
         "behavior": "Restrict a number to lie within an inclusive lower and upper bound",
         "guarantees": [
-          "pure — no side effects",
+          "pure \u2014 no side effects",
           "result equals lo if x < lo; result equals hi if x > hi; result equals x otherwise"
         ],
         "errorConditions": [
@@ -733,7 +733,7 @@
       "query": {
         "behavior": "Parse a single line of CSV into a list of field strings, handling quoted fields with embedded commas",
         "guarantees": [
-          "pure — no mutation of input",
+          "pure \u2014 no mutation of input",
           "handles RFC 4180 quoting rules"
         ],
         "errorConditions": [
@@ -752,7 +752,7 @@
         "behavior": "Parse a human-readable duration string such as '2 days' or '1h' into a number of milliseconds"
       },
       "expectedAtom": null,
-      "rationale": "WI-510 Slice 1: ms fixture entry. The ms package's parse() behavior — convert a duration string to milliseconds. Atoms are produced by the dependency-following shave engine decomposing ms/index.js, not hand-authored. This entry is synthetic-tasks in the bootstrap corpus (no seed block); combinedScore >= 0.70 is verified by module-graph.test.ts §10 quality test (local provider + in-memory registry populated by the engine's storeBlock output)."
+      "rationale": "WI-510 Slice 1: ms fixture entry. The ms package's parse() behavior \u2014 convert a duration string to milliseconds. Atoms are produced by the dependency-following shave engine decomposing ms/index.js, not hand-authored. This entry is synthetic-tasks in the bootstrap corpus (no seed block); combinedScore >= 0.70 is verified by module-graph.test.ts \u00a710 quality test (local provider + in-memory registry populated by the engine's storeBlock output)."
     },
     {
       "id": "cat1-validator-is-email-001",
@@ -762,7 +762,7 @@
         "behavior": "Validate whether a string is a valid email address, with support for display names, UTF-8 local parts, and configurable TLD requirements"
       },
       "expectedAtom": null,
-      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isEmail behavior — validates email address strings per RFC standards with configurable options. Atoms are produced by the dependency-following shave engine decomposing validator/lib/isEmail.js from the vendored Babel-transpiled CJS fixture (Path A). synthetic-tasks with expectedAtom:null mirrors the Slice 1 ms precedent. combinedScore >= 0.70 is verified by validator-fixture.test.ts §F quality test (local provider + in-memory registry)."
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isEmail behavior \u2014 validates email address strings per RFC standards with configurable options. Atoms are produced by the dependency-following shave engine decomposing validator/lib/isEmail.js from the vendored Babel-transpiled CJS fixture (Path A). synthetic-tasks with expectedAtom:null mirrors the Slice 1 ms precedent. combinedScore >= 0.70 is verified by validator-fixture.test.ts \u00a7F quality test (local provider + in-memory registry)."
     },
     {
       "id": "cat1-validator-is-url-001",
@@ -772,7 +772,7 @@
         "behavior": "Validate whether a string is a valid URL, supporting multiple protocols, authentication, IP addresses, and configurable options for TLD and underscores"
       },
       "expectedAtom": null,
-      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isURL behavior — validates URL strings with flexible protocol and host options. Atoms produced by shave engine from validator/lib/isURL.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isURL behavior \u2014 validates URL strings with flexible protocol and host options. Atoms produced by shave engine from validator/lib/isURL.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts \u00a7F."
     },
     {
       "id": "cat1-validator-is-uuid-001",
@@ -782,7 +782,7 @@
         "behavior": "Validate whether a string is a valid UUID (universally unique identifier) in versions 1 through 5, nil UUID, or max UUID format"
       },
       "expectedAtom": null,
-      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isUUID behavior — validates UUID strings across all versions including nil and max. Atoms produced by shave engine from validator/lib/isUUID.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isUUID behavior \u2014 validates UUID strings across all versions including nil and max. Atoms produced by shave engine from validator/lib/isUUID.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts \u00a7F."
     },
     {
       "id": "cat1-validator-is-alphanumeric-001",
@@ -792,7 +792,87 @@
         "behavior": "Validate whether a string contains only alphanumeric characters, with optional locale support for language-specific character sets"
       },
       "expectedAtom": null,
-      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isAlphanumeric behavior — validates that a string is alphanumeric with locale-aware character set support. Atoms produced by shave engine from validator/lib/isAlphanumeric.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts §F."
+      "rationale": "WI-510 Slice 2: validator@13.15.35 fixture entry. isAlphanumeric behavior \u2014 validates that a string is alphanumeric with locale-aware character set support. Atoms produced by shave engine from validator/lib/isAlphanumeric.js. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in validator-fixture.test.ts \u00a7F."
+    },
+    {
+      "id": "cat1-semver-satisfies-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Check whether a semantic version string satisfies a given semver range expression, returning true or false"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. satisfies behavior -- tests whether a version string matches a version range. Atoms produced by shave engine from semver/functions/satisfies.js (largest subgraph ~18 modules, exercises classes/range <-> classes/comparator circular import via Slice 1 cycle guard). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-semver-coerce-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Coerce a loose version string or number into a valid semver version object, extracting major, minor, and patch components"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. coerce behavior -- converts loose version strings to normalized SemVer instances. Atoms produced by shave engine from semver/functions/coerce.js (~8 modules). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-semver-compare-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compare two semantic version strings and return -1, 0, or 1 indicating their relative ordering"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. compare behavior -- performs numeric version comparison returning a sort-compatible integer. Atoms produced by shave engine from semver/functions/compare.js (~7 modules). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-semver-parse-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Parse a semantic version string into its component parts: major, minor, patch, prerelease, and build metadata"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 3: semver@7.8.0 fixture entry. parse behavior (resolves issue-body 'parse-component' per DEC-WI510-S3-PARSE-COMPONENT-BINDING-001) -- converts a version string into a SemVer object with structured fields. Atoms produced by shave engine from semver/functions/parse.js (~7 modules). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 verified in semver-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-uuid-v4-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Generate a random UUID version 4 string in the standard 8-4-4-4-12 hexadecimal format"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 4: uuid@11.1.1 fixture entry. v4 behavior (resolves issue-body 'v4-generate' per DEC-WI510-S4-UUID-BINDING-NAMES-001) -- generates a cryptographically random UUID. Atoms produced by shave engine from uuid/dist/cjs/v4.js (~6 modules). DEC-WI510-S4-NODE-BUILTIN-FOREIGN-LEAF-001: crypto Node builtin emitted as ForeignLeafEntry. synthetic-tasks, expectedAtom:null, combinedScore >= 0.55 verified in uuid-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-uuid-validate-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Validate whether a given string is a properly formatted UUID conforming to RFC 4122 syntax"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 4: uuid@11.1.1 fixture entry. validate behavior (resolves issue-body 'v4-validate' per DEC-WI510-S4-UUID-BINDING-NAMES-001) -- checks UUID format via regex. Atoms produced by shave engine from uuid/dist/cjs/validate.js (~2 modules). No external edges (no crypto). synthetic-tasks, expectedAtom:null, combinedScore >= 0.55 verified in uuid-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-uuid-v7-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Generate a time-ordered UUID version 7 string that encodes millisecond-precision timestamp for lexicographic sortability"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 4: uuid@11.1.1 fixture entry. v7 behavior (resolves issue-body 'v7-generate' per DEC-WI510-S4-UUID-BINDING-NAMES-001) -- generates a timestamp-first UUID. Atoms produced by shave engine from uuid/dist/cjs/v7.js (~5 modules). DEC-WI510-S4-NODE-BUILTIN-FOREIGN-LEAF-001: crypto Node builtin emitted as ForeignLeafEntry. synthetic-tasks, expectedAtom:null, combinedScore >= 0.55 verified in uuid-headline-bindings.test.ts section F."
+    },
+    {
+      "id": "cat1-nanoid-001",
+      "source": "synthetic-tasks",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Generate a 21-character URL-friendly cryptographically secure random unique identifier"
+      },
+      "expectedAtom": null,
+      "rationale": "WI-510 Slice 4: nanoid@3.3.12 fixture entry. nanoid primary export behavior (DEC-WI510-S4-NANOID-PRIMARY-EXPORT-001) -- generates a compact, URL-safe ID. Atoms produced by shave engine from nanoid/index.cjs (~2 modules). DEC-WI510-S4-NODE-BUILTIN-FOREIGN-LEAF-001: crypto Node builtin emitted as ForeignLeafEntry. synthetic-tasks, expectedAtom:null, combinedScore >= 0.55 verified in nanoid-headline-bindings.test.ts section F."
     }
   ]
 }

@@ -26,7 +26,8 @@
 // same BlockMerkleRoot is always chosen, producing the same resolution order and
 // the same emitted artifact.
 
-import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+import type { BlockMerkleRoot, Granularity, SpecHash } from "@yakcc/contracts";
+import { DEFAULT_GRANULARITY } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import type { ProvenanceManifest } from "./manifest.js";
 import { buildManifest } from "./manifest.js";
@@ -63,9 +64,21 @@ export interface Artifact {
  * When omitted, assemble() attempts to resolve sub-block refs using only the
  * entry block's own implSource imports (typically insufficient for corpora that
  * use relative import paths, since the SpecHash is unknown without fetching rows).
+ *
+ * granularity — atom-specificity dial (1 = tightest, 5 = loosest).
+ * Defaults to DEFAULT_GRANULARITY (3). Per-level semantics are calibrated from
+ * B9 (#446) and B4 (#188) sweep data; the dial is accepted here so the CLI and
+ * hook layers can pass it through now, even before per-level behaviour is wired.
+ * See @decision DEC-WI463-GRANULARITY-001 in @yakcc/contracts/src/granularity.ts.
  */
 export interface AssembleOptions {
   readonly knownMerkleRoots?: Iterable<BlockMerkleRoot>;
+  readonly granularity?: Granularity;
+}
+
+/** @internal Resolve the effective granularity from AssembleOptions. */
+export function resolveGranularity(opts: AssembleOptions | undefined): Granularity {
+  return opts?.granularity ?? DEFAULT_GRANULARITY;
 }
 
 // ---------------------------------------------------------------------------
