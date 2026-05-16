@@ -49,6 +49,8 @@
 
 import type { SpecYak } from "@yakcc/contracts";
 import type { CandidateMatch } from "@yakcc/registry";
+import { enforceAtomSizeRatio, computeAtomComplexity, computeNeedComplexity } from "./atom-size-ratio.js";
+import { getEnforcementConfig } from "./enforcement-config.js";
 
 // ---------------------------------------------------------------------------
 // Score constants — D2 auto-accept thresholds
@@ -356,7 +358,13 @@ export type SubstitutionResult =
   | {
       readonly substituted: false;
       /** Reason for not substituting — aids telemetry and debugging. */
-      readonly reason: "no-candidates" | "score-below-threshold" | "gap-too-small" | "binding-extract-failed" | "disabled";
+      readonly reason:
+        | "no-candidates"
+        | "score-below-threshold"
+        | "gap-too-small"
+        | "binding-extract-failed"
+        | "disabled"
+        | "atom-size-too-large"; // Layer 3 reject (DEC-HOOK-ENF-LAYER3-ATOM-SIZE-RATIO-001)
     }
   | {
       readonly substituted: true;
@@ -411,7 +419,48 @@ export async function executeSubstitution(
     return { substituted: false, reason: "gap-too-small" };
   }
 
-  // Step 2: Extract the binding shape from the original code.
+  // Step 2: Layer 3 atom-size ratio gate (DEC-HOOK-ENF-LAYER3-ATOM-SIZE-RATIO-001).
+  // Runs BETWEEN the D2 auto-accept gate AND renderSubstitution — the single plug
+  // point per Layer 3 spec. Only runs when disableGate is false.
+  const l3cfg = getEnforcementConfig().layer3;
+  if (!l3cfg.disableGate) {
+    const best = candidates[0];
+    if (best !== undefined) {
+      // Build AtomLike from the winning candidate's spec block.
+      // specCanonicalBytes → SpecYak is attempted; on failure, use zero-complexity
+      // proxy so the gate is conservative (does not reject on spec parse errors).
+      let specForL3: SpecYak | undefined;
+      try {
+        const { validateSpecYak } = await import("@yakcc/contracts");
+        const specJson = new TextDecoder().decode(best.block.specCanonicalBytes);
+        specForL3 = validateSpecYak(JSON.parse(specJson));
+      } catch {
+        specForL3 = undefined;
+      }
+
+      const atomLike = {
+        spec: specForL3 ?? { inputs: [], outputs: [], guarantees: [] } as unknown as SpecYak,
+        // exportedSurface: number of named exports — v1 proxy: outputs.length.
+        exportedSurface: specForL3?.outputs?.length ?? 0,
+        // transitiveDeps: not yet exposed by @yakcc/registry; default 0 in v1.
+        transitiveDeps: 0,
+      };
+
+      // Need-side analysis: derive from originalCode (simple token scan; full
+      // ts-morph scan is deferred to v2 when the call-site AST is available).
+      // v1 proxy: bindingsUsed = 1 (the caller uses the atom), statementCount =
+      // number of semicolons + block-statements in originalCode (rough proxy).
+      const statementCount = Math.max(1, (originalCode.match(/;/g) ?? []).length);
+      const callSite = { bindingsUsed: 1, statementCount };
+
+      const l3Result = enforceAtomSizeRatio(atomLike, callSite, l3cfg);
+      if (l3Result.status === "atom-size-too-large") {
+        return { substituted: false, reason: "atom-size-too-large" };
+      }
+    }
+  }
+
+  // Step 3: Extract the binding shape from the original code.
   // Lazy-import to avoid circular references; @yakcc/ir is a peer package.
   const { extractBindingShape } = await import("@yakcc/ir");
   const binding = extractBindingShape(originalCode);
@@ -419,7 +468,7 @@ export async function executeSubstitution(
     return { substituted: false, reason: "binding-extract-failed" };
   }
 
-  // Step 3: Attempt to recover SpecYak from the winning candidate's specCanonicalBytes.
+  // Step 4: Attempt to recover SpecYak from the winning candidate's specCanonicalBytes.
   // specCanonicalBytes is a UTF-8-encoded canonical JSON blob (see canonicalize.ts).
   // If parsing/validation fails we fall through to the two-line Phase 2 rendering
   // (no contract comment) rather than failing the substitution entirely.
@@ -436,7 +485,7 @@ export async function executeSubstitution(
     }
   }
 
-  // Step 4: Render the substitution (with contract comment if spec was recovered).
+  // Step 5: Render the substitution (with contract comment if spec was recovered).
   const substitutedCode = renderSubstitution(decision.atomHash, originalCode, binding, spec);
 
   return {

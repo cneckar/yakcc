@@ -139,13 +139,65 @@ export interface ResultSetRejectEnvelope {
 export type ResultSetSizeResult = ResultSetAcceptEnvelope | ResultSetRejectEnvelope;
 
 // ---------------------------------------------------------------------------
-// Layers 3–5 placeholders — additive per Sacred Practice 12
+// Layer 3 — atom-size ratio enforcement (wi-591-s3-layer3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Layer 3 ACCEPT envelope: the atom-to-need ratio is within configured bounds,
+ * OR the atom's complexity is below the minFloor and was bypassed.
+ *
+ * @decision DEC-HOOK-ENF-LAYER3-ATOM-SIZE-RATIO-001
+ */
+export interface AtomSizeAcceptEnvelope {
+  readonly layer: 3;
+  readonly status: "ok";
+  /** Computed atomComplexity proxy value. */
+  readonly atomComplexity: number;
+  /** Computed needComplexity proxy value. */
+  readonly needComplexity: number;
+  /** Actual ratio (atomComplexity / needComplexity). */
+  readonly ratio: number;
+  /**
+   * True when the atom's complexity was below minFloor and the ratio check
+   * was bypassed entirely. False when the check ran and passed.
+   */
+  readonly bypassed: boolean;
+}
+
+/**
+ * Layer 3 REJECT envelope: the atom's complexity far exceeds the immediate
+ * call-site need.
+ *
+ * When this envelope is returned, substitute.ts MUST NOT call renderSubstitution.
+ * The suggestion text is surfaced to the LLM as a forcing-function message.
+ *
+ * @decision DEC-HOOK-ENF-LAYER3-ATOM-SIZE-RATIO-001
+ */
+export interface AtomSizeRejectEnvelope {
+  readonly layer: 3;
+  readonly status: "atom-size-too-large";
+  /** Computed atomComplexity proxy value at time of rejection. */
+  readonly atomComplexity: number;
+  /** Computed needComplexity proxy value at time of rejection. */
+  readonly needComplexity: number;
+  /** Actual ratio (atomComplexity / needComplexity). */
+  readonly ratio: number;
+  /** Configured threshold that was exceeded. */
+  readonly ratioThreshold: number;
+  /** Forcing-function text surfaced to the LLM. */
+  readonly suggestion: string;
+}
+
+/** Discriminated union result of enforceAtomSizeRatio(). */
+export type AtomSizeRatioResult = AtomSizeAcceptEnvelope | AtomSizeRejectEnvelope;
+
+// ---------------------------------------------------------------------------
+// Layers 4–5 placeholders — additive per Sacred Practice 12
 //
-// S3..S5 implementers append their envelope types here. No existing shape
+// S4..S5 implementers append their envelope types here. No existing shape
 // changes. This comment block documents the extension point so future
 // implementers know where to add.
 //
-// S3 will export: AtomSizeEnvelope (ok | atom_oversized)
 // S4 will export: DescentTrackingEnvelope (ok | descent_bypass_warning)
 // S5 will export: DriftEnvelope (ok | drift_alert)
 // ---------------------------------------------------------------------------
