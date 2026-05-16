@@ -1,44 +1,58 @@
+# @decision DEC-CI-POSTMERGE-ADVISORY-GATE-001
+# Title: Rewire pr-ci-test-advisory from pull_request to push:main (closes #596, #595)
+# Status: accepted
+# Rationale: Long-running tests (20 min) must NOT be in the merge critical path.
+# The prior pull_request trigger caused every PR push to queue a 20-min job that
+# was non-gating but consumed runner minutes and produced misleading PR UI noise.
+# Moving the trigger to push:branches:[main] makes the run post-merge and
+# non-blocking by construction. On failure the workflow auto-files a GitHub Issue
+# with log tail via file-ci-regression.sh (D3+D4 dedup mechanism) so regressions
+# surface retrospectively without blocking developer flow. workflow_dispatch is
+# retained for on-demand ad-hoc validation. DEC-CI-FAST-PATH-PHASE-1-005
+# established this precedent for bootstrap.yml/test.yml/wave-3-parity.yml; WI-596
+# applies the same pattern here.
+#
 # @decision DEC-CI-TEST-ADVISORY-SEPARATE-WORKFLOW-001
 # Title: test-advisory split from pr-ci.yml to escape cancel-in-progress
-# Status: accepted
+# Status: superseded by DEC-CI-POSTMERGE-ADVISORY-GATE-001 (trigger now push:main)
 # Rationale: pr-ci.yml uses cancel-in-progress=true so new commits / origin/main
 # updates kill in-flight runs. The 20-min advisory test job was being killed
 # repeatedly (PRs #562/#566/#570/#571 all hit this; PR #570 merged with wrong
 # assertions because vitest never completed). Splitting the advisory test into
-# its own workflow with no cancel-in-progress lets it run to completion without
-# blocking the fast pr-ci.yml gates.
-# Per DEC-CI-MERGE-GATE-ENFORCE-001 this remains advisory (continue-on-error
-# at job level; not added to branch protection required checks).
+# its own workflow with no cancel-in-progress let it run to completion without
+# blocking the fast pr-ci.yml gates. WI-596 completes the move by dropping the
+# pull_request trigger entirely.
 
 name: pr-ci-test-advisory
 
 on:
-  pull_request:
+  push:
     branches: [main]
+  workflow_dispatch:    # manual ad-hoc trigger for on-demand validation
 
-# DELIBERATELY NO cancel-in-progress. The whole point of this split is that
-# advisory tests should complete even when fast checks are re-fired on new
-# commits. Latest run wins per GitHub's natural queueing.
-# (Alternative considered: cancel-in-progress=true on a distinct group keyed
-# on github.run_id — but that defeats the purpose. Plain queue is correct.)
+# No cancel-in-progress: post-merge push:main runs are independent and should
+# complete. Each push to main is a distinct commit; all advisory runs should
+# finish and file issues if they fail.
+
+permissions:
+  issues: write
+  contents: read
 
 jobs:
   # ---------------------------------------------------------------------------
-  # test-advisory — affected packages, NON-GATING
-  # DEC-CI-MERGE-GATE-ENFORCE-001: tests do NOT gate merges per operator policy
-  # ("tests that take this fucking long sure as fuck shouldn't be critical path
-  # for merges", 2026-05-11). `continue-on-error: true` at the JOB level surfaces
-  # failures in the PR UI for fast feedback but does NOT block the merge button.
-  # Slice C's branch protection MUST NOT include this job in required contexts.
-  # Moved here from pr-ci.yml by DEC-CI-TEST-ADVISORY-SEPARATE-WORKFLOW-001 to
-  # escape pr-ci.yml's cancel-in-progress, which was killing the 20-min job
-  # whenever a new commit pushed.
+  # test-advisory — affected packages, NON-GATING, post-merge advisory
+  # DEC-CI-POSTMERGE-ADVISORY-GATE-001: fires AFTER merge (push:main trigger),
+  # not during PR review. Failure does NOT block merges; instead, auto-files a
+  # GitHub Issue with log tail and merge-PR reference for retrospective triage.
+  # DEC-CI-MERGE-GATE-ENFORCE-001: this job is NOT in branch-protection required
+  # contexts. Branch protection continues to require only:
+  #   lint (full workspace), typecheck (full workspace), build (full workspace),
+  #   branch hygiene check, B6a air-gap benchmark (zero outbound).
   # ---------------------------------------------------------------------------
   test-advisory:
     name: test (affected packages, advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,11 +70,25 @@ jobs:
       - name: Build full workspace (required before tests can resolve workspace deps)
         run: pnpm -r build
 
-      - name: Test affected packages (non-gating)
+      - name: Test affected packages (post-merge advisory)
         # Affected filter retained for cycle-time speed (DEC-CI-FAST-PATH-PHASE-1-001).
-        # Failure surfaces in PR UI but does NOT block merge (see continue-on-error
-        # at the job level above).
+        # tee captures stdout+stderr to tmp/test-advisory.log for the on-failure
+        # regression-issue step (D4: log excerpt from tee, NOT from gh api run logs
+        # which are unavailable until the run completes).
+        # set -o pipefail: non-zero exit from pnpm propagates through tee.
+        # continue-on-error is dropped: on push:main, failure should exit non-zero
+        # so the on-failure step below fires correctly.
+        id: test
         run: |
+          mkdir -p tmp
           FILTER=$(bash scripts/affected-packages.sh)
           echo "Affected filter: $FILTER"
-          eval "pnpm $FILTER test"
+          set -o pipefail
+          eval "pnpm $FILTER test" 2>&1 | tee tmp/test-advisory.log
+
+      - name: Auto-file regression issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash .github/workflows/scripts/file-ci-regression.sh
