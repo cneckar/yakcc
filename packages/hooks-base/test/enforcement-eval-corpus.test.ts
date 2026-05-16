@@ -35,6 +35,12 @@ import { scoreResultSetSize } from "../src/result-set-size.js";
 import { enforceAtomSizeRatio } from "../src/atom-size-ratio.js";
 import type { AtomLike, CallSiteAnalysis } from "../src/atom-size-ratio.js";
 import type { Layer3Config } from "../src/enforcement-config.js";
+import {
+  recordMiss,
+  getAdvisoryWarning,
+  resetSession,
+} from "../src/descent-tracker.js";
+import type { Layer4Config } from "../src/enforcement-config.js";
 
 // ---------------------------------------------------------------------------
 // Corpus type
@@ -42,7 +48,7 @@ import type { Layer3Config } from "../src/enforcement-config.js";
 
 interface CorpusRow {
   id: string;
-  /** For Layer 1 rows: the intent text. For Layer 2/3 rows: descriptive label (not interpreted). */
+  /** For Layer 1 rows: the intent text. For Layer 2/3/4 rows: descriptive label (not interpreted). */
   input: string;
   expectedLayer: number;
   expectedOutcome: "intent-too-broad" | "accept" | "result-set-too-large" | "atom-oversized" | "descent-bypass-warning" | "drift-alert";
@@ -57,6 +63,13 @@ interface CorpusRow {
   needComplexity?: number;
   ratioThreshold?: number;
   minFloor?: number;
+  // Layer 4 fields — present only for L4-* rows
+  packageName?: string;
+  bindingName?: string;
+  intent?: string;
+  priorMisses?: number;
+  minDepth?: number;
+  shallowAllowPatterns?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +250,57 @@ function assertLayer3Row(row: CorpusRow): void {
 }
 
 // ---------------------------------------------------------------------------
+// Layer 4 helpers — build Layer4Config from corpus fields and run descent tracker
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert a Layer 4 corpus row against the descent-tracker module.
+ *
+ * The row encodes the scenario via:
+ *   - packageName + bindingName: the binding under test
+ *   - priorMisses: number of recordMiss calls to execute before the assertion
+ *   - minDepth + shallowAllowPatterns: the Layer4Config to use
+ *   - intent: passed to getAdvisoryWarning (affects suggestion text)
+ *   - expectedOutcome: "descent-bypass-warning" or "accept"
+ *
+ * Uses the actual descent-tracker functions (real production code — no mocks).
+ *
+ * @decision DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001
+ */
+function assertLayer4Row(row: CorpusRow): void {
+  const packageName = row.packageName ?? "unknown-pkg";
+  const bindingName = row.bindingName ?? "unknownBinding";
+  const intent = row.intent ?? row.input;
+  const priorMisses = row.priorMisses ?? 0;
+
+  const cfg: Layer4Config = {
+    minDepth: row.minDepth ?? 2,
+    shallowAllowPatterns: row.shallowAllowPatterns ?? [],
+    disableTracking: false,
+  };
+
+  // Simulate prior import-intercept miss events.
+  for (let i = 0; i < priorMisses; i++) {
+    recordMiss(packageName, bindingName);
+  }
+
+  const warning = getAdvisoryWarning(packageName, bindingName, intent, cfg);
+
+  if (row.expectedOutcome === "descent-bypass-warning") {
+    expect(warning, `[${row.id}] expected DescentBypassWarning for priorMisses=${priorMisses} (${row.notes ?? ""})`).not.toBeNull();
+    expect(warning?.layer, `[${row.id}] layer discriminant must be 4`).toBe(4);
+    expect(warning?.status, `[${row.id}] status must be descent-bypass-warning`).toBe("descent-bypass-warning");
+    expect(warning?.bindingKey, `[${row.id}] bindingKey format`).toBe(`${packageName}::${bindingName}`);
+    expect(warning?.observedDepth, `[${row.id}] observedDepth must equal priorMisses`).toBe(priorMisses);
+    expect(warning?.minDepth, `[${row.id}] minDepth from config`).toBe(cfg.minDepth);
+  } else if (row.expectedOutcome === "accept") {
+    expect(warning, `[${row.id}] expected null warning (accept) for priorMisses=${priorMisses} (${row.notes ?? ""})`).toBeNull();
+  } else {
+    throw new Error(`[${row.id}] unexpected expectedOutcome="${row.expectedOutcome}" for a Layer 4 row`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Layer 2 assertion helper
 // ---------------------------------------------------------------------------
 
@@ -264,15 +328,17 @@ function assertLayer2Row(row: CorpusRow): void {
 }
 
 // ---------------------------------------------------------------------------
-// Config reset between tests (needed for L2 env-override tests)
+// Config and session reset between tests (needed for L2 env-override and L4 session tests)
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
   resetConfigOverride();
+  resetSession();
 });
 
 afterEach(() => {
   resetConfigOverride();
+  resetSession();
 });
 
 // ---------------------------------------------------------------------------
@@ -280,9 +346,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("Layer 6 eval corpus — structural invariants", () => {
-  it("corpus JSON loads successfully with ≥5 rows", async () => {
+  it("corpus JSON loads successfully with ≥17 rows", async () => {
     const rows = await loadCorpus();
-    expect(rows.length).toBeGreaterThanOrEqual(5);
+    expect(rows.length).toBeGreaterThanOrEqual(17);
   });
 
   it("every row has required fields: id, input, expectedLayer, expectedOutcome", async () => {
@@ -334,6 +400,20 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
     for (const row of layer3Rows) {
       expect(row.id, `id should match L3-NNN`).toMatch(/^L3-\d{3}$/);
+    }
+  });
+
+  it("S4 seeds exactly 3 Layer 4 rows", async () => {
+    const rows = await loadCorpus();
+    const layer4Rows = rows.filter((r) => r.expectedLayer === 4);
+    expect(layer4Rows.length).toBe(3);
+  });
+
+  it("all S4 row ids follow L4-NNN format", async () => {
+    const rows = await loadCorpus();
+    const layer4Rows = rows.filter((r) => r.expectedLayer === 4);
+    for (const row of layer4Rows) {
+      expect(row.id, `id should match L4-NNN`).toMatch(/^L4-\d{3}$/);
     }
   });
 });
@@ -486,9 +566,18 @@ describe("Layer 6 eval corpus — completeness gate", () => {
     expect(hasAccept, "corpus must contain at least one accept row for Layer 3").toBe(true);
   });
 
-  it("corpus has grown to 17 rows (S1=7 + S2=5 + S3=5)", async () => {
+  it("corpus covers both descent-bypass-warning and accept outcomes in Layer 4", async () => {
     const rows = await loadCorpus();
-    expect(rows.length).toBe(17);
+    const layer4Rows = rows.filter((r) => r.expectedLayer === 4);
+    const hasWarn = layer4Rows.some((r) => r.expectedOutcome === "descent-bypass-warning");
+    const hasAccept = layer4Rows.some((r) => r.expectedOutcome === "accept");
+    expect(hasWarn, "corpus must contain at least one descent-bypass-warning row").toBe(true);
+    expect(hasAccept, "corpus must contain at least one accept row for Layer 4").toBe(true);
+  });
+
+  it("corpus has grown to 20 rows (S1=7 + S2=5 + S3=5 + S4=3)", async () => {
+    const rows = await loadCorpus();
+    expect(rows.length).toBe(20);
   });
 });
 
@@ -537,6 +626,43 @@ describe("Layer 6 eval corpus — Layer 3 rows", () => {
     const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
     for (const row of layer3Rows) {
       assertLayer3Row(row);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer 4 eval gate — table-driven (S4 additive, wi-592-s4-layer4)
+// ---------------------------------------------------------------------------
+
+describe("Layer 6 eval corpus — Layer 4 rows", () => {
+  it("L4-001: zero-miss scenario (depth=0 < minDepth=2) → descent-bypass-warning", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-001");
+    expect(row, "L4-001 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-002: sufficient-miss scenario (depth=2 equals minDepth=2) → accept (no warning)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-002");
+    expect(row, "L4-002 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-003: shallow-allow bypass ('add' matches ^add$, depth=0) → accept (no warning)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-003");
+    expect(row, "L4-003 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("all Layer 4 rows pass (catch-all sweep for future corpus additions)", async () => {
+    const rows = await loadCorpus();
+    const layer4Rows = rows.filter((r) => r.expectedLayer === 4);
+    for (const row of layer4Rows) {
+      // Each row needs a fresh session — layer4 is stateful (miss accumulation).
+      resetSession();
+      assertLayer4Row(row);
     }
   });
 });

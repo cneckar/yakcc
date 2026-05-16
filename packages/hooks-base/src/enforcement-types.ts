@@ -192,12 +192,45 @@ export interface AtomSizeRejectEnvelope {
 export type AtomSizeRatioResult = AtomSizeAcceptEnvelope | AtomSizeRejectEnvelope;
 
 // ---------------------------------------------------------------------------
-// Layers 4–5 placeholders — additive per Sacred Practice 12
-//
-// S4..S5 implementers append their envelope types here. No existing shape
-// changes. This comment block documents the extension point so future
-// implementers know where to add.
-//
-// S4 will export: DescentTrackingEnvelope (ok | descent_bypass_warning)
-// S5 will export: DriftEnvelope (ok | drift_alert)
+// Layer 4 — descent-depth tracking (advisory warning, non-blocking; wi-592-s4-layer4)
 // ---------------------------------------------------------------------------
+
+/**
+ * Advisory warning attached to a SubstitutionResult when Layer 4 detects that
+ * a substitution was attempted with fewer prior misses than minDepth, AND the
+ * binding intent does not match any shallowAllowPattern.
+ *
+ * This is NON-BLOCKING: the substitution still proceeds. The warning is an
+ * advisory signal for observability and future enforcement escalation.
+ *
+ * @decision DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001
+ * title: Layer 4 advisory warning — non-blocking descent depth signal
+ * status: decided (wi-592-s4-layer4)
+ * rationale:
+ *   Layer 4 is spec'd as advisory (plan §5.5, acceptance notes). A warning is
+ *   attached to SubstitutionResult but does not cause a reject path. This keeps
+ *   Layer 4 observability-safe: operators can measure the warning rate before
+ *   deciding to escalate to blocking in a future layer. The warning carries
+ *   the binding key, actual depth, required min depth, and the intent so
+ *   downstream telemetry can aggregate per-binding descent behaviour.
+ */
+export interface DescentBypassWarning {
+  readonly layer: 4;
+  readonly status: "descent-bypass-warning";
+  /** The binding key (packageName::binding) that triggered the warning. */
+  readonly bindingKey: string;
+  /** The observed miss count at the time of substitution (descent depth). */
+  readonly observedDepth: number;
+  /** The configured minDepth threshold that was not met. */
+  readonly minDepth: number;
+  /** The intent string that was checked against shallowAllowPatterns. */
+  readonly intent: string;
+  /**
+   * Advisory suggestion text for telemetry and future LLM-facing surfaces.
+   * Not surfaced to the LLM in Layer 4 (advisory only).
+   */
+  readonly suggestion: string;
+}
+
+// Layer 5 placeholder — additive per Sacred Practice 12.
+// S5 will export: DriftEnvelope (ok | drift_alert)

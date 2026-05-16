@@ -101,7 +101,18 @@ export type TelemetryEvent = {
     //   Emitted via outcomeOverride="atom-size-too-large" at the Layer 3 gate in
     //   executeSubstitution (substitute.ts). outcomeFromResponse() unchanged.
     //   Cross-reference: plans/wi-579-s3-layer3-atom-size-ratio.md
-    | "atom-size-too-large"; // S3 additive (DEC-HOOK-ENF-LAYER3-TELEMETRY-001)
+    | "atom-size-too-large" // S3 additive (DEC-HOOK-ENF-LAYER3-TELEMETRY-001)
+    // @decision DEC-HOOK-ENF-LAYER4-TELEMETRY-001
+    // title: "descent-bypass-warning" additive outcome for Layer 4 descent-depth tracker (wi-592 S4)
+    // status: decided (wi-592-s4-layer4)
+    // rationale:
+    //   Additive expansion following the Layer 3 pattern (DEC-HOOK-ENF-LAYER3-TELEMETRY-001).
+    //   Emitted alongside a successful substitution when Layer 4 attaches a DescentBypassWarning.
+    //   The outcome signals that the substitution succeeded but a depth advisory was triggered.
+    //   outcomeFromResponse() unchanged — this override is passed explicitly by substitute.ts
+    //   when descentBypassWarning is non-null.
+    //   Cross-reference: plans/wi-579-s4-layer4-descent-tracker.md
+    | "descent-bypass-warning"; // S4 additive (DEC-HOOK-ENF-LAYER4-TELEMETRY-001)
   // ---------------------------------------------------------------------------
   // Phase 2 additions â€” additive fields (backwards-compatible per #217 spec).
   // Old telemetry consumers see these as optional (undefined in Phase 1 events).
@@ -239,8 +250,8 @@ export function hashIntent(intentText: string): string {
  */
 export function outcomeFromResponse(
   response: HookResponse,
-  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large",
-): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" {
+  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" | "descent-bypass-warning",
+): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" | "descent-bypass-warning" {
   // Note: shave-on-miss outcome values are emitted directly via appendTelemetryEvent
   // from shave-on-miss.ts, not via this function. This function handles only the
   // four standard outcomes plus the override values.
@@ -324,7 +335,7 @@ export function captureTelemetry(opts: {
    * by the Layer 1 gate to set "intent-too-broad" (DEC-HOOK-ENF-LAYER1-TELEMETRY-001),
    * and by the Layer 2 gate to set "result-set-too-large" (DEC-HOOK-ENF-LAYER2-TELEMETRY-001).
    */
-  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large";
+  outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" | "descent-bypass-warning";
   /** BMR prefixes of atoms created. Non-empty only for outcome === "atomized". */
   atomsCreated?: readonly string[];
   sessionId?: string;

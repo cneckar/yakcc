@@ -387,6 +387,26 @@ export async function runImportIntercept(
       const intercepted = resolveResult.status === "matched";
       const top = resolveResult.candidates[0];
 
+      // -----------------------------------------------------------------------
+      // Layer 4 — descent-depth tracking (wi-592 S4, DEC-HOOK-ENF-LAYER4-DESCENT-TRACKING-001)
+      // Record miss or hit per binding so substitute.ts can read descent depth
+      // at substitution time. Failures are swallowed (observe-don't-mutate).
+      // -----------------------------------------------------------------------
+      try {
+        const { recordMiss: l4RecordMiss, recordHit: l4RecordHit } = await import("./descent-tracker.js");
+        const bindingName =
+          candidate.binding.namedImports[0] ??
+          candidate.binding.defaultImport ??
+          candidate.binding.moduleSpecifier;
+        if (intercepted) {
+          l4RecordHit(candidate.binding.moduleSpecifier, bindingName);
+        } else {
+          l4RecordMiss(candidate.binding.moduleSpecifier, bindingName);
+        }
+      } catch {
+        // Tracking failure must not affect the hook path.
+      }
+
       results.push({
         binding: candidate.binding,
         intercepted,
