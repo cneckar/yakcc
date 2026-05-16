@@ -420,9 +420,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("Layer 6 eval corpus — structural invariants", () => {
-  it("corpus JSON loads successfully with ≥20 rows", async () => {
+  it("corpus JSON loads successfully with ≥50 rows (S6 closer target)", async () => {
     const rows = await loadCorpus();
-    expect(rows.length).toBeGreaterThanOrEqual(20);
+    expect(rows.length).toBeGreaterThanOrEqual(50);
   });
 
   it("every row has required fields: id, input, expectedLayer, expectedOutcome", async () => {
@@ -435,22 +435,22 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     }
   });
 
-  it("S1 seeds exactly 7 Layer 1 rows", async () => {
+  it("S6 grows Layer 1 rows to ≥10 (S1 seeded 7; S6 adds 3)", async () => {
     const rows = await loadCorpus();
     const layer1Rows = rows.filter((r) => r.expectedLayer === 1);
-    expect(layer1Rows.length).toBe(7);
+    expect(layer1Rows.length).toBeGreaterThanOrEqual(10);
   });
 
-  it("S2 seeds exactly 5 Layer 2 rows", async () => {
+  it("S6 grows Layer 2 rows to ≥10 (S2 seeded 5; S6 adds 5)", async () => {
     const rows = await loadCorpus();
     const layer2Rows = rows.filter((r) => r.expectedLayer === 2);
-    expect(layer2Rows.length).toBe(5);
+    expect(layer2Rows.length).toBeGreaterThanOrEqual(10);
   });
 
-  it("S3 seeds exactly 5 Layer 3 rows", async () => {
+  it("S6 grows Layer 3 rows to ≥10 (S3 seeded 5; S6 adds 5)", async () => {
     const rows = await loadCorpus();
     const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
-    expect(layer3Rows.length).toBe(5);
+    expect(layer3Rows.length).toBeGreaterThanOrEqual(10);
   });
 
   it("all S1 row ids follow L1-NNN format", async () => {
@@ -477,10 +477,10 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     }
   });
 
-  it("S4 seeds exactly 3 Layer 4 rows", async () => {
+  it("S6 grows Layer 4 rows to ≥10 (S4 seeded 3; S6 adds 7)", async () => {
     const rows = await loadCorpus();
     const layer4Rows = rows.filter((r) => r.expectedLayer === 4);
-    expect(layer4Rows.length).toBe(3);
+    expect(layer4Rows.length).toBeGreaterThanOrEqual(10);
   });
 
   it("all S4 row ids follow L4-NNN format", async () => {
@@ -491,10 +491,10 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     }
   });
 
-  it("S5 seeds exactly 3 Layer 5 rows", async () => {
+  it("S6 grows Layer 5 rows to ≥10 (S5 seeded 3; S6 adds 7)", async () => {
     const rows = await loadCorpus();
     const layer5Rows = rows.filter((r) => r.expectedLayer === 5);
-    expect(layer5Rows.length).toBe(3);
+    expect(layer5Rows.length).toBeGreaterThanOrEqual(10);
   });
 
   it("all S5 row ids follow L5-NNN format", async () => {
@@ -502,6 +502,19 @@ describe("Layer 6 eval corpus — structural invariants", () => {
     const layer5Rows = rows.filter((r) => r.expectedLayer === 5);
     for (const row of layer5Rows) {
       expect(row.id, `id should match L5-NNN`).toMatch(/^L5-\d{3}$/);
+    }
+  });
+
+  it("corpus has exactly 50 rows (S6 closer target: 10 per layer × 5 layers)", async () => {
+    const rows = await loadCorpus();
+    expect(rows.length).toBe(50);
+  });
+
+  it("each layer has exactly 10 rows (proportional coverage requirement)", async () => {
+    const rows = await loadCorpus();
+    for (const layer of [1, 2, 3, 4, 5]) {
+      const count = rows.filter((r) => r.expectedLayer === layer).length;
+      expect(count, `Layer ${layer} must have exactly 10 rows`).toBe(10);
     }
   });
 });
@@ -563,6 +576,27 @@ describe("Layer 6 eval corpus — Layer 1 rows", () => {
     if (row) assertLayer1Row(row);
   });
 
+  it("L1-008: 'misc things processor' → intent-too-broad (meta_word + stop_words + too_short)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L1-008");
+    expect(row, "L1-008 must be in corpus").toBeDefined();
+    if (row) assertLayer1Row(row);
+  });
+
+  it("L1-009: 'parse ISO 8601 datetime string into UTC epoch milliseconds' → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L1-009");
+    expect(row, "L1-009 must be in corpus").toBeDefined();
+    if (row) assertLayer1Row(row);
+  });
+
+  it("L1-010: 'encode binary buffer as base64url without padding' → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L1-010");
+    expect(row, "L1-010 must be in corpus").toBeDefined();
+    if (row) assertLayer1Row(row);
+  });
+
   it("all Layer 1 rows pass (catch-all sweep for future corpus additions)", async () => {
     const rows = await loadCorpus();
     const layer1Rows = rows.filter((r) => r.expectedLayer === 1);
@@ -609,6 +643,41 @@ describe("Layer 6 eval corpus — Layer 2 rows", () => {
     const rows = await loadCorpus();
     const row = rows.find((r) => r.id === "L2-005");
     expect(row, "L2-005 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-006: 11 total weak candidates → result-set-too-large (exceeds maxOverall=10)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-006");
+    expect(row, "L2-006 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-007: 0 total candidates → accept (empty result set)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-007");
+    expect(row, "L2-007 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-008: 1 confident candidate → accept (single ideal match)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-008");
+    expect(row, "L2-008 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-009: 8 confident candidates → result-set-too-large", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-009");
+    expect(row, "L2-009 must be in corpus").toBeDefined();
+    if (row) assertLayer2Row(row);
+  });
+
+  it("L2-010: 10 total weak candidates → accept (at maxOverall=10 boundary)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L2-010");
+    expect(row, "L2-010 must be in corpus").toBeDefined();
     if (row) assertLayer2Row(row);
   });
 
@@ -663,9 +732,9 @@ describe("Layer 6 eval corpus — completeness gate", () => {
     expect(hasAccept, "corpus must contain at least one accept row for Layer 4").toBe(true);
   });
 
-  it("corpus has grown to 23 rows (S1=7 + S2=5 + S3=5 + S4=3 + S5=3)", async () => {
+  it("corpus has grown to 50 rows (S6 final: S1=10 + S2=10 + S3=10 + S4=10 + S5=10)", async () => {
     const rows = await loadCorpus();
-    expect(rows.length).toBe(23);
+    expect(rows.length).toBe(50);
   });
 
   it("corpus covers both drift-alert and accept outcomes in Layer 5", async () => {
@@ -718,6 +787,41 @@ describe("Layer 6 eval corpus — Layer 3 rows", () => {
     if (row) assertLayer3Row(row);
   });
 
+  it("L3-006: moderate atom (atomComplexity=50, needComplexity=1) → atom-oversized (ratio=50)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-006");
+    expect(row, "L3-006 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-007: moderate atom with reasonable callsite (ratio=7.5 < 10) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-007");
+    expect(row, "L3-007 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-008: atomComplexity=19 below minFloor=20 → accept (gate bypassed)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-008");
+    expect(row, "L3-008 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-009: very large atom (atomComplexity=200, needComplexity=3) → atom-oversized (ratio≈66.7)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-009");
+    expect(row, "L3-009 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
+  it("L3-010: large atom with large callsite (ratio=5.0 < 10) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L3-010");
+    expect(row, "L3-010 must be in corpus").toBeDefined();
+    if (row) assertLayer3Row(row);
+  });
+
   it("all Layer 3 rows pass (catch-all sweep for future corpus additions)", async () => {
     const rows = await loadCorpus();
     const layer3Rows = rows.filter((r) => r.expectedLayer === 3);
@@ -750,6 +854,55 @@ describe("Layer 6 eval corpus — Layer 4 rows", () => {
     const rows = await loadCorpus();
     const row = rows.find((r) => r.id === "L4-003");
     expect(row, "L4-003 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-004: one-miss scenario (depth=1 < minDepth=2) → descent-bypass-warning", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-004");
+    expect(row, "L4-004 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-005: over-threshold scenario (depth=3 > minDepth=2) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-005");
+    expect(row, "L4-005 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-006: shallow-allow with raised minDepth=3 ('abs' matches ^abs$) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-006");
+    expect(row, "L4-006 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-007: 'debounce' not shallow-allowed, depth=0 < minDepth=2 → descent-bypass-warning", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-007");
+    expect(row, "L4-007 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-008: well-warmed scenario (depth=5 >> minDepth=2) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-008");
+    expect(row, "L4-008 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-009: depth=1 < elevated minDepth=3 → descent-bypass-warning", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-009");
+    expect(row, "L4-009 must be in corpus").toBeDefined();
+    if (row) assertLayer4Row(row);
+  });
+
+  it("L4-010: depth=3 equals elevated minDepth=3 → accept (exactly warmed)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L4-010");
+    expect(row, "L4-010 must be in corpus").toBeDefined();
     if (row) assertLayer4Row(row);
   });
 
@@ -787,6 +940,55 @@ describe("Layer 6 eval corpus — Layer 5 rows", () => {
     const rows = await loadCorpus();
     const row = rows.find((r) => r.id === "L5-003");
     expect(row, "L5-003 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-004: 10 events with candidateCount 6-9 (median=7 > resultSetMedianMax=5) → drift-alert (result_set_median)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-004");
+    expect(row, "L5-004 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-005: 10 events with atomRatio 11-16 (median≈12.5 > ratioMedianMax=4) → drift-alert (ratio_median)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-005");
+    expect(row, "L5-005 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-006: 2/5 = 40% bypass rate exactly at descentBypassMax=0.40 boundary → accept (not strictly >)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-006");
+    expect(row, "L5-006 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-007: single event, no specificityScore or atomRatio → accept (insufficient data for mean/median)", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-007");
+    expect(row, "L5-007 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-008: disableDetection=true → accept regardless of window contents", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-008");
+    expect(row, "L5-008 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-009: dual-dimension alert (bypass=60%>40% AND specificity=0.42<0.55) → drift-alert", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-009");
+    expect(row, "L5-009 must be in corpus").toBeDefined();
+    if (row) assertLayer5Row(row);
+  });
+
+  it("L5-010: all four dimensions healthy (specificity=0.724, bypass=0%, candidateCount=3, ratio=3.5) → accept", async () => {
+    const rows = await loadCorpus();
+    const row = rows.find((r) => r.id === "L5-010");
+    expect(row, "L5-010 must be in corpus").toBeDefined();
     if (row) assertLayer5Row(row);
   });
 

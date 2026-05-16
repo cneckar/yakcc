@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "ref": "post-579",
+  "commitSha": "TBD-post-merge",
+  "status": "placeholder",
+  "note": "Filled by separate bench-run WI; full B4-tokens benchmark suite is heavy compute and deferred per #594 acceptance. B4 measures token consumption per successful substitution. Post-#579 baseline captures the token impact of L1 rejection (saves query tokens when vague intents are blocked) vs. L4 descent discipline cost.",
+  "dimensions": {
+    "tokens_per_substitution_p50": null,
+    "tokens_saved_by_l1_rejection": null,
+    "tokens_overhead_per_warning": null
+  }
+}

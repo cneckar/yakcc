@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "ref": "post-579",
+  "commitSha": "TBD-post-merge",
+  "status": "placeholder",
+  "note": "Filled by separate bench-run WI; full B5-coherence benchmark suite is heavy compute and deferred per #594 acceptance. B5 measures coherence of substitution choices (correct atom selected for intent). Post-#579 baseline expected to show improved coherence due to L1 specificity gate filtering vague intents that previously returned low-coherence matches.",
+  "dimensions": {
+    "coherence_score_mean": null,
+    "coherence_score_p25": null,
+    "coherence_score_p75": null,
+    "l1_reject_rate": null
+  }
+}
