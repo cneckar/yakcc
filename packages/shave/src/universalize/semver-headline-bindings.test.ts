@@ -165,10 +165,9 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
         forest.moduleCount,
         "satisfies moduleCount should be in [14,22]",
       ).toBeGreaterThanOrEqual(14);
-      expect(
-        forest.moduleCount,
-        "satisfies moduleCount should be in [14,22]",
-      ).toBeLessThanOrEqual(22);
+      expect(forest.moduleCount, "satisfies moduleCount should be in [14,22]").toBeLessThanOrEqual(
+        22,
+      );
       expect(forest.stubCount, "satisfies stubCount must be 0 after engine fix #576").toBe(0);
       expect(rangeCount, "range.js must appear exactly once (cycle guard proof)").toBe(1);
       expect(comparatorCount, "comparator.js must appear exactly once (cycle guard proof)").toBe(1);
@@ -271,9 +270,15 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
           }
         }
         console.log("[satisfies sE] persisted atoms:", persistedCount);
-        expect(plans.length, "satisfies sE: collectForestSlicePlans must produce plans").toBeGreaterThan(0);
+        expect(
+          plans.length,
+          "satisfies sE: collectForestSlicePlans must produce plans",
+        ).toBeGreaterThan(0);
         // Engine fix #576: range.js decomposes now, so satisfies produces novel-glue atoms.
-        expect(persistedCount, "satisfies sE: must persist at least one atom after engine fix #576").toBeGreaterThan(0);
+        expect(
+          persistedCount,
+          "satisfies sE: must persist at least one atom after engine fix #576",
+        ).toBeGreaterThan(0);
       } finally {
         await registry.close();
       }
