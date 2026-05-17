@@ -5,7 +5,7 @@ export function validateInputCharacters(input) {
   for (let i = 0; i < input.length; i++) {
     const code = input.charCodeAt(i);
     if (code > 127) throw new RangeError(`Non-ASCII character at position ${i}`);
-    if (code < 32 && code !== 9) throw new SyntaxError(`Control character at position ${i}`);
+    if (code < 32) throw new SyntaxError(`Control character at position ${i}`);
   }
 }
 
