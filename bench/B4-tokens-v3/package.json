@@ -1,0 +1,25 @@
+{
+  "name": "@yakcc-bench/b4-tokens-v3",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B4-v3 — Two-phase hypothesis-matrix: Opus corpus-build + 6-cell exploit (A-F) across 5 complex tasks.",
+  "notes": [
+    "NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is bench-local — must NOT appear in root package.json.",
+    "Install: pnpm --dir bench/B4-tokens-v3 install",
+    "Oracle tests run against reference-impl.ts by default (no API key needed).",
+    "Phase 1 + Phase 2 harness runs require ANTHROPIC_API_KEY and consume real API budget ($75 cap)."
+  ],
+  "scripts": {
+    "test:oracles": "vitest run --config vitest.config.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "vitest": "^4.1.5"
+  }
+}
