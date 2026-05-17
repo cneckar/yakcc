@@ -1,7 +1,28 @@
 {
   "$schema": "corpus-spec/v2",
-  "note": "B10-import-replacement task corpus. Slice 1 ships empty (tasks: []). Slice 2/3 populate with import-heavy tasks + sha256 fingerprints. See plans/wi-512-b10-import-heavy-bench.md §3b.2.",
+  "note": "B10-import-replacement task corpus. Slice 2 adds the first import-heavy demo task (validate-rfc5321-email). See plans/wi-512-s2-b10-demo-task.md.",
   "benchmark": "B10-import-replacement",
-  "slice": "slice-1",
-  "tasks": []
+  "slice": "slice-2",
+  "tasks": [
+    {
+      "id": "validate-rfc5321-email",
+      "spec_path": "tasks/validate-rfc5321-email/spec.yak",
+      "spec_sha256_lf": "72d8b6dd489ccad5ab471f4cb4b2813c97d54358541233811fa55cf8b8d3c8d8",
+      "entry_function": "validateRfc5321Email",
+      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function validateRfc5321Email(input: string): boolean\n\nBehavior:\nValidate whether a string is a valid RFC 5321 email address. Returns true iff the input parses as a single mailbox per RFC 5321 §4.1.2 (local-part '@' domain), with no display name, no UTF-8 local parts, and a TLD required on the domain part.\n\nThrow appropriate Error subclasses (SyntaxError or RangeError) for invalid input.",
+        "prompt_sha256": "e6abff33fbb67a022de78c8a319a143b396c7559385dcbccda36df5d60d780c9"
+      },
+      "dry_run_fixture": "fixtures/validate-rfc5321-email/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.90,
+        "reachable_bytes_reduction_min": 0.90,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    }
+  ]
 }

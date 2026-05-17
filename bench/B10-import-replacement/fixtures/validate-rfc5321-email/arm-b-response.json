@@ -1,0 +1,18 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B10 Slice 2 dry-run. Arm B = LLM baseline (no yakcc hook). Emits the natural `import validator from 'validator'` solution. Drives the resolver against validator's actual transitive closure.",
+  "_fixture_provenance": "Hand-authored representative fixture for the locked prompt; replaced by the captured live-run response committed alongside the headline results artifact (see plan §6.1 T-B-2).",
+  "_arm": "B",
+  "_task": "validate-rfc5321-email",
+  "_prompt_sha256": "e6abff33fbb67a022de78c8a319a143b396c7559385dcbccda36df5d60d780c9",
+  "id": "msg_dry_validate_rfc5321_email_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 },
+  "content": [{
+    "type": "text",
+    "text": "```typescript\nimport validator from 'validator';\n\nfunction validateRfc5321Email(input: string): boolean {\n  return validator.isEmail(input);\n}\n\nexport { validateRfc5321Email };\nexport default validateRfc5321Email;\n```"
+  }]
+}
