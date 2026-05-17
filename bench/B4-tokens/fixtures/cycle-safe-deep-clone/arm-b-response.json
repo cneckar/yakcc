@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm B = baseline (no hook, no yakccResolve MCP). Model regenerates recursive deep clone from scratch without atom substitution. Higher output_tokens than Arm A = token cost of naive regeneration (full recursive type-dispatch). DEC-B4-FIXTURE-STUB-001: minimal stub — full pre-recorded response requires an actual API run (operator-initiated post-merge per DEC-BENCH-B4-REALIGN-NO-RERUN-001).",
+  "_decision": "DEC-B4-FIXTURE-STUB-001",
+  "_arm": "B",
+  "_task": "cycle-safe-deep-clone",
+  "id": "msg_dry_clone_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 851,
+    "output_tokens": 498,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the cycle-safe deep clone implementation:\n\n```typescript\nexport default function deepClone<T>(value: T, seen = new WeakMap<object, unknown>()): T {\n  // Handle primitives and functions\n  if (value === null || typeof value !== 'object') {\n    return value;\n  }\n  \n  // Handle cycles\n  if (seen.has(value as object)) {\n    return seen.get(value as object) as T;\n  }\n  \n  // Date\n  if (value instanceof Date) {\n    const cloned = new Date(value.getTime());\n    seen.set(value, cloned);\n    return cloned as unknown as T;\n  }\n  \n  // RegExp\n  if (value instanceof RegExp) {\n    const cloned = new RegExp(value.source, value.flags);\n    cloned.lastIndex = 0;\n    seen.set(value, cloned);\n    return cloned as unknown as T;\n  }\n  \n  // Map\n  if (value instanceof Map) {\n    const cloned = new Map();\n    seen.set(value, cloned);\n    for (const [k, v] of value) {\n      cloned.set(deepClone(k, seen), deepClone(v, seen));\n    }\n    return cloned as unknown as T;\n  }\n  \n  // Set\n  if (value instanceof Set) {\n    const cloned = new Set();\n    seen.set(value, cloned);\n    for (const v of value) {\n      cloned.add(deepClone(v, seen));\n    }\n    return cloned as unknown as T;\n  }\n  \n  // ArrayBuffer\n  if (value instanceof ArrayBuffer) {\n    const cloned = value.slice(0);\n    seen.set(value, cloned);\n    return cloned as unknown as T;\n  }\n  \n  // Array\n  if (Array.isArray(value)) {\n    const cloned: unknown[] = [];\n    seen.set(value, cloned);\n    for (let i = 0; i < value.length; i++) {\n      cloned[i] = deepClone(value[i], seen);\n    }\n    return cloned as unknown as T;\n  }\n  \n  // Plain objects and class instances\n  const proto = Object.getPrototypeOf(value);\n  const cloned = Object.create(proto);\n  seen.set(value as object, cloned);\n  \n  for (const key of Object.getOwnPropertyNames(value)) {\n    cloned[key] = deepClone((value as Record<string, unknown>)[key], seen);\n  }\n  \n  for (const sym of Object.getOwnPropertySymbols(value)) {\n    cloned[sym] = deepClone((value as Record<symbol, unknown>)[sym], seen);\n  }\n  \n  return cloned;\n}\n```"
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 {
-  "description": "B4-tokens benchmark Slice 1 task corpus spec — task selection rationale, per-task hook engagement annotations, and non-engagement records.",
+  "description": "B4-tokens benchmark task corpus spec — task selection rationale, per-task hook engagement annotations, and non-engagement records. Updated by WI-609 Slice 1 to add 3 new tasks targeting WI-510-shaved packages (uuid, jsonwebtoken, lodash).",
   "schema_version": 1,
-  "slice": 1,
-  "n_tasks": 3,
+  "slice": 3,
+  "n_tasks": 11,
   "triage_status": "complete",
   "triage_completed_at": "2026-05-15",
   "triage_summary": {
@@ -29,6 +29,24 @@
       "hook_engagement": "none",
       "non_engagement_reason": "Debounce is a genuinely novel stateful higher-order function. The Slice 1 bootstrap corpus contains no timer-management atom that the yakccResolve tool could substitute. The model correctly ignored the tool and generated the implementation directly. Both arms produced approximately equal output (~427 vs ~433 tokens, 1.4% noise). Root cause analysis (WI-B4-DEBOUNCE-HOOK-ENGAGEMENT #451): Candidate 1 (registry not seeded for debounce-shaped contracts) confirmed — the Slice 1 registry does not contain a debounce atom. Candidate 2 (embedding match threshold) and Candidate 3 (substitution flow logic bug) are ruled out: the model DID see the yakccResolve tool (Arm A input_tokens=1226 vs Arm B input_tokens=567, delta=659 tokens = system prompt suffix + tool schema) but chose not to invoke it because no matching atom exists. This is correct behavior: the hook should not hallucinate atom names. Resolution: document non-engagement here. Path to engagement in Slice 2: seed a timer-management atom (setTimeout/clearTimeout closure pattern) into the registry. The debounce prompt would then have a candidate for at least the timer-state primitive, reducing the code the model must regenerate.",
       "follow_up_issue": "454"
+    },
+    {
+      "id": "uuid-v4-generate-validate",
+      "hook_engagement": "high",
+      "engagement_notes": "High atom density: uuid Slice 4 (WI-510 S4) shipped two distinct atoms — v4.js (generation, 35 LoC of byte-manipulation with crypto RNG + version/variant bit-setting) and validate.js (~15 LoC regex-based canonical form check). The hook has direct substitution targets for both generateV4 and validateV4. A hook-equipped LLM should be able to substitute both atoms and avoid regenerating ~80-100 LoC of byte-fiddling. Engagement prediction: high. Measured engagement: TBD (post-rerun, operator-appended). WI-510 S4 atom paths: packages/seeds/uuid/v4.js, packages/seeds/uuid/validate.js.",
+      "follow_up_issue": null
+    },
+    {
+      "id": "verify-jwt-hs256",
+      "hook_engagement": "high",
+      "engagement_notes": "High atom density: jsonwebtoken Slice 6 (WI-510 S6) shipped two atoms — verify.js (HMAC-SHA256 verify logic with algorithm check + timingSafeEqual + exp validation) and decode.js (base64url decode + header/payload parse). The hook should substitute both atoms: the verify path covers the full verification sequence, decode.js covers base64url + JSON parsing. A hook-naive LLM regenerates ~150-200 LoC of HMAC + base64url plumbing including the algorithm-confusion vulnerability. Engagement prediction: high. Measured engagement: TBD (post-rerun, operator-appended). WI-510 S6 atom paths: packages/seeds/jsonwebtoken/verify.js, packages/seeds/jsonwebtoken/decode.js.",
+      "follow_up_issue": null
+    },
+    {
+      "id": "cycle-safe-deep-clone",
+      "hook_engagement": "high",
+      "engagement_notes": "High atom density: lodash Slice 7 (WI-510 S7) shipped two atoms — cloneDeep.js (top-level clone entry, 30 LoC wrapping _baseClone) and _baseClone.js (~150 LoC recursive type-dispatch with WeakMap cycle detection, Date/RegExp/Map/Set/typed-array handlers, prototype chain preservation, symbol-key enumeration). The hook should substitute both: the outer cloneDeep atom wraps the inner _baseClone atom. A hook-naive LLM regenerates 100-200 LoC of recursive type-dispatch, often omitting cycles, symbol keys, or prototype chain. Note: debounce-with-cancel also uses lodash shave but for a different atom (timer closure pattern); this task targets the cloneDeep/baseClone atoms specifically. Engagement prediction: high. Measured engagement: TBD (post-rerun, operator-appended). WI-510 S7 atom paths: packages/seeds/lodash/cloneDeep.js, packages/seeds/lodash/_baseClone.js.",
+      "follow_up_issue": null
     }
   ],
   "notes": [
@@ -36,6 +54,7 @@
     "non_engagement_reason is required when hook_engagement is 'none'",
     "follow_up_issue references GitHub issue number for tracking; null if no follow-up needed",
     "Slice 1 real-run artifact: tmp/B4-tokens/slice1-2026-05-13T06-28-13-376Z.json",
-    "Debounce non-engagement diagnosed under WI-B4-DEBOUNCE-HOOK-ENGAGEMENT (#451), 2026-05-13"
+    "Debounce non-engagement diagnosed under WI-B4-DEBOUNCE-HOOK-ENGAGEMENT (#451), 2026-05-13",
+    "WI-609 Slice 1 (2026-05-16): +3 tasks added targeting WI-510 S4/S6/S7 shaved atoms. corpus-spec.json n_tasks updated from 3 to 11 (all tasks in tasks.json are now annotated here). engagement_notes for new tasks are predictions; measured values appended post-rerun."
   ]
 }

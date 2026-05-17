@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm B = baseline (no hook, no yakccResolve MCP). Model regenerates JWT HMAC + base64url plumbing from scratch without atom substitution. Higher output_tokens than Arm A = token cost of naive regeneration. DEC-B4-FIXTURE-STUB-001: minimal stub — full pre-recorded response requires an actual API run (operator-initiated post-merge per DEC-BENCH-B4-REALIGN-NO-RERUN-001).",
+  "_decision": "DEC-B4-FIXTURE-STUB-001",
+  "_arm": "B",
+  "_task": "verify-jwt-hs256",
+  "id": "msg_dry_jwt_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 781,
+    "output_tokens": 412,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the JWT HS256 verification implementation:\n\n```typescript\nimport { createHmac, timingSafeEqual } from 'node:crypto';\n\nexport interface VerifyResult {\n  valid: boolean;\n  payload?: Record<string, unknown>;\n  header?: Record<string, unknown>;\n  reason?: string;\n}\n\nfunction base64urlDecode(str: string): Buffer {\n  // Convert base64url to base64\n  const base64 = str.replace(/-/g, '+').replace(/_/g, '/')\n    + '=='.slice(0, (4 - str.length % 4) % 4);\n  return Buffer.from(base64, 'base64');\n}\n\nexport function verifyHs256(token: string, secret: string): VerifyResult {\n  const parts = token.split('.');\n  if (parts.length !== 3) {\n    return { valid: false, reason: 'Token must have exactly 3 parts' };\n  }\n  \n  const [headerB64, payloadB64, signatureB64] = parts;\n  \n  let header: Record<string, unknown>;\n  try {\n    header = JSON.parse(base64urlDecode(headerB64).toString('utf8'));\n  } catch {\n    return { valid: false, reason: 'Failed to decode header' };\n  }\n  \n  if (header.alg !== 'HS256') {\n    return { valid: false, reason: `Algorithm ${header.alg} not supported` };\n  }\n  \n  let payload: Record<string, unknown>;\n  try {\n    payload = JSON.parse(base64urlDecode(payloadB64).toString('utf8'));\n  } catch {\n    return { valid: false, reason: 'Failed to decode payload' };\n  }\n  \n  const signingInput = `${headerB64}.${payloadB64}`;\n  const expectedSig = createHmac('sha256', secret).update(signingInput).digest();\n  const actualSig = base64urlDecode(signatureB64);\n  \n  if (expectedSig.length !== actualSig.length) {\n    return { valid: false, reason: 'Signature verification failed' };\n  }\n  \n  if (!timingSafeEqual(expectedSig, actualSig)) {\n    return { valid: false, reason: 'Signature verification failed' };\n  }\n  \n  if (typeof payload.exp === 'number') {\n    if (Math.floor(Date.now() / 1000) >= payload.exp) {\n      return { valid: false, reason: 'Token has expired' };\n    }\n  }\n  \n  return { valid: true, header, payload };\n}\n```"
+    }
+  ]
+}

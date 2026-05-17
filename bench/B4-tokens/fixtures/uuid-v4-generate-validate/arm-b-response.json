@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for dry-run mode. Arm B = baseline (no hook, no yakccResolve MCP). Model regenerates UUID byte-manipulation from scratch without atom substitution. Higher output_tokens than Arm A = token cost of naive regeneration. DEC-B4-FIXTURE-STUB-001: minimal stub — full pre-recorded response requires an actual API run (operator-initiated post-merge per DEC-BENCH-B4-REALIGN-NO-RERUN-001).",
+  "_decision": "DEC-B4-FIXTURE-STUB-001",
+  "_arm": "B",
+  "_task": "uuid-v4-generate-validate",
+  "id": "msg_dry_uuid_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 721,
+    "output_tokens": 298,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "Here is the UUID v4 implementation:\n\n```typescript\nimport { randomBytes } from 'node:crypto';\n\nexport function generateV4(): string {\n  const bytes = randomBytes(16);\n  // Set version to 4\n  bytes[6] = (bytes[6] & 0x0f) | 0x40;\n  // Set variant to RFC 4122\n  bytes[8] = (bytes[8] & 0x3f) | 0x80;\n  \n  const hex = bytes.toString('hex');\n  return [\n    hex.slice(0, 8),\n    '-',\n    hex.slice(8, 12),\n    '-',\n    hex.slice(12, 16),\n    '-',\n    hex.slice(16, 20),\n    '-',\n    hex.slice(20, 32)\n  ].join('');\n}\n\nconst UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-8][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/;\n\nexport function validateV4(input: string): boolean {\n  if (typeof input !== 'string') return false;\n  return UUID_REGEX.test(input);\n}\n```"
+    }
+  ]
+}
