@@ -1618,4 +1618,3 @@ export function assemblyScriptBackend(opts?: AsBackendOptions): WasmBackend {
     },
   };
 }
-
