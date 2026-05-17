@@ -36,11 +36,21 @@ export function emptyListContent(input, pos) {
   return pos + 1;
 }
 
+// @decision DEC-WI-636-001
+// Title: Reject leading-zero integers in parseDigits
+// Status: accepted
+// Rationale: The integer-overflow attack class (leading-zeros variant) exploits
+// silent parseInt acceptance of inputs like "007". A single length+first-char
+// guard after digit consumption eliminates shape_escapes across all 3 arm-a
+// granularities while preserving valid zero ("0", length 1).
 export function parseDigits(input, pos) {
   let end = pos;
   while (end < input.length && input[end] >= "0" && input[end] <= "9") end++;
   if (end === pos) {
     throw new SyntaxError(`Expected digit at position ${pos}, got: ${JSON.stringify(input[pos] ?? "EOF")}`);
+  }
+  if (end - pos > 1 && input[pos] === "0") {
+    throw new SyntaxError(`Leading zeros not allowed at position ${pos}`);
   }
   return [parseInt(input.slice(pos, end), 10), end];
 }

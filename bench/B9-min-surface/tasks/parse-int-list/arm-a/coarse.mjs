@@ -27,6 +27,7 @@ export function listOfInts(input) {
       const start = pos;
       while (pos < input.length && input[pos] >= "0" && input[pos] <= "9") pos++;
       if (pos === start) throw new SyntaxError(`Expected digit at position ${pos}`);
+      if (pos - start > 1 && input[start] === "0") throw new SyntaxError(`Leading zeros not allowed at position ${start}`);
       result.push(parseInt(input.slice(start, pos), 10));
       while (pos < input.length && (input[pos] === " " || input[pos] === "\t")) pos++;
     }
