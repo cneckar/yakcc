@@ -1,0 +1,462 @@
+{
+  "_meta": {
+    "benchmark": "B8-SYNTHETIC",
+    "slice": 1,
+    "fraction_f": 1,
+    "timestamp": "2026-05-17T00:40:05.914Z",
+    "corpus_sha256": "40788cc0403036ea7b562eccfa1c2be73bc812ac8dffb0fbe5c8fb355a4477a3",
+    "corpus_n": 10,
+    "registry_path": "/home/claude/yakcc/.yakcc/registry.sqlite",
+    "decision": "DEC-BENCH-B8-REVALIDATION-MASTER-001",
+    "note": "WI-611 Slice 1 revalidation. Run via: node bench/B8-synthetic/run.mjs --registry .yakcc/registry.sqlite --packages-root <repo_root>. Raw harness output SHA-256: 453f5c6de0de790d723419dba359e920ea728e365b38aa9705c38499dd46b718",
+    "registry_state_summary": {
+      "registry_file_path": ".yakcc/registry.sqlite",
+      "registry_mtime_iso": "2026-05-17T00:29:09+00:00",
+      "registry_birth_iso": "2026-05-12T03:13:35+00:00",
+      "registry_size_bytes": 1867776,
+      "corpus_age_days_relative_to_run_date": 4,
+      "registry_note": "mtime reflects read access during planning smoke probe (2026-05-17); birth date (2026-05-12) is the canonical creation date. The registry predates all WI-510 and WI-579 slices.",
+      "known_missing_initiatives": [
+        "#526 (WI-510 Slice 1 — dependency-following shave engine, landed 2026-05-14)",
+        "#544 (WI-510 Slice 2 — four validator headline bindings, landed 2026-05-15)",
+        "#570/#571 (WI-510 Slice 3 — semver@7.8.0, landed 2026-05-15)",
+        "#573 (WI-510 Slice 4 — uuid@11.1.1 + nanoid@3.3.12, landed 2026-05-15)",
+        "#584 (WI-510 Slice 5 — date-fns@4.1.0, landed 2026-05-16)",
+        "#586 (WI-510 Slice 6 — jsonwebtoken@9.0.2 + bcryptjs@2.4.3, landed 2026-05-16)",
+        "#598 (WI-510 Slice 7 — lodash@4.17.21, landed 2026-05-16)",
+        "#616 (WI-510 Slice 8 — zod@3.25.76, landed 2026-05-17)",
+        "#589 (WI-579 Slice 1 — Layer 1 intent-specificity gate, landed 2026-05-15)",
+        "#597 (WI-579 Slice 2 — Layer 2 result-set size enforcement, landed 2026-05-15)",
+        "#599 (WI-579 Slice 3 — Layer 3 atom-size ratio enforcement, landed 2026-05-15)",
+        "#602 (WI-579 Slice 4 — Layer 4 descent-depth tracker, landed 2026-05-15)",
+        "#603 (WI-579 Slice 5 — Layer 5 telemetry-driven drift detection, landed 2026-05-16)",
+        "#606 (WI-579 Slice 6 — 6-layer hook enforcement complete, landed 2026-05-16)",
+        "#613 (WI-579 fix — Layer 4 descent-tracker key parity, landed 2026-05-17)"
+      ]
+    }
+  },
+  "per_task": [
+    {
+      "task_id": "substrate-001-sort-integers",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5680416500348997,
+          "raw_tokens": 32
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5670913082711841,
+          "raw_tokens": 68
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5859493644615554,
+          "raw_tokens": 28
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 128,
+      "task_estimated_hook_tokens": 128
+    },
+    {
+      "task_id": "substrate-002-parse-int",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5671317012005943,
+          "raw_tokens": 52
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5591706003747134,
+          "raw_tokens": 22
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5718070667570565,
+          "raw_tokens": 18
+        },
+        {
+          "block_id": "b4",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5780834542637052,
+          "raw_tokens": 22
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 114,
+      "task_estimated_hook_tokens": 114
+    },
+    {
+      "task_id": "substrate-003-hash-map",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5850127759510393,
+          "raw_tokens": 48
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5668549522610533,
+          "raw_tokens": 72
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5742824420244119,
+          "raw_tokens": 68
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 188,
+      "task_estimated_hook_tokens": 188
+    },
+    {
+      "task_id": "substrate-004-string-ops",
+      "tier": "substrate",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6125924370987228,
+          "raw_tokens": 36
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6105016827629832,
+          "raw_tokens": 30
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5879125037108928,
+          "raw_tokens": 30
+        },
+        {
+          "block_id": "b4",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5847200623014572,
+          "raw_tokens": 36
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 132,
+      "task_estimated_hook_tokens": 132
+    },
+    {
+      "task_id": "glue-001-http-router",
+      "tier": "glue",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.575730959008947,
+          "raw_tokens": 115
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5810924407086837,
+          "raw_tokens": 110
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6102073819957781,
+          "raw_tokens": 35
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 260,
+      "task_estimated_hook_tokens": 260
+    },
+    {
+      "task_id": "glue-002-error-mapper",
+      "tier": "glue",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6072374925116577,
+          "raw_tokens": 55
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5823828039644923,
+          "raw_tokens": 42
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6042678806451818,
+          "raw_tokens": 98
+        },
+        {
+          "block_id": "b4",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6091402714593954,
+          "raw_tokens": 35
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 230,
+      "task_estimated_hook_tokens": 230
+    },
+    {
+      "task_id": "glue-003-config-loader",
+      "tier": "glue",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5777604214266852,
+          "raw_tokens": 50
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5825857717568077,
+          "raw_tokens": 42
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5657139206794994,
+          "raw_tokens": 130
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 222,
+      "task_estimated_hook_tokens": 222
+    },
+    {
+      "task_id": "application-001-crud-endpoint",
+      "tier": "application",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5662525138241108,
+          "raw_tokens": 42
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5580789356914551,
+          "raw_tokens": 52
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5516893860432752,
+          "raw_tokens": 22
+        },
+        {
+          "block_id": "b4",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5470951777845947,
+          "raw_tokens": 28
+        },
+        {
+          "block_id": "b5",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5686219395194847,
+          "raw_tokens": 52
+        },
+        {
+          "block_id": "b6",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5612551308317819,
+          "raw_tokens": 22
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 218,
+      "task_estimated_hook_tokens": 218
+    },
+    {
+      "task_id": "application-002-cli-subcommand",
+      "tier": "application",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6074491156614918,
+          "raw_tokens": 100
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6019696705268274,
+          "raw_tokens": 70
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6082368410177388,
+          "raw_tokens": 85
+        },
+        {
+          "block_id": "b4",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5895814334823939,
+          "raw_tokens": 85
+        },
+        {
+          "block_id": "b5",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.6035141597271689,
+          "raw_tokens": 38
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 378,
+      "task_estimated_hook_tokens": 378
+    },
+    {
+      "task_id": "application-003-event-emitter",
+      "tier": "application",
+      "blocks": [
+        {
+          "block_id": "b1",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.597703970941577,
+          "raw_tokens": 170
+        },
+        {
+          "block_id": "b2",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5791283777747616,
+          "raw_tokens": 25
+        },
+        {
+          "block_id": "b3",
+          "hit": false,
+          "match_atom": null,
+          "top1_score": 0.5904064269767417,
+          "raw_tokens": 24
+        }
+      ],
+      "task_hit_rate": 0,
+      "task_has_coverage": false,
+      "task_total_raw_tokens": 219,
+      "task_estimated_hook_tokens": 219
+    }
+  ],
+  "per_tier": {
+    "substrate": {
+      "n": 4,
+      "mean_hit_rate": 0,
+      "mean_savings_pct": 0
+    },
+    "glue": {
+      "n": 3,
+      "mean_hit_rate": 0,
+      "mean_savings_pct": 0
+    },
+    "application": {
+      "n": 3,
+      "mean_hit_rate": 0,
+      "mean_savings_pct": 0
+    }
+  },
+  "aggregate": {
+    "all_tasks": {
+      "n": 10,
+      "mean_hit_rate": 0,
+      "mean_savings_pct": 0,
+      "total_raw_tokens": 2089,
+      "total_hook_tokens": 2089,
+      "total_savings_pct": 0
+    },
+    "tasks_with_coverage": {
+      "n": 0,
+      "mean_hit_rate": 0,
+      "mean_savings_pct": 0,
+      "total_raw_tokens": 0,
+      "total_hook_tokens": 0,
+      "total_savings_pct": 0
+    }
+  },
+  "curve_points": [
+    {
+      "f": 1,
+      "curve": "all_tasks",
+      "hit_rate": 0,
+      "mean_savings_pct": 0,
+      "total_savings_pct": 0
+    },
+    {
+      "f": 1,
+      "curve": "tasks_with_coverage",
+      "hit_rate": 0,
+      "mean_savings_pct": 0,
+      "total_savings_pct": 0,
+      "n_tasks": 0
+    }
+  ],
+  "verdict": {
+    "verdict": "KILL",
+    "reason": "mean savings 0.0% < 50% KILL bar — architecture fundamentally limited; production cannot exceed this ceiling"
+  }
+}
