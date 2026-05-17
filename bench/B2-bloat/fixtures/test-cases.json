@@ -1,0 +1,468 @@
+[
+  {
+    "description": "boolean schemas",
+    "schema": true,
+    "tests": [
+      {"description": "true schema: null", "data": null, "valid": true},
+      {"description": "true schema: string", "data": "foo", "valid": true},
+      {"description": "true schema: number", "data": 1, "valid": true},
+      {"description": "true schema: object", "data": {}, "valid": true}
+    ]
+  },
+  {
+    "description": "false schema",
+    "schema": false,
+    "tests": [
+      {"description": "false schema: null", "data": null, "valid": false},
+      {"description": "false schema: string", "data": "foo", "valid": false},
+      {"description": "false schema: number", "data": 1, "valid": false}
+    ]
+  },
+  {
+    "description": "type: string",
+    "schema": {"type": "string"},
+    "tests": [
+      {"description": "accepts string", "data": "foo", "valid": true},
+      {"description": "rejects number", "data": 1, "valid": false},
+      {"description": "rejects null", "data": null, "valid": false},
+      {"description": "rejects boolean", "data": true, "valid": false},
+      {"description": "rejects array", "data": [], "valid": false},
+      {"description": "rejects object", "data": {}, "valid": false}
+    ]
+  },
+  {
+    "description": "type: integer",
+    "schema": {"type": "integer"},
+    "tests": [
+      {"description": "accepts integer", "data": 1, "valid": true},
+      {"description": "accepts zero", "data": 0, "valid": true},
+      {"description": "rejects float", "data": 1.1, "valid": false},
+      {"description": "rejects string", "data": "1", "valid": false}
+    ]
+  },
+  {
+    "description": "type: number",
+    "schema": {"type": "number"},
+    "tests": [
+      {"description": "accepts integer", "data": 1, "valid": true},
+      {"description": "accepts float", "data": 1.5, "valid": true},
+      {"description": "rejects string", "data": "1", "valid": false},
+      {"description": "rejects boolean", "data": true, "valid": false}
+    ]
+  },
+  {
+    "description": "type: array",
+    "schema": {"type": "array"},
+    "tests": [
+      {"description": "accepts array", "data": [], "valid": true},
+      {"description": "accepts non-empty array", "data": [1,2,3], "valid": true},
+      {"description": "rejects object", "data": {}, "valid": false},
+      {"description": "rejects string", "data": "foo", "valid": false}
+    ]
+  },
+  {
+    "description": "type: object",
+    "schema": {"type": "object"},
+    "tests": [
+      {"description": "accepts object", "data": {}, "valid": true},
+      {"description": "accepts non-empty object", "data": {"a": 1}, "valid": true},
+      {"description": "rejects array", "data": [], "valid": false},
+      {"description": "rejects string", "data": "foo", "valid": false}
+    ]
+  },
+  {
+    "description": "type: null",
+    "schema": {"type": "null"},
+    "tests": [
+      {"description": "accepts null", "data": null, "valid": true},
+      {"description": "rejects string", "data": "null", "valid": false},
+      {"description": "rejects zero", "data": 0, "valid": false},
+      {"description": "rejects false", "data": false, "valid": false}
+    ]
+  },
+  {
+    "description": "type: boolean",
+    "schema": {"type": "boolean"},
+    "tests": [
+      {"description": "accepts true", "data": true, "valid": true},
+      {"description": "accepts false", "data": false, "valid": true},
+      {"description": "rejects number", "data": 0, "valid": false},
+      {"description": "rejects string", "data": "true", "valid": false}
+    ]
+  },
+  {
+    "description": "type array",
+    "schema": {"type": ["integer", "string"]},
+    "tests": [
+      {"description": "accepts integer", "data": 1, "valid": true},
+      {"description": "accepts string", "data": "foo", "valid": true},
+      {"description": "rejects float", "data": 1.5, "valid": false},
+      {"description": "rejects null", "data": null, "valid": false}
+    ]
+  },
+  {
+    "description": "const",
+    "schema": {"const": 1},
+    "tests": [
+      {"description": "accepts 1", "data": 1, "valid": true},
+      {"description": "rejects 2", "data": 2, "valid": false},
+      {"description": "rejects string", "data": "1", "valid": false},
+      {"description": "rejects null", "data": null, "valid": false}
+    ]
+  },
+  {
+    "description": "const null",
+    "schema": {"const": null},
+    "tests": [
+      {"description": "accepts null", "data": null, "valid": true},
+      {"description": "rejects false", "data": false, "valid": false}
+    ]
+  },
+  {
+    "description": "enum",
+    "schema": {"enum": [1, 2, 3]},
+    "tests": [
+      {"description": "accepts 1", "data": 1, "valid": true},
+      {"description": "accepts 3", "data": 3, "valid": true},
+      {"description": "rejects 4", "data": 4, "valid": false},
+      {"description": "rejects null", "data": null, "valid": false}
+    ]
+  },
+  {
+    "description": "enum with mixed types",
+    "schema": {"enum": [1, "foo", null, true]},
+    "tests": [
+      {"description": "accepts 1", "data": 1, "valid": true},
+      {"description": "accepts foo", "data": "foo", "valid": true},
+      {"description": "accepts null", "data": null, "valid": true},
+      {"description": "accepts true", "data": true, "valid": true},
+      {"description": "rejects 2", "data": 2, "valid": false}
+    ]
+  },
+  {
+    "description": "multipleOf",
+    "schema": {"multipleOf": 2},
+    "tests": [
+      {"description": "accepts 4", "data": 4, "valid": true},
+      {"description": "accepts 0", "data": 0, "valid": true},
+      {"description": "rejects 3", "data": 3, "valid": false},
+      {"description": "rejects 2.5", "data": 2.5, "valid": false}
+    ]
+  },
+  {
+    "description": "maximum and minimum",
+    "schema": {"minimum": 1, "maximum": 5},
+    "tests": [
+      {"description": "accepts 3", "data": 3, "valid": true},
+      {"description": "accepts 1 (boundary)", "data": 1, "valid": true},
+      {"description": "accepts 5 (boundary)", "data": 5, "valid": true},
+      {"description": "rejects 0", "data": 0, "valid": false},
+      {"description": "rejects 6", "data": 6, "valid": false}
+    ]
+  },
+  {
+    "description": "exclusiveMinimum and exclusiveMaximum",
+    "schema": {"exclusiveMinimum": 1, "exclusiveMaximum": 5},
+    "tests": [
+      {"description": "accepts 2", "data": 2, "valid": true},
+      {"description": "rejects 1 (exclusive boundary)", "data": 1, "valid": false},
+      {"description": "rejects 5 (exclusive boundary)", "data": 5, "valid": false},
+      {"description": "rejects 6", "data": 6, "valid": false}
+    ]
+  },
+  {
+    "description": "minLength and maxLength",
+    "schema": {"minLength": 2, "maxLength": 4},
+    "tests": [
+      {"description": "accepts ab", "data": "ab", "valid": true},
+      {"description": "accepts abcd", "data": "abcd", "valid": true},
+      {"description": "rejects a (too short)", "data": "a", "valid": false},
+      {"description": "rejects abcde (too long)", "data": "abcde", "valid": false}
+    ]
+  },
+  {
+    "description": "pattern",
+    "schema": {"pattern": "^[a-z]+$"},
+    "tests": [
+      {"description": "accepts abc", "data": "abc", "valid": true},
+      {"description": "rejects ABC", "data": "ABC", "valid": false},
+      {"description": "rejects a1b", "data": "a1b", "valid": false}
+    ]
+  },
+  {
+    "description": "minItems and maxItems",
+    "schema": {"minItems": 2, "maxItems": 4},
+    "tests": [
+      {"description": "accepts [1,2]", "data": [1, 2], "valid": true},
+      {"description": "accepts [1,2,3,4]", "data": [1, 2, 3, 4], "valid": true},
+      {"description": "rejects [1] (too short)", "data": [1], "valid": false},
+      {"description": "rejects [1,2,3,4,5] (too long)", "data": [1, 2, 3, 4, 5], "valid": false}
+    ]
+  },
+  {
+    "description": "uniqueItems",
+    "schema": {"uniqueItems": true},
+    "tests": [
+      {"description": "accepts unique", "data": [1, 2, 3], "valid": true},
+      {"description": "accepts empty", "data": [], "valid": true},
+      {"description": "rejects duplicates", "data": [1, 2, 1], "valid": false}
+    ]
+  },
+  {
+    "description": "prefixItems",
+    "schema": {"prefixItems": [{"type": "integer"}, {"type": "string"}]},
+    "tests": [
+      {"description": "accepts [1, 'foo']", "data": [1, "foo"], "valid": true},
+      {"description": "accepts [1, 'foo', true] (extra item ok)", "data": [1, "foo", true], "valid": true},
+      {"description": "rejects ['foo', 1]", "data": ["foo", 1], "valid": false}
+    ]
+  },
+  {
+    "description": "items (validates items beyond prefixItems)",
+    "schema": {"prefixItems": [{"type": "integer"}], "items": {"type": "string"}},
+    "tests": [
+      {"description": "accepts [1, 'foo']", "data": [1, "foo"], "valid": true},
+      {"description": "rejects [1, 2]", "data": [1, 2], "valid": false}
+    ]
+  },
+  {
+    "description": "contains",
+    "schema": {"contains": {"type": "integer"}},
+    "tests": [
+      {"description": "accepts [1, 'foo']", "data": [1, "foo"], "valid": true},
+      {"description": "rejects ['foo', 'bar']", "data": ["foo", "bar"], "valid": false}
+    ]
+  },
+  {
+    "description": "minContains and maxContains",
+    "schema": {"contains": {"type": "integer"}, "minContains": 2, "maxContains": 3},
+    "tests": [
+      {"description": "accepts [1, 2, 'foo']", "data": [1, 2, "foo"], "valid": true},
+      {"description": "accepts [1, 2, 3]", "data": [1, 2, 3], "valid": true},
+      {"description": "rejects [1, 'foo'] (only 1 integer)", "data": [1, "foo"], "valid": false},
+      {"description": "rejects [1, 2, 3, 4] (4 integers)", "data": [1, 2, 3, 4], "valid": false}
+    ]
+  },
+  {
+    "description": "required",
+    "schema": {"type": "object", "required": ["foo"]},
+    "tests": [
+      {"description": "accepts object with foo", "data": {"foo": 1}, "valid": true},
+      {"description": "rejects object without foo", "data": {"bar": 1}, "valid": false},
+      {"description": "rejects empty object", "data": {}, "valid": false}
+    ]
+  },
+  {
+    "description": "minProperties and maxProperties",
+    "schema": {"minProperties": 1, "maxProperties": 3},
+    "tests": [
+      {"description": "accepts 1 property", "data": {"a": 1}, "valid": true},
+      {"description": "accepts 3 properties", "data": {"a": 1, "b": 2, "c": 3}, "valid": true},
+      {"description": "rejects 0 properties", "data": {}, "valid": false},
+      {"description": "rejects 4 properties", "data": {"a": 1, "b": 2, "c": 3, "d": 4}, "valid": false}
+    ]
+  },
+  {
+    "description": "properties",
+    "schema": {"properties": {"foo": {"type": "integer"}, "bar": {"type": "string"}}},
+    "tests": [
+      {"description": "accepts valid object", "data": {"foo": 1, "bar": "baz"}, "valid": true},
+      {"description": "accepts extra properties", "data": {"foo": 1, "bar": "baz", "extra": null}, "valid": true},
+      {"description": "rejects wrong type for foo", "data": {"foo": "string"}, "valid": false},
+      {"description": "accepts missing optional property", "data": {"foo": 1}, "valid": true}
+    ]
+  },
+  {
+    "description": "additionalProperties: false",
+    "schema": {"properties": {"foo": {}}, "additionalProperties": false},
+    "tests": [
+      {"description": "accepts only foo", "data": {"foo": 1}, "valid": true},
+      {"description": "rejects extra property", "data": {"foo": 1, "bar": 2}, "valid": false},
+      {"description": "accepts empty", "data": {}, "valid": true}
+    ]
+  },
+  {
+    "description": "additionalProperties: schema",
+    "schema": {"properties": {"foo": {}}, "additionalProperties": {"type": "boolean"}},
+    "tests": [
+      {"description": "accepts boolean additional", "data": {"foo": 1, "bar": true}, "valid": true},
+      {"description": "rejects non-boolean additional", "data": {"foo": 1, "bar": 1}, "valid": false}
+    ]
+  },
+  {
+    "description": "patternProperties",
+    "schema": {"patternProperties": {"^S_": {"type": "string"}, "^I_": {"type": "integer"}}},
+    "tests": [
+      {"description": "accepts valid patterns", "data": {"S_foo": "bar", "I_count": 1}, "valid": true},
+      {"description": "rejects wrong type for S_ pattern", "data": {"S_foo": 1}, "valid": false},
+      {"description": "accepts non-matching key", "data": {"other": 42}, "valid": true}
+    ]
+  },
+  {
+    "description": "propertyNames",
+    "schema": {"propertyNames": {"pattern": "^[a-z]+$"}},
+    "tests": [
+      {"description": "accepts lowercase keys", "data": {"foo": 1, "bar": 2}, "valid": true},
+      {"description": "rejects uppercase key", "data": {"Foo": 1}, "valid": false}
+    ]
+  },
+  {
+    "description": "dependentRequired",
+    "schema": {"dependentRequired": {"bar": ["foo"]}},
+    "tests": [
+      {"description": "accepts without bar", "data": {}, "valid": true},
+      {"description": "accepts with both bar and foo", "data": {"bar": 1, "foo": 2}, "valid": true},
+      {"description": "rejects bar without foo", "data": {"bar": 1}, "valid": false}
+    ]
+  },
+  {
+    "description": "allOf",
+    "schema": {"allOf": [{"type": "string"}, {"minLength": 3}]},
+    "tests": [
+      {"description": "accepts long string", "data": "abc", "valid": true},
+      {"description": "rejects short string", "data": "ab", "valid": false},
+      {"description": "rejects non-string", "data": 1, "valid": false}
+    ]
+  },
+  {
+    "description": "anyOf",
+    "schema": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+    "tests": [
+      {"description": "accepts integer", "data": 1, "valid": true},
+      {"description": "accepts string", "data": "foo", "valid": true},
+      {"description": "rejects null", "data": null, "valid": false},
+      {"description": "rejects float", "data": 1.5, "valid": false}
+    ]
+  },
+  {
+    "description": "oneOf",
+    "schema": {"oneOf": [{"type": "integer"}, {"minimum": 2}]},
+    "tests": [
+      {"description": "accepts integer < 2 (only first matches)", "data": 1, "valid": true},
+      {"description": "rejects integer >= 2 (both match)", "data": 3, "valid": false},
+      {"description": "accepts non-integer >= 2 (only second matches)", "data": 2.5, "valid": true}
+    ]
+  },
+  {
+    "description": "not",
+    "schema": {"not": {"type": "string"}},
+    "tests": [
+      {"description": "accepts non-string", "data": 1, "valid": true},
+      {"description": "rejects string", "data": "foo", "valid": false}
+    ]
+  },
+  {
+    "description": "if/then/else",
+    "schema": {"if": {"type": "integer"}, "then": {"minimum": 0}, "else": {"type": "string"}},
+    "tests": [
+      {"description": "integer >= 0 passes then", "data": 5, "valid": true},
+      {"description": "integer < 0 fails then", "data": -1, "valid": false},
+      {"description": "string passes else", "data": "foo", "valid": true},
+      {"description": "null fails else", "data": null, "valid": false}
+    ]
+  },
+  {
+    "description": "$ref to $defs",
+    "schema": {
+      "$defs": {"positiveInteger": {"type": "integer", "minimum": 1}},
+      "properties": {"count": {"$ref": "#/$defs/positiveInteger"}}
+    },
+    "tests": [
+      {"description": "accepts count=5", "data": {"count": 5}, "valid": true},
+      {"description": "rejects count=0", "data": {"count": 0}, "valid": false},
+      {"description": "rejects count string", "data": {"count": "5"}, "valid": false}
+    ]
+  },
+  {
+    "description": "$ref to $anchor",
+    "schema": {
+      "$defs": {"myAnchor": {"$anchor": "myAnchor", "type": "string"}},
+      "properties": {"x": {"$ref": "#myAnchor"}}
+    },
+    "tests": [
+      {"description": "accepts x as string", "data": {"x": "hello"}, "valid": true},
+      {"description": "rejects x as number", "data": {"x": 1}, "valid": false}
+    ]
+  },
+  {
+    "description": "unevaluatedProperties",
+    "schema": {
+      "properties": {"foo": {"type": "string"}},
+      "unevaluatedProperties": false
+    },
+    "tests": [
+      {"description": "accepts only foo", "data": {"foo": "bar"}, "valid": true},
+      {"description": "rejects unevaluated property", "data": {"foo": "bar", "extra": 1}, "valid": false},
+      {"description": "accepts empty object", "data": {}, "valid": true}
+    ]
+  },
+  {
+    "description": "unevaluatedItems",
+    "schema": {
+      "prefixItems": [{"type": "integer"}],
+      "unevaluatedItems": false
+    },
+    "tests": [
+      {"description": "accepts [1]", "data": [1], "valid": true},
+      {"description": "rejects [1, 2] (second item unevaluated)", "data": [1, 2], "valid": false},
+      {"description": "accepts []", "data": [], "valid": true}
+    ]
+  },
+  {
+    "description": "dependentSchemas",
+    "schema": {
+      "dependentSchemas": {
+        "bar": {"properties": {"foo": {"type": "integer"}}, "required": ["foo"]}
+      }
+    },
+    "tests": [
+      {"description": "accepts without bar", "data": {}, "valid": true},
+      {"description": "accepts with bar and integer foo", "data": {"bar": 1, "foo": 5}, "valid": true},
+      {"description": "rejects with bar but missing foo", "data": {"bar": 1}, "valid": false}
+    ]
+  },
+  {
+    "description": "nested schemas",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1
+        }
+      },
+      "required": ["items"]
+    },
+    "tests": [
+      {"description": "accepts valid nested", "data": {"items": ["a", "b"]}, "valid": true},
+      {"description": "rejects wrong item type", "data": {"items": [1, 2]}, "valid": false},
+      {"description": "rejects empty items array", "data": {"items": []}, "valid": false},
+      {"description": "rejects missing items key", "data": {}, "valid": false}
+    ]
+  },
+  {
+    "description": "recursive $ref",
+    "schema": {
+      "$id": "tree",
+      "$defs": {
+        "node": {
+          "type": "object",
+          "properties": {
+            "value": {"type": "integer"},
+            "left": {"$ref": "#/$defs/node"},
+            "right": {"$ref": "#/$defs/node"}
+          },
+          "required": ["value"]
+        }
+      },
+      "$ref": "#/$defs/node"
+    },
+    "tests": [
+      {"description": "accepts leaf node", "data": {"value": 1}, "valid": true},
+      {"description": "accepts tree node", "data": {"value": 1, "left": {"value": 2}, "right": {"value": 3}}, "valid": true},
+      {"description": "rejects missing value", "data": {}, "valid": false},
+      {"description": "rejects invalid nested node", "data": {"value": 1, "left": {}}, "valid": false}
+    ]
+  }
+]

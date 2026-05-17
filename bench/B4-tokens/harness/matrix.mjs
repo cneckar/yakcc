@@ -46,6 +46,23 @@
 //   buildCellSpace({ tier, driverFilter? }) → Cell[]
 //
 // Authority: DEC-V0-B4-SLICE2-MATRIX-002 (locked). No inline amendments.
+//
+// @decision DEC-BENCH-B4-001
+// @title B4 min-tier matrix verdict — first observed data point
+// @status closed 2026-05-14 (run ID min-2026-05-14-21-20-9d0e8234, $5.5534)
+// @rationale
+//   First minimum-tier (144-run) matrix completed 2026-05-14T21:56:44Z.
+//   Observed (verbatim, honesty clause):
+//     Haiku   unhooked→hooked-default  −9.9%   79% oracle  0/8 quality-lift
+//     Sonnet                          −21.1%   88% oracle  0/8 quality-lift
+//     Opus                             −6.0%   88% oracle  0/8 quality-lift
+//   Killer-cell (Haiku-hooked passes Haiku-unhooked fails): 0/8.
+//   Token savings are inverted (hook costs MORE). Root cause (WI-479 H4):
+//   tool invoked on 100% of hooked cells but returned 0 atoms — offline BLAKE3
+//   embedding stub produces sub-threshold confidence on all 8 tasks; substitution
+//   never fires. Hooked arm pays tool-use turn overhead with no substitution gains.
+//   No KILL fires per DEC-V0-B4-SLICE2-NO-KILL-003 (directional targets only).
+//   Full artifact: bench/B4-tokens/results-min-darwin-2026-05-14-evening.md.
 
 /**
  * @typedef {Object} Driver

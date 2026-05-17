@@ -1,0 +1,16 @@
+{
+  "name": "@yakcc/example-json-schema-validator",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "B2 benchmark workload: JSON Schema 2020-12 validator as a single Yakcc atom (coarse granularity).",
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.2"
+  }
+}

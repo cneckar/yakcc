@@ -1,0 +1,23 @@
+{
+  "name": "@yakcc-bench/b2-bloat",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B2 — Bloat reduction benchmark: transitive dependency weight of Yakcc-compiled JSON Schema 2020-12 validator vs ajv@8.x.",
+  "notes": [
+    "This package.json is NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "esbuild and ajv are bench-local deps — they MUST NOT appear in the root package.json.",
+    "Install bench deps: pnpm --dir bench/B2-bloat install",
+    "Dry-run mode works without install (harness + test suite load only). Run pnpm bench:bloat:dry from root.",
+    "Live run requires pnpm --dir bench/B2-bloat install to pull esbuild and ajv for size comparison."
+  ],
+  "scripts": {
+    "run": "node harness/run.mjs",
+    "run:dry": "node harness/run.mjs --dry-run"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "esbuild": "^0.25.4"
+  }
+}
