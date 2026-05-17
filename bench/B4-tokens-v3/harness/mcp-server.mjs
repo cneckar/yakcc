@@ -12,6 +12,18 @@
 //   the atom-lookup contract is identical (same registry, same embedding model, same protocol).
 //   This file is a verbatim copy of bench/B4-tokens/harness/mcp-server.mjs with a v3 header.
 //
+// @decision DEC-V0-B4-V3-MCP-NAMING-001
+// @title B4-v3 MCP server file naming: mcp-server.mjs (not mcp-spawn.mjs)
+// @status accepted
+// @rationale
+//   The predecessor plan (issue #662 / WI-B4-V3-HARNESS-COMPLETE) referenced the file as
+//   "mcp-spawn.mjs" in early design notes. The actual shipped file is named "mcp-server.mjs"
+//   (consistent with bench/B4-tokens/harness/mcp-server.mjs naming and the MCP server
+//   role — it IS the server, not a spawn helper). This decision locks "mcp-server.mjs" as
+//   the canonical name for B4-v3. The dispatch CLI and phase2.mjs reference this file by
+//   the canonical name. The "mcp-spawn.mjs" alias is intentionally NOT created — one
+//   canonical path prevents split-brain bugs in future consumers.
+//
 // @decision DEC-V0-B4-MCP-001
 // @title MCP atom-lookup server: stdio JSON-RPC backend against the real yakcc registry
 // @status accepted
