@@ -1099,6 +1099,28 @@
       "expectedAtom": null,
       "expectedAtomName": "lru-cache",
       "rationale": "Behavior-only query for lru-cache/LRUCache class entry (WI-510 Slice 10 / #642 S10 — first slice of the #642 cluster S10-S15). Atom is the LRUCache class entry via dist/esm/index.js (TSC-emitted ESM; 1681 LOC; DEC-WI510-S10-ENTRY-PATH-DIST-ESM-001). The LRUCache class IS the binding surface; one corpus row per plan DEC-WI510-S10-ONE-CLASS-ONE-ROW-001. Engine-gap landscape: #576 closed (b5dff3a, PR #604 — arrow-returns-arrow HOF; first production-fixture exercise of post-#576 engine on class-body-heavy package, DEC-WI510-S10-CLASS-BODY-FIRST-PRODUCTION-EXERCISE-001); #585 N/A (no UMD); #619 N/A (ESM path, no TSC CJS prelude). Dynamic import('node:diagnostics_channel') in diagnostics-channel.js: Outcome A (externalSpecifiers=[]) — extractImportSpecifiers walks only static ImportDeclaration nodes; dynamic import() CallExpression is invisible to BFS extractor (DEC-WI510-S10-DYNAMIC-IMPORT-EMPIRICAL-001). combinedScore fixed floor 0.70 per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001 (LRUCache class contains binding-bearing source text directly)."
+    },
+    {
+      "id": "cat1-csv-parse-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Streaming CSV parser implementing the Node.js stream.Transform API; consumes string or Buffer input and emits parsed records as arrays or objects; supports callback-style invocation with parse(input, options, cb); handles quoted fields, custom delimiters, record terminators, BOM stripping, and column header mapping when columns option is true"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "csv-parse",
+      "rationale": "Behavior-only query for csv-parse@6.2.1 callback/Parser entry (WI-510 Slice 11 / #642 S11). Atom is the lib/index.js entry (hand-authored ESM; 147 LOC; DEC-WI510-S11-ENTRY-PATH-LIB-ESM-001). Entry is lib/index.js — the canonical ESM import path (package.json#exports['.']['import'].default); not the CJS rollup (dist/cjs/index.cjs) or the browser ESM bundle (dist/esm/index.js). Engine-gap landscape: #576 closed; #585 N/A (plain ESM, no IIFE); #619 N/A (hand-authored ESM, no TSC prelude); #666 N/A (no #foo private class fields in any lib/ source — DEC-WI510-S11-NO-PRIVATE-FIELDS-001). Node builtin import: import { Transform } from \"stream\" at lib/index.js entry — appears as externalSpecifiers=[\"stream\"] foreign leaf (DEC-WI510-S11-NODE-BUILTIN-STREAM-001). Full decomposition predicted (moduleCount=9, stubCount=0). combinedScore fixed floor 0.70 per DEC-WI510-S11-COMBINED-SCORE-FIXED-FLOOR-001."
+    },
+    {
+      "id": "cat1-csv-parse-sync-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Synchronous CSV parser that takes a complete string or Buffer input and returns the full array of parsed records in a single blocking call; throws CsvError on malformed input; supports the same option surface as the streaming parser including delimiters, quotes, BOM handling, and columns-as-headers; does not implement stream.Transform"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "csv-parse-sync",
+      "rationale": "Behavior-only query for csv-parse@6.2.1 sync entry (WI-510 Slice 11 / #642 S11). Atom is the lib/sync.js entry (hand-authored ESM; 28 LOC; DEC-WI510-S11-ENTRY-PATH-LIB-ESM-001). Entry is lib/sync.js — the canonical ESM sync import path (package.json#exports['./sync']['import'].default). lib/sync.js does NOT import lib/index.js; its subgraph is lib/api/* + lib/utils/* only (8 modules, no stream builtin import — externalSpecifiers=[]). Same engine-gap landscape as cat1-csv-parse-001: #576/#585/#619 N/A; #666 N/A. Full decomposition predicted (moduleCount=8, stubCount=0). combinedScore fixed floor 0.70 per DEC-WI510-S11-COMBINED-SCORE-FIXED-FLOOR-001. Within-package two-entry pattern (novel for WI-510; precedent S4/S6/S9 all cross-package per DEC-WI510-S11-TWO-ROW-FUNCTION-PAIR-001)."
     }
   ]
 }
