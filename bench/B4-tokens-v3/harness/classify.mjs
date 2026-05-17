@@ -19,6 +19,17 @@
 //   All four conditions must hold for a task to be "validated".
 //   hypothesis_validated = (validated task count) / (total tasks) ≥ 0.5
 //
+// @decision DEC-B4-V3-CLASSIFY-SHAPE-001
+// @title classify.mjs accepts nested cells[].reps[] shape matching phase2.mjs output
+// @status accepted
+// @rationale
+//   phase2.mjs writes { tasks: [{ task_id, cells: [{ cell_id, reps: [...] }] }] }.
+//   The previous flat-reps shape ({ task_id, reps: [{ cell_id, ... }] }) caused
+//   classifyTask to silently return validated=false for every task because reps
+//   filtered by cell_id always returned 0 elements from the wrong shape.
+//   The nested shape is the natural 6-cell matrix output; this decision locks it
+//   as the single canonical contract between phase2.mjs and classify.mjs.
+//
 // Exports:
 //   classifyTask(taskData) -> TaskVerdict
 //   classifyHypothesis(phase2Results) -> HypothesisVerdict
@@ -44,25 +55,26 @@
  */
 
 /**
- * Aggregate per-cell stats from a list of rep results for one task.
+ * Aggregate per-cell stats from the nested cells[].reps[] structure.
  * Returns oracle_pass_rate and mean_cost_usd for a given cell_id.
  *
- * @param {Array<{ cell_id: string, oracle_passed: boolean, cost_usd: number, tool_cycles?: number }>} reps
+ * @param {Array<{ cell_id: string, reps: Array<{ oracle_passed: boolean, cost_usd: number, tool_cycles?: number }> }>} cells
  * @param {string} cellId
  * @returns {{ oracle_pass_rate: number, mean_cost_usd: number, mean_tool_cycles: number, any_oracle_pass: boolean }}
  */
-function cellStats(reps, cellId) {
-  const cellReps = reps.filter((r) => r.cell_id === cellId);
-  if (cellReps.length === 0) {
+function cellStats(cells, cellId) {
+  const cell = cells.find((c) => c.cell_id === cellId);
+  if (!cell || cell.reps.length === 0) {
     return { oracle_pass_rate: 0, mean_cost_usd: 0, mean_tool_cycles: 0, any_oracle_pass: false };
   }
-  const passCount = cellReps.filter((r) => r.oracle_passed).length;
-  const totalCost = cellReps.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
-  const totalCycles = cellReps.reduce((s, r) => s + (r.tool_cycles ?? 0), 0);
+  const { reps } = cell;
+  const passCount = reps.filter((r) => r.oracle_passed).length;
+  const totalCost = reps.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
+  const totalCycles = reps.reduce((s, r) => s + (r.tool_cycles ?? 0), 0);
   return {
-    oracle_pass_rate: passCount / cellReps.length,
-    mean_cost_usd: totalCost / cellReps.length,
-    mean_tool_cycles: totalCycles / cellReps.length,
+    oracle_pass_rate: passCount / reps.length,
+    mean_cost_usd: totalCost / reps.length,
+    mean_tool_cycles: totalCycles / reps.length,
     any_oracle_pass: passCount > 0,
   };
 }
@@ -70,23 +82,28 @@ function cellStats(reps, cellId) {
 /**
  * Classify HC-1..HC-4 for a single task.
  *
+ * taskData follows the nested cells[].reps[] shape produced by phase2.mjs
+ * (DEC-B4-V3-CLASSIFY-SHAPE-001).
+ *
  * @param {{
  *   task_id: string,
- *   reps: Array<{
+ *   cells: Array<{
  *     cell_id: string,
- *     oracle_passed: boolean,
- *     cost_usd: number,
- *     tool_cycles?: number
+ *     reps: Array<{
+ *       oracle_passed: boolean,
+ *       cost_usd: number,
+ *       tool_cycles?: number
+ *     }>
  *   }>
  * }} taskData
  * @returns {TaskVerdict}
  */
 export function classifyTask(taskData) {
-  const { task_id, reps } = taskData;
+  const { task_id, cells } = taskData;
 
-  const A = cellStats(reps, 'A'); // Opus unhooked — quality baseline
-  const E = cellStats(reps, 'E'); // Haiku unhooked — expected to fail
-  const F = cellStats(reps, 'F'); // Haiku hooked — expected to pass
+  const A = cellStats(cells, 'A'); // Opus unhooked — quality baseline
+  const E = cellStats(cells, 'E'); // Haiku unhooked — expected to fail
+  const F = cellStats(cells, 'F'); // Haiku hooked — expected to pass
 
   // HC-1: E fails oracle OR E takes ≥5× turns of A
   // "fails oracle" = no rep passed (any_oracle_pass = false)
@@ -131,14 +148,19 @@ export function classifyTask(taskData) {
 /**
  * Classify the full hypothesis verdict across all tasks.
  *
+ * phase2Results follows the shape produced by phase2.mjs
+ * (DEC-B4-V3-CLASSIFY-SHAPE-001).
+ *
  * @param {{
  *   tasks: Array<{
  *     task_id: string,
- *     reps: Array<{
+ *     cells: Array<{
  *       cell_id: string,
- *       oracle_passed: boolean,
- *       cost_usd: number,
- *       tool_cycles?: number
+ *       reps: Array<{
+ *         oracle_passed: boolean,
+ *         cost_usd: number,
+ *         tool_cycles?: number
+ *       }>
  *     }>
  *   }>
  * }} phase2Results

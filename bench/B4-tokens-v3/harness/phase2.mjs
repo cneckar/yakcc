@@ -54,6 +54,22 @@ const REPO_ROOT = process.env['YAKCC_REPO_ROOT'] ?? resolve(__dirname, '../../..
 const RESULTS_DIR = join(BENCH_ROOT, 'results');
 const MCP_SERVER_PATH = join(__dirname, 'mcp-server.mjs');
 
+// @decision DEC-B4-V3-HARNESS-INTEGRATION-001 (B2)
+// YAKCC_REGISTRY_PATH is mandatory. No fallback to the production registry.
+// Fallback would corrupt Phase 2 attribution by mixing Phase 1 atoms with
+// pre-existing production atoms, making causal attribution impossible.
+const YAKCC_REGISTRY_PATH = process.env['YAKCC_REGISTRY_PATH'];
+if (!YAKCC_REGISTRY_PATH) {
+  process.stderr.write(
+    'ERROR [B4-v3 Phase 2]: YAKCC_REGISTRY_PATH is required.\n' +
+    '  Set it to the per-run registry produced by Phase 1:\n' +
+    '    export YAKCC_REGISTRY_PATH=tmp/B4-tokens-v3/<run-id>/registry.sqlite\n' +
+    '  This env var prevents silent fallback to the production registry\n' +
+    '  (.yakcc/registry.sqlite), which would corrupt Phase 2 attribution.\n'
+  );
+  process.exit(1);
+}
+
 const { values: flags } = parseArgs({
   args: process.argv.slice(2),
   options: {
@@ -143,8 +159,8 @@ const ATOM_LOOKUP_TOOL_DEF = {
 // ---------------------------------------------------------------------------
 
 async function startMcpServer() {
-  const registryPath = process.env['YAKCC_REGISTRY_PATH']
-    ?? join(REPO_ROOT, '.yakcc', 'registry.sqlite');
+  // YAKCC_REGISTRY_PATH already validated at startup (B2 fix).
+  const registryPath = YAKCC_REGISTRY_PATH;
 
   const server = spawn('node', [MCP_SERVER_PATH], {
     cwd: REPO_ROOT,
@@ -260,6 +276,16 @@ async function main() {
   if (!process.env['ANTHROPIC_API_KEY']) {
     console.error('ERROR: ANTHROPIC_API_KEY is required for real Phase 2 runs.');
     console.error('Use --dry-run for a no-API-call test.');
+    process.exit(1);
+  }
+
+  // B2 fix: verify registry file exists before any API spend.
+  if (!existsSync(YAKCC_REGISTRY_PATH)) {
+    console.error(
+      `ERROR [B4-v3 Phase 2]: Registry file not found: ${YAKCC_REGISTRY_PATH}\n` +
+      '  Run Phase 1 first to populate the per-run registry, then set\n' +
+      '  YAKCC_REGISTRY_PATH to the resulting registry.sqlite path.'
+    );
     process.exit(1);
   }
 

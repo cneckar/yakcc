@@ -12,6 +12,7 @@
     "Phase 1 + Phase 2 harness runs require ANTHROPIC_API_KEY and consume real API budget ($75 cap)."
   ],
   "scripts": {
+    "test": "node --test test/harness.test.mjs",
     "test:oracles": "vitest run --config vitest.config.mjs"
   },
   "dependencies": {

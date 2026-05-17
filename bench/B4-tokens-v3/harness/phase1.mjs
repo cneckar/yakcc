@@ -27,14 +27,17 @@
 //   Cost ceiling: $75 USD shared with Phase 2 (DEC-V0-B4-SLICE2-COST-CEILING-004).
 //   Phase 1 alone uses roughly $5–15 (5 tasks × Opus × N=3 = 15 runs).
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createHash } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BENCH_ROOT = resolve(__dirname, '..');
+const REPO_ROOT = process.env['YAKCC_REPO_ROOT'] ?? resolve(__dirname, '../../..');
 const RESULTS_DIR = join(BENCH_ROOT, 'results');
+const TMP_ROOT = join(REPO_ROOT, 'tmp', 'B4-tokens-v3');
 
 const { values: flags } = parseArgs({
   args: process.argv.slice(2),
@@ -66,6 +69,9 @@ const { BudgetTracker, BudgetExceededError } = await import(
 );
 const { verifyTaskManifest } = await import(
   new URL('file://' + join(__dirname, 'verify.mjs')).href
+);
+const { syncAtoms } = await import(
+  new URL('file://' + join(__dirname, 'atom-sync.mjs')).href
 );
 
 async function main() {
@@ -111,6 +117,15 @@ async function main() {
 
   const runId = `phase1-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
   const resultsFile = join(RESULTS_DIR, `${runId}.json`);
+
+  // B1 fix: per-run registry isolated to this run (no fallback to prod registry).
+  // Set YAKCC_REGISTRY_PATH so Phase 2 can locate it by env var.
+  const registryDir = join(TMP_ROOT, runId);
+  const registryPath = join(registryDir, 'registry.sqlite');
+  mkdirSync(registryDir, { recursive: true });
+  process.env['YAKCC_REGISTRY_PATH'] = registryPath;
+  const implScratchDir = join(registryDir, 'impl-scratch');
+  mkdirSync(implScratchDir, { recursive: true });
 
   const budget = new BudgetTracker({ cap_usd: PHASE1_CAP_USD });
   const billingLog = new BillingLog({ dir: RESULTS_DIR, runId });
@@ -167,15 +182,6 @@ async function main() {
       budget.addSpend(costUsd);
       budget.logRollingSpend({ phase: 1, taskId: task.id, rep, callCost: costUsd });
 
-      billingLog.append({
-        run_id: runId, phase: 1, task_id: task.id, rep,
-        driver: 'opus', arm: 'unhooked',
-        model_id: 'claude-opus-4-7',
-        input_tokens: inputTokens, output_tokens: outputTokens,
-        cost_usd: costUsd, cumulative_cost_usd: budget.cumulativeUsd,
-        wall_ms: wallMs, ts: new Date().toISOString(),
-      });
-
       // Extract generated code and run oracle to capture Q_p1
       const generatedText = response.content
         .filter((b) => b.type === 'text')
@@ -184,11 +190,34 @@ async function main() {
       const generatedCode = extractCode(generatedText);
       const oracle = await runOracle(task.id, generatedCode);
 
+      // B1 fix: write generated code to a temp .ts file and extract atoms into
+      // the per-run registry. BlockMerkleRoots are captured in the billing artifact
+      // so the dossier can trace which atoms came from which Phase 1 rep.
+      const implHash = createHash('sha256').update(generatedCode).digest('hex').slice(0, 12);
+      const implFile = join(implScratchDir, `${task.id}-rep${rep}-${implHash}.ts`);
+      let atomMerkleRoots = [];
+      if (generatedCode.trim()) {
+        writeFileSync(implFile, generatedCode, 'utf8');
+        atomMerkleRoots = await syncAtoms({ implFile, registryPath, repoRoot: REPO_ROOT });
+        try { rmSync(implFile); } catch (_) {}
+      }
+
       console.log(
         `  Oracle: ${oracle.oracle_passed ? 'PASS' : 'FAIL'} ` +
         `(${oracle.oracle_pass_count}/${oracle.oracle_total}) | ` +
-        `in=${inputTokens} out=${outputTokens} | $${costUsd.toFixed(4)}`
+        `in=${inputTokens} out=${outputTokens} | $${costUsd.toFixed(4)} | ` +
+        `atoms=${atomMerkleRoots.length}`
       );
+
+      billingLog.append({
+        run_id: runId, phase: 1, task_id: task.id, rep,
+        driver: 'opus', arm: 'unhooked',
+        model_id: 'claude-opus-4-7',
+        input_tokens: inputTokens, output_tokens: outputTokens,
+        cost_usd: costUsd, cumulative_cost_usd: budget.cumulativeUsd,
+        wall_ms: wallMs, ts: new Date().toISOString(),
+        atom_merkle_roots: atomMerkleRoots,
+      });
 
       reps.push({
         rep,
@@ -200,6 +229,7 @@ async function main() {
         oracle_pass_count: oracle.oracle_pass_count,
         oracle_total: oracle.oracle_total,
         oracle_failures: oracle.oracle_failures,
+        atom_merkle_roots: atomMerkleRoots,
       });
     }
 
@@ -214,6 +244,7 @@ async function main() {
       n_tasks: tasks.length, n_reps: N_REPS,
       total_cost_usd: budget.cumulativeUsd,
       cap_usd: PHASE1_CAP_USD,
+      registry_path: registryPath,
       completed_at: new Date().toISOString(),
       tasks: taskResults,
     };
@@ -222,8 +253,10 @@ async function main() {
     console.log(`Phase 1 complete. Total cost: $${budget.cumulativeUsd.toFixed(4)}`);
     console.log(`Results: ${resultsFile}`);
     console.log(`Billing: ${billingLog.path}`);
+    console.log(`Registry: ${registryPath}`);
     console.log('');
-    console.log('Next step: review phase1 output, verify atom extraction, then run phase2.mjs.');
+    console.log('Next step: set YAKCC_REGISTRY_PATH to the registry above, then run phase2.mjs.');
+    console.log(`  export YAKCC_REGISTRY_PATH='${registryPath}'`);
   }
 }
 
