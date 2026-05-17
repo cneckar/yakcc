@@ -22,13 +22,12 @@
 //
 //   Output:
 //     bench/B4-tokens-v3/results/phase1-<date>.json  — per-task cost + oracle
-//     bench/B4-tokens-v3/results/phase1-<date>.jsonl — JSONL billing log
+//     bench/B4-tokens-v3/results/phase1-<date>.jsonl — billing log
 //
 //   Cost ceiling: $75 USD shared with Phase 2 (DEC-V0-B4-SLICE2-COST-CEILING-004).
 //   Phase 1 alone uses roughly $5–15 (5 tasks × Opus × N=3 = 15 runs).
 
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -55,6 +54,20 @@ const TASK_ID  = flags['task'] ?? 'all';
 // Phase 1 is allowed up to $25 of the $75 total budget. Phase 2 gets $50.
 const PHASE1_CAP_USD = 25;
 
+// Import harness modules
+const { extractCode, runOracle } = await import(
+  new URL('file://' + join(__dirname, 'oracle-runner.mjs')).href
+);
+const { BillingLog, estimateCostUsd } = await import(
+  new URL('file://' + join(__dirname, 'billing.mjs')).href
+);
+const { BudgetTracker, BudgetExceededError } = await import(
+  new URL('file://' + join(__dirname, 'budget.mjs')).href
+);
+const { verifyTaskManifest } = await import(
+  new URL('file://' + join(__dirname, 'verify.mjs')).href
+);
+
 async function main() {
   console.log('B4-tokens-v3 Phase 1 — Corpus Build (Opus, empty registry)');
   console.log(`Mode: ${DRY_RUN ? 'DRY RUN' : 'REAL RUN'}`);
@@ -74,7 +87,7 @@ async function main() {
 
   if (DRY_RUN) {
     console.log(`[DRY RUN] Would run Phase 1 on ${tasks.length} tasks × N=${N_REPS} reps`);
-    console.log(`[DRY RUN] Tasks: ${tasks.map(t => t.id).join(', ')}`);
+    console.log(`[DRY RUN] Tasks: ${tasks.map((t) => t.id).join(', ')}`);
     console.log(`[DRY RUN] Driver: claude-opus-4-7 (unhooked, empty corpus)`);
     console.log('');
     console.log('Phase 1 dry run complete. No API calls made.');
@@ -88,7 +101,9 @@ async function main() {
     process.exit(1);
   }
 
-  // Import SDK lazily (not needed in dry-run mode)
+  // Verify task prompts match their SHA-256 hashes before any API spend
+  verifyTaskManifest(manifest, BENCH_ROOT);
+
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
@@ -96,9 +111,10 @@ async function main() {
 
   const runId = `phase1-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
   const resultsFile = join(RESULTS_DIR, `${runId}.json`);
-  const billingFile = join(RESULTS_DIR, `${runId}.jsonl`);
 
-  let totalCostUsd = 0;
+  const budget = new BudgetTracker({ cap_usd: PHASE1_CAP_USD });
+  const billingLog = new BillingLog({ dir: RESULTS_DIR, runId });
+
   const taskResults = [];
 
   for (const task of tasks) {
@@ -108,9 +124,21 @@ async function main() {
     for (let rep = 1; rep <= N_REPS; rep++) {
       console.log(`[Phase 1] Task=${task.id} Rep=${rep}/${N_REPS} Driver=opus (unhooked)`);
 
-      if (totalCostUsd >= PHASE1_CAP_USD) {
-        console.error(`Budget cap $${PHASE1_CAP_USD} exceeded at task=${task.id} rep=${rep}. Stopping.`);
-        break;
+      // Pre-call budget check (conservative estimate: 2000in + 1000out tokens for Opus)
+      const estCost = estimateCostUsd({
+        model_id: 'claude-opus-4-7',
+        input_tokens: 2000,
+        output_tokens: 1000,
+      });
+      try {
+        budget.checkBeforeCall(estCost);
+      } catch (err) {
+        if (err instanceof BudgetExceededError) {
+          console.error(`[BUDGET] ${err.message}`);
+          writeResults();
+          process.exit(0);
+        }
+        throw err;
       }
 
       const startMs = Date.now();
@@ -130,49 +158,73 @@ async function main() {
 
       const inputTokens  = response.usage?.input_tokens  ?? 0;
       const outputTokens = response.usage?.output_tokens ?? 0;
-      // Opus 4.7 pricing (approximate): $15/1M input, $75/1M output
-      const costUsd = (inputTokens * 15 + outputTokens * 75) / 1_000_000;
-      totalCostUsd += costUsd;
-
-      const generatedText = response.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('\n');
-
-      const billingRow = {
-        run_id: runId, phase: 1, task: task.id, rep, driver: 'opus',
-        arm: 'unhooked', input_tokens: inputTokens, output_tokens: outputTokens,
-        cost_usd: costUsd, total_cost_usd: totalCostUsd, wall_ms: wallMs,
-        ts: new Date().toISOString(),
-      };
-      writeFileSync(billingFile, JSON.stringify(billingRow) + '\n', { flag: 'a' });
-
-      reps.push({
-        rep, input_tokens: inputTokens, output_tokens: outputTokens,
-        cost_usd: costUsd, wall_ms: wallMs,
-        response_length: generatedText.length,
+      const costUsd = estimateCostUsd({
+        model_id: 'claude-opus-4-7',
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
       });
 
-      console.log(`  Tokens: ${inputTokens}in / ${outputTokens}out | Cost: $${costUsd.toFixed(4)} | Total: $${totalCostUsd.toFixed(4)}`);
+      budget.addSpend(costUsd);
+      budget.logRollingSpend({ phase: 1, taskId: task.id, rep, callCost: costUsd });
+
+      billingLog.append({
+        run_id: runId, phase: 1, task_id: task.id, rep,
+        driver: 'opus', arm: 'unhooked',
+        model_id: 'claude-opus-4-7',
+        input_tokens: inputTokens, output_tokens: outputTokens,
+        cost_usd: costUsd, cumulative_cost_usd: budget.cumulativeUsd,
+        wall_ms: wallMs, ts: new Date().toISOString(),
+      });
+
+      // Extract generated code and run oracle to capture Q_p1
+      const generatedText = response.content
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n');
+      const generatedCode = extractCode(generatedText);
+      const oracle = await runOracle(task.id, generatedCode);
+
+      console.log(
+        `  Oracle: ${oracle.oracle_passed ? 'PASS' : 'FAIL'} ` +
+        `(${oracle.oracle_pass_count}/${oracle.oracle_total}) | ` +
+        `in=${inputTokens} out=${outputTokens} | $${costUsd.toFixed(4)}`
+      );
+
+      reps.push({
+        rep,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cost_usd: costUsd,
+        wall_ms: wallMs,
+        oracle_passed: oracle.oracle_passed,
+        oracle_pass_count: oracle.oracle_pass_count,
+        oracle_total: oracle.oracle_total,
+        oracle_failures: oracle.oracle_failures,
+      });
     }
 
     taskResults.push({ task_id: task.id, reps });
   }
 
-  const summary = {
-    run_id: runId, phase: 1, n_tasks: tasks.length, n_reps: N_REPS,
-    total_cost_usd: totalCostUsd, cap_usd: PHASE1_CAP_USD,
-    completed_at: new Date().toISOString(),
-    tasks: taskResults,
-  };
-  writeFileSync(resultsFile, JSON.stringify(summary, null, 2), 'utf8');
+  writeResults();
 
-  console.log('');
-  console.log(`Phase 1 complete. Total cost: $${totalCostUsd.toFixed(4)}`);
-  console.log(`Results: ${resultsFile}`);
-  console.log(`Billing: ${billingFile}`);
-  console.log('');
-  console.log('Next step: review phase1 output, verify atom extraction, then run phase2.mjs.');
+  function writeResults() {
+    const summary = {
+      run_id: runId, phase: 1,
+      n_tasks: tasks.length, n_reps: N_REPS,
+      total_cost_usd: budget.cumulativeUsd,
+      cap_usd: PHASE1_CAP_USD,
+      completed_at: new Date().toISOString(),
+      tasks: taskResults,
+    };
+    writeFileSync(resultsFile, JSON.stringify(summary, null, 2), 'utf8');
+    console.log('');
+    console.log(`Phase 1 complete. Total cost: $${budget.cumulativeUsd.toFixed(4)}`);
+    console.log(`Results: ${resultsFile}`);
+    console.log(`Billing: ${billingLog.path}`);
+    console.log('');
+    console.log('Next step: review phase1 output, verify atom extraction, then run phase2.mjs.');
+  }
 }
 
-main().catch(err => { console.error(err); process.exit(1); });
+main().catch((err) => { console.error(err); process.exit(1); });
