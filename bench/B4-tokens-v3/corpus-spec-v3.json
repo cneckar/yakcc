@@ -1,0 +1,38 @@
+{
+  "_decision": {
+    "id": "DEC-BENCH-B4-V3-CORPUS-SPEC-001",
+    "title": "B4-v3 corpus-spec-v3.json — task prompt SHA-256 invariant",
+    "status": "accepted",
+    "rationale": "Content-addresses the 5 task prompts so the harness can detect prompt drift before spending API budget. SHA-256 hashes match tasks.json (the authoritative manifest). Any divergence between corpus-spec-v3.json and tasks.json is a sign that tasks.json was updated without a new corpus-spec version. The harness verify.mjs enforces these hashes at startup. Locked by WI-B4-V3-HARNESS-INTEGRATION (#668)."
+  },
+  "schema_version": 1,
+  "bench": "B4-tokens-v3",
+  "n_tasks": 5,
+  "tasks": [
+    {
+      "id": "json5-parser",
+      "prompt_sha256": "726da1fd1b4d2c5c85a4ccee661c2a4e2b8e863a75a2e19087174905bef17b49",
+      "complexity_domain": "parser_combinator"
+    },
+    {
+      "id": "pkce-code-verifier",
+      "prompt_sha256": "24a74bc9a6b269e52f552a08ea97f2b216e8551ab28e5c3a4472abb4b0d47e92",
+      "complexity_domain": "security_protocol"
+    },
+    {
+      "id": "two-phase-commit",
+      "prompt_sha256": "550fd152ee4dfdbc3ea97f084ebe5b0b16e341f54ea8523b664f88b5f9e007a8",
+      "complexity_domain": "distributed_coordination"
+    },
+    {
+      "id": "kahan-running-stats",
+      "prompt_sha256": "903af8ba7b67ca8434e37a2a0dd9050a3f6b250d185acbcef26ced0386fde55d",
+      "complexity_domain": "numerical_precision"
+    },
+    {
+      "id": "token-bucket-rate-limiter",
+      "prompt_sha256": "10122406f223ae7ac8f939aab7b5e0e98558b8a0de2ab3b8da0c12eed6ce44ef",
+      "complexity_domain": "stateful_fsm"
+    }
+  ]
+}
