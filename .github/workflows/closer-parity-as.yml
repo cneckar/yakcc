@@ -24,9 +24,10 @@ on:
   # packages/compile/src/as-compile-cache.test.ts via pr-ci.yml's
   # affected-package test step.
 
+# @decision DEC-CI-CLOSER-PARITY-AS-NO-CANCEL-001 (#612) — push:main runs must complete to populate verified-marker cache
 concurrency:
   group: closer-parity-as-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   parity:
