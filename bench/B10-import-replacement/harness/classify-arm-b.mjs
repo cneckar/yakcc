@@ -113,9 +113,20 @@ export function classifyArmB({ taskId, armAResult, armBReps, dryRun = false }) {
   let verdict;
   let reason;
 
-  if (dryRun) {
+  // @decision DEC-BENCH-B10-SLICE2-CLASSIFIER-DRYRUN-001
+  // @title Dry-run returns PASS-DIRECTIONAL for import-heavy tasks; PENDING for zero-import tasks
+  // @status accepted
+  // @rationale
+  //   Slice 1 returned PENDING unconditionally under dry-run (correct for B9 smoke corpus
+  //   where Arm B has 0 npm imports and nothing is measurable). Slice 2 introduces import-heavy
+  //   tasks where the canned dry-run fixture IS the canonical natural answer (hand-authored
+  //   validator import). For these tasks, dry-run should return PASS-DIRECTIONAL / WARN-DIRECTIONAL.
+  //   PENDING is now reserved for bMedianFn === 0 (no import surface to measure).
+  //   The dry_run: true annotation still flows into the output so reviewers can see the mode.
+  //   Cross-references: plans/wi-512-s2-b10-demo-task.md S5.3
+  if (dryRun && bMedianFn === 0) {
     verdict = "PENDING";
-    reason  = "dry-run mode — not a statistically valid measurement";
+    reason  = "dry-run mode with zero Arm B import surface -- not measurable";
   } else if (bMedianFn === 0 && aFn === 0) {
     verdict = "INCONCLUSIVE";
     reason  = "both arms have 0 transitive npm functions (not an import-heavy task)";

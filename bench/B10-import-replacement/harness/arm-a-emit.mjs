@@ -64,7 +64,9 @@ export const TASK_ENTRY_FUNCTIONS = {
   "kebab-to-camel":    "kebabToCamel",
   "digits-to-sum":     "digitsToSum",
   "even-only-filter":  "evenOnlyFilter",
-  // B10 import-heavy tasks (Slice 2+, added here when tasks/* gains entries)
+  // B10 import-heavy tasks (Slice 2+)
+  // DEC-BENCH-B10-SLICE2-DEMO-LIBRARY-001 -- validator/isEmail demo task
+  "validate-rfc5321-email": "validateRfc5321Email",
 };
 
 // ---------------------------------------------------------------------------
