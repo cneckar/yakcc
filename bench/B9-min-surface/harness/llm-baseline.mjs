@@ -210,6 +210,65 @@ function extractCode(responseText) {
 }
 
 // ---------------------------------------------------------------------------
+// Export-prefix helpers (post-extract emit normalization — DEC-B9-EXPORT-001)
+// ---------------------------------------------------------------------------
+//
+// @decision DEC-B9-EXPORT-001
+// @title Post-extract export prefix injection for arm-B LLM emits
+// @status accepted
+// @rationale
+//   The locked arm-B prompt (DEC-V0-MIN-SURFACE-003) asks the LLM to implement
+//   a TypeScript function with a bare signature ("function listOfInts(...)").
+//   The LLM honors this verbatim and emits bare top-level function declarations
+//   with no `export` keyword. When classify-arm-b.mjs imports the emitted file
+//   and accesses mod[entryFuncName], the binding is undefined — causing
+//   "Entry function not found" errors across all 6 tasks.
+//
+//   Fix: after extractCode() returns, derive the entry name from
+//   TASK_PROMPTS[taskId].signature (already the local authority for the prompt)
+//   and prepend `export ` to the bare top-level function declaration.
+//
+//   Idempotent: already-exported emits (dry-run fixtures pre-shaped with export)
+//   pass through unchanged. No-op when no matching bare function is found;
+//   downstream "Entry function not found" error still fires with its informative
+//   message — we never invent a missing entry.
+//
+//   Prompt sha256, TASK_PROMPTS, SYSTEM_PROMPT, and extractCode() are untouched.
+
+/**
+ * Extract the entry function name from a TypeScript signature string.
+ * e.g. "function listOfInts(input: string): readonly number[]" => "listOfInts"
+ * Returns null if the signature is falsy or does not contain a function name.
+ */
+function extractEntryNameFromSignature(signature) {
+  const m = signature?.match(/function\s+(\w+)\s*\(/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Idempotently prefix a bare top-level function declaration with `export`.
+ *
+ * Rules (applied in order):
+ * 1. No entryName → return code unchanged.
+ * 2. Code already exports via `export [default] function <entryName>` → unchanged.
+ * 3. Code already exports via named export object `export { ... <entryName> ...}` → unchanged.
+ * 4. Bare top-level `function <entryName>(` found → rewrite to `export function <entryName>(`.
+ * 5. No bare match found → return unchanged (let downstream throw with its informative error).
+ */
+function ensureExport(code, entryName) {
+  if (!entryName) return code;
+  // Already exported as a function declaration (export [default] function name)
+  if (new RegExp(`(^|\\n)\\s*export\\s+(?:default\\s+)?function\\s+${entryName}\\b`).test(code)) return code;
+  // Already exported via named export object: export { name ... }
+  if (new RegExp(`(^|\\n)\\s*export\\s+\\{[^}]*\\b${entryName}\\b`).test(code)) return code;
+  // Locate first bare top-level function declaration and prefix with export
+  const bareFn = new RegExp(`(^|\\n)(\\s*)function\\s+${entryName}\\s*\\(`);
+  return bareFn.test(code)
+    ? code.replace(bareFn, `$1$2export function ${entryName}(`)
+    : code;
+}
+
+// ---------------------------------------------------------------------------
 // Fixture loading (dry-run mode)
 // ---------------------------------------------------------------------------
 
@@ -312,11 +371,14 @@ async function getLlmBaselineRep({ taskId, dryRun, outputPath, repIndex = 0 } = 
     sourceOf = "live-api";
   }
 
-  // Extract code
+  // Extract code, then normalize export prefix (DEC-B9-EXPORT-001)
   const content = responseData.content ?? [];
   const textBlock = content.find((c) => c.type === "text");
   const responseText = textBlock?.text ?? "";
-  const emittedCode = extractCode(responseText);
+  const emittedCodeRaw = extractCode(responseText);
+  const _taskDef = TASK_PROMPTS[_taskId];
+  const _entryName = _taskDef ? extractEntryNameFromSignature(_taskDef.signature) : null;
+  const emittedCode = ensureExport(emittedCodeRaw, _entryName);
 
   // Write to output path — include rep index in filename to avoid overwrites
   const REPO_ROOT = resolve(BENCH_B9_ROOT, "..", "..");

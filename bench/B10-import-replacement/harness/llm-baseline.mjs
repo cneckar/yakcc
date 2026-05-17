@@ -132,11 +132,36 @@ function promptSha256(systemPrompt, userPrompt) {
  * Extract TypeScript source from a model response containing a ```typescript block.
  * Returns null if no fence found.
  *
+ * Accepts all realistic LLM fence variants:
+ *   - ```typescript\ncode``` (standard)
+ *   - ```typescript foo\ncode``` (with trailing annotation on language line)
+ *   - ```ts\ncode```
+ *   - ```\ncode``` (bare fence)
+ *
+ * @decision DEC-B10-FENCE-REGEX-001
+ * @title Loosen fence open-line to accept trailing tokens after language tag
+ * @status accepted
+ * @rationale
+ *   Some LLM responses emit ` ```typescript foo\n` (trailing annotation on the
+ *   language tag line). The original `\s*\n` required an immediate newline after
+ *   optional whitespace, so any non-whitespace trailing token caused extract_failed.
+ *   New form: `(?:(?:typescript|ts)[^\n]*)?\n` — when the language tag is present
+ *   it may be followed by any non-newline chars; the mandatory `\n` is preserved.
+ *   A bare ` ``` ` fence (no language tag) still matches (optional group absent).
+ *   A `python` fence still rejects: `python` doesn't match `typescript|ts` so the
+ *   optional group is absent, and the `\n` won't match the `p` in `python`.
+ *   This is the minimum change that fixes the live-mode failure without becoming
+ *   a "treat anything as emit" fallback.
+ *   See: plans/wi-679-b10-fence-regex.md, #679.
+ *
  * @param {string} responseText
  * @returns {string|null}
  */
 function extractEmitFromResponse(responseText) {
-  const fenceRe = /```(?:typescript|ts)?\s*\n([\s\S]*?)```/;
+  // Accepts: ```typescript[anything]\ncode```, ```ts[anything]\ncode```, ```\ncode```.
+  // Rejects: ```python\ncode``` because `python` doesn't match `typescript|ts` and
+  // the mandatory `\n` immediately after ` ``` ` won't match the `p` in `python`.
+  const fenceRe = /```(?:(?:typescript|ts)[^\n]*)?\n([\s\S]*?)```/;
   const m = fenceRe.exec(responseText);
   return m ? m[1] : null;
 }
@@ -285,14 +310,42 @@ export async function runArmBRep({ taskId, taskSpec, dryRun, noNetwork, outputDi
     writeFileSync(emitPath, emitText, "utf8");
   }
 
+  // When extraction fails (and the run was not skipped), dump the raw response to a
+  // tmp diagnostic file so the next investigator can inspect the exact format returned.
+  // @decision DEC-B10-FENCE-DIAG-001
+  // @title Write raw response to tmp diagnostic file on extract_failed
+  // @status accepted
+  // @rationale
+  //   extract_failed is silent by default — the result records the error string but
+  //   the raw LLM response is discarded, making root-cause analysis impossible without
+  //   a live re-run ($0.09/re-run, zero evidence). Writing to tmp/B10-import-replacement/
+  //   preserves the evidence for offline inspection without touching fixture or result
+  //   files. Unix timestamp suffix prevents collisions across concurrent reps. The dump
+  //   is skipped on the no-network path (responseText is undefined/empty). Dump failures
+  //   are caught and warned — a tmp write error must not mask the underlying extract_failed.
+  //   See: plans/wi-679-b10-fence-regex.md, #679.
+  let extractFailedDumpPath = null;
+  if (emitText == null && source !== "skipped") {
+    try {
+      const diagDir = join(REPO_ROOT, "tmp", "B10-import-replacement");
+      mkdirSync(diagDir, { recursive: true });
+      const ts = Date.now();
+      extractFailedDumpPath = join(diagDir, `extract-failed-${taskId}-rep${rep}-${ts}.txt`);
+      writeFileSync(extractFailedDumpPath, responseText, "utf8");
+    } catch (dumpErr) {
+      console.warn(`[llm-baseline] warn: extract_failed dump write failed: ${dumpErr.message}`);
+    }
+  }
+
   return {
-    task_id:     taskId,
+    task_id:                 taskId,
     rep,
     source,
     prompt_sha256,
-    emit_path:   emitPath,
-    emit_text:   emitText,
-    error:       emitText == null ? "extract_failed: no ```typescript fence in response" : null,
+    emit_path:               emitPath,
+    emit_text:               emitText,
+    extract_failed_dump_path: extractFailedDumpPath,
+    error:                   emitText == null ? "extract_failed: no ```typescript fence in response" : null,
     ...apiMeta,
   };
 }
@@ -355,6 +408,7 @@ if (isMain) {
       console.log(`emit_path:    ${result.emit_path ?? "none"}`);
       console.log(`prompt_sha:   ${result.prompt_sha256?.slice(0, 16) ?? "N/A"}...`);
       if (result.error) console.warn(`error:        ${result.error}`);
+      if (result.extract_failed_dump_path) console.warn(`dump:         ${result.extract_failed_dump_path}`);
     }
   } catch (err) {
     console.error(`[llm-baseline] Fatal: ${err.message}`);
