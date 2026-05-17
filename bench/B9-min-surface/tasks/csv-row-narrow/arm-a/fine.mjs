@@ -11,7 +11,9 @@ export function nonAsciiRejector(input) {
 export function controlCharRejector(input) {
   for (let i = 0; i < input.length; i++) {
     const code = input.charCodeAt(i);
-    if (code < 32 && code !== 9) throw new SyntaxError(`Control character at position ${i}: code ${code}`);
+    // @decision DEC-WI-637-001: Reject all control chars (code < 32) including tab,
+    // per spec.yak ("Input contains control characters (code < 32)") and arm-b reference.
+    if (code < 32) throw new SyntaxError(`Control character at position ${i}: code ${code}`);
   }
 }
 
