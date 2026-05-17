@@ -131,7 +131,37 @@ The orchestrator:
 
 ### Options
 
-The orchestrator has no flags. Set `YAKCC_REPO_ROOT` env var to override repository root detection.
+Set `YAKCC_REPO_ROOT` env var to override repository root detection.
+
+#### Per-comparator spawn timeout
+
+Each comparator subprocess is given a **60-minute** per-comparator ceiling (`spawnSync` timeout).
+This covers the observed `~2.2×` ubuntu-latest slowdown vs developer machines and the higher
+yakcc-as WASM JIT cost on darwin/M1 Pro hardware (see issue #638 and `DEC-BENCH-B1-CI-TIMEOUT-001`).
+Runs approaching this cap should be investigated as a perf regression, not a timeout bug.
+
+#### Reducing yakcc-as iteration count for local diagnostic runs
+
+On darwin/M1 Pro, yakcc-as per-iteration cost can reach ~6× the ubuntu-latest measurement,
+causing the canonical 1100-iteration run (100 warm-up + 1000 measured) to exceed the 60-min
+ceiling. The yakcc-as comparator supports an opt-in iteration override via environment variables:
+
+```bash
+# Quick diagnostic run (~10 measured iterations)
+YAKCC_AS_WARMUP_ITERS=5 YAKCC_AS_MEASURED_ITERS=10 \
+  node bench/B1-latency/integer-math/run.mjs
+```
+
+- **`YAKCC_AS_WARMUP_ITERS`** — warm-up iteration count (default: `100`)
+- **`YAKCC_AS_MEASURED_ITERS`** — measured iteration count (default: `1000`)
+
+The result JSON emits `"iterations_override": true` when these vars are active, so artifacts
+from reduced-iter runs are visually distinguished from canonical CI artifacts.
+
+**Important:** Leave these env vars **unset** for CI runs and any artifact intended as the
+verdict-of-record. Reduced-iter runs have higher statistical variance and are for local
+PASS/KILL diagnostic use only. The verdict statistic (`mean_ms`) is per-iteration and
+iteration-count-invariant, so the gate remains valid for any sample size.
 
 ## Result Artifact Format
 
