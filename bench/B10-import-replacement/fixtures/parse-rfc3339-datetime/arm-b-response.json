@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B10 Slice 3 dry-run. Arm B = LLM baseline. Emits the natural parseISO from date-fns.",
+  "_fixture_provenance": "Hand-authored representative fixture for the locked prompt; replaced by live-run response on operator live run.",
+  "_arm": "B",
+  "_task": "parse-rfc3339-datetime",
+  "_prompt_sha256": "8a0cac9be2e064ba19b305b7fdc34b0255350b0d27c62aa6ca5d8cf46768efd4",
+  "id": "msg_dry_parse_rfc3339_datetime_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { parseISO } from 'date-fns';\n\nfunction parseRfc3339Datetime(dateString: string): Date {\n  return parseISO(dateString);\n}\n\nexport { parseRfc3339Datetime };\nexport default parseRfc3339Datetime;\n```"
+    }
+  ]
+}

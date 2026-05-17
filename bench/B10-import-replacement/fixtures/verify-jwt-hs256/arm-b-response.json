@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B10 Slice 3 dry-run. Arm B = LLM baseline. Emits the natural jwt.verify with jsonwebtoken import.",
+  "_fixture_provenance": "Hand-authored representative fixture for the locked prompt; replaced by live-run response on operator live run.",
+  "_arm": "B",
+  "_task": "verify-jwt-hs256",
+  "_prompt_sha256": "b3b7e21f14d9b98be88205df906aa4ca8779f60371e7985fb344801497872fe4",
+  "id": "msg_dry_verify_jwt_hs256_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport jwt from 'jsonwebtoken';\n\nfunction verifyJwtHs256(token: string, secret: string): unknown {\n  return jwt.verify(token, secret, { algorithms: ['HS256'] });\n}\n\nexport { verifyJwtHs256 };\nexport default verifyJwtHs256;\n```"
+    }
+  ]
+}

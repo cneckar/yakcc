@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned Anthropic Messages API response for B10 Slice 3 dry-run. Arm B = LLM baseline. Emits the natural jwt.decode with jsonwebtoken import.",
+  "_fixture_provenance": "Hand-authored representative fixture for the locked prompt; replaced by live-run response on operator live run.",
+  "_arm": "B",
+  "_task": "decode-jwt-header-claims",
+  "_prompt_sha256": "176ef5a1ab0d219af98d9451a6b92e7748638cbf86c947de1841ab2bfdaa39c3",
+  "id": "msg_dry_decode_jwt_header_claims_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport jwt from 'jsonwebtoken';\n\nfunction decodeJwtHeaderClaims(token: string): object | null {\n  return jwt.decode(token, { complete: true });\n}\n\nexport { decodeJwtHeaderClaims };\nexport default decodeJwtHeaderClaims;\n```"
+    }
+  ]
+}

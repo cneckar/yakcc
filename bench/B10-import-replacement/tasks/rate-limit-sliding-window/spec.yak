@@ -1,0 +1,19 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — p-throttle@8.1.0 / throttle (default export) / task: rate-limit-sliding-window",
+  "name": "rate-limit-sliding-window",
+  "inputs": [
+    { "name": "fn", "type": "function", "description": "The async function to throttle." },
+    { "name": "limit", "type": "number", "description": "Maximum number of calls per interval." },
+    { "name": "interval", "type": "number", "description": "Interval duration in milliseconds." }
+  ],
+  "outputs": [
+    { "name": "throttled", "type": "function", "description": "A throttled version of the input function that enforces the rate limit." }
+  ],
+  "level": "L0",
+  "behavior": "Create a throttled version of an async function that limits it to at most `limit` calls per `interval` milliseconds. Additional calls beyond the rate are queued and delayed.",
+  "guarantees": [
+    { "id": "rate-enforced", "description": "No more than `limit` calls execute within any `interval` window." },
+    { "id": "queue-based", "description": "Excess calls are queued, not dropped." }
+  ],
+  "errorConditions": []
+}

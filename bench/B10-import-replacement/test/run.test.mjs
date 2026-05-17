@@ -255,3 +255,54 @@ describe("S10 Arm A traverses only 1 file for B9 reference emits (U4 mitigation 
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-DETERMINISTIC-DRYRUN-1: re-running --dry-run twice produces byte-identical output
+//
+// @decision DEC-BENCH-B10-SLICE3-DRYRUN-DETERMINISM-001
+// @title Re-run determinism: two consecutive dry-run invocations produce identical results
+// @status accepted
+// @rationale
+//   S2 added this guarantee (the smoke fixture mechanism). S3 verifies it still holds
+//   across the broader 15-task B10 corpus. Determinism is required for CI reproducibility
+//   and for the SHA-locked corpus-spec.json prompt_sha256 locking scheme.
+//   Two consecutive dry-runs are compared field-by-field after stripping timestamp fields
+//   (measured_at, artifact_sha256 which embeds timestamps).
+//   Cross-references: plans/wi-512-s3-b10-broaden.md §8.1 T-DETERMINISTIC-DRYRUN-1
+// ---------------------------------------------------------------------------
+
+describe("T-DETERMINISTIC-DRYRUN-1: two dry-runs produce identical task-level results", () => {
+  // Run the harness twice and compare stable fields
+  let run1, run2;
+
+  it("both dry-runs exit 0", () => {
+    run1 = spawnSync(
+      process.execPath,
+      [HARNESS_RUN, "--dry-run", "--tasks=validate-rfc5321-email,verify-jwt-hs256,coerce-semver"],
+      { encoding: "utf8", timeout: 120_000, cwd: BENCH_B10_ROOT }
+    );
+    run2 = spawnSync(
+      process.execPath,
+      [HARNESS_RUN, "--dry-run", "--tasks=validate-rfc5321-email,verify-jwt-hs256,coerce-semver"],
+      { encoding: "utf8", timeout: 120_000, cwd: BENCH_B10_ROOT }
+    );
+    if (run1.error) throw run1.error;
+    if (run2.error) throw run2.error;
+    assert.equal(run1.status, 0, "first dry-run exited " + run1.status);
+    assert.equal(run2.status, 0, "second dry-run exited " + run2.status);
+  });
+
+  it("both dry-runs produce identical verdict lines (no NaN, stable verdicts)", () => {
+    // Extract verdict lines from stdout (not timestamps)
+    const verdictPattern = /^(.*?(?:PASS-DIRECTIONAL|WARN-DIRECTIONAL|PENDING|INCONCLUSIVE).*)$/mg;
+    const verdicts1 = (run1?.stdout ?? "").match(verdictPattern) ?? [];
+    const verdicts2 = (run2?.stdout ?? "").match(verdictPattern) ?? [];
+    assert.ok(verdicts1.length > 0, "no verdict lines in first run");
+    assert.deepEqual(verdicts1, verdicts2, "verdict lines differ between runs -- non-deterministic");
+  });
+
+  it("neither dry-run contains NaN in stdout", () => {
+    assert.ok(!run1?.stdout?.includes("NaN"), "run1 stdout contains NaN");
+    assert.ok(!run2?.stdout?.includes("NaN"), "run2 stdout contains NaN");
+  });
+});

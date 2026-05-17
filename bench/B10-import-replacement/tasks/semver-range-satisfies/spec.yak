@@ -1,0 +1,18 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — semver@7.8.0 / satisfies / task: semver-range-satisfies",
+  "name": "semver-range-satisfies",
+  "inputs": [
+    { "name": "version", "type": "string", "description": "A semver version string (e.g. '1.2.3')." },
+    { "name": "range", "type": "string", "description": "A semver range expression (e.g. '>=1.0.0 <2.0.0')." }
+  ],
+  "outputs": [
+    { "name": "satisfies", "type": "boolean", "description": "True iff the version satisfies the range." }
+  ],
+  "level": "L0",
+  "behavior": "Check whether a semver version string satisfies a semver range expression. Returns true if the version falls within the range, false otherwise.",
+  "guarantees": [
+    { "id": "boolean-output", "description": "Returns boolean true/false; never throws on valid semver inputs." },
+    { "id": "semver-compliant", "description": "Follows semver 2.0.0 range semantics." }
+  ],
+  "errorConditions": []
+}

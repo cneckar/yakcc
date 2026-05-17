@@ -1,0 +1,18 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — bcryptjs@2.4.3 / compare (engine-gap-disclosed #585) / task: bcrypt-verify-constant-time",
+  "name": "bcrypt-verify-constant-time",
+  "inputs": [
+    { "name": "plaintext", "type": "string", "description": "The plaintext password to verify." },
+    { "name": "hash", "type": "string", "description": "The bcrypt hash string to verify against." }
+  ],
+  "outputs": [
+    { "name": "matches", "type": "Promise<boolean>", "description": "Resolves to true iff the plaintext matches the hash." }
+  ],
+  "level": "L0",
+  "behavior": "Verify that a plaintext password matches a bcrypt hash using a constant-time comparison to prevent timing attacks. Returns a Promise that resolves to true if the passwords match.",
+  "guarantees": [
+    { "id": "constant-time", "description": "Uses constant-time comparison to prevent timing side-channels." },
+    { "id": "async", "description": "Returns a Promise." }
+  ],
+  "errorConditions": []
+}

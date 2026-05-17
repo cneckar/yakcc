@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/harness/arm-a-emit.mjs
 //
@@ -67,6 +67,21 @@ export const TASK_ENTRY_FUNCTIONS = {
   // B10 import-heavy tasks (Slice 2+)
   // DEC-BENCH-B10-SLICE2-DEMO-LIBRARY-001 -- validator/isEmail demo task
   "validate-rfc5321-email": "validateRfc5321Email",
+  // DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 -- 14 new S3 tasks
+  "verify-jwt-hs256":             "verifyJwtHs256",
+  "decode-jwt-header-claims":     "decodeJwtHeaderClaims",
+  "rate-limit-sliding-window":    "rateLimitSlidingWindow",
+  "parse-rfc3339-datetime":       "parseRfc3339Datetime",
+  "format-iso-date":              "formatIsoDate",
+  "add-business-days":            "addBusinessDays",
+  "cycle-safe-deep-clone":        "cycleSafeDeepClone",
+  "semver-range-satisfies":       "semverRangeSatisfies",
+  "bcrypt-verify-constant-time":  "bcryptVerifyConstantTime",
+  "uuid-v4-generate-validate":    "uuidV4GenerateValidate",
+  "nanoid-generate":              "nanoidGenerate",
+  "debounce-with-flush-cancel":   "debounceWithFlushCancel",
+  "validate-string-min-max":      "validateStringMinMax",
+  "coerce-semver":                "coerceSemver",
 };
 
 // ---------------------------------------------------------------------------
@@ -217,3 +232,4 @@ if (isMain) {
     process.exit(1);
   }
 }
+

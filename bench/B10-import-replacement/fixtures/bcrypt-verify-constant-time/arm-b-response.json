@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for bcrypt-verify-constant-time / bcryptjs compare (engine-gap-disclosed #585).",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "bcrypt-verify-constant-time",
+  "_prompt_sha256": "a357ddf844ecfcea4b2f1fe272357c7e7609094398914a60acd4708707c2fc0b",
+  "id": "msg_dry_bcrypt_verify_constant_time_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport bcrypt from 'bcryptjs';\n\nasync function bcryptVerifyConstantTime(plaintext: string, hash: string): Promise<boolean> {\n  return bcrypt.compare(plaintext, hash);\n}\n\nexport { bcryptVerifyConstantTime };\nexport default bcryptVerifyConstantTime;\n```"
+    }
+  ]
+}

@@ -169,3 +169,85 @@ describe("T-CLASSIFIER-1d: INCONCLUSIVE when both arms are zero (non-dry-run)", 
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-CLASSIFIER-CVE-1: summarizeSuite returns total_cve_matches correctly summed
+//
+// @decision DEC-BENCH-B10-SLICE3-CVE-METRIC-001
+// @title S3 CVE secondary metric: headline reporting axis via total_cve_matches
+// @status accepted
+// @rationale
+//   S3 promotes cve_pattern_matches to a headline column in the PR-body table.
+//   summarizeSuite must correctly sum median_cve_matches across all task results.
+//   This test locks the suite-level CVE aggregation behavior.
+//   Cross-references: plans/wi-512-s3-b10-broaden.md §8.1 T-CLASSIFIER-CVE-1
+// ---------------------------------------------------------------------------
+
+describe("T-CLASSIFIER-CVE-1: summarizeSuite total_cve_matches is correctly summed", async () => {
+  const { summarizeSuite } = await loadClassifier();
+
+  // Synthetic 3-task input with known cve_matches values
+  const taskResults = [
+    {
+      task_id: "task-a",
+      verdict: "PASS-DIRECTIONAL",
+      reason:  "95% reduction",
+      arm_b:   { median_cve_matches: 3 },
+    },
+    {
+      task_id: "task-b",
+      verdict: "WARN-DIRECTIONAL",
+      reason:  "80% reduction",
+      arm_b:   { median_cve_matches: 0 },
+    },
+    {
+      task_id: "task-c",
+      verdict: "PASS-DIRECTIONAL",
+      reason:  "92% reduction",
+      arm_b:   { median_cve_matches: 1 },
+    },
+  ];
+
+  const suite = summarizeSuite(taskResults);
+
+  it("total_cve_matches is the sum of median_cve_matches across all tasks (3+0+1=4)", () => {
+    assert.strictEqual(
+      suite.total_cve_matches,
+      4,
+      `Expected total_cve_matches=4, got ${suite.total_cve_matches}`
+    );
+  });
+
+  it("suite_verdict is WARN-DIRECTIONAL (mixed pass+warn)", () => {
+    assert.strictEqual(
+      suite.suite_verdict,
+      "WARN-DIRECTIONAL",
+      `Expected WARN-DIRECTIONAL (mixed), got: ${suite.suite_verdict}`
+    );
+  });
+
+  it("tasks_passing is 2", () => {
+    assert.strictEqual(suite.tasks_passing, 2, `Expected tasks_passing=2, got ${suite.tasks_passing}`);
+  });
+
+  it("tasks_warning is 1", () => {
+    assert.strictEqual(suite.tasks_warning, 1, `Expected tasks_warning=1, got ${suite.tasks_warning}`);
+  });
+
+  it("tasks_total is 3", () => {
+    assert.strictEqual(suite.tasks_total, 3, `Expected tasks_total=3, got ${suite.tasks_total}`);
+  });
+
+  it("total_cve_matches is 0 when all arm_b.median_cve_matches are undefined (graceful nullish)", () => {
+    const noCveResults = [
+      { task_id: "x", verdict: "PASS-DIRECTIONAL", reason: "ok", arm_b: {} },
+      { task_id: "y", verdict: "PASS-DIRECTIONAL", reason: "ok" },
+    ];
+    const s2 = summarizeSuite(noCveResults);
+    assert.strictEqual(
+      s2.total_cve_matches,
+      0,
+      `Expected total_cve_matches=0 when arm_b missing, got ${s2.total_cve_matches}`
+    );
+  });
+});

@@ -1,0 +1,17 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — date-fns@4.1.0 / parseISO / task: parse-rfc3339-datetime",
+  "name": "parse-rfc3339-datetime",
+  "inputs": [
+    { "name": "dateString", "type": "string", "description": "An ISO 8601 / RFC 3339 date-time string (e.g. '2024-01-15T10:30:00Z')." }
+  ],
+  "outputs": [
+    { "name": "date", "type": "Date", "description": "A JavaScript Date object representing the parsed date-time." }
+  ],
+  "level": "L0",
+  "behavior": "Parse an ISO 8601 / RFC 3339 date-time string and return a JavaScript Date object. Handles date-only strings, date-time strings with timezone offsets, and UTC (Z) suffixes.",
+  "guarantees": [
+    { "id": "iso8601", "description": "Parses all standard ISO 8601 formats including date-only and date-time." },
+    { "id": "timezone-aware", "description": "Preserves timezone offset information in the resulting Date." }
+  ],
+  "errorConditions": []
+}

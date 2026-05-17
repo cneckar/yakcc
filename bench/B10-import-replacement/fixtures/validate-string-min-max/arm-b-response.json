@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for validate-string-min-max / zod string().min().max() (engine-gap-disclosed #619+#576).",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "validate-string-min-max",
+  "_prompt_sha256": "ee4eac8d0531c6a5ab88494a1df3ee15ea9a858b310d5779651aee7c291bf6ec",
+  "id": "msg_dry_validate_string_min_max_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { z } from 'zod';\n\nfunction validateStringMinMax(input: unknown, min: number, max: number): { success: boolean; error?: string } {\n  const schema = z.string().min(min).max(max);\n  const result = schema.safeParse(input);\n  if (result.success) return { success: true };\n  return { success: false, error: result.error.message };\n}\n\nexport { validateStringMinMax };\nexport default validateStringMinMax;\n```"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — jsonwebtoken@9.0.2 / verify (HS256) / task: verify-jwt-hs256",
+  "name": "verify-jwt-hs256",
+  "inputs": [
+    { "name": "token", "type": "string", "description": "A compact serialization JWT string." },
+    { "name": "secret", "type": "string", "description": "The HMAC secret key used to sign the token." }
+  ],
+  "outputs": [
+    { "name": "payload", "type": "unknown", "description": "The decoded payload object if the token is valid and signed with the given secret using HS256." }
+  ],
+  "level": "L0",
+  "behavior": "Verify a JWT token signed with HS256 (HMAC-SHA256). Returns the decoded payload if the token signature is valid and the algorithm is HS256. Throws if the token is invalid, expired, or signed with a different algorithm.",
+  "guarantees": [
+    { "id": "hs256-only", "description": "Only accepts tokens with alg=HS256; rejects other algorithms." },
+    { "id": "throws-on-invalid", "description": "Throws an error if the token is invalid, malformed, or expired." }
+  ],
+  "errorConditions": []
+}

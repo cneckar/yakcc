@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for uuid-v4-generate-validate / uuid v4 + validate.",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "uuid-v4-generate-validate",
+  "_prompt_sha256": "1d543e5676d88ed43d92ff0955fd2c20b76a6813c47df4246a38692ebd3d4b24",
+  "id": "msg_dry_uuid_v4_generate_validate_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { v4, validate } from 'uuid';\n\nfunction uuidV4GenerateValidate(input?: string): string | boolean {\n  if (input === undefined) return v4();\n  return validate(input);\n}\n\nexport { uuidV4GenerateValidate };\nexport default uuidV4GenerateValidate;\n```"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — lodash@4.17.21 / cloneDeep / task: cycle-safe-deep-clone",
+  "name": "cycle-safe-deep-clone",
+  "inputs": [
+    { "name": "value", "type": "unknown", "description": "Any JavaScript value to deep clone." }
+  ],
+  "outputs": [
+    { "name": "clone", "type": "unknown", "description": "A deep clone of the input value." }
+  ],
+  "level": "L0",
+  "behavior": "Recursively deep clone a JavaScript value. Handles objects, arrays, primitives, Date objects, RegExp, Map, Set, and circular references (cycle-safe). Returns a new value with no shared references to the original.",
+  "guarantees": [
+    { "id": "deep", "description": "All nested structures are cloned recursively." },
+    { "id": "cycle-safe", "description": "Circular references are preserved without infinite recursion." },
+    { "id": "no-mutation", "description": "The original value is not mutated." }
+  ],
+  "errorConditions": []
+}
