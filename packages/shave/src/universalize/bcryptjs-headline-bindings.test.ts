@@ -154,12 +154,11 @@ function withSemanticIntentCard(
 // ---------------------------------------------------------------------------
 
 describe("bcryptjs-package-atom -- per-entry shave (WI-510 Slice 6)", () => {
-  // SKIPPED — WI-585 engine fix lands moduleCount=1 (correct) but bcrypt library
-  // decompose is now slow (300s+ per section). Test assertion updates + per-test
-  // timeout tuning tracked in follow-up issue #625.
-  it.skip(
+  // WI-625: unskipped post-WI-585; per-test timeout raised to absorb full
+  // bcryptjs UMD IIFE decompose cost (~300s per section observed).
+  it(
     "section A -- dist/bcrypt.js UMD IIFE decomposes: moduleCount>=1, stubCount=0, filePath ends bcrypt.js (WI-585 fix; DEC-WI510-S6-BCRYPTJS-SINGLE-MODULE-PACKAGE-001)",
-    { timeout: 120_000 },
+    { timeout: 900_000 },
     async () => {
       const forest = await shavePackage(BCRYPTJS_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -196,12 +195,11 @@ describe("bcryptjs-package-atom -- per-entry shave (WI-510 Slice 6)", () => {
     },
   );
 
-  // SKIPPED — WI-585 engine fix lands moduleCount=1 (correct) but bcrypt library
-  // decompose is now slow (300s+ per section). Test assertion updates + per-test
-  // timeout tuning tracked in follow-up issue #625.
-  it.skip(
+  // WI-625: unskipped post-WI-585; per-test timeout raised to absorb full
+  // bcryptjs UMD IIFE decompose cost (~300s per section observed).
+  it(
     "section B -- forest.nodes[0].kind === 'module'; filePath contains 'bcrypt.js' (WI-585 fix; engine gap closed)",
-    { timeout: 120_000 },
+    { timeout: 900_000 },
     async () => {
       const forest = await shavePackage(BCRYPTJS_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -216,12 +214,11 @@ describe("bcryptjs-package-atom -- per-entry shave (WI-510 Slice 6)", () => {
     },
   );
 
-  // SKIPPED — WI-585 engine fix lands moduleCount=1 (correct) but bcrypt library
-  // decompose is now slow (300s+ per section). Test assertion updates + per-test
-  // timeout tuning tracked in follow-up issue #625.
-  it.skip(
+  // WI-625: unskipped post-WI-585; per-test timeout raised to absorb full
+  // bcryptjs UMD IIFE decompose cost (~300s per section observed).
+  it(
     "section C -- forestModules.length >= 1; externalSpecifiers contains 'crypto'; no stubs for entry path (WI-585 fix)",
-    { timeout: 120_000 },
+    { timeout: 900_000 },
     async () => {
       const forest = await shavePackage(BCRYPTJS_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -244,12 +241,11 @@ describe("bcryptjs-package-atom -- per-entry shave (WI-510 Slice 6)", () => {
     },
   );
 
-  // SKIPPED — WI-585 engine fix lands moduleCount=1 (correct) but bcrypt library
-  // decompose is now slow (300s+ per section). Test assertion updates + per-test
-  // timeout tuning tracked in follow-up issue #625.
-  it.skip(
+  // WI-625: unskipped post-WI-585; timeout raised to 1_500_000 ms (25 min) — two-pass
+  // (two full decompose() calls on the 1379-line UMD IIFE). 2.5× margin over ~600s observed cost.
+  it(
     "section D -- two-pass byte-identical determinism for bcryptjs subgraph (post-WI-585: module shape is deterministic)",
-    { timeout: 300_000 },
+    { timeout: 1_500_000 },
     async () => {
       const entryPath = join(BCRYPTJS_FIXTURE_ROOT, "dist", "bcrypt.js");
       const forest1 = await shavePackage(BCRYPTJS_FIXTURE_ROOT, {
@@ -293,12 +289,11 @@ describe("bcryptjs-package-atom -- per-entry shave (WI-510 Slice 6)", () => {
     },
   );
 
-  // SKIPPED — WI-585 engine fix lands moduleCount=1 (correct) but bcrypt library
-  // decompose is now slow (300s+ per section). Test assertion updates + per-test
-  // timeout tuning tracked in follow-up issue #625.
-  it.skip(
+  // WI-625: unskipped post-WI-585; per-test timeout raised to absorb full
+  // bcryptjs UMD IIFE decompose cost (~300s per section observed).
+  it(
     "section E -- collectForestSlicePlans produces novel-glue entries; persistedCount > 0; blocks retrievable (WI-585 fix)",
-    { timeout: 120_000 },
+    { timeout: 900_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
@@ -458,12 +453,11 @@ describe("bcryptjs verify section F -- combinedScore quality gate", () => {
 // ---------------------------------------------------------------------------
 
 describe("bcryptjs headline bindings -- compound interaction (real production sequence)", () => {
-  // SKIPPED — WI-585 engine fix lands moduleCount=1 (correct) but bcrypt library
-  // decompose is now slow (300s+ per section). Test assertion updates + per-test
-  // timeout tuning tracked in follow-up issue #625.
-  it.skip(
+  // WI-625: unskipped post-WI-585; timeout raised to 1_500_000 ms (25 min) — compound
+  // section performs decompose + slice plan collection + atom persistence. 2.5× margin.
+  it(
     "bcryptjs single-module-package shave: moduleCount>=1, stubCount=0, externalSpecifiers includes 'crypto', persistedCount>0, atomMerkleRoots[0] captured for corpus (WI-585 fix)",
-    { timeout: 300_000 },
+    { timeout: 1_500_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
