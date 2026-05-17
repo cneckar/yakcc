@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for semver-range-satisfies / semver satisfies.",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "semver-range-satisfies",
+  "_prompt_sha256": "8b623e6b1775cf3a9ff3cb3e9f66e65c93c5e06fb5dfb94e9fbb3399d75bf3db",
+  "id": "msg_dry_semver_range_satisfies_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { satisfies } from 'semver';\n\nfunction semverRangeSatisfies(version: string, range: string): boolean {\n  return satisfies(version, range);\n}\n\nexport { semverRangeSatisfies };\nexport default semverRangeSatisfies;\n```"
+    }
+  ]
+}

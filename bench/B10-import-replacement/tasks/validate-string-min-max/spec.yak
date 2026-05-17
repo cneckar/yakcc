@@ -1,0 +1,19 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — zod@3.25.76 / z.string().min().max() (engine-gap-disclosed #619/#576) / task: validate-string-min-max",
+  "name": "validate-string-min-max",
+  "inputs": [
+    { "name": "input", "type": "unknown", "description": "The value to validate." },
+    { "name": "min", "type": "number", "description": "Minimum string length (inclusive)." },
+    { "name": "max", "type": "number", "description": "Maximum string length (inclusive)." }
+  ],
+  "outputs": [
+    { "name": "result", "type": "{ success: boolean; error?: string }", "description": "Object with success flag and optional error message." }
+  ],
+  "level": "L0",
+  "behavior": "Validate that the input is a string whose length is between min and max (inclusive). Returns { success: true } on success or { success: false, error: string } describing the violation.",
+  "guarantees": [
+    { "id": "safe-parse", "description": "Never throws; always returns a result object." },
+    { "id": "inclusive-bounds", "description": "min and max are inclusive bounds on string length." }
+  ],
+  "errorConditions": []
+}

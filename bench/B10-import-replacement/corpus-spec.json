@@ -1,15 +1,19 @@
 {
   "$schema": "corpus-spec/v2",
-  "note": "B10-import-replacement task corpus. Slice 2 adds the first import-heavy demo task (validate-rfc5321-email). See plans/wi-512-s2-b10-demo-task.md.",
+  "note": "B10-import-replacement task corpus. Slice 2 adds the first import-heavy demo task. Slice 3 broadens to 15 tasks covering 11 WI-510 libraries. See plans/wi-512-s3-b10-broaden.md. DEC-BENCH-B10-SLICE3-TASK-CORPUS-SIZE-001 / DEC-BENCH-B10-SLICE3-HEADLINE-ACCEPTANCE-001 / DEC-BENCH-B10-SLICE3-CLOSES-512-001.",
   "benchmark": "B10-import-replacement",
-  "slice": "slice-2",
+  "slice": "slice-3",
   "tasks": [
     {
       "id": "validate-rfc5321-email",
       "spec_path": "tasks/validate-rfc5321-email/spec.yak",
       "spec_sha256_lf": "72d8b6dd489ccad5ab471f4cb4b2813c97d54358541233811fa55cf8b8d3c8d8",
       "entry_function": "validateRfc5321Email",
-      "arm_a_granularity_strategies": ["A-fine", "A-medium", "A-coarse"],
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
       "arm_b_n_reps": 3,
       "arm_b_prompt": {
         "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
@@ -18,8 +22,356 @@
       },
       "dry_run_fixture": "fixtures/validate-rfc5321-email/arm-b-response.json",
       "directional_targets": {
-        "reachable_functions_reduction_min": 0.90,
-        "reachable_bytes_reduction_min": 0.90,
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "verify-jwt-hs256",
+      "spec_path": "tasks/verify-jwt-hs256/spec.yak",
+      "spec_sha256_lf": "cc10ebdbc64e6bfe98bfe8e5d46063bdbf11e1669d81d5482a9dea7243c7eefb",
+      "entry_function": "verifyJwtHs256",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function verifyJwtHs256(token: string, secret: string): unknown\n\nBehavior:\nVerify a JWT token signed with HS256 (HMAC-SHA256). Returns the decoded payload if the token signature is valid and the algorithm is HS256. Throws if the token is invalid, expired, or signed with a different algorithm.",
+        "prompt_sha256": "b3b7e21f14d9b98be88205df906aa4ca8779f60371e7985fb344801497872fe4"
+      },
+      "dry_run_fixture": "fixtures/verify-jwt-hs256/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "decode-jwt-header-claims",
+      "spec_path": "tasks/decode-jwt-header-claims/spec.yak",
+      "spec_sha256_lf": "80148c8e1373c079ea382633b0058eb2d08c4ee1646d64d2961f54b1fda8a803",
+      "entry_function": "decodeJwtHeaderClaims",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function decodeJwtHeaderClaims(token: string): object | null\n\nBehavior:\nDecode a JWT token without verifying the signature. Returns an object containing the decoded header and payload. Returns null if the token cannot be decoded rather than throwing.",
+        "prompt_sha256": "176ef5a1ab0d219af98d9451a6b92e7748638cbf86c947de1841ab2bfdaa39c3"
+      },
+      "dry_run_fixture": "fixtures/decode-jwt-header-claims/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "rate-limit-sliding-window",
+      "spec_path": "tasks/rate-limit-sliding-window/spec.yak",
+      "spec_sha256_lf": "63c9830a650854576494b5229f47844564a5584c671ec1eb22534f76fc03db39",
+      "entry_function": "rateLimitSlidingWindow",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function rateLimitSlidingWindow(fn: Function, limit: number, interval: number): Function\n\nBehavior:\nCreate a throttled version of an async function that limits it to at most limit calls per interval milliseconds. Additional calls beyond the rate are queued and delayed.",
+        "prompt_sha256": "f7924bf53e72f160430e1be613f1999f16e7bdda2a6bba32a93e084491b9ce63"
+      },
+      "dry_run_fixture": "fixtures/rate-limit-sliding-window/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "parse-rfc3339-datetime",
+      "spec_path": "tasks/parse-rfc3339-datetime/spec.yak",
+      "spec_sha256_lf": "cebb80e520c45b2254837ab6d6a0eb88de76cbfe6f33b559a0393600f9047741",
+      "entry_function": "parseRfc3339Datetime",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function parseRfc3339Datetime(dateString: string): Date\n\nBehavior:\nParse an ISO 8601 / RFC 3339 date-time string and return a JavaScript Date object. Handles date-only strings, date-time strings with timezone offsets, and UTC (Z) suffixes.",
+        "prompt_sha256": "8a0cac9be2e064ba19b305b7fdc34b0255350b0d27c62aa6ca5d8cf46768efd4"
+      },
+      "dry_run_fixture": "fixtures/parse-rfc3339-datetime/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "format-iso-date",
+      "spec_path": "tasks/format-iso-date/spec.yak",
+      "spec_sha256_lf": "828bf24c36e700c7d6df72d4b14dc493b51478b872ba10e1ff2863e75d8ee2b7",
+      "entry_function": "formatIsoDate",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function formatIsoDate(date: Date): string\n\nBehavior:\nFormat a JavaScript Date object as an ISO 8601 string with full date, time, and UTC offset components. Output format: 'YYYY-MM-DDTHH:mm:ssxxx'.",
+        "prompt_sha256": "ce3091515ca43d03af4e4e181e3da91d65339e3a1bce33e57e9fa2f35315b895"
+      },
+      "dry_run_fixture": "fixtures/format-iso-date/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "add-business-days",
+      "spec_path": "tasks/add-business-days/spec.yak",
+      "spec_sha256_lf": "e5a58584efd5293fc626f7e074ca26936dd9d1086b98525b6eb728103836dd48",
+      "entry_function": "addBusinessDays",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function addBusinessDays(date: Date, days: number): Date\n\nBehavior:\nAdd a given number of days to a date and return a new Date object. Does not modify the original date. Negative values subtract days.",
+        "prompt_sha256": "815d2b145ce4a5138abda715f5960842ae3b5f84997bb7bbf5bacebab67193b7"
+      },
+      "dry_run_fixture": "fixtures/add-business-days/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "cycle-safe-deep-clone",
+      "spec_path": "tasks/cycle-safe-deep-clone/spec.yak",
+      "spec_sha256_lf": "19a326e7f7a1b5010cfa8d5dc178ef52c70dc5e40a04182a5e835224a557e6eb",
+      "entry_function": "cycleSafeDeepClone",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function cycleSafeDeepClone(value: unknown): unknown\n\nBehavior:\nRecursively deep clone a JavaScript value. Handles objects, arrays, primitives, Date objects, RegExp, Map, Set, and circular references (cycle-safe). Returns a new value with no shared references to the original.",
+        "prompt_sha256": "bb20f7e203ac453bf4328a198ab854c9532e80387a37c49e19f659d233a8f4e8"
+      },
+      "dry_run_fixture": "fixtures/cycle-safe-deep-clone/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "semver-range-satisfies",
+      "spec_path": "tasks/semver-range-satisfies/spec.yak",
+      "spec_sha256_lf": "f00b7941cf220b67e97c261c330a57ae78871c45f3c293da7cbe7843d62003cc",
+      "entry_function": "semverRangeSatisfies",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function semverRangeSatisfies(version: string, range: string): boolean\n\nBehavior:\nCheck whether a semver version string satisfies a semver range expression. Returns true if the version falls within the range, false otherwise.",
+        "prompt_sha256": "8b623e6b1775cf3a9ff3cb3e9f66e65c93c5e06fb5dfb94e9fbb3399d75bf3db"
+      },
+      "dry_run_fixture": "fixtures/semver-range-satisfies/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "bcrypt-verify-constant-time",
+      "spec_path": "tasks/bcrypt-verify-constant-time/spec.yak",
+      "spec_sha256_lf": "30a82d8436786124b33629cca1c8a9ca15b3cc3c2a57e9c66e3956e4a7c5aa6f",
+      "entry_function": "bcryptVerifyConstantTime",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: async function bcryptVerifyConstantTime(plaintext: string, hash: string): Promise<boolean>\n\nBehavior:\nVerify that a plaintext password matches a bcrypt hash using a constant-time comparison to prevent timing attacks. Returns a Promise that resolves to true if the passwords match.",
+        "prompt_sha256": "a357ddf844ecfcea4b2f1fe272357c7e7609094398914a60acd4708707c2fc0b"
+      },
+      "dry_run_fixture": "fixtures/bcrypt-verify-constant-time/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      },
+      "engine_gap_disclosure": {
+        "issue": "#585",
+        "summary": "bcryptjs/dist/bcrypt.js is a UMD IIFE; shave decompose() emits stub (moduleCount=0, stubCount=1) per DEC-WI510-S6-BCRYPTJS-SINGLE-MODULE-PACKAGE-001.",
+        "impact": "Arm A is a hand-authored constant-time-compare reference, not a real atom composition. The transitive-surface delta is still measured and reported, but Arm A's provenance differs from the unblocked tasks. Headline table marks this row [GAP] in the verdict column.",
+        "tracking_pr": "#585"
+      }
+    },
+    {
+      "id": "uuid-v4-generate-validate",
+      "spec_path": "tasks/uuid-v4-generate-validate/spec.yak",
+      "spec_sha256_lf": "caf19015c3a0d09094cea7355bd5bfb457bdf47a7737abccc13452c4e5b5f9f0",
+      "entry_function": "uuidV4GenerateValidate",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function uuidV4GenerateValidate(input?: string): string | boolean\n\nBehavior:\nGenerate a UUID v4 string (when called with no argument) or validate whether a given string is a valid UUID (when called with a string argument). UUID v4 uses random bytes from the crypto module.",
+        "prompt_sha256": "1d543e5676d88ed43d92ff0955fd2c20b76a6813c47df4246a38692ebd3d4b24"
+      },
+      "dry_run_fixture": "fixtures/uuid-v4-generate-validate/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "nanoid-generate",
+      "spec_path": "tasks/nanoid-generate/spec.yak",
+      "spec_sha256_lf": "cba0625fed3188782c4662526c5fb313ca7d4fec9f6d1a1a76cb230c4cab183b",
+      "entry_function": "nanoidGenerate",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function nanoidGenerate(size?: number): string\n\nBehavior:\nGenerate a cryptographically secure random string ID using the URL-safe alphabet (A-Za-z0-9_-). Default size is 21 characters.",
+        "prompt_sha256": "e3b9c1670352f45e1f2df1dc017e6d23fcb7e4f7d0830b97bb7b00b1dbd56458"
+      },
+      "dry_run_fixture": "fixtures/nanoid-generate/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "debounce-with-flush-cancel",
+      "spec_path": "tasks/debounce-with-flush-cancel/spec.yak",
+      "spec_sha256_lf": "b79c952188fccf8218669c077ea70960b0bbee5a36c80318680b303577f7fc19",
+      "entry_function": "debounceWithFlushCancel",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function debounceWithFlushCancel(fn: Function, wait: number, options?: object): Function & { flush: Function; cancel: Function }\n\nBehavior:\nCreate a debounced function that delays invoking fn until after wait milliseconds have elapsed since the last call. The returned function has .flush() (invoke immediately) and .cancel() (cancel pending invocation) methods.",
+        "prompt_sha256": "eed982c88a0b145b26ed21203e34b6883618f12e184e4bdcb832f8102654c43e"
+      },
+      "dry_run_fixture": "fixtures/debounce-with-flush-cancel/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      }
+    },
+    {
+      "id": "validate-string-min-max",
+      "spec_path": "tasks/validate-string-min-max/spec.yak",
+      "spec_sha256_lf": "11d42732d124f3b1d1e1ecdfc93a8b89e11e2fc38d912a7f98d2aa08b419fa72",
+      "entry_function": "validateStringMinMax",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function validateStringMinMax(input: unknown, min: number, max: number): { success: boolean; error?: string }\n\nBehavior:\nValidate that the input is a string whose length is between min and max (inclusive). Returns { success: true } on success or { success: false, error: string } describing the violation. Never throws.",
+        "prompt_sha256": "ee4eac8d0531c6a5ab88494a1df3ee15ea9a858b310d5779651aee7c291bf6ec"
+      },
+      "dry_run_fixture": "fixtures/validate-string-min-max/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
+        "arm_a_unique_non_builtin_imports": 0,
+        "arm_b_unique_non_builtin_imports_min": 1
+      },
+      "engine_gap_disclosure": {
+        "issue": "#619+#576",
+        "summary": "zod@3.25.76 TS-compiled CJS has ArrowFunction-in-class-body (#576) and TS-compiled CJS prelude (#619). Shave maps via helper-file pattern per DEC-WI510-S8-HELPER-FILE-MAPPING-001.",
+        "impact": "Arm A is a hand-authored string-length validation reference, not a real atom composition via the production path. Headline table marks this row [GAP] in the verdict column.",
+        "tracking_pr": "#619+#576"
+      }
+    },
+    {
+      "id": "coerce-semver",
+      "spec_path": "tasks/coerce-semver/spec.yak",
+      "spec_sha256_lf": "d22211c2f18c8a37c8c38788b38f5c80634148e0caafcd1ab37d4f4a18565c73",
+      "entry_function": "coerceSemver",
+      "arm_a_granularity_strategies": [
+        "A-fine",
+        "A-medium",
+        "A-coarse"
+      ],
+      "arm_b_n_reps": 3,
+      "arm_b_prompt": {
+        "system_prompt": "You are an expert TypeScript developer. When given a coding task, implement it in a single TypeScript file. Output only the implementation code in a ```typescript code block. Do not include explanation before or after the code block.",
+        "user_prompt_template": "Implement a TypeScript function with this signature: function coerceSemver(version: string): string | null\n\nBehavior:\nCoerce a string into a valid semver version string by extracting the first numeric semver-like pattern and normalizing it to major.minor.patch format. Returns null if no semver-like pattern is found.",
+        "prompt_sha256": "da40438c8d2a8cae123c796be86d6860fc33260274f578a086378899d8265c81"
+      },
+      "dry_run_fixture": "fixtures/coerce-semver/arm-b-response.json",
+      "directional_targets": {
+        "reachable_functions_reduction_min": 0.9,
+        "reachable_bytes_reduction_min": 0.9,
         "arm_a_unique_non_builtin_imports": 0,
         "arm_b_unique_non_builtin_imports_min": 1
       }

@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for nanoid-generate / nanoid default export.",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "nanoid-generate",
+  "_prompt_sha256": "e3b9c1670352f45e1f2df1dc017e6d23fcb7e4f7d0830b97bb7b00b1dbd56458",
+  "id": "msg_dry_nanoid_generate_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { nanoid } from 'nanoid';\n\nfunction nanoidGenerate(size?: number): string {\n  return nanoid(size);\n}\n\nexport { nanoidGenerate };\nexport default nanoidGenerate;\n```"
+    }
+  ]
+}

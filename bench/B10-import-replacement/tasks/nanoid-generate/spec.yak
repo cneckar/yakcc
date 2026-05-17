@@ -1,0 +1,18 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — nanoid@3.3.12 / nanoid (default export) / task: nanoid-generate",
+  "name": "nanoid-generate",
+  "inputs": [
+    { "name": "size", "type": "number | undefined", "description": "Optional length of the generated ID. Defaults to 21." }
+  ],
+  "outputs": [
+    { "name": "id", "type": "string", "description": "A cryptographically random URL-safe string ID of the given size." }
+  ],
+  "level": "L0",
+  "behavior": "Generate a cryptographically secure random string ID using the URL-safe alphabet (A-Za-z0-9_-). Default size is 21 characters.",
+  "guarantees": [
+    { "id": "crypto-random", "description": "Uses node:crypto for random generation." },
+    { "id": "url-safe", "description": "Output contains only URL-safe characters." },
+    { "id": "default-size-21", "description": "Default size is 21 characters when no size is given." }
+  ],
+  "errorConditions": []
+}

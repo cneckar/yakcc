@@ -1,10 +1,19 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/harness/measure-transitive-surface.mjs
 //
 // @decision DEC-IRT-B10-METRIC-001
 // @title Transitive-reachable-surface methodology
 // @status accepted
+// @decision DEC-BENCH-B10-SLICE3-CVE-METRIC-001
+// @title Promote npm-audit cve_pattern_matches to headline reporting axis (S3)
+// @status accepted
+// @rationale
+//   S3 replaces the synthetic 2-row advisories.json with a real pinned advisory DB snapshot
+//   captured via npm audit at S3-implementation date. The CVE count is now a headline column
+//   in the PR-body table alongside reachable_functions and reachable_bytes per parent issue
+//   "Secondary metrics" stanza. DB is pinned (not auto-refreshed in CI) for determinism.
+//   See plans/wi-512-s3-b10-broaden.md §6 / DEC-BENCH-B10-SLICE3-CVE-DB-PROVENANCE-001.
 // @rationale
 //   METHODOLOGY
 //   Tool: ts-morph Project with ModuleResolutionKind.NodeNext + an explicit
@@ -897,3 +906,4 @@ if (isMain) {
     process.exit(1);
   });
 }
+

@@ -1,0 +1,17 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — semver@7.8.0 / coerce / task: coerce-semver",
+  "name": "coerce-semver",
+  "inputs": [
+    { "name": "version", "type": "string", "description": "A string that may contain a semver-like version (e.g. 'v1', '1.2', '1.2.3-rc1')." }
+  ],
+  "outputs": [
+    { "name": "semver", "type": "string | null", "description": "The coerced semver string (e.g. '1.0.0'), or null if the input cannot be coerced." }
+  ],
+  "level": "L0",
+  "behavior": "Coerce a string into a valid semver version string by extracting the first numeric semver-like pattern and normalizing it to major.minor.patch format. Returns null if no semver-like pattern is found.",
+  "guarantees": [
+    { "id": "null-on-failure", "description": "Returns null rather than throwing when the input cannot be coerced." },
+    { "id": "normalized-output", "description": "Output is always in major.minor.patch format when non-null." }
+  ],
+  "errorConditions": []
+}

@@ -1,0 +1,17 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — jsonwebtoken@9.0.2 / decode / task: decode-jwt-header-claims",
+  "name": "decode-jwt-header-claims",
+  "inputs": [
+    { "name": "token", "type": "string", "description": "A compact serialization JWT string." }
+  ],
+  "outputs": [
+    { "name": "decoded", "type": "object | null", "description": "The decoded token payload and header without signature verification, or null if decoding fails." }
+  ],
+  "level": "L0",
+  "behavior": "Decode a JWT token without verifying the signature. Returns an object containing the decoded header and payload. Does not throw on invalid tokens — returns null instead.",
+  "guarantees": [
+    { "id": "no-verification", "description": "Does not verify the signature. Returns decoded content only." },
+    { "id": "null-on-failure", "description": "Returns null if the token cannot be decoded rather than throwing." }
+  ],
+  "errorConditions": []
+}

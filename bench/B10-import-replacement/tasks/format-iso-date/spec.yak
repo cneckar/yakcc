@@ -1,0 +1,17 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — date-fns@4.1.0 / formatISO / task: format-iso-date",
+  "name": "format-iso-date",
+  "inputs": [
+    { "name": "date", "type": "Date", "description": "A JavaScript Date object to format." }
+  ],
+  "outputs": [
+    { "name": "isoString", "type": "string", "description": "An ISO 8601 string representation of the date." }
+  ],
+  "level": "L0",
+  "behavior": "Format a JavaScript Date object as an ISO 8601 string with full date, time, and UTC offset components. Output format: 'YYYY-MM-DDTHH:mm:ssxxx'.",
+  "guarantees": [
+    { "id": "iso8601-output", "description": "Always produces a valid ISO 8601 extended format string." },
+    { "id": "timezone-preserved", "description": "Includes timezone offset in the output string." }
+  ],
+  "errorConditions": []
+}

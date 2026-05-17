@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for add-business-days / date-fns addDays.",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "add-business-days",
+  "_prompt_sha256": "815d2b145ce4a5138abda715f5960842ae3b5f84997bb7bbf5bacebab67193b7",
+  "id": "msg_dry_add_business_days_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { addDays } from 'date-fns';\n\nfunction addBusinessDays(date: Date, days: number): Date {\n  return addDays(date, days);\n}\n\nexport { addBusinessDays };\nexport default addBusinessDays;\n```"
+    }
+  ]
+}

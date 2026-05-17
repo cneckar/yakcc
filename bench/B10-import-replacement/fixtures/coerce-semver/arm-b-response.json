@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for coerce-semver / semver coerce.",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "coerce-semver",
+  "_prompt_sha256": "da40438c8d2a8cae123c796be86d6860fc33260274f578a086378899d8265c81",
+  "id": "msg_dry_coerce_semver_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { coerce } from 'semver';\n\nfunction coerceSemver(version: string): string | null {\n  const result = coerce(version);\n  return result ? result.version : null;\n}\n\nexport { coerceSemver };\nexport default coerceSemver;\n```"
+    }
+  ]
+}
