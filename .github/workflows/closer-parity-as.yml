@@ -26,7 +26,21 @@ on:
 
 concurrency:
   group: closer-parity-as-${{ github.ref }}
-  cancel-in-progress: true
+  # @decision DEC-CI-CLOSER-PARITY-NO-CANCEL-001
+  # @title closer-parity-as does NOT cancel in-progress runs
+  # @status accepted
+  # @rationale Pre-WI-612: cancel-in-progress=true killed every push:main
+  # run in active-merge sessions before the verified-marker cache could
+  # populate. Observed 2026-05-16: 5 consecutive runs cancelled (HEADs
+  # 7eea48b / e49c885 / b5dff3a / 60e66e9 / 772b0c2), each preempted by
+  # the next merge within minutes. Off PR critical path (this workflow
+  # is push:main + workflow_dispatch only, per DEC-CI-CLOSER-PARITY-AS-WORKFLOW-001)
+  # so concurrent runs are acceptable in cost; the benefit is that any
+  # one run completing fills the content-keyed verified-marker cache
+  # (DEC-AS-COMPILE-CACHE-001) so subsequent runs short-circuit.
+  # Mirrors DEC-CI-TEST-ADVISORY-SEPARATE-WORKFLOW-001 (PR #582) / WI-596
+  # (PR #605) pattern for pr-ci-test-advisory.yml. Cross-ref #612.
+  cancel-in-progress: false
 
 jobs:
   parity:
