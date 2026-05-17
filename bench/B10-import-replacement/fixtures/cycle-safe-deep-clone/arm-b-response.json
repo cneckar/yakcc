@@ -1,0 +1,25 @@
+{
+  "_fixture_note": "Canned fixture for cycle-safe-deep-clone / lodash cloneDeep.",
+  "_fixture_provenance": "Hand-authored representative fixture.",
+  "_arm": "B",
+  "_task": "cycle-safe-deep-clone",
+  "_prompt_sha256": "bb20f7e203ac453bf4328a198ab854c9532e80387a37c49e19f659d233a8f4e8",
+  "id": "msg_dry_cycle_safe_deep_clone_arm_b_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-6",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "```typescript\nimport { cloneDeep } from 'lodash';\n\nfunction cycleSafeDeepClone(value: unknown): unknown {\n  return cloneDeep(value);\n}\n\nexport { cycleSafeDeepClone };\nexport default cycleSafeDeepClone;\n```"
+    }
+  ]
+}

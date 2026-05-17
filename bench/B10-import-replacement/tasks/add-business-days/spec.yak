@@ -1,0 +1,18 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — date-fns@4.1.0 / addDays / task: add-business-days",
+  "name": "add-business-days",
+  "inputs": [
+    { "name": "date", "type": "Date", "description": "The start date." },
+    { "name": "days", "type": "number", "description": "Number of days to add (may be negative)." }
+  ],
+  "outputs": [
+    { "name": "result", "type": "Date", "description": "A new Date with the given number of days added." }
+  ],
+  "level": "L0",
+  "behavior": "Add a given number of days to a date and return a new Date object. Does not modify the original date.",
+  "guarantees": [
+    { "id": "immutable", "description": "Returns a new Date; does not mutate the input date." },
+    { "id": "negative-days", "description": "Negative values subtract days." }
+  ],
+  "errorConditions": []
+}

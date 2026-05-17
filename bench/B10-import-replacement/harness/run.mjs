@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/harness/run.mjs
 //
@@ -40,6 +40,24 @@
 //   re-run scenarios. Enforced via BudgetExceededError before each API call.
 //   Dry-run (--dry-run) is the CI default and costs $0.
 //   triad plan OD-4 defers a larger cost cap to Slice 2 (DEC-BENCH-B10-SLICE2-COST-001).
+//
+// @decision DEC-BENCH-B10-SLICE2-COST-001
+// @title Slice 2 cost cap = $25 USD (same constant value as Slice 1; DEC annotation added)
+// @status accepted
+// @rationale
+//   Slice 2 adopts the same $25 cost cap as Slice 1 (COST_CAP_USD = 25 unchanged).
+//   OD-4 resolved per plans/wi-512-s2-b10-demo-task.md S2.6. Matches B4
+//   DEC-V0-B4-SLICE2-COST-CEILING-004 $25 reserve for B10 slot.
+//   A single live run for one task with N=3 reps at ~$0.01/rep is ~$0.03.
+//   The cap is a structural safety rail for re-run scenarios.
+//
+// @decision DEC-BENCH-B10-SLICE3-COST-001
+// @title Slice 3 cost cap = $25 USD (unchanged constant value from S1/S2; DEC reference appended)
+// @status accepted
+// @rationale
+//   15 tasks x N=3 reps x ~$0.01/rep ≈ $0.45. The $25 cap is a structural safety rail.
+//   Matches B4 DEC-V0-B4-SLICE2-COST-CEILING-004 $25 reserve. Constant value unchanged.
+//   See plans/wi-512-s3-b10-broaden.md §5.2.
 //
 // Flags:
 //   --dry-run           Use B9 fixture responses (no API calls)
@@ -158,6 +176,10 @@ const IS_SMOKE = TASK_IDS.every((t) => B9_SMOKE_TASK_IDS.includes(t));
 
 const TIMESTAMP   = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const ARTIFACT_DIR = join(REPO_ROOT, "tmp", "B10-import-replacement");
+// Scratch emits (Arm B .mjs files extracted from API responses) go inside the bench directory
+// so the resolver can find bench-local node_modules (validator, etc.) via the normal upward walk.
+// (R-S2-3 fix: resolver uses findPackageRoot() which walks up from emit dir to find node_modules.)
+const BENCH_SCRATCH_DIR = join(BENCH_B10_ROOT, "tmp", "scratch");
 
 function defaultOutputPath(artifactSha) {
   if (DRY_RUN && IS_SMOKE) {
@@ -241,11 +263,73 @@ async function measureTask(taskId, harness, rollingCostUsd) {
                           behavior:  "Sum the digits of a non-negative integer string." },
     "even-only-filter": { signature: "function evenOnlyFilter(input: readonly number[]): readonly number[]",
                           behavior:  "Return only even integers from the array." },
+    // DEC-BENCH-B10-SLICE2-DEMO-LIBRARY-001 -- Slice 2 import-heavy demo task
+    "validate-rfc5321-email": {
+      signature: "function validateRfc5321Email(input: string): boolean",
+      behavior:  "Validate whether a string is a valid RFC 5321 email address. Returns true iff the input parses as a single mailbox per RFC 5321 S4.1.2 (local-part '@' domain), with no display name, no UTF-8 local parts, and a TLD required on the domain part.",
+    },
+    // DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 -- 14 new S3 tasks
+    "verify-jwt-hs256": {
+      signature: "function verifyJwtHs256(token: string, secret: string): unknown",
+      behavior:  "Verify a JWT token signed with HS256 (HMAC-SHA256). Returns the decoded payload if the token signature is valid and the algorithm is HS256. Throws if the token is invalid, expired, or signed with a different algorithm.",
+    },
+    "decode-jwt-header-claims": {
+      signature: "function decodeJwtHeaderClaims(token: string): object | null",
+      behavior:  "Decode a JWT token without verifying the signature. Returns an object containing the decoded header and payload. Returns null if the token cannot be decoded.",
+    },
+    "rate-limit-sliding-window": {
+      signature: "function rateLimitSlidingWindow(fn: Function, limit: number, interval: number): Function",
+      behavior:  "Create a throttled version of an async function that limits it to at most limit calls per interval milliseconds.",
+    },
+    "parse-rfc3339-datetime": {
+      signature: "function parseRfc3339Datetime(dateString: string): Date",
+      behavior:  "Parse an ISO 8601 / RFC 3339 date-time string and return a JavaScript Date object.",
+    },
+    "format-iso-date": {
+      signature: "function formatIsoDate(date: Date): string",
+      behavior:  "Format a JavaScript Date object as an ISO 8601 string with full date, time, and UTC offset components.",
+    },
+    "add-business-days": {
+      signature: "function addBusinessDays(date: Date, days: number): Date",
+      behavior:  "Add a given number of days to a date and return a new Date object. Does not modify the original date.",
+    },
+    "cycle-safe-deep-clone": {
+      signature: "function cycleSafeDeepClone(value: unknown): unknown",
+      behavior:  "Recursively deep clone a JavaScript value. Handles objects, arrays, primitives, Date objects, RegExp, Map, Set, and circular references.",
+    },
+    "semver-range-satisfies": {
+      signature: "function semverRangeSatisfies(version: string, range: string): boolean",
+      behavior:  "Check whether a semver version string satisfies a semver range expression.",
+    },
+    "bcrypt-verify-constant-time": {
+      signature: "async function bcryptVerifyConstantTime(plaintext: string, hash: string): Promise<boolean>",
+      behavior:  "Verify that a plaintext password matches a bcrypt hash using constant-time comparison. [engine-gap-disclosed #585]",
+    },
+    "uuid-v4-generate-validate": {
+      signature: "function uuidV4GenerateValidate(input?: string): string | boolean",
+      behavior:  "Generate a UUID v4 string (when called with no argument) or validate whether a given string is a valid UUID.",
+    },
+    "nanoid-generate": {
+      signature: "function nanoidGenerate(size?: number): string",
+      behavior:  "Generate a cryptographically secure random string ID using the URL-safe alphabet. Default size is 21 characters.",
+    },
+    "debounce-with-flush-cancel": {
+      signature: "function debounceWithFlushCancel(fn: Function, wait: number, options?: object): Function & { flush: Function; cancel: Function }",
+      behavior:  "Create a debounced function that delays invoking fn until after wait milliseconds. The returned function has .flush() and .cancel() methods.",
+    },
+    "validate-string-min-max": {
+      signature: "function validateStringMinMax(input: unknown, min: number, max: number): { success: boolean; error?: string }",
+      behavior:  "Validate that the input is a string whose length is between min and max (inclusive). [engine-gap-disclosed #619+#576]",
+    },
+    "coerce-semver": {
+      signature: "function coerceSemver(version: string): string | null",
+      behavior:  "Coerce a string into a valid semver version string by extracting the first numeric semver-like pattern. Returns null if no pattern is found.",
+    },
   };
   const taskSpec = INLINE_SPECS[taskId] ?? { signature: `function ${taskId}(input: unknown): unknown`, behavior: taskId };
 
   if (!NO_NETWORK) {
-    const scratchDir = join(ARTIFACT_DIR, "scratch", taskId);
+    const scratchDir = join(BENCH_SCRATCH_DIR, taskId);
     for (let rep = 0; rep < nReps; rep++) {
       if (rollingCostUsd.value >= COST_CAP_USD) {
         throw new BudgetExceededError(rollingCostUsd.value, COST_CAP_USD);
@@ -472,3 +556,4 @@ main().catch((err) => {
   if (process.env.DEBUG) console.error(err.stack);
   process.exit(1);
 });
+

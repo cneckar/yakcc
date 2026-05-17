@@ -1,0 +1,17 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — uuid@11.1.1 / v4 + validate / task: uuid-v4-generate-validate",
+  "name": "uuid-v4-generate-validate",
+  "inputs": [
+    { "name": "input", "type": "string | undefined", "description": "Optional string to validate as UUID. If undefined, generates a new UUID v4." }
+  ],
+  "outputs": [
+    { "name": "result", "type": "string | boolean", "description": "If input is undefined: a new UUID v4 string. If input is a string: true iff it is a valid UUID." }
+  ],
+  "level": "L0",
+  "behavior": "Generate a UUID v4 string (when called with no argument) or validate whether a given string is a valid UUID (when called with a string argument). UUID v4 uses random bytes from the crypto module.",
+  "guarantees": [
+    { "id": "uuid-v4-format", "description": "Generated UUIDs conform to RFC 4122 UUID v4 format." },
+    { "id": "crypto-random", "description": "Generation uses cryptographically secure random values." }
+  ],
+  "errorConditions": []
+}

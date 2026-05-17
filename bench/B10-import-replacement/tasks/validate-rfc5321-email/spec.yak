@@ -1,0 +1,19 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE2-DEMO-LIBRARY-001 — demo library: validator@13.15.35 / isEmail / task: validate-rfc5321-email",
+  "name": "validate-rfc5321-email",
+  "inputs": [
+    { "name": "input", "type": "string",
+      "description": "An RFC 5321 (SMTP envelope) email address string." }
+  ],
+  "outputs": [
+    { "name": "result", "type": "boolean",
+      "description": "True iff the input is a valid RFC 5321 email address." }
+  ],
+  "level": "L0",
+  "behavior": "Validate whether a string is a valid RFC 5321 email address. Returns true iff the input parses as a single mailbox per RFC 5321 §4.1.2 (local-part '@' domain), with no display name, no UTF-8 local parts, and a TLD required on the domain part.",
+  "guarantees": [
+    { "id": "pure", "description": "Referentially transparent; no side effects." },
+    { "id": "boolean-output", "description": "Returns boolean true/false; never throws on input shape." }
+  ],
+  "errorConditions": []
+}

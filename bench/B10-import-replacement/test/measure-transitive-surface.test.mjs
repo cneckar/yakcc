@@ -287,3 +287,81 @@ describe("T11 npm-audit secondary metric", () => {
     assert.equal(match.cve, "CVE-2024-99999", `expected CVE-2024-99999, got ${match.cve}`);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// T-CVE-DB-1: fixtures/npm-audit-db/advisories.json is the real pinned snapshot
+//
+// @decision DEC-BENCH-B10-SLICE3-CVE-METRIC-001
+// @title S3 replaces synthetic 2-row advisory DB with real pinned snapshot
+// @status accepted
+// @rationale
+//   S3 requirement: "fixtures/npm-audit-db/advisories.json is the real pinned snapshot
+//   (NOT the S1 2-row synthetic placeholder); contains entries for the 11 covered packages
+//   OR cve_pattern_matches == 0 is independently verifiable from npm audit."
+//   This test verifies the DB was regenerated (not stub-edited) by checking:
+//   - It is NOT the synthetic 2-row placeholder (no 'vuln-pkg' or 'other-pkg')
+//   - It contains at least 1 real advisory with a GHSA ID
+//   - All entries have package_name, vulnerable_versions, severity, title fields
+//   - lodash is present (the only package with known advisories as of 2026-05-17)
+//   Cross-references: plans/wi-512-s3-b10-broaden.md §8.1 T-CVE-DB-1
+// ---------------------------------------------------------------------------
+import { readFileSync, existsSync } from "node:fs";
+
+const CVE_DB_PATH = join(__dirname, "..", "fixtures", "npm-audit-db", "advisories.json");
+
+describe("T-CVE-DB-1: fixtures/npm-audit-db/advisories.json is real pinned snapshot", () => {
+  let db;
+
+  it("advisories.json exists", () => {
+    assert.ok(existsSync(CVE_DB_PATH), "missing: " + CVE_DB_PATH);
+    db = JSON.parse(readFileSync(CVE_DB_PATH, "utf8"));
+    assert.ok(Array.isArray(db), "advisories.json must be an array");
+  });
+
+  it("does NOT contain synthetic placeholder packages (vuln-pkg, other-pkg)", () => {
+    db = db ?? JSON.parse(readFileSync(CVE_DB_PATH, "utf8"));
+    const syntheticPkgs = db.filter(
+      (e) => e.package_name === "vuln-pkg" || e.package_name === "other-pkg"
+    );
+    assert.deepEqual(
+      syntheticPkgs,
+      [],
+      "advisories.json still contains synthetic placeholder packages -- was not replaced"
+    );
+  });
+
+  it("all entries have required fields: id, package_name, vulnerable_versions, severity, title", () => {
+    db = db ?? JSON.parse(readFileSync(CVE_DB_PATH, "utf8"));
+    for (const entry of db) {
+      assert.ok(typeof entry.id === "string" && entry.id.length > 0,
+        "entry missing id: " + JSON.stringify(entry).slice(0, 80));
+      assert.ok(typeof entry.package_name === "string" && entry.package_name.length > 0,
+        "entry missing package_name: " + entry.id);
+      assert.ok(typeof entry.vulnerable_versions === "string" && entry.vulnerable_versions.length > 0,
+        "entry missing vulnerable_versions: " + entry.id);
+      assert.ok(typeof entry.severity === "string",
+        "entry missing severity: " + entry.id);
+      assert.ok(typeof entry.title === "string" && entry.title.length > 0,
+        "entry missing title: " + entry.id);
+    }
+  });
+
+  it("contains at least one real GHSA advisory (id starts with GHSA-)", () => {
+    db = db ?? JSON.parse(readFileSync(CVE_DB_PATH, "utf8"));
+    const realAdvisories = db.filter((e) => e.id && e.id.startsWith("GHSA-"));
+    assert.ok(
+      realAdvisories.length >= 1,
+      "Expected at least 1 real GHSA advisory, found: " + db.map((e) => e.id).join(", ")
+    );
+  });
+
+  it("lodash is present in the DB (lodash@4.17.21 has known advisories)", () => {
+    db = db ?? JSON.parse(readFileSync(CVE_DB_PATH, "utf8"));
+    const lodashEntries = db.filter((e) => e.package_name === "lodash");
+    assert.ok(
+      lodashEntries.length >= 1,
+      "Expected lodash advisory entries in real pinned DB (npm audit shows 3 for lodash@4.17.21)"
+    );
+  });
+});

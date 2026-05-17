@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "@yakcc-bench/b10-import-replacement",
   "version": "0.0.1",
   "private": true,
@@ -9,10 +9,11 @@
     "@anthropic-ai/sdk is a bench-local dep — it MUST NOT appear in the root package.json.",
     "Install bench deps: pnpm --dir bench/B10-import-replacement install",
     "Dry-run mode works without API calls. Real-run requires ANTHROPIC_API_KEY and pnpm install.",
-    "ts-morph: required for transitive-surface resolver. Install via: pnpm --dir bench/B10-import-replacement install"
+    "ts-morph: required for transitive-surface resolver. Install via: pnpm --dir bench/B10-import-replacement install",
+    "validator: bench-local dep per DEC-BENCH-B10-SLICE2-VALIDATOR-DEP-001 -- NOT in root package.json or pnpm-workspace.yaml"
   ],
   "scripts": {
-    "test": "node --test test/measure-transitive-surface.test.mjs test/run.test.mjs",
+    "test": "node --test test/measure-transitive-surface.test.mjs test/run.test.mjs test/classify-arm-b.test.mjs test/validate-rfc5321-email.test.mjs test/verify-jwt-hs256.test.mjs test/decode-jwt-header-claims.test.mjs test/rate-limit-sliding-window.test.mjs test/parse-rfc3339-datetime.test.mjs test/format-iso-date.test.mjs test/add-business-days.test.mjs test/cycle-safe-deep-clone.test.mjs test/semver-range-satisfies.test.mjs test/bcrypt-verify-constant-time.test.mjs test/uuid-v4-generate-validate.test.mjs test/nanoid-generate.test.mjs test/debounce-with-flush-cancel.test.mjs test/validate-string-min-max.test.mjs test/coerce-semver.test.mjs",
     "run:dry": "node harness/run.mjs --dry-run",
     "run:no-network": "node harness/run.mjs --no-network",
     "run:live": "node harness/run.mjs"
@@ -20,7 +21,18 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
     "ts-morph": "^23.0.0",
-    "fast-check": "^3.22.0"
+    "fast-check": "^3.22.0",
+    "validator": "^13.15.35",
+    "semver": "7.8.0",
+    "uuid": "11.1.1",
+    "nanoid": "3.3.12",
+    "date-fns": "4.1.0",
+    "jsonwebtoken": "9.0.2",
+    "bcryptjs": "2.4.3",
+    "lodash": "4.17.21",
+    "zod": "3.25.76",
+    "p-throttle": "8.1.0",
+    "ms": "2.1.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

@@ -171,7 +171,10 @@
  *     enumeration, same shape on every pass.
  */
 
+import { blake3 } from "@noble/hashes/blake3";
+import { bytesToHex } from "@noble/hashes/utils";
 import { canonicalAstHash } from "@yakcc/contracts";
+import type { CanonicalAstHash } from "@yakcc/contracts";
 import { type Node, Project, ScriptKind, SyntaxKind } from "ts-morph";
 import type { ShaveRegistryView } from "../types.js";
 import { isAtom } from "./atom-test.js";
@@ -385,10 +388,41 @@ function safeCanonicalAstHash(
   // Last resort: try standalone first; if it fails use full source + range.
   // Full source always contains the original binding scopes so it is valid TS;
   // emitCanonical targets only the node's range, keeping the hash context-free.
+  //
+  // @decision DEC-WI585-SAFE-HASH-FALLBACK-CHAIN-001
+  // title: safeCanonicalAstHash guards against TypeError from canonical-ast collectLocalRenames
+  // status: decided
+  // rationale:
+  //   When bcryptjs dist/bcrypt.js (JavaScript parsed as TypeScript with ScriptKind.TS)
+  //   is decomposed, canonicalAstHash(fullSource, { start, end }) throws a TypeError
+  //   (not a CanonicalAstParseError) because ts-morph@28.0.0's ParameterDeclaration
+  //   .getNameNode() returns undefined for certain JavaScript function parameter shapes,
+  //   and canonical-ast.ts::collectLocalRenames() accesses .kind on that undefined node
+  //   (contracts/src/canonical-ast.ts:238 — forbidden file, cannot modify in this WI).
+  //   The fix is a third fallback that catches any Error (not just CanonicalAstParseError)
+  //   from the full-source call and falls back to a fragment-only standalone hash.
+  //   This is valid because: (a) the fragment hash is deterministic on content; (b) the
+  //   full-source hash's purpose is to provide binding-scope context — when it fails,
+  //   the fragment hash is the best available approximation; (c) "best effort" is the
+  //   correct policy for JS-parsed-as-TS content (DEC-WI510-BEST-EFFORT-MODULE-DEGRADATION-001).
+  //   Consequence: atoms from JS-parsed-as-TS files get a content-based hash without
+  //   local-rename normalization (since collectLocalRenames also fails). The hash is
+  //   still stable and deterministic across passes — WI-V2-09 bootstrap invariant holds.
+  //   Compatible with DEC-SLICER-FN-SCOPED-CF-001: the wrap path is already tried above;
+  //   this is only the final-final fallback for pathological JS-as-TS inputs.
   try {
     return canonicalAstHash(nodeSource);
   } catch {
-    return canonicalAstHash(fullSource, { start, end });
+    try {
+      return canonicalAstHash(fullSource, { start, end });
+    } catch {
+      // Full-source parse also failed (e.g. ts-morph TypeError on JS-as-TS parameter nodes
+      // in collectLocalRenames — see DEC-WI585-SAFE-HASH-FALLBACK-CHAIN-001).
+      // Last resort: raw BLAKE3 of nodeSource bytes. No AST normalization (no rename pass),
+      // but deterministic on content — satisfies WI-V2-09 byte-identical bootstrap invariant.
+      const TEXT_ENC = new TextEncoder();
+      return bytesToHex(blake3(TEXT_ENC.encode(nodeSource))) as CanonicalAstHash;
+    }
   }
 }
 
@@ -907,6 +941,47 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
       }
     }
     return result;
+  }
+
+  // ParenthesizedExpression: a pure syntactic wrapper `(expr)` — transparent
+  // for decomposition purposes. Descend into the inner expression.
+  //
+  // @decision DEC-WI585-PARENTHESIZED-EXPRESSION-UNWRAP-001
+  // title: ParenthesizedExpression is a transparent wrapper in decomposableChildrenOf
+  // status: decided
+  // rationale:
+  //   UMD IIFE patterns (and other grouped expressions) produce a top-level
+  //   ExpressionStatement whose expression is a ParenthesizedExpression wrapping
+  //   the real CallExpression. For example, bcryptjs dist/bcrypt.js:
+  //     (function(global, factory) { ... }(this, function() { var bcrypt = {}; ... }))
+  //   The existing ExpressionStatement handler descends into the expression, which
+  //   is the ParenthesizedExpression. Without this branch, decomposableChildrenOf
+  //   returns [] for ParenthesizedExpression, causing DidNotReachAtomError (WI-585).
+  //   Fix: unwrap ParenthesizedExpression to its inner expression so the recursion
+  //   continues into the CallExpression, which is already handled. This is a
+  //   strictly additive, transparent-passthrough extension — identically to how
+  //   LabeledStatement was added (same rationale: pure structural wrapper with no
+  //   decomposable behavior of its own). No existing passing tests are affected.
+  // alternatives:
+  //   A. Add IIFE special-casing to module-graph.ts::shavePackage — rejected;
+  //      that would be a parallel-authority violation per DEC-WI585-NO-EXTRACT-IIFE-SPECIAL-CASE-001.
+  //   B. Handle ParenthesizedExpression in unwrapCalleeToDecomposable — rejected;
+  //      that helper is called only from the CallExpression branch, not the
+  //      ExpressionStatement → ParenthesizedExpression path. Adding it there would
+  //      silently skip the outer paren-wrapped expression at the statement level.
+  //   C. Classify ParenthesizedExpression as always-atomic — rejected;
+  //      the inner expression may be a large non-atomic CallExpression (the IIFE body);
+  //      forcing it to atom would prevent valid sub-decomposition.
+  // consequences:
+  //   - bcryptjs dist/bcrypt.js (UMD IIFE) decomposes; externalSpecifiers includes
+  //     'crypto'; corpus rows get non-null expectedAtom (DEC-WI585-CORPUS-MERKLE-ROOT-CAPTURE-001).
+  //   - Any other package using the top-level `(expr)` shape also decomposes correctly.
+  //   - Recursion depth increases by 1 for paren-wrapped expressions; still within
+  //     DEFAULT_MAX_DEPTH=24 for any real-world code (the paren adds at most 1 level).
+  //   - Compatible with WI-V2-09 byte-identical bootstrap: deterministic single-child descent.
+  if (kind === SyntaxKind.ParenthesizedExpression) {
+    const paren = node as Node & { getExpression(): Node };
+    return [paren.getExpression()];
   }
 
   // ExpressionStatement: the statement is a thin wrapper — the expression is

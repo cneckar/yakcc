@@ -1,0 +1,19 @@
+{
+  "$comment": "DEC-BENCH-B10-SLICE3-TASK-CORPUS-SELECTION-001 — lodash@4.17.21 / debounce / task: debounce-with-flush-cancel",
+  "name": "debounce-with-flush-cancel",
+  "inputs": [
+    { "name": "fn", "type": "function", "description": "The function to debounce." },
+    { "name": "wait", "type": "number", "description": "Milliseconds to wait before invoking." },
+    { "name": "options", "type": "object | undefined", "description": "Optional options: { leading, trailing, maxWait }." }
+  ],
+  "outputs": [
+    { "name": "debounced", "type": "function", "description": "A debounced function with .flush() and .cancel() methods." }
+  ],
+  "level": "L0",
+  "behavior": "Create a debounced function that delays invoking `fn` until after `wait` milliseconds have elapsed since the last call. The returned function has `.flush()` (invoke immediately) and `.cancel()` (cancel pending invocation) methods.",
+  "guarantees": [
+    { "id": "trailing-edge", "description": "By default invokes on the trailing edge of the wait timeout." },
+    { "id": "flush-cancel", "description": "The returned function has .flush() and .cancel() methods." }
+  ],
+  "errorConditions": []
+}
