@@ -1,0 +1,75 @@
+{
+  "name": "json-schema-validator",
+  "inputs": [
+    {
+      "name": "schema",
+      "type": "boolean | { readonly [k: string]: unknown }",
+      "description": "A JSON Schema 2020-12 schema (boolean or object)."
+    },
+    {
+      "name": "instance",
+      "type": "null | boolean | number | string | readonly unknown[] | { readonly [k: string]: unknown }",
+      "description": "The JSON value to validate against the schema."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "{ valid: boolean; errors: readonly { instancePath: string; schemaPath: string; keyword: string; message: string }[] }",
+      "description": "Validation result: valid=true if the instance satisfies the schema, plus structured error list."
+    }
+  ],
+  "preconditions": [],
+  "postconditions": [],
+  "invariants": [],
+  "effects": [],
+  "level": "L2",
+  "behavior": "Validate a JSON value against a JSON Schema 2020-12 schema. Returns { valid, errors } where valid is true iff the instance satisfies all constraints imposed by the schema. Supports the full 2020-12 vocabulary: type, const, enum, numeric/string/array/object keywords, allOf/anyOf/oneOf/not, if/then/else, $ref/$defs/$anchor/$dynamicRef/$dynamicAnchor, dependentRequired, dependentSchemas, unevaluatedProperties, unevaluatedItems.",
+  "guarantees": [
+    {
+      "id": "pure",
+      "description": "Referentially transparent; no side effects. Result is deterministic for a given (schema, instance) pair."
+    },
+    {
+      "id": "false-schema",
+      "description": "Boolean schema `false` always fails validation; boolean schema `true` always passes."
+    },
+    {
+      "id": "ref-resolution",
+      "description": "$ref values of the form #, #/path/to/def, or #anchorName are resolved against the root schema's $defs and $anchor declarations."
+    },
+    {
+      "id": "annotation-tracking",
+      "description": "unevaluatedProperties and unevaluatedItems correctly track which properties/items were evaluated by sibling and applicator keywords."
+    }
+  ],
+  "errorConditions": [],
+  "nonFunctional": {
+    "time": "O(n * d) where n is instance size and d is schema depth",
+    "space": "O(d) for recursion stack plus O(p) for property annotation sets",
+    "purity": "pure",
+    "threadSafety": "safe"
+  },
+  "propertyTests": [
+    {
+      "id": "true-schema-always-valid",
+      "description": "validate(true, x).valid === true for any JSON value x"
+    },
+    {
+      "id": "false-schema-never-valid",
+      "description": "validate(false, x).valid === false for any JSON value x"
+    },
+    {
+      "id": "type-string-rejects-numbers",
+      "description": "validate({ type: 'string' }, 42).valid === false"
+    },
+    {
+      "id": "required-missing-fails",
+      "description": "validate({ required: ['x'] }, {}).valid === false"
+    },
+    {
+      "id": "allof-all-must-pass",
+      "description": "validate({ allOf: [{ type: 'string' }, { minLength: 3 }] }, 'ab').valid === false"
+    }
+  ]
+}
