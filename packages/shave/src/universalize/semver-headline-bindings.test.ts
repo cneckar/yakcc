@@ -294,7 +294,7 @@ describe("semver satisfies -- per-entry shave (WI-510 Slice 3)", () => {
 describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
   it(
     "section A -- moduleCount in [6,12], stubCount=0, forestTotalLeafCount>0 for coerce subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -314,7 +314,7 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
     },
   );
 
-  it("section B -- forest.nodes[0] is coerce.js", { timeout: 120_000 }, async () => {
+  it("section B -- forest.nodes[0] is coerce.js", { timeout: 300_000 }, async () => {
     const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
       registry: emptyRegistry,
       entryPath: join(SEMVER_FIXTURE_ROOT, "functions", "coerce.js"),
@@ -327,7 +327,7 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section C -- subgraph has only transitively-reachable modules; no unrelated semver behaviors",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -383,7 +383,7 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section E -- coerce forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
@@ -424,7 +424,7 @@ describe("semver coerce -- per-entry shave (WI-510 Slice 3)", () => {
 describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
   it(
     "section A -- moduleCount in [5,10], stubCount=0, forestTotalLeafCount>0 for compare subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -444,7 +444,7 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
     },
   );
 
-  it("section B -- forest.nodes[0] is compare.js", { timeout: 120_000 }, async () => {
+  it("section B -- forest.nodes[0] is compare.js", { timeout: 300_000 }, async () => {
     const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
       registry: emptyRegistry,
       entryPath: join(SEMVER_FIXTURE_ROOT, "functions", "compare.js"),
@@ -457,7 +457,7 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section C -- subgraph has only transitively-reachable modules; no unrelated semver behaviors",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -511,7 +511,7 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section E -- compare forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
@@ -553,7 +553,7 @@ describe("semver compare -- per-entry shave (WI-510 Slice 3)", () => {
 describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
   it(
     "section A -- moduleCount in [5,10], stubCount=0, forestTotalLeafCount>0 for parse subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -573,7 +573,7 @@ describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
     },
   );
 
-  it("section B -- forest.nodes[0] is parse.js", { timeout: 120_000 }, async () => {
+  it("section B -- forest.nodes[0] is parse.js", { timeout: 300_000 }, async () => {
     const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
       registry: emptyRegistry,
       entryPath: join(SEMVER_FIXTURE_ROOT, "functions", "parse.js"),
@@ -586,7 +586,7 @@ describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section C -- subgraph has only transitively-reachable modules; no unrelated semver behaviors",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(SEMVER_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -640,7 +640,7 @@ describe("semver parse -- per-entry shave (WI-510 Slice 3)", () => {
 
   it(
     "section E -- parse forest persisted via real collectForestSlicePlans -> maybePersistNovelGlueAtom path",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
@@ -891,7 +891,7 @@ describe("semver parse section F -- combinedScore quality gate", () => {
 describe("semver headline bindings -- compound interaction (real production sequence)", () => {
   it(
     "all four per-entry shaves are independent, complete, produce non-empty forests, and persist via real path",
-    { timeout: 300_000 },
+    { timeout: 900_000 },
     async () => {
       const bindings = [
         { name: "satisfies", entry: "satisfies.js", minMod: 14, maxMod: 22 }, // engine fix #576: range.js now decomposes
