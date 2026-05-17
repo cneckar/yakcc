@@ -41,6 +41,16 @@
 //   Dry-run (--dry-run) is the CI default and costs $0.
 //   triad plan OD-4 defers a larger cost cap to Slice 2 (DEC-BENCH-B10-SLICE2-COST-001).
 //
+// @decision DEC-BENCH-B10-SLICE2-COST-001
+// @title Slice 2 cost cap = $25 USD (same constant value as Slice 1; DEC annotation added)
+// @status accepted
+// @rationale
+//   Slice 2 adopts the same $25 cost cap as Slice 1 (COST_CAP_USD = 25 unchanged).
+//   OD-4 resolved per plans/wi-512-s2-b10-demo-task.md S2.6. Matches B4
+//   DEC-V0-B4-SLICE2-COST-CEILING-004 $25 reserve for B10 slot.
+//   A single live run for one task with N=3 reps at ~$0.01/rep is ~$0.03.
+//   The cap is a structural safety rail for re-run scenarios.
+//
 // Flags:
 //   --dry-run           Use B9 fixture responses (no API calls)
 //   --no-network        Skip Arm B entirely
@@ -158,6 +168,10 @@ const IS_SMOKE = TASK_IDS.every((t) => B9_SMOKE_TASK_IDS.includes(t));
 
 const TIMESTAMP   = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const ARTIFACT_DIR = join(REPO_ROOT, "tmp", "B10-import-replacement");
+// Scratch emits (Arm B .mjs files extracted from API responses) go inside the bench directory
+// so the resolver can find bench-local node_modules (validator, etc.) via the normal upward walk.
+// (R-S2-3 fix: resolver uses findPackageRoot() which walks up from emit dir to find node_modules.)
+const BENCH_SCRATCH_DIR = join(BENCH_B10_ROOT, "tmp", "scratch");
 
 function defaultOutputPath(artifactSha) {
   if (DRY_RUN && IS_SMOKE) {
@@ -241,11 +255,16 @@ async function measureTask(taskId, harness, rollingCostUsd) {
                           behavior:  "Sum the digits of a non-negative integer string." },
     "even-only-filter": { signature: "function evenOnlyFilter(input: readonly number[]): readonly number[]",
                           behavior:  "Return only even integers from the array." },
+    // DEC-BENCH-B10-SLICE2-DEMO-LIBRARY-001 -- Slice 2 import-heavy demo task
+    "validate-rfc5321-email": {
+      signature: "function validateRfc5321Email(input: string): boolean",
+      behavior:  "Validate whether a string is a valid RFC 5321 email address. Returns true iff the input parses as a single mailbox per RFC 5321 S4.1.2 (local-part '@' domain), with no display name, no UTF-8 local parts, and a TLD required on the domain part.",
+    },
   };
   const taskSpec = INLINE_SPECS[taskId] ?? { signature: `function ${taskId}(input: unknown): unknown`, behavior: taskId };
 
   if (!NO_NETWORK) {
-    const scratchDir = join(ARTIFACT_DIR, "scratch", taskId);
+    const scratchDir = join(BENCH_SCRATCH_DIR, taskId);
     for (let rep = 0; rep < nReps; rep++) {
       if (rollingCostUsd.value >= COST_CAP_USD) {
         throw new BudgetExceededError(rollingCostUsd.value, COST_CAP_USD);
