@@ -1066,6 +1066,28 @@
       "expectedAtom": null,
       "expectedAtomName": "zod-array-each",
       "rationale": "Behavior-only query for zod/array-each (WI-510 Slice 8). ENGINE-GAP-MAPPED: array-each source lives in v3/types.cjs which the engine cannot atomize (DEC-WI510-S8-HELPER-FILE-MAPPING-001). No viable Group B helper file exists: standard-schema.cjs is a 77-byte stub; en.cjs also stubs (moduleCount=0, stubCount=1) due to a module-level arrow function extending issue #576 beyond class bodies (DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002). array-each has no atom; this row is a pure behavior-only marker for future engine-fix attribution. When the engine recovers atoms from v3/types.cjs or a suitable helper, this row rationale will be updated to reference the new atom."
+    },
+    {
+      "id": "cat1-p-limit-sliding-window-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Run a configurable maximum number of promise-returning or async functions concurrently using a queued task limiter, with dynamic in-flight count tracking and the ability to clear pending tasks"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "p-limit-sliding-window",
+      "rationale": "Behavior-only query for p-limit/sliding-window (WI-510 Slice 9 — the FINAL slice; closes #510). Atom is the package's single-file index.js entry; p-limit is pure-ESM hand-authored (Sindre Sorhus) and decomposes cleanly (DEC-WI510-S9-ENGINE-GAPS-NOT-EXERCISED-001). p-limit uses yocto-queue as a foreign leaf (DEC-WI510-S9-FOREIGN-LEAF-YOCTO-QUEUE-001); externalSpecifiers=[\"yocto-queue\"]. combinedScore fixed floor 0.70 per DEC-WI510-S9-COMBINED-SCORE-FIXED-FLOOR-001 (the binding-bearing source is in the shaved atom directly, unlike S8 engine-gap-mapped helper files). First WI-510 production-fixture exercise of extractImportSpecifiers ESM path (DEC-WI510-S9-ESM-IMPORT-EXTRACTOR-FIRST-PRODUCTION-USE-001)."
+    },
+    {
+      "id": "cat1-p-throttle-sliding-window-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Throttle a promise-returning or async function so it executes at most a configurable number of times per interval using a sliding time window, with optional strict-mode time-queue, per-request weighting, and AbortSignal-aware cancellation"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "p-throttle-sliding-window",
+      "rationale": "Behavior-only query for p-throttle/sliding-window (WI-510 Slice 9 — the FINAL slice; closes #510). Atom is the package's single-file index.js entry; p-throttle is pure-ESM hand-authored (Sindre Sorhus) and decomposes cleanly (DEC-WI510-S9-ENGINE-GAPS-NOT-EXERCISED-001). p-throttle has zero external deps (externalSpecifiers=[]); historical p-limit dep removed at v8. combinedScore fixed floor 0.70 per DEC-WI510-S9-COMBINED-SCORE-FIXED-FLOOR-001 (the binding-bearing source is in the shaved atom directly). p-throttle uses WeakMap/WeakRef/FinalizationRegistry/AbortSignal at module scope; engine treats these as opaque identifier references (DEC-WI510-S9-MODERN-PLATFORM-PRIMITIVES-001)."
     }
   ]
 }
