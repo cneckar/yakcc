@@ -25,6 +25,7 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Serialize all accumulate runs under a single concurrency slot.
 # cancel-in-progress: false — NEVER cancel. Every run may discover unique atoms
@@ -129,14 +130,17 @@ jobs:
           git add bootstrap/expected-roots.json
           git commit -m "ci: accumulate atoms from ${{ github.event_name }} ${{ github.ref }}"
 
-          # Retry up to 3 times with pull-rebase between attempts (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
-          for i in 1 2 3; do
+          # Retry up to 5 times with exponential backoff + pull-rebase between attempts
+          # (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001).
+          for i in 1 2 3 4 5; do
             if git push origin main; then
               echo "Pushed on attempt $i"
               exit 0
             fi
-            echo "Push attempt $i failed; pulling and rebasing..."
+            sleep_seconds=$((2 ** (i - 1)))
+            echo "Push attempt $i failed; sleeping ${sleep_seconds}s then pulling and rebasing..."
+            sleep "$sleep_seconds"
             git pull --rebase origin main || { echo "Rebase conflict on attempt $i; bailing"; exit 1; }
           done
-          echo "All 3 push attempts failed"
+          echo "All 5 push attempts failed"
           exit 1
