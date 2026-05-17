@@ -19,6 +19,7 @@ export function parseIntegerList(input, startPos) {
   let end = pos;
   while (end < input.length && input[end] >= "0" && input[end] <= "9") end++;
   if (end === pos) throw new SyntaxError(`Expected digit at position ${pos}`);
+  if (end - pos > 1 && input[pos] === "0") throw new SyntaxError(`Leading zeros not allowed at position ${pos}`);
   results.push(parseInt(input.slice(pos, end), 10));
   pos = end;
 
@@ -31,6 +32,7 @@ export function parseIntegerList(input, startPos) {
     end = pos;
     while (end < input.length && input[end] >= "0" && input[end] <= "9") end++;
     if (end === pos) throw new SyntaxError(`Expected digit at position ${pos}`);
+    if (end - pos > 1 && input[pos] === "0") throw new SyntaxError(`Leading zeros not allowed at position ${pos}`);
     results.push(parseInt(input.slice(pos, end), 10));
     pos = end;
     while (pos < input.length && (input[pos] === " " || input[pos] === "\t")) pos++;
