@@ -127,6 +127,11 @@ USAGE
 
 COMMANDS
   init [--target <dir>] [--peer <url>] Initialize yakcc in a project directory
+       [--local] [--airgapped]         Mode: local (default) or airgapped (no peer)
+       [--skip-hooks]                  Skip IDE hook auto-install
+       [--ide <claude-code|cursor|     Explicit IDE list (skip auto-detect)
+             cline|continue,...>]
+       [--no-seed]                     Skip bootstrap corpus seed
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
   registry rebuild [--path <p>]       Re-embed all blocks after an embedding model swap
   registry export --to <p>            Export registry as canonical SQLite (VACUUM INTO)
