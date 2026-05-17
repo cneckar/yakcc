@@ -1088,6 +1088,17 @@
       "expectedAtom": null,
       "expectedAtomName": "p-throttle-sliding-window",
       "rationale": "Behavior-only query for p-throttle/sliding-window (WI-510 Slice 9 — the FINAL slice; closes #510). Atom is the package's single-file index.js entry; p-throttle is pure-ESM hand-authored (Sindre Sorhus) and decomposes cleanly (DEC-WI510-S9-ENGINE-GAPS-NOT-EXERCISED-001). p-throttle has zero external deps (externalSpecifiers=[]); historical p-limit dep removed at v8. combinedScore fixed floor 0.70 per DEC-WI510-S9-COMBINED-SCORE-FIXED-FLOOR-001 (the binding-bearing source is in the shaved atom directly). p-throttle uses WeakMap/WeakRef/FinalizationRegistry/AbortSignal at module scope; engine treats these as opaque identifier references (DEC-WI510-S9-MODERN-PLATFORM-PRIMITIVES-001)."
+    },
+    {
+      "id": "cat1-lru-cache-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Bounded-size key-value cache with least-recently-used eviction; tracks recency on get and set; supports optional per-entry time-to-live with lazy expiration; supports optional max byte budget with size-aware eviction; provides get, set, has, delete, clear, and peek operations"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "lru-cache",
+      "rationale": "Behavior-only query for lru-cache/LRUCache class entry (WI-510 Slice 10 / #642 S10 — first slice of the #642 cluster S10-S15). Atom is the LRUCache class entry via dist/esm/index.js (TSC-emitted ESM; 1681 LOC; DEC-WI510-S10-ENTRY-PATH-DIST-ESM-001). The LRUCache class IS the binding surface; one corpus row per plan DEC-WI510-S10-ONE-CLASS-ONE-ROW-001. Engine-gap landscape: #576 closed (b5dff3a, PR #604 — arrow-returns-arrow HOF; first production-fixture exercise of post-#576 engine on class-body-heavy package, DEC-WI510-S10-CLASS-BODY-FIRST-PRODUCTION-EXERCISE-001); #585 N/A (no UMD); #619 N/A (ESM path, no TSC CJS prelude). Dynamic import('node:diagnostics_channel') in diagnostics-channel.js: Outcome A (externalSpecifiers=[]) — extractImportSpecifiers walks only static ImportDeclaration nodes; dynamic import() CallExpression is invisible to BFS extractor (DEC-WI510-S10-DYNAMIC-IMPORT-EMPIRICAL-001). combinedScore fixed floor 0.70 per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001 (LRUCache class contains binding-bearing source text directly)."
     }
   ]
 }
