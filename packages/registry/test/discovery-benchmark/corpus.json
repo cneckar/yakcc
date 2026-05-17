@@ -1121,6 +1121,17 @@
       "expectedAtom": null,
       "expectedAtomName": "csv-parse-sync",
       "rationale": "Behavior-only query for csv-parse@6.2.1 sync entry (WI-510 Slice 11 / #642 S11). Atom is the lib/sync.js entry (hand-authored ESM; 28 LOC; DEC-WI510-S11-ENTRY-PATH-LIB-ESM-001). Entry is lib/sync.js — the canonical ESM sync import path (package.json#exports['./sync']['import'].default). lib/sync.js does NOT import lib/index.js; its subgraph is lib/api/* + lib/utils/* only (8 modules, no stream builtin import — externalSpecifiers=[]). Same engine-gap landscape as cat1-csv-parse-001: #576/#585/#619 N/A; #666 N/A. Full decomposition predicted (moduleCount=8, stubCount=0). combinedScore fixed floor 0.70 per DEC-WI510-S11-COMBINED-SCORE-FIXED-FLOOR-001. Within-package two-entry pattern (novel for WI-510; precedent S4/S6/S9 all cross-package per DEC-WI510-S11-TWO-ROW-FUNCTION-PAIR-001)."
+    },
+    {
+      "id": "cat1-fastest-levenshtein-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compute the Levenshtein edit distance between two strings — the minimum number of single-character insertions, deletions, or substitutions required to transform one string into the other; also supports finding the string in a candidate array with the smallest edit distance to a target string; uses the Myers bit-parallel algorithm for fast computation on short strings (length <= 32) and a chunked variant for longer strings"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "fastest-levenshtein",
+      "rationale": "Behavior-only query for fastest-levenshtein@1.0.16 ESM entry (WI-510 Slice 12 / #642 S12 — third slice of the #642 cluster S10-S15). Package selection: fastest-levenshtein chosen over js-levenshtein per DEC-WI510-S12-PACKAGE-SELECTION-FASTEST-001 (js-levenshtein ships only as CJS bare-IIFE with HIGH-UNKNOWN engine-gap risk; fastest-levenshtein ships clean single-file ESM via the module field; #642 table grants the swap). Entry is esm/mod.js — the clean ESM entry (138 LOC; arrow-function const bindings; named exports distance + closest) per DEC-WI510-S12-ENTRY-PATH-ESM-MOD-001. Single-file single-module forest: moduleCount=1, one corpus row carrying both distance and closest exports per DEC-WI510-S12-ONE-FILE-ONE-ROW-001. Engine-gap landscape: #576 closed; #585 N/A (plain ESM, no IIFE); #619 N/A (ESM emit, not CJS); #666 N/A (zero classes anywhere, verified by grep — DEC-WI510-S12-NO-CLASSES-001). Zero imports anywhere: externalSpecifiers=[] is the contract (DEC-WI510-S12-NO-EXTERNAL-IMPORTS-001). Module-scope new Uint32Array(0x10000) is opaque construction (DEC-WI510-S12-MODULE-SCOPE-TYPED-ARRAY-001). Full decomposition predicted (DEC-WI510-S12-ENGINE-GAPS-LANDSCAPE-001). combinedScore fixed floor 0.70 per DEC-WI510-S12-COMBINED-SCORE-FIXED-FLOOR-001 (distance arrow function IS the edit-distance computation; binding-bearing source text present directly in atom)."
     }
   ]
 }
