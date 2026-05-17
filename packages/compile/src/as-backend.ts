@@ -36,13 +36,32 @@
 //
 // @decision DEC-AS-BACKEND-TMPDIR-001
 // Title: AS source and WASM output written to OS temp directory, cleaned up on exit
-// Status: decided (WI-AS-PHASE-1-MVP)
+// Status: SUPERSEDED by DEC-AS-BACKEND-IN-PROCESS-001 (WI-630-S1)
 // Rationale:
-//   The asc compiler requires a real filesystem path for input and output.
-//   Using os.tmpdir() keeps the operation stateless from the caller's perspective
-//   and avoids polluting the project tree. Temp files are cleaned up after each
-//   emit() call regardless of success/failure (finally block). A unique
-//   subdirectory per call (randomUUID) prevents concurrent-call collisions.
+//   Originally: asc required a real filesystem path for input and output.
+//   Superseded: the in-process asc.main() API eliminates the tmpdir lifecycle
+//   entirely. No mkdirSync/writeFileSync/readFileSync/rmSync per atom.
+//   This annotation is retained for history; the tmpdir convention no longer
+//   applies to the production emit path.
+//
+// @decision DEC-AS-BACKEND-IN-PROCESS-001
+// Title: AS backend uses the in-process assemblyscript/asc.main() programmatic API;
+//        the per-atom Node child-process invocation via execFileSync is retired.
+// Status: decided (WI-630-S1, plans/wi-630-as-in-process-compile.md)
+// Rationale:
+//   The 4,119-atom closer-parity-as cold-run is dominated by per-atom Node startup
+//   (~50-80 ms) + asc init (~150-300 ms). Replacing execFileSync with the in-process
+//   asc.main() API eliminates the Node child-process tax while preserving:
+//   - The cache key (DEC-AS-COMPILE-CACHE-001): byte-identical WASM output verified
+//     by differential test on ≥10 representative atoms.
+//   - The WasmBackend interface: emit() was already async; no caller churn.
+//   - The concurrency runner (DEC-AS-CLOSER-PARITY-CONCURRENCY-001): untouched.
+//   - Multi-export (DEC-AS-MULTI-EXPORT-001) and record substrate
+//     (DEC-AS-RECORD-LAYOUT-001): both covered by the differential test matrix.
+//   I/O strategy: atom source served in-memory via readFile callback; AS std-lib
+//   reads delegated to fs/promises.readFile fallback (OS page cache amortizes
+//   std-lib reads across the 4,119-atom corpus). See plan §4 Decision 2.
+//   Supersedes DEC-AS-BACKEND-TMPDIR-001 for the production emit path.
 //
 // @decision DEC-AS-JSON-STRATEGY-001
 // Title: AS-backend JSON support uses flat-memory manual integer parsers/writers
@@ -654,12 +673,10 @@
 // closures-parity.test.ts for flat-memory layout constants
 // (CLO_BASE_PTR = 32768) and oracle details.
 
-import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile as fsReadFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type APIOptions, main as ascMain, createMemoryStream } from "assemblyscript/asc";
 import type { ResolutionResult } from "./resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -1459,8 +1476,8 @@ export interface AsBackendOptions {
  *   1. Extract the entry block's implSource from the ResolutionResult
  *   2. Infer the numeric domain (i32/i64/f64) from source heuristics
  *   3. Prepare AS-compatible source (strip TS-only constructs, rewrite types)
- *   4. Write source to a temp directory, invoke asc via Node child_process
- *   5. Read the .wasm bytes, clean up temp directory, return Uint8Array
+ *   4. Invoke asc programmatic main() in-process with virtual-filename readFile/writeFile callbacks
+ *   5. Capture the WASM bytes from the writeFile callback, return Uint8Array<ArrayBuffer>
  *
  * Multi-export support (DEC-AS-MULTI-EXPORT-001):
  *   asc natively emits exports for every `export function` in the source.
@@ -1471,7 +1488,7 @@ export interface AsBackendOptions {
  *
  * @param opts - Optional factory configuration (see AsBackendOptions)
  * @decision DEC-V1-LOWER-BACKEND-REUSE-001 (see file header)
- * @decision DEC-AS-BACKEND-TMPDIR-001 (see file header)
+ * @decision DEC-AS-BACKEND-IN-PROCESS-001 (see file header — supersedes DEC-AS-BACKEND-TMPDIR-001)
  * @decision DEC-AS-MULTI-EXPORT-001 (multi-export: asc handles natively; no emitter change)
  * @decision DEC-AS-RECORD-LAYOUT-001 (records: flat-struct linear-memory; exportMemory option)
  * @decision DEC-AS-BACKEND-OPTIONS-001 (optional AsBackendOptions for per-factory asc flags)
@@ -1492,74 +1509,112 @@ export function assemblyScriptBackend(opts?: AsBackendOptions): WasmBackend {
       const domain = inferDomainFromSource(entryBlock.source);
       const asSource = prepareAsSource(entryBlock.source, domain);
 
-      // Create a unique temp directory for this compilation unit.
-      // @decision DEC-AS-BACKEND-TMPDIR-001
-      const workDir = join(tmpdir(), `yakcc-as-${randomUUID()}`);
-      mkdirSync(workDir, { recursive: true });
+      // Virtual filenames — no tmpdir needed (DEC-AS-BACKEND-IN-PROCESS-001).
+      // asc.main() resolves filenames via the readFile/writeFile callbacks below;
+      // these tokens never touch the real filesystem.
+      const VIRTUAL_SRC = "atom.ts";
+      const VIRTUAL_OUT = "atom.wasm";
 
-      const srcPath = join(workDir, "atom.ts");
-      const outPath = join(workDir, "atom.wasm");
+      // Build argv equivalent to the former execFileSync ascArgs, minus the
+      // leading asc.js script-name slot (implicit in the programmatic API).
+      // @decision DEC-AS-BACKEND-IN-PROCESS-001
+      // @decision DEC-AS-BACKEND-OPTIONS-001
+      // @decision DEC-AS-RECORD-LAYOUT-001
+      const argv: string[] = [
+        VIRTUAL_SRC,
+        "--outFile",
+        VIRTUAL_OUT,
+        "--optimize",
+        "--runtime",
+        "stub", // minimal AS runtime (no GC) — numeric + struct substrates
+      ];
 
-      try {
-        writeFileSync(srcPath, asSource, "utf8");
-
-        // Invoke asc via Node (asc.js is a Node CLI script, not a native binary).
-        // We find asc.js by resolving the assemblyscript package from this module's
-        // require context. This works both in src/ (development) and dist/ (built).
-        const ascJs = resolveAsc();
-        const ascArgs = [
-          ascJs,
-          srcPath,
-          "--outFile",
-          outPath,
-          "--optimize",
-          "--runtime",
-          "stub", // minimal AS runtime (no GC) — numeric + struct substrates
-        ];
-
-        // --noExportMemory: suppress memory export for pure numeric functions
-        // (Phase 1 default). Omit when exportMemory is requested (Phase 2A
-        // record substrates need to write struct bytes into WASM memory).
-        // @decision DEC-AS-BACKEND-OPTIONS-001
+      // --noExportMemory: suppress memory export for pure numeric functions
+      // (Phase 1 default). Omit when exportMemory is requested (Phase 2A
+      // record substrates need to write struct bytes into WASM memory).
+      if (!exportMemory) {
+        argv.push("--noExportMemory");
+      } else {
+        // --initialMemory 1: guarantee ≥1 page (64 KiB) when memory is exported.
+        // The AS stub runtime does not allocate pages by default; without an
+        // initial page, DataView writes by the test harness throw RangeError.
         // @decision DEC-AS-RECORD-LAYOUT-001
-        if (!exportMemory) {
-          ascArgs.push("--noExportMemory");
-        } else {
-          // --initialMemory 1: guarantee ≥1 page (64 KiB) when memory is exported.
-          // The AS stub runtime does not allocate memory pages by default; without
-          // an initial page, DataView writes by the test harness throw RangeError.
-          // 1 page (64 KiB) is sufficient for all Phase 2A record substrates
-          // (struct pointers start at byte 64, struct data fits well within 64 KiB).
-          // @decision DEC-AS-RECORD-LAYOUT-001
-          ascArgs.push("--initialMemory", "1");
+        argv.push("--initialMemory", "1");
+      }
+
+      // Captured output buffers for diagnostics and result.
+      let wasmBytes: Uint8Array | null = null;
+      const stderrStream = createMemoryStream();
+      const stdoutStream = createMemoryStream();
+
+      // readFile callback: serve the atom source in-memory; delegate std-lib
+      // and importmap lookups to real disk via fs/promises.readFile.
+      // Returning null signals "file not found" per asc API contract — asc then
+      // falls back to its bundled std-lib resolver for built-in modules.
+      const readFile: APIOptions["readFile"] = async (
+        filename: string,
+        _baseDir: string,
+      ): Promise<string | null> => {
+        if (filename === VIRTUAL_SRC) {
+          return asSource;
         }
+        try {
+          // Delegate to real disk for AS std-lib and importmap files.
+          return await fsReadFile(filename, "utf8");
+        } catch {
+          return null; // ENOENT — let asc use its built-in resolver
+        }
+      };
 
-        execFileSync(process.execPath, ascArgs, {
-          // Capture stderr to include in errors; stdio: pipe prevents terminal noise.
-          stdio: ["ignore", "pipe", "pipe"],
-          encoding: "buffer",
-        });
+      // writeFile callback: capture WASM bytes when asc emits the output file.
+      // Any ancillary artefacts (sourcemap, bindings) are accepted silently —
+      // we don't request them (no --sourceMap), so this branch is a safety net.
+      const writeFile: APIOptions["writeFile"] = async (
+        filename: string,
+        contents: Uint8Array | string,
+      ): Promise<void> => {
+        if (filename === VIRTUAL_OUT && contents instanceof Uint8Array) {
+          wasmBytes = contents;
+        }
+        // Other artefacts (e.g. future ancillary files): accept silently.
+      };
 
-        const wasmBytes = readFileSync(outPath);
-        // Cast to the typed Uint8Array<ArrayBuffer> that WasmBackend.emit promises.
-        return new Uint8Array(
-          wasmBytes.buffer,
-          wasmBytes.byteOffset,
-          wasmBytes.byteLength,
-        ) as Uint8Array<ArrayBuffer>;
-      } catch (err: unknown) {
-        // Enrich error with source context for debugging.
-        const msg = err instanceof Error ? err.message : String(err);
+      const apiOptions: APIOptions = {
+        stdout: stdoutStream,
+        stderr: stderrStream,
+        readFile,
+        writeFile,
+      };
+
+      const result = await ascMain(argv, apiOptions);
+
+      if (result.error !== null) {
         throw new Error(
           `assemblyScriptBackend: asc compilation failed for entry=${resolution.entry}\n` +
             `domain: ${domain}\n` +
             `source:\n${asSource}\n` +
-            `asc error:\n${msg}`,
+            `asc error:\n${result.error.message}\n` +
+            `stderr:\n${stderrStream.toString()}`,
         );
-      } finally {
-        // Always clean up the temp directory, even on error.
-        rmSync(workDir, { recursive: true, force: true });
       }
+
+      if (wasmBytes === null) {
+        throw new Error(
+          `assemblyScriptBackend: asc completed but produced no WASM output for entry=${resolution.entry}\n` +
+            `domain: ${domain}\n` +
+            `stderr:\n${stderrStream.toString()}`,
+        );
+      }
+
+      // Local const narrows the type from `Uint8Array | null` to `Uint8Array`
+      // so TypeScript can see through the async-callback assignment above.
+      const capturedBytes: Uint8Array = wasmBytes;
+      // Cast to the typed Uint8Array<ArrayBuffer> that WasmBackend.emit promises.
+      return new Uint8Array(
+        capturedBytes.buffer,
+        capturedBytes.byteOffset,
+        capturedBytes.byteLength,
+      ) as Uint8Array<ArrayBuffer>;
     },
   };
 }

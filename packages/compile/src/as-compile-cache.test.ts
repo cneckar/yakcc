@@ -9,6 +9,7 @@
 // @decision DEC-AS-COMPILE-CACHE-005 (determinism: cold/warm byte equality)
 // @decision DEC-AS-COMPILE-CACHE-006 (atomic write + corrupt-entry recovery)
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,7 +134,6 @@ describe("deriveCacheKey", () => {
 
     // Simulate what a different asc version would produce:
     // If the version were different, the same atomHash would produce a different key.
-    const { createHash } = require("node:crypto");
     const differentVersionKey = createHash("sha256")
       .update(`atomA|99.0.0|${ASC_FLAGS_HASH}`)
       .digest("hex");
@@ -360,7 +360,6 @@ describe("cachedAsEmit — thundering herd lock (DEC-AS-COMPILE-CACHE-004)", () 
 
   it("version-skew produces a different cache key (no false hits)", () => {
     // Simulate what a different ascVersion would produce.
-    const { createHash } = require("node:crypto");
     const fakeKey = createHash("sha256")
       .update(`same-atom|99.99.99|${ASC_FLAGS_HASH}`)
       .digest("hex");
