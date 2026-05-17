@@ -142,12 +142,15 @@ async function ensureCorpus() {
 // @decision DEC-BENCH-B1-CI-TIMEOUT-001
 // ubuntu-latest runners are dramatically slower at pure-software CPU work than
 // typical developer machines (~2.2× factor observed on rust-software SHA-256).
-// The 600s default timeout was sufficient on Windows but not in CI. 30 minutes
+// The 600s default timeout was sufficient on Windows but not in CI. 60 minutes
 // is a generous ceiling that should accommodate even the slowest comparator on
-// the slowest runner; runs that approach this cap should be investigated as a
-// separate perf regression, not as a timeout bug. CI job timeout is independent
-// at 60 minutes (workflow level), so a runaway is still bounded.
-function runComparator(label, cmd, args, timeoutMs = 1800000) { // 30 min — covers ubuntu-latest ~2.2× slowdown vs Windows
+// the slowest runner (including darwin/M1 Pro yakcc-as WASM JIT cost — #638).
+// Bumped 30→60 min for #638 (darwin/M1 Pro yakcc-as wall-clock); see also
+// YAKCC_AS_MEASURED_ITERS opt-in in yakcc-as/run.mjs.
+// Runs that approach this cap should be investigated as a separate perf
+// regression, not as a timeout bug. CI job timeout is independent at 60 minutes
+// (workflow level), so a runaway is still bounded.
+function runComparator(label, cmd, args, timeoutMs = 3600000) { // 60 min — covers ubuntu-latest ~2.2× slowdown and darwin yakcc-as M1 JIT cost
   console.log(`\n${BOLD}[run]${RESET} ${label}...`);
   const result = spawnSync(cmd, args, {
     encoding: "utf8",
