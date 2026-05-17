@@ -209,13 +209,29 @@ function withSemanticIntentCard(entry: NovelGlueEntry, behaviorText: string): No
 
 // ---------------------------------------------------------------------------
 // Group A / index.cjs
-// plan §3.2: moduleCount=0, stubCount=1, wall-clock ~454ms
-// Section A/B/C: 120_000ms  Section D (two-pass): 360_000ms
+// #619 fix: TS-compiled CJS prelude NOW decomposes (PR #627 ParenthesizedExpression
+// branch already handled the prelude's `(this && this.__X) || (Object.create ? fn : fn)`
+// pattern). W1 probe (2026-05-17) confirmed moduleCount=7, stubCount=2 post-fix.
+// stubCount=2 reflects transitive BFS stubs for v3/types.cjs (RecursionDepthExceeded)
+// and v3/locales/en.cjs (TemplateExpression gap #576) — those are engine gaps orthogonal
+// to #619. The entry point itself decomposes; moduleCount >= 1 is the key gate.
+//
+// @decision DEC-FIX-619-PRELUDE-WALK-001
+// title: index.cjs Group A assertions flipped — prelude decomposes via PR #627 branch
+// status: decided
+// rationale: W1 empirical probe found moduleCount=7 (not 0) for index.cjs after PR #627.
+//   The ParenthesizedExpression branch (DEC-WI585-PARENTHESIZED-EXPRESSION-UNWRAP-001)
+//   already handles the prelude. stubCount=2 (not 0) because the BFS walks transitively
+//   into types.cjs (RecursionDepthExceededError) and en.cjs (TemplateExpression gap).
+//   Both are tracked in their own Group A describes. moduleCount >= 1 is the correct
+//   gate: the entry point itself decomposes. Assertions updated to engine reality.
+// Note: BFS walks into v3/types.cjs (3775-line monolith) so wall-clock is ~130s for
+// sections B/C (types.cjs adds ~69s per call). Timeouts raised accordingly.
 // ---------------------------------------------------------------------------
 describe("zod/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)", () => {
   it(
-    "section A -- moduleCount=0, stubCount=1, leafTotal=0, externalSpecifiers=[]",
-    { timeout: 120_000 },
+    "section A -- moduleCount>=1, leafTotal>0, externalSpecifiers=[]",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -223,24 +239,18 @@ describe("zod/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)", (
       });
       console.log("[zod-index sA] moduleCount:", forest.moduleCount);
       console.log("[zod-index sA] stubCount:", forest.stubCount);
-      console.log(
-        "[zod-index sA] stubs:",
-        forestStubs(forest).map((s) => s.specifier),
-      );
       console.log("[zod-index sA] leafTotal:", forestTotalLeafCount(forest));
-      // Engine-gap: TS-compiled CJS prelude defeats strict-subset at entry.
-      // DEC-WI510-S8-ENGINE-GAP-CORROBORATION-TESTS-001: assert empirical engine output exactly.
+      // #619 fixed: prelude now decomposes; moduleCount >= 1, leafTotal > 0.
+      // stubCount may be > 0 due to transitive BFS stubs (types.cjs depth, en.cjs #576).
+      // DEC-FIX-619-PRELUDE-WALK-001: assertion flip from engine-gap to engine-reality.
       expect(
         forest.moduleCount,
-        "index.cjs moduleCount must be 0 (engine-gap: prelude stubs entry)",
-      ).toBe(0);
+        "index.cjs moduleCount must be >= 1 (prelude decomposes post #619 fix)",
+      ).toBeGreaterThanOrEqual(1);
       expect(
-        forest.stubCount,
-        "index.cjs stubCount must be 1 (single stub for the entry itself)",
-      ).toBe(1);
-      expect(forestTotalLeafCount(forest), "index.cjs leafTotal must be 0 (stub, no leaves)").toBe(
-        0,
-      );
+        forestTotalLeafCount(forest),
+        "index.cjs leafTotal must be > 0 (leaves produced post #619 fix)",
+      ).toBeGreaterThan(0);
       const allExternal = forestModules(forest).flatMap((m) => m.externalSpecifiers);
       expect(
         allExternal,
@@ -250,40 +260,42 @@ describe("zod/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)", (
   );
 
   it(
-    "section B -- stub specifier path ends in zod-3.25.76/index.cjs",
-    { timeout: 120_000 },
+    "section B -- at least one module resolved (entry point decomposes post #619 fix)",
+    // BFS walks into types.cjs (~69s) so allow up to 300s for the full forest.
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "index.cjs"),
       });
-      const stubs = forestStubs(forest);
-      expect(stubs).toHaveLength(1);
-      const stubSpec = normalize(stubs[0]?.specifier ?? "");
-      expect(stubSpec, "index.cjs stub specifier must end in zod-3.25.76/index.cjs").toContain(
-        join("zod-3.25.76", "index.cjs"),
-      );
+      const modules = forestModules(forest);
+      expect(
+        modules.length,
+        "index.cjs must have >= 1 resolved module (DEC-FIX-619-PRELUDE-WALK-001)",
+      ).toBeGreaterThanOrEqual(1);
     },
   );
 
   it(
-    "section C -- no modules resolved (engine-gap corroboration; DEC-WI510-S8-ENGINE-GAP-CORROBORATION-TESTS-001)",
-    { timeout: 120_000 },
+    "section C -- moduleCount>=1 (engine-reality post #619 fix; DEC-FIX-619-PRELUDE-WALK-001)",
+    // BFS walks into types.cjs (~69s) so allow up to 300s.
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "index.cjs"),
       });
       expect(
-        forestModules(forest).length,
-        "index.cjs must have 0 resolved modules (engine-gap stub)",
-      ).toBe(0);
+        forest.moduleCount,
+        "index.cjs must have >= 1 module (prelude decomposes post #619 fix)",
+      ).toBeGreaterThanOrEqual(1);
     },
   );
 
   it(
-    "section D -- two-pass byte-identical determinism for index.cjs stub state",
-    { timeout: 360_000 },
+    "section D -- two-pass byte-identical determinism for index.cjs working state",
+    // Two BFS calls × ~130s each; 900s gives safe headroom.
+    { timeout: 900_000 },
     async () => {
       const forest1 = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -296,21 +308,40 @@ describe("zod/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)", (
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      const stubs1 = forestStubs(forest1).map((s) => normalize(s.specifier));
-      const stubs2 = forestStubs(forest2).map((s) => normalize(s.specifier));
-      expect(stubs1).toEqual(stubs2);
+      // Verify module sets are identical across passes (byte-identical determinism).
+      const mods1 = forestModules(forest1)
+        .map((m) => normalize(m.filePath))
+        .sort();
+      const mods2 = forestModules(forest2)
+        .map((m) => normalize(m.filePath))
+        .sort();
+      expect(mods1).toEqual(mods2);
     },
   );
 });
 
 // ---------------------------------------------------------------------------
 // Group A / v3/external.cjs
-// plan §3.2: moduleCount=0, stubCount=1, wall-clock ~306ms
+// #619 fix: TS-compiled CJS prelude NOW decomposes (same PR #627 branch as index.cjs).
+// W1 probe (2026-05-17) confirmed moduleCount=6, stubCount>0 post-fix.
+// stubCount may be > 0 due to transitive BFS stubs: external.cjs requires types.cjs
+// (RecursionDepthExceeded) and en.cjs (TemplateExpression #576) transitively.
+// The entry point itself decomposes; moduleCount >= 1 is the key gate.
+//
+// @decision DEC-FIX-619-PRELUDE-WALK-001
+// title: v3/external.cjs Group A assertions flipped — prelude decomposes via PR #627 branch
+// status: decided
+// rationale: W1 empirical probe found moduleCount=6 (not 0) for v3/external.cjs after PR #627.
+//   Two-helper prelude (__createBinding + __exportStar) decomposes via the same
+//   ParenthesizedExpression branch that fixed index.cjs. stubCount may be > 0 from
+//   transitive deps (types.cjs depth limit, en.cjs TemplateExpression). Assertions
+//   updated to engine reality: moduleCount >= 1, leafTotal > 0.
+// Note: BFS walks into v3/types.cjs so wall-clock is ~130s. Timeouts raised.
 // ---------------------------------------------------------------------------
 describe("zod/v3/external.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)", () => {
   it(
-    "section A -- moduleCount=0, stubCount=1, leafTotal=0, externalSpecifiers=[]",
-    { timeout: 120_000 },
+    "section A -- moduleCount>=1, leafTotal>0, externalSpecifiers=[]",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -318,51 +349,57 @@ describe("zod/v3/external.cjs -- engine-gap corroboration (WI-510 Slice 8 Group 
       });
       console.log("[zod-v3-external sA] moduleCount:", forest.moduleCount);
       console.log("[zod-v3-external sA] stubCount:", forest.stubCount);
-      console.log(
-        "[zod-v3-external sA] stubs:",
-        forestStubs(forest).map((s) => s.specifier),
-      );
+      console.log("[zod-v3-external sA] leafTotal:", forestTotalLeafCount(forest));
+      // #619 fixed: prelude now decomposes; moduleCount >= 1, leafTotal > 0.
+      // stubCount may be > 0 due to transitive BFS stubs (types.cjs depth, en.cjs #576).
+      // DEC-FIX-619-PRELUDE-WALK-001: assertion flip from engine-gap to engine-reality.
       expect(
         forest.moduleCount,
-        "v3/external.cjs moduleCount must be 0 (engine-gap: same prelude pattern)",
-      ).toBe(0);
-      expect(forest.stubCount, "v3/external.cjs stubCount must be 1").toBe(1);
-      expect(forestTotalLeafCount(forest)).toBe(0);
+        "v3/external.cjs moduleCount must be >= 1 (prelude decomposes post #619 fix)",
+      ).toBeGreaterThanOrEqual(1);
+      expect(forestTotalLeafCount(forest), "v3/external.cjs leafTotal must be > 0").toBeGreaterThan(
+        0,
+      );
       const allExternal = forestModules(forest).flatMap((m) => m.externalSpecifiers);
-      expect(allExternal).toEqual([]);
+      expect(allExternal, "v3/external.cjs externalSpecifiers must be []").toEqual([]);
     },
   );
 
   it(
-    "section B -- stub specifier path ends in zod-3.25.76/v3/external.cjs",
-    { timeout: 120_000 },
+    "section B -- at least one module resolved (entry point decomposes post #619 fix)",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "v3", "external.cjs"),
       });
-      const stubs = forestStubs(forest);
-      expect(stubs).toHaveLength(1);
-      const stubSpec = normalize(stubs[0]?.specifier ?? "");
-      expect(stubSpec).toContain(join("zod-3.25.76", "v3", "external.cjs"));
+      const modules = forestModules(forest);
+      expect(
+        modules.length,
+        "v3/external.cjs must have >= 1 resolved module (DEC-FIX-619-PRELUDE-WALK-001)",
+      ).toBeGreaterThanOrEqual(1);
     },
   );
 
   it(
-    "section C -- no modules resolved (engine-gap corroboration)",
-    { timeout: 120_000 },
+    "section C -- moduleCount>=1 (engine-reality post #619 fix; DEC-FIX-619-PRELUDE-WALK-001)",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "v3", "external.cjs"),
       });
-      expect(forestModules(forest).length).toBe(0);
+      expect(
+        forest.moduleCount,
+        "v3/external.cjs must have >= 1 module (prelude decomposes post #619 fix)",
+      ).toBeGreaterThanOrEqual(1);
     },
   );
 
   it(
-    "section D -- two-pass byte-identical determinism for v3/external.cjs stub state",
-    { timeout: 360_000 },
+    "section D -- two-pass byte-identical determinism for v3/external.cjs working state",
+    // Two BFS calls × ~130s each; 900s gives safe headroom.
+    { timeout: 900_000 },
     async () => {
       const forest1 = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -375,9 +412,14 @@ describe("zod/v3/external.cjs -- engine-gap corroboration (WI-510 Slice 8 Group 
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      const stubs1 = forestStubs(forest1).map((s) => normalize(s.specifier));
-      const stubs2 = forestStubs(forest2).map((s) => normalize(s.specifier));
-      expect(stubs1).toEqual(stubs2);
+      // Verify module sets are identical across passes (byte-identical determinism).
+      const mods1 = forestModules(forest1)
+        .map((m) => normalize(m.filePath))
+        .sort();
+      const mods2 = forestModules(forest2)
+        .map((m) => normalize(m.filePath))
+        .sort();
+      expect(mods1).toEqual(mods2);
     },
   );
 });
@@ -391,10 +433,25 @@ describe("zod/v3/external.cjs -- engine-gap corroboration (WI-510 Slice 8 Group 
 //     ZodString.prototype.min / .max / .regex → string-min / string-max / regex-match
 //     ZodNumber.prototype.int → number-int
 //     ZodArray constructor → array-each
-//   The engine cannot atomize it due to: (a) TS-compiled CJS prelude at top-of-file
-//   defeating strict-subset, AND (b) 39 class declarations + 131 arrow-function tokens
-//   triggering issue #576 (ArrowFunctions in class bodies) at maximum scale.
-//   For the orchestrator to file as a new GitHub issue post-land.
+//   Post #619 fix: the prelude itself NOW decomposes (DEC-FIX-619-PRELUDE-WALK-001).
+//   However, once the engine descends past the prelude into the 3775-line body, it hits
+//   RecursionDepthExceededError at depth 25 (> DEFAULT_MAX_DEPTH=24). The monolith's
+//   nested class bodies + arrow functions create a descent path that exceeds the depth
+//   ceiling before the body fully decomposes.
+//
+// @decision DEC-FIX-619-TYPES-CJS-POST-FIX-001
+// title: v3/types.cjs remains stubbed post-#619 — path (a): RecursionDepthExceededError
+// status: decided
+// rationale:
+//   W1 empirical probe (2026-05-17) confirmed: decompose() on types.cjs throws
+//   RecursionDepthExceededError(depth=25, maxDepth=24) post PR #627. The prelude layer
+//   was fixed, but the 3775-line body (39 class declarations + 131 arrow tokens) drives
+//   the recursion to depth 25 before exhausting all decomposable children. This is a
+//   DEPTH-LIMIT gap, orthogonal to the #619 prelude issue. Path (a) applies: keep all
+//   stub assertions unchanged; add this comment documenting the residual gap. A
+//   follow-up issue for the depth-limit / body-scale problem should be filed separately.
+//   Path (b) (flip assertions with raised timeouts) was NOT chosen because the file
+//   still stubs — the error is deterministic and not a timeout race condition.
 // ---------------------------------------------------------------------------
 describe("zod/v3/types.cjs -- engine-gap corroboration, binding-bearing monolith (WI-510 Slice 8 Group A)", () => {
   it(
@@ -486,12 +543,25 @@ describe("zod/v3/types.cjs -- engine-gap corroboration, binding-bearing monolith
 
 // ---------------------------------------------------------------------------
 // Group A / v3/index.cjs
-// plan §3.2: moduleCount=0, stubCount=1, wall-clock ~302ms
+// #619 fix: TS-compiled CJS prelude NOW decomposes (same PR #627 branch as index.cjs).
+// W1 probe (2026-05-17) confirmed moduleCount=7, stubCount>0 post-fix.
+// stubCount may be > 0 due to transitive BFS stubs: v3/index.cjs requires types.cjs
+// (RecursionDepthExceeded) and en.cjs (TemplateExpression #576) transitively.
+// The entry point itself decomposes; moduleCount >= 1 is the key gate.
+//
+// @decision DEC-FIX-619-PRELUDE-WALK-001
+// title: v3/index.cjs Group A assertions flipped — prelude decomposes via PR #627 branch
+// status: decided
+// rationale: W1 empirical probe found moduleCount=7 (not 0) for v3/index.cjs after PR #627.
+//   Identical-shape sibling of index.cjs (require paths differ). Same four-helper prelude.
+//   stubCount may be > 0 from transitive deps (types.cjs depth limit, en.cjs TemplateExpression).
+//   Assertions updated to engine reality: moduleCount >= 1, leafTotal > 0.
+// Note: BFS walks into v3/types.cjs so wall-clock is ~130s. Timeouts raised.
 // ---------------------------------------------------------------------------
 describe("zod/v3/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)", () => {
   it(
-    "section A -- moduleCount=0, stubCount=1, leafTotal=0, externalSpecifiers=[]",
-    { timeout: 120_000 },
+    "section A -- moduleCount>=1, leafTotal>0, externalSpecifiers=[]",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -499,48 +569,55 @@ describe("zod/v3/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)"
       });
       console.log("[zod-v3-index sA] moduleCount:", forest.moduleCount);
       console.log("[zod-v3-index sA] stubCount:", forest.stubCount);
-      console.log(
-        "[zod-v3-index sA] stubs:",
-        forestStubs(forest).map((s) => s.specifier),
-      );
-      expect(forest.moduleCount).toBe(0);
-      expect(forest.stubCount).toBe(1);
-      expect(forestTotalLeafCount(forest)).toBe(0);
+      console.log("[zod-v3-index sA] leafTotal:", forestTotalLeafCount(forest));
+      // #619 fixed: prelude now decomposes; moduleCount >= 1, leafTotal > 0.
+      // stubCount may be > 0 due to transitive BFS stubs (types.cjs depth, en.cjs #576).
+      // DEC-FIX-619-PRELUDE-WALK-001: assertion flip from engine-gap to engine-reality.
+      expect(
+        forest.moduleCount,
+        "v3/index.cjs moduleCount must be >= 1 (prelude decomposes post #619 fix)",
+      ).toBeGreaterThanOrEqual(1);
+      expect(forestTotalLeafCount(forest), "v3/index.cjs leafTotal must be > 0").toBeGreaterThan(0);
       const allExternal = forestModules(forest).flatMap((m) => m.externalSpecifiers);
-      expect(allExternal).toEqual([]);
+      expect(allExternal, "v3/index.cjs externalSpecifiers must be []").toEqual([]);
     },
   );
 
   it(
-    "section B -- stub specifier path ends in zod-3.25.76/v3/index.cjs",
-    { timeout: 120_000 },
+    "section B -- at least one module resolved (entry point decomposes post #619 fix)",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "v3", "index.cjs"),
       });
-      const stubs = forestStubs(forest);
-      expect(stubs).toHaveLength(1);
-      const stubSpec = normalize(stubs[0]?.specifier ?? "");
-      expect(stubSpec).toContain(join("zod-3.25.76", "v3", "index.cjs"));
+      const modules = forestModules(forest);
+      expect(
+        modules.length,
+        "v3/index.cjs must have >= 1 resolved module (DEC-FIX-619-PRELUDE-WALK-001)",
+      ).toBeGreaterThanOrEqual(1);
     },
   );
 
   it(
-    "section C -- no modules resolved (engine-gap corroboration)",
-    { timeout: 120_000 },
+    "section C -- moduleCount>=1 (engine-reality post #619 fix; DEC-FIX-619-PRELUDE-WALK-001)",
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "v3", "index.cjs"),
       });
-      expect(forestModules(forest).length).toBe(0);
+      expect(
+        forest.moduleCount,
+        "v3/index.cjs must have >= 1 module (prelude decomposes post #619 fix)",
+      ).toBeGreaterThanOrEqual(1);
     },
   );
 
   it(
-    "section D -- two-pass byte-identical determinism for v3/index.cjs stub state",
-    { timeout: 360_000 },
+    "section D -- two-pass byte-identical determinism for v3/index.cjs working state",
+    // Two BFS calls × ~130s each; 900s gives safe headroom.
+    { timeout: 900_000 },
     async () => {
       const forest1 = await shavePackage(ZOD_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -553,9 +630,14 @@ describe("zod/v3/index.cjs -- engine-gap corroboration (WI-510 Slice 8 Group A)"
       expect(forest1.moduleCount).toBe(forest2.moduleCount);
       expect(forest1.stubCount).toBe(forest2.stubCount);
       expect(forestTotalLeafCount(forest1)).toBe(forestTotalLeafCount(forest2));
-      const stubs1 = forestStubs(forest1).map((s) => normalize(s.specifier));
-      const stubs2 = forestStubs(forest2).map((s) => normalize(s.specifier));
-      expect(stubs1).toEqual(stubs2);
+      // Verify module sets are identical across passes (byte-identical determinism).
+      const mods1 = forestModules(forest1)
+        .map((m) => normalize(m.filePath))
+        .sort();
+      const mods2 = forestModules(forest2)
+        .map((m) => normalize(m.filePath))
+        .sort();
+      expect(mods1).toEqual(mods2);
     },
   );
 });
