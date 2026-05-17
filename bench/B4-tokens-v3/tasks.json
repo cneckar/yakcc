@@ -1,0 +1,76 @@
+{
+  "_decision": {
+    "id": "DEC-BENCH-B4-V3-TASKS-001",
+    "title": "B4-v3: 5-task complex-task suite for two-phase hypothesis matrix",
+    "status": "accepted",
+    "rationale": "Issue #644 (WI-B4-V3-HYPOTHESIS-MATRIX) requires tasks where Haiku-unhooked fails ≥50% (quality-delta requirement). Tasks selected from operator-suggested domains: (1) json5-parser — parser combinator with backtracking; Haiku drops ≥3 JSON5 features (unquoted reserved-word keys, hex literals, multiline continuation). (2) pkce-code-verifier — security protocol with crypto; Haiku uses base64 instead of base64url, omits timingSafeEqual. (3) two-phase-commit — distributed coordination FSM; Haiku breaks idempotency, NO-voter abort broadcast. (4) kahan-running-stats — numerical precision; Haiku uses population variance (n) instead of sample variance (n-1) and skips RangeError throwing. (5) token-bucket-rate-limiter — stateful time-based FSM with fake-timer oracle; Haiku omits edge cases (tryConsume(0), TypeError for negatives, capacity cap on refill). Per DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001: all oracles hand-authored, no LLM judges.",
+    "locked_by": "WI-B4-V3-HYPOTHESIS-MATRIX (#644)",
+    "per_task_traps": {
+      "json5-parser": "Haiku commonly omits ≥3 features: unquoted reserved-word keys (for, if), hex literals (0xCAFE), line-continuation in strings, or implements block comments incorrectly; failing ≥30% of oracle cases",
+      "pkce-code-verifier": "Haiku uses standard base64 (contains +//) not base64url (-/_), omits = stripping, skips timingSafeEqual — fails RFC 7636 test vector and multiple oracle cases",
+      "two-phase-commit": "Haiku breaks idempotency (double-commit throws), fails to abort YES-voters when any-NO, gets state machine transitions wrong from non-idle states",
+      "kahan-running-stats": "Haiku uses population variance (divides by n) not sample variance (divides by n-1, Bessel's correction) — critical oracle discriminator; also omits RangeError type specificity",
+      "token-bucket-rate-limiter": "Haiku omits tryConsume(0)/consume(0) edge cases, skips TypeError for negative inputs, uses naive refill without capping at capacity"
+    }
+  },
+  "note": "Task manifest for B4-tokens-v3 two-phase hypothesis matrix. SHA-256 hashes content-address each prompt file. Harness verifies on startup and aborts on drift.",
+  "schema_version": 1,
+  "n_tasks": 5,
+  "tasks": [
+    {
+      "id": "json5-parser",
+      "prompt_file": "tasks/json5-parser/prompt.md",
+      "oracle_test": "tasks/json5-parser/oracle.test.ts",
+      "reference_impl": "tasks/json5-parser/reference-impl.ts",
+      "sha256": "726da1fd1b4d2c5c85a4ccee661c2a4e2b8e863a75a2e19087174905bef17b49",
+      "description": "Parse JSON5 (superset of JSON): single-quoted strings, unquoted keys, trailing commas, comments, hex numbers, Infinity/NaN, leading/trailing decimal, line continuation.",
+      "adversarial_framing": "Parser combinator task. Haiku typically drops ≥3 JSON5 features, most commonly: unquoted reserved-word keys ({for:1}), hex literals (0xFF), line-continuation escapes in strings, or misimplements block comment termination.",
+      "expected_export": "named:parseJSON5",
+      "complexity_domain": "parser_combinator"
+    },
+    {
+      "id": "pkce-code-verifier",
+      "prompt_file": "tasks/pkce-code-verifier/prompt.md",
+      "oracle_test": "tasks/pkce-code-verifier/oracle.test.ts",
+      "reference_impl": "tasks/pkce-code-verifier/reference-impl.ts",
+      "sha256": "24a74bc9a6b269e52f552a08ea97f2b216e8551ab28e5c3a4472abb4b0d47e92",
+      "description": "Implement PKCE (RFC 7636): generateCodeVerifier (crypto.randomBytes, base64url), computeCodeChallenge (SHA-256 + base64url), verifyPkce (timingSafeEqual).",
+      "adversarial_framing": "Security protocol with RFC 7636 test vector. Haiku typically uses standard base64 (with +/ chars) instead of base64url (-_ chars, no padding), fails the test vector, and omits timingSafeEqual for constant-time comparison.",
+      "expected_export": "named:generateCodeVerifier,named:computeCodeChallenge,named:verifyPkce",
+      "complexity_domain": "security_protocol"
+    },
+    {
+      "id": "two-phase-commit",
+      "prompt_file": "tasks/two-phase-commit/prompt.md",
+      "oracle_test": "tasks/two-phase-commit/oracle.test.ts",
+      "reference_impl": "tasks/two-phase-commit/reference-impl.ts",
+      "sha256": "550fd152ee4dfdbc3ea97f084ebe5b0b16e341f54ea8523b664f88b5f9e007a8",
+      "description": "Synchronous 2PC coordinator: Participant (prepare/commit/abort FSM) + Coordinator (run protocol, all-YES commit, any-NO abort all).",
+      "adversarial_framing": "Distributed coordination FSM. Haiku commonly: breaks idempotency (double-commit throws instead of no-op), fails to call abort() on YES-voters when another participant votes NO, gets coordinator state transitions wrong.",
+      "expected_export": "named:Participant,named:Coordinator,named:TwoPhaseCommitError",
+      "complexity_domain": "distributed_coordination"
+    },
+    {
+      "id": "kahan-running-stats",
+      "prompt_file": "tasks/kahan-running-stats/prompt.md",
+      "oracle_test": "tasks/kahan-running-stats/oracle.test.ts",
+      "reference_impl": "tasks/kahan-running-stats/reference-impl.ts",
+      "sha256": "903af8ba7b67ca8434e37a2a0dd9050a3f6b250d185acbcef26ced0386fde55d",
+      "description": "Streaming statistics with Kahan compensated sum + Welford running variance (sample variance, n-1 denominator) + min/max + RangeError on empty.",
+      "adversarial_framing": "Numerical precision + statistics correctness. Critical discriminator: sample variance (n-1) vs population variance (n). Haiku uses n denominator, failing [1,3]→2.0 and [1,2,3]→1.0 oracle cases. Also omits RangeError (uses Error) and misses empty-set throws.",
+      "expected_export": "named:KahanStats",
+      "complexity_domain": "numerical_precision"
+    },
+    {
+      "id": "token-bucket-rate-limiter",
+      "prompt_file": "tasks/token-bucket-rate-limiter/prompt.md",
+      "oracle_test": "tasks/token-bucket-rate-limiter/oracle.test.ts",
+      "reference_impl": "tasks/token-bucket-rate-limiter/reference-impl.ts",
+      "sha256": "10122406f223ae7ac8f939aab7b5e0e98558b8a0de2ab3b8da0c12eed6ce44ef",
+      "description": "Token bucket rate limiter: tryConsume/consume with time-based refill (Date.now()), capacity cap, RateLimitError with available/requested fields, reset().",
+      "adversarial_framing": "Stateful time-based FSM with fake-timer oracle. Haiku commonly omits: tryConsume(0)/consume(0) always-true contract, TypeError for negative token requests, capacity cap on refill overshoot, RateLimitError.available and .requested properties.",
+      "expected_export": "named:TokenBucketRateLimiter,named:RateLimitError",
+      "complexity_domain": "stateful_fsm"
+    }
+  ]
+}

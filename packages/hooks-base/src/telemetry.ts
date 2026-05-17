@@ -274,6 +274,34 @@ export function hashIntent(intentText: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Outcome values returned by outcomeFromResponse().
+ *
+ * Subset of TelemetryEvent.outcome: excludes shave-on-miss-* and drift-alert
+ * values that are emitted via direct appendTelemetryEvent calls, not via
+ * outcomeFromResponse(). Extracted as a named alias so the function signature
+ * stays within the 200-char behavior limit.
+ *
+ * @decision DEC-634-OUTCOME-ALIAS-001
+ * @title TelemetryOutcome type alias keeps outcomeFromResponse signature ≤200 chars
+ * @status accepted
+ * @rationale
+ *   Without this alias, buildSignatureString() produces a 222-char behavior for
+ *   the outcomeFromResponse leaf (the full inline union is 160 chars in the return
+ *   position). Extracting the union as TelemetryOutcome reduces the signature to
+ *   ~75 chars, satisfying the IntentCard 200-char validator without altering the
+ *   public contract. This is the fix for #634.
+ */
+export type TelemetryOutcome =
+  | "registry-hit"
+  | "synthesis-required"
+  | "passthrough"
+  | "atomized"
+  | "intent-too-broad"
+  | "result-set-too-large"
+  | "atom-size-too-large"
+  | "descent-bypass-warning";
+
+/**
  * Extract the outcome string from a HookResponse discriminated union.
  *
  * @decision DEC-HOOK-ATOM-CAPTURE-001 (D-HOOK-7 additive outcome)
@@ -285,7 +313,7 @@ export function hashIntent(intentText: string): string {
 export function outcomeFromResponse(
   response: HookResponse,
   outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" | "descent-bypass-warning",
-): "registry-hit" | "synthesis-required" | "passthrough" | "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" | "descent-bypass-warning" {
+): TelemetryOutcome {
   // Note: shave-on-miss outcome values are emitted directly via appendTelemetryEvent
   // from shave-on-miss.ts, not via this function. This function handles only the
   // four standard outcomes plus the override values.

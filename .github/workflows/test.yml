@@ -7,9 +7,14 @@ on:
   # sole PR gate. This workflow retains push:main for immediate post-merge
   # correctness. Nightly cron coverage is provided by nightly.yml
   # (DEC-CI-FAST-PATH-PHASE-3-001).
+
+# No cancel-in-progress: post-merge push:main runs are independent and should
+# complete. Each push to main is a distinct commit; all runs should finish so
+# the operator gets a clean test signal per commit.
+# DEC-CI-POSTMERGE-FULL-TEST-COMPLETE-001 (mirror of DEC-CI-POSTMERGE-ADVISORY-GATE-001
+# applied to pr-ci-test-advisory.yml in PR cneckar/yakcc#605 closing cneckar/yakcc#596/#595).
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   test:
     name: pnpm -r build + test

@@ -34,8 +34,25 @@ import { randomUUID } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const WARMUP = 100;
-const MEASURED = 1000;
+// Iteration counts default to the canonical apples-to-apples 100/1000 cadence
+// (matching ts-baseline, rust-baseline-accelerated, rust-baseline-software).
+// They are opt-in overridable via env vars to support local PASS/KILL verdicts
+// on platforms where yakcc-as per-iter cost exceeds the orchestrator's 60-min
+// ceiling — primarily darwin/M1 Pro (#638). Reduced-iter runs are marked in
+// the JSON output via the `iterations` field and the `iterations_override`
+// flag; canonical CI runs leave both env vars unset and emit 1000 measured.
+function parsePositiveInt(envVal, fallback, name) {
+  if (envVal === undefined || envVal === "") return fallback;
+  const n = Number.parseInt(envVal, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    process.stderr.write(`WARN: ignoring invalid ${name}=${envVal} (need positive integer); using default ${fallback}\n`);
+    return fallback;
+  }
+  return n;
+}
+const WARMUP = parsePositiveInt(process.env.YAKCC_AS_WARMUP_ITERS, 100, "YAKCC_AS_WARMUP_ITERS");
+const MEASURED = parsePositiveInt(process.env.YAKCC_AS_MEASURED_ITERS, 1000, "YAKCC_AS_MEASURED_ITERS");
+const ITERATIONS_OVERRIDE = (WARMUP !== 100 || MEASURED !== 1000);
 
 // Tag constants — must match source.ts
 const TAG_NUMBER = 1;
@@ -275,6 +292,8 @@ const result2 = {
   mean_ms: mean,
   throughput_mb_per_sec: throughputMbPerSec,
   iterations: MEASURED,
+  warmup_iterations: WARMUP,
+  iterations_override: ITERATIONS_OVERRIDE,
   checksum: lastSum,
 };
 process.stdout.write(JSON.stringify(result2) + "\n");

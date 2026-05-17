@@ -26,6 +26,8 @@
     "bench:min-surface": "node bench/B9-min-surface/harness/run.mjs",
     "bench:min-surface:dry": "node bench/B9-min-surface/harness/run.mjs --dry-run",
     "bench:min-surface:no-network": "node bench/B9-min-surface/harness/run.mjs --no-network",
+    "bench:bloat": "node bench/B2-bloat/harness/run.mjs",
+    "bench:bloat:dry": "node bench/B2-bloat/harness/run.mjs --dry-run",
     "bench:import-replacement": "node bench/B10-import-replacement/harness/run.mjs",
     "bench:import-replacement:dry": "node bench/B10-import-replacement/harness/run.mjs --dry-run",
     "bench:import-replacement:no-network": "node bench/B10-import-replacement/harness/run.mjs --no-network"
