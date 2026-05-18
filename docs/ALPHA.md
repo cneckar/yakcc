@@ -27,7 +27,18 @@ What we are **not** testing in this alpha:
 
 ## Install (alpha-specific)
 
-The binary distribution is in flight at [#361](https://github.com/cneckar/yakcc/issues/361). For this alpha, **clone-from-monorepo is the install path**:
+<!--
+  @decision DEC-704-ALPHA-INSTALL-001
+  title: Alpha install copy reflects shipped reality (Slice 1 only)
+  status: accepted
+  rationale: Documenting a downloadable binary that does not exist would block tester onboarding;
+             the first failed curl would burn trust. The honest local-build path serves the same
+             audience adequately until #361 Slices 2-3 ship.
+  authority-domain: alpha-install-section
+-->
+
+**Primary install: clone from monorepo.** This is the only path that gives every platform a
+working `yakcc` today.
 
 ```sh
 git clone https://github.com/cneckar/yakcc.git ~/.yakcc-cli
@@ -38,6 +49,22 @@ pnpm -r build
 export PATH="$HOME/.yakcc-cli/packages/cli/dist:$PATH"
 yakcc --version    # confirm
 ```
+
+**Optional secondary: build a standalone binary locally** (Linux x64 only today — macOS and
+Windows arrive with [#361](https://github.com/cneckar/yakcc/issues/361) Slice 2).
+This is the Slice-1-of-[#361](https://github.com/cneckar/yakcc/issues/361) output; a downloadable
+GitHub Release artifact is not yet available.
+
+```sh
+# inside ~/.yakcc-cli (already cloned above)
+pnpm --filter @yakcc/cli build:binary
+# produces packages/cli/dist/yakcc-bin
+cp packages/cli/dist/yakcc-bin ~/bin/yakcc    # or any dir on your PATH
+yakcc --version    # confirm
+```
+
+**Coming soon:** downloadable binaries via GitHub Releases and multi-arch support land with
+[#361](https://github.com/cneckar/yakcc/issues/361) Slices 2-3.
 
 Then in your own project:
 
@@ -66,7 +93,7 @@ Things we know about, in priority order. **You will hit some of these.** That's 
 | Substitution-integration: 4 specific test cases fail | Under triage; classifying which (if any) hit real-world usage | [#365](https://github.com/cneckar/yakcc/issues/365) |
 | Bootstrap perf: schema v9 write path 30+min vs prior 5min | Fix in flight, lands within ~3 hours of investigation | [#377](https://github.com/cneckar/yakcc/issues/377) |
 | Windows `yakcc init` may no-op | Under investigation; #274 fix may be incomplete | [#385](https://github.com/cneckar/yakcc/issues/385) |
-| No standalone binary yet (`npm install -g` or single executable) | Wrath active; binary lands ~1-2 weeks | [#361](https://github.com/cneckar/yakcc/issues/361) |
+| Standalone binary Slice 1 shipped (#361, local Linux x64 build only); multi-arch download via GitHub Releases pending Slices 2-3 | Slices 2-3 in flight | [#361](https://github.com/cneckar/yakcc/issues/361) |
 | No global registry peer (`yakcc.dev`) yet | Post-v0 by design; alpha = your local corpus + yakcc seed | [#371](https://github.com/cneckar/yakcc/issues/371) |
 | Codex CLI hook not wired | Deferred to v0.5+ on demand | [#220](https://github.com/cneckar/yakcc/issues/220) (closed not-planned) |
 | Recursive self-hosting proof not yet green | Surgical fix in flight; load-bearing for v2 narrative not v0 use | [#355](https://github.com/cneckar/yakcc/issues/355) |
@@ -120,10 +147,28 @@ We're not promising hotfixes for cosmetic issues. We are promising to read every
 ## What's next (post-alpha-0 trajectory)
 
 - `v0.5.0-alpha.1`: substitution-integration fixes (#365), bootstrap perf (#377), Windows bin fix (#385), starter-corpus polish.
-- `v0.5.0-beta.0`: binary distribution (#361, Wrath active), shave cache (#363), recursive self-hosting proof closure (#355).
+- `v0.5.0-beta.0`: binary distribution multi-arch + downloadable (#361 Slices 2-4), shave cache (#363), recursive self-hosting proof closure (#355).
 - `v0.5.0`: global registry peer (#371), OSS-libs shave campaign begins, B4 token-savings benchmark published.
 
 We'll cut a new alpha tag for each substantive fix wave. Pin to a specific tag in your install instructions; we'll announce when to move forward.
+
+---
+
+## How to contribute
+
+The most impactful thing you can do as an alpha tester, beyond filing bugs, is run the B3
+cache-hit sprint — a structured 3+3+3 day experiment that measures the real-world registry-hit
+rate on your own code. The protocol is self-contained:
+
+- **[Run the B3 cache-hit sprint](../bench/B3-cache-hit/PROTOCOL.md)** — measures registry-hit
+  rate for boilerplate / glue / novel-logic tasks on your real project, with and without the hook.
+  We want the hit-rate data and the per-task friction log back via a comment on
+  [#187](https://github.com/cneckar/yakcc/issues/187).
+- **File an alpha-feedback issue** for any bug or UX rough edge:
+  https://github.com/cneckar/yakcc/issues/new?template=alpha-feedback.md
+- **Report regressions found via the smoke-test loop** — if `yakcc init` followed by one IDE
+  session produces no telemetry, that's a regression; file with your platform info and the output
+  of `tail -20 ~/.yakcc/telemetry/*.jsonl`.
 
 ---
 

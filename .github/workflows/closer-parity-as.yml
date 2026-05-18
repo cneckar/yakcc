@@ -96,6 +96,29 @@ jobs:
           key: closer-parity-as-verified-${{ steps.source-hash.outputs.hash }}
 
       # -----------------------------------------------------------------------
+      # Seed AS wasm shard cache from checked-in bootstrap/ (WI-631 Stage B).
+      #
+      # This step copies bootstrap/as-cache-seed/* into tmp/yakcc-as-cache/
+      # so cold runs (no actions/cache hit) start with a populated cache.
+      # The next step (Stage A restore) overlays any actions/cache hit on
+      # top; --no-clobber ensures the cache (potentially fresher than the
+      # committed seed) wins on collision.
+      # @decision DEC-AS-WASM-SEED-001
+      # @decision DEC-AS-WASM-SEED-003
+      # @decision DEC-AS-WASM-SEED-COPY-MODE-001
+      # -----------------------------------------------------------------------
+      - name: Seed AS wasm shard cache from bootstrap/
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tmp/yakcc-as-cache
+          if [ -d bootstrap/as-cache-seed ]; then
+            cp -rn bootstrap/as-cache-seed/. tmp/yakcc-as-cache/
+            echo "Seeded $(find tmp/yakcc-as-cache -name '*.wasm' | wc -l) wasm shard(s) from bootstrap/as-cache-seed/"
+          else
+            echo "bootstrap/as-cache-seed/ not present; skipping seed copy"
+          fi
+
+      # -----------------------------------------------------------------------
       # AS wasm shard cache (DEC-AS-COMPILE-CACHE-002 on-disk persistence).
       #
       # This is the per-atom wasm byte cache that as-compile-cache.ts writes
