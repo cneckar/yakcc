@@ -1,0 +1,1 @@
+{"run_id":"phase2-2026-05-18T17-54-47","phase":2,"task_id":"crc32c","cell_id":"F","driver":"haiku","arm":"hooked","model_id":"claude-haiku-4-5-20251001","rep":1,"input_tokens":2429,"output_tokens":494,"cost_usd":0.003919199999999999,"cumulative_cost_usd":0.003919199999999999,"wall_ms":5753,"ts":"2026-05-18T17:54:53.263Z","tool_cycles":1}

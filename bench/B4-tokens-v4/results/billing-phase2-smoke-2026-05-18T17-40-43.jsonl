@@ -1,0 +1,1 @@
+{"run_id":"phase2-smoke-2026-05-18T17-40-43","phase":2,"task_id":"crc32c","cell_id":"E","driver":"haiku","arm":"unhooked","model_id":"claude-haiku-4-5-20251001","rep":1,"input_tokens":468,"output_tokens":463,"cost_usd":0.0022264,"cumulative_cost_usd":0.0022264,"wall_ms":3115,"ts":"2026-05-18T17:40:46.696Z","tool_cycles":0}
