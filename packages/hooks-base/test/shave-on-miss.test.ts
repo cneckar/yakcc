@@ -93,13 +93,10 @@ const savedCorpusDir = process.env.YAKCC_SHAVE_ON_MISS_CORPUS_DIR;
 
 let tempDir: string;
 
-beforeEach(async () => {
-  // Flush microtasks/macrotasks so any orphaned workers scheduled by the prior test (via
-  // queueMicrotask) finish and write their completedBindings into _cachedState BEFORE we
-  // reset. Without this yield, orphaned workers can complete AFTER the reset, contaminating
-  // _cachedState during the next test's synchronous setup window.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  // Reset in-memory state after orphaned workers have settled.
+beforeEach(() => {
+  // Reset in-memory state cache. Orphaned workers from a prior test may have written
+  // stale completedBindings into _cachedState after afterEach ran, but we handle that
+  // per-test where needed (see §9) rather than here, to avoid async timing hazards.
   _resetShaveOnMissState();
   tempDir = join(tmpdir(), `shave-on-miss-test-${process.pid}-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
@@ -463,6 +460,12 @@ describe("applyShaveOnMiss -- Slice 3 completion persistence", () => {
     const registry = await openRegistry(":memory:", {
       embeddings: identityEmbeddingProvider(),
     });
+
+    // §8 schedules orphaned workers (no drain) that may complete during the openRegistry
+    // await above and write completedBindings into _cachedState. Reset synchronously here:
+    // no await between this reset and applyShaveOnMiss, so no callback can sneak in and
+    // re-contaminate before the enqueue call.
+    _resetShaveOnMissState();
 
     const ctx = { intent: "validate email" };
 
