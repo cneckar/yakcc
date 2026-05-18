@@ -1186,6 +1186,7 @@ prerequisites for any external-facing v1 federation work and are
 encoded as v1 work items rather than v0.7 stragglers because the v0.7
 demo and its acceptance bar passed without them per
 DEC-V07-CLOSURE-001 below.
+- **Engine gap closed**: lru-cache@11.3.6 decomposes cleanly post-#695 (closes #666; `DEC-SHAVE-PRIVATE-CLASS-FIELD-001`); #696 follow-ups completed (§F quality gate, DEC consequences field, stale-comment cleanup).
 
 ### Initiative: v1 federation + L0 substantiation (`@yakcc/federation`)
 
