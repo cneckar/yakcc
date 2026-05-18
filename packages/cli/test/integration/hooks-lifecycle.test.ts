@@ -3,14 +3,14 @@
 // hooks-lifecycle.test.ts — round-trip hook lifecycle harness for all IDE adapters
 //
 // @decision DEC-687-S1-ADAPTER-COUNT
-// title: Harness covers 5 production-wired adapters; codex deferred (no CLI IDE adapter)
-// status: amended (WI-687-S3 adds windsurf)
+// title: Harness covers 6 production-wired adapters; codex deferred (no CLI IDE adapter)
+// status: amended (WI-687-S3 adds windsurf; WI-687-S4 adds aider)
 // rationale:
 //   The CLI's production surface (KNOWN_IDE_NAMES in ide-detect.ts,
 //   installHookForIde/uninstallHookForIde in init.ts/uninstall.ts) contains
-//   5 adapters: claude-code, cursor, cline, continue, windsurf. There is no `codex`
-//   IDE adapter in the CLI; hooks-codex exists as a hooks-base sibling package but is
-//   not wired into installHookForIde/uninstallHookForIde/KNOWN_IDE_NAMES.
+//   6 adapters: claude-code, cursor, cline, continue, windsurf, aider. There is no
+//   `codex` IDE adapter in the CLI; hooks-codex exists as a hooks-base sibling package
+//   but is not wired into installHookForIde/uninstallHookForIde/KNOWN_IDE_NAMES.
 //   Adding a codex lifecycle case would require touching packages/cli/src/**, which
 //   is forbidden by this slice's scope manifest. The codex gap is recorded here
 //   explicitly so future planners do not silently rediscover it.
@@ -60,10 +60,18 @@ const SENTINELS = {
   cline: "yakcc-hook-v1-cline",
   continue: "yakcc-hook-v1-continue",
   windsurf: "yakcc-hook-v1-windsurf",
+  aider: "yakcc-hook-v1-aider",
 } as const;
 
 type Adapter = keyof typeof SENTINELS;
-const ADAPTERS: readonly Adapter[] = ["claude-code", "cursor", "cline", "continue", "windsurf"] as const;
+const ADAPTERS: readonly Adapter[] = [
+  "claude-code",
+  "cursor",
+  "cline",
+  "continue",
+  "windsurf",
+  "aider",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Suite-level HOME sentinel guard
@@ -86,6 +94,7 @@ const HOME_SENTINEL_PATHS = [
   join(REAL_HOME, ".config", "cline"),
   join(REAL_HOME, ".continue"),
   join(REAL_HOME, ".windsurf"),
+  join(REAL_HOME, ".aider"),
 ];
 
 let homeDirSnapshots: HomeDirSnapshot[] = [];
@@ -187,6 +196,9 @@ function seedDetectProbe(adapter: Adapter, homeDir: string): void {
     case "windsurf":
       mkdirSync(join(homeDir, ".windsurf"), { recursive: true });
       break;
+    case "aider":
+      mkdirSync(join(homeDir, ".aider"), { recursive: true });
+      break;
   }
 }
 
@@ -207,6 +219,8 @@ function hookArtefactPath(adapter: Adapter, targetDir: string, homeDir: string):
       return join(homeDir, ".continue", "yakcc-continue-hook.json");
     case "windsurf":
       return join(targetDir, ".windsurf", "settings.json");
+    case "aider":
+      return join(homeDir, ".aider", "yakcc-aider-hook.json");
   }
 }
 
@@ -241,10 +255,10 @@ function isYakccMarkerPresent(adapter: Adapter, targetDir: string, homeDir: stri
     case "claude-code": {
       // sentinel is on an inner hook object inside hooks.PreToolUse[].hooks[]
       const hooks = obj.hooks as Record<string, unknown> | undefined;
-      const preToolUse = hooks?.PreToolUse as Array<{ matcher: string; hooks: Array<{ _yakcc?: string }> }> | undefined;
-      return (preToolUse ?? []).some((entry) =>
-        entry.hooks.some((h) => h._yakcc === sentinel),
-      );
+      const preToolUse = hooks?.PreToolUse as
+        | Array<{ matcher: string; hooks: Array<{ _yakcc?: string }> }>
+        | undefined;
+      return (preToolUse ?? []).some((entry) => entry.hooks.some((h) => h._yakcc === sentinel));
     }
     case "cursor":
     case "windsurf": {
@@ -255,6 +269,7 @@ function isYakccMarkerPresent(adapter: Adapter, targetDir: string, homeDir: stri
     }
     case "cline":
     case "continue":
+    case "aider":
       // sentinel is _yakcc field on the marker file directly
       return obj._yakcc === sentinel;
   }
@@ -268,7 +283,7 @@ function isYakccMarkerPresent(adapter: Adapter, targetDir: string, homeDir: stri
  * See DEC-687-S1-BYTE-IDENTITY-SCOPE.
  */
 function normalizeForByteIdentity(adapter: Adapter, raw: Buffer): Buffer {
-  if (adapter === "cline" || adapter === "continue") {
+  if (adapter === "cline" || adapter === "continue" || adapter === "aider") {
     const obj = JSON.parse(raw.toString("utf-8")) as Record<string, unknown>;
     delete obj.installedAt;
     return Buffer.from(`${JSON.stringify(obj, null, 2)}\n`, "utf-8");
@@ -276,6 +291,7 @@ function normalizeForByteIdentity(adapter: Adapter, raw: Buffer): Buffer {
   // For claude-code, cursor, and windsurf settings.json: the file is deterministic —
   // applyInstall returns early if the marker is already present, so bytes
   // are unchanged on re-init. Return raw for strict byte comparison.
+  // aider is handled above (marker file with installedAt field).
   return raw;
 }
 
@@ -331,7 +347,11 @@ function preSeedSiblingContent(
       const notesPath = join(cursorDir, "user-notes.json");
       const userSettings = { "editor.tabSize": 2, hooks: { somethingElse: { cmd: "echo hi" } } };
       writeFileSync(settingsPath, `${JSON.stringify(userSettings, null, 2)}\n`, "utf-8");
-      writeFileSync(notesPath, `${JSON.stringify({ note: "user cursor notes" }, null, 2)}\n`, "utf-8");
+      writeFileSync(
+        notesPath,
+        `${JSON.stringify({ note: "user cursor notes" }, null, 2)}\n`,
+        "utf-8",
+      );
       return {
         paths: [settingsPath, notesPath],
         capture: () => ({
@@ -345,7 +365,11 @@ function preSeedSiblingContent(
       const clineDir = join(homeDir, ".config", "cline");
       mkdirSync(clineDir, { recursive: true });
       const notesPath = join(clineDir, "user-notes.json");
-      writeFileSync(notesPath, `${JSON.stringify({ note: "cline user notes" }, null, 2)}\n`, "utf-8");
+      writeFileSync(
+        notesPath,
+        `${JSON.stringify({ note: "cline user notes" }, null, 2)}\n`,
+        "utf-8",
+      );
       return {
         paths: [notesPath],
         capture: () => ({ notes: readFileSync(notesPath, "utf-8") }),
@@ -371,13 +395,34 @@ function preSeedSiblingContent(
       const notesPath = join(windsurfDir, "user-notes.json");
       const userSettings = { "editor.tabSize": 2, hooks: { somethingElse: { cmd: "echo hi" } } };
       writeFileSync(settingsPath, `${JSON.stringify(userSettings, null, 2)}\n`, "utf-8");
-      writeFileSync(notesPath, `${JSON.stringify({ note: "user windsurf notes" }, null, 2)}\n`, "utf-8");
+      writeFileSync(
+        notesPath,
+        `${JSON.stringify({ note: "user windsurf notes" }, null, 2)}\n`,
+        "utf-8",
+      );
       return {
         paths: [settingsPath, notesPath],
         capture: () => ({
           settings: readFileSync(settingsPath, "utf-8"),
           notes: readFileSync(notesPath, "utf-8"),
         }),
+      };
+    }
+    case "aider": {
+      // Write a sibling user-notes.json in ~/.aider/ (not the yakcc marker file).
+      // Aider uses ~/.aider/ for chat history and cache; we place a user-owned
+      // notes file there to verify uninstall does not disturb it.
+      const aiderDir = join(homeDir, ".aider");
+      mkdirSync(aiderDir, { recursive: true });
+      const notesPath = join(aiderDir, "user-notes.json");
+      writeFileSync(
+        notesPath,
+        `${JSON.stringify({ note: "aider user notes" }, null, 2)}\n`,
+        "utf-8",
+      );
+      return {
+        paths: [notesPath],
+        capture: () => ({ notes: readFileSync(notesPath, "utf-8") }),
       };
     }
   }
@@ -435,17 +480,18 @@ for (const adapter of ADAPTERS) {
 
     it(`${adapter}: first init records adapter in .yakccrc.json installedHooks`, async () => {
       const logger = new CollectingLogger();
-      await init(
-        ["--target", scratch.targetDir, "--ide", adapter, "--no-seed"],
-        logger,
-        { overrideHome: scratch.homeDir },
-      );
+      await init(["--target", scratch.targetDir, "--ide", adapter, "--no-seed"], logger, {
+        overrideHome: scratch.homeDir,
+      });
 
       const rcPath = join(scratch.targetDir, ".yakccrc.json");
       expect(existsSync(rcPath), ".yakccrc.json not found").toBe(true);
       const rc = readJson(rcPath);
       expect(Array.isArray(rc.installedHooks), "installedHooks is not an array").toBe(true);
-      expect((rc.installedHooks as string[]).includes(adapter), `${adapter} not in installedHooks`).toBe(true);
+      expect(
+        (rc.installedHooks as string[]).includes(adapter),
+        `${adapter} not in installedHooks`,
+      ).toBe(true);
     });
 
     it(`${adapter}: second init is idempotent — artefact bytes unchanged and no duplicate hook entry`, async () => {
@@ -472,13 +518,19 @@ for (const adapter of ADAPTERS) {
 
       // Hook artefact bytes unchanged (stripped of installedAt for cline/continue)
       const snapshot2 = normalizeForByteIdentity(adapter, readFileSync(artefact));
-      expect(snapshot2.equals(snapshot1), `${adapter}: hook artefact changed on second init (idempotency violation)`).toBe(true);
+      expect(
+        snapshot2.equals(snapshot1),
+        `${adapter}: hook artefact changed on second init (idempotency violation)`,
+      ).toBe(true);
 
       // .yakccrc.json installedHooks lists adapter exactly once
       const rc = readJson(join(scratch.targetDir, ".yakccrc.json"));
       const hooks = rc.installedHooks as string[];
       const occurrences = hooks.filter((h) => h === adapter).length;
-      expect(occurrences, `${adapter} appears ${occurrences} times in installedHooks (expected 1)`).toBe(1);
+      expect(
+        occurrences,
+        `${adapter} appears ${occurrences} times in installedHooks (expected 1)`,
+      ).toBe(1);
     });
 
     // -----------------------------------------------------------------------
@@ -535,18 +587,15 @@ for (const adapter of ADAPTERS) {
         { overrideHome: scratch.homeDir },
       );
 
-      await uninstall(
-        ["--target", scratch.targetDir, "--ide", adapter],
-        new CollectingLogger(),
-        { overrideHome: scratch.homeDir },
-      );
+      await uninstall(["--target", scratch.targetDir, "--ide", adapter], new CollectingLogger(), {
+        overrideHome: scratch.homeDir,
+      });
 
       const rc = readJson(join(scratch.targetDir, ".yakccrc.json"));
       const hooks = rc.installedHooks as string[];
-      expect(
-        hooks.includes(adapter),
-        `${adapter} still in installedHooks after uninstall`,
-      ).toBe(false);
+      expect(hooks.includes(adapter), `${adapter} still in installedHooks after uninstall`).toBe(
+        false,
+      );
     });
 
     // -----------------------------------------------------------------------
@@ -564,11 +613,9 @@ for (const adapter of ADAPTERS) {
       snapshot1 = normalizeForByteIdentity(adapter, readFileSync(artefact));
 
       // Uninstall
-      await uninstall(
-        ["--target", scratch.targetDir, "--ide", adapter],
-        new CollectingLogger(),
-        { overrideHome: scratch.homeDir },
-      );
+      await uninstall(["--target", scratch.targetDir, "--ide", adapter], new CollectingLogger(), {
+        overrideHome: scratch.homeDir,
+      });
       expect(isYakccMarkerPresent(adapter, scratch.targetDir, scratch.homeDir)).toBe(false);
 
       // Re-init — small delay for fresh timestamps if applicable
@@ -584,7 +631,10 @@ for (const adapter of ADAPTERS) {
 
       // artefact is present and marker is back
       expect(existsSync(artefact), `artefact absent after re-init at ${artefact}`).toBe(true);
-      expect(isYakccMarkerPresent(adapter, scratch.targetDir, scratch.homeDir), `yakcc marker missing after re-init`).toBe(true);
+      expect(
+        isYakccMarkerPresent(adapter, scratch.targetDir, scratch.homeDir),
+        `yakcc marker missing after re-init`,
+      ).toBe(true);
 
       // Bytes match snapshot1 (after normalisation)
       const snapshot3 = normalizeForByteIdentity(adapter, readFileSync(artefact));
