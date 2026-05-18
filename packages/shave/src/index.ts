@@ -408,13 +408,25 @@ import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./univers
  * "variance" is removed — variance ranking is now live (WI-011 / #374).
  *
  * @decision DEC-LICENSE-GATE-REMOVE-001
- * title: License gate removed from universalize() (WI-682, 2026-05-17)
- * status: accepted
- * rationale: Operator DEC (2026-05-17): yakcc reimplements behavior, not source.
- *   License-of-origin gating is misapplied defense-in-depth. See MASTER_PLAN.md
- *   DEC-LICENSE-GATE-REMOVE-001 for full rationale.
- * supersedes: DEC-LICENSE-GATE-001, DEC-LICENSE-WIRING-002
- * closes: #682
+ * @title Remove ingest-side license gate from shave pipeline
+ * @status accepted
+ * @rationale
+ *   Operator DEC 2026-05-17 (verbatim):
+ *   "Let's get rid of the license checks entirely we are not copying code, we
+ *   are reimplementing behavior so we don't need to stop on copy left, and def
+ *   not on no license"
+ *   yakcc's product story is behavioral reimplementation, not source
+ *   redistribution. Atoms are content-addressed derivations of behavior, not
+ *   copies of source. Ingest-side copyleft/missing-license gating is misapplied
+ *   defense-in-depth. The gate was already vestigial in production —
+ *   hooks-base/atomize.ts auto-prepended MIT SPDX to bypass it.
+ * @consequences
+ *   - shave's universalize() no longer rejects sources lacking SPDX headers
+ *   - hooks-base/atomize.ts no longer auto-prepends MIT SPDX (gate is gone)
+ *   - Consumers depending on LicenseRefusedError need to remove that import
+ *   - bench/B4-tokens-v3/harness/atom-sync.mjs no longer needs ensureSpdxHeader
+ * @supersedes DEC-LICENSE-GATE-001, DEC-LICENSE-WIRING-002
+ * @closes #682
  *
  * Process a single candidate block through the universalization pipeline.
  *
