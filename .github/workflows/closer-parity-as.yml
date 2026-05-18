@@ -95,6 +95,37 @@ jobs:
           path: tmp/closer-parity-as/.verified-marker
           key: closer-parity-as-verified-${{ steps.source-hash.outputs.hash }}
 
+      # -----------------------------------------------------------------------
+      # AS wasm shard cache (DEC-AS-COMPILE-CACHE-002 on-disk persistence).
+      #
+      # This is the per-atom wasm byte cache that as-compile-cache.ts writes
+      # to <repoRoot>/tmp/yakcc-as-cache/. Restoring it across CI runs means
+      # any atom whose source hash matches a prior run skips asc entirely —
+      # breaks the chicken-and-egg per #631 / #485 where cold-runs hit the
+      # 60-min wall before the verified-marker can populate.
+      #
+      # Cache key is intentionally NOT tied to test file or corpus — atom
+      # source hash is the cache key inside as-compile-cache.ts, so we only
+      # need to invalidate when the compile pipeline ITSELF changes (asc
+      # version via pnpm-lock, the as-backend.ts invocation logic, or the
+      # cache module itself). Restore-keys provides graceful degradation: a
+      # stale cache is still better than a cold start.
+      # @decision DEC-AS-WASM-CACHE-CI-001
+      # @title Restore tmp/yakcc-as-cache/ across closer-parity-as CI runs (WI-631 Stage A)
+      # @status accepted
+      # @rationale Breaks chicken-and-egg per #631 / #485. Cache key restricted
+      # to compile-pipeline files so test/corpus churn does not invalidate.
+      # Restore-keys provides graceful degradation. actions/cache@v4 saves
+      # automatically on successful job exit (no separate save step).
+      - name: Restore AS wasm shard cache
+        if: steps.verified-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: tmp/yakcc-as-cache
+          key: yakcc-as-wasm-cache-v1-${{ hashFiles('packages/compile/src/as-backend.ts', 'packages/compile/src/as-compile-cache.ts', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            yakcc-as-wasm-cache-v1-
+
       - name: Skip — already verified for this source state
         if: steps.verified-cache.outputs.cache-hit == 'true'
         run: |

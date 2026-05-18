@@ -49,6 +49,7 @@ import { registryRebuild } from "./commands/registry-rebuild.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
 import { shave } from "./commands/shave.js";
+import { uninstall } from "./commands/uninstall.js";
 
 // Re-export ContractId for callers who import from @yakcc/cli.
 export type { ContractId } from "@yakcc/contracts";
@@ -127,6 +128,16 @@ USAGE
 
 COMMANDS
   init [--target <dir>] [--peer <url>] Initialize yakcc in a project directory
+       [--local] [--airgapped]         Mode: local (default) or airgapped (no peer)
+       [--skip-hooks]                  Skip IDE hook auto-install
+       [--ide <claude-code|cursor|     Explicit IDE list (skip auto-detect)
+             cline|continue,...>]
+       [--no-seed]                     Skip bootstrap corpus seed
+  uninstall [--target <dir>]          Remove yakcc IDE hooks (preserves data)
+            [--purge]                 Also remove .yakcc/ and .yakccrc.json
+            [--ide <claude-code|      Target specific IDEs only (default: all installed)
+                  cursor|cline|
+                  continue,...>]
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
   registry rebuild [--path <p>]       Re-embed all blocks after an embedding model swap
   registry export --to <p>            Export registry as canonical SQLite (VACUUM INTO)
@@ -198,6 +209,14 @@ export async function runCli(
       // `yakcc init [--target <dir>] [--peer <url>]`
       const initArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return init(initArgv, logger);
+    }
+
+    case "uninstall": {
+      // `yakcc uninstall [--target <dir>] [--purge] [--ide <list>]`
+      // Symmetric off-switch for `yakcc init` (DEC-CLI-UNINSTALL-COMMAND-001).
+      // subcommand may be a flag like --target or --purge — reassemble into argv.
+      const uninstallArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return uninstall(uninstallArgv, logger);
     }
 
     case "registry": {

@@ -43,11 +43,12 @@ Then in your own project:
 
 ```sh
 cd ~/my-project
-yakcc init                    # creates .yakcc/, .yakccrc.json, wires Claude Code hook
-yakcc seed --yakcc            # imports yakcc's ~4k atoms as your starter corpus
+yakcc init    # creates .yakcc/, .yakccrc.json, auto-detects + wires IDE hooks, seeds the bootstrap corpus
 ```
 
-Open Claude Code in the project. Ask it to do real work. Watch the hook fire.
+`yakcc init` is a single command (per `DEC-CLI-INIT-002`): it detects your installed IDEs (Claude Code, Cursor, Cline, Continue.dev), wires each hook, and seeds the yakcc bootstrap corpus (~4k atoms) in one step. No separate `yakcc seed --yakcc` call is needed.
+
+Open Claude Code (or Cursor) in the project. Ask it to do real work. Watch the hook fire.
 
 ### Known platform notes
 
@@ -106,7 +107,7 @@ We're not promising hotfixes for cosmetic issues. We are promising to read every
 ## What's in this alpha (one-paragraph CHANGELOG)
 
 `v0.5.0-alpha.0` ships:
-- **Hook layer** (#194) — Claude Code + Cursor adapters wired; intercepts `Edit|Write|MultiEdit`; routes through local registry first.
+- **Hook layer** (#194) — Claude Code + Cursor adapters wired with live `settings.json` hook injection; Cline and Continue.dev marker surfaces installed (per `DEC-CLI-HOOKS-CLINE-INSTALL-001`, `DEC-CLI-HOOKS-CONTINUE-INSTALL-001`); intercepts `Edit|Write|MultiEdit`; routes through local registry first.
 - **Corpus flywheel** (#362, PR #368) — every novel emission becomes an atom in your local registry, discoverable in the next session.
 - **Local registry + sqlite-vec** — content-addressed, embeddings-indexed, BLAKE3-keyed atom storage.
 - **F1 federation** — mirror/serve/pull a registry over HTTP; integrity check on every transfer.
