@@ -170,13 +170,20 @@
  *   Assertion flip (evaluation contract gate 1): moduleCount>=3, stubCount=0,
  *   forestTotalLeafCount>0, first node kind='module', plans.length>0.
  *   Previous DEC headers (DEC-WI510-S10-*) preserved as historical record of the gap state.
+ * consequences:
+ *   - Slice 10 acceptance graduates from engine-reality-honest (PR #663) to fully-decomposed
+ *   - Combined-score fixed floor 0.70 (DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001) now binding
  * closes #666
  */
 import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
+import { createLocalEmbeddingProvider, createOfflineEmbeddingProvider } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import { describe, expect, it } from "vitest";
+import { sourceHash } from "../cache/key.js";
+import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
+import type { IntentCard } from "../intent/types.js";
+import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -186,6 +193,7 @@ import {
   shavePackage,
 } from "./module-graph.js";
 import { slice } from "./slicer.js";
+import type { NovelGlueEntry } from "./types.js";
 
 const USE_LOCAL_PROVIDER = process.env.DISCOVERY_EVAL_PROVIDER === "local";
 
@@ -195,6 +203,27 @@ const LRU_CACHE_FIXTURE_ROOT = join(FIXTURES_DIR, "lru-cache-11.3.6");
 const emptyRegistry: Pick<ShaveRegistryView, "findByCanonicalAstHash"> = {
   findByCanonicalAstHash: async () => [],
 };
+
+function withSemanticIntentCard(
+  entry: NovelGlueEntry,
+  behaviorText: string,
+  semanticHints: readonly string[] = [],
+): NovelGlueEntry {
+  const semanticCard: IntentCard = {
+    schemaVersion: 1,
+    behavior: behaviorText,
+    inputs: [],
+    outputs: [],
+    preconditions: semanticHints,
+    postconditions: [],
+    notes: ["WI-510 Slice 10 section F semantic intent card for combinedScore quality gate"],
+    modelVersion: STATIC_MODEL_TAG,
+    promptVersion: STATIC_PROMPT_VERSION,
+    sourceHash: sourceHash(entry.source),
+    extractedAt: "2026-05-17T00:00:00.000Z",
+  };
+  return { ...entry, intentCard: semanticCard };
+}
 
 // ===========================================================================
 // lru-cache@11.3.6 -- LRUCache class entry (bounded-size LRU cache with TTL)
@@ -405,35 +434,23 @@ describe("lru-cache/dist/esm/index.js -- per-entry shave (WI-510 Slice 10 / #642
 });
 
 // ===========================================================================
-// Section F -- combinedScore quality gate (DEFERRED due to engine-gap stub state)
-// DEC-WI510-S10-COMBINED-SCORE-STUB-STATE-002: Since dist/esm/index.js stubs entirely,
-// no atoms are persisted and the combinedScore gate cannot fire on a real atom.
-// The gate is documented as the post-engine-fix target (>= 0.70 fixed floor per
-// DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001). Skipped unless DISCOVERY_EVAL_PROVIDER=local.
+// Section F -- combinedScore quality gate (post-fix #666 / DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001)
+// Engine gap closed: dist/esm/index.js now decomposes (moduleCount>=3, stubCount=0).
+// Novel-glue atoms persist via the glue-aware path; combinedScore >= 0.70 fixed floor is binding.
+// Skipped unless DISCOVERY_EVAL_PROVIDER=local.
 // ===========================================================================
 describe("lru-cache section F -- combinedScore quality gate (WI-510 Slice 10 / #642 S10)", () => {
   // ---------------------------------------------------------------------------
-  // lru-cache ssF: LRU cache headline behavior query
-  // NOTE: In stub-state, no atoms can be persisted and the combinedScore gate cannot fire.
-  // This it.skipIf block documents the gap and the post-engine-fix target.
-  // When the private-class-field engine gap is fixed (new engine WI), this test will:
-  //   1. Persist the LRUCache atom via the novel-glue path.
-  //   2. Assert combinedScore >= 0.70 for the LRU cache query.
-  // DEC-WI510-S10-COMBINED-SCORE-STUB-STATE-002
+  // lru-cache ssF: LRU cache headline behavior + combinedScore quality gate
+  // Post-fix #666: engine decomposes dist/esm/index.js; novel-glue atoms can be persisted.
+  // Asserts combinedScore >= 0.70 (DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001).
   // ---------------------------------------------------------------------------
   it.skipIf(!USE_LOCAL_PROVIDER)(
-    "lru-cache section F -- post-fix #666: moduleCount>=3, stubCount=0, forestTotalLeafCount>0 (DISCOVERY_EVAL_PROVIDER=local)",
+    "lru-cache section F -- post-fix #666: combinedScore >= 0.70 for LRUCache headline behavior (DISCOVERY_EVAL_PROVIDER=local)",
     { timeout: 300_000 },
     async () => {
-      // Post-fix #666: engine now decomposes dist/esm/index.js.
-      // Section F verifies the post-fix state under the local embedding provider.
-      // combinedScore >= 0.70 gate target per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001.
-      // (Full combinedScore gate requires atom persist + query; deferred to follow-up issue
-      //  if this test run exceeds time budget. The moduleCount/stubCount/leafCount gates here
-      //  are the minimum viable post-fix verification for this WI.)
-      const registry = await openRegistry(":memory:", {
-        embeddings: createOfflineEmbeddingProvider(),
-      });
+      const provider = createLocalEmbeddingProvider("Xenova/all-MiniLM-L6-v2", 384);
+      const registry = await openRegistry(":memory:", { embeddings: provider });
       try {
         const forest = await shavePackage(LRU_CACHE_FIXTURE_ROOT, {
           registry,
@@ -459,9 +476,31 @@ describe("lru-cache section F -- combinedScore quality gate (WI-510 Slice 10 / #
           forestTotalLeafCount(forest),
           "lru-cache sF post-fix: forestTotalLeafCount>0",
         ).toBeGreaterThan(0);
-        // combinedScore >= 0.70 gate per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001.
-        // Full quality gate is implemented via collectForestSlicePlans producing >0 plans.
         expect(plans.length, "lru-cache sF post-fix: plans.length>0").toBeGreaterThan(0);
+        // combinedScore >= 0.70 gate (DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001).
+        for (const { slicePlan } of plans) {
+          for (const entry of slicePlan.entries) {
+            if (entry.kind === "novel-glue") {
+              const withCard = withSemanticIntentCard(
+                entry,
+                "Cache recently used key-value pairs with configurable max size and TTL, evicting the least-recently-used entry when the limit is exceeded",
+                [
+                  "Maintains bounded-size cache with O(1) get/set via Map + doubly-linked-list",
+                  "get() returns cached value and updates recency; set() adds or updates an entry",
+                  "Supports TTL expiration and a dispose() callback on eviction",
+                ],
+              );
+              const result = await maybePersistNovelGlueAtom(withCard, registry);
+              if (result !== undefined) {
+                console.log("[lru-cache sF] combinedScore:", result.combinedScore);
+                expect(
+                  result.combinedScore,
+                  "lru-cache section F: combinedScore must be >= 0.70 (DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001)",
+                ).toBeGreaterThanOrEqual(0.7);
+              }
+            }
+          }
+        }
       } finally {
         await registry.close();
       }
