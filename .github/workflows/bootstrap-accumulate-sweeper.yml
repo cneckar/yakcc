@@ -1,0 +1,60 @@
+# @decision DEC-BOOTSTRAP-ACCUMULATE-SWEEPER-001
+# Title: Hourly periodic sweeper for bootstrap-accumulate manifest
+# Status: accepted
+# Rationale: GitHub Actions cross-event concurrency cancellation (per #686
+# investigation) causes per-PR bootstrap-accumulate runs to be cancelled
+# despite cancel-in-progress: false. Per #707 (orchestrator decision
+# 2026-05-17), Option 3 (periodic sweeper) is the chosen mitigation — it
+# guarantees eventual accumulation regardless of cancellation noise and
+# pairs cleanly with DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001's best-effort
+# eventual-invariant framing. Hourly cadence × ~5min per run = ~2 hours
+# of CI compute per day. Distinct concurrency group from bootstrap-accumulate
+# so the sweeper does not interfere with per-merge runs.
+# Cross-refs: #707 (this WI), #686 (cancellation analysis), #651 (chronic
+# drift this unblocks), DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 (preserved).
+
+name: bootstrap-accumulate-sweeper
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # hourly sweep
+  workflow_dispatch:       # manual trigger for testing
+
+concurrency:
+  group: bootstrap-accumulate-sweeper
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: node packages/cli/dist/bin.js bootstrap
+        continue-on-error: true
+      - name: Push accumulated atoms if any
+        run: |
+          git diff --quiet bootstrap/expected-roots.json && echo "No new atoms." && exit 0
+          git config user.name "ci-bootstrap-sweeper"
+          git config user.email "ci-bootstrap-sweeper@yakcc"
+          git add bootstrap/expected-roots.json
+          git commit -m "ci(sweeper): hourly accumulation pass"
+          for i in 1 2 3 4 5; do
+            if git push origin main; then exit 0; fi
+            sleep_seconds=$((2 ** (i - 1)))
+            sleep "$sleep_seconds"
+            git pull --rebase origin main || exit 1
+          done
+          exit 1
