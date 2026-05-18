@@ -30,7 +30,7 @@ The pipeline runs in four stages for each candidate block:
 | Export | Description |
 |--------|-------------|
 | `shave(sourcePath, registry, options?)` | One-shot file ingestion. Reads `sourcePath`, wraps it as a `CandidateBlock`, runs the full pipeline, and returns a `ShaveResult` with per-atom stubs and intent cards. |
-| `universalize(candidate, registry, options?)` | Single-block pipeline. Takes a `CandidateBlock` in memory, runs license gate → intent extraction → decompose → slice, and returns a `UniversalizeResult`. `shave()` delegates to this. |
+| `universalize(candidate, registry, options?)` | Single-block pipeline. Takes a `CandidateBlock` in memory, runs intent extraction → decompose → slice, and returns a `UniversalizeResult`. `shave()` delegates to this. |
 | `createIntentExtractionHook(options?)` | Factory for an `IntentExtractionHook` whose `intercept` method delegates to `universalize()`. Used by hook integrations. |
 
 ### Decomposition
@@ -47,14 +47,6 @@ The pipeline runs in four stages for each candidate block:
 | Export | Description |
 |--------|-------------|
 | `slice(tree, registry)` | Convert a `RecursionTree` into a `SlicePlan`. |
-
-### License gate
-
-| Export | Description |
-|--------|-------------|
-| `detectLicense(source)` | Scan source text for a license declaration. Returns a `LicenseDetection`. |
-| `licenseGate(detection)` | Apply the license policy. Returns `LicenseGateResult` with `accepted: boolean`. |
-| `LicenseRefusedError` | Thrown by `universalize()` when the license gate rejects source. Carries the `LicenseDetection`. |
 
 ### Property-test corpus (WI-016)
 
@@ -81,7 +73,6 @@ The pipeline runs in four stages for each candidate block:
 |--------|-------------|
 | `AnthropicApiKeyMissingError` | Thrown by `universalize()` when `ANTHROPIC_API_KEY` is absent and the `"llm"` strategy is active without a cache hit. |
 | `IntentCardSchemaError` | Thrown when a received `IntentCard` fails schema validation. |
-| `LicenseRefusedError` | Thrown when the license gate rejects source. |
 | `OfflineCacheMissError` | Thrown when `offline: true` is set and no cache entry exists for the requested source. |
 
 ### Version constants
@@ -101,7 +92,6 @@ The pipeline runs in four stages for each candidate block:
 `IntentCard`, `IntentParam`, `AtomTestOptions`, `AtomTestResult`, `AtomTestReason`,
 `RecursionNode`, `AtomLeaf`, `BranchNode`, `RecursionTree`, `RecursionOptions`,
 `SlicePlan`, `SlicePlanEntry`, `PointerEntry`, `NovelGlueEntry`,
-`AcceptedLicense`, `LicenseDetection`, `LicenseGateResult`,
 `CorpusResult`, `CorpusSource`, `CorpusAtomSpec`, `CorpusExtractionOptions`.
 
 ## The `intentStrategy` axis
@@ -140,14 +130,6 @@ The complete pipeline (`shave`, `universalize`, `decompose`, `slice`,
 Tests use `openRegistry(":memory:")` for real SQLite persistence and
 `seedIntentCache` for offline determinism. This discipline is enforced at every
 test boundary — no test calls a live API.
-
-## License gate locality
-
-The license gate (`licenseGate(detectLicense(source))`) runs as the first step in
-`universalize()`, before any I/O or API calls. A single check on the full source
-string covers all decomposed leaves because every leaf derives from the same
-source text. Refused source is never stored in the registry and is never transmitted
-to federation peers.
 
 ## Example
 
