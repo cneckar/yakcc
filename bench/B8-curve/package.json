@@ -1,0 +1,10 @@
+{
+  "name": "@yakcc/bench-b8-curve",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "B8-CURVE — subset-fraction sampler + per-f loop over the B8-SYNTHETIC corpus.",
+  "scripts": {
+    "run": "node ./run-curve.mjs"
+  }
+}
