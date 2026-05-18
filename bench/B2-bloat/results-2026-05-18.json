@@ -1,0 +1,27 @@
+{
+  "run_id": "h3k0oo9yg4w",
+  "started_at": "2026-05-18T17:01:32.716Z",
+  "platform": "win32-x64",
+  "granularity": "coarse",
+  "arms": {
+    "yakcc": {
+      "arm": "yakcc-coarse",
+      "rawTsSize": 32847,
+      "bundleSize": 11352,
+      "gzipBundleSize": 3548,
+      "distinctUnits": 1
+    },
+    "ajv": {
+      "arm": "ajv",
+      "bundleSize": 117520,
+      "gzipBundleSize": 36106,
+      "distinctUnits": 12
+    }
+  },
+  "test_results": {
+    "total": 156,
+    "passed": 0,
+    "failed": 0,
+    "pass_rate": "N/A"
+  }
+}
