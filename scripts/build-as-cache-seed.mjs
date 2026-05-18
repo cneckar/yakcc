@@ -114,7 +114,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -129,14 +129,17 @@ const OUT_DIR = OUT_DIR_OVERRIDE
 // Import compiled packages (from dist — no TypeScript flag needed for these)
 // ---------------------------------------------------------------------------
 
+// Dynamic imports of absolute paths must be wrapped with pathToFileURL on
+// Windows — Node's ESM loader rejects bare `C:\...` paths with
+// ERR_UNSUPPORTED_ESM_URL_SCHEME. Fix per #741.
 const { assemblyScriptBackend } = await import(
-  join(REPO_ROOT, "packages", "compile", "dist", "as-backend.js")
+  pathToFileURL(join(REPO_ROOT, "packages", "compile", "dist", "as-backend.js")).href
 );
 const { cachedAsEmit, deriveCacheKey, ASC_VERSION } = await import(
-  join(REPO_ROOT, "packages", "compile", "dist", "as-compile-cache.js")
+  pathToFileURL(join(REPO_ROOT, "packages", "compile", "dist", "as-compile-cache.js")).href
 );
 const { blockMerkleRoot, specHash } = await import(
-  join(REPO_ROOT, "packages", "contracts", "dist", "index.js")
+  pathToFileURL(join(REPO_ROOT, "packages", "contracts", "dist", "index.js")).href
 );
 
 // ---------------------------------------------------------------------------
@@ -353,7 +356,7 @@ if (INLINE_SAMPLE) {
   console.log(`[seed-gen]       For Phase 0 measurement only, use --from-cache instead.`);
 
   const { regenerateCorpus } = await import(
-    join(REPO_ROOT, "examples", "v1-wave-3-wasm-lower-demo", "test", "corpus-loader.ts")
+    pathToFileURL(join(REPO_ROOT, "examples", "v1-wave-3-wasm-lower-demo", "test", "corpus-loader.ts")).href
   );
 
   const corpus = await regenerateCorpus();
