@@ -15,7 +15,7 @@ The name is a yak-shave joke that is also a thesis. The double-c is a nod to the
 
 **Verified building blocks.** Every block in the registry carries property tests. When you compose blocks into a program, you know exactly what was tested and how.
 
-**IDE integration.** Hooks for Claude Code, Cursor, and Codex CLI intercept code-emission events and check the registry first. If a matching block already exists, it is served — no generation needed.
+**IDE integration.** Hooks for Claude Code, Cursor, Cline, and Continue.dev intercept code-emission events and check the registry first. If a matching block already exists, it is served — no generation needed.
 
 **Offline-first.** No API key is required for most operations. Shaving uses static TypeScript analysis by default. Vector search uses a local embedding model.
 
@@ -34,11 +34,9 @@ The name is a yak-shave joke that is also a thesis. The double-c is a nod to the
 # Install dependencies and build all packages
 pnpm install && pnpm build
 
-# Initialize yakcc in your project directory (creates .yakcc/, .claude/settings.json, .yakccrc.json)
+# Initialize yakcc in your project directory
+# Creates .yakcc/, wires IDE hooks for all detected IDEs, seeds the bootstrap corpus
 yakcc init
-
-# Optionally ingest the seed corpus (~20 blocks composing a JSON integer-list parser)
-yakcc seed
 
 # Assemble the parse-int-list demo
 yakcc compile examples/parse-int-list
@@ -58,10 +56,24 @@ parse-int-list demo — assembled by Yakcc v0
   listOfInts("[10,200,3000]") => [10,200,3000]
 ```
 
-`yakcc init` creates an empty registry, wires the Claude Code hook, and writes `.yakccrc.json` in one step. To initialize in a different directory or connect to a team registry peer:
+`yakcc init` is a single-command setup (per `DEC-CLI-INIT-002`): it creates the registry, auto-detects installed IDEs (Claude Code, Cursor, Cline, Continue.dev), wires each hook, and seeds the yakcc bootstrap corpus (~3k+ atoms) — all in one step. The ≤6-line summary tells you which IDEs were wired and that the seed ran.
+
+To initialize in a different directory or connect to a team registry peer:
 
 ```sh
 yakcc init --target my-project/ [--peer https://registry.example.com]
+```
+
+To remove yakcc from a project (preserves local registry data):
+
+```sh
+yakcc uninstall
+```
+
+To remove all yakcc data (hooks + registry):
+
+```sh
+yakcc uninstall --purge
 ```
 
 For the full walkthrough see `docs/USING_YAKCC.md`. Testing the v0.5.0-alpha? See `docs/ALPHA.md` for the alpha-specific tester guide.
@@ -84,23 +96,34 @@ yakcc bootstrap --verify
 
 ## IDE hook installation
 
+`yakcc init` automatically installs hooks for all detected IDEs. The commands below are for explicit control — re-wiring after a fresh IDE install, troubleshooting, or targeted installation.
+
 ```sh
 # Claude Code — writes a PreToolUse hook entry to .claude/settings.json
 # Intercepts Edit / Write / MultiEdit tool calls (DEC-HOOK-LAYER-001 D-HOOK-2)
 yakcc hooks claude-code install [--target <dir>]
-
-# Remove the hook from .claude/settings.json
 yakcc hooks claude-code install --uninstall [--target <dir>]
 
-# Cursor (WI-HOOK-LAYER Phase 4 — not yet implemented)
-# yakcc hooks cursor install
+# Cursor — wires the Cursor settings surface (shipped in WI-656-S1)
+yakcc hooks cursor install [--target <dir>]
+yakcc hooks cursor install --uninstall [--target <dir>]
 
-# Codex CLI (WI-HOOK-LAYER Phase 5 — conditional on demand)
-# yakcc hooks codex install
+# Cline — writes a marker file ~/.config/cline/yakcc-cline-hook.json
+# (DEC-CLI-HOOKS-CLINE-INSTALL-001; live settings.json wiring pending API stabilization)
+yakcc hooks cline install
+yakcc hooks cline install --uninstall
+
+# Continue.dev — writes a marker file ~/.continue/yakcc-continue-hook.json
+# (DEC-CLI-HOOKS-CONTINUE-INSTALL-001; live settings.json wiring pending API stabilization)
+yakcc hooks continue install
+yakcc hooks continue install --uninstall
+
+# Codex CLI — not yet wired; tracked at #220 (closed not-planned, conditional on demand)
 ```
 
 After installation, every `Edit`, `Write`, and `MultiEdit` tool call made by
-Claude Code will invoke `yakcc hook-intercept` before the code lands on disk.
+Claude Code (and Cursor, once their hook surface is fully wired) will invoke
+`yakcc hook-intercept` before the code lands on disk.
 The hook queries the local registry for a matching atom and captures telemetry
 (local-only by default per DEC-HOOK-LAYER-001 D-HOOK-5).
 
