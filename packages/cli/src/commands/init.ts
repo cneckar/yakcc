@@ -58,6 +58,7 @@ import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
 import { hooksCursorInstall } from "./hooks-cursor-install.js";
@@ -227,6 +228,13 @@ async function installHookForIde(
       if (code !== 0) throw new Error(`windsurf hook install failed (exit ${code})`);
       break;
     }
+    case "aider": {
+      const { join } = await import("node:path");
+      const aiderDir = join(home, ".aider");
+      const code = await hooksAiderInstall([], logger, aiderDir);
+      if (code !== 0) throw new Error(`aider hook install failed (exit ${code})`);
+      break;
+    }
   }
 }
 
@@ -323,7 +331,7 @@ export async function init(
     logger.error(`error: ${(err as Error).message}`);
     logger.error("Usage: yakcc init [--target <dir>] [--peer <url>] [--local] [--airgapped]");
     logger.error(
-      "                  [--skip-hooks] [--ide <claude-code|cursor|cline|continue,...>] [--no-seed]",
+      "                  [--skip-hooks] [--ide <claude-code|cursor|cline|continue|windsurf|aider,...>] [--no-seed]",
     );
     return 1;
   }

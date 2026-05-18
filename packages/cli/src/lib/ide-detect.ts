@@ -40,11 +40,12 @@ import { join } from "node:path";
  * - `"cline"`:       Cline VS Code extension (saoudrizwan.claude-dev)
  * - `"continue"`:    Continue.dev VS Code / JetBrains extension
  * - `"windsurf"`:    Windsurf (Codeium's AI IDE, VS Code-derived)
+ * - `"aider"`:       Aider CLI tool (https://aider.chat)
  *
  * Note: "codex" is explicitly excluded per NG1 / DEC-CLI-INIT-002 (#220 closed
  * not-planned). Do not add it here without a new WI reversing that decision.
  */
-export type IdeName = "claude-code" | "cursor" | "cline" | "continue" | "windsurf";
+export type IdeName = "claude-code" | "cursor" | "cline" | "continue" | "windsurf" | "aider";
 
 /**
  * A detected IDE entry — the config directory is confirmed to exist.
@@ -117,12 +118,17 @@ export function buildCandidatePaths(home: string): Record<IdeName, readonly stri
   // IDE; config lives in a flat ~/.windsurf/ directory on all supported platforms.
   const windsurfCandidates: string[] = [join(home, ".windsurf")];
 
+  // Aider (https://aider.chat): `~/.aider/` on all platforms. Aider is a CLI tool that
+  // auto-creates this directory on first run to store chat history and cache.
+  const aiderCandidates: string[] = [join(home, ".aider")];
+
   return {
     "claude-code": [join(home, ".claude")],
     cursor: cursorCandidates,
     cline: clineCandidates,
     continue: continueCandidates,
     windsurf: windsurfCandidates,
+    aider: aiderCandidates,
   };
 }
 
@@ -150,7 +156,7 @@ export function buildCandidatePaths(home: string): Record<IdeName, readonly stri
  *
  * @returns Array of DetectedIde entries, one per IDE whose config dir exists.
  *   Empty array if no IDEs are detected. Order is stable: claude-code, cursor,
- *   cline, continue.
+ *   cline, continue, windsurf, aider.
  */
 export function detectInstalledIdes(overrideHome?: string): DetectedIde[] {
   const home = overrideHome ?? homedir();
@@ -182,4 +188,5 @@ export const KNOWN_IDE_NAMES: readonly IdeName[] = [
   "cline",
   "continue",
   "windsurf",
+  "aider",
 ];
