@@ -2170,6 +2170,30 @@ Dependency waves: single WI; no parallelism. Critical path = WI-682-license-gate
 
 See `plans/wi-682-license-gate-remove.md` for the 10-gate Evaluation Contract and full file-by-file action plan. Scope manifest at `tmp/scope-682-license-gate-remove.json`.
 
+### Initiative: WI-703 — Execute B2-bloat harness + publish DEC-BENCH-B2-001 verdict
+
+Status: **active 2026-05-18.** Issue [#703](https://github.com/cneckar/yakcc/issues/703); labels `serenity`, `benchmarks`, `ready`. Workflow id: `wi-703-b2-bloat-verdict`. Goal id: `g-wi-703-b2-bloat-verdict`. Parent: [#186](https://github.com/cneckar/yakcc/issues/186) (B2 substrate, harness landed in PR #640). Non-cost-bearing — local byte-weight + cold-start + esbuild bundle measurement; zero LLM API calls. The B2-bloat harness has shipped but has never been executed against live bundle measurements — `DEC-BENCH-B2-001` is annotated `@status pending-tester` in `bench/B2-bloat/harness/run.mjs` lines 8–37 with placeholder fields. This WI executes the harness, commits a stable-path results JSON, and annotates the DEC with observed values verbatim (honesty clause: PASS-DIRECTIONAL or WARN-DIRECTIONAL, both recorded as-is). Cold-corpus framing per `bench/B2-bloat/README.md` § Cold-Corpus Caveat is the explicit baseline; below-target values are valid characterisation points, not failures.
+
+| ID | Title | Description | Deps | Gate | State |
+|---|---|---|---|---|---|
+| WI-703-b2-bloat-verdict | Execute B2-bloat harness + publish DEC-BENCH-B2-001 | Three-commit slice: (C1) plan + scope + this MASTER_PLAN row; (C2) run `pnpm bench:bloat` end-to-end and commit `bench/B2-bloat/results-2026-05-18.json`; (C3) annotate `DEC-BENCH-B2-001` in MASTER_PLAN Decision Log with observed yakcc/ajv raw + gzip bytes, distinct-unit counts, test-suite pass rate, and verdict (PASS-DIRECTIONAL / WARN-DIRECTIONAL per honesty clause), and promote in-source `@status pending-tester` → `decided` with the same values inlined (Sacred Practice #7). No edits to validator source, harness measurement logic, fixtures, or comparator. Full-workspace `pnpm -w lint` + `pnpm -w typecheck` green. Land via PR `closes #703`. | — | reviewer (read-only) → PR | active 2026-05-18 |
+
+Dependency waves: single WI; no parallelism. Critical path = WI-703-b2-bloat-verdict.
+
+#### Evaluation Contract and Scope Manifest
+
+See `plans/wi-703-b2-bloat-verdict.md` for the full Evaluation Contract (7 required tests, 2 required real-path checks, 3 authority invariants, 7 forbidden shortcuts including no-validator-edit and no-`pnpm -r build` per AS-WASM cold-compile risk per WI-485 history) and per-commit boundaries. Scope manifest at `tmp/scope-wi-703-b2-bloat-verdict.json` (canonical 5-key shape).
+
+#### Decisions opened by this WI
+
+- `DEC-WI703-NO-VALIDATOR-EDIT-001` — Validator source is the subject of measurement; editing it to improve the verdict defeats the honesty clause. Test-suite failures below 100% are observed values, filed as separate follow-up issues, not patched-then-rerun in this WI.
+- `DEC-WI703-CHARACTERISATION-FRAMING-001` — Per #186 reframe (2026-05-13 comment 4442627848) and DEC-BENCH-SUITE-DEFERRAL-001, every Slice 1 observation is a valid characterisation point including below-target ones, which validate the cold-corpus framing. The only WI-level failure modes are (a) harness crash, (b) inability to produce a results JSON, (c) verdict not annotated. The numbers themselves cannot fail.
+- `DEC-WI703-COMMITTED-RESULTS-PATH-001` — Results live at `bench/B2-bloat/results-2026-05-18.json` (date-stamped, stable). Future Slice 2 / Slice 3 runs produce sibling files (`results-<YYYY-MM-DD>.json`); the date suffix gives an append-only log without overwriting prior runs. The harness's own `tmp/B2-bloat/results-b2-<ISO>.json` output is gitignored and transient; a committed stable filename is what downstream tooling and audits can cite.
+
+#### Decision filled by this WI
+
+- `DEC-BENCH-B2-001` — Currently annotated `@status pending-tester` in `bench/B2-bloat/harness/run.mjs` lines 8–37 and tracked across MASTER_PLAN via DEC-BENCHMARK-SUITE-001 / DEC-BENCH-SUITE-DEFERRAL-001. C3 of this WI is the canonical fill: appends a `DEC-BENCH-B2-001` row to the MASTER_PLAN Decision Log carrying observed yakcc/ajv raw + gzip bytes, distinct-unit counts, test-suite pass rate, reduction percentage, and verdict (PASS-DIRECTIONAL / WARN-DIRECTIONAL).
+
 ---
 
 ## Open questions
