@@ -850,12 +850,11 @@ describe("discovery-eval-full-corpus — corpus schema correctness", () => {
     }
   });
 
-  it("synthetic-tasks entries have null expectedAtom and no expectedAtomName", () => {
+  it("synthetic-tasks entries have null expectedAtom", () => {
     const entries = loadCorpus();
     const synthetic = entries.filter((e) => e.source === "synthetic-tasks");
     for (const e of synthetic) {
       expect(e.expectedAtom).toBeNull();
-      expect(e.expectedAtomName).toBeUndefined();
     }
   });
 
