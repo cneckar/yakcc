@@ -1826,6 +1826,14 @@ Six tasks = mid-range of 5-8 corridor per #446. Tasks 2–6 are authored in this
 | W-B9-S1-11 | Add `bench:min-surface` script to root `package.json`; document `--dry-run` and `--no-network` flags (latter per Gap 11) | S | W-B9-S1-10 | none | 5 |
 | W-B9-S1-12 | First honest measurement run on Windows; commit `results-windows-<date>.json`; append observed values to `DEC-BENCH-B9-SLICE1-001` (no KILL pre-data per #167 Principle 1) | M | W-B9-S1-11 | review | 6 |
 
+**B9 Slice 1 bug-class follow-ups (per #167 Principle 6 — bugs vs tuning).** Defects discovered during or after the Slice 1 honest run are tracked here as independent slices, not as edits to the Slice 1 W-B9-S1-N table above. Each row links to its issue/PR and its plan file under `plans/`.
+
+| ID | Title | Weight | Deps | Gate | Status |
+|----|-------|--------|------|------|--------|
+| W-B9-S1-BUG-692 | B9 axis2 false `shape_escape` on `[007]` — emit-provenance fields (path/mtime/bytes/sha256) surfaced in axis2 JSON output for self-diagnosing stale-artifact false-positives | M | W-B9-S1-4 | review | done — `plans/wi-692-b9-axis2-falsepos.md`; DEC-B9-EMIT-PROVENANCE-001 landed in `measure-axis2.mjs` |
+| W-B9-S1-BUG-697 | Regenerate stale `examples/parse-int-list/dist/module.mjs` from current source (post-#636 — currently Apr-29 pre-fix artifact) | S | — | review | in flight — issue [#697](https://github.com/cneckar/yakcc/issues/697) |
+| W-B9-S1-BUG-698 | `arm-a-emit.mjs` freshness guard — fall back to bench reference (with stderr warning + new `source: "bench-reference-stale-fallback"` enum value) when dist mtime predates fallback; `--force-gold-standard` / `{forceGoldStandard:true}` opt-in override; `@decision DEC-B9-EMIT-FRESHNESS-GUARD-001` and `-002` documented file-local | S | W-B9-S1-7 | review | planned — issue [#698](https://github.com/cneckar/yakcc/issues/698); plan `plans/wi-fix-698-arm-a-emit-freshness-guard.md` |
+
 **Critical path:** 6 waves. **Max width:** 4 (Wave 2: axis1 + attack-classes + axis3 + llm-baseline + arm-a-emit all parallelize once skeleton is locked).
 
 **Slice 1 directional targets** (per #167 Principle 1 + #446 Gap 12 — KILL columns struck; replaced with "Directional target (no KILL pre-data)"):

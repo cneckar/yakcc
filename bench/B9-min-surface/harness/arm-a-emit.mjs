@@ -3,25 +3,25 @@
 // bench/B9-min-surface/harness/arm-a-emit.mjs
 //
 // @decision DEC-V0-MIN-SURFACE-004
-// @title Arm A granularity sweep — three strategies per task
+// @title Arm A granularity sweep -- three strategies per task
 // @status accepted
 // @rationale
 //   GRANULARITY SWEEP DEFINITION (per #446 Gap 3 + MASTER_PLAN.md Slice 1)
 //   Arm A is not a single point but a sweep over three decomposition strategies:
 //
-//   A-fine: maximally atomic — deepest decomposition the registry/bench permits.
+//   A-fine: maximally atomic -- deepest decomposition the registry/bench permits.
 //     Each atom handles exactly one structural concern (one ASCII check, one delimiter
 //     assertion, one digit parser, etc.). Maximises the number of distinct atoms so
 //     the Axis 1 reachable-function count is minimised per-call and Axis 2 shape
 //     refusal fires at the shallowest atom.
 //     Location: bench/B9-min-surface/tasks/<task>/arm-a/fine.mjs
 //
-//   A-medium: composite blocks — atoms grouped at natural task-component boundaries
+//   A-medium: composite blocks -- atoms grouped at natural task-component boundaries
 //     (e.g., "validate prefix" = ASCII check + opening delimiter check). Represents
 //     the natural mid-point between maximum atomization and a monolithic function.
 //     Location: bench/B9-min-surface/tasks/<task>/arm-a/medium.mjs
 //
-//   A-coarse: single broad block per task — minimal decomposition, one function
+//   A-coarse: single broad block per task -- minimal decomposition, one function
 //     handles the entire spec. Structurally closer to an LLM emit. Used to measure
 //     how much of the attack-surface reduction comes from the block boundary rather
 //     than from deep atomization.
@@ -39,17 +39,17 @@
 //   The bench/B9-min-surface/tasks/parse-int-list/arm-a/fine.mjs is a fallback reference.
 //
 //   REJECTED ALTERNATIVES:
-//   - Single A-fine only: doesn't produce the frontier — the cost/surface trade-off
+//   - Single A-fine only: doesn't produce the frontier -- the cost/surface trade-off
 //     is the primary research question for B9.
 //   - Continuous granularity (N > 3 strategies): diminishing returns; 3 strategies
 //     span the design space (fine/medium/coarse) at tractable measurement cost.
 //
 //   Cross-references:
-//   DEC-V0-MIN-SURFACE-001 (REFUSED-EARLY) — harness/measure-axis2.mjs
-//   DEC-V0-MIN-SURFACE-002 (reachability) — harness/measure-axis1.mjs
-//   DEC-V0-MIN-SURFACE-004 (this annotation) — harness/arm-a-emit.mjs
-//   DEC-V0-MIN-SURFACE-005 (Arm B classifier) — harness/classify-arm-b.mjs
-//   DEC-BENCH-B9-SLICE1-COST-001 (cost cap) — harness/run.mjs
+//   DEC-V0-MIN-SURFACE-001 (REFUSED-EARLY) -- harness/measure-axis2.mjs
+//   DEC-V0-MIN-SURFACE-002 (reachability) -- harness/measure-axis1.mjs
+//   DEC-V0-MIN-SURFACE-004 (this annotation) -- harness/arm-a-emit.mjs
+//   DEC-V0-MIN-SURFACE-005 (Arm B classifier) -- harness/classify-arm-b.mjs
+//   DEC-BENCH-B9-SLICE1-COST-001 (cost cap) -- harness/run.mjs
 //
 // Usage:
 //   node bench/B9-min-surface/harness/arm-a-emit.mjs --task <taskId> --strategy <fine|medium|coarse>
@@ -58,7 +58,7 @@
 // Or import as a module:
 //   import { resolveArmAEmit, ARM_A_STRATEGIES } from './arm-a-emit.mjs';
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -90,6 +90,42 @@ export const TASK_ENTRY_FUNCTIONS = {
 };
 
 // ---------------------------------------------------------------------------
+// @decision DEC-B9-EMIT-FRESHNESS-GUARD-001
+// @title Compare mtime of compiled gold-standard vs bench fallback; fall back when stale.
+// @status accepted
+// @rationale
+//   PROBLEM: resolveArmAEmit() previously preferred examples/parse-int-list/dist/module.mjs
+//   unconditionally whenever it existed. Because the dist file has no freshness contract
+//   relative to the bench fallback, a stale dist file (mtime older than bench fallback) can
+//   silently route B9 axis2 through the wrong implementation -- producing false-positive or
+//   false-negative results. This was the root cause of the 2026-05-18 B9 axis2 false-positive
+//   captured in issue #692 (dist mtime Apr 29 2026, bench fallback mtime post-#636 May 17 2026).
+//
+//   THREE CANDIDATES CONSIDERED:
+//   (A) Silent fallback + stderr warning (ACCEPTED): When dist mtime < bench fallback mtime,
+//       return bench fallback path and print a greppable WARN to stderr. The source enum
+//       value "bench-reference-stale-fallback" signals the fallback in JSON output.
+//       Override: --force-gold-standard (CLI) / { forceGoldStandard: true } (module API).
+//   (B) Throw StaleEmitError unless --force-gold-standard set: Rejected -- breaks run.mjs
+//       sweep iteration (per-task try/catch turns into "skip task" rather than "use bench
+//       fallback", producing incomplete sweeps without addressing the root cause).
+//   (C) Content-hash allowlist: Rejected -- adds maintenance surface (known-good-shas.json)
+//       without a corresponding gain; SHA mismatch is a strict subset of mtime drift.
+//
+//   ACCEPTED RATIONALE:
+//   - Bench runs always produce a working measurement against the freshest reference.
+//   - The stderr WARN is loud and greppable for any honest operator.
+//   - The "bench-reference-stale-fallback" source enum value in JSON output enables
+//     post-hoc detection from results-*.json inspection.
+//   - The opt-in { forceGoldStandard: true } preserves deliberate stale-artifact
+//     measurement (e.g. pre/post-#636 comparison runs).
+//   - Guard is disabled via override, not removed -- dist is still preferred when fresh.
+//
+//   Cross-reference: DEC-V0-MIN-SURFACE-004 (Arm A granularity sweep -- parent decision)
+//   Issue: #698  |  Companion: #697 (regenerate the stale dist artifact)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Resolve Arm A emit path for a given (task, strategy)
 // ---------------------------------------------------------------------------
 
@@ -97,25 +133,59 @@ export const TASK_ENTRY_FUNCTIONS = {
  * Resolve the .mjs path for the Arm A granularity sweep at the given strategy.
  *
  * For parse-int-list A-fine, if the yakcc compile output is present
- * (examples/parse-int-list/dist/module.mjs or module.ts transpiled to .mjs),
- * that is used as the gold standard. Otherwise, the bench reference is used.
+ * (examples/parse-int-list/dist/module.mjs) AND its mtime is >= the bench
+ * fallback mtime, it is used as the gold standard. When the dist file is older
+ * than the bench fallback (stale artifact) a stderr warning is emitted and the
+ * bench fallback is returned instead. Pass { forceGoldStandard: true } to
+ * bypass the freshness guard and always prefer the dist file when present.
  *
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {"A-fine"|"A-medium"|"A-coarse"} strategy
- * @returns {{ emitPath: string, source: "yakcc-compile"|"bench-reference" }}
+ * @param {{ forceGoldStandard?: boolean }} [options={}]
+ * @returns {{ emitPath: string, source: "yakcc-compile"|"bench-reference"|"bench-reference-stale-fallback" }}
  */
-export function resolveArmAEmit(repoRoot, taskId, strategy) {
+export function resolveArmAEmit(repoRoot, taskId, strategy, options = {}) {
   const strategyDir = STRATEGY_DIR[strategy];
   if (!strategyDir) {
     throw new Error(`Unknown strategy: ${strategy}. Valid values: ${ARM_A_STRATEGIES.join(", ")}`);
   }
 
-  // For parse-int-list A-fine: prefer yakcc compile output if it exists
+  // For parse-int-list A-fine: prefer yakcc compile output if it exists and is fresh
   if (taskId === "parse-int-list" && strategy === "A-fine") {
     // Check for pre-transpiled .mjs from the compile pipeline
     const compiledMjs = join(repoRoot, "examples", "parse-int-list", "dist", "module.mjs");
     if (existsSync(compiledMjs)) {
+      // DEC-B9-EMIT-FRESHNESS-GUARD-001: Freshness guard
+      // When forceGoldStandard is set, bypass the mtime check and prefer dist unconditionally.
+      const forceGoldStandard = options.forceGoldStandard === true;
+      if (forceGoldStandard) {
+        return { emitPath: compiledMjs, source: "yakcc-compile" };
+      }
+
+      // Compute bench fallback path for mtime comparison
+      const benchPath = join(BENCH_B9_ROOT, "tasks", taskId, "arm-a", `${strategyDir}.mjs`);
+
+      if (existsSync(benchPath)) {
+        const compiledStat = statSync(compiledMjs);
+        const benchStat = statSync(benchPath);
+
+        if (compiledStat.mtimeMs < benchStat.mtimeMs) {
+          // Dist file is older than bench fallback -- staleness guard fires.
+          // Emit a greppable stderr warning and fall back to bench reference.
+          const compiledMtimeIso = new Date(compiledStat.mtimeMs).toISOString();
+          const benchMtimeIso = new Date(benchStat.mtimeMs).toISOString();
+          process.stderr.write(
+            `[arm-a-emit] WARN: yakcc-compile artifact at ${compiledMjs} mtime=${compiledMtimeIso} ` +
+            `is older than bench fallback at ${benchPath} mtime=${benchMtimeIso}; ` +
+            `falling back to bench reference. Pass --force-gold-standard or ` +
+            `{forceGoldStandard:true} to override.\n`
+          );
+          return { emitPath: benchPath, source: "bench-reference-stale-fallback" };
+        }
+      }
+
+      // Dist is fresh (mtime >= bench fallback) or bench fallback does not exist
       return { emitPath: compiledMjs, source: "yakcc-compile" };
     }
     // Note: module.ts would need transpilation; that's handled by the run.mjs orchestrator
@@ -143,9 +213,10 @@ export function resolveArmAEmit(repoRoot, taskId, strategy) {
  *
  * @param {string} repoRoot
  * @param {string[]} taskIds
+ * @param {{ forceGoldStandard?: boolean }} [options={}]
  * @returns {Array<{ taskId, strategy, emitPath, entryFunction, source }>}
  */
-export function listAllArmAEmits(repoRoot, taskIds) {
+export function listAllArmAEmits(repoRoot, taskIds, options = {}) {
   const emits = [];
   for (const taskId of taskIds) {
     const entryFunction = TASK_ENTRY_FUNCTIONS[taskId];
@@ -154,7 +225,7 @@ export function listAllArmAEmits(repoRoot, taskIds) {
     }
     for (const strategy of ARM_A_STRATEGIES) {
       try {
-        const { emitPath, source } = resolveArmAEmit(repoRoot, taskId, strategy);
+        const { emitPath, source } = resolveArmAEmit(repoRoot, taskId, strategy, options);
         emits.push({ taskId, strategy, emitPath, entryFunction, source });
       } catch (err) {
         // Report missing emits but don't abort listing
@@ -177,6 +248,7 @@ const { values: cliArgs } = parseArgs({
     list: { type: "boolean", default: false },
     "repo-root": { type: "string" },
     json: { type: "boolean", default: false },
+    "force-gold-standard": { type: "boolean", default: false },
   },
   strict: false,
   allowPositionals: false,
@@ -208,10 +280,11 @@ if (isMain) {
     }
 
     const REPO_ROOT = cliArgs["repo-root"] ?? findRepoRoot(resolve(BENCH_B9_ROOT, "..", ".."));
+    const resolveOptions = { forceGoldStandard: cliArgs["force-gold-standard"] };
 
     if (cliArgs["list"]) {
       const taskIds = Object.keys(TASK_ENTRY_FUNCTIONS);
-      const emits = listAllArmAEmits(REPO_ROOT, taskIds);
+      const emits = listAllArmAEmits(REPO_ROOT, taskIds, resolveOptions);
       if (cliArgs["json"]) {
         process.stdout.write(JSON.stringify(emits, null, 2) + "\n");
       } else {
@@ -222,7 +295,7 @@ if (isMain) {
       }
     } else if (cliArgs["task"] && cliArgs["strategy"]) {
       try {
-        const { emitPath, source } = resolveArmAEmit(REPO_ROOT, cliArgs["task"], cliArgs["strategy"]);
+        const { emitPath, source } = resolveArmAEmit(REPO_ROOT, cliArgs["task"], cliArgs["strategy"], resolveOptions);
         const entryFunction = TASK_ENTRY_FUNCTIONS[cliArgs["task"]];
         const result = { task_id: cliArgs["task"], strategy: cliArgs["strategy"], emit_path: emitPath, entry_function: entryFunction, source };
         if (cliArgs["json"]) {
@@ -239,8 +312,8 @@ if (isMain) {
         process.exit(1);
       }
     } else {
-      console.error("Usage: arm-a-emit.mjs --task <taskId> --strategy <A-fine|A-medium|A-coarse> [--json]");
-      console.error("   or: arm-a-emit.mjs --list [--json]");
+      console.error("Usage: arm-a-emit.mjs --task <taskId> --strategy <A-fine|A-medium|A-coarse> [--json] [--force-gold-standard]");
+      console.error("   or: arm-a-emit.mjs --list [--json] [--force-gold-standard]");
       process.exit(1);
     }
   })();
