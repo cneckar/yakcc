@@ -18,9 +18,10 @@
 // - Throws TypeError immediately = REFUSED-EARLY (if input marked REFUSED-EARLY)
 // - Returns normally when should refuse = shape-escape (KILL finding)
 
-import { strictEqual, ok } from "node:assert";
+import { createHash } from "node:crypto";
+import { strictEqual, ok, match } from "node:assert";
 import { test } from "node:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -489,4 +490,249 @@ export default listOfInts;
   strictEqual(classResult.shape_escapes, 0, `should have 0 shape_escapes, got ${classResult.shape_escapes}`);
 
   console.log(`  benign-pass test: benign_pass=${classResult.benign_pass}/2`);
+});
+
+// ---------------------------------------------------------------------------
+// Regression tests for #692 — emit provenance fields + stale-artifact diagnosis
+//
+// Root cause: resolveArmAEmit preferred examples/parse-int-list/dist/module.mjs
+// (stale, pre-#636, missing leading-zeros guard) over the bench reference
+// (post-#636, has the guard). This caused "[007]" to return [7] instead of
+// throwing SyntaxError — a shape-escape false-positive in axis2.
+//
+// These tests:
+// T7: Stale-artifact case — emit that lacks the leading-zeros guard produces
+//     shape-escape on "[007]" (pre-#636 behavior). Verifies the classifier
+//     correctly identifies the false-positive scenario.
+// T8: Post-#636 case — bench reference fine.mjs correctly refuses "[007]"
+//     as refused-early. Verifies the fix is in place in the bench reference.
+// T9: Provenance fields — every axis2 result contains the 4 provenance fields
+//     with correct values (sha256 matches computed value).
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test 7: Stale-artifact regression — pre-#636 emit (no leading-zeros guard)
+//         produces shape-escape on "[007]"
+// ---------------------------------------------------------------------------
+
+test("axis2: regression #692 — stale emit (pre-#636) produces shape-escape on [007]", async (t) => {
+  mkdirSync(SCRATCH_DIR, { recursive: true });
+
+  // Synthetic stale emit: mirrors pre-#636 parseDigits — no leading-zeros guard
+  // This is what examples/parse-int-list/dist/module.mjs contained before #636
+  const emitPath = join(SCRATCH_DIR, "emit-pre-636-stale.mjs");
+  writeSyntheticMjs(emitPath, `
+// Synthetic stale emit: pre-#636 parseDigits — NO leading-zeros guard
+// Mirrors examples/parse-int-list/dist/module.mjs before #636 was landed.
+// "[007]" silently returns [7] instead of throwing SyntaxError.
+export function parseDigits(input, pos) {
+  let end = pos;
+  while (end < input.length && input[end] >= '0' && input[end] <= '9') end++;
+  if (end === pos) throw new SyntaxError('Expected digit at position ' + pos);
+  return [parseInt(input.slice(pos, end), 10), end]; // no leading-zeros check
+}
+export function listOfInts(input) {
+  if (!input.startsWith('[')) throw new SyntaxError('Expected [');
+  if (!input.endsWith(']')) throw new SyntaxError('Expected ]');
+  const inner = input.slice(1, -1).trim();
+  if (!inner) return [];
+  return inner.split(',').map(s => {
+    const [n] = parseDigits(s.trim(), 0);
+    return n;
+  });
+}
+export default listOfInts;
+`.trim());
+
+  // Attack class with the leading-zeros payload that exposed the #692 false-positive
+  const attackDir = join(SCRATCH_DIR, "attack-classes-692-stale");
+  writeAttackClassFixture(attackDir, "integer-overflow", [
+    {
+      label: "leading-zeros-007",
+      payload: "[007]",
+      expected_outcome: "REFUSED-EARLY",
+      rationale: "Leading zeros in integer literal — should throw SyntaxError but stale emit returns [7]",
+    },
+    {
+      label: "leading-zeros-0042",
+      payload: "[0042]",
+      expected_outcome: "REFUSED-EARLY",
+      rationale: "Leading zeros — stale emit returns [42] instead of throwing",
+    },
+  ]);
+
+  const result = spawnSync(process.execPath, [
+    join(BENCH_B9_ROOT, "harness", "measure-axis2.mjs"),
+    "--emit", emitPath,
+    "--attack-classes", attackDir,
+    "--entry", "listOfInts",
+    "--json",
+  ], { encoding: "utf8", timeout: 30_000, env: process.env });
+
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`measure-axis2 exited ${result.status}: ${result.stderr?.slice(0, 500)}`);
+  }
+
+  const output = JSON.parse(result.stdout.trim());
+  const classResult = output.by_class["integer-overflow"];
+
+  ok(classResult !== undefined, "integer-overflow class should be in results");
+  // Stale emit accepts "[007]" and "[0042]" without throwing — both are shape-escapes
+  strictEqual(classResult.shape_escapes, 2,
+    `stale emit should produce 2 shape_escapes on leading-zero inputs, got ${classResult.shape_escapes}`);
+  strictEqual(classResult.refused_early, 0,
+    `stale emit should have 0 refused_early (accepts leading zeros), got ${classResult.refused_early}`);
+
+  console.log(`  regression #692 stale-emit: shape_escapes=${classResult.shape_escapes} (expected 2) refused_early=${classResult.refused_early} (expected 0)`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 8: Post-#636 regression — bench reference fine.mjs correctly refuses
+//         "[007]" as refused-early (verifies the fix is present)
+// ---------------------------------------------------------------------------
+
+test("axis2: regression #692 — post-#636 bench fine.mjs refuses [007] as refused-early", async (t) => {
+  mkdirSync(SCRATCH_DIR, { recursive: true });
+
+  // The actual post-#636 bench reference fine.mjs
+  const emitPath = join(BENCH_B9_ROOT, "tasks", "parse-int-list", "arm-a", "fine.mjs");
+  ok(existsSync(emitPath), `bench fine.mjs should exist at ${emitPath}`);
+
+  const attackDir = join(SCRATCH_DIR, "attack-classes-692-post636");
+  writeAttackClassFixture(attackDir, "integer-overflow", [
+    {
+      label: "leading-zeros-007",
+      payload: "[007]",
+      expected_outcome: "REFUSED-EARLY",
+      rationale: "Post-#636 fix: leading-zeros guard in parseDigits should throw SyntaxError",
+    },
+    {
+      label: "leading-zeros-0042",
+      payload: "[0042]",
+      expected_outcome: "REFUSED-EARLY",
+      rationale: "Post-#636: leading zeros rejected at parseDigits boundary",
+    },
+    {
+      label: "valid-no-leading-zero",
+      payload: "[42]",
+      expected_outcome: "BENIGN-PASS",
+      rationale: "Non-zero integer without leading zero should parse correctly",
+    },
+    {
+      label: "valid-zero",
+      payload: "[0]",
+      expected_outcome: "BENIGN-PASS",
+      rationale: "Single zero is valid (length 1, no leading zero)",
+    },
+  ]);
+
+  const result = spawnSync(process.execPath, [
+    join(BENCH_B9_ROOT, "harness", "measure-axis2.mjs"),
+    "--emit", emitPath,
+    "--attack-classes", attackDir,
+    "--entry", "listOfInts",
+    "--json",
+  ], { encoding: "utf8", timeout: 30_000, env: process.env });
+
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`measure-axis2 exited ${result.status}: ${result.stderr?.slice(0, 500)}`);
+  }
+
+  const output = JSON.parse(result.stdout.trim());
+  const classResult = output.by_class["integer-overflow"];
+
+  ok(classResult !== undefined, "integer-overflow class should be in results");
+  // Post-#636: both leading-zero inputs should be refused-early, 0 shape-escapes
+  strictEqual(classResult.refused_early, 2,
+    `post-#636 fine.mjs should refuse 2 leading-zero inputs early, got ${classResult.refused_early}`);
+  strictEqual(classResult.shape_escapes, 0,
+    `post-#636 fine.mjs should have 0 shape_escapes, got ${classResult.shape_escapes}`);
+  // Benign inputs should still pass
+  strictEqual(classResult.benign_pass, 2,
+    `post-#636 fine.mjs should have 2 benign_pass, got ${classResult.benign_pass}`);
+
+  console.log(`  regression #692 post-636: refused_early=${classResult.refused_early}/2 shape_escapes=${classResult.shape_escapes} benign_pass=${classResult.benign_pass}/2`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 9: Provenance fields — every axis2 result contains the 4 provenance
+//         fields with correct types and a sha256 that matches the file content.
+//         This is the compound production-sequence test: it exercises
+//         computeEmitProvenance -> measureAxis2 return value -> JSON output.
+// ---------------------------------------------------------------------------
+
+test("axis2: provenance fields — emit_path_resolved, emit_mtime_iso, emit_bytes, emit_sha256_short present and correct", async (t) => {
+  mkdirSync(SCRATCH_DIR, { recursive: true });
+
+  const emitContent = `
+export function listOfInts(input) {
+  if (!input.startsWith('[')) throw new SyntaxError('Expected [');
+  return [];
+}
+export default listOfInts;
+`.trim();
+
+  const emitPath = join(SCRATCH_DIR, "emit-provenance-check.mjs");
+  writeSyntheticMjs(emitPath, emitContent);
+
+  // Compute expected sha256 short ourselves for verification
+  const expectedSha256Short = createHash("sha256")
+    .update(readFileSync(emitPath))
+    .digest("hex")
+    .slice(0, 16);
+
+  const attackDir = join(SCRATCH_DIR, "attack-classes-provenance");
+  writeAttackClassFixture(attackDir, "probe", [
+    {
+      label: "non-bracket",
+      payload: "not-a-list",
+      expected_outcome: "REFUSED-EARLY",
+      rationale: "Probe input",
+    },
+  ]);
+
+  const result = spawnSync(process.execPath, [
+    join(BENCH_B9_ROOT, "harness", "measure-axis2.mjs"),
+    "--emit", emitPath,
+    "--attack-classes", attackDir,
+    "--entry", "listOfInts",
+    "--json",
+  ], { encoding: "utf8", timeout: 30_000, env: process.env });
+
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`measure-axis2 exited ${result.status}: ${result.stderr?.slice(0, 500)}`);
+  }
+
+  const output = JSON.parse(result.stdout.trim());
+
+  // All 4 provenance fields must be present
+  ok("emit_path_resolved" in output, "output must have emit_path_resolved");
+  ok("emit_mtime_iso" in output, "output must have emit_mtime_iso");
+  ok("emit_bytes" in output, "output must have emit_bytes");
+  ok("emit_sha256_short" in output, "output must have emit_sha256_short");
+
+  // emit_path_resolved should be an absolute path pointing to our emit
+  strictEqual(output.emit_path_resolved, emitPath,
+    `emit_path_resolved should be the absolute emit path`);
+
+  // emit_mtime_iso should be a valid ISO-8601 timestamp
+  ok(!isNaN(Date.parse(output.emit_mtime_iso)),
+    `emit_mtime_iso should be a valid ISO-8601 string, got: ${output.emit_mtime_iso}`);
+  match(output.emit_mtime_iso, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
+    `emit_mtime_iso should match ISO-8601 pattern`);
+
+  // emit_bytes must be a positive number
+  ok(typeof output.emit_bytes === "number" && output.emit_bytes > 0,
+    `emit_bytes should be a positive number, got: ${output.emit_bytes}`);
+
+  // emit_sha256_short must be exactly 16 hex chars and match our computation
+  match(output.emit_sha256_short, /^[0-9a-f]{16}$/,
+    `emit_sha256_short should be 16 lowercase hex chars, got: ${output.emit_sha256_short}`);
+  strictEqual(output.emit_sha256_short, expectedSha256Short,
+    `emit_sha256_short should match SHA-256 of file content`);
+
+  console.log(`  provenance test: path=${output.emit_path_resolved} mtime=${output.emit_mtime_iso} bytes=${output.emit_bytes} sha256short=${output.emit_sha256_short}`);
 });

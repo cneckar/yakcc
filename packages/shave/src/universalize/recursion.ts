@@ -826,7 +826,48 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     ) {
       return [body];
     }
-    // Expression-body arrow function with non-function-like body — not further decomposable.
+    // @decision DEC-SHAVE-PRIVATE-CLASS-FIELD-001
+    // title: Expression-body ArrowFunction/FunctionExpression descends into any expression body
+    // status: accepted
+    // rationale:
+    //   When a non-Block expression body (e.g. a nested ConditionalExpression chain)
+    //   is classified as non-atomic by isAtom(), the previous return [] caused
+    //   DidNotReachAtomError. Root cause identified via §P6 probe (WI-666):
+    //     Node at [1301,1558) (kind=ArrowFunction) is not atomic and has no decomposable children
+    //   Source: `const getUintArray = (max) => !isPosInt(max) ? null : max <= 256 ? ... : null`
+    //   The ArrowFunction has 5 ConditionalExpression nodes (5 CF boundaries > maxCF=1) so
+    //   isAtom() returns false. But decomposableChildrenOf returned [] because the body is not
+    //   a Block and not a function-like, preventing descent into the ConditionalExpression chain.
+    //   Fix: for any expression body that is defined and not a Block, return [body] so the
+    //   recursion descends into it. The existing ConditionalExpression branch of
+    //   decomposableChildrenOf (lines 1108-1114) then handles the ternary chain correctly.
+    //   This is a strictly additive extension — existing passing tests are unaffected because:
+    //     (a) Block-body paths are unchanged (handled by the getStatements() branch above).
+    //     (b) Function-like expression bodies are already returned by the branch above.
+    //     (c) For expression bodies that are already atomic (no CF boundaries, not in registry),
+    //         isAtom() returns true before decomposableChildrenOf is even consulted,
+    //         so this branch is only reached when the body is genuinely non-atomic.
+    // alternatives:
+    //   A. Add ConditionalExpression specifically to this branch -- rejected; overly narrow;
+    //      other complex expression types (BinaryExpression chains, etc.) could exhibit the
+    //      same failure; the general solution is strictly cleaner.
+    //   B. Classify all expression-body arrow functions as atomic atoms -- rejected;
+    //      a genuinely large ConditionalExpression chain should decompose to its branches,
+    //      not become one monolithic atom. Quality of decomposition matters.
+    //   C. Extend the ConditionalExpression branch to also handle wrapping ArrowFunction --
+    //      rejected; that would require changing ConditionalExpression to also handle its
+    //      ArrowFunction parent, violating the node-local responsibility of each branch.
+    // consequences:
+    //   - lru-cache dist/esm/index.js decomposes: moduleCount >= 3, stubCount=0.
+    //   - combinedScore >= 0.70 gate can fire (post engine fix).
+    //   - Any future package with expression-body arrow functions containing complex
+    //     ternary chains or BinaryExpression nesting will also decompose correctly.
+    //   - Compatible with WI-V2-09 byte-identical bootstrap: descent is deterministic.
+    //   - DEC-WI510-S10-PRIVATE-CLASS-FIELD-ENGINE-GAP-001 closed.
+    // closes #666
+    if (body !== undefined) {
+      return [body];
+    }
     return [];
   }
 

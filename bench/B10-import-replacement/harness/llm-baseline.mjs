@@ -21,8 +21,11 @@
 //   Behavior:\n{behavior}\n\nError conditions:\n{error_conditions_numbered}\n\n
 //   Throw appropriate Error subclasses (SyntaxError or RangeError) for invalid input."
 //
-//   MODEL / SAMPLING (matching B9):
-//   claude-sonnet-4-6, max_tokens=2048, temperature=1.0, N=3 reps per task
+//   MODEL / SAMPLING (B10-specific; B9 keeps max_tokens=2048 for prompt-parity with B4):
+//   claude-sonnet-4-6, max_tokens=8192, temperature=1.0, N=3 reps per task
+//   max_tokens is raised to 8192 (vs B9's 2048) to accommodate complex validators such as
+//   validate-rfc5321-email which exceed 2048 tokens mid-stream. B9 tasks (digit-sum,
+//   kebab-to-camel, etc.) are deliberately small; the divergence is intentional.
 //
 //   DRY-RUN PATH (Slice 1)
 //   In Slice 1 the B10 corpus is empty (tasks: []). The smoke run operates against
@@ -130,7 +133,7 @@ function promptSha256(systemPrompt, userPrompt) {
 
 /**
  * Extract TypeScript source from a model response containing a ```typescript block.
- * Returns null if no fence found.
+ * Returns null if no fence found at all.
  *
  * Accepts all realistic LLM fence variants:
  *   - ```typescript\ncode``` (standard)
@@ -154,16 +157,42 @@ function promptSha256(systemPrompt, userPrompt) {
  *   a "treat anything as emit" fallback.
  *   See: plans/wi-679-b10-fence-regex.md, #679.
  *
+ * @decision DEC-B10-FENCE-FALLBACK-001
+ * @title Add unclosed-fence fallback path returning { text, truncated } shape
+ * @status accepted
+ * @rationale
+ *   When max_tokens is exhausted mid-response the LLM emits an opening fence but
+ *   no closing fence. The primary regex (which requires a closing ```) returns null,
+ *   producing extract_failed and PENDING verdicts with zero axis1 data — even when
+ *   95%+ of the implementation arrived intact (#691, confirmed via #679 diagnostic dumps).
+ *   The fallback regex anchors to end-of-input (`$`) and captures everything after
+ *   the opening fence line. It runs ONLY when primary returns null, so it cannot
+ *   interfere with clean closed-fence extraction. The return shape changes from
+ *   `string|null` to `{ text: string, truncated: boolean }|null` so callers can
+ *   record the truncation state and emit a distinct error tag rather than "extract_failed".
+ *   Python fences still reject (same language-tag rule applies to both regexes).
+ *   See: plans/wi-691-b10-max-tokens.md, #691.
+ *
  * @param {string} responseText
- * @returns {string|null}
+ * @returns {{ text: string, truncated: boolean }|null}
  */
 function extractEmitFromResponse(responseText) {
+  // Primary: requires closing fence. Returns truncated:false on match.
   // Accepts: ```typescript[anything]\ncode```, ```ts[anything]\ncode```, ```\ncode```.
   // Rejects: ```python\ncode``` because `python` doesn't match `typescript|ts` and
   // the mandatory `\n` immediately after ` ``` ` won't match the `p` in `python`.
-  const fenceRe = /```(?:(?:typescript|ts)[^\n]*)?\n([\s\S]*?)```/;
-  const m = fenceRe.exec(responseText);
-  return m ? m[1] : null;
+  const primaryRe = /```(?:(?:typescript|ts)[^\n]*)?\n([\s\S]*?)```/;
+  const primary = primaryRe.exec(responseText);
+  if (primary) return { text: primary[1], truncated: false };
+
+  // Fallback: no closing fence required — anchored at end of input.
+  // Fires only when primary returned null (response was truncated mid-fence).
+  // Same fence-open rules: python still rejects, bare ``` still matches.
+  const fallbackRe = /```(?:(?:typescript|ts)[^\n]*)?\n([\s\S]*)$/;
+  const fallback = fallbackRe.exec(responseText);
+  if (fallback) return { text: fallback[1], truncated: true };
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +264,7 @@ async function callAnthropicApi(systemPrompt, userPrompt) {
   const client = new AnthropicClass({ apiKey });
   const message = await client.messages.create({
     model:      "claude-sonnet-4-6",
-    max_tokens: 2048,
+    max_tokens: 8192,
     temperature: 1.0,
     system:     systemPrompt,
     messages:   [{ role: "user", content: userPrompt }],
@@ -301,7 +330,9 @@ export async function runArmBRep({ taskId, taskSpec, dryRun, noNetwork, outputDi
     };
   }
 
-  const emitText = extractEmitFromResponse(responseText);
+  const extracted = extractEmitFromResponse(responseText);
+  const emitText = extracted?.text ?? null;
+  const truncatedEmit = extracted?.truncated ?? false;
   let emitPath = null;
 
   if (emitText && outputDir) {
@@ -310,8 +341,10 @@ export async function runArmBRep({ taskId, taskSpec, dryRun, noNetwork, outputDi
     writeFileSync(emitPath, emitText, "utf8");
   }
 
-  // When extraction fails (and the run was not skipped), dump the raw response to a
-  // tmp diagnostic file so the next investigator can inspect the exact format returned.
+  // When extraction fails entirely (no fence at all, extracted == null), dump the raw
+  // response to a tmp diagnostic file so the next investigator can inspect the format.
+  // Truncated reps (extracted != null but truncated: true) already have the partial .mjs
+  // written above plus the truncated_emit flag — the extra txt dump is redundant evidence.
   // @decision DEC-B10-FENCE-DIAG-001
   // @title Write raw response to tmp diagnostic file on extract_failed
   // @status accepted
@@ -321,11 +354,12 @@ export async function runArmBRep({ taskId, taskSpec, dryRun, noNetwork, outputDi
   //   a live re-run ($0.09/re-run, zero evidence). Writing to tmp/B10-import-replacement/
   //   preserves the evidence for offline inspection without touching fixture or result
   //   files. Unix timestamp suffix prevents collisions across concurrent reps. The dump
-  //   is skipped on the no-network path (responseText is undefined/empty). Dump failures
-  //   are caught and warned — a tmp write error must not mask the underlying extract_failed.
-  //   See: plans/wi-679-b10-fence-regex.md, #679.
+  //   is skipped on the no-network path (responseText is undefined/empty) and on the
+  //   truncated path (partial emit is already written as .mjs). Dump failures are caught
+  //   and warned — a tmp write error must not mask the underlying extract_failed.
+  //   See: plans/wi-679-b10-fence-regex.md, #679; plans/wi-691-b10-max-tokens.md, #691.
   let extractFailedDumpPath = null;
-  if (emitText == null && source !== "skipped") {
+  if (extracted == null && source !== "skipped") {
     try {
       const diagDir = join(REPO_ROOT, "tmp", "B10-import-replacement");
       mkdirSync(diagDir, { recursive: true });
@@ -337,15 +371,27 @@ export async function runArmBRep({ taskId, taskSpec, dryRun, noNetwork, outputDi
     }
   }
 
+  // Determine error string:
+  //   - null (extracted ok, not truncated): no error
+  //   - truncated_emit: partial emit captured, closing fence absent (max_tokens ceiling hit)
+  //   - extract_failed: no fence at all in response
+  let errorStr = null;
+  if (extracted == null) {
+    errorStr = "extract_failed: no ```typescript fence in response";
+  } else if (truncatedEmit) {
+    errorStr = "truncated_emit: closing fence missing (max_tokens=8192 exceeded)";
+  }
+
   return {
-    task_id:                 taskId,
+    task_id:                  taskId,
     rep,
     source,
     prompt_sha256,
-    emit_path:               emitPath,
-    emit_text:               emitText,
+    emit_path:                emitPath,
+    emit_text:                emitText,
+    truncated_emit:           truncatedEmit,
     extract_failed_dump_path: extractFailedDumpPath,
-    error:                   emitText == null ? "extract_failed: no ```typescript fence in response" : null,
+    error:                    errorStr,
     ...apiMeta,
   };
 }
