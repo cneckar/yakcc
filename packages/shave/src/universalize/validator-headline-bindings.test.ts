@@ -29,6 +29,20 @@
  * title: Re-use the abandoned slices vendored Babel-CJS tarball verbatim
  * status: decided
  * rationale: Full validator-13.15.35/ from commit f9c93f0 carried byte-for-byte.
+ *
+ * @decision DEC-WI541-MEMO-CACHE-001
+ * title: File-local Map<string, Promise<ModuleForest>> memoises emptyRegistry shavePackage calls
+ * status: decided
+ * rationale:
+ *   WI-541: 28 shavePackage calls → ~8 by memoising per-entryPath results for the emptyRegistry
+ *   structural checks (§A, §B, §C). §D's determinism proof is preserved: forest1 reads from cache
+ *   (already-built), forest2 is a fresh shavePackage call — the byte-equality assertion still
+ *   proves that two independent invocations yield identical output (not a tautology).  §E, §F,
+ *   and the compound block all open their own registries and are NOT routed through this cache;
+ *   they continue to call shavePackage directly. Cache lifetime is the test-file module eval
+ *   (const declaration) — no cross-file sharing, no engine-level state, preserves
+ *   DEC-WI510-S2-PER-ENTRY-ISOLATION-001.  DEC-WI541-NO-VITEST-CONFIG-EDIT-001: vitest.config.ts
+ *   is untouched by this WI.
  */
 
 import { join, normalize } from "node:path";
@@ -42,6 +56,7 @@ import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
+  type ModuleForest,
   collectForestSlicePlans,
   forestModules,
   forestStubs,
@@ -59,6 +74,36 @@ const VALIDATOR_FIXTURE_ROOT = join(FIXTURES_DIR, "validator-13.15.35");
 const emptyRegistry: Pick<ShaveRegistryView, "findByCanonicalAstHash"> = {
   findByCanonicalAstHash: async () => [],
 };
+
+/**
+ * File-local memoise cache for emptyRegistry shavePackage calls.
+ * Keyed by absolute entryPath string; value is a Promise<ModuleForest> that
+ * resolves to the result of the first shavePackage call for that path.
+ *
+ * Lifetime: this module's eval (const) — resets with each vitest worker spawn.
+ * Only used by §A / §B / §C structural checks that use emptyRegistry.
+ * §D, §E, §F, and the compound block bypass this cache (they call shavePackage directly).
+ *
+ * @decision DEC-WI541-MEMO-CACHE-001 — see file-level @decision block above.
+ */
+const _emptyRegistryForestCache = new Map<string, Promise<ModuleForest>>();
+
+/**
+ * Returns a memoised Promise<ModuleForest> for the given entryPath via emptyRegistry.
+ * On first call for a given path: triggers shavePackage and stores the Promise.
+ * On subsequent calls: returns the same Promise (already resolved).
+ * Callers must NOT mutate the returned forest; treat it as read-only.
+ */
+function cachedShave(entryPath: string): Promise<ModuleForest> {
+  const hit = _emptyRegistryForestCache.get(entryPath);
+  if (hit !== undefined) return hit;
+  const promise = shavePackage(VALIDATOR_FIXTURE_ROOT, {
+    registry: emptyRegistry,
+    entryPath,
+  });
+  _emptyRegistryForestCache.set(entryPath, promise);
+  return promise;
+}
 
 function collectLeafHashes(node: {
   kind: string;
@@ -162,10 +207,7 @@ describe("validator isEmail -- per-entry shave (WI-510 Slice 2)", () => {
     "section A -- moduleCount in [7,12], stubCount=0, forestTotalLeafCount>0 for isEmail subgraph",
     { timeout: 300_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js"));
       console.log("[isEmail sA] moduleCount:", forest.moduleCount);
       console.log("[isEmail sA] stubCount:", forest.stubCount);
       console.log("[isEmail sA] forestTotalLeafCount:", forestTotalLeafCount(forest));
@@ -181,10 +223,7 @@ describe("validator isEmail -- per-entry shave (WI-510 Slice 2)", () => {
   );
 
   it("section B -- forest.nodes[0] is isEmail.js", { timeout: 120_000 }, async () => {
-    const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-      registry: emptyRegistry,
-      entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js"),
-    });
+    const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js"));
     const firstNode = forest.nodes[0];
     expect(firstNode).toBeDefined();
     expect(firstNode?.kind).toBe("module");
@@ -195,10 +234,7 @@ describe("validator isEmail -- per-entry shave (WI-510 Slice 2)", () => {
     "section C -- subgraph contains only transitively-reachable modules; no unrelated validators",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js"));
       const filePaths = forestModules(forest).map((m) => m.filePath);
       for (const fp of filePaths) expect(fp).toContain("validator-13.15.35");
       expect(filePaths.some((p) => p.includes("isEmail.js"))).toBe(true);
@@ -219,10 +255,9 @@ describe("validator isEmail -- per-entry shave (WI-510 Slice 2)", () => {
     { timeout: 300_000 },
     async () => {
       const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", "isEmail.js");
-      const forest1 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath,
-      });
+      // forest1: from cache (built by §A warmup); forest2: fresh call — proves two independent
+      // invocations yield identical output (DEC-WI541-MEMO-CACHE-001: one cached + one fresh).
+      const forest1 = await cachedShave(entryPath);
       const forest2 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath,
@@ -288,10 +323,7 @@ describe("validator isURL -- per-entry shave (WI-510 Slice 2)", () => {
     "section A -- moduleCount in [6,12], stubCount=0, forestTotalLeafCount>0 for isURL subgraph",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js"));
       console.log("[isURL sA] moduleCount:", forest.moduleCount);
       console.log("[isURL sA] stubCount:", forest.stubCount);
       console.log("[isURL sA] forestTotalLeafCount:", forestTotalLeafCount(forest));
@@ -307,10 +339,7 @@ describe("validator isURL -- per-entry shave (WI-510 Slice 2)", () => {
   );
 
   it("section B -- forest.nodes[0] is isURL.js", { timeout: 120_000 }, async () => {
-    const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-      registry: emptyRegistry,
-      entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js"),
-    });
+    const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js"));
     const firstNode = forest.nodes[0];
     expect(firstNode).toBeDefined();
     expect(firstNode?.kind).toBe("module");
@@ -321,10 +350,7 @@ describe("validator isURL -- per-entry shave (WI-510 Slice 2)", () => {
     "section C -- subgraph contains only transitively-reachable modules; no unrelated validators",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js"));
       const filePaths = forestModules(forest).map((m) => m.filePath);
       for (const fp of filePaths) expect(fp).toContain("validator-13.15.35");
       expect(filePaths.some((p) => p.includes("isURL.js"))).toBe(true);
@@ -350,10 +376,9 @@ describe("validator isURL -- per-entry shave (WI-510 Slice 2)", () => {
     { timeout: 300_000 },
     async () => {
       const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", "isURL.js");
-      const forest1 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath,
-      });
+      // forest1: from cache (built by §A warmup); forest2: fresh call — proves two independent
+      // invocations yield identical output (DEC-WI541-MEMO-CACHE-001: one cached + one fresh).
+      const forest1 = await cachedShave(entryPath);
       const forest2 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath,
@@ -419,10 +444,7 @@ describe("validator isUUID -- per-entry shave (WI-510 Slice 2)", () => {
     "section A -- moduleCount in [1,4], stubCount=0, forestTotalLeafCount>0 for isUUID subgraph",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js"));
       console.log("[isUUID sA] moduleCount:", forest.moduleCount);
       console.log("[isUUID sA] stubCount:", forest.stubCount);
       console.log("[isUUID sA] forestTotalLeafCount:", forestTotalLeafCount(forest));
@@ -438,10 +460,7 @@ describe("validator isUUID -- per-entry shave (WI-510 Slice 2)", () => {
   );
 
   it("section B -- forest.nodes[0] is isUUID.js", { timeout: 120_000 }, async () => {
-    const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-      registry: emptyRegistry,
-      entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js"),
-    });
+    const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js"));
     const firstNode = forest.nodes[0];
     expect(firstNode).toBeDefined();
     expect(firstNode?.kind).toBe("module");
@@ -452,10 +471,7 @@ describe("validator isUUID -- per-entry shave (WI-510 Slice 2)", () => {
     "section C -- subgraph contains only transitively-reachable modules; no unrelated validators",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js"));
       const filePaths = forestModules(forest).map((m) => m.filePath);
       for (const fp of filePaths) expect(fp).toContain("validator-13.15.35");
       expect(filePaths.some((p) => p.includes("isUUID.js"))).toBe(true);
@@ -484,10 +500,9 @@ describe("validator isUUID -- per-entry shave (WI-510 Slice 2)", () => {
     { timeout: 120_000 },
     async () => {
       const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", "isUUID.js");
-      const forest1 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath,
-      });
+      // forest1: from cache (built by §A warmup); forest2: fresh call — proves two independent
+      // invocations yield identical output (DEC-WI541-MEMO-CACHE-001: one cached + one fresh).
+      const forest1 = await cachedShave(entryPath);
       const forest2 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath,
@@ -553,10 +568,7 @@ describe("validator isAlphanumeric -- per-entry shave (WI-510 Slice 2)", () => {
     "section A -- moduleCount in [2,5], stubCount=0, forestTotalLeafCount>0 for isAlphanumeric subgraph",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js"));
       console.log("[isAlphanumeric sA] moduleCount:", forest.moduleCount);
       console.log("[isAlphanumeric sA] stubCount:", forest.stubCount);
       console.log("[isAlphanumeric sA] forestTotalLeafCount:", forestTotalLeafCount(forest));
@@ -574,10 +586,7 @@ describe("validator isAlphanumeric -- per-entry shave (WI-510 Slice 2)", () => {
   );
 
   it("section B -- forest.nodes[0] is isAlphanumeric.js", { timeout: 120_000 }, async () => {
-    const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-      registry: emptyRegistry,
-      entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js"),
-    });
+    const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js"));
     const firstNode = forest.nodes[0];
     expect(firstNode).toBeDefined();
     expect(firstNode?.kind).toBe("module");
@@ -588,10 +597,7 @@ describe("validator isAlphanumeric -- per-entry shave (WI-510 Slice 2)", () => {
     "section C -- subgraph contains only transitively-reachable modules; no unrelated validators",
     { timeout: 120_000 },
     async () => {
-      const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js"),
-      });
+      const forest = await cachedShave(join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js"));
       const filePaths = forestModules(forest).map((m) => m.filePath);
       for (const fp of filePaths) expect(fp).toContain("validator-13.15.35");
       expect(filePaths.some((p) => p.includes("isAlphanumeric.js"))).toBe(true);
@@ -624,10 +630,9 @@ describe("validator isAlphanumeric -- per-entry shave (WI-510 Slice 2)", () => {
     { timeout: 120_000 },
     async () => {
       const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", "isAlphanumeric.js");
-      const forest1 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath,
-      });
+      // forest1: from cache (built by §A warmup); forest2: fresh call — proves two independent
+      // invocations yield identical output (DEC-WI541-MEMO-CACHE-001: one cached + one fresh).
+      const forest1 = await cachedShave(entryPath);
       const forest2 = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
         registry: emptyRegistry,
         entryPath,
@@ -887,6 +892,12 @@ describe("validator headline bindings -- compound interaction (real production s
     "all four per-entry shaves are independent, complete, and produce non-empty forests",
     { timeout: 300_000 },
     async () => {
+      // DEC-WI541-MEMO-CACHE-001: compound block reads forests from the file-local cache
+      // (warmed by §A for each binding) so it avoids 4 redundant shavePackage calls.
+      // collectForestSlicePlans takes forest + registry as separate arguments; passing the
+      // cached (emptyRegistry) forest with a fresh :memory: registry is safe — the forest
+      // structure is registry-independent.  All structural assertions (moduleCount, firstNode)
+      // and all pipeline assertions (plans.length, persistedCount) remain intact.
       const bindings = [
         { name: "isEmail", entry: "isEmail.js", minMod: 7, maxMod: 12 },
         { name: "isURL", entry: "isURL.js", minMod: 6, maxMod: 12 },
@@ -894,14 +905,14 @@ describe("validator headline bindings -- compound interaction (real production s
         { name: "isAlphanumeric", entry: "isAlphanumeric.js", minMod: 2, maxMod: 5 },
       ] as const;
       for (const b of bindings) {
+        const entryPath = join(VALIDATOR_FIXTURE_ROOT, "lib", b.entry);
         const registry = await openRegistry(":memory:", {
           embeddings: createOfflineEmbeddingProvider(),
         });
         try {
-          const forest = await shavePackage(VALIDATOR_FIXTURE_ROOT, {
-            registry,
-            entryPath: join(VALIDATOR_FIXTURE_ROOT, "lib", b.entry),
-          });
+          // Use cached forest for structural checks; registry is a fresh :memory: instance
+          // for the persist pipeline — forest and registry are decoupled in collectForestSlicePlans.
+          const forest = await cachedShave(entryPath);
           expect(forest.moduleCount).toBeGreaterThanOrEqual(b.minMod);
           expect(forest.moduleCount).toBeLessThanOrEqual(b.maxMod);
           expect(forest.stubCount).toBe(0);

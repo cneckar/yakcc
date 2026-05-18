@@ -101,6 +101,19 @@ async function bundleWithEsbuild(entryPoint, outFile, platform = "node") {
     return null; // esbuild not available
   }
 
+  // @decision DEC-FIX-706-NODEPATHS-001
+  // @title nodePaths fallback for bench-local deps (ajv arm)
+  // @status decided
+  // @rationale
+  //   The ajv arm writes its entry to tmp/B2-bloat/ajv-entry.mjs (OUT_DIR).
+  //   esbuild's default upward node_modules walk from tmp/B2-bloat never
+  //   reaches bench/B2-bloat/node_modules where ajv/ajv-formats are installed.
+  //   nodePaths adds bench/B2-bloat/node_modules as a fallback resolution root
+  //   so the ajv entry resolves without relocating the entry or copying deps.
+  //   Safe for the yakcc arm: esbuild tries the local walk first; nodePaths is
+  //   fallback only, so the yakcc arm's resolution path is unchanged.
+  const benchNodeModules = resolve(__dirname, "..", "node_modules");
+
   await esbuild.build({
     entryPoints: [entryPoint],
     bundle: true,
@@ -108,6 +121,7 @@ async function bundleWithEsbuild(entryPoint, outFile, platform = "node") {
     platform,
     format: "esm",
     outfile: outFile,
+    nodePaths: [benchNodeModules],
   });
   return statSync(outFile).size;
 }

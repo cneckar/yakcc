@@ -55,11 +55,44 @@
 //   // classifyArmBResult: classify a single (emitPath, attackClasses, entryFn) run
 //   // computeArmBRefusalSummary: aggregate N=3 reps into median + range
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// Emit provenance helpers (symmetric with measure-axis2.mjs DEC-B9-EMIT-PROVENANCE-001)
+//
+// @decision DEC-B9-EMIT-PROVENANCE-002
+// @title Arm B emit provenance fields for axis2 stale-artifact self-diagnosis
+// @status accepted
+// @rationale
+//   Symmetric with DEC-B9-EMIT-PROVENANCE-001 in measure-axis2.mjs. Arm B
+//   classification results include the same 4 provenance fields so that
+//   stale-artifact false-positives are self-diagnosing on both arms.
+//   Fields: emit_path_resolved, emit_mtime_iso, emit_bytes, emit_sha256_short.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute provenance metadata for a resolved emit file.
+ * Symmetric with computeEmitProvenance in measure-axis2.mjs.
+ *
+ * @param {string} emitPath - absolute path to the .mjs emit file
+ * @returns {{ emit_path_resolved: string, emit_mtime_iso: string, emit_bytes: number, emit_sha256_short: string }}
+ */
+function computeEmitProvenance(emitPath) {
+  const stat = statSync(emitPath);
+  const content = readFileSync(emitPath);
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  return {
+    emit_path_resolved: emitPath,
+    emit_mtime_iso: stat.mtime.toISOString(),
+    emit_bytes: stat.size,
+    emit_sha256_short: sha256.slice(0, 16),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Type-shape error classifier (identical to DEC-V0-MIN-SURFACE-001 for symmetry)
@@ -207,6 +240,9 @@ export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName, a
     (acc, c) => acc + c.inputs.filter(i => i.expected_outcome === "REFUSED-EARLY" && i.classification !== "not-applicable").length, 0
   );
 
+  // Compute provenance for the loaded file (symmetric with DEC-B9-EMIT-PROVENANCE-001)
+  const emitProvenance = computeEmitProvenance(loadPath);
+
   return {
     by_class: byClass,
     summary: {
@@ -218,6 +254,7 @@ export async function classifyArmBEmit(emitPath, attackClasses, entryFuncName, a
       shape_escapes: shapeEscapesAll,
       refused_early_rate: refusedEarlyTargets > 0 ? (refusedEarlyAll / refusedEarlyTargets) * 100 : 0,
     },
+    ...emitProvenance,
   };
 }
 

@@ -84,7 +84,8 @@
 // for transparency. When absent, defaults to ALL classes (current behavior).
 // Per fix for #515 (DEC-B9-APPLICABILITY-001).
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -129,6 +130,55 @@ const emitAbsPath = resolve(EMIT_PATH);
 if (!existsSync(emitAbsPath)) {
   console.error(`emit path not found: ${emitAbsPath}`);
   process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Emit provenance helpers
+//
+// @decision DEC-B9-EMIT-PROVENANCE-001
+// @title Emit provenance fields for axis2 stale-artifact self-diagnosis
+// @status accepted
+// @rationale
+//   Issue #692: resolveArmAEmit may prefer a stale compiled artifact
+//   (examples/parse-int-list/dist/module.mjs, pre-#636) over the current
+//   bench reference (bench/B9-min-surface/tasks/parse-int-list/arm-a/fine.mjs,
+//   post-#636). When the wrong artifact is used, shape-escape false-positives
+//   appear in axis2 results without any indication of which file was loaded.
+//
+//   Mitigation: attach 4 provenance fields to every axis2 result so the root
+//   cause of any shape-escape anomaly is immediately visible without re-running
+//   the harness interactively.
+//
+//   Fields:
+//   - emit_path_resolved: absolute path passed to loadAndInstrumentEmit
+//   - emit_mtime_iso: ISO-8601 mtime of that file at measurement time
+//   - emit_bytes: file size in bytes
+//   - emit_sha256_short: first 16 hex chars of SHA-256 of file content
+//
+//   These fields are added at the top level of the measureAxis2() return value
+//   and preserved in all downstream JSON outputs. No scoring logic is changed.
+//
+//   Out-of-scope (follow-up issues filed):
+//   - Regenerating the stale examples/parse-int-list/dist/module.mjs artifact
+//   - Changing resolveArmAEmit resolver order to prefer bench reference
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute provenance metadata for a resolved emit file.
+ *
+ * @param {string} emitPath - absolute path to the .mjs emit file
+ * @returns {{ emit_path_resolved: string, emit_mtime_iso: string, emit_bytes: number, emit_sha256_short: string }}
+ */
+function computeEmitProvenance(emitPath) {
+  const stat = statSync(emitPath);
+  const content = readFileSync(emitPath);
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  return {
+    emit_path_resolved: emitPath,
+    emit_mtime_iso: stat.mtime.toISOString(),
+    emit_bytes: stat.size,
+    emit_sha256_short: sha256.slice(0, 16),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +305,7 @@ async function loadAndInstrumentEmit(emitPath, entryFuncName) {
     return { threw, thrownError, returnValue, bodyEntered };
   }
 
-  return { invokeInstrumented, atomFunctions, entryFn };
+  return { invokeInstrumented, atomFunctions, entryFn, resolvedPath: loadPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,8 +418,11 @@ async function measureAxis2({ emitPath, attackDir, entryFuncName, applicableClas
   // Build a fast lookup set; null means "all applicable"
   const applicableSet = _applicableClasses ? new Set(_applicableClasses) : null;
 
-  const { invokeInstrumented } = await loadAndInstrumentEmit(_emitPath, _entryFuncName);
+  const { invokeInstrumented, resolvedPath } = await loadAndInstrumentEmit(_emitPath, _entryFuncName);
   const attackClasses = loadAttackClasses(_attackDir);
+
+  // Compute provenance for the actual file loaded (post .ts->.mjs resolution if applicable)
+  const emitProvenance = computeEmitProvenance(resolvedPath);
 
   const byClass = {};
   let totalAll = 0, refusedEarlyAll = 0, executedAll = 0, shapeEscapesAll = 0, notApplicableAll = 0;
@@ -478,7 +531,7 @@ async function measureAxis2({ emitPath, attackDir, entryFuncName, applicableClas
     },
   };
 
-  return { by_class: byClass, summary };
+  return { by_class: byClass, summary, ...emitProvenance };
 }
 
 // ---------------------------------------------------------------------------
