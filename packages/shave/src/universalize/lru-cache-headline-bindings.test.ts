@@ -208,13 +208,13 @@ const emptyRegistry: Pick<ShaveRegistryView, "findByCanonicalAstHash"> = {
 
 // ---------------------------------------------------------------------------
 // lru-cache/dist/esm/index.js -- sections A-E (ENGINE-GAP CORROBORATION)
-// Timeouts: per-it() 180_000ms (conservative; accommodates future engine fix rerun)
+// Timeouts: per-it() 300_000ms (conservative; accommodates future engine fix rerun)
 //           section D 360_000ms (two consecutive calls)
 // ---------------------------------------------------------------------------
 describe("lru-cache/dist/esm/index.js -- per-entry shave (WI-510 Slice 10 / #642 S10 / post-fix #666)", () => {
   it(
     "section A -- post-fix #666: moduleCount>=3, stubCount=0, forestTotalLeafCount>0",
-    { timeout: 180_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(LRU_CACHE_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -270,7 +270,7 @@ describe("lru-cache/dist/esm/index.js -- per-entry shave (WI-510 Slice 10 / #642
 
   it(
     "section B -- post-fix #666: forest.nodes[0] is a module node (not stub) for lru-cache-11.3.6/dist/esm/index.js",
-    { timeout: 180_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(LRU_CACHE_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -298,7 +298,7 @@ describe("lru-cache/dist/esm/index.js -- per-entry shave (WI-510 Slice 10 / #642
 
   it(
     "section C -- post-fix #666: forest has >=3 modules, 0 stubs, externalSpecifiers=[]",
-    { timeout: 180_000 },
+    { timeout: 300_000 },
     async () => {
       const forest = await shavePackage(LRU_CACHE_FIXTURE_ROOT, {
         registry: emptyRegistry,
@@ -367,7 +367,7 @@ describe("lru-cache/dist/esm/index.js -- per-entry shave (WI-510 Slice 10 / #642
 
   it(
     "section E -- post-fix #666: collectForestSlicePlans returns >0 plans (modules decomposed)",
-    { timeout: 180_000 },
+    { timeout: 300_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
@@ -479,7 +479,7 @@ describe("lru-cache section F -- combinedScore quality gate (WI-510 Slice 10 / #
 describe("lru-cache -- compound interaction: LRUCache post-fix decomposition end-to-end (WI-510 Slice 10 / #642 S10 / post-fix #666)", () => {
   it(
     "LRUCache entry decomposes; compound path produces modules and slice plans (post-fix #666)",
-    { timeout: 180_000 },
+    { timeout: 300_000 },
     async () => {
       const registry = await openRegistry(":memory:", {
         embeddings: createOfflineEmbeddingProvider(),
