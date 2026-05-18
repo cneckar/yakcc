@@ -8,12 +8,12 @@
 // stays focused on composition resolution. This is a new entry point — no changes
 // to the existing assemble() signature.
 //
-// Flow (updated WI-373):
+// Flow (updated WI-373, WI-682):
 //   1. Adapt the full Registry → ShaveRegistryView (null → undefined for getBlock).
 //   2. Run universalize(candidate, shaveRegistry, { persist: true, ...shaveOptions }) —
-//      license gate runs first (cheap, fail-fast), then intent extraction, decompose,
-//      slice, and now step 6 in-pipeline atom persistence (WI-373). persist:true is
-//      always forced so novel-glue entries are persisted and their merkleRoot surfaced.
+//      intent extraction, decompose, slice, and in-pipeline atom persistence (WI-373).
+//      persist:true is always forced so novel-glue entries are persisted and their
+//      merkleRoot surfaced. License gate removed (DEC-LICENSE-GATE-REMOVE-001, WI-682).
 //   3. Resolve the candidate's BlockMerkleRoot via one of three paths:
 //      a. PointerEntry-only single-entry slice: the entire candidate matches an
 //         existing primitive exactly. Use that BlockMerkleRoot directly.
@@ -23,9 +23,6 @@
 //         for this case (the TODO comment is deleted).
 //      c. Multi-leaf slice (>1 entries): throw CandidateNotResolvableError (follow-up WI).
 //   4. Call the existing assemble(merkleRoot, registry, backend, options).
-//
-// The license gate in universalize() guarantees only permissive sources reach the
-// resolver path; LicenseRefusedError propagates unwrapped to the caller.
 
 import type { BlockMerkleRoot } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
@@ -201,8 +198,6 @@ function resolveToMerkleRoot(result: UniversalizeResult): BlockMerkleRoot {
  * @param backend         - Compilation backend (defaults to tsBackend()).
  * @param options         - Combined AssembleOptions + shaveOptions.
  *
- * @throws LicenseRefusedError        - Candidate carries a refused license (GPL etc.).
- *                                      Propagated unwrapped from universalize().
  * @throws AnthropicApiKeyMissingError - No API key and not in offline mode.
  * @throws OfflineCacheMissError       - offline=true but no cache entry for this source.
  * @throws DidNotReachAtomError        - Decomposition could not reach atomic leaves.
@@ -221,10 +216,10 @@ export async function assembleCandidate(
   // Step 1: adapt Registry → ShaveRegistryView.
   const shaveRegistry = toShaveRegistryView(registry);
 
-  // Step 2: run universalize() with persist:true — license gate runs first, then
-  // intent extraction, decompose, slice, and now in-pipeline atom persistence
-  // (step 6, WI-373). persist:true is always forced here so novel-glue entries
-  // are persisted in-pipeline and their merkleRoot is surfaced to resolveToMerkleRoot().
+  // Step 2: run universalize() with persist:true — intent extraction, decompose,
+  // slice, and in-pipeline atom persistence (WI-373). persist:true is always forced
+  // here so novel-glue entries are persisted in-pipeline and their merkleRoot is
+  // surfaced to resolveToMerkleRoot(). License gate removed (DEC-LICENSE-GATE-REMOVE-001).
   // All universalize() errors propagate unwrapped.
   const universalizeOptions: UniversalizeOptions = {
     ...options.shaveOptions,

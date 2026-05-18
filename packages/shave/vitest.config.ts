@@ -9,6 +9,8 @@ export default defineConfig({
       "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
       "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
       "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
+      // WI-682: variance has no dist/ in the worktree environment; alias to source.
+      "@yakcc/variance": resolve(__dirname, "../variance/src/index.ts"),
     },
   },
   test: {

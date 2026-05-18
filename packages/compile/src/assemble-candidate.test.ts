@@ -61,12 +61,7 @@ import {
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
-import {
-  type IntentCard,
-  LicenseRefusedError,
-  type SeedIntentSpec,
-  seedIntentCache,
-} from "@yakcc/shave";
+import { type IntentCard, type SeedIntentSpec, seedIntentCache } from "@yakcc/shave";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CandidateNotResolvableError, assembleCandidate } from "./assemble-candidate.js";
 
@@ -213,50 +208,7 @@ function makeIntentCard(source: string, behavior: string): IntentCard {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: License-refused candidate → LicenseRefusedError propagates
-// ---------------------------------------------------------------------------
-
-describe("assembleCandidate — license-refused candidate", () => {
-  it("throws LicenseRefusedError for a GPL-licensed source before intent extraction", async () => {
-    // The license gate in universalize() runs before extractIntent (cheap, fail-fast).
-    // No cache seed is needed — the gate fires before any API or cache access.
-    const gplSource = `// SPDX-License-Identifier: GPL-3.0-or-later
-export function foo(x: number): number { return x + 1; }`;
-
-    await expect(
-      assembleCandidate(gplSource, registry, undefined, {
-        shaveOptions: { cacheDir, offline: true },
-      }),
-    ).rejects.toBeInstanceOf(LicenseRefusedError);
-  });
-
-  // T3 (WI-373 A6): license-refused source — no rows written to registry.
-  //
-  // persist:true is forced by assembleCandidate() (WI-373), so the license gate
-  // running BEFORE persistence is the only thing preventing rows from being written.
-  // This test verifies acceptance criterion A6: the license gate runs before step 6
-  // (persist) and leaves the registry empty.
-  it("(A6) leaves the registry empty — license gate fires before any persistence side-effect", async () => {
-    const gplSource = `// SPDX-License-Identifier: GPL-3.0-or-later
-export const gplFn = (n: number): number => n + 42;`;
-
-    // Attempt assembly — must throw LicenseRefusedError.
-    await expect(
-      assembleCandidate(gplSource, registry, undefined, {
-        shaveOptions: { cacheDir, offline: true },
-      }),
-    ).rejects.toBeInstanceOf(LicenseRefusedError);
-
-    // Verify no row was written: the registry must report nothing for any hash
-    // derivable from the refused source.
-    const hash = canonicalAstHash(gplSource);
-    const stored = await registry.findByCanonicalAstHash(hash);
-    expect(stored.length, "No block must be stored for a license-refused source").toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Test 2: PointerEntry-only single-entry slice → delegates to assemble()
+// Test 1: PointerEntry-only single-entry slice → delegates to assemble()
 //
 // Compound-interaction: seedIntentCache (public API) + storeBlock + assembleCandidate
 //   → universalize() → extractIntent (cache hit) → decompose → slice (PointerEntry)

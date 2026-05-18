@@ -30,7 +30,6 @@
  *   - serveRegistry binds a real localhost port (port: 0).
  *   - mirrorRegistry calls fetch() against that URL.
  *   - compile outputs are written to disk; equality via fs.readFileSync bytes.
- *   - GPL-fixture shave produces a typed LicenseRefusedError; A row count unchanged.
  *   - No-ownership verified via real HTTP fetch + JSON.parse; not type assertions.
  *
  *   Authority invariants (DEC-V1-FEDERATION-PROTOCOL-001):
@@ -51,7 +50,7 @@ import Database from "better-sqlite3";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { LicenseRefusedError, shave as shaveImpl } from "@yakcc/shave";
+import { shave as shaveImpl } from "@yakcc/shave";
 import { createHttpTransport, serveRegistry } from "@yakcc/federation";
 import { mirrorRegistry } from "@yakcc/federation";
 import type { MirrorReport } from "@yakcc/federation";
@@ -80,15 +79,6 @@ const TRANSCRIPT_PATH = join(EVIDENCE_DIR, "transcript.txt");
 
 const DEMO_SRC_DIR = join(process.cwd(), "src");
 const ARGV_PARSER_PATH = join(DEMO_SRC_DIR, "argv-parser.ts");
-
-// GPL fixture lives in the v0.7-mri-demo (closed; we read-only reference it).
-const GPL_FIXTURE_PATH = join(
-  WORKTREE_ROOT,
-  "examples",
-  "v0.7-mri-demo",
-  "src",
-  "gpl-fixture.ts",
-);
 
 // ---------------------------------------------------------------------------
 // Zero-embedding provider — avoids loading transformers.js in demo tests.
@@ -648,122 +638,7 @@ describe("demo: mirrorRegistry on already-populated registryB is a no-op", () =>
 }, 60_000);
 
 // ============================================================================
-// ACCEPTANCE TEST 6 — GPL refusal
-//
-// Required test: "demo: GPL-prepared input is refused at registryA's shave path;
-// registryB never sees the refused source"
-// ============================================================================
-
-describe("demo: GPL-prepared input is refused at registryA's shave path; registryB never sees the refused source", () => {
-  it("shave of GPL fixture throws LicenseRefusedError; registryA gains zero new blocks; registryB unaffected", async () => {
-    // Record block count before GPL shave attempt.
-    const dbA = new Database(REGISTRY_A_PATH, { readonly: true });
-    const countBefore = (
-      dbA.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM blocks").get() as
-        | { n: number }
-        | undefined
-    )?.n ?? 0;
-    dbA.close();
-
-    logT(`## GPL Refusal Test`);
-    logT(`  registryA block count before: ${countBefore}`);
-
-    // Attempt shave on the GPL fixture — must produce LicenseRefusedError.
-    // We test via the shave CLI which internally calls universalize.
-    // The CLI catches errors and returns exit code 1; we need to verify the
-    // specific error type so we call shave from @yakcc/shave directly.
-    const { shave: shaveImpl, LicenseRefusedError: LicenseRefusedErrorClass } = await import(
-      "@yakcc/shave"
-    );
-
-    // Open a temporary registry view for the shave call.
-    // Adapter: ShaveRegistryView.getBlock returns undefined (not null) for missing blocks.
-    // This matches the pattern in packages/cli/src/commands/shave.ts.
-    const registryForCheck = await openRegistry(REGISTRY_A_PATH, { embeddings: ZERO_EMBEDDINGS });
-    const shaveRegistryView = {
-      selectBlocks: registryForCheck.selectBlocks.bind(registryForCheck),
-      findByCanonicalAstHash: registryForCheck.findByCanonicalAstHash.bind(registryForCheck),
-      getBlock: async (root: Parameters<typeof registryForCheck.getBlock>[0]) => {
-        const row = await registryForCheck.getBlock(root);
-        return row ?? undefined;
-      },
-    };
-
-    let caughtError: unknown = undefined;
-    try {
-      await shaveImpl(GPL_FIXTURE_PATH, shaveRegistryView);
-    } catch (err) {
-      caughtError = err;
-    } finally {
-      await registryForCheck.close();
-    }
-
-    expect(
-      caughtError,
-      "shave of GPL fixture must throw LicenseRefusedError",
-    ).toBeInstanceOf(LicenseRefusedErrorClass);
-
-    const typedErr = caughtError as LicenseRefusedError;
-    expect(typedErr.detection.identifier, "LicenseRefusedError.detection.identifier").toMatch(
-      /GPL/i,
-    );
-
-    logT(`  LicenseRefusedError.detection.identifier: ${typedErr.detection.identifier}`);
-
-    // Verify registryA block count is unchanged.
-    const dbA2 = new Database(REGISTRY_A_PATH, { readonly: true });
-    const countAfter = (
-      dbA2.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM blocks").get() as
-        | { n: number }
-        | undefined
-    )?.n ?? 0;
-    dbA2.close();
-
-    logT(`  registryA block count after: ${countAfter}`);
-    logT(``);
-
-    expect(countAfter, "registryA block count must be unchanged after GPL shave attempt").toBe(
-      countBefore,
-    );
-
-    // Verify registryB also has no GPL fixture blocks (it was mirrored from A before the
-    // GPL attempt, and the GPL source never produced a triplet on A).
-    // Compare countB against countAfter (registryA's current count) rather than
-    // registryABlockMerkleRoots.length, because compile (test 3) may have loaded
-    // seed blocks into both registries after the initial mirror. The key invariant
-    // is that registryB's count equals registryA's count — i.e., the GPL source
-    // never added any new block to either registry.
-    const dbB = new Database(REGISTRY_B_PATH, { readonly: true });
-    const countB = (
-      dbB.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM blocks").get() as
-        | { n: number }
-        | undefined
-    )?.n ?? 0;
-    dbB.close();
-
-    expect(countB, "registryB block count must equal registryA block count (GPL source never reached B)").toBe(
-      countAfter,
-    );
-
-    // Greppable assertion: GPL fixture source bytes must not appear in registryB file.
-    // Read the registryB SQLite file as raw bytes and verify it does not contain
-    // the GPL fixture's SPDX identifier string.
-    const gplSource = await readFile(GPL_FIXTURE_PATH, "utf-8");
-    const gplSpdxLine = gplSource
-      .split("\n")
-      .find((l) => l.includes("GPL-3.0-or-later")) ?? "GPL-3.0-or-later";
-
-    const registryBBytes = await readFile(REGISTRY_B_PATH);
-    const registryBStr = registryBBytes.toString("utf-8", 0, registryBBytes.length);
-    expect(
-      registryBStr.includes(gplSpdxLine),
-      `registryB database file must NOT contain GPL fixture SPDX string: "${gplSpdxLine}"`,
-    ).toBe(false);
-  });
-}, 30_000);
-
-// ============================================================================
-// ACCEPTANCE TEST 7 — federation wire shape carries no ownership-shaped fields
+// ACCEPTANCE TEST 6 — federation wire shape carries no ownership-shaped fields
 //
 // Required test: "demo: federation wire shape carries no ownership-shaped fields"
 // Real-path check: verified via real HTTP fetch + JSON.parse (not type assertions)

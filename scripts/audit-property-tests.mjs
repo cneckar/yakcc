@@ -1067,8 +1067,8 @@ const pkgTableRows = Object.entries(byPackage)
 
 const failureSection =
   failedEntries.length > 0
-    ? `\n## Bootstrap Failures\n\n${failedEntries.map((f) => `- \`${f.source_path}\`: ${f.error_class} — ${f.error_class === "LicenseRefusedError" ? "expected (GPL fixture)" : "**UNEXPECTED — file backlog issue**"}`).join("\n")}\n`
-    : "\n## Bootstrap Failures\n\nNone beyond expected GPL fixture. All files shaved successfully.\n";
+    ? `\n## Bootstrap Failures\n\n${failedEntries.map((f) => `- \`${f.source_path}\`: ${f.error_class} — **UNEXPECTED — file backlog issue**`).join("\n")}\n`
+    : "\n## Bootstrap Failures\n\nNone. All files shaved successfully.\n";
 
 const md = `# WI-V2-07-PREFLIGHT L1 Audit Summary
 
@@ -1263,10 +1263,10 @@ const failedFilesSection =
     ? failedEntries
         .map(
           (f) =>
-            `- \`${f.source_path}\`: \`${f.error_class}\` — ${f.error_class === "LicenseRefusedError" ? "expected (GPL fixture, excluded)" : "**UNEXPECTED** — backlog issue required"}`,
+            `- \`${f.source_path}\`: \`${f.error_class}\` — **UNEXPECTED** — backlog issue required`,
         )
         .join("\n")
-    : "- None beyond expected GPL fixture (gpl-fixture.ts LicenseRefusedError).";
+    : "- None. All files shaved successfully.";
 
 const atomInventoryMd = `# WI-V2-07-PREFLIGHT L1 — Per-Atom Inventory
 
