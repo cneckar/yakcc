@@ -10,7 +10,7 @@ This document is for people who want to **use** yakcc in their own project. If y
 
 - **Node.js >= 22** — verify with `node --version`.
 - **pnpm >= 9** — install with `npm install -g pnpm` if needed.
-- **Claude Code** — install per [Claude Code docs](https://docs.claude.com/en/docs/claude-code). Cursor users see [§8 IDE adapters](#8-ide-adapters).
+- **Claude Code, Cursor, Cline, or Continue.dev** — install whichever IDE(s) you use. `yakcc init` auto-detects them. See [§8 IDE adapters](#8-ide-adapters) for the full list.
 - A TypeScript project you want to use yakcc with. The walkthrough assumes you are in its root.
 
 ---
@@ -53,19 +53,33 @@ cd ~/my-project
 yakcc init
 ```
 
-What this does (per `DEC-CLI-INIT-001` in `packages/cli/src/commands/init.ts`):
+What this does (per `DEC-CLI-INIT-001` and `DEC-CLI-INIT-002` in `packages/cli/src/commands/init.ts`):
 
 1. Creates `.yakcc/` for operational data — an empty SQLite registry at `.yakcc/registry.sqlite`, a `telemetry/` directory, and a `config/` directory.
-2. Writes `.yakccrc.json` at the project root with the registry path and (optionally) federation peers.
-3. Wires the Claude Code `PreToolUse` hook into `.claude/settings.json` (or creates the file if absent). The hook intercepts `Edit | Write | MultiEdit` tool calls and routes them through `yakcc hook-intercept` before they land on disk.
+2. Writes `.yakccrc.json` at the project root with the registry path, mode, installed hooks list, and (optionally) federation peers.
+3. Auto-detects installed IDEs (Claude Code, Cursor, Cline, Continue.dev) by probing their config directories (per `DEC-CLI-IDE-DETECT-SEMANTICS-001`), then wires the yakcc hook for each detected IDE.
+4. Seeds the yakcc bootstrap corpus (~3k+ atoms) into the local registry by default (per `DEC-CLI-INIT-002`). Pass `--no-seed` to skip this step.
+5. Prints a concise summary (<=6 lines) naming which IDEs were hooked and confirming the corpus was seeded.
 
 Verify the install:
 
 ```sh
 ls .yakcc/                              # registry/  telemetry/  config/  registry.sqlite
-cat .yakccrc.json                       # { "version": 1, "registry": { "path": ".yakcc/registry.sqlite" } }
-grep -A 5 yakcc .claude/settings.json   # PreToolUse hook entry with the yakcc-hook-v1 marker
+cat .yakccrc.json                       # { "version": 1, "mode": "local", "registry": { "path": ".yakcc/registry.sqlite" }, "installedHooks": [...] }
+grep -A 5 yakcc .claude/settings.json   # PreToolUse hook entry with the yakcc-hook-v1 marker (if Claude Code detected)
 ```
+
+### Init flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--target <dir>` | `.` (current dir) | Initialize a different directory |
+| `--peer <url>` | none | Connect to a team registry peer on first boot (http/https only) |
+| `--local` | (default) | Explicit local mode — offline-first, no peer |
+| `--airgapped` | off | Explicit airgap mode — semantically equivalent to `--local` today |
+| `--skip-hooks` | off | Skip IDE hook auto-install entirely |
+| `--ide <list>` | (auto-detect) | Comma-separated explicit IDE list, e.g. `--ide claude-code,cursor`. Skips auto-detection. Valid values: `claude-code`, `cursor`, `cline`, `continue` |
+| `--no-seed` | off | Skip the bootstrap corpus seed step |
 
 To initialize a *different* directory or connect to a team registry on first boot:
 
@@ -75,31 +89,37 @@ yakcc init --target ./some-other-project --peer https://registry.example.com
 
 `--peer` is validated strictly (must be `http:` or `https:`); the peer URL is stored under `federation.peers[]` in `.yakccrc.json` and immediately mirrored. See [§7 Federation](#7-federation).
 
+To wire hooks for specific IDEs only (skip auto-detection):
+
+```sh
+yakcc init --ide claude-code,cursor
+```
+
 ---
 
 ## 4. Verify the integration
 
-### 4a. Seed the yakcc bootstrap corpus (recommended day-1 step)
+### 4a. Verify the bootstrap corpus was seeded
 
-Before verifying the integration, seed the registry with yakcc's own atoms. This gives you ~3,800 real-shaved atoms covering yakcc's parsers, registry primitives, hook helpers, federation transport, and more — enough that your first Claude Code sessions hit the registry immediately instead of returning `synthesis-required` for every emission.
+`yakcc init` auto-seeds the yakcc bootstrap corpus by default (per `DEC-CLI-INIT-002`). This gives you ~3,800 real-shaved atoms covering yakcc's parsers, registry primitives, hook helpers, federation transport, and more — enough that your first Claude Code sessions hit the registry immediately instead of returning `synthesis-required` for every emission.
 
-```sh
-yakcc seed --yakcc
-```
-
-This is a one-time operation. It reads `bootstrap/yakcc.registry.sqlite` (in the yakcc repo clone) and imports every atom into your local registry via content-addressed storage. The import is idempotent — re-running is a no-op for already-present atoms.
-
-> **Why opt-in?** `yakcc init` deliberately does not auto-seed (per `DEC-CLI-INIT-001`). You may only want your own project's atoms. `yakcc seed --yakcc` is the explicit first-boot step when you want the full yakcc corpus day-1.
-
-> **Wall-time:** expect 20–60 seconds on a modern dev machine (mostly BLAKE3 + sqlite-vec embedding insertion).
-
-Confirm the import:
+Confirm the seed ran:
 
 ```sh
 yakcc query "store a block by content address"
 ```
 
-You should see at least one registry hit. If the query returns nothing, the bootstrap corpus was not imported — check that `bootstrap/yakcc.registry.sqlite` exists in your repo clone (`git status bootstrap/`).
+You should see at least one registry hit. If the query returns nothing and you did not pass `--no-seed`, check that `bootstrap/yakcc.registry.sqlite` exists in your repo clone (`git status bootstrap/`).
+
+To re-seed manually (the operation is idempotent):
+
+```sh
+yakcc seed --yakcc
+```
+
+> **Opt-out:** `yakcc init --no-seed` skips the seed step, restoring the quiet-init shape from before `DEC-CLI-INIT-002`. Use this if you only want your own project's atoms and prefer to seed on your own schedule.
+
+> **Wall-time:** expect 20-60 seconds on a modern dev machine (mostly BLAKE3 + sqlite-vec embedding insertion).
 
 ---
 
@@ -240,9 +260,11 @@ Then re-run `yakcc federation mirror --remote <new-url> --registry .yakcc/regist
 
 ## 8. IDE adapters
 
-### Claude Code (default)
+`yakcc init` auto-detects all four supported IDEs by probing their config directories (per `DEC-CLI-IDE-DETECT-SEMANTICS-001`). The explicit per-IDE commands below are for re-wiring after a fresh IDE install, troubleshooting, or targeted control.
 
-`yakcc init` wires this automatically. To manage it explicitly:
+### Claude Code
+
+`yakcc init` wires this automatically when `~/.claude/` is detected. To manage it explicitly:
 
 ```sh
 yakcc hooks claude-code install [--target <dir>]   # re-wire (idempotent)
@@ -253,6 +275,8 @@ The installer reads `.claude/settings.json`, adds (or removes) a single `PreTool
 
 ### Cursor
 
+`yakcc init` wires this automatically when the Cursor config directory is detected (platform-specific path per `DEC-CLI-IDE-DETECT-SEMANTICS-001`). To manage it explicitly:
+
 ```sh
 yakcc hooks cursor install [--target <dir>]
 yakcc hooks cursor install --uninstall
@@ -260,13 +284,81 @@ yakcc hooks cursor install --uninstall
 
 Same shape as the Claude Code installer; targets the Cursor settings surface.
 
+### Cline
+
+`yakcc init` writes a marker file `~/.config/cline/yakcc-cline-hook.json` when the Cline config directory is detected (per `DEC-CLI-HOOKS-CLINE-INSTALL-001`). The marker records the hook intent for when Cline's VS Code extension API surface stabilizes. No live settings.json wiring yet.
+
+To manage it explicitly:
+
+```sh
+yakcc hooks cline install         # write (or refresh) the marker file
+yakcc hooks cline install --uninstall   # remove the marker file
+```
+
+Cline detection probes `~/.config/cline/` and the VS Code extension dir `~/.vscode/extensions/saoudrizwan.claude-dev`.
+
+### Continue.dev
+
+`yakcc init` writes a marker file `~/.continue/yakcc-continue-hook.json` when the Continue.dev config directory is detected (per `DEC-CLI-HOOKS-CONTINUE-INSTALL-001`). Same pattern as Cline — the marker documents intent for when Continue.dev's extension API stabilizes. No live settings.json wiring yet.
+
+To manage it explicitly:
+
+```sh
+yakcc hooks continue install      # write (or refresh) the marker file
+yakcc hooks continue install --uninstall   # remove the marker file
+```
+
+Continue.dev detection probes `~/.continue/` and `~/.vscode/extensions/continue.continue`.
+
 ### Codex CLI
 
-Not yet wired. Tracked at issue [#220](https://github.com/cneckar/yakcc/issues/220) (conditional on demand).
+Not yet wired. Tracked at issue [#220](https://github.com/cneckar/yakcc/issues/220) (closed not-planned, conditional on demand).
 
 ---
 
-## 9. Telemetry — am I actually saving work?
+## 9. Removing yakcc
+
+To remove yakcc hooks from your project (preserves the local registry and `.yakcc/` data directory):
+
+```sh
+yakcc uninstall
+```
+
+What this does (per `DEC-CLI-UNINSTALL-COMMAND-001` and `DEC-CLI-UNINSTALL-DETECTION-001` in `packages/cli/src/commands/uninstall.ts`):
+
+1. Reads `.yakccrc.json` to discover which IDEs were installed (the `installedHooks` field written by `yakcc init`).
+2. Calls the per-IDE uninstaller for each detected IDE (idempotent — already-absent hooks log a message and exit 0).
+3. Updates `.yakccrc.json` to clear the `installedHooks` field.
+4. Prints a concise summary.
+
+The local registry (`.yakcc/registry.sqlite` and related data), telemetry files, and `.yakccrc.json` are preserved by default.
+
+### Uninstall flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--target <dir>` | `.` (current dir) | Uninstall from a different directory |
+| `--purge` | off | Also remove `.yakcc/` and `.yakccrc.json` — destructive; removes all local registry data |
+| `--ide <list>` | (all installed) | Comma-separated list of specific IDEs to uninstall. Valid values: `claude-code`, `cursor`, `cline`, `continue` |
+
+To remove all yakcc data from a project (hooks + registry + config):
+
+```sh
+yakcc uninstall --purge
+```
+
+To remove hooks for a specific IDE only:
+
+```sh
+yakcc uninstall --ide claude-code
+yakcc uninstall --ide cline,continue
+```
+
+Re-running `yakcc uninstall` is safe — it is idempotent. Running it on a project where yakcc was never initialized exits 0 with a no-op summary.
+
+---
+
+## 10. Telemetry — am I actually saving work?
 
 Every hook invocation appends one JSON line to `~/.yakcc/telemetry/<session-id>.jsonl` (per D-HOOK-5 in `docs/adr/hook-layer-architecture.md`). The file is **local-only**; nothing leaves your machine.
 
@@ -275,12 +367,12 @@ Schema (one event per emission):
 ```ts
 {
   t: 1715568000000,                // unix-ms timestamp
-  intentHash: "blake3:…",          // BLAKE3 of the emission text
+  intentHash: "blake3:...",        // BLAKE3 of the emission text
   toolName: "Edit" | "Write" | "MultiEdit",
   latencyMs: 12,
   outcome: "registry-hit" | "synthesis-required" | "passthrough",
   substituted: true,               // true iff Phase 2 substitution fired
-  substitutedAtomHash: "7f3a1c…"   // BMR[:8] of the substituted atom, or null
+  substitutedAtomHash: "7f3a1c..."   // BMR[:8] of the substituted atom, or null
 }
 ```
 
@@ -303,7 +395,7 @@ A dedicated `yakcc telemetry` subcommand is on the roadmap; until then `jq` is t
 
 ---
 
-## 10. Shaving your own codebase (optional)
+## 11. Shaving your own codebase (optional)
 
 If you already have a TypeScript package with conventions you want represented in the registry, bulk-ingest the whole tree:
 
@@ -327,13 +419,13 @@ yakcc registry rebuild --path .yakcc/registry.sqlite
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `yakcc: command not found` | PATH not set or build skipped | Re-run `pnpm -r build` and re-export PATH (see [§2](#2-installation)). |
 | Claude Code does not invoke the hook | `.claude/settings.json` missing the yakcc entry, or Claude Code not restarted after `yakcc init` | Run `yakcc hooks claude-code install` and restart Claude Code. Verify with `grep yakcc .claude/settings.json`. |
-| Registry seems empty after `yakcc init` | `init` deliberately does not auto-seed (per `DEC-CLI-INIT-001`) | Run `yakcc seed` (yakcc seed corpus) or `yakcc federation mirror --remote <peer-url> --registry .yakcc/registry.sqlite` (team registry). |
+| Registry seems empty after `yakcc init` | Seed was skipped (`--no-seed`) or the bootstrap corpus is missing | Run `yakcc seed --yakcc` to seed manually. If that fails, check that `bootstrap/yakcc.registry.sqlite` exists in your repo clone (`git status bootstrap/`). |
 | `federation mirror` fails with integrity error | Peer returned bytes that don't match the advertised BMR | Refuse the transfer (correct behavior). Contact the peer operator. |
 | Every emission shows `outcome: "passthrough"` | Embedding model mismatch after a yakcc upgrade | Re-embed the registry: `yakcc registry rebuild --path .yakcc/registry.sqlite`. |
 | Hook latency feels high (>200ms) | Cold embedding model on first call | Expected once per session; subsequent calls are warm-cached. If persistent, file an issue with a telemetry sample. |
@@ -342,7 +434,7 @@ yakcc registry rebuild --path .yakcc/registry.sqlite
 
 ---
 
-## 12. Where to go next
+## 13. Where to go next
 
 - [`README.md`](../README.md) — yakcc-the-project overview, monorepo layout, contributor quickstart.
 - [`MASTER_PLAN.md`](../MASTER_PLAN.md) — architecture decisions and work-item history.
