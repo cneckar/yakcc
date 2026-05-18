@@ -176,4 +176,10 @@ export function detectInstalledIdes(overrideHome?: string): DetectedIde[] {
  * Callers (e.g. `yakcc init --ide <list>`) validate user-supplied IDE names
  * against this set. Any name not in this set is an error.
  */
-export const KNOWN_IDE_NAMES: readonly IdeName[] = ["claude-code", "cursor", "cline", "continue", "windsurf"];
+export const KNOWN_IDE_NAMES: readonly IdeName[] = [
+  "claude-code",
+  "cursor",
+  "cline",
+  "continue",
+  "windsurf",
+];
