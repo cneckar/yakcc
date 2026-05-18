@@ -30,13 +30,6 @@
  *   Rationale: a function body with fewer than 3 statements is a trivial wrapper
  *   not worth registry weight (e.g. `return a + b`, `return obj.field`).
  *
- * LICENSE POLICY (per spec edge case #1):
- *   - SPDX header present → use it as-is.
- *   - SPDX header absent → auto-prepend `// SPDX-License-Identifier: MIT`.
- *     v0 always defaults to MIT; future `.yakccrc.json` override deferred.
- *   - GPL / AGPL license detected → refuse with reason "license-missing".
- *     shave's licenseGate() throws / rejects copyleft; we catch and return the reason.
- *
  * DEDUP POLICY (per spec edge case #3):
  *   INSERT OR IGNORE in registry.storeBlock() makes idempotent stores safe. Calling
  *   atomizeEmission with the same code twice produces the same BlockMerkleRoot on
@@ -47,9 +40,10 @@
  *   atomizeEmission makes ZERO outbound network calls — shave uses the "static"
  *   strategy which is pure AST analysis (no Anthropic API, no HTTP). B6 preserved.
  *
- * PIPELINE (WI-424):
- *   atomizeEmission → licenseGate (from @yakcc/shave) → universalize({persist:true})
+ * PIPELINE (WI-424, amended WI-682):
+ *   atomizeEmission → universalize({persist:true})
  *   → iterate NovelGlueEntry items in slicePlan (merkleRoot populated by universalize)
+ *   License-of-origin is not gated at ingestion (DEC-LICENSE-GATE-REMOVE-001, #682).
  *
  *   WI-424 (DEC-V2-ATOMIZE-DELEGATES-UNIVERSALIZE-001): the inline buildBlockRow +
  *   registry.storeBlock loop is removed. universalize({persist:true}) is now the
@@ -116,7 +110,6 @@ export interface AtomizeResult {
     | "type-only"
     | "trivial-body"
     | "shave-rejected"
-    | "license-missing"
     | undefined;
 }
 
@@ -344,28 +337,17 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
     return { atomized: false, atomsCreated: [], reason: "trivial-body" };
   }
 
-  // ── Step 2: License header injection ────────────────────────────────────
-
-  // @decision DEC-HOOK-ATOM-CAPTURE-001 (license-default-MIT)
-  // Auto-prepend MIT SPDX header when absent. shave's licenseGate then detects MIT.
-  // GPL/AGPL in the original code → licenseGate rejects → reason: "license-missing".
-  const hasSpdx = /SPDX-License-Identifier\s*:/i.test(emittedCode);
-  const codeForShave = hasSpdx ? emittedCode : `// SPDX-License-Identifier: MIT\n${emittedCode}`;
-
-  // ── Step 3: Shave pipeline ──────────────────────────────────────────────
+  // ── Step 2: Shave pipeline ──────────────────────────────────────────────
 
   // Import lazily — avoids circular-reference issues in tests that stub shave.
   // The static strategy is B6-safe: pure AST analysis, no network calls.
+  // @decision DEC-HOOK-ATOM-CAPTURE-001 (license-default-MIT)
+  // Superseded by DEC-LICENSE-GATE-REMOVE-001 (#682, 2026-05-17): license-default-MIT
+  // injection no longer needed because shave no longer gates on license.
+  // The SPDX auto-prepend block and license pre-check are deleted alongside the gate.
   try {
-    const { detectLicense, licenseGate, universalize, LicenseRefusedError, DidNotReachAtomError } =
+    const { universalize, DidNotReachAtomError } =
       await import("@yakcc/shave");
-
-    // License pre-check — fast, fail-early before AST parsing.
-    const detection = detectLicense(codeForShave);
-    const gateResult = licenseGate(detection);
-    if (!gateResult.accepted) {
-      return { atomized: false, atomsCreated: [], reason: "license-missing" };
-    }
 
     // The shave registry view interface is structurally satisfied by our Registry.
     // universalize() uses selectBlocks / getBlock / findByCanonicalAstHash for
@@ -407,7 +389,7 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
        *   SQLite writes via the same maybePersistNovelGlueAtom primitive run either
        *   way. No additional I/O, network calls, or synchronization is introduced.
        */
-      universalizeResult = await universalize({ source: codeForShave }, registryAsShaveView, {
+      universalizeResult = await universalize({ source: emittedCode }, registryAsShaveView, {
         intentStrategy: "static",
         offline: true,
         persist: true,
@@ -415,15 +397,6 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
     } catch (e) {
       if (e instanceof DidNotReachAtomError) {
         return { atomized: false, atomsCreated: [], reason: "shave-rejected" };
-      }
-      if (
-        e instanceof LicenseRefusedError ||
-        (e !== null &&
-          typeof e === "object" &&
-          "name" in e &&
-          (e as { name: unknown }).name === "LicenseRefusedError")
-      ) {
-        return { atomized: false, atomsCreated: [], reason: "license-missing" };
       }
       throw e;
     }
@@ -467,14 +440,8 @@ export async function atomizeEmission(input: AtomizeInput): Promise<AtomizeResul
     return { atomized: true, atomsCreated };
   } catch (e: unknown) {
     // Catch-all: any unhandled shave pipeline error → shave-rejected.
-    if (
-      e !== null &&
-      typeof e === "object" &&
-      "name" in e &&
-      (e as { name: unknown }).name === "LicenseRefusedError"
-    ) {
-      return { atomized: false, atomsCreated: [], reason: "license-missing" };
-    }
+    // DEC-LICENSE-GATE-REMOVE-001: license-missing reason removed; shave no longer
+    // gates on license-of-origin (WI-682, 2026-05-17).
     return { atomized: false, atomsCreated: [], reason: "shave-rejected" };
   }
 }

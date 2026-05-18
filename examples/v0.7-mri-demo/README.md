@@ -1,16 +1,15 @@
 # v0.7-mri-demo
 
 v0.7 acceptance demo for yakcc. Exercises the universalize pipeline
-(license gate → intent extraction → decompose → slice) end-to-end on a
-small TS argv parser adapted from `lukeed/mri`.
+(intent extraction → decompose → slice) end-to-end on a small TS argv
+parser adapted from `lukeed/mri`.
 
 ## Purpose
 
 This demo is the acceptance vehicle for WI-015 in MASTER_PLAN.md. It proves
-that the v0.7 pipeline is correctly wired: a permissively-licensed source
-file passes the license gate, reaches the LLM-backed intent-extraction step,
-and produces atoms that can be stored in the SQLite-backed registry and
-reassembled via `assembleCandidate`.
+that the v0.7 pipeline is correctly wired: a source file reaches the
+LLM-backed intent-extraction step and produces atoms that can be stored in
+the SQLite-backed registry and reassembled via `assembleCandidate`.
 
 ## Why mri-shaped
 
@@ -35,26 +34,20 @@ See: https://github.com/lukeed/mri for the canonical implementation.
 | (a) | atom test on every leaf | ⚠️ requires live decomposition (`ANTHROPIC_API_KEY`) |
 | (b) | yakcc compile output matches mri's published test corpus byte-identically | ❌ deferred — mri is JS; TS adaptation provides the structural substrate, byte-equivalence with literal mri is not achievable through the strict-TS IR |
 | (c) | intent-card cache hit on repeated run uses zero Anthropic API calls | ⚠️ achievable with live first-run + cache replay; offline-only test path needs a public `seedIntentCache` helper from `@yakcc/shave` (deferred) |
-| (d) | GPL-prepared input refused with clear error | ✅ live offline (license gate runs before LLM) |
-| (e) | provenance manifest names every atom by BlockMerkleRoot with parent-block links | ⚠️ schema + manifest extension landed (WI-014-04); population logic gated on (a) |
-| (f) | synthetic-monolithic-proposal acceptance check | ⚠️ wired via `assembleCandidate` (WI-014-05); end-to-end run gated on (a) |
+| (d) | provenance manifest names every atom by BlockMerkleRoot with parent-block links | ⚠️ schema + manifest extension landed (WI-014-04); population logic gated on (a) |
+| (e) | synthetic-monolithic-proposal acceptance check | ⚠️ wired via `assembleCandidate` (WI-014-05); end-to-end run gated on (a) |
 
 ## What the offline test suite covers (`test/acceptance.test.ts`)
-
-**Test A — License refusal** (criterion d): calls `universalize()` with a
-GPL-3.0-or-later source string; asserts `LicenseRefusedError` is thrown before
-any LLM call. Fully offline.
 
 **Test B — Pipeline structural smoke test** (criterion a, partial): reads
 `argv-parser.ts` (the MIT-licensed demo target), strips SPDX lines for stable
 bytes, then calls `universalize()` with a mock registry that returns no cached
-blocks. Asserts `AnthropicApiKeyMissingError` — proving the pipeline passed the
-license gate and reached the intent-extraction step. Offline-tolerant: the
-gate, the router, and the API-key check all executed in the correct order.
+blocks. Asserts `AnthropicApiKeyMissingError` — proving the pipeline reached
+the intent-extraction step. Offline-tolerant: the router and the API-key check
+both executed in the correct order.
 
 **Test C — Public surface contract**: asserts every symbol in the v0.7 public
-surface (`shave`, `universalize`, `LicenseRefusedError`,
-`AnthropicApiKeyMissingError`, `detectLicense`, `licenseGate`) is importable
+surface (`shave`, `universalize`, `AnthropicApiKeyMissingError`) is importable
 and defined from `@yakcc/shave`. Proves the package is correctly consumable as
 a downstream dependency.
 

@@ -11,14 +11,14 @@
 //   AnthropicApiKeyMissingError (AK1.1) — message, name, instanceof invariants.
 //   OfflineCacheMissError       (OC1.1) — message contains cacheKey, name, instanceof.
 //   IntentCardSchemaError       (IS1.1) — message contains detail, name, instanceof.
-//   LicenseRefusedError         (LR1.1) — message contains reason, detection stored, name, instanceof.
 //   ForeignPolicyRejectError    (FP1.1) — message contains pkg#export pairs, foreignRefs array, name, instanceof.
+//
+// Note: LicenseRefusedError (LR1.1) was removed by DEC-LICENSE-GATE-REMOVE-001 (WI-682, 2026-05-17).
 //
 // Properties covered:
 //   - AnthropicApiKeyMissingError: message includes key guidance text; name is correct class name.
 //   - OfflineCacheMissError: message always contains the cacheKey string; name is correct class name.
 //   - IntentCardSchemaError: message always contains the detail string; name is correct class name.
-//   - LicenseRefusedError: message contains reason; detection field matches constructor arg; name correct.
 //   - ForeignPolicyRejectError: message includes every pkg#export pair; foreignRefs array matches input.
 //   - Compound: ForeignPolicyRejectError message and foreignRefs are jointly consistent for multi-ref inputs.
 
@@ -31,10 +31,8 @@ import {
   AnthropicApiKeyMissingError,
   ForeignPolicyRejectError,
   IntentCardSchemaError,
-  LicenseRefusedError,
   OfflineCacheMissError,
 } from "./errors.js";
-import type { LicenseDetection } from "./license/types.js";
 
 // ---------------------------------------------------------------------------
 // Shared arbitraries
@@ -44,21 +42,6 @@ import type { LicenseDetection } from "./license/types.js";
 const nonEmptyStr: fc.Arbitrary<string> = fc
   .string({ minLength: 1, maxLength: 60 })
   .filter((s) => s.trim().length > 0);
-
-/** Arbitrary LicenseDetection source values. */
-const licenseSourceArb: fc.Arbitrary<LicenseDetection["source"]> = fc.constantFrom(
-  "spdx-comment",
-  "package-json",
-  "header-text",
-  "dedication",
-  "no-signal",
-);
-
-/** Arbitrary LicenseDetection (all fields; no optional evidence to avoid exactOptionalPropertyTypes issues). */
-const licenseDetectionArb: fc.Arbitrary<LicenseDetection> = fc.record({
-  identifier: nonEmptyStr,
-  source: licenseSourceArb,
-});
 
 /** One foreign ref: { pkg, export }. */
 const foreignRefArb: fc.Arbitrary<{ pkg: string; export: string }> = fc.record({
@@ -208,81 +191,6 @@ export const prop_IntentCardSchemaError_name_and_instanceof = fc.property(nonEmp
     err instanceof Error
   );
 });
-
-// ---------------------------------------------------------------------------
-// LR1.1: LicenseRefusedError — message contains reason; detection stored
-// ---------------------------------------------------------------------------
-
-/**
- * prop_LicenseRefusedError_message_contains_reason
- *
- * For any reason string and LicenseDetection, LicenseRefusedError's message
- * always contains the reason so callers can identify the refusal cause.
- *
- * Invariant (LR1.1, DEC-CONTINUOUS-SHAVE-022): the reason is embedded verbatim.
- * CLI output reads this message; the detection is stored separately for
- * programmatic introspection.
- */
-export const prop_LicenseRefusedError_message_contains_reason = fc.property(
-  nonEmptyStr,
-  licenseDetectionArb,
-  (reason, detection) => {
-    const err = new LicenseRefusedError(reason, detection);
-    return err.message.includes(reason);
-  },
-);
-
-// ---------------------------------------------------------------------------
-// LR1.1: LicenseRefusedError — detection field matches constructor arg
-// ---------------------------------------------------------------------------
-
-/**
- * prop_LicenseRefusedError_detection_field_matches_arg
- *
- * The `detection` field on LicenseRefusedError is strictly equal to the
- * LicenseDetection object passed to the constructor.
- *
- * Invariant (LR1.1, DEC-CONTINUOUS-SHAVE-022): callers introspect the
- * detection to understand what signal was found and how to present it.
- * A mutation or substitution would silently produce incorrect diagnostics.
- */
-export const prop_LicenseRefusedError_detection_field_matches_arg = fc.property(
-  nonEmptyStr,
-  licenseDetectionArb,
-  (reason, detection) => {
-    const err = new LicenseRefusedError(reason, detection);
-    return (
-      err.detection === detection &&
-      err.detection.identifier === detection.identifier &&
-      err.detection.source === detection.source
-    );
-  },
-);
-
-// ---------------------------------------------------------------------------
-// LR1.1: LicenseRefusedError — name and instanceof invariants
-// ---------------------------------------------------------------------------
-
-/**
- * prop_LicenseRefusedError_name_and_instanceof
- *
- * LicenseRefusedError has the correct .name and passes instanceof checks.
- *
- * Invariant (LR1.1, DEC-CONTINUOUS-SHAVE-022): named error classes enable
- * catch-by-type without importing string constants.
- */
-export const prop_LicenseRefusedError_name_and_instanceof = fc.property(
-  nonEmptyStr,
-  licenseDetectionArb,
-  (reason, detection) => {
-    const err = new LicenseRefusedError(reason, detection);
-    return (
-      err.name === "LicenseRefusedError" &&
-      err instanceof LicenseRefusedError &&
-      err instanceof Error
-    );
-  },
-);
 
 // ---------------------------------------------------------------------------
 // FP1.1: ForeignPolicyRejectError — message includes all pkg#export pairs

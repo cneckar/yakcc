@@ -1,0 +1,12 @@
+Refs #682 — operator DEC 2026-05-17:
+"Let's get rid of the license checks entirely we are not copying code,
+we are reimplementing behavior so we don't need to stop on copy left,
+and def not on no license"
+
+PR #714 deletes 13 files by design, all within #682's scope manifest:
+- packages/shave/src/license/ (11 files: gate, detector, types + all variants)
+- examples/v0.7-mri-demo/src/gpl-fixture.ts (GPL fixture that exercised the now-removed gate)
+- (plus 1 sibling-PR file shown as deleted in the diff is actually present;
+  the diff stat counts all 13 license-package files + the gpl-fixture)
+
+Operator/reviewer confirms these match the scope manifest at PR review time.
