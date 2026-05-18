@@ -3,44 +3,26 @@
 [![PR CI](https://github.com/cneckar/yakcc/actions/workflows/pr-ci.yml/badge.svg)](https://github.com/cneckar/yakcc/actions/workflows/pr-ci.yml)
 [![Nightly](https://github.com/cneckar/yakcc/actions/workflows/nightly.yml/badge.svg)](https://github.com/cneckar/yakcc/actions/workflows/nightly.yml)
 
-**Shave once, reuse forever.** Yakcc is a content-addressed block registry for assembling programs from verified, reusable building blocks.
+## What is yakcc
 
-The core idea: instead of writing the same parsing logic, data transformation, or utility function over and over, you shave it once into an atomic, tested block and store it in a local registry. The next time you need it — in any project, on any machine — the registry serves the exact same bytes, with proof that it works.
+**Shave once, reuse forever.** Yakcc is a content-addressed block registry for assembling programs from verified, reusable building blocks. Instead of writing the same parsing logic, data transformation, or utility function over and over, you shave it once into an atomic, tested block and store it in a local registry. The next time you need it — in any project, on any machine — the registry serves the exact same bytes, with proof that it works. The name is a yak-shave joke that is also a thesis; the double-c is a nod to the long lineage of terse compiler names.
 
-The name is a yak-shave joke that is also a thesis. The double-c is a nod to the long lineage of terse compiler names.
+## Get started in 60 seconds
 
-## Why it matters
-
-**Reproducibility by construction.** Every assembled program carries a provenance manifest naming every constituent block by its content-address. Bit-for-bit reproducibility is not a build option — it is the default.
-
-**Verified building blocks.** Every block in the registry carries property tests. When you compose blocks into a program, you know exactly what was tested and how.
-
-**IDE integration.** Hooks for Claude Code, Cursor, and Codex CLI intercept code-emission events and check the registry first. If a matching block already exists, it is served — no generation needed.
-
-**Offline-first.** No API key is required for most operations. Shaving uses static TypeScript analysis by default. Vector search uses a local embedding model.
-
-**Federation.** Registries can mirror each other over HTTP. Every transferred block is integrity-checked by recomputing its content-address from the received bytes.
-
-## Use cases
-
-- **Eliminating duplicate logic across projects** — shave utility functions once, use them everywhere via the registry.
-- **Auditable programs** — the provenance manifest proves which blocks were used and that they passed their property tests.
-- **Team registries** — serve a shared registry with `yakcc federation serve`; developers mirror blocks locally with `yakcc federation mirror`.
-- **AI-assisted development** — IDE hooks serve registry matches before an AI generates new code, anchoring generation to verified prior work.
-
-## Getting started
+> _TODO (WI-CLI-UX-COLLAPSE / [#656](https://github.com/cneckar/yakcc/issues/656)): once single-command `yakcc init` lands, this section collapses to one step._
 
 ```sh
 # Install dependencies and build all packages
 pnpm install && pnpm build
 
-# Initialize yakcc in your project directory (creates .yakcc/, .claude/settings.json, .yakccrc.json)
+# Initialize yakcc in your project directory
+# (creates .yakcc/, .claude/settings.json, .yakccrc.json — wires the IDE hook)
 yakcc init
 
-# Optionally ingest the seed corpus (~20 blocks composing a JSON integer-list parser)
+# Ingest the seed corpus (~20 blocks composing a JSON integer-list parser)
 yakcc seed
 
-# Assemble the parse-int-list demo
+# Assemble the parse-int-list demo to verify the full pipeline
 yakcc compile examples/parse-int-list
 
 # Run it
@@ -58,108 +40,60 @@ parse-int-list demo — assembled by Yakcc v0
   listOfInts("[10,200,3000]") => [10,200,3000]
 ```
 
-`yakcc init` creates an empty registry, wires the Claude Code hook, and writes `.yakccrc.json` in one step. To initialize in a different directory or connect to a team registry peer:
+For a full walkthrough see [docs/USING_YAKCC.md](docs/USING_YAKCC.md). Testing the v0.5.0-alpha? See [docs/ALPHA.md](docs/ALPHA.md) for the alpha-specific tester guide.
 
-```sh
-yakcc init --target my-project/ [--peer https://registry.example.com]
-```
+## Why yakcc
 
-For the full walkthrough see `docs/USING_YAKCC.md`. Testing the v0.5.0-alpha? See `docs/ALPHA.md` for the alpha-specific tester guide.
+**Reproducibility by construction.** Every assembled program carries a provenance manifest naming every constituent block by its content-address. Bit-for-bit reproducibility is not a build option — it is the default.
 
-## Shaving your own code
+**Verified building blocks.** Every block in the registry carries property tests. When you compose blocks into a program, you know exactly what was tested and how.
 
-```sh
-# Shave a permissively-licensed TypeScript source file into registry atoms
-yakcc shave src/my-utils.ts
+**IDE integration.** Hooks for Claude Code, Cursor, and Codex CLI intercept code-emission events and check the registry first. If a matching block already exists, it is served — no generation needed.
 
-# Search the registry for a block matching an intent
-yakcc search "parse a JSON array of integers"
+**Offline-first.** No API key is required for most operations. Shaving uses static TypeScript analysis by default. Vector search uses a local embedding model.
 
-# Semantic vector search
-yakcc query "parse a JSON array of integers" --top 5
+**Federation.** Registries can mirror each other over HTTP. Every transferred block is integrity-checked by recomputing its content-address from the received bytes.
 
-# Bootstrap: shave yakcc's own source and verify the manifest
-yakcc bootstrap --verify
-```
+## What's measured
 
-## IDE hook installation
+| Benchmark | Status | Result |
+|---|---|---|
+| B6 — air-gap operation (no outbound) | Proven | Full pipeline runs with zero network calls |
+| B1 — hook latency vs native code write | Proven | Sub-millisecond warm-cache; see `bench/B1-latency/` |
+| B4-v3 — token-spend matrix (hooked vs unhooked) | In flight | Numbers land when [DEC-BENCH-B4-V3-001](MASTER_PLAN.md) is complete |
 
-```sh
-# Claude Code — writes a PreToolUse hook entry to .claude/settings.json
-# Intercepts Edit / Write / MultiEdit tool calls (DEC-HOOK-LAYER-001 D-HOOK-2)
-yakcc hooks claude-code install [--target <dir>]
+To reproduce B6 and B1 locally: see `bench/B6-airgap/README.md` and `bench/B1-latency/README.md`.
 
-# Remove the hook from .claude/settings.json
-yakcc hooks claude-code install --uninstall [--target <dir>]
+## Quick troubleshooting
 
-# Cursor (WI-HOOK-LAYER Phase 4 — not yet implemented)
-# yakcc hooks cursor install
+Common failures and their fixes are in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
-# Codex CLI (WI-HOOK-LAYER Phase 5 — conditional on demand)
-# yakcc hooks codex install
-```
+The most common issues:
 
-After installation, every `Edit`, `Write`, and `MultiEdit` tool call made by
-Claude Code will invoke `yakcc hook-intercept` before the code lands on disk.
-The hook queries the local registry for a matching atom and captures telemetry
-(local-only by default per DEC-HOOK-LAYER-001 D-HOOK-5).
+- Hook not firing after `yakcc init` → restart Claude Code and verify `.claude/settings.json` contains a `_yakcc` entry.
+- Every emission shows `outcome: "passthrough"` → run `yakcc registry rebuild --path .yakcc/registry.sqlite` to regenerate embeddings.
+- Registry empty after init → `yakcc init` does not auto-seed by design; run `yakcc seed` or `yakcc seed --yakcc`.
 
-Re-running `install` is safe — it is idempotent and will not create duplicate
-entries. Running `--uninstall` cleanly removes the yakcc entry while leaving
-any other hook configuration untouched.
+## Advanced
 
-## Prerequisites
+[docs/ADVANCED.md](docs/ADVANCED.md) covers:
 
-- Node.js >= 22
-- pnpm >= 9
+- Running your own federation peer (`yakcc federation serve`)
+- Mirroring from a peer across machines or teams
+- Airgap deployment with no outbound network
+- Custom embedding models and re-embedding
+- Granularity dial (`--granularity=<1..5>`)
+- Telemetry inspection
+- Bulk shave on a real codebase
+- yakcc shaves itself — the v2 self-shave demo
 
-## Monorepo layout
+## Contributing
 
-```
-packages/
-  contracts/         @yakcc/contracts         — block types, content-addressing, canonicalization
-  registry/          @yakcc/registry          — SQLite-backed registry with vector search
-  ir/                @yakcc/ir                — strict-TS-subset IR validation
-  compile/           @yakcc/compile           — TS + AssemblyScript/WASM backends, assembler
-  shave/             @yakcc/shave             — universalizer pipeline: license gate, intent extraction, decompose, slice
-  seeds/             @yakcc/seeds             — ~20-block seed corpus (JSON integer-list parser)
-  hooks-base/        @yakcc/hooks-base        — shared hook logic for IDE integrations
-  hooks-claude-code/ @yakcc/hooks-claude-code — Claude Code hook
-  hooks-cursor/      @yakcc/hooks-cursor      — Cursor hook
-  hooks-codex/       @yakcc/hooks-codex       — Codex CLI hook
-  federation/        @yakcc/federation        — F1 read-only block mirror over HTTP
-  cli/               @yakcc/cli               — yakcc CLI
-  variance/          @yakcc/variance          — variance scoring and contract design rules
+Working on yakcc itself? See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the contributor orientation. The developer docs (architecture decisions, design rationale, verification ladder, ADRs) live at:
 
-examples/
-  parse-int-list/    — assemble a JSON integer-list parser from seed blocks
-  v0.7-mri-demo/     — acceptance harness for the shave pipeline
-  v1-federation-demo/ — cross-machine byte-identical compile via federation
-```
-
-## Further reading
-
-- [`MASTER_PLAN.md`](MASTER_PLAN.md) — architecture decisions and work-item history
-- [`DESIGN.md`](DESIGN.md) — extended design rationale and contract philosophy
-- [`VERIFICATION.md`](VERIFICATION.md) — verification ladder, triplet identity, TCB
-- [`FEDERATION.md`](FEDERATION.md) — F0..F4 federation trust/scale axis
-- [`MANIFESTO.md`](MANIFESTO.md) — the project's voice and intent
-- [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) — defensive publication consolidating the substrate's novel mechanisms as prior art for the public commons
-
-## v2 self-shave demo
-
-yakcc shaves the meaningfully-reusable parts of arbitrary TypeScript — including its own source — recompiles itself from those atoms, and the recompiled yakcc produces the same manifest. Reproducible from a fresh clone in 6 commands.
-
-The two-pass self-shave cycle is:
-
-1. `pnpm install --frozen-lockfile && pnpm -r build` — install and build
-2. `node packages/cli/dist/bin.js bootstrap --verify` — pass 1: verify yakcc shaves itself into a content-addressed manifest (3,807 atoms)
-3. `node packages/cli/dist/bin.js compile-self --output=dist-recompiled/` — recompile yakcc from its own atoms
-4. `YAKCC_TWO_PASS=1 pnpm --filter @yakcc/v2-self-shave-poc test two-pass-equivalence` — pass 2 + byte-identity assertion
-
-See [docs/V2_SELF_SHAVE_DEMO.md](docs/V2_SELF_SHAVE_DEMO.md) for the full fresh-clone reproduction with captured output, what each pass proves, and the "If equivalence fails" taxonomy.
-
-For pass-1 internals (bootstrap mechanics, manifest semantics, CI integration) see [docs/V2_SELF_HOSTING_DEMO.md](docs/V2_SELF_HOSTING_DEMO.md).
+- [DESIGN.md](DESIGN.md)
+- [MASTER_PLAN.md](MASTER_PLAN.md)
+- [docs/adr/](docs/adr/)
 
 ## License
 
