@@ -17,6 +17,11 @@
 #   - NOT in the required-checks list. A slow or failing run never blocks a merge.
 #     Atoms are recorded on a best-effort basis; the invariant is eventual (not
 #     gate-blocking). See pr-ci.yml for the required-checks gate.
+# Cross-reference: per #651 Option B (operator decision 2026-05-17) the
+# verify step in nightly.yml and bootstrap.yml is PERMANENTLY advisory
+# (DEC-VERIFY-CI-ADVISORY-001). The accumulator's eventual-invariant /
+# best-effort contract above is the canonical contract, not an interim
+# state awaiting promotion to a hard gate.
 
 name: bootstrap-accumulate
 

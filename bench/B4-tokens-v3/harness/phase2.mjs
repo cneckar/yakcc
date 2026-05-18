@@ -18,27 +18,57 @@
 //     E: Haiku  unhooked  — KILLER BASELINE: expected to fail
 //     F: Haiku  hooked    — KILLER CELL: cheap-hit, expected to pass via Opus atoms
 //
-//   Headline hypothesis test:
-//     A vs F: Q_A == Q_F and C_F << C_A  →  hypothesis holds
-//     E vs F: Q_E fails, Q_F passes      →  quality-lift moment
+//   Hooked cells (B, D, F) spawn a local MCP server subprocess and relay tool_use
+//   blocks from the Anthropic SDK through the MCP atom-lookup tool.
+//
+//   @decision DEC-BENCH-B4-V3-HOOKED-WIRING-001
+//   @title Phase 2 hooked-cell MCP wiring via subprocess JSON-RPC over stdio
+//   @status accepted
+//   @rationale
+//     Hooked cells spawn mcp-server.mjs as a subprocess. The Anthropic SDK's
+//     tool_use response blocks are relayed to the MCP server via Content-Length
+//     framed JSON-RPC 2.0 over stdin/stdout. This matches the v2 pattern from
+//     bench/B4-tokens/harness/run.mjs (DEC-V0-B4-HOOK-WIRING-001).
+//     One MCP server instance per (task × cell × rep) — spawned before the API call,
+//     closed after. Overhead is acceptable at the scale of 90 total runs.
 //
 //   Invocation:
 //     node bench/B4-tokens-v3/harness/phase2.mjs --dry-run
 //     node bench/B4-tokens-v3/harness/phase2.mjs --cell=F --task=json5-parser
 //     node bench/B4-tokens-v3/harness/phase2.mjs  (all cells, requires ANTHROPIC_API_KEY)
+//     node bench/B4-tokens-v3/harness/phase2.mjs --smoke  (1 task × cell E × N=1, minimal spend)
 //
 //   Output:
 //     bench/B4-tokens-v3/results/phase2-<date>.json
-//     bench/B4-tokens-v3/results/phase2-<date>.jsonl
+//     bench/B4-tokens-v3/results/phase2-<date>.jsonl (billing log)
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BENCH_ROOT = resolve(__dirname, '..');
+const REPO_ROOT = process.env['YAKCC_REPO_ROOT'] ?? resolve(__dirname, '../../..');
 const RESULTS_DIR = join(BENCH_ROOT, 'results');
+const MCP_SERVER_PATH = join(__dirname, 'mcp-server.mjs');
+
+// @decision DEC-B4-V3-HARNESS-INTEGRATION-001 (B2)
+// YAKCC_REGISTRY_PATH is mandatory. No fallback to the production registry.
+// Fallback would corrupt Phase 2 attribution by mixing Phase 1 atoms with
+// pre-existing production atoms, making causal attribution impossible.
+const YAKCC_REGISTRY_PATH = process.env['YAKCC_REGISTRY_PATH'];
+if (!YAKCC_REGISTRY_PATH) {
+  process.stderr.write(
+    'ERROR [B4-v3 Phase 2]: YAKCC_REGISTRY_PATH is required.\n' +
+    '  Set it to the per-run registry produced by Phase 1:\n' +
+    '    export YAKCC_REGISTRY_PATH=tmp/B4-tokens-v3/<run-id>/registry.sqlite\n' +
+    '  This env var prevents silent fallback to the production registry\n' +
+    '  (.yakcc/registry.sqlite), which would corrupt Phase 2 attribution.\n'
+  );
+  process.exit(1);
+}
 
 const { values: flags } = parseArgs({
   args: process.argv.slice(2),
@@ -47,27 +77,163 @@ const { values: flags } = parseArgs({
     'n-reps':   { type: 'string',  default: '3' },
     'task':     { type: 'string',  default: 'all' },
     'cell':     { type: 'string',  default: 'all' },
-    'phase1':   { type: 'string' }, // path to phase1 results JSON (optional)
+    'smoke':    { type: 'boolean', default: false }, // 1-task × cell-E × N=1 smoke test
   },
   strict: false,
 });
 
-const DRY_RUN   = flags['dry-run'];
-const N_REPS    = parseInt(flags['n-reps'] ?? '3', 10);
-const TASK_ID   = flags['task'] ?? 'all';
-const CELL_ID   = flags['cell'] ?? 'all';
-const PHASE1_IN = flags['phase1'];
+const DRY_RUN  = flags['dry-run'];
+const SMOKE    = flags['smoke'] ?? false;
+// Smoke test: 1 rep, kahan-running-stats task, cell E (Haiku unhooked — no MCP needed)
+const N_REPS   = SMOKE ? 1 : parseInt(flags['n-reps'] ?? '3', 10);
+const TASK_ID  = SMOKE ? 'kahan-running-stats' : (flags['task'] ?? 'all');
+const CELL_ID  = SMOKE ? 'E' : (flags['cell'] ?? 'all');
 
 // @decision DEC-BENCH-B4-V3-PHASE2-BUDGET-001
 // Phase 2 gets $50 of the $75 total budget.
 const PHASE2_CAP_USD = 50;
 
+const MAX_TOOL_CYCLES = 5;
+
+// Import harness modules
 const { PHASE2_CELLS } = await import(
   new URL('file://' + join(__dirname, 'matrix-v3.mjs')).href
 );
+const { extractCode, runOracle } = await import(
+  new URL('file://' + join(__dirname, 'oracle-runner.mjs')).href
+);
+const { BillingLog, estimateCostUsd, PRICING } = await import(
+  new URL('file://' + join(__dirname, 'billing.mjs')).href
+);
+const { BudgetTracker, BudgetExceededError } = await import(
+  new URL('file://' + join(__dirname, 'budget.mjs')).href
+);
+const { verifyTaskManifest } = await import(
+  new URL('file://' + join(__dirname, 'verify.mjs')).href
+);
+
+// ---------------------------------------------------------------------------
+// System prompt for hooked cells
+// ---------------------------------------------------------------------------
+
+const SYSTEM_PROMPT_VANILLA =
+  'You are an expert TypeScript developer. When given a coding task, implement it in a ' +
+  'single TypeScript file. Output only the implementation code in a ```typescript code ' +
+  'block. Do not include explanation before or after the code block.';
+
+const SYSTEM_PROMPT_HOOK_SUFFIX =
+  '\n\nYou are working in a codebase that uses the yakcc registry for common atomic ' +
+  'implementations. Before generating any code, query the atom registry for relevant ' +
+  'primitives using the atom-lookup tool. Incorporate retrieved atoms into your solution ' +
+  'rather than re-implementing them. When you call atom-lookup, pass specific behavioral ' +
+  'intent text describing the primitive you need.';
+
+// @decision DEC-BENCH-B4-V3-TOOL-DEF-001
+// atom-lookup tool definition for hooked cells. Mirrors v2 run.mjs definition.
+const ATOM_LOOKUP_TOOL_DEF = {
+  name: 'atom-lookup',
+  description:
+    'Query the yakcc atom registry for candidate implementations matching an intent. ' +
+    'Returns atoms with atom_id, atom_signature, match_confidence, atom_body_sha256. ' +
+    'Returns { atoms: [] } when no candidates match -- generate the implementation directly.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      intent: {
+        type: 'string',
+        description: 'Behavioral description of the desired atom.',
+      },
+      substitution_aggressiveness: {
+        type: 'string',
+        enum: ['conservative', 'default', 'aggressive'],
+        description: 'Threshold mode: conservative=0.95, default=0.7, aggressive=all.',
+        default: 'default',
+      },
+    },
+    required: ['intent'],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// MCP server subprocess lifecycle
+// ---------------------------------------------------------------------------
+
+async function startMcpServer() {
+  // YAKCC_REGISTRY_PATH already validated at startup (B2 fix).
+  const registryPath = YAKCC_REGISTRY_PATH;
+
+  const server = spawn('node', [MCP_SERVER_PATH], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, YAKCC_REGISTRY_PATH: registryPath, YAKCC_REPO_ROOT: REPO_ROOT },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  server.stderr.on('data', (d) => {
+    const msg = d.toString().trim();
+    if (msg) process.stdout.write(`    [MCP] ${msg}\n`);
+  });
+
+  let stdoutBuf = Buffer.alloc(0);
+  const pending = new Map();
+  let reqId = 100;
+
+  server.stdout.on('data', (chunk) => {
+    stdoutBuf = Buffer.concat([stdoutBuf, chunk]);
+    while (true) {
+      const hEnd = stdoutBuf.indexOf('\r\n\r\n');
+      if (hEnd === -1) break;
+      const hText = stdoutBuf.slice(0, hEnd).toString('utf8');
+      const m = hText.match(/Content-Length:\s*(\d+)/i);
+      if (!m) { stdoutBuf = stdoutBuf.slice(hEnd + 4); break; }
+      const cl = parseInt(m[1], 10);
+      const bStart = hEnd + 4;
+      if (stdoutBuf.length < bStart + cl) break;
+      const body = stdoutBuf.slice(bStart, bStart + cl).toString('utf8');
+      stdoutBuf = stdoutBuf.slice(bStart + cl);
+      try {
+        const msg = JSON.parse(body);
+        const res = pending.get(msg.id);
+        if (res) { pending.delete(msg.id); res(msg); }
+      } catch (_) {}
+    }
+  });
+
+  function request(method, params) {
+    const id = reqId++;
+    return new Promise((resolve, reject) => {
+      pending.set(id, resolve);
+      const body   = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+      const header = `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n`;
+      server.stdin.write(header + body);
+      setTimeout(() => {
+        if (pending.has(id)) { pending.delete(id); reject(new Error(`MCP timeout: ${method}`)); }
+      }, 10_000);
+    });
+  }
+
+  await request('initialize', { protocolVersion: '2024-11-05', capabilities: {} });
+
+  return {
+    async callTool(toolInput) {
+      const resp = await request('tools/call', { name: 'atom-lookup', arguments: toolInput });
+      if (resp.error) throw new Error(`MCP tool error: ${resp.error.message}`);
+      const text = resp.result?.content?.[0]?.text ?? '{"atoms":[]}';
+      return JSON.parse(text);
+    },
+    close() { server.kill('SIGTERM'); },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
 async function main() {
-  console.log('B4-tokens-v3 Phase 2 — Corpus Exploit (6-cell matrix A–F)');
+  if (SMOKE) {
+    console.log('B4-tokens-v3 Phase 2 — SMOKE TEST (1 task × cell E × N=1)');
+  } else {
+    console.log('B4-tokens-v3 Phase 2 — Corpus Exploit (6-cell matrix A–F)');
+  }
   console.log(`Mode: ${DRY_RUN ? 'DRY RUN' : 'REAL RUN'}`);
   console.log(`N_REPS: ${N_REPS}, Task filter: ${TASK_ID}, Cell filter: ${CELL_ID}`);
   console.log(`Budget cap: $${PHASE2_CAP_USD} USD`);
@@ -97,7 +263,9 @@ async function main() {
   if (DRY_RUN) {
     for (const task of tasks) {
       for (const cell of cells) {
-        console.log(`[DRY RUN] Task=${task.id}  Cell=${cell.cell_id} (${cell.driver}:${cell.arm})  N=${N_REPS}`);
+        console.log(
+          `[DRY RUN] Task=${task.id}  Cell=${cell.cell_id} (${cell.driver}:${cell.arm})  N=${N_REPS}`
+        );
       }
     }
     console.log('');
@@ -111,45 +279,85 @@ async function main() {
     process.exit(1);
   }
 
+  // B2 fix: verify registry file exists before any API spend.
+  if (!existsSync(YAKCC_REGISTRY_PATH)) {
+    console.error(
+      `ERROR [B4-v3 Phase 2]: Registry file not found: ${YAKCC_REGISTRY_PATH}\n` +
+      '  Run Phase 1 first to populate the per-run registry, then set\n' +
+      '  YAKCC_REGISTRY_PATH to the resulting registry.sqlite path.'
+    );
+    process.exit(1);
+  }
+
+  // Verify task prompts match SHA-256 hashes before any API spend
+  verifyTaskManifest(manifest, BENCH_ROOT);
+
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
 
   mkdirSync(RESULTS_DIR, { recursive: true });
 
-  const runId = `phase2-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+  const runId = SMOKE
+    ? `phase2-smoke-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
+    : `phase2-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
   const resultsFile = join(RESULTS_DIR, `${runId}.json`);
-  const billingFile = join(RESULTS_DIR, `${runId}.jsonl`);
 
-  let totalCostUsd = 0;
+  const budget = new BudgetTracker({ cap_usd: PHASE2_CAP_USD });
+  const billingLog = new BillingLog({ dir: RESULTS_DIR, runId });
+
   const taskResults = [];
+  let budgetExceeded = false;
 
+  TASK_LOOP:
   for (const task of tasks) {
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`Task: ${task.id}`);
+    console.log('─'.repeat(60));
+
     const promptText = readFileSync(join(BENCH_ROOT, task.prompt_file), 'utf8');
     const cellResults = [];
 
     for (const cell of cells) {
+      console.log(`\n  Cell: ${cell.cell_id} (${cell.driver}:${cell.arm})`);
+      const isHooked = cell.arm === 'hooked';
+      const systemPrompt = isHooked
+        ? SYSTEM_PROMPT_VANILLA + SYSTEM_PROMPT_HOOK_SUFFIX
+        : SYSTEM_PROMPT_VANILLA;
+
       const reps = [];
 
       for (let rep = 1; rep <= N_REPS; rep++) {
-        const label = `Task=${task.id} Cell=${cell.cell_id}(${cell.driver}:${cell.arm}) Rep=${rep}/${N_REPS}`;
-        console.log(`[Phase 2] ${label}`);
+        console.log(`    rep ${rep}/${N_REPS}...`);
 
-        if (totalCostUsd >= PHASE2_CAP_USD) {
-          console.error(`Budget cap $${PHASE2_CAP_USD} exceeded. Stopping.`);
-          writeResults();
-          process.exit(0);
+        // Conservative pre-call cost estimate: 2000in + 1000out tokens
+        const estCost = estimateCostUsd({
+          model_id: cell.model_id,
+          input_tokens: 2000,
+          output_tokens: 1000,
+        });
+        try {
+          budget.checkBeforeCall(estCost);
+        } catch (err) {
+          if (err instanceof BudgetExceededError) {
+            console.error(`\n[BUDGET] ${err.message}`);
+            budgetExceeded = true;
+            break TASK_LOOP;
+          }
+          throw err;
         }
 
-        // @decision DEC-BENCH-B4-V3-HOOKED-SYSTEM-PROMPT-001:
-        // Hooked cells include a system-prompt prefix instructing the model to
-        // use the atom-lookup MCP tool when available. When registry is pre-seeded
-        // from Phase 1, the hook finds matching atoms and substitutes them.
-        // Unhooked cells receive no system prompt (plain task prompt only).
-        const systemPrompt = cell.arm === 'hooked'
-          ? 'You are a coding assistant with access to a registry of pre-built atoms. ' +
-            'Before generating any code, query the atom registry for relevant primitives. ' +
-            'Incorporate retrieved atoms into your solution rather than re-implementing them.'
-          : undefined;
+        let mcpServer = null;
+        let toolCycles = 0;
+        const substitutionEvents = [];
+
+        if (isHooked) {
+          console.log(`    [MCP] Starting server for cell ${cell.cell_id}...`);
+          try {
+            mcpServer = await startMcpServer();
+          } catch (err) {
+            console.error(`    [MCP] Server start failed: ${err.message}`);
+          }
+        }
 
         const startMs = Date.now();
         let response;
@@ -157,52 +365,117 @@ async function main() {
           const requestOpts = {
             model: cell.model_id,
             max_tokens: 4096,
+            system: systemPrompt,
             messages: [{ role: 'user', content: promptText }],
+            ...(isHooked ? { tools: [ATOM_LOOKUP_TOOL_DEF] } : {}),
           };
-          if (systemPrompt) requestOpts.system = systemPrompt;
           response = await client.messages.create(requestOpts);
+
+          // Tool-use relay loop for hooked cells
+          if (isHooked && mcpServer) {
+            const conv = [{ role: 'user', content: promptText }];
+            while (response.stop_reason === 'tool_use' && toolCycles < MAX_TOOL_CYCLES) {
+              toolCycles++;
+              const toolUseBlocks = response.content.filter((c) => c.type === 'tool_use');
+              const toolResultContents = [];
+              for (const tu of toolUseBlocks) {
+                let toolResult;
+                try {
+                  toolResult = await mcpServer.callTool({ ...tu.input });
+                } catch (err) {
+                  console.warn(`    [MCP] Tool call failed: ${err.message}`);
+                  toolResult = { atoms: [] };
+                }
+                substitutionEvents.push({
+                  cycle: toolCycles,
+                  intent: tu.input?.intent ?? '',
+                  atoms_proposed: toolResult.atoms?.length ?? 0,
+                });
+                toolResultContents.push({
+                  type: 'tool_result',
+                  tool_use_id: tu.id,
+                  content: JSON.stringify(toolResult),
+                });
+              }
+              conv.push({ role: 'assistant', content: response.content });
+              conv.push({ role: 'user', content: toolResultContents });
+              response = await client.messages.create({
+                model: cell.model_id, max_tokens: 4096,
+                system: systemPrompt, messages: conv,
+                tools: [ATOM_LOOKUP_TOOL_DEF],
+              });
+            }
+          }
         } catch (err) {
-          console.error(`  ERROR: ${err.message}`);
+          if (mcpServer) mcpServer.close();
+          console.error(`    ERROR: ${err.message}`);
           reps.push({ rep, cell_id: cell.cell_id, error: err.message });
           continue;
         }
-        const wallMs = Date.now() - startMs;
+        if (mcpServer) mcpServer.close();
 
+        const wallMs = Date.now() - startMs;
         const inputTokens  = response.usage?.input_tokens  ?? 0;
         const outputTokens = response.usage?.output_tokens ?? 0;
-
-        // Approximate pricing (2026-05-17):
-        //   Opus 4.7:   $15/1M input, $75/1M output
-        //   Sonnet 4.6: $3/1M input,  $15/1M output
-        //   Haiku 4.5:  $0.8/1M input, $4/1M output
-        const pricing = {
-          opus:   { in: 15,  out: 75  },
-          sonnet: { in: 3,   out: 15  },
-          haiku:  { in: 0.8, out: 4   },
-        };
-        const p = pricing[cell.driver] ?? { in: 3, out: 15 };
-        const costUsd = (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
-        totalCostUsd += costUsd;
-
-        const billingRow = {
-          run_id: runId, phase: 2, task: task.id, cell_id: cell.cell_id,
-          driver: cell.driver, arm: cell.arm, rep,
-          input_tokens: inputTokens, output_tokens: outputTokens,
-          cost_usd: costUsd, total_cost_usd: totalCostUsd, wall_ms: wallMs,
-          ts: new Date().toISOString(),
-        };
-        writeFileSync(billingFile, JSON.stringify(billingRow) + '\n', { flag: 'a' });
-
-        reps.push({
-          rep, cell_id: cell.cell_id, driver: cell.driver, arm: cell.arm,
-          input_tokens: inputTokens, output_tokens: outputTokens,
-          cost_usd: costUsd, wall_ms: wallMs,
+        const costUsd = estimateCostUsd({
+          model_id: cell.model_id,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
         });
 
-        console.log(`  Tokens: ${inputTokens}in/${outputTokens}out | $${costUsd.toFixed(4)} | Total: $${totalCostUsd.toFixed(4)}`);
+        budget.addSpend(costUsd);
+        budget.logRollingSpend({ phase: 2, taskId: task.id, rep, callCost: costUsd });
+
+        billingLog.append({
+          run_id: runId, phase: 2, task_id: task.id,
+          cell_id: cell.cell_id, driver: cell.driver, arm: cell.arm,
+          model_id: cell.model_id, rep,
+          input_tokens: inputTokens, output_tokens: outputTokens,
+          cost_usd: costUsd, cumulative_cost_usd: budget.cumulativeUsd,
+          wall_ms: wallMs, ts: new Date().toISOString(),
+          tool_cycles: toolCycles,
+        });
+
+        // Extract generated code and run oracle
+        const responseText = response.content
+          .filter((b) => b.type === 'text')
+          .map((b) => b.text)
+          .join('\n');
+        const generatedCode = extractCode(responseText);
+        const oracle = await runOracle(task.id, generatedCode);
+
+        console.log(
+          `    Oracle: ${oracle.oracle_passed ? 'PASS' : 'FAIL'} ` +
+          `(${oracle.oracle_pass_count}/${oracle.oracle_total}) | ` +
+          `in=${inputTokens} out=${outputTokens} | $${costUsd.toFixed(4)}` +
+          (isHooked ? ` | MCP cycles=${toolCycles}` : '')
+        );
+
+        reps.push({
+          rep,
+          cell_id: cell.cell_id,
+          driver: cell.driver,
+          arm: cell.arm,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cost_usd: costUsd,
+          wall_ms: wallMs,
+          oracle_passed: oracle.oracle_passed,
+          oracle_pass_count: oracle.oracle_pass_count,
+          oracle_total: oracle.oracle_total,
+          oracle_failures: oracle.oracle_failures,
+          tool_cycles: toolCycles,
+          substitution_events: substitutionEvents,
+        });
       }
 
-      cellResults.push({ cell_id: cell.cell_id, driver: cell.driver, arm: cell.arm, reps });
+      cellResults.push({
+        cell_id: cell.cell_id,
+        driver: cell.driver,
+        arm: cell.arm,
+        model_id: cell.model_id,
+        reps,
+      });
     }
 
     taskResults.push({ task_id: task.id, cells: cellResults });
@@ -212,17 +485,25 @@ async function main() {
 
   function writeResults() {
     const summary = {
-      run_id: runId, phase: 2, n_tasks: tasks.length, n_cells: cells.length,
-      n_reps: N_REPS, total_cost_usd: totalCostUsd, cap_usd: PHASE2_CAP_USD,
+      run_id: runId, phase: 2,
+      smoke: SMOKE,
+      n_tasks: tasks.length, n_cells: cells.length, n_reps: N_REPS,
+      total_cost_usd: budget.cumulativeUsd, cap_usd: PHASE2_CAP_USD,
       completed_at: new Date().toISOString(),
+      ...(budgetExceeded ? { partial_run_note: 'Run stopped early: budget cap reached.' } : {}),
       tasks: taskResults,
     };
     writeFileSync(resultsFile, JSON.stringify(summary, null, 2), 'utf8');
     console.log('');
-    console.log(`Phase 2 complete. Total cost: $${totalCostUsd.toFixed(4)}`);
+    if (SMOKE) {
+      console.log('Smoke test complete.');
+      console.log('Oracle wiring verified. Ready for full Phase 2 run.');
+    } else {
+      console.log(`Phase 2 complete. Total cost: $${budget.cumulativeUsd.toFixed(4)}`);
+    }
     console.log(`Results: ${resultsFile}`);
-    console.log(`Billing: ${billingFile}`);
+    console.log(`Billing: ${billingLog.path}`);
   }
 }
 
-main().catch(err => { console.error(err); process.exit(1); });
+main().catch((err) => { console.error(err); process.exit(1); });

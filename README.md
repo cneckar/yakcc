@@ -9,18 +9,13 @@
 
 ## Get started in 60 seconds
 
-> _TODO (WI-CLI-UX-COLLAPSE / [#656](https://github.com/cneckar/yakcc/issues/656)): once single-command `yakcc init` lands, this section collapses to one step._
-
 ```sh
 # Install dependencies and build all packages
 pnpm install && pnpm build
 
 # Initialize yakcc in your project directory
-# (creates .yakcc/, .claude/settings.json, .yakccrc.json — wires the IDE hook)
+# (creates .yakcc/, wires detected IDE hooks, and seeds bootstrap atoms)
 yakcc init
-
-# Ingest the seed corpus (~20 blocks composing a JSON integer-list parser)
-yakcc seed
 
 # Assemble the parse-int-list demo to verify the full pipeline
 yakcc compile examples/parse-int-list
@@ -42,13 +37,26 @@ parse-int-list demo — assembled by Yakcc v0
 
 For a full walkthrough see [docs/USING_YAKCC.md](docs/USING_YAKCC.md). Testing the v0.5.0-alpha? See [docs/ALPHA.md](docs/ALPHA.md) for the alpha-specific tester guide.
 
+Need a custom target path or peer?
+
+```sh
+yakcc init --target my-project/ [--peer https://registry.example.com]
+```
+
+To remove yakcc from a project:
+
+```sh
+yakcc uninstall
+yakcc uninstall --purge
+```
+
 ## Why yakcc
 
 **Reproducibility by construction.** Every assembled program carries a provenance manifest naming every constituent block by its content-address. Bit-for-bit reproducibility is not a build option — it is the default.
 
 **Verified building blocks.** Every block in the registry carries property tests. When you compose blocks into a program, you know exactly what was tested and how.
 
-**IDE integration.** Hooks for Claude Code, Cursor, and Codex CLI intercept code-emission events and check the registry first. If a matching block already exists, it is served — no generation needed.
+**IDE integration.** Hooks for Claude Code, Cursor, Cline, and Continue.dev intercept code-emission events and check the registry first. If a matching block already exists, it is served — no generation needed.
 
 **Offline-first.** No API key is required for most operations. Shaving uses static TypeScript analysis by default. Vector search uses a local embedding model.
 
@@ -72,7 +80,7 @@ The most common issues:
 
 - Hook not firing after `yakcc init` → restart Claude Code and verify `.claude/settings.json` contains a `_yakcc` entry.
 - Every emission shows `outcome: "passthrough"` → run `yakcc registry rebuild --path .yakcc/registry.sqlite` to regenerate embeddings.
-- Registry empty after init → `yakcc init` does not auto-seed by design; run `yakcc seed` or `yakcc seed --yakcc`.
+- Registry looks empty after init → rerun `yakcc init` and inspect the summary for seed completion, then run `yakcc bootstrap --verify` to confirm corpus/materialization health.
 
 ## Advanced
 

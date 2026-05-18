@@ -934,6 +934,7 @@
         "behavior": "Compute a bcrypt password hash with a configurable cost factor producing a salted one-way hash for credential storage"
       },
       "expectedAtom": null,
+      "expectedAtomName": "bcryptjs-hash",
       "rationale": "WI-510 Slice 6: bcryptjs@2.4.3 fixture entry. hash behavior (DEC-WI510-S6-BCRYPT-USE-BCRYPTJS-001 substitution; DEC-WI510-S6-BCRYPTJS-SINGLE-MODULE-PACKAGE-001) -- bcrypt.hashSync(s, salt) / bcrypt.hash(s, salt, cb) in dist/bcrypt.js UMD IIFE. First WI-510 single-module-package fixture. Same atom as cat1-bcryptjs-verify-001; both corpus rows point at the same merkle root. synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in bcryptjs-headline-bindings.test.ts section F."
     },
     {
@@ -944,6 +945,7 @@
         "behavior": "Compare a plaintext password against a stored bcrypt hash using constant-time comparison to verify authentication"
       },
       "expectedAtom": null,
+      "expectedAtomName": "bcryptjs-verify",
       "rationale": "WI-510 Slice 6: bcryptjs@2.4.3 fixture entry. verify (constant-time compare) behavior (DEC-WI510-S6-BCRYPTJS-SINGLE-MODULE-PACKAGE-001) -- bcrypt.compareSync(s, hash) / bcrypt.compare(s, hash, cb) in dist/bcrypt.js UMD IIFE. Same source file and atom as cat1-bcryptjs-hash-001 (both co-housed in the bcrypt namespace inside dist/bcrypt.js). synthetic-tasks, expectedAtom:null, combinedScore >= 0.70 gated in bcryptjs-headline-bindings.test.ts section F."
     },
     {
@@ -1088,6 +1090,83 @@
       "expectedAtom": null,
       "expectedAtomName": "p-throttle-sliding-window",
       "rationale": "Behavior-only query for p-throttle/sliding-window (WI-510 Slice 9 — the FINAL slice; closes #510). Atom is the package's single-file index.js entry; p-throttle is pure-ESM hand-authored (Sindre Sorhus) and decomposes cleanly (DEC-WI510-S9-ENGINE-GAPS-NOT-EXERCISED-001). p-throttle has zero external deps (externalSpecifiers=[]); historical p-limit dep removed at v8. combinedScore fixed floor 0.70 per DEC-WI510-S9-COMBINED-SCORE-FIXED-FLOOR-001 (the binding-bearing source is in the shaved atom directly). p-throttle uses WeakMap/WeakRef/FinalizationRegistry/AbortSignal at module scope; engine treats these as opaque identifier references (DEC-WI510-S9-MODERN-PLATFORM-PRIMITIVES-001)."
+    },
+    {
+      "id": "cat1-lru-cache-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Bounded-size key-value cache with least-recently-used eviction; tracks recency on get and set; supports optional per-entry time-to-live with lazy expiration; supports optional max byte budget with size-aware eviction; provides get, set, has, delete, clear, and peek operations"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "lru-cache",
+      "rationale": "Behavior-only query for lru-cache/LRUCache class entry (WI-510 Slice 10 / #642 S10 — first slice of the #642 cluster S10-S15). Atom is the LRUCache class entry via dist/esm/index.js (TSC-emitted ESM; 1681 LOC; DEC-WI510-S10-ENTRY-PATH-DIST-ESM-001). The LRUCache class IS the binding surface; one corpus row per plan DEC-WI510-S10-ONE-CLASS-ONE-ROW-001. Engine-gap landscape: #576 closed (b5dff3a, PR #604 — arrow-returns-arrow HOF; first production-fixture exercise of post-#576 engine on class-body-heavy package, DEC-WI510-S10-CLASS-BODY-FIRST-PRODUCTION-EXERCISE-001); #585 N/A (no UMD); #619 N/A (ESM path, no TSC CJS prelude). Dynamic import('node:diagnostics_channel') in diagnostics-channel.js: Outcome A (externalSpecifiers=[]) — extractImportSpecifiers walks only static ImportDeclaration nodes; dynamic import() CallExpression is invisible to BFS extractor (DEC-WI510-S10-DYNAMIC-IMPORT-EMPIRICAL-001). combinedScore fixed floor 0.70 per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001 (LRUCache class contains binding-bearing source text directly)."
+    },
+    {
+      "id": "cat1-csv-parse-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Streaming CSV parser implementing the Node.js stream.Transform API; consumes string or Buffer input and emits parsed records as arrays or objects; supports callback-style invocation with parse(input, options, cb); handles quoted fields, custom delimiters, record terminators, BOM stripping, and column header mapping when columns option is true"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "csv-parse",
+      "rationale": "Behavior-only query for csv-parse@6.2.1 callback/Parser entry (WI-510 Slice 11 / #642 S11). Atom is the lib/index.js entry (hand-authored ESM; 147 LOC; DEC-WI510-S11-ENTRY-PATH-LIB-ESM-001). Entry is lib/index.js — the canonical ESM import path (package.json#exports['.']['import'].default); not the CJS rollup (dist/cjs/index.cjs) or the browser ESM bundle (dist/esm/index.js). Engine-gap landscape: #576 closed; #585 N/A (plain ESM, no IIFE); #619 N/A (hand-authored ESM, no TSC prelude); #666 N/A (no #foo private class fields in any lib/ source — DEC-WI510-S11-NO-PRIVATE-FIELDS-001). Node builtin import: import { Transform } from \"stream\" at lib/index.js entry — appears as externalSpecifiers=[\"stream\"] foreign leaf (DEC-WI510-S11-NODE-BUILTIN-STREAM-001). Full decomposition predicted (moduleCount=9, stubCount=0). combinedScore fixed floor 0.70 per DEC-WI510-S11-COMBINED-SCORE-FIXED-FLOOR-001."
+    },
+    {
+      "id": "cat1-csv-parse-sync-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Synchronous CSV parser that takes a complete string or Buffer input and returns the full array of parsed records in a single blocking call; throws CsvError on malformed input; supports the same option surface as the streaming parser including delimiters, quotes, BOM handling, and columns-as-headers; does not implement stream.Transform"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "csv-parse-sync",
+      "rationale": "Behavior-only query for csv-parse@6.2.1 sync entry (WI-510 Slice 11 / #642 S11). Atom is the lib/sync.js entry (hand-authored ESM; 28 LOC; DEC-WI510-S11-ENTRY-PATH-LIB-ESM-001). Entry is lib/sync.js — the canonical ESM sync import path (package.json#exports['./sync']['import'].default). lib/sync.js does NOT import lib/index.js; its subgraph is lib/api/* + lib/utils/* only (8 modules, no stream builtin import — externalSpecifiers=[]). Same engine-gap landscape as cat1-csv-parse-001: #576/#585/#619 N/A; #666 N/A. Full decomposition predicted (moduleCount=8, stubCount=0). combinedScore fixed floor 0.70 per DEC-WI510-S11-COMBINED-SCORE-FIXED-FLOOR-001. Within-package two-entry pattern (novel for WI-510; precedent S4/S6/S9 all cross-package per DEC-WI510-S11-TWO-ROW-FUNCTION-PAIR-001)."
+    },
+    {
+      "id": "cat1-fastest-levenshtein-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Compute the Levenshtein edit distance between two strings — the minimum number of single-character insertions, deletions, or substitutions required to transform one string into the other; also supports finding the string in a candidate array with the smallest edit distance to a target string; uses the Myers bit-parallel algorithm for fast computation on short strings (length <= 32) and a chunked variant for longer strings"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "fastest-levenshtein",
+      "rationale": "Behavior-only query for fastest-levenshtein@1.0.16 ESM entry (WI-510 Slice 12 / #642 S12 — third slice of the #642 cluster S10-S15). Package selection: fastest-levenshtein chosen over js-levenshtein per DEC-WI510-S12-PACKAGE-SELECTION-FASTEST-001 (js-levenshtein ships only as CJS bare-IIFE with HIGH-UNKNOWN engine-gap risk; fastest-levenshtein ships clean single-file ESM via the module field; #642 table grants the swap). Entry is esm/mod.js — the clean ESM entry (138 LOC; arrow-function const bindings; named exports distance + closest) per DEC-WI510-S12-ENTRY-PATH-ESM-MOD-001. Single-file single-module forest: moduleCount=1, one corpus row carrying both distance and closest exports per DEC-WI510-S12-ONE-FILE-ONE-ROW-001. Engine-gap landscape: #576 closed; #585 N/A (plain ESM, no IIFE); #619 N/A (ESM emit, not CJS); #666 N/A (zero classes anywhere, verified by grep — DEC-WI510-S12-NO-CLASSES-001). Zero imports anywhere: externalSpecifiers=[] is the contract (DEC-WI510-S12-NO-EXTERNAL-IMPORTS-001). Module-scope new Uint32Array(0x10000) is opaque construction (DEC-WI510-S12-MODULE-SCOPE-TYPED-ARRAY-001). Full decomposition predicted (DEC-WI510-S12-ENGINE-GAPS-LANDSCAPE-001). combinedScore fixed floor 0.70 per DEC-WI510-S12-COMBINED-SCORE-FIXED-FLOOR-001 (distance arrow function IS the edit-distance computation; binding-bearing source text present directly in atom)."
+    },
+    {
+      "id": "cat1-toposort-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Topologically sort a directed acyclic graph given as an array of [from, to] edge pairs; returns the nodes in an order such that every directed edge points from an earlier element to a later element in the returned array; supports an alternative form that accepts an explicit node list alongside the edges (toposort.array(nodes, edges)); throws a cyclic-dependency error when the graph contains a cycle and throws an unknown-node error when an edge references a node not in the supplied node list"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "toposort",
+      "rationale": "Behavior-only query for toposort@2.0.2 CJS entry (WI-510 Slice 13 / #642 S13 — fourth slice of the #642 cluster S10-S15). Entry is index.js — the ONLY published entry; pure-CJS hand-authored (Marcel Klehr 2012-2018); 99 LOC; module.exports = function(edges){...} + module.exports.array = toposort per DEC-WI510-S13-ENTRY-PATH-INDEX-CJS-001. Single-file single-module forest: moduleCount=1, one corpus row carrying both default-export edge-sort and .array node-aware-sort surfaces per DEC-WI510-S13-ONE-FILE-ONE-ROW-001. Pure-CJS-only package (no package.json#module, no exports map, no esm/ subdir); root package.json defaults to commonjs; no inner package.json marker needed per DEC-WI510-S13-NO-INNER-MARKER-001. Engine-gap landscape: #576 closed; #585 N/A (bare CJS, no IIFE); #619 N/A (hand-authored CJS, no TSC __esModule prelude); #666 N/A (zero classes anywhere, verified by grep — DEC-WI510-S13-NO-CLASSES-001). Zero require() calls AND zero import declarations: externalSpecifiers=[] is the contract (DEC-WI510-S13-NO-EXTERNAL-IMPORTS-001 — second WI-510 zero-imports fixture; first via CJS extractor path). Pre-ES2015 var + function declarations decompose identically per DEC-WI510-S13-VAR-FUNCTION-DECL-001. License file is License (capital-L, no extension; first WI-510 fixture with this exact spelling) per DEC-WI510-S13-LICENSE-FILE-NAMING-001. Full decomposition predicted (DEC-WI510-S13-ENGINE-GAPS-LANDSCAPE-001). combinedScore fixed floor 0.70 per DEC-WI510-S13-COMBINED-SCORE-FIXED-FLOOR-001 (toposort function body IS the Kahn-style DFS topological sort; binding-bearing source text present directly in atom)."
+    },
+    {
+      "id": "cat1-jsonpointer-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Resolve an RFC 6901 JSON Pointer against a JSON-shaped object and read or write the value at the addressed path; given an object and a slash-separated pointer string (for example /foo/bar/0), the get operation returns the value at that location or undefined if the path does not exist, the set operation writes a value at that location creating intermediate arrays and objects as needed and returns the previous value at that location, and a separate compile operation pre-validates a pointer and returns a reusable accessor bound to that compiled pointer; honors the RFC 6901 tilde escape sequences (~0 for a literal tilde and ~1 for a literal forward slash) and the array-append /- convention when setting; throws when given a pointer that does not begin with a slash, when given a non-object input, or when given a non-string non-array pointer; blocks prototype-chain segment names (constructor, prototype, __proto__) during the set traversal"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "jsonpointer",
+      "rationale": "Behavior-only query for jsonpointer@5.0.1 CJS entry (WI-510 Slice 14 / #642 S14 — fifth slice of the #642 cluster S10-S15). Entry is jsonpointer.js — the ONLY published entry; pure-CJS hand-authored (Jan Lehnardt 2011-2021); 100 LOC; exports.get = get + exports.set = set + exports.compile = compile per DEC-WI510-S14-ENTRY-PATH-JSONPOINTER-CJS-001. Single-file single-module forest: moduleCount=1, one corpus row carrying all three get/set/compile surfaces per DEC-WI510-S14-ONE-FILE-ONE-ROW-001. Pure-CJS-only package (no package.json#module, no exports map, no esm/ subdir); root package.json defaults to commonjs; no inner package.json marker needed per DEC-WI510-S14-NO-INNER-MARKER-001. Engine-gap landscape: #576 closed; #585 N/A (bare CJS, no IIFE); #619 N/A (hand-authored CJS, no TSC __esModule prelude); #666 N/A (zero classes anywhere, verified by grep — DEC-WI510-S14-NO-CLASSES-001). Zero require() calls AND zero import declarations: externalSpecifiers=[] is the contract (DEC-WI510-S14-NO-EXTERNAL-IMPORTS-001 — third WI-510 zero-imports fixture; second via CJS extractor path). Pre-ES2015 var + function declarations decompose identically per DEC-WI510-S14-VAR-FUNCTION-DECL-001. License file is LICENSE.md (all-caps with .md extension; matches dominant WI-510 convention S5/S7/S10/S11/S12) per DEC-WI510-S14-LICENSE-FILE-NAMING-001. Bare package.json#main path (\"./jsonpointer\"; no .js extension) resolved via extension-fallback per DEC-WI510-S14-BARE-MAIN-PATH-001. First WI-510 fixture exercising exports.X = Identifier as the SOLE top-level export surface (DEC-WI510-S14-CJS-EXPORT-SHAPE-001). Two module-scope var RegExp literal bindings per DEC-WI510-S14-MODULE-SCOPE-REGEX-LITERAL-001. Full decomposition predicted (DEC-WI510-S14-ENGINE-GAPS-LANDSCAPE-001). combinedScore fixed floor 0.70 per DEC-WI510-S14-COMBINED-SCORE-FIXED-FLOOR-001 (get function body IS the RFC 6901 pointer-walking algorithm; setter helper implements create-as-you-go path materialization; binding-bearing source text present directly in atom)."
+    },
+    {
+      "id": "cat1-base64-js-001",
+      "source": "seed-derived",
+      "category": "behavior-only",
+      "query": {
+        "behavior": "Encode and decode binary data using the RFC 4648 Base64 codec; given a Base64-encoded string (using the standard alphabet A-Z a-z 0-9 + / with = padding, plus accepting URL-safe - and _ as drop-in replacements for + and / during decode), byteLength(b64) returns the number of bytes the decoded result will occupy without allocating, toByteArray(b64) returns a Uint8Array (or Array fallback when Uint8Array is undefined in the runtime) populated with the decoded bytes, and fromByteArray(uint8) returns a Base64-encoded string from a Uint8Array using the standard alphabet and = padding as specified by RFC 4648; throws on invalid Base64 input where the length is not a multiple of 4; implements the codec via bitwise arithmetic with a precomputed lookup table for both encode (lookup[index] to character) and decode (revLookup[charCode] to 6-bit value) directions populated at module load time by a top-level for loop iterating over the alphabet string"
+      },
+      "expectedAtom": null,
+      "expectedAtomName": "base64-js",
+      "rationale": "Behavior-only query for base64-js@1.5.1 CJS entry (WI-510 Slice 15 / #642 S15 — sixth and FINAL slice of the #642 cluster S10-S15). Entry is index.js — the ONLY published entry; pure-CJS hand-authored (T. Jameson Little 2014-2020); 150 LOC; exports.byteLength = byteLength + exports.toByteArray = toByteArray + exports.fromByteArray = fromByteArray per DEC-WI510-S15-ENTRY-PATH-BASE64JS-CJS-001. Single-file single-module forest: moduleCount=1, one corpus row carrying all three byteLength/toByteArray/fromByteArray surfaces per DEC-WI510-S15-ONE-FILE-ONE-ROW-001. Pure-CJS-only package (no package.json#module, no exports map, no esm/ subdir); root package.json defaults to commonjs; no inner package.json marker needed per DEC-WI510-S15-NO-INNER-MARKER-001. Engine-gap landscape: #576 closed; #585 N/A (index.js is bare CJS, no IIFE; base64js.min.js IS UMD-wrapped but is EXCLUDED from fixture per DEC-WI510-S15-ENTRY-PATH-BASE64JS-CJS-001); #619 N/A (hand-authored CJS, no TSC __esModule prelude; hand-authored 'use strict' at line 1 is a Directive node per DEC-WI510-S15-USE-STRICT-DIRECTIVE-001); #666 N/A (zero classes anywhere, verified by grep — DEC-WI510-S15-NO-CLASSES-001). Zero require() calls AND zero import declarations: externalSpecifiers=[] is the contract (DEC-WI510-S15-NO-EXTERNAL-IMPORTS-001 — fourth WI-510 zero-imports fixture; third via CJS extractor path). Pre-ES2015 var + function declarations per DEC-WI510-S15-CJS-EXPORT-SHAPE-001. License file is LICENSE (all-caps NO extension — back to S2/S3/S6 convention) per DEC-WI510-S15-LICENSE-FILE-NAMING-001. Second WI-510 fixture exercising exports.X = Identifier as the SOLE top-level export surface (DEC-WI510-S15-CJS-EXPORT-SHAPE-001 — S14 jsonpointer was first). First WI-510 fixture with executable module-scope for loop body per DEC-WI510-S15-MODULE-SCOPE-FOR-LOOP-001. First WI-510 fixture with heavy bitwise-arithmetic codec bodies per DEC-WI510-S15-HEAVY-BITWISE-ARITHMETIC-001. Module-scope var Arr = typeof Uint8Array !== 'undefined' ? Uint8Array : Array ConditionalExpression per DEC-WI510-S15-MODULE-SCOPE-TYPED-ARRAY-CONDITIONAL-001. Full decomposition predicted (DEC-WI510-S15-ENGINE-GAPS-LANDSCAPE-001). combinedScore fixed floor 0.70 per DEC-WI510-S15-COMBINED-SCORE-FIXED-FLOOR-001 (toByteArray/fromByteArray/byteLength function bodies ARE the RFC 4648 codec arithmetic; binding-bearing source text present directly in atom). CLOSES the #642 cluster."
     }
   ]
 }

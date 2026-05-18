@@ -21,10 +21,11 @@ export default defineConfig({
       ),
       "@yakcc/hooks-base": resolve(__dirname, "../hooks-base/src/index.ts"),
       "@yakcc/hooks-claude-code": resolve(__dirname, "../hooks-claude-code/src/index.ts"),
+      "@yakcc/variance": resolve(__dirname, "../variance/src/index.ts"),
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
     pool: "forks",
     testTimeout: 60_000,
     hookTimeout: 60_000,
