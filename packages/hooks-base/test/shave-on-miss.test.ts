@@ -25,6 +25,8 @@ import { openRegistry } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetShaveOnMissQueue,
+  _restoreShaveWorker,
+  _setShaveWorkerForTesting,
   applyPreemptivePackageShave,
   applyShaveOnMiss,
   awaitShaveOnMissDrain,
@@ -37,6 +39,23 @@ import {
   makeBindingKey,
   saveShaveOnMissState,
 } from "../src/shave-on-miss-state.js";
+
+// ---------------------------------------------------------------------------
+// @decision DEC-WI508-ISSUE712-WORKER-INJECTABLE-001
+// (see shave-on-miss.ts for full rationale)
+//
+// title: Inject no-op shave worker via _setShaveWorkerForTesting to decouple
+//        queue-mechanic tests from pipeline latency and vi.mock alias races
+// status: decided (issue #712)
+// rationale:
+//   vi.mock("@yakcc/shave", factory) intercepts the first dynamic import reliably
+//   (single-worker tests pass in ~10ms) but Vitest alias resolution causes concurrent
+//   second-worker imports to bypass the mock registry and hit the real esbuild
+//   transpilation path (>5 s per worker). Injecting the worker function pointer at
+//   module level bypasses the dynamic-import machinery entirely. Tests exercise all
+//   queue-mechanic invariants (dedup, drain, completedBindings, state persistence).
+//   The @yakcc/shave pipeline is independently verified in @yakcc/shave's own suite.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Fixture paths
@@ -87,10 +106,14 @@ beforeEach(() => {
   // Tests that want to test preemptive shave override this env var explicitly.
   // DEC-WI508-S3-PREEMPTIVE-MISS-THRESHOLD-001.
   process.env.YAKCC_PREEMPTIVE_SHAVE_MISS_THRESHOLD = "999";
+  // Inject a sub-millisecond no-op worker so queue-mechanic tests are decoupled
+  // from @yakcc/shave pipeline latency. DEC-WI508-ISSUE712-WORKER-INJECTABLE-001.
+  _setShaveWorkerForTesting(async () => []);
 });
 
 afterEach(() => {
-  // Reset queue and state cache between tests to prevent state leakage.
+  // Restore the real shave worker and reset queue/state between tests.
+  _restoreShaveWorker();
   _resetShaveOnMissQueue();
   // Restore env vars.
   if (savedCorpusDir !== undefined) {
