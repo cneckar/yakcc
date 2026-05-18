@@ -24,3 +24,14 @@ bench/B8-synthetic/transcripts/*.jsonl text eol=lf
 *.ts text eol=lf
 *.mjs text eol=lf
 *.js text eol=lf
+
+# @decision DEC-AS-WASM-SEED-001
+# @title Mark bootstrap/as-cache-seed wasm files as binary (WI-631 Stage B)
+# @status accepted
+# @rationale
+#   Treats committed wasm shards as binary so git does not attempt text-mode
+#   diff or line-ending normalization. Without this, Windows core.autocrlf=true
+#   would corrupt the wasm bytes on checkout (analogous to DEC-BENCH-B8-SHA-001).
+#   The pattern uses /** to cover the two-level shard layout:
+#   bootstrap/as-cache-seed/<key[0..3]>/<key>.wasm (DEC-AS-COMPILE-CACHE-002).
+bootstrap/as-cache-seed/**/*.wasm binary
