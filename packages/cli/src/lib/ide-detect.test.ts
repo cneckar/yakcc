@@ -189,40 +189,89 @@ describe("detectInstalledIdes — continue.dev detection", () => {
   });
 });
 
+describe("detectInstalledIdes — windsurf detection", () => {
+  it("detects windsurf when ~/.windsurf/ exists", () => {
+    const configDir = join(fakeHome, ".windsurf");
+    mkdirAt(configDir);
+
+    const result = detectInstalledIdes(fakeHome);
+    const entry = result.find((e) => e.name === "windsurf");
+    expect(entry).toBeDefined();
+    expect(entry?.configDir).toBe(configDir);
+    expect(entry?.installed).toBe(true);
+  });
+
+  it("does NOT detect windsurf when ~/.windsurf/ is absent", () => {
+    const result = detectInstalledIdes(fakeHome);
+    expect(result.find((e) => e.name === "windsurf")).toBeUndefined();
+  });
+});
+
+describe("detectInstalledIdes — aider detection", () => {
+  it("detects aider when ~/.aider/ exists", () => {
+    const configDir = join(fakeHome, ".aider");
+    mkdirAt(configDir);
+
+    const result = detectInstalledIdes(fakeHome);
+    const entry = result.find((e) => e.name === "aider");
+    expect(entry).toBeDefined();
+    expect(entry?.configDir).toBe(configDir);
+    expect(entry?.installed).toBe(true);
+  });
+
+  it("does NOT detect aider when ~/.aider/ is absent", () => {
+    const result = detectInstalledIdes(fakeHome);
+    expect(result.find((e) => e.name === "aider")).toBeUndefined();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Multi-IDE detection
 // ---------------------------------------------------------------------------
 
 describe("detectInstalledIdes — multiple IDEs simultaneously", () => {
-  it("detects all four IDEs when all config dirs exist", () => {
+  it("detects all six IDEs when all config dirs exist", () => {
     mkdirAt(join(fakeHome, ".claude"));
     mkdirAt(join(fakeHome, ".config", "Cursor"));
     mkdirAt(join(fakeHome, ".config", "cline"));
     mkdirAt(join(fakeHome, ".continue"));
+    mkdirAt(join(fakeHome, ".windsurf"));
+    mkdirAt(join(fakeHome, ".aider"));
 
     const result = detectInstalledIdes(fakeHome);
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(6);
     const names = result.map((e) => e.name);
     expect(names).toContain("claude-code");
     expect(names).toContain("cursor");
     expect(names).toContain("cline");
     expect(names).toContain("continue");
+    expect(names).toContain("windsurf");
+    expect(names).toContain("aider");
   });
 
-  it("result order is stable: claude-code, cursor, cline, continue", () => {
+  it("result order is stable: claude-code, cursor, cline, continue, windsurf, aider", () => {
     mkdirAt(join(fakeHome, ".claude"));
     mkdirAt(join(fakeHome, ".config", "Cursor"));
     mkdirAt(join(fakeHome, ".config", "cline"));
     mkdirAt(join(fakeHome, ".continue"));
+    mkdirAt(join(fakeHome, ".windsurf"));
+    mkdirAt(join(fakeHome, ".aider"));
 
     const result = detectInstalledIdes(fakeHome);
-    expect(result.map((e) => e.name)).toEqual(["claude-code", "cursor", "cline", "continue"]);
+    expect(result.map((e) => e.name)).toEqual([
+      "claude-code",
+      "cursor",
+      "cline",
+      "continue",
+      "windsurf",
+      "aider",
+    ]);
   });
 
   it("detects only the IDEs whose config dirs actually exist (subset)", () => {
     mkdirAt(join(fakeHome, ".claude"));
     mkdirAt(join(fakeHome, ".continue"));
-    // cursor and cline NOT created
+    // cursor, cline, windsurf, aider NOT created
 
     const result = detectInstalledIdes(fakeHome);
     expect(result).toHaveLength(2);
@@ -349,15 +398,17 @@ describe("detectInstalledIdes — no shell-out (B6a air-gap gate)", () => {
     mkdirAt(join(fakeHome, ".config", "Cursor"));
     mkdirAt(join(fakeHome, ".config", "cline"));
     mkdirAt(join(fakeHome, ".continue"));
+    mkdirAt(join(fakeHome, ".windsurf"));
+    mkdirAt(join(fakeHome, ".aider"));
 
     // Should complete synchronously and instantly (no subprocess latency).
     const start = Date.now();
     const result = detectInstalledIdes(fakeHome);
     const elapsed = Date.now() - start;
 
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(6);
     // Subprocess spawn would add at least 20ms even on fast machines.
-    // A pure-existsSync run on 4 paths completes in < 5ms.
+    // A pure-existsSync run on 6 paths completes in < 5ms.
     expect(elapsed).toBeLessThan(50);
   });
 });
@@ -367,8 +418,15 @@ describe("detectInstalledIdes — no shell-out (B6a air-gap gate)", () => {
 // ---------------------------------------------------------------------------
 
 describe("KNOWN_IDE_NAMES", () => {
-  it("contains exactly the four supported IDE names", () => {
-    expect(KNOWN_IDE_NAMES).toEqual(["claude-code", "cursor", "cline", "continue"]);
+  it("contains exactly the six supported IDE names (claude-code, cursor, cline, continue, windsurf, aider)", () => {
+    expect(KNOWN_IDE_NAMES).toEqual([
+      "claude-code",
+      "cursor",
+      "cline",
+      "continue",
+      "windsurf",
+      "aider",
+    ]);
   });
 
   it("does NOT contain 'codex' (NG1: #220 closed not-planned)", () => {

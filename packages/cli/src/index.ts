@@ -38,6 +38,7 @@ import { bootstrap } from "./commands/bootstrap.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
+import { hooksAiderInstall } from "./commands/hooks-aider-install.js";
 import { hooksCursorInstall } from "./commands/hooks-cursor-install.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { hooksWindsurfInstall } from "./commands/hooks-windsurf-install.js";
@@ -328,8 +329,19 @@ export async function runCli(
         );
         return 1;
       }
+      // `yakcc hooks aider install`
+      if (subcommand === "aider") {
+        const [hooksSub, ...hooksRest] = rest;
+        if (hooksSub === "install") {
+          return hooksAiderInstall(hooksRest, logger);
+        }
+        logger.error(
+          `error: unknown hooks aider subcommand: ${hooksSub ?? "(none)"}. Did you mean 'hooks aider install'?`,
+        );
+        return 1;
+      }
       logger.error(
-        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install', 'hooks cursor install', or 'hooks windsurf install'?`,
+        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install', 'hooks cursor install', 'hooks windsurf install', or 'hooks aider install'?`,
       );
       return 1;
     }

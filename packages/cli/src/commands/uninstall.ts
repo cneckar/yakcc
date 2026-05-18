@@ -37,6 +37,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
 import { hooksCursorInstall } from "./hooks-cursor-install.js";
@@ -157,6 +158,8 @@ async function uninstallHookForIde(
       return hooksContinueInstall(["--uninstall"], logger, join(home, ".continue"));
     case "windsurf":
       return hooksWindsurfInstall(["--target", targetDir, "--uninstall"], logger);
+    case "aider":
+      return hooksAiderInstall(["--uninstall"], logger, join(home, ".aider"));
   }
 }
 
@@ -224,7 +227,7 @@ export async function uninstall(
   } catch (err) {
     logger.error(`error: ${(err as Error).message}`);
     logger.error(
-      "Usage: yakcc uninstall [--target <dir>] [--purge] [--ide <claude-code|cursor|cline|continue,...>]",
+      "Usage: yakcc uninstall [--target <dir>] [--purge] [--ide <claude-code|cursor|cline|continue|windsurf|aider,...>]",
     );
     return 1;
   }
