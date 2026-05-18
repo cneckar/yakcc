@@ -39,11 +39,12 @@ import { join } from "node:path";
  * - `"cursor"`:      Cursor editor (forked VS Code)
  * - `"cline"`:       Cline VS Code extension (saoudrizwan.claude-dev)
  * - `"continue"`:    Continue.dev VS Code / JetBrains extension
+ * - `"windsurf"`:    Windsurf (Codeium's AI IDE, VS Code-derived)
  *
  * Note: "codex" is explicitly excluded per NG1 / DEC-CLI-INIT-002 (#220 closed
  * not-planned). Do not add it here without a new WI reversing that decision.
  */
-export type IdeName = "claude-code" | "cursor" | "cline" | "continue";
+export type IdeName = "claude-code" | "cursor" | "cline" | "continue" | "windsurf";
 
 /**
  * A detected IDE entry — the config directory is confirmed to exist.
@@ -112,11 +113,16 @@ export function buildCandidatePaths(home: string): Record<IdeName, readonly stri
     join(home, ".vscode", "extensions", "continue.continue"),
   ];
 
+  // Windsurf (Codeium): `~/.windsurf/` on all platforms. Windsurf is a VS Code-derived
+  // IDE; config lives in a flat ~/.windsurf/ directory on all supported platforms.
+  const windsurfCandidates: string[] = [join(home, ".windsurf")];
+
   return {
     "claude-code": [join(home, ".claude")],
     cursor: cursorCandidates,
     cline: clineCandidates,
     continue: continueCandidates,
+    windsurf: windsurfCandidates,
   };
 }
 
@@ -170,4 +176,4 @@ export function detectInstalledIdes(overrideHome?: string): DetectedIde[] {
  * Callers (e.g. `yakcc init --ide <list>`) validate user-supplied IDE names
  * against this set. Any name not in this set is an error.
  */
-export const KNOWN_IDE_NAMES: readonly IdeName[] = ["claude-code", "cursor", "cline", "continue"];
+export const KNOWN_IDE_NAMES: readonly IdeName[] = ["claude-code", "cursor", "cline", "continue", "windsurf"];

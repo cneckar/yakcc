@@ -3,13 +3,13 @@
 // hooks-lifecycle.test.ts — round-trip hook lifecycle harness for all IDE adapters
 //
 // @decision DEC-687-S1-ADAPTER-COUNT
-// title: Harness covers 4 production-wired adapters; codex deferred (no CLI IDE adapter)
-// status: accepted (WI-687-S1)
+// title: Harness covers 5 production-wired adapters; codex deferred (no CLI IDE adapter)
+// status: amended (WI-687-S3 adds windsurf)
 // rationale:
 //   The CLI's production surface (KNOWN_IDE_NAMES in ide-detect.ts,
-//   installHookForIde/uninstallHookForIde in init.ts/uninstall.ts) contains exactly
-//   4 adapters: claude-code, cursor, cline, continue. There is no `codex` IDE
-//   adapter in the CLI; hooks-codex exists as a hooks-base sibling package but is
+//   installHookForIde/uninstallHookForIde in init.ts/uninstall.ts) contains
+//   5 adapters: claude-code, cursor, cline, continue, windsurf. There is no `codex`
+//   IDE adapter in the CLI; hooks-codex exists as a hooks-base sibling package but is
 //   not wired into installHookForIde/uninstallHookForIde/KNOWN_IDE_NAMES.
 //   Adding a codex lifecycle case would require touching packages/cli/src/**, which
 //   is forbidden by this slice's scope manifest. The codex gap is recorded here
@@ -59,10 +59,11 @@ const SENTINELS = {
   cursor: "yakcc-hook-v1-cursor",
   cline: "yakcc-hook-v1-cline",
   continue: "yakcc-hook-v1-continue",
+  windsurf: "yakcc-hook-v1-windsurf",
 } as const;
 
 type Adapter = keyof typeof SENTINELS;
-const ADAPTERS: readonly Adapter[] = ["claude-code", "cursor", "cline", "continue"] as const;
+const ADAPTERS: readonly Adapter[] = ["claude-code", "cursor", "cline", "continue", "windsurf"] as const;
 
 // ---------------------------------------------------------------------------
 // Suite-level HOME sentinel guard
@@ -84,6 +85,7 @@ const HOME_SENTINEL_PATHS = [
   join(REAL_HOME, ".cursor"),
   join(REAL_HOME, ".config", "cline"),
   join(REAL_HOME, ".continue"),
+  join(REAL_HOME, ".windsurf"),
 ];
 
 let homeDirSnapshots: HomeDirSnapshot[] = [];
@@ -182,12 +184,15 @@ function seedDetectProbe(adapter: Adapter, homeDir: string): void {
     case "continue":
       mkdirSync(join(homeDir, ".continue"), { recursive: true });
       break;
+    case "windsurf":
+      mkdirSync(join(homeDir, ".windsurf"), { recursive: true });
+      break;
   }
 }
 
 /**
  * Returns the primary hook artefact path for a given adapter.
- * claude-code and cursor: settings.json inside targetDir subtree.
+ * claude-code, cursor, windsurf: settings.json inside targetDir subtree.
  * cline and continue: marker file inside homeDir subtree.
  */
 function hookArtefactPath(adapter: Adapter, targetDir: string, homeDir: string): string {
@@ -200,6 +205,8 @@ function hookArtefactPath(adapter: Adapter, targetDir: string, homeDir: string):
       return join(homeDir, ".config", "cline", "yakcc-cline-hook.json");
     case "continue":
       return join(homeDir, ".continue", "yakcc-continue-hook.json");
+    case "windsurf":
+      return join(targetDir, ".windsurf", "settings.json");
   }
 }
 
@@ -239,7 +246,8 @@ function isYakccMarkerPresent(adapter: Adapter, targetDir: string, homeDir: stri
         entry.hooks.some((h) => h._yakcc === sentinel),
       );
     }
-    case "cursor": {
+    case "cursor":
+    case "windsurf": {
       // sentinel is on hooks.yakcc._yakcc in settings.json
       const hooks = obj.hooks as Record<string, unknown> | undefined;
       const yakccEntry = hooks?.yakcc as Record<string, unknown> | undefined;
@@ -265,7 +273,7 @@ function normalizeForByteIdentity(adapter: Adapter, raw: Buffer): Buffer {
     delete obj.installedAt;
     return Buffer.from(`${JSON.stringify(obj, null, 2)}\n`, "utf-8");
   }
-  // For claude-code and cursor settings.json: the file is deterministic —
+  // For claude-code, cursor, and windsurf settings.json: the file is deterministic —
   // applyInstall returns early if the marker is already present, so bytes
   // are unchanged on re-init. Return raw for strict byte comparison.
   return raw;
@@ -352,6 +360,24 @@ function preSeedSiblingContent(
       return {
         paths: [configPath],
         capture: () => ({ config: readFileSync(configPath, "utf-8") }),
+      };
+    }
+    case "windsurf": {
+      // Write .windsurf/settings.json with user content not related to yakcc.
+      // A sibling file user-notes.json in the .windsurf dir.
+      const windsurfDir = join(targetDir, ".windsurf");
+      mkdirSync(windsurfDir, { recursive: true });
+      const settingsPath = join(windsurfDir, "settings.json");
+      const notesPath = join(windsurfDir, "user-notes.json");
+      const userSettings = { "editor.tabSize": 2, hooks: { somethingElse: { cmd: "echo hi" } } };
+      writeFileSync(settingsPath, `${JSON.stringify(userSettings, null, 2)}\n`, "utf-8");
+      writeFileSync(notesPath, `${JSON.stringify({ note: "user windsurf notes" }, null, 2)}\n`, "utf-8");
+      return {
+        paths: [settingsPath, notesPath],
+        capture: () => ({
+          settings: readFileSync(settingsPath, "utf-8"),
+          notes: readFileSync(notesPath, "utf-8"),
+        }),
       };
     }
   }
