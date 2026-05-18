@@ -12,7 +12,7 @@
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { IntentCard } from "./intent/types.js";
-import type { LicenseDetection } from "./license/types.js";
+// DEC-LICENSE-GATE-REMOVE-001: LicenseDetection import removed (WI-682, 2026-05-17).
 import type { SlicePlanEntry } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
@@ -248,12 +248,8 @@ export interface UniversalizeResult {
     readonly canonicalAstHash: CanonicalAstHash;
     readonly merkleRoot: BlockMerkleRoot;
   }[];
-  /**
-   * The license detection result for the candidate's source — populated by
-   * WI-013-02. The gate ran against this detection before intent extraction;
-   * callers can introspect what signal was found.
-   */
-  readonly licenseDetection: LicenseDetection;
+  // DEC-LICENSE-GATE-REMOVE-001: licenseDetection field removed (WI-682, 2026-05-17).
+  // License-of-origin gating is gone; the field is no longer populated or meaningful.
   readonly diagnostics: ShaveDiagnostics;
 }
 

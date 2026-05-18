@@ -629,14 +629,14 @@ export async function universalize(
     finalSlicePlan = enrichedWithMerkle;
   }
 
+  // DEC-LICENSE-GATE-REMOVE-001: licenseDetection field removed from result (WI-682, 2026-05-17).
   return {
     intentCard,
     slicePlan: finalSlicePlan,
     matchedPrimitives: plan.matchedPrimitives,
-    licenseDetection: detection,
     diagnostics: {
       // "decomposition" removed — decompose() is now live (WI-012-06).
-      // "license-gate" removed — gate is now live (WI-013-02).
+      // "license-gate" removed — gate removed by DEC-LICENSE-GATE-REMOVE-001 (WI-682).
       // "variance" removed — variance ranking is now live (WI-011 / #374).
       stubbed: [],
       cacheHits: 0,
