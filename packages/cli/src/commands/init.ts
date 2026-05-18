@@ -62,6 +62,7 @@ import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
 import { hooksCursorInstall } from "./hooks-cursor-install.js";
 import { hooksClaudeCodeInstall } from "./hooks-install.js";
+import { hooksWindsurfInstall } from "./hooks-windsurf-install.js";
 import { registryInit } from "./registry-init.js";
 import { seedYakccCorpus } from "./seed-yakcc.js";
 
@@ -219,6 +220,11 @@ async function installHookForIde(
       const continueDir = join(home, ".continue");
       const code = await hooksContinueInstall([], logger, continueDir);
       if (code !== 0) throw new Error(`continue hook install failed (exit ${code})`);
+      break;
+    }
+    case "windsurf": {
+      const code = await hooksWindsurfInstall(["--target", targetDir], logger);
+      if (code !== 0) throw new Error(`windsurf hook install failed (exit ${code})`);
       break;
     }
   }

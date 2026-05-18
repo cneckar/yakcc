@@ -41,6 +41,7 @@ import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
 import { hooksCursorInstall } from "./hooks-cursor-install.js";
 import { hooksClaudeCodeInstall } from "./hooks-install.js";
+import { hooksWindsurfInstall } from "./hooks-windsurf-install.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -154,6 +155,8 @@ async function uninstallHookForIde(
       return hooksClineInstall(["--uninstall"], logger, join(home, ".config", "cline"));
     case "continue":
       return hooksContinueInstall(["--uninstall"], logger, join(home, ".continue"));
+    case "windsurf":
+      return hooksWindsurfInstall(["--target", targetDir, "--uninstall"], logger);
   }
 }
 

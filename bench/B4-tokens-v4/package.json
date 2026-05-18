@@ -1,0 +1,27 @@
+{
+  "name": "@yakcc-bench/b4-tokens-v4",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B4-v4 — Corpus redesign: dual-shave composite atoms + recalibrated 6-task suite at Haiku failure boundary.",
+  "notes": [
+    "NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is bench-local — must NOT appear in root package.json.",
+    "Install: pnpm --dir bench/B4-tokens-v4 install",
+    "Oracle tests run against reference implementations by default (no API key needed).",
+    "Phase 1 + Phase 2 harness runs require ANTHROPIC_API_KEY and consume real API budget ($75 cap)."
+  ],
+  "scripts": {
+    "test:oracles": "vitest run --config vitest.config.mjs",
+    "phase1:dry": "node harness/phase1-v4.mjs --dry-run",
+    "phase2:dry": "YAKCC_REGISTRY_PATH=/dev/null node harness/phase2-v4.mjs --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "vitest": "^4.1.5"
+  }
+}
