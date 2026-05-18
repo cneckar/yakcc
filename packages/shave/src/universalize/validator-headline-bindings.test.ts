@@ -56,12 +56,12 @@ import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
+  type ModuleForest,
   collectForestSlicePlans,
   forestModules,
   forestStubs,
   forestTotalLeafCount,
   shavePackage,
-  type ModuleForest,
 } from "./module-graph.js";
 import { slice } from "./slicer.js";
 import type { NovelGlueEntry } from "./types.js";
