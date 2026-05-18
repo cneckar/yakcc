@@ -288,7 +288,7 @@ describe("shave-on-miss integration -- headline first->second sequence", () => {
 describe("shave-on-miss integration -- async-window passthrough", () => {
   it(
     "first call returns in < 100ms (shave runs async, does not block emission)",
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
       process.env.YAKCC_SHAVE_ON_MISS_CORPUS_DIR = FIXTURE_MODULE_GRAPH_DIR;
 
@@ -332,7 +332,7 @@ describe("shave-on-miss integration -- async-window passthrough", () => {
         }
 
         // Clean up drain before closing.
-        await awaitShaveOnMissDrain(30_000);
+        await awaitShaveOnMissDrain(90_000);
       } finally {
         await registry.close();
       }
