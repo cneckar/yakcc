@@ -1,0 +1,42 @@
+{
+  "run_id": "phase2-smoke-2026-05-18T17-40-43",
+  "phase": 2,
+  "smoke": true,
+  "n_tasks": 1,
+  "n_cells": 1,
+  "n_reps": 1,
+  "total_cost_usd": 0.0022264,
+  "cap_usd": 50,
+  "completed_at": "2026-05-18T17:40:47.287Z",
+  "tasks": [
+    {
+      "task_id": "crc32c",
+      "cells": [
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 468,
+              "output_tokens": 463,
+              "cost_usd": 0.0022264,
+              "wall_ms": 3115,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+{
+  "run_id": "phase2-2026-05-18T18-29-00",
+  "phase": 2,
+  "smoke": false,
+  "n_tasks": 1,
+  "n_cells": 1,
+  "n_reps": 10,
+  "total_cost_usd": 0.07466,
+  "cap_usd": 50,
+  "completed_at": "2026-05-18T18:30:32.567Z",
+  "tasks": [
+    {
+      "task_id": "semver-range",
+      "cells": [
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 2016,
+              "cost_usd": 0.008612,
+              "wall_ms": 9854,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1526,
+              "cost_usd": 0.006652,
+              "wall_ms": 7942,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1843,
+              "cost_usd": 0.00792,
+              "wall_ms": 9452,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 4ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 4,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1376,
+              "cost_usd": 0.006052,
+              "wall_ms": 6476,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:67:3 > semver-range — tilde ranges > ~1.2.3 rejects 1.2.2 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 5,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1719,
+              "cost_usd": 0.007424,
+              "wall_ms": 8720,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 2ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 6,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1747,
+              "cost_usd": 0.007536,
+              "wall_ms": 8190,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 7,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1640,
+              "cost_usd": 0.007108,
+              "wall_ms": 8777,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 8,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1959,
+              "cost_usd": 0.008384,
+              "wall_ms": 9718,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 9,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1396,
+              "cost_usd": 0.006132,
+              "wall_ms": 7398,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 10,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 2073,
+              "cost_usd": 0.00884,
+              "wall_ms": 9924,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

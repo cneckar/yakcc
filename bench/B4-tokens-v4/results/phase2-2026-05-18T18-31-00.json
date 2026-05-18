@@ -1,0 +1,374 @@
+{
+  "run_id": "phase2-2026-05-18T18-31-00",
+  "phase": 2,
+  "smoke": false,
+  "n_tasks": 1,
+  "n_cells": 1,
+  "n_reps": 10,
+  "total_cost_usd": 0.11301119999999999,
+  "cap_usd": 50,
+  "completed_at": "2026-05-18T18:33:32.968Z",
+  "tasks": [
+    {
+      "task_id": "semver-range",
+      "cells": [
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3291,
+              "output_tokens": 1936,
+              "cost_usd": 0.010376799999999999,
+              "wall_ms": 13729,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 4ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse and compare semantic version strings in MAJOR.MINOR.PATCH format",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate and normalize semantic version version strings",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "tilde caret range expansion for semver",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3317,
+              "output_tokens": 2013,
+              "cost_usd": 0.010705600000000001,
+              "wall_ms": 16891,
+              "oracle_passed": false,
+              "oracle_pass_count": 39,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:60:3 > semver-range — OR (||) > ^1.0.0 || ^2.0.0 rejects 3.0.0 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:77:3 > semver-range — caret ranges (non-zero major) > ^1.2.3 rejects 2.0.0 2ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:80:3 > semver-range — caret ranges (non-zero major) > ^2.0.0 rejects 3.0.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:86:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.2.3 rejects 0.3.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 2ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse semantic version strings into major, minor, patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Compare semantic versions numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Parse and evaluate version range expressions",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3318,
+              "output_tokens": 1791,
+              "cost_usd": 0.0098184,
+              "wall_ms": 12184,
+              "oracle_passed": false,
+              "oracle_pass_count": 40,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:68:3 > semver-range — tilde ranges > ~1.2 accepts 1.2.5 2ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:69:3 > semver-range — tilde ranges > ~1.2 rejects 1.3.0 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:71:3 > semver-range — tilde ranges > ~1 rejects 2.0.0 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse and compare semantic version strings (MAJOR.MINOR.PATCH)",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "evaluate version ranges including caret and tilde notation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "check if a version satisfies a semver range expression",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 4,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3272,
+              "output_tokens": 2412,
+              "cost_usd": 0.0122656,
+              "wall_ms": 15395,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major minor patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic version objects numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate semantic version format",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 5,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3253,
+              "output_tokens": 1934,
+              "cost_usd": 0.0103384,
+              "wall_ms": 12502,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major minor patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic versions numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse and evaluate semver range constraints",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 6,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3255,
+              "output_tokens": 1465,
+              "cost_usd": 0.008464,
+              "wall_ms": 10425,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major minor patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic versions numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse semver range specification with comparators and version constraints",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 7,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3333,
+              "output_tokens": 2254,
+              "cost_usd": 0.011682399999999999,
+              "wall_ms": 13941,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major minor patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic versions numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate and parse semver range expressions with operators",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 8,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3278,
+              "output_tokens": 2057,
+              "cost_usd": 0.0108504,
+              "wall_ms": 13069,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 4ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major, minor, patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic versions returning -1, 0, or 1",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse semver range specification like caret tilde or comparators",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 9,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3332,
+              "output_tokens": 4096,
+              "cost_usd": 0.0190496,
+              "wall_ms": 23720,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse semantic version string into major minor patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Compare two semantic versions numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Parse and validate semver range specification",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 10,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3270,
+              "output_tokens": 1711,
+              "cost_usd": 0.00946,
+              "wall_ms": 15025,
+              "oracle_passed": false,
+              "oracle_pass_count": 42,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 2ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major minor patch components",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic versions numerically",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse and validate semver range specification",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

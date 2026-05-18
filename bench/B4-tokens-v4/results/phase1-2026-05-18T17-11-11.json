@@ -1,0 +1,26 @@
+{
+  "run_id": "phase1-2026-05-18T17-11-11",
+  "phase": 1,
+  "n_tasks": 1,
+  "n_reps": 1,
+  "total_cost_usd": 0.044715,
+  "cap_usd": 25,
+  "registry_path": "C:\\src\\yakcc\\tmp\\B4-tokens-v4\\phase1-2026-05-18T17-11-11\\registry.sqlite",
+  "completed_at": "2026-05-18T17:11:17.472Z",
+  "tasks": [
+    {
+      "task_id": "crc32c",
+      "reps": [
+        {
+          "rep": 1,
+          "input_tokens": 576,
+          "output_tokens": 481,
+          "cost_usd": 0.044715,
+          "wall_ms": 5841,
+          "atom_merkle_roots_fine": [],
+          "atom_merkle_roots_coarse": []
+        }
+      ]
+    }
+  ]
+}
