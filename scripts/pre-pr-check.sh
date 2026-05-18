@@ -32,13 +32,17 @@ if [ -n "$deleted_files" ]; then
   echo
   echo "$deleted_files" | sed 's/^/  /'
   echo
-  # Honor [intentional-deletions] marker in any commit message on this branch.
-  # This allows legitimate subtractive refactors (e.g. removing a feature module
-  # by operator DEC) without triggering the stale-rebase false-positive exit.
+  # Honor a .intentional-deletions FILE marker at repo root.
+  # A file is in the worktree tree regardless of git ref semantics, making it
+  # CI-reliable even when actions/checkout@v4 uses an ephemeral merge-commit ref
+  # whose log walk may not traverse PR-side parent commits as expected.
+  # (Prior mechanism checked commit-log grep, which failed in CI — replaced here.)
   # Operator/reviewer must still confirm the deletions match the WI's scope manifest.
-  if git log --format=%B origin/main..HEAD | grep -qF "[intentional-deletions]"; then
-    echo "OK — [intentional-deletions] marker found in commit log; deletions accepted."
+  if [ -f ".intentional-deletions" ]; then
+    echo "OK — .intentional-deletions marker file present; deletions accepted."
     echo "Operator/reviewer should still confirm the deletions match the WI's scope manifest."
+    echo "Marker file content (rationale):"
+    sed 's/^/  /' .intentional-deletions
     echo
   else
     echo "If any of these files are outside your WI's scope manifest, your"
@@ -46,8 +50,9 @@ if [ -n "$deleted_files" ]; then
     echo "a PR\" for the cherry-pick-onto-fresh recovery path."
     echo
     echo "If the deletions are intentional (subtractive refactor per WI DEC),"
-    echo "add the marker \"[intentional-deletions]\" to one of your commit"
-    echo "messages and re-push. The hygiene check will warn-only on that signal."
+    echo "add a \".intentional-deletions\" file at the repo root with a brief"
+    echo "rationale (commit it to your branch) and re-push. The hygiene check"
+    echo "reads the file's existence and rationale."
     echo
     exit 1
   fi
