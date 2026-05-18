@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test", "vitest.config.ts"],
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../hooks-base" },
+    { "path": "../registry" }
+  ]
+}
