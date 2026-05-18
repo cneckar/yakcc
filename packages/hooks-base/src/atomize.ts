@@ -110,7 +110,6 @@ export interface AtomizeResult {
     | "type-only"
     | "trivial-body"
     | "shave-rejected"
-    | "license-missing"
     | undefined;
 }
 
