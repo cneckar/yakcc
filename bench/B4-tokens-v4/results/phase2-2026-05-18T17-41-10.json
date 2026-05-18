@@ -1,0 +1,2995 @@
+{
+  "run_id": "phase2-2026-05-18T17-41-10",
+  "phase": 2,
+  "smoke": false,
+  "n_tasks": 6,
+  "n_cells": 6,
+  "n_reps": 3,
+  "total_cost_usd": 6.173112,
+  "cap_usd": 50,
+  "completed_at": "2026-05-18T18:10:18.932Z",
+  "tasks": [
+    {
+      "task_id": "crc32c",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 642,
+              "output_tokens": 465,
+              "cost_usd": 0.044505,
+              "wall_ms": 6038,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 642,
+              "output_tokens": 472,
+              "cost_usd": 0.04503,
+              "wall_ms": 5662,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 642,
+              "output_tokens": 481,
+              "cost_usd": 0.045705,
+              "wall_ms": 5736,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 1939,
+              "output_tokens": 497,
+              "cost_usd": 0.06636,
+              "wall_ms": 8696,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli checksum lookup table generation with polynomial 0x82F63B78",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode string to Uint8Array using TextEncoder",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 1942,
+              "output_tokens": 497,
+              "cost_usd": 0.066405,
+              "wall_ms": 8973,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli polynomial 0x82F63B78 lookup table generation and checksum computation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode string to Uint8Array using TextEncoder",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 1940,
+              "output_tokens": 478,
+              "cost_usd": 0.06495,
+              "wall_ms": 10392,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli checksum lookup table generation with polynomial 0x82F63B78",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode a string to Uint8Array using TextEncoder",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 469,
+              "output_tokens": 404,
+              "cost_usd": 0.007467,
+              "wall_ms": 4213,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 469,
+              "output_tokens": 378,
+              "cost_usd": 0.007077,
+              "wall_ms": 3939,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 469,
+              "output_tokens": 404,
+              "cost_usd": 0.007467,
+              "wall_ms": 4657,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1414,
+              "output_tokens": 756,
+              "cost_usd": 0.015582,
+              "wall_ms": 12200,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli polynomial 0x82F63B78 lookup table generation and checksum computation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode string to Uint8Array using TextEncoder",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1603,
+              "output_tokens": 1338,
+              "cost_usd": 0.024879,
+              "wall_ms": 23897,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli checksum lookup table computed from polynomial 0x82F63B78",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "CRC32 lookup table based incremental checksum update with running state",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "UTF-8 encode string to Uint8Array using TextEncoder",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "finalize CRC checksum with XOR mask and unsigned 32-bit integer result",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1509,
+              "output_tokens": 1094,
+              "cost_usd": 0.020937,
+              "wall_ms": 19852,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli polynomial 0x82F63B78 lookup table generation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "CRC32 lookup table based byte-by-byte checksum computation with initial seed and final XOR",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "UTF-8 encode string to Uint8Array using TextEncoder",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 468,
+              "output_tokens": 522,
+              "cost_usd": 0.0024624,
+              "wall_ms": 3012,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 468,
+              "output_tokens": 449,
+              "cost_usd": 0.0021704000000000003,
+              "wall_ms": 2575,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 468,
+              "output_tokens": 465,
+              "cost_usd": 0.0022344,
+              "wall_ms": 2579,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1342,
+              "output_tokens": 497,
+              "cost_usd": 0.0030616000000000003,
+              "wall_ms": 4254,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli polynomial checksum computation",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1456,
+              "output_tokens": 520,
+              "cost_usd": 0.0032448000000000004,
+              "wall_ms": 4804,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli polynomial checksum computation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "generate CRC lookup table from polynomial",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1427,
+              "output_tokens": 493,
+              "cost_usd": 0.0031136000000000002,
+              "wall_ms": 4566,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "CRC-32C Castagnoli polynomial checksum computation with lookup table",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "reflect bits in 32-bit integer for CRC polynomial",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "utf8-codec",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 812,
+              "output_tokens": 1439,
+              "cost_usd": 0.120105,
+              "wall_ms": 14294,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 812,
+              "output_tokens": 1318,
+              "cost_usd": 0.11103,
+              "wall_ms": 12170,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 812,
+              "output_tokens": 1600,
+              "cost_usd": 0.13218,
+              "wall_ms": 15684,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2237,
+              "output_tokens": 2799,
+              "cost_usd": 0.24348,
+              "wall_ms": 30799,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode a JavaScript string to bytes handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode bytes to string with validation of continuation bytes and overlong sequences",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "append code point to string using fromCharCode with surrogate pair splitting",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2214,
+              "output_tokens": 2785,
+              "cost_usd": 0.242085,
+              "wall_ms": 29572,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode JavaScript string to bytes handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode bytes to string with strict validation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "decode UTF-8 continuation byte validation",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2566,
+              "output_tokens": 2554,
+              "cost_usd": 0.23004,
+              "wall_ms": 33202,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode JavaScript string to byte array handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode bytes to string with validation of overlong sequences and surrogates",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "combine high and low surrogate into supplementary code point",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "split supplementary code point into UTF-16 surrogate pair",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "append byte to growable Uint8Array buffer",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "build JavaScript string from array of code points using fromCharCode",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 587,
+              "output_tokens": 2398,
+              "cost_usd": 0.037731,
+              "wall_ms": 23879,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 587,
+              "output_tokens": 2069,
+              "cost_usd": 0.032796,
+              "wall_ms": 20552,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 587,
+              "output_tokens": 2096,
+              "cost_usd": 0.033201,
+              "wall_ms": 21022,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1718,
+              "output_tokens": 2808,
+              "cost_usd": 0.047274,
+              "wall_ms": 36260,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode JavaScript string to Uint8Array bytes handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode Uint8Array bytes to JavaScript string with validation throwing TypeError on invalid sequences",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "encode Unicode code point to UTF-8 multi-byte sequence",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate overlong UTF-8 encoding and surrogate code point range check",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1706,
+              "output_tokens": 2691,
+              "cost_usd": 0.045483,
+              "wall_ms": 39251,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode JavaScript string to bytes handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode byte sequence to string with validation and error handling",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "encode Unicode code point to multi-byte UTF-8 sequence",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate UTF-8 continuation bytes and detect overlong encoding",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1713,
+              "output_tokens": 3368,
+              "cost_usd": 0.055659,
+              "wall_ms": 44223,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode JavaScript string to Uint8Array bytes handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode Uint8Array bytes to JavaScript string with validation overlong surrogate",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "encode Unicode code point to multi-byte UTF-8 sequence",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate and parse UTF-8 continuation bytes from byte array",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 586,
+              "output_tokens": 1825,
+              "cost_usd": 0.0077688,
+              "wall_ms": 8710,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 586,
+              "output_tokens": 2022,
+              "cost_usd": 0.0085568,
+              "wall_ms": 8819,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 586,
+              "output_tokens": 1877,
+              "cost_usd": 0.007976800000000001,
+              "wall_ms": 8574,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1606,
+              "output_tokens": 2119,
+              "cost_usd": 0.0097608,
+              "wall_ms": 10812,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encoding decoding string bytes conversion",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "surrogate pair handling JavaScript string Unicode",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate UTF-8 byte sequence multi-byte encoding",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1678,
+              "output_tokens": 2209,
+              "cost_usd": 0.010178399999999999,
+              "wall_ms": 12326,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encoding and decoding with support for surrogate pairs and error handling",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Surrogate pair handling for JavaScript strings",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Validate and decode UTF-8 byte sequences",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1678,
+              "output_tokens": 1987,
+              "cost_usd": 0.009290399999999999,
+              "wall_ms": 10876,
+              "oracle_passed": true,
+              "oracle_pass_count": 32,
+              "oracle_total": 32,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 encode string to bytes handling surrogate pairs",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "UTF-8 decode bytes to string with validation of continuation bytes and overlong sequences",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate UTF-8 byte sequences detect invalid multi-byte encoding",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "base32-rfc4648",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 848,
+              "cost_usd": 0.073875,
+              "wall_ms": 8886,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 2681,
+              "cost_usd": 0.21135,
+              "wall_ms": 23194,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1907,
+              "cost_usd": 0.1533,
+              "wall_ms": 19511,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 1988,
+              "output_tokens": 2541,
+              "cost_usd": 0.220395,
+              "wall_ms": 27404,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encode and decode bytes to/from string",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Build lookup table mapping alphabet characters to their indices",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2212,
+              "output_tokens": 2569,
+              "cost_usd": 0.225855,
+              "wall_ms": 32851,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encode bytes to string",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 decode string to bytes",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "build reverse lookup table mapping alphabet characters to index values",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "strip trailing padding equals characters from string",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2002,
+              "output_tokens": 2879,
+              "cost_usd": 0.245955,
+              "wall_ms": 30010,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encode bytes to string with alphabet ABCDEFGHIJKLMNOPQRSTUVWXYZ234567 and padding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 decode string to Uint8Array",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 516,
+              "output_tokens": 733,
+              "cost_usd": 0.012543,
+              "wall_ms": 8566,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 516,
+              "output_tokens": 732,
+              "cost_usd": 0.012528,
+              "wall_ms": 8627,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 516,
+              "output_tokens": 741,
+              "cost_usd": 0.012663,
+              "wall_ms": 7438,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1688,
+              "output_tokens": 3142,
+              "cost_usd": 0.052194,
+              "wall_ms": 42812,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encode bytes to string using ABCDEFGHIJKLMNOPQRSTUVWXYZ234567 alphabet with = padding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 decode string to bytes using ABCDEFGHIJKLMNOPQRSTUVWXYZ234567 alphabet strip padding validate characters",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "split byte array into fixed-size chunks for bit-packing",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate string characters against allowed alphabet set throw TypeError on invalid char",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1666,
+              "output_tokens": 3354,
+              "cost_usd": 0.055308,
+              "wall_ms": 42441,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encode bytes to string using ABCDEFGHIJKLMNOPQRSTUVWXYZ234567 alphabet with padding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 decode string to bytes with padding strip and invalid character validation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "split byte array into fixed-size chunks for binary encoding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "build reverse lookup table from alphabet string character to index",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1677,
+              "output_tokens": 2765,
+              "cost_usd": 0.046506,
+              "wall_ms": 37193,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encode Uint8Array to string using ABCDEFGHIJKLMNOPQRSTUVWXYZ234567 alphabet with = padding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 decode string to Uint8Array with padding strip and invalid character/length validation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "pack 5-bit groups from byte array for base-N encoding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate and strip trailing padding characters from encoded string",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 515,
+              "output_tokens": 753,
+              "cost_usd": 0.003424,
+              "wall_ms": 4281,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 515,
+              "output_tokens": 737,
+              "cost_usd": 0.00336,
+              "wall_ms": 4060,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 515,
+              "output_tokens": 791,
+              "cost_usd": 0.003576,
+              "wall_ms": 4609,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1541,
+              "output_tokens": 893,
+              "cost_usd": 0.0048048000000000006,
+              "wall_ms": 6774,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 encoding with alphabet ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RFC 4648 Base32 decoding from alphabet ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1616,
+              "output_tokens": 758,
+              "cost_usd": 0.0043248,
+              "wall_ms": 6435,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Base32 encoding RFC 4648 alphabet ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Base32 decoding RFC 4648 alphabet",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "bit manipulation bit shifting reading bits from bytes",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1538,
+              "output_tokens": 909,
+              "cost_usd": 0.0048664,
+              "wall_ms": 6824,
+              "oracle_passed": true,
+              "oracle_pass_count": 27,
+              "oracle_total": 27,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Base32 encoding and decoding implementation following RFC 4648",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "base32 alphabet alphabet lookup and character validation",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "bitwise operations for encoding bytes to base32 groups",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "lru-ttl-cache",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 989,
+              "output_tokens": 1384,
+              "cost_usd": 0.118635,
+              "wall_ms": 13940,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 989,
+              "output_tokens": 1238,
+              "cost_usd": 0.107685,
+              "wall_ms": 11783,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 989,
+              "output_tokens": 1372,
+              "cost_usd": 0.117735,
+              "wall_ms": 14317,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2509,
+              "output_tokens": 1985,
+              "cost_usd": 0.18651,
+              "wall_ms": 27261,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache implementation using Map insertion order for O(1) get/set with recency promotion",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiration check for cache entry with expiry timestamp",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate positive integer argument throw RangeError",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "promote map key to most recently used by delete and reinsert",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2378,
+              "output_tokens": 1571,
+              "cost_usd": 0.153495,
+              "wall_ms": 21466,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache implementation using Map with O(1) get/set and least-recently-used eviction",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiration check for cache entry with expiry timestamp",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "positive integer validation throwing RangeError",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2601,
+              "output_tokens": 1832,
+              "cost_usd": 0.176415,
+              "wall_ms": 25316,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache implementation using Map insertion order",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiration check for cache entry",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate positive integer argument throw RangeError",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "move key to end of Map for LRU recency tracking",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "evict oldest entry from Map",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 752,
+              "output_tokens": 1875,
+              "cost_usd": 0.030381,
+              "wall_ms": 17047,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 752,
+              "output_tokens": 1738,
+              "cost_usd": 0.028326,
+              "wall_ms": 20585,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 752,
+              "output_tokens": 1781,
+              "cost_usd": 0.028971,
+              "wall_ms": 20000,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1770,
+              "output_tokens": 1976,
+              "cost_usd": 0.03495,
+              "wall_ms": 25803,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "doubly linked list node for LRU cache ordering with head and tail sentinels",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache O(1) get and set with HashMap and doubly linked list",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiry check using Date.now timestamp per cache entry",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1766,
+              "output_tokens": 1960,
+              "cost_usd": 0.034698,
+              "wall_ms": 25876,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "doubly linked list node for LRU cache with head and tail sentinels",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache O(1) get and set with HashMap and doubly linked list",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiry check using Date.now timestamp",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1781,
+              "output_tokens": 2381,
+              "cost_usd": 0.041058,
+              "wall_ms": 33272,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Doubly linked list node for LRU cache with head/tail sentinel pointers, O(1) insert and remove",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache with HashMap and doubly linked list, O(1) get and set with capacity eviction",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiry check using Date.now timestamp comparison",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 751,
+              "output_tokens": 1211,
+              "cost_usd": 0.0054448000000000005,
+              "wall_ms": 6135,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 751,
+              "output_tokens": 1303,
+              "cost_usd": 0.0058128,
+              "wall_ms": 5760,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 751,
+              "output_tokens": 1224,
+              "cost_usd": 0.0054968000000000005,
+              "wall_ms": 9466,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1739,
+              "output_tokens": 1595,
+              "cost_usd": 0.0077712,
+              "wall_ms": 10504,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache least recently used eviction tracking doubly linked list",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "time-to-live TTL expiration timestamp management",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1765,
+              "output_tokens": 1923,
+              "cost_usd": 0.009104,
+              "wall_ms": 10897,
+              "oracle_passed": true,
+              "oracle_pass_count": 24,
+              "oracle_total": 24,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache data structure with linked list node for tracking access order",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL expiration checking and timestamp management",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Doubly linked list implementation for maintaining insertion and access order",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1832,
+              "output_tokens": 1610,
+              "cost_usd": 0.0079056,
+              "wall_ms": 10189,
+              "oracle_passed": false,
+              "oracle_pass_count": 18,
+              "oracle_total": 24,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/lru-ttl-cache/oracle.test.ts:118:3 > lru-ttl-cache — TTL eviction > entry expires after TTL 3ms",
+                "bench/B4-tokens-v4/tasks/lru-ttl-cache/oracle.test.ts:127:3 > lru-ttl-cache — TTL eviction > expired entry is not counted in size 2ms",
+                "bench/B4-tokens-v4/tasks/lru-ttl-cache/oracle.test.ts:147:3 > lru-ttl-cache — TTL eviction > defaultTtlMs applies when set() is called without explicit TTL 1ms",
+                "bench/B4-tokens-v4/tasks/lru-ttl-cache/oracle.test.ts:156:3 > lru-ttl-cache — TTL eviction > explicit ttlMs=0 defers to defaultTtlMs 1ms",
+                "bench/B4-tokens-v4/tasks/lru-ttl-cache/oracle.test.ts:180:3 > lru-ttl-cache — has() > returns false for expired key 1ms",
+                "bench/B4-tokens-v4/tasks/lru-ttl-cache/oracle.test.ts:211:3 > lru-ttl-cache — entries() > entries() excludes expired 2ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "LRU cache with capacity management and eviction",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "TTL time-to-live expiration tracking with timestamps",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "doubly-linked list node for LRU ordering",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "semver-range",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 832,
+              "output_tokens": 1772,
+              "cost_usd": 0.14538,
+              "wall_ms": 16910,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 832,
+              "output_tokens": 1688,
+              "cost_usd": 0.13908,
+              "wall_ms": 16822,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 832,
+              "output_tokens": 2081,
+              "cost_usd": 0.168555,
+              "wall_ms": 19186,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2462,
+              "output_tokens": 1843,
+              "cost_usd": 0.175155,
+              "wall_ms": 25133,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse a semver version string into numeric major.minor.patch tuple",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Compare two semver version tuples numerically",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Parse semver range with caret tilde comparators into bounds",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "Split string on top-level separator with logical OR",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "Validate string matches regex pattern and throw TypeError",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2239,
+              "output_tokens": 1609,
+              "cost_usd": 0.15426,
+              "wall_ms": 21071,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse a semver version string into numeric major, minor, patch components",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Compare two semver versions numerically returning -1, 0, or 1",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Expand tilde and caret semver range operators into comparator pairs",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2469,
+              "output_tokens": 1775,
+              "cost_usd": 0.17016,
+              "wall_ms": 24221,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse semver version string MAJOR.MINOR.PATCH into numeric tuple",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Compare two semver version tuples numerically",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Parse semver range string with caret tilde comparators into normalized constraints",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "Split string by separator and trim whitespace",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "Semver range satisfies check node-semver subset",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 686,
+              "output_tokens": 1793,
+              "cost_usd": 0.028953,
+              "wall_ms": 16014,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 686,
+              "output_tokens": 1572,
+              "cost_usd": 0.025638,
+              "wall_ms": 14802,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 686,
+              "output_tokens": 2057,
+              "cost_usd": 0.032913,
+              "wall_ms": 17969,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1799,
+              "output_tokens": 2099,
+              "cost_usd": 0.036882,
+              "wall_ms": 27035,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semver version string into major minor patch integers",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "semver range satisfaction checking comparator tilde caret",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "compare two version tuples numerically returning -1 0 1",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "expand tilde range to comparator pair gte lt",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1964,
+              "output_tokens": 2306,
+              "cost_usd": 0.040482,
+              "wall_ms": 31563,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semver version string into major minor patch integers",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semver versions numerically returning -1 0 1",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "expand tilde semver range to comparator pair gte lt",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "expand caret semver range to comparator pair gte lt with 0.x.y semantics",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "split OR-separated semver range string into AND comparator groups",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "validate semver string matches MAJOR.MINOR.PATCH numeric format",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1910,
+              "output_tokens": 2036,
+              "cost_usd": 0.03627,
+              "wall_ms": 26757,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse and compare semantic version strings MAJOR.MINOR.PATCH as integers",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Expand tilde semver range notation to comparator pair >=X.Y.Z <X.Y+1.0",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Expand caret semver range notation to comparator pair with 0.x.y locking semantics",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "Split version range string on || into OR groups then on whitespace into AND comparators",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "Evaluate a single semver comparator operator against two parsed version tuples",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 1771,
+              "cost_usd": 0.007632,
+              "wall_ms": 8817,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 2551,
+              "cost_usd": 0.010752,
+              "wall_ms": 12730,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:112:3 > semver-range — error cases > satisfies() throws TypeError for partial version 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 685,
+              "output_tokens": 4096,
+              "cost_usd": 0.016932,
+              "wall_ms": 19005,
+              "oracle_passed": false,
+              "oracle_pass_count": 32,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:60:3 > semver-range — OR (||) > ^1.0.0 || ^2.0.0 rejects 3.0.0 3ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:66:3 > semver-range — tilde ranges > ~1.2.3 rejects 1.3.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:69:3 > semver-range — tilde ranges > ~1.2 rejects 1.3.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:71:3 > semver-range — tilde ranges > ~1 rejects 2.0.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:77:3 > semver-range — caret ranges (non-zero major) > ^1.2.3 rejects 2.0.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:80:3 > semver-range — caret ranges (non-zero major) > ^2.0.0 rejects 3.0.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:86:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.2.3 rejects 0.3.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:87:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.2.3 rejects 1.0.0 (NOT same as ^1.0.0) 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:93:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.0.3 rejects 0.0.4 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:94:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.0.3 rejects 0.1.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:95:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.0.3 rejects 1.0.0 1ms",
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:99:3 > semver-range — caret ranges (zero major) — critical Haiku discriminator > ^0.0.0 rejects 0.0.1 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1633,
+              "output_tokens": 2508,
+              "cost_usd": 0.0113384,
+              "wall_ms": 13370,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse and compare semantic versions with major.minor.patch format",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Parse semver range expressions including caret, tilde, and comparison operators",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1753,
+              "output_tokens": 2774,
+              "cost_usd": 0.0124984,
+              "wall_ms": 14658,
+              "oracle_passed": true,
+              "oracle_pass_count": 44,
+              "oracle_total": 44,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse semantic version string into major minor patch components",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Compare two semantic versions numerically",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Parse and evaluate semver range constraints",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1756,
+              "output_tokens": 2262,
+              "cost_usd": 0.0104528,
+              "wall_ms": 13583,
+              "oracle_passed": false,
+              "oracle_pass_count": 43,
+              "oracle_total": 44,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/semver-range/oracle.test.ts:70:3 > semver-range — tilde ranges > ~1 accepts 1.9.9 3ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse semantic version string into major minor patch components",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "compare two semantic versions numerically",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse and evaluate version range expressions",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "ring-buffer",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 752,
+              "output_tokens": 907,
+              "cost_usd": 0.079305,
+              "wall_ms": 8811,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 752,
+              "output_tokens": 876,
+              "cost_usd": 0.07698,
+              "wall_ms": 9186,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 752,
+              "output_tokens": 790,
+              "cost_usd": 0.07053,
+              "wall_ms": 8832,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2166,
+              "output_tokens": 917,
+              "cost_usd": 0.101265,
+              "wall_ms": 15250,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Validate that a value is a positive integer, throw RangeError otherwise",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Fixed-capacity ring buffer / circular buffer with push, shift, peek, get",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Normalize negative array index relative to length with bounds check",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2168,
+              "output_tokens": 1000,
+              "cost_usd": 0.10752,
+              "wall_ms": 14846,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Validate that a value is a positive integer, throw RangeError otherwise",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Fixed-capacity ring buffer / circular buffer with push, shift, peek, indexed access",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Normalize negative index relative to length with bounds check",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 2159,
+              "output_tokens": 878,
+              "cost_usd": 0.098235,
+              "wall_ms": 13852,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Validate that a value is a positive integer, throw RangeError otherwise",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Fixed capacity ring buffer / circular buffer with wrap-around push",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Normalize negative array index to positive with bounds check",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 549,
+              "output_tokens": 790,
+              "cost_usd": 0.013497,
+              "wall_ms": 8165,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 549,
+              "output_tokens": 788,
+              "cost_usd": 0.013467,
+              "wall_ms": 7784,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 549,
+              "output_tokens": 892,
+              "cost_usd": 0.015027,
+              "wall_ms": 8353,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1647,
+              "output_tokens": 1411,
+              "cost_usd": 0.026106,
+              "wall_ms": 23523,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "fixed-capacity ring buffer circular buffer with push shift peek get iterator",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate positive integer capacity throw RangeError",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "wrap index modulo circular array access",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "normalize negative array index to positive",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1655,
+              "output_tokens": 1571,
+              "cost_usd": 0.02853,
+              "wall_ms": 24852,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "fixed-capacity ring buffer circular buffer with push shift peek get iterator",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate positive integer capacity throw RangeError",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "normalize negative array index to positive index",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 2,
+                  "intent": "modulo wrap-around index for circular buffer slot calculation",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 1480,
+              "output_tokens": 1401,
+              "cost_usd": 0.025455,
+              "wall_ms": 19748,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "fixed-capacity ring buffer circular buffer with push shift peek and iterator",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate positive integer capacity throw RangeError",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 548,
+              "output_tokens": 767,
+              "cost_usd": 0.0035064000000000002,
+              "wall_ms": 3963,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 548,
+              "output_tokens": 847,
+              "cost_usd": 0.0038264,
+              "wall_ms": 4704,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 548,
+              "output_tokens": 1734,
+              "cost_usd": 0.0073744,
+              "wall_ms": 7525,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1418,
+              "output_tokens": 843,
+              "cost_usd": 0.0045064,
+              "wall_ms": 6133,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "circular buffer ring buffer fixed capacity with head tail pointers",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1481,
+              "output_tokens": 954,
+              "cost_usd": 0.0050008000000000006,
+              "wall_ms": 7075,
+              "oracle_passed": false,
+              "oracle_pass_count": 18,
+              "oracle_total": 26,
+              "oracle_failures": [
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:86:3 > ring-buffer — shift > removes and returns oldest item 3ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:122:3 > ring-buffer — get > get(-1) returns newest item 1ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:128:3 > ring-buffer — get > get(-2) returns second-newest 1ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:146:3 > ring-buffer — get > get works correctly after wrap-around 1ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:165:3 > ring-buffer — iterator > iterates correctly after wrap-around 3ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:172:3 > ring-buffer — iterator > for...of works 2ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:200:3 > ring-buffer — clear > can push after clear 1ms",
+                "bench/B4-tokens-v4/tasks/ring-buffer/oracle.test.ts:210:3 > ring-buffer — push/shift interleaved (exhaustive wrap-around) > maintains FIFO order through multiple wrap-arounds 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "circular ring buffer with fixed capacity wrapping",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate positive integer capacity parameter",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1417,
+              "output_tokens": 1011,
+              "cost_usd": 0.0051776,
+              "wall_ms": 6650,
+              "oracle_passed": true,
+              "oracle_pass_count": 26,
+              "oracle_total": 26,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "fixed capacity circular ring buffer implementation with push shift peek and get operations",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
