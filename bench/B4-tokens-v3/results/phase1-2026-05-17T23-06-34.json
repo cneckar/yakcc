@@ -1,0 +1,217 @@
+{
+  "run_id": "phase1-2026-05-17T23-06-34",
+  "phase": 1,
+  "n_tasks": 5,
+  "n_reps": 3,
+  "total_cost_usd": 1.6983450000000002,
+  "cap_usd": 25,
+  "registry_path": "C:\\src\\yakcc\\tmp\\B4-tokens-v3\\phase1-2026-05-17T23-06-34\\registry.sqlite",
+  "completed_at": "2026-05-17T23:10:01.108Z",
+  "tasks": [
+    {
+      "task_id": "json5-parser",
+      "reps": [
+        {
+          "rep": 1,
+          "input_tokens": 526,
+          "output_tokens": 3668,
+          "cost_usd": 0.28299,
+          "wall_ms": 33613,
+          "oracle_passed": true,
+          "oracle_pass_count": 40,
+          "oracle_total": 40,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 2,
+          "input_tokens": 526,
+          "output_tokens": 4024,
+          "cost_usd": 0.30969,
+          "wall_ms": 35727,
+          "oracle_passed": true,
+          "oracle_pass_count": 40,
+          "oracle_total": 40,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 3,
+          "input_tokens": 526,
+          "output_tokens": 4006,
+          "cost_usd": 0.30834,
+          "wall_ms": 35295,
+          "oracle_passed": true,
+          "oracle_pass_count": 40,
+          "oracle_total": 40,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        }
+      ]
+    },
+    {
+      "task_id": "pkce-code-verifier",
+      "reps": [
+        {
+          "rep": 1,
+          "input_tokens": 668,
+          "output_tokens": 467,
+          "cost_usd": 0.045045,
+          "wall_ms": 5541,
+          "oracle_passed": true,
+          "oracle_pass_count": 17,
+          "oracle_total": 17,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 2,
+          "input_tokens": 668,
+          "output_tokens": 408,
+          "cost_usd": 0.04062,
+          "wall_ms": 4598,
+          "oracle_passed": true,
+          "oracle_pass_count": 17,
+          "oracle_total": 17,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 3,
+          "input_tokens": 668,
+          "output_tokens": 409,
+          "cost_usd": 0.040695,
+          "wall_ms": 5095,
+          "oracle_passed": true,
+          "oracle_pass_count": 17,
+          "oracle_total": 17,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        }
+      ]
+    },
+    {
+      "task_id": "two-phase-commit",
+      "reps": [
+        {
+          "rep": 1,
+          "input_tokens": 728,
+          "output_tokens": 867,
+          "cost_usd": 0.075945,
+          "wall_ms": 8336,
+          "oracle_passed": true,
+          "oracle_pass_count": 18,
+          "oracle_total": 18,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 2,
+          "input_tokens": 728,
+          "output_tokens": 873,
+          "cost_usd": 0.076395,
+          "wall_ms": 8957,
+          "oracle_passed": true,
+          "oracle_pass_count": 18,
+          "oracle_total": 18,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 3,
+          "input_tokens": 728,
+          "output_tokens": 914,
+          "cost_usd": 0.07947,
+          "wall_ms": 9357,
+          "oracle_passed": true,
+          "oracle_pass_count": 18,
+          "oracle_total": 18,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        }
+      ]
+    },
+    {
+      "task_id": "kahan-running-stats",
+      "reps": [
+        {
+          "rep": 1,
+          "input_tokens": 608,
+          "output_tokens": 768,
+          "cost_usd": 0.06672,
+          "wall_ms": 7923,
+          "oracle_passed": true,
+          "oracle_pass_count": 22,
+          "oracle_total": 22,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 2,
+          "input_tokens": 608,
+          "output_tokens": 664,
+          "cost_usd": 0.05892,
+          "wall_ms": 7891,
+          "oracle_passed": true,
+          "oracle_pass_count": 22,
+          "oracle_total": 22,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 3,
+          "input_tokens": 608,
+          "output_tokens": 771,
+          "cost_usd": 0.066945,
+          "wall_ms": 8160,
+          "oracle_passed": true,
+          "oracle_pass_count": 22,
+          "oracle_total": 22,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        }
+      ]
+    },
+    {
+      "task_id": "token-bucket-rate-limiter",
+      "reps": [
+        {
+          "rep": 1,
+          "input_tokens": 601,
+          "output_tokens": 1017,
+          "cost_usd": 0.08529,
+          "wall_ms": 9822,
+          "oracle_passed": true,
+          "oracle_pass_count": 18,
+          "oracle_total": 18,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 2,
+          "input_tokens": 601,
+          "output_tokens": 1024,
+          "cost_usd": 0.085815,
+          "wall_ms": 9717,
+          "oracle_passed": true,
+          "oracle_pass_count": 18,
+          "oracle_total": 18,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        },
+        {
+          "rep": 3,
+          "input_tokens": 601,
+          "output_tokens": 886,
+          "cost_usd": 0.075465,
+          "wall_ms": 8299,
+          "oracle_passed": true,
+          "oracle_pass_count": 18,
+          "oracle_total": 18,
+          "oracle_failures": [],
+          "atom_merkle_roots": []
+        }
+      ]
+    }
+  ]
+}

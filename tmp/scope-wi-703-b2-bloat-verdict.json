@@ -1,0 +1,48 @@
+{
+  "allowed_paths": [
+    "plans/wi-703-b2-bloat-verdict.md",
+    "tmp/scope-wi-703-b2-bloat-verdict.json",
+    "MASTER_PLAN.md",
+    "bench/B2-bloat/results-2026-05-18.json",
+    "bench/B2-bloat/harness/run.mjs",
+    "tmp/B2-bloat/**",
+    "tmp/wi-703-*/**"
+  ],
+  "required_paths": [
+    "plans/wi-703-b2-bloat-verdict.md",
+    "tmp/scope-wi-703-b2-bloat-verdict.json",
+    "MASTER_PLAN.md",
+    "bench/B2-bloat/results-2026-05-18.json"
+  ],
+  "forbidden_paths": [
+    "examples/json-schema-validator/src/**",
+    "examples/json-schema-validator/spec.yak",
+    "examples/json-schema-validator/tsconfig.json",
+    "examples/json-schema-validator/package.json",
+    "bench/B2-bloat/fixtures/**",
+    "bench/B2-bloat/README.md",
+    "bench/B2-bloat/package.json",
+    "bench/B1-latency/**",
+    "bench/B4-tokens/**",
+    "bench/B4-tokens-v3/**",
+    "bench/B4-tokens-v4/**",
+    "bench/B5-coherence/**",
+    "bench/B6-airgap/**",
+    "bench/B7-commit/**",
+    "bench/B8-synthetic/**",
+    "bench/B9-min-surface/**",
+    "bench/B10-import-replacement/**",
+    "bench/v0-release-smoke/**",
+    "packages/**",
+    "docs/**",
+    ".github/**",
+    ".claude/**",
+    "scripts/**"
+  ],
+  "state_domains": [
+    "b2-bloat-bench-results"
+  ],
+  "authority_domains": [
+    "bench-b2-bloat-verdict"
+  ]
+}

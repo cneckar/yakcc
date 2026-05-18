@@ -210,6 +210,39 @@ async function runShaveWorker(entryPath: string, registry: Registry): Promise<re
     .map((a: { merkleRoot?: string }) => (a.merkleRoot as string).slice(0, 8));
 }
 
+// @decision DEC-WI508-ISSUE712-WORKER-INJECTABLE-001
+// title: runShaveWorker injectable via _setShaveWorkerForTesting to fix concurrent-worker drain hang
+// status: decided (issue #712)
+// rationale:
+//   vi.mock("@yakcc/shave", factory) intercepts the first dynamic import("@yakcc/shave") call
+//   reliably (single-worker tests pass in ~10ms), but Vitest alias resolution can cause
+//   subsequent concurrent imports — from a second parallel queueMicrotask worker — to resolve
+//   against the aliased path ("../shave/src/index.ts") instead of the mock registry entry.
+//   The second worker then triggers real esbuild transpilation of the @yakcc/shave tree,
+//   which takes >5s and causes awaitShaveOnMissDrain(30_000) to exceed the 30s budget when
+//   104 preemptive workers fire simultaneously.  Injecting the worker function pointer at the
+//   module level (matching the _resetShaveOnMissQueue/_resetShaveOnMissState test-only export
+//   pattern) bypasses the dynamic-import machinery entirely: tests set a sub-millisecond no-op
+//   and all queue-mechanic assertions (dedup, drain, completedBindings, state persistence) are
+//   fully exercised without pipeline latency. The @yakcc/shave pipeline is independently
+//   verified in its own test suite.
+
+// Indirection layer for the shave worker. Tests replace this via _setShaveWorkerForTesting().
+let _runShaveWorker: (entryPath: string, registry: Registry) => Promise<readonly string[]> =
+  runShaveWorker;
+
+/** Replace the background shave worker for testing. Test-only. */
+export function _setShaveWorkerForTesting(
+  fn: (entryPath: string, registry: Registry) => Promise<readonly string[]>,
+): void {
+  _runShaveWorker = fn;
+}
+
+/** Restore the real shave worker after testing. Test-only. */
+export function _restoreShaveWorker(): void {
+  _runShaveWorker = runShaveWorker;
+}
+
 // ---------------------------------------------------------------------------
 // Telemetry helpers (DEC-WI508-S2-TELEMETRY-OUTCOME-ADDITIVE-001)
 // ---------------------------------------------------------------------------
@@ -342,7 +375,7 @@ export function applyShaveOnMiss(
   // the engine handles correctly, with identical fire-and-forget semantics.
   queueMicrotask(async () => {
     try {
-      const atomsCreated = await runShaveWorker(entryPath, registry);
+      const atomsCreated = await _runShaveWorker(entryPath, registry);
       _queue.set(queueKey, { state: "completed", atomsCreated });
       emitShaveOnMissTelemetry("shave-on-miss-completed", ctx.intent, { atomsCreated });
     } catch (err) {

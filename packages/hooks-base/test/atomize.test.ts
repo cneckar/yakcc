@@ -334,29 +334,27 @@ describe("A3 — atomize-no: rejected shapes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A4 — license-missing: GPL-licensed code → atomized=false
+// A4 — gpl-atomizes: GPL-licensed code atomizes successfully (no license gate)
 // ---------------------------------------------------------------------------
 
-describe("A4 — license-missing: GPL-flagged code", () => {
-  it("returns atomized=false with reason='license-missing' for GPL code", async () => {
+describe("A4 — gpl-atomizes: GPL-flagged code", () => {
+  it("atomizes successfully — GPL code is no longer gated", async () => {
     const result = await atomizeEmission(makeInput({ emittedCode: GPL_CODE }));
-    expect(result.atomized).toBe(false);
-    expect(result.reason).toBe("license-missing");
-    expect(result.atomsCreated).toHaveLength(0);
+    // With the license gate removed, GPL code proceeds through the pipeline.
+    expect(result.atomized).toBe(true);
+    expect(result.atomsCreated.length).toBeGreaterThan(0);
   }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
-// A5 — license-default-MIT: no SPDX header → MIT injected, atomization proceeds
+// A5 — no-spdx-atomizes: source without SPDX header atomizes successfully
 // ---------------------------------------------------------------------------
 
-describe("A5 — license-default-MIT: emission without SPDX header", () => {
-  it("auto-prepends MIT SPDX header and atomizes successfully", async () => {
+describe("A5 — no-spdx-atomizes: emission without SPDX header", () => {
+  it("source without SPDX header atomizes successfully", async () => {
     const result = await atomizeEmission(makeInput({ emittedCode: NO_SPDX_HEADER }));
 
-    // The MIT injection should make the license gate pass.
-    // Result must NOT be "license-missing".
-    expect(result.reason).not.toBe("license-missing");
+    // The license gate is gone — no SPDX header is required.
     // With a proper exported function + JSDoc + non-trivial body, should atomize.
     expect(result.atomized).toBe(true);
     expect(result.atomsCreated.length).toBeGreaterThan(0);
