@@ -2021,6 +2021,46 @@ All six WI rows are **landed** as of 2026-05-18: WI-B4-V3-TASKS-001 and WI-B4-V3
 
 ---
 
+#### Slice 2.7 — B4-v4 corpus-redesign execution + dossier
+
+Status: **active 2026-05-18.** Workflow id: `wi-731-b4-v4-execute`. Goal id: `g-wi-731-b4-v4-execute`. Plan: [`plans/wi-731-b4-v4-execute.md`](plans/wi-731-b4-v4-execute.md). Scope: `tmp/scope-wi-731-b4-v4-execute.json`. Ticket: [#731](https://github.com/cneckar/yakcc/issues/731) (`fuckgoblin`, `benchmarks`, `ready`, `load-bearing`). Operator authorization: 2026-05-18 ~16:40Z ("we can run some benchmarks that were blocked now").
+
+This slice executes the B4-v4 apparatus landed in PR [#728](https://github.com/cneckar/yakcc/pull/728) (commit `8e6ed5a`, WI-722 corpus-redesign apparatus). The apparatus has never been exercised; this WI is execution-only — no apparatus modifications permitted. Apparatus structural fixes over v3: (a) dual-shave persistence in `bench/B4-tokens-v4/harness/atom-sync-v4.mjs` (fine pass at `maxControlFlowBoundaries=1` AND coarse pass at `maxControlFlowBoundaries=999`) so the registry contains task-scale composite atoms in addition to L0 leaves (`DEC-B4-V4-CORPUS-COMPOSITE-001`); (b) 6-task harder corpus (`crc32c`, `utf8-codec`, `base32-rfc4648`, `lru-ttl-cache`, `semver-range`, `ring-buffer`) calibrated to Haiku-4.5 failure boundary with documented per-task adversarial traps (`DEC-BENCH-B4-V4-TASKS-001`).
+
+**Wave structure** (single implementer slice, 7 waves):
+
+| Wave | Action | Cost cap | Acceptance |
+|---|---|---|---|
+| 1 | Phase 1 smoke (crc32c × N=1, dry-run + real) | $0.10 | both atoms_fine and atoms_coarse ≥ 1 |
+| 2 | Phase 1 full (6 tasks × N=3) | $25 (DEC-V0-B4-SLICE2-COST-CEILING-004 sub-cap) | 18 reps, every rep has fine + coarse merkle roots |
+| 3 | Registry verification (zero LLM cost) | $0 | `over_1500_chars >= 6`; per-task top-1 score logged |
+| 4 | Phase 2 smoke (cell E × crc32c × N=1) | $0.01 | MCP spawn + oracle pipeline confirmed |
+| 5 | Phase 2 full baseline (6 cells × 6 tasks × N=3 = 108 calls) | $50 baseline + rescue cap | 108 rows, cumulative ≤ $50 |
+| 6 | (conditional) N=10 rescue re-runs on rescue-eligible tasks per `DEC-B4-V4-REPS-001` | within $50 total cap | per-rescue-task E×N=10 + F×N=10 result files |
+| 7 | Dossier `DEC-BENCH-B4-V4-001.md` + MASTER_PLAN annotation + PR | $0 | all §6 Evaluation Contract gates green |
+
+**Honesty clause is binding.** A null verdict ("rescue not supported at this corpus shape") is a valid landing — `DEC-BENCH-B4-V3-001` is the precedent. The dossier records the empirical result verbatim regardless of direction.
+
+**Work items:**
+
+| ID | Title | Weight | Deps | Gate | Wave |
+|----|-------|--------|------|------|------|
+| WI-731-B4-V4-EXECUTE | Execute B4-v4 matrix (Phase 1 + verify + Phase 2 baseline + rescue + dossier); land via PR closing #731 | XL | PR #728 merged | reviewer → PR | 1–7 |
+
+**Budget:** $75 total cap (`DEC-V0-B4-SLICE2-COST-CEILING-004`); Phase 1 sub-cap $25; Phase 2 baseline + rescue cap $50. Spend > $50 requires explicit operator OK with timestamp + quote in dossier §7.
+
+**Pre-locked operator DECs from #722 design phase (binding inputs, do not re-litigate):**
+- `DEC-B4-V4-CORPUS-COMPOSITE-001` (Option A — composite atoms in existing blocks table; additive to L0 leaves)
+- `DEC-BENCH-B4-V4-TASKS-001` (6 tasks, not 10)
+- `DEC-B4-V4-REPS-001` (N=3 baseline; FG bumps to N=10 on rescue-eligible tasks at execution)
+- `DEC-BENCH-B4-V4-MATRIX-001` (6 cells A–F unchanged from v3 shape)
+- D4 (no Haiku 3.0 cells for first run; deferred to follow-up if rescue confirmed)
+- `DEC-V0-B4-SLICE2-COST-CEILING-004` ($75 total cap)
+
+**Out of scope for Slice 2.7.** Any apparatus modification to `bench/B4-tokens-v4/harness/**` or `bench/B4-tokens-v4/tasks/**`; Haiku-3.0 D4 follow-up cells (gated on verdict); v3 dossier edits; other bench directories.
+
+---
+
 #### Slice 3 — first-pass relabel + repair (B1 / B5 / B6 / B7 / B8)
 
 Mechanical work to make each runnable + relabel pass-bars as directional targets. Per-bench actions:
