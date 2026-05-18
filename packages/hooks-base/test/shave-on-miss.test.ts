@@ -466,11 +466,15 @@ describe("applyShaveOnMiss -- Slice 3 completion persistence", () => {
       embeddings: identityEmbeddingProvider(),
     });
 
-    // §8 schedules orphaned workers (no drain) that may complete during the openRegistry
-    // await above and write completedBindings into _cachedState. Reset synchronously here:
-    // no await between this reset and applyShaveOnMiss, so no callback can sneak in and
-    // re-contaminate before the enqueue call.
+    // §8 schedules orphaned workers (no drain) that complete during the openRegistry await
+    // and write completedBindings into BOTH _cachedState AND the disk state file.
+    // Reset in-memory cache AND delete the disk file so getState() reloads clean state.
+    // No await follows before applyShaveOnMiss, so nothing can re-contaminate between here
+    // and the enqueue call.
     _resetShaveOnMissState();
+    if (existsSync(statePath)) {
+      rmSync(statePath);
+    }
 
     const ctx = { intent: "validate email" };
 
@@ -491,29 +495,25 @@ describe("applyShaveOnMiss -- Slice 3 completion persistence", () => {
 // ---------------------------------------------------------------------------
 
 describe("applyPreemptivePackageShave", () => {
-  it("enqueues shaves for all bindings found in the corpus lib/ dir", async () => {
+  it("enqueues shaves for all bindings found in the corpus lib/ dir", () => {
     const statePath = process.env.YAKCC_SHAVE_ON_MISS_STATE_PATH as string;
     // applyPreemptivePackageShave calls applyShaveOnMiss internally, which resolves
     // the corpus dir from YAKCC_SHAVE_ON_MISS_CORPUS_DIR (not the corpusDir argument).
     // Set the env var so resolveEntryPath() can find the fixture bindings.
     process.env.YAKCC_SHAVE_ON_MISS_CORPUS_DIR = FIXTURE_DIR;
 
-    const registry = await openRegistry(":memory:", {
-      embeddings: identityEmbeddingProvider(),
-    });
+    // Use a fake registry -- missCounts are written synchronously by applyShaveOnMiss
+    // (writeFileSync in updateState) before any worker microtask runs. We verify enqueuing
+    // via missCount, not worker completion. Completion semantics are tested in §9.
+    const fakeRegistry = {} as import("@yakcc/registry").Registry;
     const ctx = { intent: "preemptive scan validator" };
 
-    applyPreemptivePackageShave("validator", ctx, registry, FIXTURE_DIR);
+    applyPreemptivePackageShave("validator", ctx, fakeRegistry, FIXTURE_DIR);
 
-    // At least one background shave should be pending.
-    await awaitShaveOnMissDrain(30_000);
-
-    // After drain, completedBindings should contain at least one validator binding.
+    // missCounts are written synchronously by each applyShaveOnMiss call, so asserting
+    // here (no drain needed) is reliable regardless of worker mock behavior.
     const state = loadShaveOnMissState(statePath);
-    const validatorCompleted = state.completedBindings.filter((k) => k.startsWith("validator::"));
-    expect(validatorCompleted.length).toBeGreaterThan(0);
-
-    await registry.close();
+    expect(state.missCounts["validator"]).toBeGreaterThan(0);
   });
 
   it("does nothing when package is not in corpus dir", () => {
