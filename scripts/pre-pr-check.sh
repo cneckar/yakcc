@@ -32,11 +32,25 @@ if [ -n "$deleted_files" ]; then
   echo
   echo "$deleted_files" | sed 's/^/  /'
   echo
-  echo "If any of these files are outside your WI's scope manifest, your"
-  echo "branch is in stale-rebase damage. See AGENTS.md \"Before you open"
-  echo "a PR\" for the cherry-pick-onto-fresh recovery path."
-  echo
-  exit 1
+  # Honor [intentional-deletions] marker in any commit message on this branch.
+  # This allows legitimate subtractive refactors (e.g. removing a feature module
+  # by operator DEC) without triggering the stale-rebase false-positive exit.
+  # Operator/reviewer must still confirm the deletions match the WI's scope manifest.
+  if git log --format=%B origin/main..HEAD | grep -qF "[intentional-deletions]"; then
+    echo "OK — [intentional-deletions] marker found in commit log; deletions accepted."
+    echo "Operator/reviewer should still confirm the deletions match the WI's scope manifest."
+    echo
+  else
+    echo "If any of these files are outside your WI's scope manifest, your"
+    echo "branch is in stale-rebase damage. See AGENTS.md \"Before you open"
+    echo "a PR\" for the cherry-pick-onto-fresh recovery path."
+    echo
+    echo "If the deletions are intentional (subtractive refactor per WI DEC),"
+    echo "add the marker \"[intentional-deletions]\" to one of your commit"
+    echo "messages and re-push. The hygiene check will warn-only on that signal."
+    echo
+    exit 1
+  fi
 fi
 
 echo "OK — no deletions detected against origin/main."
