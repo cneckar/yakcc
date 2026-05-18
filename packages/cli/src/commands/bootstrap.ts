@@ -86,10 +86,11 @@ import { PLUMBING_INCLUDE_GLOBS, plumbingPathAllowed } from "./plumbing-globs.js
 // Expected-failures schema
 //
 // @decision DEC-V2-BOOT-EXPECTED-FAILURES-001
-// @title expected-failures.json documents intentional LicenseRefusedError cases
+// @title expected-failures.json documents intentional fixture failure cases
 // @status accepted
-// @rationale Some fixture files are intentionally GPL-licensed to exercise the
-//   license gate. These must not contribute to the bootstrap failure count.
+// @rationale Some fixture files are intentionally designed to fail shave (e.g.
+//   a deliberately malformed fixture exercising DidNotReachAtomError or similar).
+//   These must not contribute to the bootstrap failure count.
 //   The expected-failures.json file (bootstrap/expected-failures.json) documents
 //   each such case with path + errorClass + rationale. Both path and errorClass
 //   must match for the reclassification to apply (path alone is insufficient —
@@ -97,12 +98,15 @@ import { PLUMBING_INCLUDE_GLOBS, plumbingPathAllowed } from "./plumbing-globs.js
 //   is never triggered, a WARNING is emitted: that either means the file was
 //   renamed/deleted or the underlying issue was fixed, both of which warrant
 //   removing the entry. Untriggered entries do NOT fail the bootstrap.
+//   Note: LicenseRefusedError cases were the canonical example prior to
+//   DEC-LICENSE-GATE-REMOVE-001 (WI-682, 2026-05-17); the mechanism is
+//   general-purpose for any intentional-failure case.
 // ---------------------------------------------------------------------------
 
 /** One entry in expected-failures.json. */
 interface ExpectedFailureEntry {
   readonly path: string; // repo-relative, matches outcomes[].path
-  readonly errorClass: string; // constructor name, e.g. "LicenseRefusedError"
+  readonly errorClass: string; // constructor name, e.g. "DidNotReachAtomError"
   readonly rationale: string; // human-readable explanation
 }
 

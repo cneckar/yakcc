@@ -1,13 +1,15 @@
 /**
  * v0.7 acceptance tests — offline-tolerant
  *
- * Tests A-D cover the acceptance criteria achievable without ANTHROPIC_API_KEY.
+ * Tests B-D cover the acceptance criteria achievable without ANTHROPIC_API_KEY.
  * Items requiring a live API key are documented in README.md with the ⚠️ marker.
  *
- * Test A — License refusal (acceptance item d)
  * Test B — Pipeline structural smoke test (acceptance item a, partial)
  * Test C — Public surface contract
  * Test D — Compile assembleCandidate accessibility
+ *
+ * Note: Test A (License refusal) was removed by DEC-LICENSE-GATE-REMOVE-001 (WI-682,
+ * 2026-05-17). yakcc reimplements behavior; license-of-origin is not gated at ingestion.
  */
 
 import { readFile } from "node:fs/promises";
@@ -15,9 +17,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AnthropicApiKeyMissingError,
-  LicenseRefusedError,
-  detectLicense,
-  licenseGate,
   shave,
   universalize,
 } from "@yakcc/shave";
@@ -33,57 +32,12 @@ const mockRegistry: ShaveRegistryView = {
 };
 
 // ---------------------------------------------------------------------------
-// Test A — License refusal (acceptance item d)
-// @decision DEC-LICENSE-GATE-001: licenseGate refuses copyleft licenses.
-// The gate runs before any LLM call, making this test fully offline.
-// ---------------------------------------------------------------------------
-
-describe("Test A: license refusal", () => {
-  it("universalize() throws LicenseRefusedError for GPL-3.0-or-later source", async () => {
-    const gplSource = [
-      "// SPDX-License-Identifier: GPL-3.0-or-later",
-      "// This file is intentionally GPL-licensed — it must be refused by yakcc shave.",
-      "export function reject(): boolean { return false; }",
-    ].join("\n");
-
-    await expect(
-      universalize({ source: gplSource }, mockRegistry),
-    ).rejects.toThrow(LicenseRefusedError);
-  });
-
-  it("LicenseRefusedError carries detection.identifier matching GPL-3.0-or-later", async () => {
-    const gplSource = [
-      "// SPDX-License-Identifier: GPL-3.0-or-later",
-      "export function reject(): boolean { return false; }",
-    ].join("\n");
-
-    let caught: LicenseRefusedError | undefined;
-    try {
-      await universalize({ source: gplSource }, mockRegistry);
-    } catch (err) {
-      if (err instanceof LicenseRefusedError) caught = err;
-    }
-
-    expect(caught).toBeInstanceOf(LicenseRefusedError);
-    expect(caught?.detection.identifier).toMatch(/GPL-3\.0-or-later/);
-  });
-
-  it("detectLicense + licenseGate work synchronously without API key", () => {
-    const gplSource = "// SPDX-License-Identifier: GPL-3.0-or-later\nexport {}";
-    const detection = detectLicense(gplSource);
-    const result = licenseGate(detection);
-    expect(result.accepted).toBe(false);
-    expect(detection.identifier).toMatch(/GPL-3\.0-or-later/);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Test B — Pipeline structural smoke test (acceptance item a, partial)
 //
 // Reads argv-parser.ts (the MIT-licensed TS demo target), strips the SPDX
 // comment so the candidate bytes are stable, then calls universalize() with
 // the mock registry. Expects AnthropicApiKeyMissingError — proving the
-// pipeline passed the license gate and reached the intent-extraction step.
+// pipeline reached the intent-extraction step.
 //
 // NOTE: Live decomposition requires ANTHROPIC_API_KEY. The offline cache path
 // requires a public seedIntentCache helper from @yakcc/shave (deferred). Once
@@ -113,14 +67,13 @@ describe("Test B: pipeline structural smoke test", () => {
     // decompose argv-parser.ts without hitting CanonicalAstParseError.
     //
     // With intentStrategy: "static" (the default), the pipeline:
-    //   1. Passes the license gate (MIT source accepted).
-    //   2. Extracts intent via TypeScript Compiler API — no API key needed.
-    //   3. Decomposes via decompose() — previously threw CanonicalAstParseError
+    //   1. Extracts intent via TypeScript Compiler API — no API key needed.
+    //   2. Decomposes via decompose() — previously threw CanonicalAstParseError
     //      on the while-loop body's continue/break; now succeeds.
-    //   4. Returns a UniversalizeResult with a slicePlan.
+    //   3. Returns a UniversalizeResult with a slicePlan.
     //
-    // The license gate fires before any LLM call, so this test proves the gate
-    // works AND that the static decompose path runs end-to-end.
+    // DEC-LICENSE-GATE-REMOVE-001: license gate removed (WI-682). This test
+    // proves the static decompose path runs end-to-end without license gating.
     const result = await universalize({ source }, mockRegistry, {
       intentStrategy: "static",
     });
@@ -142,6 +95,9 @@ describe("Test B: pipeline structural smoke test", () => {
 // Asserts that every symbol listed in the v0.7 public surface is importable
 // and defined. This proves the @yakcc/shave package is correctly consumable
 // as a downstream dependency from an examples/ package.
+//
+// Note: LicenseRefusedError, detectLicense, licenseGate were removed from the
+// public surface by DEC-LICENSE-GATE-REMOVE-001 (WI-682, 2026-05-17).
 // ---------------------------------------------------------------------------
 
 describe("Test C: public surface contract (@yakcc/shave)", () => {
@@ -153,29 +109,10 @@ describe("Test C: public surface contract (@yakcc/shave)", () => {
     expect(typeof universalize).toBe("function");
   });
 
-  it("LicenseRefusedError is a class", () => {
-    expect(typeof LicenseRefusedError).toBe("function");
-    const instance = new LicenseRefusedError("test", {
-      identifier: "GPL-3.0-or-later",
-      confidence: "high",
-      method: "spdx-header",
-    });
-    expect(instance).toBeInstanceOf(LicenseRefusedError);
-    expect(instance).toBeInstanceOf(Error);
-  });
-
   it("AnthropicApiKeyMissingError is a class", () => {
     expect(typeof AnthropicApiKeyMissingError).toBe("function");
     const instance = new AnthropicApiKeyMissingError();
     expect(instance).toBeInstanceOf(Error);
-  });
-
-  it("detectLicense is a function", () => {
-    expect(typeof detectLicense).toBe("function");
-  });
-
-  it("licenseGate is a function", () => {
-    expect(typeof licenseGate).toBe("function");
   });
 });
 

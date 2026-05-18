@@ -39,6 +39,24 @@ import {
 } from "../src/shave-on-miss-state.js";
 
 // ---------------------------------------------------------------------------
+// Mock @yakcc/shave so unit tests exercise queue mechanics, not shave quality.
+//
+// runShaveWorker does `await import("@yakcc/shave")` which in vitest/forks mode
+// requires Vite to transform 474 TypeScript source files on cold start (~40s per
+// worker). Every drain-waiting test exceeds the 5000ms default vitest timeout
+// before the drain even begins. Unit tests cover queue dedup, state persistence,
+// and skip-shave heuristics -- none of which depend on the shave engine output.
+// Real shave quality is covered by shave-on-miss-integration.test.ts which uses
+// { timeout: 120_000 } and the real engine (see plan §10.4.5).
+//
+// vi.mock is placed after all imports (standard ESM placement that vitest's
+// hoisting transform handles correctly regardless of position in file).
+// ---------------------------------------------------------------------------
+vi.mock("@yakcc/shave", () => ({
+  shave: vi.fn().mockResolvedValue({ atoms: [] }),
+}));
+
+// ---------------------------------------------------------------------------
 // Fixture paths
 // ---------------------------------------------------------------------------
 
@@ -75,7 +93,14 @@ const savedCorpusDir = process.env.YAKCC_SHAVE_ON_MISS_CORPUS_DIR;
 
 let tempDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Flush microtasks/macrotasks so any orphaned workers scheduled by the prior test (via
+  // queueMicrotask) finish and write their completedBindings into _cachedState BEFORE we
+  // reset. Without this yield, orphaned workers can complete AFTER the reset, contaminating
+  // _cachedState during the next test's synchronous setup window.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  // Reset in-memory state after orphaned workers have settled.
+  _resetShaveOnMissState();
   tempDir = join(tmpdir(), `shave-on-miss-test-${process.pid}-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
   // Point to an isolated per-test state file so tests never share the default
@@ -402,29 +427,27 @@ describe("applyShaveOnMiss -- Slice 3 skip-shave: completedBindings check", () =
 // ---------------------------------------------------------------------------
 
 describe("applyShaveOnMiss -- Slice 3 miss count persistence", () => {
-  it("increments missCounts for the package on each new enqueue", async () => {
+  it("increments missCounts for the package on each new enqueue", () => {
     process.env.YAKCC_SHAVE_ON_MISS_CORPUS_DIR = FIXTURE_DIR;
     const statePath = process.env.YAKCC_SHAVE_ON_MISS_STATE_PATH as string;
     // Preemptive threshold is already 999 from beforeEach.
 
-    const registry = await openRegistry(":memory:", {
-      embeddings: identityEmbeddingProvider(),
-    });
+    // Use a minimal fake registry -- missCounts are set synchronously by applyShaveOnMiss()
+    // before any worker runs, so no real registry or drain is needed for this assertion.
+    const fakeRegistry = {} as import("@yakcc/registry").Registry;
 
     const ctx1 = { intent: "validate email" };
     const ctx2 = { intent: "validate URL" };
 
-    applyShaveOnMiss("validator", "isEmail", ctx1, registry);
-    _resetShaveOnMissState(); // simulate a second process loading state from disk
-    applyShaveOnMiss("validator", "isURL", ctx2, registry);
+    applyShaveOnMiss("validator", "isEmail", ctx1, fakeRegistry);
+    // Second miss for the same package -- miss count should accumulate to 2.
+    applyShaveOnMiss("validator", "isURL", ctx2, fakeRegistry);
 
-    await awaitShaveOnMissDrain(30_000);
-
+    // missCounts are persisted synchronously by applyShaveOnMiss() (writeFileSync in
+    // updateState) before any worker microtask runs. Assert directly from disk.
     const state = loadShaveOnMissState(statePath);
     // Both misses should be recorded.
     expect(state.missCounts["validator"]).toBeGreaterThanOrEqual(2);
-
-    await registry.close();
   });
 });
 
