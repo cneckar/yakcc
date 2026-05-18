@@ -1,28 +1,25 @@
 # @yakcc/shave
 
-The universalizer pipeline: decompose a permissively-licensed TypeScript/JavaScript
-source file into content-addressed registry atoms.
+The universalizer pipeline: decompose a TypeScript/JavaScript source file into
+content-addressed registry atoms.
 
 ## What this package provides
 
-The pipeline runs in five stages for each candidate block:
+The pipeline runs in four stages for each candidate block:
 
-1. **License gate** (`licenseGate` + `detectLicense`) — cheap, pure, fail-fast.
-   Copyleft or refused-license source is rejected before any I/O or API calls.
-   The license check is local; federation peers never see refused source.
-2. **Intent extraction** (`extractIntent`, internal) — extracts a behavioral
+1. **Intent extraction** (`extractIntent`, internal) — extracts a behavioral
    `IntentCard` describing inputs, outputs, and behavior. Default strategy is
    `"static"` (TypeScript Compiler API + JSDoc parser, no API key required,
    fully offline). The `"llm"` strategy is available for AI-derived corpus
    fallback (WI-016) but is not the default.
-3. **Decomposition** (`decompose`) — recursively reduces the source AST into a
+2. **Decomposition** (`decompose`) — recursively reduces the source AST into a
    `RecursionTree` of `AtomLeaf` (irreducible) and `BranchNode` (compound)
    nodes, using the registry's `findByCanonicalAstHash` to detect known
    primitives.
-4. **Slicing** (`slice`) — converts the `RecursionTree` into a flat `SlicePlan`:
+3. **Slicing** (`slice`) — converts the `RecursionTree` into a flat `SlicePlan`:
    a sequence of `NovelGlueEntry` (new atoms to register) and `PointerEntry`
    (existing registry blocks) in DFS order (leaves before root).
-5. **Persist** (`maybePersistNovelGlueAtom`, internal) — `shave()` walks the
+4. **Persist** (`maybePersistNovelGlueAtom`, internal) — `shave()` walks the
    `SlicePlan` sequentially, persisting novel atoms and threading
    `parent_block_root` lineage (WI-017, `DEC-REGISTRY-PARENT-BLOCK-004`).
 
