@@ -466,12 +466,14 @@ describe("applyShaveOnMiss -- Slice 3 completion persistence", () => {
       embeddings: identityEmbeddingProvider(),
     });
 
-    // §8 schedules orphaned workers (no drain) that complete during the openRegistry await
-    // and write completedBindings into BOTH _cachedState AND the disk state file.
-    // Reset in-memory cache AND delete the disk file so getState() reloads clean state.
-    // No await follows before applyShaveOnMiss, so nothing can re-contaminate between here
-    // and the enqueue call.
-    _resetShaveOnMissState();
+    // §8's orphaned workers (fakeRegistry, no drain) complete during the openRegistry await
+    // and contaminate via THREE vectors:
+    //   1. _cachedState.completedBindings (in-memory)
+    //   2. disk state file (written by updateState's saveShaveOnMissState)
+    //   3. _queue[queueKey] = { state: "completed" } (set in the worker try-block)
+    // _resetShaveOnMissQueue() clears vectors 1 and 3; rmSync clears vector 2.
+    // No await follows, so nothing can re-contaminate before applyShaveOnMiss.
+    _resetShaveOnMissQueue();
     if (existsSync(statePath)) {
       rmSync(statePath);
     }
