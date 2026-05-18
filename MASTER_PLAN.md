@@ -1709,6 +1709,7 @@ Status: **active 2026-05-10.** Parent initiative at [#194](https://github.com/cn
 | Sub | WI-V05-CLI-INSTALL-RETIRE-FACADE | [#203](https://github.com/cneckar/yakcc/issues/203) | blocked on #194 Phase 0 | Replaces the v0 facade in `packages/cli/src/commands/hooks-install.ts` with real wiring (settings.json hook / MCP server / both per #194's chosen surface). |
 | Sub | WI-V05-INIT-COMMAND | [#204](https://github.com/cneckar/yakcc/issues/204) | blocked on #203 | New `yakcc init` CLI command for fresh-project setup. The "first 30 seconds" surface. |
 | Sub | WI-V05-USER-WALKTHROUGH | [#205](https://github.com/cneckar/yakcc/issues/205) | blocked on #194 Phase 1+, #203, #204 | `docs/USING_YAKCC.md` end-user walkthrough. |
+| Sub | WI-CLI-UX-COLLAPSE | [#656](https://github.com/cneckar/yakcc/issues/656) | **closed 2026-05-18** | Single-command `yakcc init` (auto-seed + 4-IDE auto-detect + hook auto-install for Claude Code / Cursor / Cline / Continue.dev) + symmetric `yakcc uninstall`. Landed via PRs #681 / #685 / #688. |
 | Benchmark | WI-BENCHMARK-B3 | [#187](https://github.com/cneckar/yakcc/issues/187) | gated on hook + discovery v3 | Cache hit rate on 3-day human-engineer sprint |
 | Benchmark | WI-BENCHMARK-B4 | [#188](https://github.com/cneckar/yakcc/issues/188) | gated on hook | Token expenditure reduction (single-point A/B) |
 | Benchmark | WI-BENCHMARK-B5 | [#189](https://github.com/cneckar/yakcc/issues/189) | gated on hook + contract-surfacing | Hallucination rebound / multi-turn coherence |
