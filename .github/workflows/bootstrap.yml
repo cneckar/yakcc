@@ -97,13 +97,18 @@ jobs:
 
       - name: Verify content-addressed manifest
         if: steps.verified-cache.outputs.cache-hit != 'true'
-        # @decision DEC-VERIFY-CI-ADVISORY-001 — verify is advisory until
-        # bootstrap-accumulate's eventual invariant stops drifting under
-        # rapid-merge contention (#645, PR #646 and follow-up #651). Per
-        # DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 the accumulator is best-effort;
-        # making verify a hard gate contradicts that contract. The full
-        # diagnostic still prints in the run log (loud failure preserved for
-        # local/dev use). Tracking: #651 (reconciliation).
+        # @decision DEC-VERIFY-CI-ADVISORY-001 — verify is PERMANENTLY advisory
+        # per #651 Option B (operator decision 2026-05-17). This aligns with
+        # DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001's eventual-invariant /
+        # best-effort contract: making verify a hard CI gate would contradict
+        # that contract. CI verify failures print the full diagnostic (loud
+        # failure preserved in the run log) but do NOT block merges. The
+        # strict invariant is enforced by local pre-commit / pre-push hooks
+        # where authors can resolve drift inline. Empirical basis: ~80% of
+        # bootstrap-accumulate runs are cancelled by sister activity, so no
+        # retry-budget tuning alone can close the gap (cancellation root cause
+        # tracked in #686). This is not interim — do not flip continue-on-error
+        # to false without superseding this DEC.
         continue-on-error: true
         run: node packages/cli/dist/bin.js bootstrap --verify
 
