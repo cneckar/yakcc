@@ -8,8 +8,9 @@
 // subclasses. A code-string approach requires callers to import and compare
 // string constants, which is error-prone.
 //
-// WI-013-02: LicenseRefusedError added as the fourth error class covering
-// the license-gate failure mode in universalize().
+// WI-013-02: LicenseRefusedError was the fourth error class; removed by
+// DEC-LICENSE-GATE-REMOVE-001 (WI-682, 2026-05-17). The license gate
+// and its associated error type are deleted entirely.
 
 /**
  * Thrown when a live extraction is attempted but ANTHROPIC_API_KEY is not set
@@ -55,24 +56,6 @@ export class IntentCardSchemaError extends Error {
   constructor(detail: string) {
     super(`IntentCard schema violation: ${detail}`);
     this.name = "IntentCardSchemaError";
-  }
-}
-
-import type { LicenseDetection } from "./license/types.js";
-
-/**
- * Thrown by universalize() when the candidate's source carries a refused
- * license (copyleft, proprietary, unrecognized, or no signal).
- *
- * Resolution: only feed permissive-licensed sources to universalize(); per
- * MASTER_PLAN.md v0.7 the registry is permissive-only by structural gate.
- */
-export class LicenseRefusedError extends Error {
-  readonly detection: LicenseDetection;
-  constructor(reason: string, detection: LicenseDetection) {
-    super(`License refused: ${reason}`);
-    this.name = "LicenseRefusedError";
-    this.detection = detection;
   }
 }
 

@@ -234,12 +234,13 @@ back the same hand-authored `digit` atom whether they shaved it from
 identity collapses the duplicates.
 
 Each ingested block passes the same gates as a fresh block: the strict
-TS subset, a property-test corpus, content-addressed identity. Only
-permissive licenses are accepted at the ingestion boundary (Unlicense,
-MIT, BSD-2/3, Apache-2.0, ISC, 0BSD, public-domain dedications);
-copyleft and proprietary licenses are refused with a clear error.
-Upstream licenses are recorded but not relicensed — the commons
-absorbs without rewriting attribution. v0.7 gates absorption on
+TS subset, a property-test corpus, content-addressed identity.
+yakcc reimplements behavior, not source — atoms are content-addressed
+derivations of observable contracts, not copies of upstream code.
+Because no source redistribution occurs, ingest-side license gating
+is not required. Upstream provenance is still recorded in metadata
+so consumers have full traceability; the commons absorbs without
+rewriting attribution. v0.7 gates absorption on
 property tests plus a focused differential test against the upstream
 package's published test corpus; v1 adds large-scale fuzz-driven
 differential execution as the deeper check. Until v1, shaved blocks
@@ -552,13 +553,14 @@ canonical contract as a hand-authored seed atom collapse to the
 same content-address — the registry is a commons, not a
 catalogue-of-origins.
 
-License compatibility is enforced at the ingestion boundary.
-Accepted: Unlicense, MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0,
-ISC, 0BSD, explicit public-domain dedications. Refused with a
-clear error: GPL/AGPL/LGPL/copyleft, proprietary, unidentifiable.
-The Unlicense remains the standard for fresh contributions per the
-cornerstone — shaved third-party code carries its original
-license, the commons does not rewrite upstream attribution.
+There is no ingest-side license gate (DEC-LICENSE-GATE-REMOVE-001).
+yakcc's product story is behavioral reimplementation: atoms are
+content-addressed derivations of observable contracts, not copies of
+upstream source. Copyleft restrictions govern redistribution of source;
+they do not govern independent behavioral reimplementation of an API
+contract. The Unlicense remains the standard for fresh yakcc contributions
+per the cornerstone — shaved atoms record original upstream provenance in
+metadata without rewriting or relicensing it.
 
 **`librAIrian` is a prototype reference.** The Python project at
 `/Users/cris/src/librAIrian/` (Phases 0-4 + R1-R22) demonstrated

@@ -171,6 +171,9 @@
  *   forestTotalLeafCount>0, first node kind='module', plans.length>0.
  *   Previous DEC headers (DEC-WI510-S10-*) preserved as historical record of the gap state.
  * closes #666
+ * consequences:
+ *   - Slice 10 acceptance graduates from engine-reality-honest (PR #663) to fully-decomposed
+ *   - Combined-score fixed floor 0.70 (DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001) now binding
  */
 import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -405,21 +408,20 @@ describe("lru-cache/dist/esm/index.js -- per-entry shave (WI-510 Slice 10 / #642
 });
 
 // ===========================================================================
-// Section F -- combinedScore quality gate (DEFERRED due to engine-gap stub state)
-// DEC-WI510-S10-COMBINED-SCORE-STUB-STATE-002: Since dist/esm/index.js stubs entirely,
-// no atoms are persisted and the combinedScore gate cannot fire on a real atom.
-// The gate is documented as the post-engine-fix target (>= 0.70 fixed floor per
-// DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001). Skipped unless DISCOVERY_EVAL_PROVIDER=local.
+// Section F -- post-fix decomposed quality gate.
+// With the engine-gap closed (PR #695 / DEC-SHAVE-PRIVATE-CLASS-FIELD-001),
+// lru-cache@11.3.6 decomposes cleanly (moduleCount>=3, stubCount=0,
+// forestTotalLeafCount=433). When DISCOVERY_EVAL_PROVIDER=local is set,
+// the local-semantic discovery path is exercised and combinedScore is
+// asserted >=0.70 per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001.
+// In CI (no DISCOVERY_EVAL_PROVIDER), §F skipIf-skips — that is accepted.
+// DEC-WI510-S10-COMBINED-SCORE-STUB-STATE-002 preserved as historical record.
 // ===========================================================================
 describe("lru-cache section F -- combinedScore quality gate (WI-510 Slice 10 / #642 S10)", () => {
   // ---------------------------------------------------------------------------
-  // lru-cache ssF: LRU cache headline behavior query
-  // NOTE: In stub-state, no atoms can be persisted and the combinedScore gate cannot fire.
-  // This it.skipIf block documents the gap and the post-engine-fix target.
-  // When the private-class-field engine gap is fixed (new engine WI), this test will:
-  //   1. Persist the LRUCache atom via the novel-glue path.
-  //   2. Assert combinedScore >= 0.70 for the LRU cache query.
-  // DEC-WI510-S10-COMBINED-SCORE-STUB-STATE-002
+  // lru-cache ssF: LRU cache headline behavior query (post-fix decomposed state).
+  // Engine gap closed by PR #695 (DEC-SHAVE-PRIVATE-CLASS-FIELD-001).
+  // skipIf(!USE_LOCAL_PROVIDER) is the canonical CI-skip path and is preserved.
   // ---------------------------------------------------------------------------
   it.skipIf(!USE_LOCAL_PROVIDER)(
     "lru-cache section F -- post-fix #666: moduleCount>=3, stubCount=0, forestTotalLeafCount>0 (DISCOVERY_EVAL_PROVIDER=local)",
@@ -460,8 +462,11 @@ describe("lru-cache section F -- combinedScore quality gate (WI-510 Slice 10 / #
           "lru-cache sF post-fix: forestTotalLeafCount>0",
         ).toBeGreaterThan(0);
         // combinedScore >= 0.70 gate per DEC-WI510-S10-COMBINED-SCORE-FIXED-FLOOR-001.
-        // Full quality gate is implemented via collectForestSlicePlans producing >0 plans.
-        expect(plans.length, "lru-cache sF post-fix: plans.length>0").toBeGreaterThan(0);
+        // Post-fix: engine decomposes cleanly, combinedScore is the canonical quality gate.
+        expect(
+          forest.combinedScore,
+          "lru-cache sF post-fix: combinedScore>=0.70",
+        ).toBeGreaterThanOrEqual(0.7);
       } finally {
         await registry.close();
       }

@@ -1,0 +1,2663 @@
+{
+  "run_id": "phase2-2026-05-17T23-23-33",
+  "phase": 2,
+  "smoke": false,
+  "n_tasks": 5,
+  "n_cells": 6,
+  "n_reps": 3,
+  "total_cost_usd": 5.3331741999999975,
+  "cap_usd": 50,
+  "completed_at": "2026-05-17T23:47:22.778Z",
+  "tasks": [
+    {
+      "task_id": "json5-parser",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 592,
+              "output_tokens": 3876,
+              "cost_usd": 0.29958,
+              "wall_ms": 34993,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 592,
+              "output_tokens": 3392,
+              "cost_usd": 0.26328,
+              "wall_ms": 31429,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 592,
+              "output_tokens": 3921,
+              "cost_usd": 0.302955,
+              "wall_ms": 34417,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4674,
+              "output_tokens": 4096,
+              "cost_usd": 0.37731,
+              "wall_ms": 43952,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:32:3 > json5-parser — standard JSON (must pass) > parses null 6ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:33:3 > json5-parser — standard JSON (must pass) > parses true 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:34:3 > json5-parser — standard JSON (must pass) > parses false 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:35:3 > json5-parser — standard JSON (must pass) > parses integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:36:3 > json5-parser — standard JSON (must pass) > parses negative integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:37:3 > json5-parser — standard JSON (must pass) > parses float 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:38:3 > json5-parser — standard JSON (must pass) > parses double-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:39:3 > json5-parser — standard JSON (must pass) > parses empty object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:40:3 > json5-parser — standard JSON (must pass) > parses empty array 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:41:3 > json5-parser — standard JSON (must pass) > parses nested object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:44:3 > json5-parser — standard JSON (must pass) > parses array of values 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:50:3 > json5-parser — single-quoted strings > parses single-quoted string 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:51:3 > json5-parser — single-quoted strings > parses escaped single quote inside single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:54:3 > json5-parser — single-quoted strings > parses double-quote inside single-quoted string without escaping 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:60:3 > json5-parser — unquoted keys > parses object with unquoted key 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:63:3 > json5-parser — unquoted keys > parses object with reserved-word key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:67:3 > json5-parser — unquoted keys > parses unquoted key with underscores and dollars 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:70:3 > json5-parser — unquoted keys > parses mixed quoted and unquoted keys 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:76:3 > json5-parser — trailing commas > allows trailing comma in array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:79:3 > json5-parser — trailing commas > allows trailing comma in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:82:3 > json5-parser — trailing commas > allows trailing comma in nested structures 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:88:3 > json5-parser — comments > ignores single-line comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:97:3 > json5-parser — comments > ignores comment between items 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:103:3 > json5-parser — special numbers > parses hex literal 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:104:3 > json5-parser — special numbers > parses uppercase hex 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:105:3 > json5-parser — special numbers > parses leading-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:106:3 > json5-parser — special numbers > parses trailing-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:107:3 > json5-parser — special numbers > parses Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:110:3 > json5-parser — special numbers > parses NaN 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:111:3 > json5-parser — special numbers > parses +1 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:115:3 > json5-parser — multiline string > line continuation splices strings 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:122:3 > json5-parser — error cases > throws SyntaxError for empty input 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:125:3 > json5-parser — error cases > throws SyntaxError for unterminated string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:128:3 > json5-parser — error cases > throws SyntaxError for unterminated array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:131:3 > json5-parser — error cases > throws SyntaxError for trailing garbage 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:134:3 > json5-parser — error cases > throws SyntaxError for unterminated block comment 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "JSON5 parser that parses JSON5 superset of JSON",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "recursive descent parser with position tracking for source text",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse string escape sequences including unicode and hex escapes",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "check if character is valid ECMAScript identifier start or continue",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4687,
+              "output_tokens": 4096,
+              "cost_usd": 0.377505,
+              "wall_ms": 43802,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:32:3 > json5-parser — standard JSON (must pass) > parses null 6ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:33:3 > json5-parser — standard JSON (must pass) > parses true 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:34:3 > json5-parser — standard JSON (must pass) > parses false 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:35:3 > json5-parser — standard JSON (must pass) > parses integer 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:36:3 > json5-parser — standard JSON (must pass) > parses negative integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:37:3 > json5-parser — standard JSON (must pass) > parses float 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:38:3 > json5-parser — standard JSON (must pass) > parses double-quoted string 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:39:3 > json5-parser — standard JSON (must pass) > parses empty object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:40:3 > json5-parser — standard JSON (must pass) > parses empty array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:41:3 > json5-parser — standard JSON (must pass) > parses nested object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:44:3 > json5-parser — standard JSON (must pass) > parses array of values 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:50:3 > json5-parser — single-quoted strings > parses single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:51:3 > json5-parser — single-quoted strings > parses escaped single quote inside single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:54:3 > json5-parser — single-quoted strings > parses double-quote inside single-quoted string without escaping 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:60:3 > json5-parser — unquoted keys > parses object with unquoted key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:63:3 > json5-parser — unquoted keys > parses object with reserved-word key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:67:3 > json5-parser — unquoted keys > parses unquoted key with underscores and dollars 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:70:3 > json5-parser — unquoted keys > parses mixed quoted and unquoted keys 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:76:3 > json5-parser — trailing commas > allows trailing comma in array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:79:3 > json5-parser — trailing commas > allows trailing comma in object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:82:3 > json5-parser — trailing commas > allows trailing comma in nested structures 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:88:3 > json5-parser — comments > ignores single-line comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 3ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:97:3 > json5-parser — comments > ignores comment between items 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:103:3 > json5-parser — special numbers > parses hex literal 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:104:3 > json5-parser — special numbers > parses uppercase hex 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:105:3 > json5-parser — special numbers > parses leading-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:106:3 > json5-parser — special numbers > parses trailing-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:107:3 > json5-parser — special numbers > parses Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:110:3 > json5-parser — special numbers > parses NaN 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:111:3 > json5-parser — special numbers > parses +1 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:115:3 > json5-parser — multiline string > line continuation splices strings 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:122:3 > json5-parser — error cases > throws SyntaxError for empty input 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:125:3 > json5-parser — error cases > throws SyntaxError for unterminated string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:128:3 > json5-parser — error cases > throws SyntaxError for unterminated array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:131:3 > json5-parser — error cases > throws SyntaxError for trailing garbage 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:134:3 > json5-parser — error cases > throws SyntaxError for unterminated block comment 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "JSON5 parser that parses JSON5 superset of JSON including single quotes, unquoted keys, trailing commas, comments, hex numbers",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "recursive descent parser with position tracking for source string",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse JSON string literal with escape sequences including unicode \\uXXXX",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "check if character is valid ECMAScript IdentifierStart or IdentifierPart",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4655,
+              "output_tokens": 4096,
+              "cost_usd": 0.377025,
+              "wall_ms": 42954,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:32:3 > json5-parser — standard JSON (must pass) > parses null 6ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:33:3 > json5-parser — standard JSON (must pass) > parses true 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:34:3 > json5-parser — standard JSON (must pass) > parses false 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:35:3 > json5-parser — standard JSON (must pass) > parses integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:36:3 > json5-parser — standard JSON (must pass) > parses negative integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:37:3 > json5-parser — standard JSON (must pass) > parses float 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:38:3 > json5-parser — standard JSON (must pass) > parses double-quoted string 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:39:3 > json5-parser — standard JSON (must pass) > parses empty object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:40:3 > json5-parser — standard JSON (must pass) > parses empty array 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:41:3 > json5-parser — standard JSON (must pass) > parses nested object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:44:3 > json5-parser — standard JSON (must pass) > parses array of values 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:50:3 > json5-parser — single-quoted strings > parses single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:51:3 > json5-parser — single-quoted strings > parses escaped single quote inside single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:54:3 > json5-parser — single-quoted strings > parses double-quote inside single-quoted string without escaping 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:60:3 > json5-parser — unquoted keys > parses object with unquoted key 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:63:3 > json5-parser — unquoted keys > parses object with reserved-word key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:67:3 > json5-parser — unquoted keys > parses unquoted key with underscores and dollars 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:70:3 > json5-parser — unquoted keys > parses mixed quoted and unquoted keys 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:76:3 > json5-parser — trailing commas > allows trailing comma in array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:79:3 > json5-parser — trailing commas > allows trailing comma in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:82:3 > json5-parser — trailing commas > allows trailing comma in nested structures 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:88:3 > json5-parser — comments > ignores single-line comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:97:3 > json5-parser — comments > ignores comment between items 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:103:3 > json5-parser — special numbers > parses hex literal 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:104:3 > json5-parser — special numbers > parses uppercase hex 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:105:3 > json5-parser — special numbers > parses leading-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:106:3 > json5-parser — special numbers > parses trailing-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:107:3 > json5-parser — special numbers > parses Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:110:3 > json5-parser — special numbers > parses NaN 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:111:3 > json5-parser — special numbers > parses +1 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:115:3 > json5-parser — multiline string > line continuation splices strings 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:122:3 > json5-parser — error cases > throws SyntaxError for empty input 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:125:3 > json5-parser — error cases > throws SyntaxError for unterminated string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:128:3 > json5-parser — error cases > throws SyntaxError for unterminated array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:131:3 > json5-parser — error cases > throws SyntaxError for trailing garbage 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:134:3 > json5-parser — error cases > throws SyntaxError for unterminated block comment 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "JSON5 parser implementation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse string escape sequences including unicode \\uXXXX and hex \\xXX",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "check if character is valid ECMAScript identifier start or part",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "recursive descent parser with position tracking and error reporting",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 427,
+              "output_tokens": 3351,
+              "cost_usd": 0.051546,
+              "wall_ms": 29685,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 427,
+              "output_tokens": 3718,
+              "cost_usd": 0.057051,
+              "wall_ms": 31836,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 427,
+              "output_tokens": 3175,
+              "cost_usd": 0.048906,
+              "wall_ms": 27016,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3027,
+              "output_tokens": 4096,
+              "cost_usd": 0.070521,
+              "wall_ms": 45788,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:32:3 > json5-parser — standard JSON (must pass) > parses null 6ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:33:3 > json5-parser — standard JSON (must pass) > parses true 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:34:3 > json5-parser — standard JSON (must pass) > parses false 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:35:3 > json5-parser — standard JSON (must pass) > parses integer 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:36:3 > json5-parser — standard JSON (must pass) > parses negative integer 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:37:3 > json5-parser — standard JSON (must pass) > parses float 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:38:3 > json5-parser — standard JSON (must pass) > parses double-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:39:3 > json5-parser — standard JSON (must pass) > parses empty object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:40:3 > json5-parser — standard JSON (must pass) > parses empty array 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:41:3 > json5-parser — standard JSON (must pass) > parses nested object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:44:3 > json5-parser — standard JSON (must pass) > parses array of values 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:50:3 > json5-parser — single-quoted strings > parses single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:51:3 > json5-parser — single-quoted strings > parses escaped single quote inside single-quoted string 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:54:3 > json5-parser — single-quoted strings > parses double-quote inside single-quoted string without escaping 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:60:3 > json5-parser — unquoted keys > parses object with unquoted key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:63:3 > json5-parser — unquoted keys > parses object with reserved-word key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:67:3 > json5-parser — unquoted keys > parses unquoted key with underscores and dollars 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:70:3 > json5-parser — unquoted keys > parses mixed quoted and unquoted keys 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:76:3 > json5-parser — trailing commas > allows trailing comma in array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:79:3 > json5-parser — trailing commas > allows trailing comma in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:82:3 > json5-parser — trailing commas > allows trailing comma in nested structures 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:88:3 > json5-parser — comments > ignores single-line comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 3ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:97:3 > json5-parser — comments > ignores comment between items 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:103:3 > json5-parser — special numbers > parses hex literal 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:104:3 > json5-parser — special numbers > parses uppercase hex 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:105:3 > json5-parser — special numbers > parses leading-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:106:3 > json5-parser — special numbers > parses trailing-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:107:3 > json5-parser — special numbers > parses Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:110:3 > json5-parser — special numbers > parses NaN 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:111:3 > json5-parser — special numbers > parses +1 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:115:3 > json5-parser — multiline string > line continuation splices strings 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:122:3 > json5-parser — error cases > throws SyntaxError for empty input 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:125:3 > json5-parser — error cases > throws SyntaxError for unterminated string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:128:3 > json5-parser — error cases > throws SyntaxError for unterminated array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:131:3 > json5-parser — error cases > throws SyntaxError for trailing garbage 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:134:3 > json5-parser — error cases > throws SyntaxError for unterminated block comment 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "JSON5 parser supporting single-quoted strings, unquoted keys, trailing commas, comments, hex numbers, Infinity, NaN, leading/trailing decimal points",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "skip whitespace and comments single-line block parser cursor",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse ECMAScript IdentifierName unquoted object key",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3672,
+              "output_tokens": 4096,
+              "cost_usd": 0.072456,
+              "wall_ms": 47452,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:32:3 > json5-parser — standard JSON (must pass) > parses null 6ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:33:3 > json5-parser — standard JSON (must pass) > parses true 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:34:3 > json5-parser — standard JSON (must pass) > parses false 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:35:3 > json5-parser — standard JSON (must pass) > parses integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:36:3 > json5-parser — standard JSON (must pass) > parses negative integer 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:37:3 > json5-parser — standard JSON (must pass) > parses float 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:38:3 > json5-parser — standard JSON (must pass) > parses double-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:39:3 > json5-parser — standard JSON (must pass) > parses empty object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:40:3 > json5-parser — standard JSON (must pass) > parses empty array 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:41:3 > json5-parser — standard JSON (must pass) > parses nested object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:44:3 > json5-parser — standard JSON (must pass) > parses array of values 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:50:3 > json5-parser — single-quoted strings > parses single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:51:3 > json5-parser — single-quoted strings > parses escaped single quote inside single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:54:3 > json5-parser — single-quoted strings > parses double-quote inside single-quoted string without escaping 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:60:3 > json5-parser — unquoted keys > parses object with unquoted key 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:63:3 > json5-parser — unquoted keys > parses object with reserved-word key 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:67:3 > json5-parser — unquoted keys > parses unquoted key with underscores and dollars 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:70:3 > json5-parser — unquoted keys > parses mixed quoted and unquoted keys 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:76:3 > json5-parser — trailing commas > allows trailing comma in array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:79:3 > json5-parser — trailing commas > allows trailing comma in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:82:3 > json5-parser — trailing commas > allows trailing comma in nested structures 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:88:3 > json5-parser — comments > ignores single-line comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:97:3 > json5-parser — comments > ignores comment between items 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:103:3 > json5-parser — special numbers > parses hex literal 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:104:3 > json5-parser — special numbers > parses uppercase hex 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:105:3 > json5-parser — special numbers > parses leading-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:106:3 > json5-parser — special numbers > parses trailing-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:107:3 > json5-parser — special numbers > parses Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:110:3 > json5-parser — special numbers > parses NaN 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:111:3 > json5-parser — special numbers > parses +1 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:115:3 > json5-parser — multiline string > line continuation splices strings 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:122:3 > json5-parser — error cases > throws SyntaxError for empty input 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:125:3 > json5-parser — error cases > throws SyntaxError for unterminated string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:128:3 > json5-parser — error cases > throws SyntaxError for unterminated array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:131:3 > json5-parser — error cases > throws SyntaxError for trailing garbage 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:134:3 > json5-parser — error cases > throws SyntaxError for unterminated block comment 1ms"
+              ],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "JSON5 parser supporting single-quoted strings, unquoted keys, trailing commas, comments, hex numbers, Infinity, NaN, leading/trailing decimal points",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "recursive descent parser with position tracking and SyntaxError throwing",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 2,
+                  "intent": "skip whitespace and comments single-line block comment parser",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 2,
+                  "intent": "parse ECMAScript identifier name unquoted object key IdentifierName",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3687,
+              "output_tokens": 4096,
+              "cost_usd": 0.072501,
+              "wall_ms": 49281,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:32:3 > json5-parser — standard JSON (must pass) > parses null 7ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:33:3 > json5-parser — standard JSON (must pass) > parses true 3ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:34:3 > json5-parser — standard JSON (must pass) > parses false 3ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:35:3 > json5-parser — standard JSON (must pass) > parses integer 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:36:3 > json5-parser — standard JSON (must pass) > parses negative integer 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:37:3 > json5-parser — standard JSON (must pass) > parses float 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:38:3 > json5-parser — standard JSON (must pass) > parses double-quoted string 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:39:3 > json5-parser — standard JSON (must pass) > parses empty object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:40:3 > json5-parser — standard JSON (must pass) > parses empty array 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:41:3 > json5-parser — standard JSON (must pass) > parses nested object 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:44:3 > json5-parser — standard JSON (must pass) > parses array of values 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:50:3 > json5-parser — single-quoted strings > parses single-quoted string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:51:3 > json5-parser — single-quoted strings > parses escaped single quote inside single-quoted string 3ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:54:3 > json5-parser — single-quoted strings > parses double-quote inside single-quoted string without escaping 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:60:3 > json5-parser — unquoted keys > parses object with unquoted key 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:63:3 > json5-parser — unquoted keys > parses object with reserved-word key 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:67:3 > json5-parser — unquoted keys > parses unquoted key with underscores and dollars 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:70:3 > json5-parser — unquoted keys > parses mixed quoted and unquoted keys 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:76:3 > json5-parser — trailing commas > allows trailing comma in array 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:79:3 > json5-parser — trailing commas > allows trailing comma in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:82:3 > json5-parser — trailing commas > allows trailing comma in nested structures 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:88:3 > json5-parser — comments > ignores single-line comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:97:3 > json5-parser — comments > ignores comment between items 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:103:3 > json5-parser — special numbers > parses hex literal 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:104:3 > json5-parser — special numbers > parses uppercase hex 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:105:3 > json5-parser — special numbers > parses leading-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:106:3 > json5-parser — special numbers > parses trailing-dot number 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:107:3 > json5-parser — special numbers > parses Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:110:3 > json5-parser — special numbers > parses NaN 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:111:3 > json5-parser — special numbers > parses +1 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:115:3 > json5-parser — multiline string > line continuation splices strings 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:122:3 > json5-parser — error cases > throws SyntaxError for empty input 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:125:3 > json5-parser — error cases > throws SyntaxError for unterminated string 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:128:3 > json5-parser — error cases > throws SyntaxError for unterminated array 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:131:3 > json5-parser — error cases > throws SyntaxError for trailing garbage 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:134:3 > json5-parser — error cases > throws SyntaxError for unterminated block comment 1ms"
+              ],
+              "tool_cycles": 2,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "JSON5 parser supporting single-quoted strings, unquoted keys, trailing commas, comments, hex numbers, Infinity, NaN",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "recursive descent parser character position tracking with whitespace and comment skipping",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 2,
+                  "intent": "parse JavaScript string escape sequences including unicode hex and special characters",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 2,
+                  "intent": "ECMAScript IdentifierName start and continue character validation",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 426,
+              "output_tokens": 3428,
+              "cost_usd": 0.014052799999999999,
+              "wall_ms": 14623,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 0,
+              "oracle_failures": [
+                "Subprocess spawn error: spawnSync C:\\WINDOWS\\system32\\cmd.exe ETIMEDOUT"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 426,
+              "output_tokens": 3403,
+              "cost_usd": 0.0139528,
+              "wall_ms": 14674,
+              "oracle_passed": false,
+              "oracle_pass_count": 38,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 426,
+              "output_tokens": 2243,
+              "cost_usd": 0.0093128,
+              "wall_ms": 10246,
+              "oracle_passed": false,
+              "oracle_pass_count": 36,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:91:3 > json5-parser — comments > ignores block comment 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:94:3 > json5-parser — comments > ignores inline comment in object 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 1ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms"
+              ],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2998,
+              "output_tokens": 3740,
+              "cost_usd": 0.017358400000000003,
+              "wall_ms": 18548,
+              "oracle_passed": false,
+              "oracle_pass_count": 38,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "parse JSON5 format with comments, unquoted keys, and single quotes",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "tokenize or lex JSON5 input stream",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "validate and parse numeric literals including hexadecimal and infinity",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1426,
+              "output_tokens": 3074,
+              "cost_usd": 0.013436799999999999,
+              "wall_ms": 16017,
+              "oracle_passed": false,
+              "oracle_pass_count": 38,
+              "oracle_total": 40,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:108:3 > json5-parser — special numbers > parses -Infinity 2ms",
+                "bench/B4-tokens-v3/tasks/json5-parser/oracle.test.ts:109:3 > json5-parser — special numbers > parses +Infinity 1ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Parse JSON5 format with support for comments, single quotes, unquoted keys, trailing commas",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Tokenize or lexically analyze JSON5 with whitespace and comment handling",
+                  "atoms_proposed": 0
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3070,
+              "output_tokens": 4003,
+              "cost_usd": 0.018468,
+              "wall_ms": 19809,
+              "oracle_passed": true,
+              "oracle_pass_count": 40,
+              "oracle_total": 40,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "tokenize or lex input string into tokens for parsing",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "parse JSON structure from tokens",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "handle string parsing with escape sequences",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "pkce-code-verifier",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 734,
+              "output_tokens": 420,
+              "cost_usd": 0.04251,
+              "wall_ms": 4643,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 734,
+              "output_tokens": 406,
+              "cost_usd": 0.04146,
+              "wall_ms": 5207,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 734,
+              "output_tokens": 406,
+              "cost_usd": 0.04146,
+              "wall_ms": 4791,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4142,
+              "output_tokens": 439,
+              "cost_usd": 0.095055,
+              "wall_ms": 10481,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encode a Buffer or byte array (replace + with -, / with _, strip = padding)",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "PKCE code verifier and S256 code challenge generation for OAuth 2.0",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant-time string comparison using crypto.timingSafeEqual with length check",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4168,
+              "output_tokens": 435,
+              "cost_usd": 0.095145,
+              "wall_ms": 10104,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encode a Buffer or byte array (replace + with -, / with _, strip = padding)",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash of an ASCII string returning Buffer using node:crypto",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant-time string equality comparison using crypto.timingSafeEqual that returns false on length mismatch instead of throwing",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4073,
+              "output_tokens": 473,
+              "cost_usd": 0.09657,
+              "wall_ms": 10339,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encoding of bytes (replace + with -, / with _, strip = padding)",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant-time string comparison using crypto.timingSafeEqual",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash of a string returning a Buffer",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 521,
+              "output_tokens": 308,
+              "cost_usd": 0.006183,
+              "wall_ms": 3668,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 521,
+              "output_tokens": 308,
+              "cost_usd": 0.006183,
+              "wall_ms": 4439,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 521,
+              "output_tokens": 305,
+              "cost_usd": 0.006138,
+              "wall_ms": 3646,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3707,
+              "output_tokens": 1735,
+              "cost_usd": 0.037146,
+              "wall_ms": 30428,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encode buffer without padding, replace + with - and / with _",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "generate cryptographically random bytes using crypto.randomBytes",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash of string returning Buffer using node crypto createHash",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant time string comparison using crypto.timingSafeEqual",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3717,
+              "output_tokens": 1700,
+              "cost_usd": 0.036651,
+              "wall_ms": 32767,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encode buffer without padding replace plus slash",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "cryptographically random bytes using node crypto randomBytes",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash buffer using node:crypto createHash",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant time buffer comparison using crypto timingSafeEqual",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3719,
+              "output_tokens": 2015,
+              "cost_usd": 0.041382,
+              "wall_ms": 40345,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encode buffer without padding using node crypto",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "generate cryptographically random bytes using crypto.randomBytes",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash buffer using node:crypto createHash",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant time buffer comparison using crypto.timingSafeEqual",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 520,
+              "output_tokens": 383,
+              "cost_usd": 0.001948,
+              "wall_ms": 2466,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 520,
+              "output_tokens": 321,
+              "cost_usd": 0.0017,
+              "wall_ms": 5299,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 520,
+              "output_tokens": 313,
+              "cost_usd": 0.001668,
+              "wall_ms": 1917,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3681,
+              "output_tokens": 718,
+              "cost_usd": 0.0058168000000000004,
+              "wall_ms": 8176,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encoding and decoding for PKCE code verifier and challenge",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "cryptographically secure random bytes generation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash computation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant-time string comparison for security",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 3712,
+              "output_tokens": 611,
+              "cost_usd": 0.0054136,
+              "wall_ms": 8187,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "PKCE code verifier generation using crypto.randomBytes",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "base64url encoding without padding",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "SHA-256 hash and base64url encode",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant-time comparison using crypto.timingSafeEqual",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1589,
+              "output_tokens": 511,
+              "cost_usd": 0.0033152,
+              "wall_ms": 5375,
+              "oracle_passed": true,
+              "oracle_pass_count": 17,
+              "oracle_total": 17,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "base64url encoding without padding",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "constant-time buffer comparison",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "cryptographic random bytes generation",
+                  "atoms_proposed": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "two-phase-commit",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 794,
+              "output_tokens": 921,
+              "cost_usd": 0.080985,
+              "wall_ms": 8809,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 794,
+              "output_tokens": 914,
+              "cost_usd": 0.08046,
+              "wall_ms": 9056,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 794,
+              "output_tokens": 934,
+              "cost_usd": 0.08196,
+              "wall_ms": 9479,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3403,
+              "output_tokens": 898,
+              "cost_usd": 0.118395,
+              "wall_ms": 14285,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Two-phase commit coordinator with participants voting yes/no",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "State machine with idle/prepared/committed/aborted transitions",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4137,
+              "output_tokens": 898,
+              "cost_usd": 0.129405,
+              "wall_ms": 12941,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Two-phase commit coordinator with participants having state machine for prepare/commit/abort",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Custom error class extending Error with proper prototype chain",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Finite state machine with guarded transitions and idempotent operations",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 4138,
+              "output_tokens": 967,
+              "cost_usd": 0.134595,
+              "wall_ms": 14631,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "two-phase commit coordinator protocol implementation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "finite state machine with transition validation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "custom Error subclass with message",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 609,
+              "output_tokens": 739,
+              "cost_usd": 0.012912,
+              "wall_ms": 6728,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 609,
+              "output_tokens": 739,
+              "cost_usd": 0.012912,
+              "wall_ms": 6288,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 609,
+              "output_tokens": 739,
+              "cost_usd": 0.012912,
+              "wall_ms": 7714,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 2593,
+              "output_tokens": 1611,
+              "cost_usd": 0.031944,
+              "wall_ms": 26424,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "two-phase commit coordinator synchronous participants prepare commit abort",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "state machine transition idle running committed aborted",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 2593,
+              "output_tokens": 1542,
+              "cost_usd": 0.030909,
+              "wall_ms": 25984,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "two-phase commit coordinator synchronous participants prepare commit abort",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "state machine transition idle running committed aborted",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 2595,
+              "output_tokens": 1540,
+              "cost_usd": 0.030885,
+              "wall_ms": 26620,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "two-phase commit coordinator synchronous participants prepare commit abort",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "state machine idle running committed aborted transitions",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 608,
+              "output_tokens": 790,
+              "cost_usd": 0.0036464,
+              "wall_ms": 3943,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 608,
+              "output_tokens": 813,
+              "cost_usd": 0.0037384000000000002,
+              "wall_ms": 4334,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 608,
+              "output_tokens": 843,
+              "cost_usd": 0.0038584,
+              "wall_ms": 4385,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2116,
+              "output_tokens": 833,
+              "cost_usd": 0.0050248,
+              "wall_ms": 7100,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "state machine with transitions between idle running committed aborted states",
+                  "atoms_proposed": 0
+                },
+                {
+                  "cycle": 1,
+                  "intent": "two phase commit protocol coordination",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2645,
+              "output_tokens": 905,
+              "cost_usd": 0.005736,
+              "wall_ms": 7584,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "state machine with transitions between multiple states",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "error handling with custom error class",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1999,
+              "output_tokens": 811,
+              "cost_usd": 0.0048432,
+              "wall_ms": 6196,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "state machine with transitions between states",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "kahan-running-stats",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 674,
+              "output_tokens": 713,
+              "cost_usd": 0.063585,
+              "wall_ms": 8032,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 674,
+              "output_tokens": 1003,
+              "cost_usd": 0.085335,
+              "wall_ms": 10235,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 674,
+              "output_tokens": 769,
+              "cost_usd": 0.067785,
+              "wall_ms": 8036,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3279,
+              "output_tokens": 832,
+              "cost_usd": 0.111585,
+              "wall_ms": 13099,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation accumulator (Neumaier variant) for floating point",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Welford's online algorithm for streaming variance and mean",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3267,
+              "output_tokens": 796,
+              "cost_usd": 0.108705,
+              "wall_ms": 12746,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation accumulator for floating point numbers",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Welford's online algorithm for streaming variance and mean",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3262,
+              "output_tokens": 700,
+              "cost_usd": 0.10143,
+              "wall_ms": 11557,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation accumulator for floating point numbers",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Welford online algorithm for streaming variance and mean",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 538,
+              "output_tokens": 577,
+              "cost_usd": 0.010269,
+              "wall_ms": 6001,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 538,
+              "output_tokens": 585,
+              "cost_usd": 0.010389,
+              "wall_ms": 5785,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 538,
+              "output_tokens": 587,
+              "cost_usd": 0.010419,
+              "wall_ms": 6766,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3152,
+              "output_tokens": 4096,
+              "cost_usd": 0.070896,
+              "wall_ms": 50844,
+              "oracle_passed": false,
+              "oracle_pass_count": 0,
+              "oracle_total": 22,
+              "oracle_failures": [
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:41:3 > KahanStats — sum > returns 0 for empty accumulator 8ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:45:3 > KahanStats — sum > returns 0 for empty count 4ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:49:3 > KahanStats — sum > sums simple integers 2ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:55:3 > KahanStats — sum > count tracks additions 2ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:61:3 > KahanStats — sum > sum is accurate for small values 2ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:69:3 > KahanStats — mean > throws RangeError on empty accumulator 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:73:3 > KahanStats — mean > mean of single value 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:79:3 > KahanStats — mean > mean of [1, 2, 3] is 2 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:85:3 > KahanStats — mean > mean of [10, 20, 30] is 20 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:93:3 > KahanStats — variance (Bessel correction n-1) > throws RangeError with count === 0 2ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:97:3 > KahanStats — variance (Bessel correction n-1) > throws RangeError with count === 1 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:103:3 > KahanStats — variance (Bessel correction n-1) > sample variance of [1, 3] is 2 (n-1 denominator) 4ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:110:3 > KahanStats — variance (Bessel correction n-1) > sample variance of [1, 2, 3] is 1 (n-1 denominator) 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:117:3 > KahanStats — variance (Bessel correction n-1) > sample variance uses n-1, NOT n 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:130:3 > KahanStats — stddev > throws RangeError when count < 2 4ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:136:3 > KahanStats — stddev > stddev of [1, 2, 3] is sqrt(1) = 1 4ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:142:3 > KahanStats — stddev > stddev = sqrt(variance) 2ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:150:3 > KahanStats — min/max > throws RangeError for min on empty 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:154:3 > KahanStats — min/max > throws RangeError for max on empty 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:158:3 > KahanStats — min/max > min and max of a single value 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:165:3 > KahanStats — min/max > tracks min and max across multiple values 3ms",
+                "bench/B4-tokens-v3/tasks/kahan-running-stats/oracle.test.ts:172:3 > KahanStats — min/max > handles negative values in min/max 2ms"
+              ],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation accumulator",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "streaming online variance calculation Welford algorithm",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "running min max tracker streaming values",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3182,
+              "output_tokens": 1390,
+              "cost_usd": 0.030396,
+              "wall_ms": 25146,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation accumulator streaming",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Welford online algorithm streaming variance mean accumulator",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "streaming min max tracker accumulator",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 3153,
+              "output_tokens": 1457,
+              "cost_usd": 0.031314,
+              "wall_ms": 25049,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation accumulator",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "streaming mean variance standard deviation accumulator online algorithm",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "running min max tracker streaming values",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 537,
+              "output_tokens": 638,
+              "cost_usd": 0.0029816,
+              "wall_ms": 3807,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 537,
+              "output_tokens": 632,
+              "cost_usd": 0.0029576,
+              "wall_ms": 3365,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 537,
+              "output_tokens": 611,
+              "cost_usd": 0.0028736,
+              "wall_ms": 3334,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2547,
+              "output_tokens": 1363,
+              "cost_usd": 0.007489600000000001,
+              "wall_ms": 9809,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation algorithm for floating point accumulation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "streaming statistics mean variance standard deviation calculation",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2556,
+              "output_tokens": 662,
+              "cost_usd": 0.0046928000000000004,
+              "wall_ms": 7356,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation algorithm",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "streaming statistics accumulator variance mean",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2595,
+              "output_tokens": 675,
+              "cost_usd": 0.004776,
+              "wall_ms": 6040,
+              "oracle_passed": true,
+              "oracle_pass_count": 22,
+              "oracle_total": 22,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Kahan compensated summation for accurate floating point sum accumulation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "streaming statistics accumulator for mean variance and standard deviation",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "token-bucket-rate-limiter",
+      "cells": [
+        {
+          "cell_id": "A",
+          "driver": "opus",
+          "arm": "unhooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 667,
+              "output_tokens": 1039,
+              "cost_usd": 0.08793,
+              "wall_ms": 10172,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 667,
+              "output_tokens": 916,
+              "cost_usd": 0.078705,
+              "wall_ms": 8579,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "A",
+              "driver": "opus",
+              "arm": "unhooked",
+              "input_tokens": 667,
+              "output_tokens": 1036,
+              "cost_usd": 0.087705,
+              "wall_ms": 10131,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "B",
+          "driver": "opus",
+          "arm": "hooked",
+          "model_id": "claude-opus-4-7",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3963,
+              "output_tokens": 1064,
+              "cost_usd": 0.139245,
+              "wall_ms": 14445,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Token bucket rate limiter with refill based on elapsed time",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Custom Error subclass with additional readonly properties",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Validate positive finite number argument throw TypeError",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3955,
+              "output_tokens": 1019,
+              "cost_usd": 0.13575,
+              "wall_ms": 14680,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Token bucket rate limiter class with capacity and refill rate",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Custom error class with extra readonly properties",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Validate positive number argument and throw TypeError",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "B",
+              "driver": "opus",
+              "arm": "hooked",
+              "input_tokens": 3965,
+              "output_tokens": 1002,
+              "cost_usd": 0.134625,
+              "wall_ms": 14021,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "Token bucket rate limiter class with capacity and refill rate",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Custom error class extending Error with additional numeric fields",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "Validate positive number argument, throw TypeError if not positive",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "C",
+          "driver": "sonnet",
+          "arm": "unhooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 487,
+              "output_tokens": 616,
+              "cost_usd": 0.010701,
+              "wall_ms": 8298,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 487,
+              "output_tokens": 649,
+              "cost_usd": 0.011196,
+              "wall_ms": 8885,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "C",
+              "driver": "sonnet",
+              "arm": "unhooked",
+              "input_tokens": 487,
+              "output_tokens": 615,
+              "cost_usd": 0.010686,
+              "wall_ms": 5593,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "D",
+          "driver": "sonnet",
+          "arm": "hooked",
+          "model_id": "claude-sonnet-4-6",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 2464,
+              "output_tokens": 1171,
+              "cost_usd": 0.024957,
+              "wall_ms": 17768,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "token bucket rate limiter with refill over time using Date.now",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RateLimitError custom error class with available and requested token counts",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 2457,
+              "output_tokens": 1237,
+              "cost_usd": 0.025926,
+              "wall_ms": 18498,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "token bucket rate limiter with refill over time using Date.now",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RateLimitError class with available and requested tokens fields",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "D",
+              "driver": "sonnet",
+              "arm": "hooked",
+              "input_tokens": 2462,
+              "output_tokens": 1290,
+              "cost_usd": 0.026736,
+              "wall_ms": 19798,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "token bucket rate limiter with refill based on elapsed time",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "RateLimitError class with available and requested token fields",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "cell_id": "E",
+          "driver": "haiku",
+          "arm": "unhooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 486,
+              "output_tokens": 661,
+              "cost_usd": 0.0030328,
+              "wall_ms": 3068,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 2,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 486,
+              "output_tokens": 672,
+              "cost_usd": 0.0030768,
+              "wall_ms": 3253,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            },
+            {
+              "rep": 3,
+              "cell_id": "E",
+              "driver": "haiku",
+              "arm": "unhooked",
+              "input_tokens": 486,
+              "output_tokens": 681,
+              "cost_usd": 0.0031128,
+              "wall_ms": 3630,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 0,
+              "substitution_events": []
+            }
+          ]
+        },
+        {
+          "cell_id": "F",
+          "driver": "haiku",
+          "arm": "hooked",
+          "model_id": "claude-haiku-4-5-20251001",
+          "reps": [
+            {
+              "rep": 1,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2468,
+              "output_tokens": 699,
+              "cost_usd": 0.004770399999999999,
+              "wall_ms": 5935,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "token bucket rate limiting mechanism with capacity and refill rate",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "error class for rate limit exceeded with available and requested tokens",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 2,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 1806,
+              "output_tokens": 705,
+              "cost_usd": 0.0042648,
+              "wall_ms": 5230,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "token bucket rate limiting with time-based refill",
+                  "atoms_proposed": 5
+                }
+              ]
+            },
+            {
+              "rep": 3,
+              "cell_id": "F",
+              "driver": "haiku",
+              "arm": "hooked",
+              "input_tokens": 2445,
+              "output_tokens": 709,
+              "cost_usd": 0.004792,
+              "wall_ms": 5645,
+              "oracle_passed": true,
+              "oracle_pass_count": 18,
+              "oracle_total": 18,
+              "oracle_failures": [],
+              "tool_cycles": 1,
+              "substitution_events": [
+                {
+                  "cycle": 1,
+                  "intent": "token bucket rate limiter implementation",
+                  "atoms_proposed": 5
+                },
+                {
+                  "cycle": 1,
+                  "intent": "rate limiting with token bucket algorithm",
+                  "atoms_proposed": 5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
