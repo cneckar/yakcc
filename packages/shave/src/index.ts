@@ -193,11 +193,11 @@ export async function seedIntentCache(spec: SeedIntentSpec, card: IntentCard): P
 export { validateIntentCard } from "./intent/validate-intent-card.js";
 
 // Error classes — exported as named classes so callers can use instanceof.
+// DEC-LICENSE-GATE-REMOVE-001: LicenseRefusedError removed (WI-682, 2026-05-17).
 export {
   AnthropicApiKeyMissingError,
   ForeignPolicyRejectError,
   IntentCardSchemaError,
-  LicenseRefusedError,
   OfflineCacheMissError,
   PersistRequestedButNotSupportedError,
 } from "./errors.js";
@@ -284,18 +284,6 @@ export type {
 } from "./universalize/types.js";
 
 // ---------------------------------------------------------------------------
-// Re-exports — WI-013-01 license gate public surface
-// ---------------------------------------------------------------------------
-
-export { detectLicense } from "./license/detector.js";
-export { licenseGate } from "./license/gate.js";
-export type {
-  AcceptedLicense,
-  LicenseDetection,
-  LicenseGateResult,
-} from "./license/types.js";
-
-// ---------------------------------------------------------------------------
 // WI-V2-04 L5: foreign-policy gate public surface
 // ---------------------------------------------------------------------------
 
@@ -364,7 +352,6 @@ import {
 } from "./cache/key.js";
 import {
   ForeignPolicyRejectError,
-  LicenseRefusedError,
   PersistRequestedButNotSupportedError,
 } from "./errors.js";
 import {
@@ -376,8 +363,6 @@ import {
 } from "./intent/constants.js";
 import { extractIntent } from "./intent/extract.js";
 import type { IntentCard } from "./intent/types.js";
-import { detectLicense } from "./license/detector.js";
-import { licenseGate } from "./license/gate.js";
 import { locateProjectRoot } from "./locate-root.js";
 import { maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
 import { FOREIGN_POLICY_DEFAULT } from "./types.js";
@@ -422,30 +407,23 @@ import type { ForeignLeafEntry, NovelGlueEntry, SlicePlanEntry } from "./univers
  * live. "license-gate" is removed — gate is now live (WI-013-02).
  * "variance" is removed — variance ranking is now live (WI-011 / #374).
  *
- * @decision DEC-LICENSE-WIRING-002
- * title: License gate runs first in universalize() (WI-013-02)
- * status: decided
- * rationale:
- *   - The gate is cheap (pure string scan, no I/O) and fail-fast: refusing a
- *     copyleft candidate before any extractIntent or decompose() call avoids
- *     wasted API quota and computation.
- *   - A single source check on candidate.source covers all leaves: every leaf
- *     produced by decompose() derives from the same source string, so re-checking
- *     per-leaf would be redundant and would not change the gate outcome.
- *   - The gate is the second-line defense; detectLicense() is the first signal.
- *     LicenseRefusedError carries the LicenseDetection so callers can introspect
- *     why the candidate was refused.
- *   - "license-gate" is removed from diagnostics.stubbed now that this gate is live.
+ * @decision DEC-LICENSE-GATE-REMOVE-001
+ * title: License gate removed from universalize() (WI-682, 2026-05-17)
+ * status: accepted
+ * rationale: Operator DEC (2026-05-17): yakcc reimplements behavior, not source.
+ *   License-of-origin gating is misapplied defense-in-depth. See MASTER_PLAN.md
+ *   DEC-LICENSE-GATE-REMOVE-001 for full rationale.
+ * supersedes: DEC-LICENSE-GATE-001, DEC-LICENSE-WIRING-002
+ * closes: #682
  *
  * Process a single candidate block through the universalization pipeline.
  *
  * WI-012-06: wired to decompose() + slice() in addition to extractIntent.
- * WI-013-02: license gate runs before intent extraction (fail-fast, cheap).
+ * WI-682: license gate removed (DEC-LICENSE-GATE-REMOVE-001, 2026-05-17).
  * Requires either:
  *   - ANTHROPIC_API_KEY set in the environment, OR
  *   - options.offline === true with a pre-populated cache entry.
  *
- * Throws LicenseRefusedError if the candidate's source carries a refused license.
  * Throws AnthropicApiKeyMissingError if neither condition is met.
  * Throws OfflineCacheMissError if offline mode is set and the cache has no entry.
  * Throws DidNotReachAtomError if decomposition cannot reach atomic leaves.
@@ -464,20 +442,12 @@ export async function universalize(
   const projectRoot = await locateProjectRoot();
   const cacheDir = options?.cacheDir ?? join(projectRoot, ".yakcc", "shave-cache", "intent");
 
-  // Step 1: license gate — cheap, fail-fast, runs before any I/O.
-  // Per DEC-LICENSE-WIRING-002: one check on the full source string covers all
-  // leaves because every leaf derives from the same source text.
-  const detection = detectLicense(candidate.source);
-  const gateResult = licenseGate(detection);
-  if (!gateResult.accepted) {
-    throw new LicenseRefusedError(gateResult.reason, detection);
-  }
-
-  // Step 2: extract intent card.
+  // Step 1: extract intent card.
   // WI-022: plumb intentStrategy through to extractIntent. Default "static"
   // per DEC-INTENT-STRATEGY-001. The model/promptVersion fields are only
   // consumed by the "llm" path; for "static" they are ignored (the static
   // path uses STATIC_MODEL_TAG/STATIC_PROMPT_VERSION internally).
+  // DEC-LICENSE-GATE-REMOVE-001: license gate removed (WI-682, 2026-05-17).
   const intentCard = await extractIntent(candidate.source, {
     strategy: options?.intentStrategy ?? "static",
     model: options?.model ?? DEFAULT_MODEL,
@@ -486,15 +456,15 @@ export async function universalize(
     offline: options?.offline,
   });
 
-  // Step 3: decompose source into a RecursionTree.
+  // Step 2: decompose source into a RecursionTree.
   // DidNotReachAtomError and RecursionDepthExceededError propagate unwrapped —
   // per DEC-RECURSION-005, these are load-bearing reviewer-gate failures.
   const tree = await decompose(candidate.source, registry, options?.recursionOptions);
 
-  // Step 4: slice the RecursionTree into a SlicePlan.
+  // Step 3: slice the RecursionTree into a SlicePlan.
   const plan = await slice(tree, registry);
 
-  // Step 5: attach intentCard to every NovelGlueEntry in the slice plan.
+  // Step 4: attach intentCard to every NovelGlueEntry in the slice plan.
   //
   // Single-leaf case: attach the already-extracted root intentCard directly.
   // Multi-leaf case: call extractIntent per novel-glue entry.
@@ -571,7 +541,7 @@ export async function universalize(
     slicePlan = enrichedEntries;
   }
 
-  // Step 6 (NEW — WI-373): in-pipeline atom persistence, gated on options.persist === true.
+  // Step 5 (WI-373): in-pipeline atom persistence, gated on options.persist === true.
   //
   // @decision DEC-UNIVERSALIZE-PERSIST-PIPELINE-001
   // @title Persistence step 6 runs after intentCard attachment, postorder DFS, with parentBlockRoot lineage
@@ -683,14 +653,15 @@ export async function universalize(
  * Process a source file through the full shave pipeline.
  *
  * Reads the source file at `sourcePath`, wraps it in a CandidateBlock, and
- * runs it through universalize() (license gate → intent extraction →
- * decompose → slice). Returns a ShaveResult with atoms derived from the
- * SlicePlan, the extracted intent card, and forwarded diagnostics.
+ * runs it through universalize() (intent extraction → decompose → slice).
+ * Returns a ShaveResult with atoms derived from the SlicePlan, the extracted
+ * intent card, and forwarded diagnostics.
  *
  * Throws a plain Error (mentioning the path) if the file is not found.
- * All universalize() errors (LicenseRefusedError, AnthropicApiKeyMissingError,
+ * All universalize() errors (AnthropicApiKeyMissingError,
  * OfflineCacheMissError, DidNotReachAtomError, RecursionDepthExceededError)
  * propagate unwrapped.
+ * Note: license-of-origin is not gated at ingestion (DEC-LICENSE-GATE-REMOVE-001).
  *
  * @param sourcePath - Absolute path to the source file to process.
  * @param registry   - Registry view used for block lookups.

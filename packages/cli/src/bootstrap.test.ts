@@ -506,109 +506,6 @@ describe("bootstrap expected-failures exemption", () => {
     return filePath;
   }
 
-  it("reclassifies a LicenseRefusedError failure as expected-failure and exits 0", async () => {
-    // Create a fixture project with a no-SPDX file (triggers LicenseRefusedError or
-    // similar gate failure). We also include one valid file so the bootstrap isn't empty.
-    const projDir = makeFixtureProject(suiteDir, "proj-ef-basic", [
-      {
-        relativePath: "packages/foo/src/ok.ts",
-        content: VALID_TS_SOURCE,
-      },
-      {
-        relativePath: "packages/foo/src/bad.ts",
-        content: NO_SPDX_SOURCE,
-      },
-    ]);
-
-    // Run without expected-failures first to confirm bad.ts causes a real failure.
-    const registryPath1 = join(suiteDir, "ef-basic-r1.sqlite");
-    const manifestPath1 = join(suiteDir, "ef-basic-m1.json");
-    const reportPath1 = join(suiteDir, "ef-basic-rep1.json");
-
-    const origCwd = process.cwd();
-    process.chdir(projDir);
-    let codeWithout: number;
-    let errorClassObserved: string;
-    try {
-      const logger1 = new CollectingLogger();
-      codeWithout = await bootstrap(
-        ["--registry", registryPath1, "--manifest", manifestPath1, "--report", reportPath1],
-        logger1,
-      );
-      // Must fail without the exemption.
-      expect(codeWithout).toBe(1);
-
-      // Discover the actual errorClass the shave pipeline throws for this fixture.
-      const report1 = JSON.parse(readFileSync(reportPath1, "utf-8")) as Array<{
-        outcome: string;
-        path: string;
-        errorClass?: string;
-      }>;
-      const badEntry = report1.find((r) => r.path.endsWith("bad.ts"));
-      expect(badEntry).toBeDefined();
-      expect(badEntry?.outcome).toBe("failure");
-      errorClassObserved = badEntry?.errorClass ?? "Error";
-    } finally {
-      process.chdir(origCwd);
-    }
-
-    // Write an expected-failures.json that covers bad.ts with the observed errorClass.
-    // The path in expected-failures.json must be repo-relative (matches outcomes[].path).
-    const efPath = makeExpectedFailuresFile(suiteDir, "ef-basic.json", [
-      {
-        path: "packages/foo/src/bad.ts",
-        errorClass: errorClassObserved,
-        rationale: "Test fixture: intentional license-gate failure for unit test coverage.",
-      },
-    ]);
-
-    // Run again with expected-failures — bad.ts should be reclassified, exit 0.
-    const registryPath2 = join(suiteDir, "ef-basic-r2.sqlite");
-    const manifestPath2 = join(suiteDir, "ef-basic-m2.json");
-    const reportPath2 = join(suiteDir, "ef-basic-rep2.json");
-
-    process.chdir(projDir);
-    try {
-      const logger2 = new CollectingLogger();
-      const codeWith = await bootstrap(
-        [
-          "--registry",
-          registryPath2,
-          "--manifest",
-          manifestPath2,
-          "--report",
-          reportPath2,
-          "--expected-failures",
-          efPath,
-        ],
-        logger2,
-      );
-
-      // Exit 0: the only failure is now an expected-failure.
-      expect(codeWith).toBe(0);
-
-      // Report must show outcome:"expected-failure" for bad.ts.
-      expect(existsSync(reportPath2)).toBe(true);
-      const report2 = JSON.parse(readFileSync(reportPath2, "utf-8")) as Array<{
-        outcome: string;
-        path: string;
-        errorClass?: string;
-        rationale?: string;
-      }>;
-      const efEntry = report2.find((r) => r.path.endsWith("bad.ts"));
-      expect(efEntry).toBeDefined();
-      expect(efEntry?.outcome).toBe("expected-failure");
-      expect(efEntry?.rationale).toContain("Test fixture");
-
-      // Summary output must mention expected-failures count.
-      const logOutput = logger2.logLines.join("\n");
-      expect(logOutput).toContain("expected-failures");
-      expect(logOutput).toContain("1");
-    } finally {
-      process.chdir(origCwd);
-    }
-  }, 120_000);
-
   it("still exits 1 when a non-exempted file also fails", async () => {
     // Two bad files; only one is in expected-failures.json. The other must still fail.
     const projDir = makeFixtureProject(suiteDir, "proj-ef-partial", [
@@ -705,9 +602,9 @@ describe("bootstrap expected-failures exemption", () => {
 
     const efPath = makeExpectedFailuresFile(suiteDir, "ef-untriggered.json", [
       {
-        path: "examples/v0.7-mri-demo/src/gpl-fixture.ts",
-        errorClass: "LicenseRefusedError",
-        rationale: "Intentional GPL fixture — but this fixture is not in this mini-project.",
+        path: "examples/some-fixture-that-does-not-exist.ts",
+        errorClass: "DidNotReachAtomError",
+        rationale: "Test fixture: intentional entry that is never triggered — path not in mini-project.",
       },
     ]);
 
@@ -740,7 +637,7 @@ describe("bootstrap expected-failures exemption", () => {
       const logOutput = logger.logLines.join("\n");
       expect(logOutput).toContain("warning");
       expect(logOutput).toContain("expected-failure");
-      expect(logOutput).toContain("gpl-fixture.ts");
+      expect(logOutput).toContain("some-fixture-that-does-not-exist.ts");
     } finally {
       process.chdir(origCwd);
     }

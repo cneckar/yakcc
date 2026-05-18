@@ -31,18 +31,6 @@ describe("errors.ts — Path A property corpus", () => {
     fc.assert(Props.prop_IntentCardSchemaError_name_and_instanceof);
   });
 
-  it("property: LicenseRefusedError — message contains reason", () => {
-    fc.assert(Props.prop_LicenseRefusedError_message_contains_reason);
-  });
-
-  it("property: LicenseRefusedError — detection field matches constructor arg", () => {
-    fc.assert(Props.prop_LicenseRefusedError_detection_field_matches_arg);
-  });
-
-  it("property: LicenseRefusedError — name and instanceof invariants", () => {
-    fc.assert(Props.prop_LicenseRefusedError_name_and_instanceof);
-  });
-
   it("property: ForeignPolicyRejectError — message includes all pkg#export pairs", () => {
     fc.assert(Props.prop_ForeignPolicyRejectError_message_includes_all_refs);
   });

@@ -1,8 +1,8 @@
 # v0.7-mri-demo
 
 v0.7 acceptance demo for yakcc. Exercises the universalize pipeline
-(license gate → intent extraction → decompose → slice) end-to-end on a
-small TS argv parser adapted from `lukeed/mri`.
+(intent extraction → decompose → slice) end-to-end on a small TS argv
+parser adapted from `lukeed/mri`.
 
 ## Purpose
 
