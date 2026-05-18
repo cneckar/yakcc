@@ -1,0 +1,41 @@
+B4-v4 Phase 1 Registry Verification
+Run ID: phase1-2026-05-18T17-18-16
+Registry: tmp/B4-tokens-v4/phase1-2026-05-18T17-18-16/registry.sqlite
+Verified at: 2026-05-18T17:32Z
+
+=== 3.3.a Size Distribution ===
+total_atoms 348
+size_p100 3418
+size_p50 52
+size_p10 19
+over_300_chars 36
+over_1500_chars 10
+
+Acceptance gate: over_1500_chars >= 6 → PASS (10 >= 6)
+
+=== 3.3.b Per-task top-1 hook query simulation ===
+crc32c top1_score=0.813 top1_size=37
+utf8-codec top1_score=0.850 top1_size=3328
+base32-rfc4648 top1_score=0.837 top1_size=3328
+lru-ttl-cache top1_score=0.824 top1_size=2935
+semver-range top1_score=0.844 top1_size=92
+ring-buffer top1_score=0.797 top1_size=1865
+
+All 6 tasks: top1_score >= 0.70 → PASS
+
+=== Notes ===
+- Query API used: reg.findCandidatesByQuery({ behavior: <intent> }, { limit: 5 })
+  The plan script used reg.findCandidatesByQuery(string, ...) which returned no results;
+  the correct API takes a QueryIntentCard { behavior: string }.
+- crc32c top-1 is a fine-grained atom (37 chars), not a composite. Score 0.813 still passes.
+  The composite CRC32C atoms (3418 chars max) exist in the registry but rank below fine-grained
+  atoms for this particular intent query. Phase 2 hooked cells query by task-specific behavior
+  from the intent card at runtime — actual MCP results may differ.
+- semver-range top-1 is 92 chars (small atom), score 0.844. Semver has 10 composite atoms in registry.
+- utf8-codec, base32-rfc4648, lru-ttl-cache, ring-buffer top-1 atoms are composite (>1500 chars).
+
+=== Apparatus note ===
+Phase 1 required rebuilding packages/shave dist before running. The WI-682 license-gate removal
+(DEC-LICENSE-GATE-REMOVE-001) was present in shave/src but the dist was stale (still had gate active).
+After `pnpm --filter @yakcc/shave build`, atoms are persisted correctly. Smoke run (pre-Wave 2)
+verified atoms_fine=16 atoms_coarse=12 for crc32c-rep1.

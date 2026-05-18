@@ -1,0 +1,1 @@
+{"run_id":"phase1-2026-05-18T17-11-11","phase":1,"task_id":"crc32c","rep":1,"driver":"opus","arm":"unhooked","model_id":"claude-opus-4-7","input_tokens":576,"output_tokens":481,"cost_usd":0.044715,"cumulative_cost_usd":0.044715,"wall_ms":5841,"ts":"2026-05-18T17:11:17.472Z","atom_merkle_roots_fine":[],"atom_merkle_roots_coarse":[]}
