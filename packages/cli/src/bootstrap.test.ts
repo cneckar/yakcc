@@ -604,7 +604,8 @@ describe("bootstrap expected-failures exemption", () => {
       {
         path: "examples/some-fixture-that-does-not-exist.ts",
         errorClass: "DidNotReachAtomError",
-        rationale: "Test fixture: intentional entry that is never triggered — path not in mini-project.",
+        rationale:
+          "Test fixture: intentional entry that is never triggered — path not in mini-project.",
       },
     ]);
 

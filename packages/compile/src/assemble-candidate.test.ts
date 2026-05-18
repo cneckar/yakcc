@@ -61,11 +61,7 @@ import {
 } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry } from "@yakcc/registry";
-import {
-  type IntentCard,
-  type SeedIntentSpec,
-  seedIntentCache,
-} from "@yakcc/shave";
+import { type IntentCard, type SeedIntentSpec, seedIntentCache } from "@yakcc/shave";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CandidateNotResolvableError, assembleCandidate } from "./assemble-candidate.js";
 

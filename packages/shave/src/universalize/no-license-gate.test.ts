@@ -94,11 +94,9 @@ const add = (a: number, b: number): number => a + b;`;
 describe("WI-682 regression: no ingest-side license gate", () => {
   it("accepts source with no SPDX header and returns a valid result", async () => {
     // The old LicenseRefusedError would have been thrown here for missing SPDX.
-    const result = await universalize(
-      { source: SOURCE_NO_SPDX },
-      emptyRegistry,
-      { intentStrategy: "static" },
-    );
+    const result = await universalize({ source: SOURCE_NO_SPDX }, emptyRegistry, {
+      intentStrategy: "static",
+    });
 
     // Did not throw — gate is gone.
     expect(result).toBeDefined();
@@ -116,11 +114,9 @@ describe("WI-682 regression: no ingest-side license gate", () => {
 
   it("accepts source with GPL-2.0-only SPDX header without throwing", async () => {
     // The old gate refused GPL with LicenseRefusedError.
-    const result = await universalize(
-      { source: SOURCE_GPL_SPDX },
-      emptyRegistry,
-      { intentStrategy: "static" },
-    );
+    const result = await universalize({ source: SOURCE_GPL_SPDX }, emptyRegistry, {
+      intentStrategy: "static",
+    });
 
     expect(result).toBeDefined();
     expect(result.intentCard).toBeDefined();
@@ -129,11 +125,9 @@ describe("WI-682 regression: no ingest-side license gate", () => {
 
   it("accepts source with AGPL-3.0-or-later SPDX header without throwing", async () => {
     // The old gate refused AGPL with LicenseRefusedError (strongest copyleft).
-    const result = await universalize(
-      { source: SOURCE_AGPL_SPDX },
-      emptyRegistry,
-      { intentStrategy: "static" },
-    );
+    const result = await universalize({ source: SOURCE_AGPL_SPDX }, emptyRegistry, {
+      intentStrategy: "static",
+    });
 
     expect(result).toBeDefined();
     expect(result.intentCard).toBeDefined();
@@ -159,11 +153,9 @@ describe("WI-682 regression: no ingest-side license gate", () => {
      *   - matchedPrimitives is empty (emptyRegistry — step 3 slicer ran correctly).
      *   - diagnostics.stubbed is empty (no stubbed steps remain).
      */
-    const result = await universalize(
-      { source: SOURCE_NO_SPDX },
-      emptyRegistry,
-      { intentStrategy: "static" },
-    );
+    const result = await universalize({ source: SOURCE_NO_SPDX }, emptyRegistry, {
+      intentStrategy: "static",
+    });
 
     // Step 0 (old gate position): did not throw.
     expect(result).toBeDefined();
