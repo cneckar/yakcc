@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import * as continueExports from "@yakcc/hooks-continue";
+import * as continueExports from "./index.js";
 import * as clineExports from "@yakcc/hooks-cline";
 
 describe("@yakcc/hooks-continue re-export parity", () => {
