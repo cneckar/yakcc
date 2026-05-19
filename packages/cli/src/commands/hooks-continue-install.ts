@@ -33,6 +33,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { updateInstalledHooks } from "../lib/rc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -119,6 +120,9 @@ export async function hooksContinueInstall(
     return 1;
   }
 
+  // Project root for rc file updates; IDE config dir is separate (home-based).
+  const targetDir = parsed.values.target ?? ".";
+
   // Resolve the Continue.dev config directory.
   // overrideContinueDir is the injection seam for tests; production uses ~/.continue/.
   const continueDir = overrideContinueDir ?? join(homedir(), ".continue");
@@ -143,12 +147,14 @@ export async function hooksContinueInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    updateInstalledHooks(targetDir, "continue", "remove");
     logger.log(`yakcc continue hook marker removed: ${markerPath}`);
     return 0;
   }
 
   // --- Install path ---
   if (isYakccInstalled(markerPath)) {
+    updateInstalledHooks(targetDir, "continue", "add");
     logger.log(`yakcc continue hook already installed at ${markerPath} (idempotent).`);
     return 0;
   }
@@ -174,6 +180,7 @@ export async function hooksContinueInstall(
     return 1;
   }
 
+  updateInstalledHooks(targetDir, "continue", "add");
   logger.log(`yakcc continue hook marker installed: ${markerPath}`);
   logger.log(
     "note: Continue.dev tool-call interception API not yet stable — see marker for details.",

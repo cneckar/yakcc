@@ -38,6 +38,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { updateInstalledHooks } from "../lib/rc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -124,6 +125,9 @@ export async function hooksAiderInstall(
     return 1;
   }
 
+  // Project root for rc file updates; IDE config dir is separate (home-based).
+  const targetDir = parsed.values.target ?? ".";
+
   // Resolve the Aider config directory.
   // overrideAiderDir is the injection seam for tests; production uses ~/.aider/.
   const aiderDir = overrideAiderDir ?? join(homedir(), ".aider");
@@ -148,12 +152,14 @@ export async function hooksAiderInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    updateInstalledHooks(targetDir, "aider", "remove");
     logger.log(`yakcc aider hook marker removed: ${markerPath}`);
     return 0;
   }
 
   // --- Install path ---
   if (isYakccInstalled(markerPath)) {
+    updateInstalledHooks(targetDir, "aider", "add");
     logger.log(`yakcc aider hook already installed at ${markerPath} (idempotent).`);
     return 0;
   }
@@ -181,6 +187,7 @@ export async function hooksAiderInstall(
     return 1;
   }
 
+  updateInstalledHooks(targetDir, "aider", "add");
   logger.log(`yakcc aider hook marker installed: ${markerPath}`);
   logger.log(
     "note: Aider hook wiring via --lint-cmd/--test-cmd deferred — see marker for details.",

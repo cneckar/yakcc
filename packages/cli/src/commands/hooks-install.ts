@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { updateInstalledHooks } from "../lib/rc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -197,6 +198,7 @@ export async function hooksClaudeCodeInstall(
       logger.error(`error: cannot write ${settingsPath}: ${String(err)}`);
       return 1;
     }
+    updateInstalledHooks(targetDir, "claude-code", "remove");
     logger.log(`yakcc hook removed from ${settingsPath}`);
     return 0;
   }
@@ -219,6 +221,8 @@ export async function hooksClaudeCodeInstall(
       // Non-fatal: the main install succeeded.
     }
   }
+
+  updateInstalledHooks(targetDir, "claude-code", "add");
 
   if (alreadyInstalled) {
     logger.log(`yakcc hook already installed at ${settingsPath} (idempotent).`);

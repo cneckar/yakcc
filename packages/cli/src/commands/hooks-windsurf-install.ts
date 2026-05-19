@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { updateInstalledHooks } from "../lib/rc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -172,6 +173,7 @@ export async function hooksWindsurfInstall(
       logger.error(`error: cannot write ${settingsPath}: ${String(err)}`);
       return 1;
     }
+    updateInstalledHooks(targetDir, "windsurf", "remove");
     logger.log(`yakcc windsurf hook removed from ${settingsPath}`);
     return 0;
   }
@@ -210,6 +212,8 @@ export async function hooksWindsurfInstall(
     logger.error(`warning: cannot write marker file ${markerPath}: ${String(err)}`);
     // Non-fatal: the settings.json update succeeded.
   }
+
+  updateInstalledHooks(targetDir, "windsurf", "add");
 
   if (alreadyInstalled) {
     logger.log(`yakcc windsurf hook already installed at ${settingsPath} (idempotent).`);

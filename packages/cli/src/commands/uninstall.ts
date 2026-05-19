@@ -31,12 +31,13 @@
 //   Visibility is via the summary line, not a confirmation gate. Uses rmSync with
 //   { recursive: true, force: true } per C4 (cross-platform path safety).
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { RC_FILENAME, type YakccRc, readRc } from "../lib/rc.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
@@ -50,23 +51,6 @@ import { hooksWindsurfInstall } from "./hooks-windsurf-install.js";
 
 /** Subdirectory for all yakcc operational data — removed on `--purge`. */
 const YAKCC_DIR = ".yakcc";
-
-/** Config file at project root — read (for installedHooks) and mutated or deleted. */
-const RC_FILENAME = ".yakccrc.json";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/**
- * Flexible rc schema — only the fields uninstall.ts needs are typed; the rest
- * are preserved verbatim (EC-S2-I3: version stays 1, additive-only, no field removal).
- */
-interface YakccRc {
-  version: number;
-  installedHooks?: string[];
-  [key: string]: unknown;
-}
 
 // ---------------------------------------------------------------------------
 // Options injection seam (mirrors init.ts InitOptions)
@@ -86,21 +70,6 @@ export interface UninstallOptions {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Read `.yakccrc.json` from target directory, or return null if absent/corrupt.
- * Parsing errors are silently swallowed and treated as "no rc" — the caller
- * falls through to the detectInstalledIdes() tier.
- */
-function readRc(targetDir: string): YakccRc | null {
-  const rcPath = join(targetDir, RC_FILENAME);
-  if (!existsSync(rcPath)) return null;
-  try {
-    return JSON.parse(readFileSync(rcPath, "utf-8")) as YakccRc;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Parse a comma-separated `--ide` value into a list of IdeName.

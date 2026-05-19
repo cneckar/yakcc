@@ -12,12 +12,18 @@
  *   hook wiring yet; idempotent install/uninstall.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CollectingLogger } from "../index.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
+
+function readRc(dir: string): Record<string, unknown> | null {
+  const p = join(dir, ".yakccrc.json");
+  if (!existsSync(p)) return null;
+  return JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+}
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -174,5 +180,46 @@ describe("hooksContinueInstall — invalid flags", () => {
     const code = await hooksContinueInstall(["--bogus-flag"], logger, fakeContinueDir);
     expect(code).toBe(1);
     expect(logger.errLines.some((l) => l.includes("error:"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 5: .yakccrc.json installedHooks bookkeeping (#759)
+// ---------------------------------------------------------------------------
+
+describe("hooksContinueInstall — .yakccrc.json installedHooks bookkeeping", () => {
+  it("install with --target and existing rc adds 'continue' to installedHooks", async () => {
+    writeFileSync(
+      join(tmpDir, ".yakccrc.json"),
+      JSON.stringify({ version: 1, registry: { path: ".yakcc/registry.sqlite" }, installedHooks: [] }, null, 2),
+      "utf-8",
+    );
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("continue")).toBe(true);
+  });
+
+  it("install with --target and no rc creates .yakccrc.json with installedHooks: ['continue']", async () => {
+    expect(existsSync(join(tmpDir, ".yakccrc.json"))).toBe(false);
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect(rc?.installedHooks).toEqual(["continue"]);
+  });
+
+  it("install twice with --target does not duplicate 'continue' (idempotent)", async () => {
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const rc = readRc(tmpDir);
+    const hooks = rc?.installedHooks as string[];
+    expect(hooks.filter((h) => h === "continue").length).toBe(1);
+  });
+
+  it("--uninstall with --target removes 'continue' from installedHooks", async () => {
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    await hooksContinueInstall(["--uninstall", "--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const rc = readRc(tmpDir);
+    const hooks = rc?.installedHooks as string[];
+    expect(hooks.includes("continue")).toBe(false);
   });
 });

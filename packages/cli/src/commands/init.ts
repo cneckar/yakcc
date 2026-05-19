@@ -52,12 +52,13 @@
 //   Installer dispatch uses a thin table (DEC-CLI-IDE-INSTALLER-DISPATCH-001).
 //   Backward compat preserved: --target and --peer semantics unchanged.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { RC_FILENAME, type YakccRc, readRc, writeRc } from "../lib/rc.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
@@ -80,9 +81,6 @@ const YAKCC_SUBDIRS = ["registry", "telemetry", "config"] as const;
 /** Default registry path relative to target. */
 const DEFAULT_REGISTRY_SUBPATH = ".yakcc/registry.sqlite";
 
-/** Config file written at the project root (see DEC-CLI-INIT-001). */
-const RC_FILENAME = ".yakccrc.json";
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -96,41 +94,6 @@ const RC_FILENAME = ".yakccrc.json";
  * - "global": --peer <url> was provided; will mirror from that peer on init.
  */
 type YakccMode = "local" | "airgapped" | "global";
-
-/** Shape of the .yakccrc.json written by init. */
-interface YakccRc {
-  version: 1;
-  mode?: YakccMode;
-  registry: {
-    path: string;
-  };
-  federation?: {
-    peers: string[];
-  };
-  installedHooks?: string[];
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Read .yakccrc.json from target directory, or return null if absent/corrupt.
- */
-function readRc(targetDir: string): YakccRc | null {
-  const rcPath = join(targetDir, RC_FILENAME);
-  if (!existsSync(rcPath)) return null;
-  try {
-    return JSON.parse(readFileSync(rcPath, "utf-8")) as YakccRc;
-  } catch {
-    return null;
-  }
-}
-
-/** Write .yakccrc.json to target directory. */
-function writeRc(targetDir: string, rc: YakccRc): void {
-  writeFileSync(join(targetDir, RC_FILENAME), `${JSON.stringify(rc, null, 2)}\n`, "utf-8");
-}
 
 /**
  * Validate a peer URL string: must be http:// or https://.
@@ -212,14 +175,14 @@ async function installHookForIde(
     case "cline": {
       const { join } = await import("node:path");
       const clineDir = join(home, ".config", "cline");
-      const code = await hooksClineInstall([], logger, clineDir);
+      const code = await hooksClineInstall(["--target", targetDir], logger, clineDir);
       if (code !== 0) throw new Error(`cline hook install failed (exit ${code})`);
       break;
     }
     case "continue": {
       const { join } = await import("node:path");
       const continueDir = join(home, ".continue");
-      const code = await hooksContinueInstall([], logger, continueDir);
+      const code = await hooksContinueInstall(["--target", targetDir], logger, continueDir);
       if (code !== 0) throw new Error(`continue hook install failed (exit ${code})`);
       break;
     }
@@ -231,7 +194,7 @@ async function installHookForIde(
     case "aider": {
       const { join } = await import("node:path");
       const aiderDir = join(home, ".aider");
-      const code = await hooksAiderInstall([], logger, aiderDir);
+      const code = await hooksAiderInstall(["--target", targetDir], logger, aiderDir);
       if (code !== 0) throw new Error(`aider hook install failed (exit ${code})`);
       break;
     }

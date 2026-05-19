@@ -36,6 +36,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CollectingLogger, runCli } from "../index.js";
 import { hooksClaudeCodeInstall } from "./hooks-install.js";
 
+function readRc(dir: string): Record<string, unknown> | null {
+  const p = join(dir, ".yakccrc.json");
+  if (!existsSync(p)) return null;
+  return JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -369,6 +375,47 @@ describe("runCli dispatch -- hooks continue install (Defect B coverage)", () => 
     const code = await runCli(["hooks", "continue", "badcmd"], logger);
     expect(code).toBe(1);
     expect(logger.errLines.some((l) => l.includes("unknown hooks continue subcommand"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 13: .yakccrc.json installedHooks bookkeeping (#759)
+// ---------------------------------------------------------------------------
+
+describe(".yakccrc.json installedHooks bookkeeping (claude-code)", () => {
+  it("install with existing rc adds 'claude-code' to installedHooks", async () => {
+    writeFileSync(
+      join(tmpDir, ".yakccrc.json"),
+      JSON.stringify({ version: 1, registry: { path: ".yakcc/registry.sqlite" }, installedHooks: [] }, null, 2),
+      "utf-8",
+    );
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("claude-code")).toBe(true);
+  });
+
+  it("install with no rc creates .yakccrc.json with installedHooks: ['claude-code']", async () => {
+    expect(existsSync(join(tmpDir, ".yakccrc.json"))).toBe(false);
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect(rc?.installedHooks).toEqual(["claude-code"]);
+  });
+
+  it("install twice does not duplicate 'claude-code' in installedHooks (idempotent)", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    const hooks = rc?.installedHooks as string[];
+    expect(hooks.filter((h) => h === "claude-code").length).toBe(1);
+  });
+
+  it("--uninstall removes 'claude-code' from installedHooks", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir, "--uninstall"], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    const hooks = rc?.installedHooks as string[];
+    expect(hooks.includes("claude-code")).toBe(false);
   });
 });
 
