@@ -176,3 +176,40 @@ describe("hooksContinueInstall — invalid flags", () => {
     expect(logger.errLines.some((l) => l.includes("error:"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 5: WI-759 — .yakccrc.json.installedHooks integration (overrideCwd seam)
+// ---------------------------------------------------------------------------
+
+import { readRc } from "../lib/yakccrc.js";
+
+describe("hooksContinueInstall — WI-759 rc integration (overrideCwd)", () => {
+  it("AC3: creates .yakccrc.json at overrideCwd when absent", async () => {
+    const code = await hooksContinueInstall([], new CollectingLogger(), fakeContinueDir, tmpDir);
+    expect(code).toBe(0);
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect(rc?.version).toBe(1);
+  });
+
+  it("AC1: install appends continue to installedHooks at overrideCwd", async () => {
+    await hooksContinueInstall([], new CollectingLogger(), fakeContinueDir, tmpDir);
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks).toContain("continue");
+  });
+
+  it("AC4: second install does not duplicate continue in installedHooks", async () => {
+    await hooksContinueInstall([], new CollectingLogger(), fakeContinueDir, tmpDir);
+    await hooksContinueInstall([], new CollectingLogger(), fakeContinueDir, tmpDir);
+    const rc = readRc(tmpDir);
+    const count = rc?.installedHooks?.filter((h) => h === "continue").length ?? 0;
+    expect(count).toBe(1);
+  });
+
+  it("AC5: uninstall removes continue from installedHooks at overrideCwd", async () => {
+    await hooksContinueInstall([], new CollectingLogger(), fakeContinueDir, tmpDir);
+    await hooksContinueInstall(["--uninstall"], new CollectingLogger(), fakeContinueDir, tmpDir);
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks ?? []).not.toContain("continue");
+  });
+});

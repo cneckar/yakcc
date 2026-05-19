@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -198,6 +199,12 @@ export async function hooksClaudeCodeInstall(
       return 1;
     }
     logger.log(`yakcc hook removed from ${settingsPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks ---
+    try {
+      removeInstalledHook(targetDir, "claude-code");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -225,6 +232,12 @@ export async function hooksClaudeCodeInstall(
   } else {
     logger.log(`yakcc hook installed at ${settingsPath}`);
     logger.log(`tool-call interception: ${HOOK_MATCHER} → ${HOOK_COMMAND}`);
+  }
+  // --- WI-759: update .yakccrc.json.installedHooks ---
+  try {
+    addInstalledHook(targetDir, "claude-code");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
   }
   return 0;
 }

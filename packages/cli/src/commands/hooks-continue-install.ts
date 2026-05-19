@@ -33,6 +33,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -94,6 +95,7 @@ export async function hooksContinueInstall(
   argv: readonly string[],
   logger: Logger,
   overrideContinueDir?: string,
+  overrideCwd?: string,
 ): Promise<number> {
   let parsed: ReturnType<
     typeof parseArgs<{
@@ -144,6 +146,13 @@ export async function hooksContinueInstall(
       return 1;
     }
     logger.log(`yakcc continue hook marker removed: ${markerPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001) ---
+    const rcDir = overrideCwd ?? process.cwd();
+    try {
+      removeInstalledHook(rcDir, "continue");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -178,5 +187,12 @@ export async function hooksContinueInstall(
   logger.log(
     "note: Continue.dev tool-call interception API not yet stable — see marker for details.",
   );
+  // --- WI-759: update .yakccrc.json.installedHooks (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001) ---
+  const rcDir = overrideCwd ?? process.cwd();
+  try {
+    addInstalledHook(rcDir, "continue");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+  }
   return 0;
 }

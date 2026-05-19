@@ -31,12 +31,13 @@
 //   Visibility is via the summary line, not a confirmation gate. Uses rmSync with
 //   { recursive: true, force: true } per C4 (cross-platform path safety).
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { RC_FILENAME, readRc } from "../lib/yakccrc.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
@@ -51,22 +52,9 @@ import { hooksWindsurfInstall } from "./hooks-windsurf-install.js";
 /** Subdirectory for all yakcc operational data — removed on `--purge`. */
 const YAKCC_DIR = ".yakcc";
 
-/** Config file at project root — read (for installedHooks) and mutated or deleted. */
-const RC_FILENAME = ".yakccrc.json";
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/**
- * Flexible rc schema — only the fields uninstall.ts needs are typed; the rest
- * are preserved verbatim (EC-S2-I3: version stays 1, additive-only, no field removal).
- */
-interface YakccRc {
-  version: number;
-  installedHooks?: string[];
-  [key: string]: unknown;
-}
 
 // ---------------------------------------------------------------------------
 // Options injection seam (mirrors init.ts InitOptions)
@@ -86,21 +74,6 @@ export interface UninstallOptions {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Read `.yakccrc.json` from target directory, or return null if absent/corrupt.
- * Parsing errors are silently swallowed and treated as "no rc" — the caller
- * falls through to the detectInstalledIdes() tier.
- */
-function readRc(targetDir: string): YakccRc | null {
-  const rcPath = join(targetDir, RC_FILENAME);
-  if (!existsSync(rcPath)) return null;
-  try {
-    return JSON.parse(readFileSync(rcPath, "utf-8")) as YakccRc;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Parse a comma-separated `--ide` value into a list of IdeName.
@@ -153,13 +126,15 @@ async function uninstallHookForIde(
     case "cursor":
       return hooksCursorInstall(["--target", targetDir, "--uninstall"], logger);
     case "cline":
-      return hooksClineInstall(["--uninstall"], logger, join(home, ".config", "cline"));
+      // Pass targetDir as overrideCwd so removeInstalledHook updates the correct project rc
+      // (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001 / WI-759).
+      return hooksClineInstall(["--uninstall"], logger, join(home, ".config", "cline"), targetDir);
     case "continue":
-      return hooksContinueInstall(["--uninstall"], logger, join(home, ".continue"));
+      return hooksContinueInstall(["--uninstall"], logger, join(home, ".continue"), targetDir);
     case "windsurf":
       return hooksWindsurfInstall(["--target", targetDir, "--uninstall"], logger);
     case "aider":
-      return hooksAiderInstall(["--uninstall"], logger, join(home, ".aider"));
+      return hooksAiderInstall(["--uninstall"], logger, join(home, ".aider"), targetDir);
   }
 }
 
@@ -302,40 +277,15 @@ export async function uninstall(
   }
 
   // -------------------------------------------------------------------------
-  // 5. Update .yakccrc.json after a default (non-purge) uninstall
+  // 5. .yakccrc.json installedHooks update (WI-759)
   //
-  // If --ide was used: remove only the targeted IDEs from installedHooks.
-  // If no --ide (rc or detect path): set installedHooks to [].
-  // Skip if .yakccrc.json doesn't exist.
+  // As of WI-759, each per-IDE installer tail-calls removeInstalledHook() when
+  // invoked with --uninstall. This is handled inside uninstallHookForIde() above
+  // via the hooks-*-install.ts modules. No inline rc-write is needed here.
   //
-  // EC-S2-I3: all fields except installedHooks are preserved verbatim.
+  // The readRc import is kept for the Tier 2 detection above.
+  // EC-S2-I3: field preservation is guaranteed by lib/yakccrc.ts removeInstalledHook.
   // -------------------------------------------------------------------------
-
-  if (!doPurge) {
-    const rc = readRc(targetDir);
-    if (rc !== null) {
-      let updatedHooks: string[];
-      if (explicitIdes !== null) {
-        // --ide path: remove only the targeted IDEs from the inventory
-        updatedHooks = (rc.installedHooks ?? []).filter(
-          (h) => !explicitIdes?.includes(h as IdeName),
-        );
-      } else {
-        // Default path: clear the entire installedHooks array
-        updatedHooks = [];
-      }
-      const updated: YakccRc = { ...rc, installedHooks: updatedHooks };
-      try {
-        writeFileSync(
-          join(targetDir, RC_FILENAME),
-          `${JSON.stringify(updated, null, 2)}\n`,
-          "utf-8",
-        );
-      } catch (err) {
-        logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)}`);
-      }
-    }
-  }
 
   // -------------------------------------------------------------------------
   // 6. --purge: remove .yakcc/ and .yakccrc.json (DEC-CLI-UNINSTALL-PURGE-001)
