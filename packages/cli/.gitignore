@@ -9,3 +9,6 @@ dist/yakcc-bin-win32-x64.exe
 LICENSE
 LICENSE-ATOMS
 *.tgz
+
+# test-run artifact: installers invoked without --target default to cwd
+.yakccrc.json
