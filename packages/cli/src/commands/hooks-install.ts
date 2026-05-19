@@ -3,7 +3,7 @@
 // title: Replace v0 CLAUDE.md facade with real settings.json hook wiring
 // status: decided (WI-V05-CLI-INSTALL-RETIRE-FACADE #203)
 // rationale:
-//   Per DEC-HOOK-LAYER-001 (docs/adr/hook-layer-architecture.md):
+//   Per DEC-HOOK-LAYER-001 (docs/archive/developer/adr/hook-layer-architecture.md):
 //   D-HOOK-1 → Claude Code is the first IDE target.
 //   D-HOOK-2 → tool-call interception via settings.json PreToolUse hook entry
 //               for Edit|Write|MultiEdit tool calls.

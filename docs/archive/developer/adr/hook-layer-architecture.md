@@ -71,7 +71,7 @@ Tool-call interception preserves the agent's mental model: when the agent emits 
 - **(a) Synchronous** *(chosen)*. Agent's current turn sees the substituted version; the next turn's reasoning is immediately consistent with what's on disk. Multi-turn coherence (B5) is preserved by construction. Latency is the sole concern, mitigated by the ≤200ms budget and discovery's local-SQLite + sqlite-vec architecture (no network I/O on the hot path).
 - **(b) Asynchronous.** Code lands as the agent emitted; hook substitutes in the background; subsequent turns see the substituted version. Zero perceived per-call latency, but the agent's *current* turn cannot reason about the substitution. The agent emits code, observes the tool result (which says "wrote X bytes"), and may then write follow-up code that references the unsubstituted version. The hook then has to either revert its own substitution or accept that the LLM's mental model has drifted from disk.
 
-The 200ms budget is enforced as a hard cap. A budget violation is a regression that must be fixed in discovery (D5 calibration knobs, D6 migration tuning, or per-dimension model adjustment per D1's v3.1 trigger — see ADR docs/adr/discovery-multi-dim-embeddings.md). The hook does not include a "fall back to async if discovery is slow" escape hatch — that escape hatch silently degrades coherence guarantees and would mask discovery regressions.
+The 200ms budget is enforced as a hard cap. A budget violation is a regression that must be fixed in discovery (D5 calibration knobs, D6 migration tuning, or per-dimension model adjustment per D1's v3.1 trigger — see ADR docs/archive/developer/adr/discovery-multi-dim-embeddings.md). The hook does not include a "fall back to async if discovery is slow" escape hatch — that escape hatch silently degrades coherence guarantees and would mask discovery regressions.
 
 ### D-HOOK-4: Contract surfacing — inline contract comment
 
@@ -194,7 +194,7 @@ This ADR should be re-opened if any of the following occur:
 
 Phase 0 (this ADR) ships:
 
-- This document at `docs/adr/hook-layer-architecture.md`
+- This document at `docs/archive/developer/adr/hook-layer-architecture.md`
 - `DEC-HOOK-LAYER-001` row in MASTER_PLAN's Decision Log (filed alongside this commit)
 - Implementation cascade as sub-tickets of #194, filed concurrently
 
@@ -305,12 +305,12 @@ Parallels the `// @atom <name>` contract comment from D-HOOK-4, but distinguisha
   - `packages/hooks-cursor/src/index.ts`
   - `packages/hooks-codex/src/index.ts`
 - Discovery integration:
-  - D1: `docs/adr/discovery-multi-dim-embeddings.md` (`DEC-V3-DISCOVERY-D1-001`)
-  - D2: `docs/adr/discovery-query-language.md` (`DEC-V3-DISCOVERY-D2-001`)
-  - D3: `docs/adr/discovery-ranking.md` (`DEC-V3-DISCOVERY-D3-001`)
-  - D4: `docs/adr/discovery-llm-interaction.md` (`DEC-V3-DISCOVERY-D4-001`)
-  - D5: `docs/adr/discovery-quality-measurement.md` (`DEC-V3-DISCOVERY-D5-001`)
-  - D6: `docs/adr/discovery-migration.md` (`DEC-V3-DISCOVERY-D6-001`)
+  - D1: `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` (`DEC-V3-DISCOVERY-D1-001`)
+  - D2: `docs/archive/developer/adr/discovery-query-language.md` (`DEC-V3-DISCOVERY-D2-001`)
+  - D3: `docs/archive/developer/adr/discovery-ranking.md` (`DEC-V3-DISCOVERY-D3-001`)
+  - D4: `docs/archive/developer/adr/discovery-llm-interaction.md` (`DEC-V3-DISCOVERY-D4-001`)
+  - D5: `docs/archive/developer/adr/discovery-quality-measurement.md` (`DEC-V3-DISCOVERY-D5-001`)
+  - D6: `docs/archive/developer/adr/discovery-migration.md` (`DEC-V3-DISCOVERY-D6-001`)
 - Related decisions:
   - `DEC-V3-INITIATIVE-001` — measurement-first guardrail (gates Phase 2)
   - `DEC-EMBED-010` — single-vector embedding (current hook integration)

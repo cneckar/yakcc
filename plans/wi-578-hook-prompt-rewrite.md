@@ -32,7 +32,7 @@ Before accepting the brief verbatim, the planner challenged the framing on three
 - G4: Land a unit-level prompt assertion (`packages/hooks-base/src/system-prompt.test.ts`) that **grep-style verifies** the rewritten file contains required substrings (imperative tokens, URL-parser walkthrough, self-check) and does NOT contain forbidden ones (soft suggestions, carve-outs).
 - G5: Land a negative test scaffold proving a loose-intent prompt produces refusal/self-correction. Because LLM behavior is non-deterministic, this test uses a deterministic stub or a snapshot of an Anthropic transcript (see §5).
 - G6: Scaffold a telemetry assertion (instrumented but threshold-deferred until #569 follow-up enables descent-depth capture, OR implement the post-hoc grouping inference described in §6) for: "of next N hook invocations post-rewrite, ≥ X% of misses show recursion depth ≥ 1."
-- G7: Update the D4 ADR (`docs/adr/discovery-llm-interaction.md`) with a Q-extension explaining the descent-and-compose addition — required because the prompt file carries the comment "changes to this file require a D4 ADR revision."
+- G7: Update the D4 ADR (`docs/archive/developer/adr/discovery-llm-interaction.md`) with a Q-extension explaining the descent-and-compose addition — required because the prompt file carries the comment "changes to this file require a D4 ADR revision."
 
 ### Non-goals (explicit)
 - N1: **Do NOT modify `packages/shave/src/intent/prompt.ts`.** That is the intent-extraction prompt sent to Haiku during shave, not the LLM hook prompt. It is forbidden in the workflow scope and is unrelated to #578.
@@ -50,7 +50,7 @@ Before accepting the brief verbatim, the planner challenged the framing on three
 | U1: Does `INTENT_PROMPT_VERSION` (`packages/shave/src/intent/constants.ts`) need bumping? | **No** by inspection — that version governs the SHAVE intent-extraction prompt (`packages/shave/src/intent/prompt.ts`), not the discovery system prompt. Confirm during implementation via grep for `INTENT_PROMPT_VERSION` usages; no rewrite of `shave/intent/prompt.ts` means no bump. |
 | U2: How to deterministically prove "loose query produces refusal" in the negative test, given LLM non-determinism? | Three options, ordered by preference: (a) **assertion against the rewritten prompt text** (refusal language is present) + (b) **a recorded-transcript fixture** capturing a real Haiku call where the rewritten prompt induces refusal for one canonical loose query (`"validation"`), checked into `tmp/wi-578-investigation/transcripts/`. Option (c) wiring a runtime stub for the discovery LLM call is out of scope because the LLM call lives in the IDE, not in our code. |
 | U3: Should descent-depth telemetry be inferred post-hoc (no runtime change) or stamped explicitly (LLM passes a `parentIntentHash`)? | **Implementation chooses inference path** unless trivial. Post-hoc: group `TelemetryEvent` rows by session ID, sort by `t`, mark consecutive misses where intent-hash B's intent string is a strict sub-phrase / narrower form of A's intent string as `depth >= 1`. This requires no LLM contract change but requires storing intent text temporarily for the analysis (currently only `intentHash` is stored). Approval gate: if inference is infeasible without a privacy-policy change, implementer flags and we defer descent-depth to a follow-up filed against #569. |
-| U4: ADR revision requirement — must the D4 ADR be revised in the same commit, or filed as a follow-up? | **Same commit.** The prompt file's header comment makes the ADR the authority; merging a prompt change without a corresponding ADR Q-extension would break the authority invariant. Implementer adds a Q9 (or similarly numbered) section to `docs/adr/discovery-llm-interaction.md` capturing the descent-and-compose addition. — **Note: this requires expanding the allowed-paths scope** (see §10 scope manifest). |
+| U4: ADR revision requirement — must the D4 ADR be revised in the same commit, or filed as a follow-up? | **Same commit.** The prompt file's header comment makes the ADR the authority; merging a prompt change without a corresponding ADR Q-extension would break the authority invariant. Implementer adds a Q9 (or similarly numbered) section to `docs/archive/developer/adr/discovery-llm-interaction.md` capturing the descent-and-compose addition. — **Note: this requires expanding the allowed-paths scope** (see §10 scope manifest). |
 
 ---
 
@@ -59,7 +59,7 @@ Before accepting the brief verbatim, the planner challenged the framing on three
 | Surface | Authority | Role in #578 |
 | --- | --- | --- |
 | `docs/system-prompts/yakcc-discovery.md` | governed by D4 ADR `DEC-V3-DISCOVERY-D4-001` | **Primary rewrite target.** Single source of truth for the hook LLM system prompt. Loaded by all IDE adapters via `SYSTEM_PROMPT_PATH`. |
-| `docs/adr/discovery-llm-interaction.md` | DEC-V3-DISCOVERY-D4-001 authority itself | Must be updated with a new Q-section (e.g., Q9 "Descent-and-Compose Discipline") documenting the new prompt invariants. |
+| `docs/archive/developer/adr/discovery-llm-interaction.md` | DEC-V3-DISCOVERY-D4-001 authority itself | Must be updated with a new Q-section (e.g., Q9 "Descent-and-Compose Discipline") documenting the new prompt invariants. |
 | `packages/hooks-{claude-code,cursor}/src/yakcc-resolve-tool.ts` | DEC-HOOK-PHASE-3-L3-MCP-001, DEC-HOOK-CURSOR-PHASE4-002 | Read-only consumers of `SYSTEM_PROMPT_PATH`. NOT modified by #578. |
 | `packages/hooks-base/src/import-intercept.ts` | DEC-WI508-INTERCEPT-001..006 | Deterministic registry-query path. NOT a prompt surface. Modified ONLY for descent-depth telemetry if §6 inference path is infeasible. |
 | `packages/hooks-base/src/telemetry.ts` | DEC-HOOK-PHASE-1-001 | Optional: extend `TelemetryEvent` with a `descendedFromIntentHash?: string` field if approach (b) of U3 is taken. |
@@ -77,7 +77,7 @@ Before accepting the brief verbatim, the planner challenged the framing on three
 **Implementer will COPY this verbatim into `docs/system-prompts/yakcc-discovery.md`.**
 
 ```markdown
-# Authority: DEC-V3-DISCOVERY-D4-001 (docs/adr/discovery-llm-interaction.md) — changes to this file require a D4 ADR revision.
+# Authority: DEC-V3-DISCOVERY-D4-001 (docs/archive/developer/adr/discovery-llm-interaction.md) — changes to this file require a D4 ADR revision.
 
 You have access to the yakcc discovery system via the `yakcc_resolve` tool. The
 rules below are not suggestions. They define the only acceptable way to write
@@ -267,7 +267,7 @@ Issue suggests P0/P1/P2 split, but inventory shows:
 | Step | Output | Files |
 | --- | --- | --- |
 | 1 | Rewrite the prompt file with §5 text | `docs/system-prompts/yakcc-discovery.md` |
-| 2 | Add ADR Q-section documenting the descent-and-compose addition | `docs/adr/discovery-llm-interaction.md` |
+| 2 | Add ADR Q-section documenting the descent-and-compose addition | `docs/archive/developer/adr/discovery-llm-interaction.md` |
 | 3 | Add the unit test that greps the new prompt for required/forbidden substrings | `packages/hooks-base/src/system-prompt.test.ts` (new) |
 | 4 | Add a `system-prompt.ts` helper that exports the prompt-file path constant + a `loadDiscoveryPrompt()` reader (the test imports this; this is the optional minor consolidation toward a single path constant — implementer may skip if it expands scope) | `packages/hooks-base/src/system-prompt.ts` (new) |
 | 5 | Create the test corpus JSON | `tmp/wi-578-investigation/test-corpus.json` |
@@ -284,7 +284,7 @@ If during implementation step 7 the heuristic descent-depth inference proves inf
 
 | Risk | Mitigation |
 | --- | --- |
-| R1: ADR revision requires expanding the workflow scope to include `docs/adr/discovery-llm-interaction.md`. | **Plan amendment required** (see §10). Reviewer must approve scope-set expansion via `cc-policy workflow scope-sync` before implementer starts. |
+| R1: ADR revision requires expanding the workflow scope to include `docs/archive/developer/adr/discovery-llm-interaction.md`. | **Plan amendment required** (see §10). Reviewer must approve scope-set expansion via `cc-policy workflow scope-sync` before implementer starts. |
 | R2: The 75-line prompt is ~2.5x the current 49 lines. Token cost is per-session, not per-query, so impact is negligible — but verify. | Implementer notes pre/post line+token counts in the PR description. |
 | R3: Negative test for "loose query produces refusal" is fundamentally LLM-non-deterministic. | Lean on the unit-level grep test (deterministic) + a *recorded* Anthropic transcript fixture for one canonical case. Do NOT make the integration test depend on a live LLM call. |
 | R4: Descent-depth heuristic (Design A) might be too noisy or yield zero data in CI. | Test guards with a `skip-if-thin` check (< 20 events ⇒ skip), and the threshold is documented as a placeholder. Real-world tuning is a follow-up against #569. |
@@ -297,7 +297,7 @@ If during implementation step 7 the heuristic descent-depth inference proves inf
 
 The dispatched scope (per the workflow contract block) **does not include** the two files that must be edited:
 - `docs/system-prompts/yakcc-discovery.md` (the actual rewrite target)
-- `docs/adr/discovery-llm-interaction.md` (the governing ADR that must be updated in the same commit)
+- `docs/archive/developer/adr/discovery-llm-interaction.md` (the governing ADR that must be updated in the same commit)
 
 The dispatched scope also lists `packages/hooks-codex/src/yakcc-resolve-tool.ts` which **does not exist** and is unrelated.
 
@@ -306,7 +306,7 @@ The dispatched scope also lists `packages/hooks-codex/src/yakcc-resolve-tool.ts`
 ### allowed_paths (additions)
 ```
 docs/system-prompts/yakcc-discovery.md
-docs/adr/discovery-llm-interaction.md
+docs/archive/developer/adr/discovery-llm-interaction.md
 packages/hooks-base/src/system-prompt.ts
 packages/hooks-base/src/system-prompt.test.ts
 packages/hooks-base/test/system-prompt-integration.test.ts
@@ -318,7 +318,7 @@ plans/wi-578-hook-prompt-rewrite.md
 ### required_paths
 ```
 docs/system-prompts/yakcc-discovery.md
-docs/adr/discovery-llm-interaction.md
+docs/archive/developer/adr/discovery-llm-interaction.md
 plans/wi-578-hook-prompt-rewrite.md
 packages/hooks-base/src/system-prompt.test.ts
 packages/hooks-base/test/system-prompt-integration.test.ts
@@ -360,7 +360,7 @@ yakcc-resolve-tool-prompt (carry-over)
 
 ### Required real-path checks
 1. `docs/system-prompts/yakcc-discovery.md` exists and contains the §5 text verbatim.
-2. `docs/adr/discovery-llm-interaction.md` contains a new Q-section dated post-2026-05-15 documenting the descent-and-compose addition.
+2. `docs/archive/developer/adr/discovery-llm-interaction.md` contains a new Q-section dated post-2026-05-15 documenting the descent-and-compose addition.
 3. `packages/hooks-{claude-code,cursor}/src/yakcc-resolve-tool.ts` continue to reference `SYSTEM_PROMPT_PATH = "docs/system-prompts/yakcc-discovery.md"` (regression-style check that the path was not accidentally changed).
 
 ### Required authority invariants
@@ -370,7 +370,7 @@ yakcc-resolve-tool-prompt (carry-over)
 4. URL-parser walkthrough present: `grep -c "URL parser" docs/system-prompts/yakcc-discovery.md` ≥ 1.
 5. Self-check present: `grep -c "self-check\|Self-check" docs/system-prompts/yakcc-discovery.md` ≥ 1.
 6. Single source of truth preserved: `find packages -name '*.ts' -not -path '*/dist/*' -not -path '*/node_modules/*' -exec grep -l '"SYSTEM_PROMPT_PATH"' {} \;` returns ≤ 2 files (the existing 2 IDE adapters); no new copies.
-7. D4 ADR updated: `grep -c "descent-and-compose\|Descent-and-Compose" docs/adr/discovery-llm-interaction.md` ≥ 1.
+7. D4 ADR updated: `grep -c "descent-and-compose\|Descent-and-Compose" docs/archive/developer/adr/discovery-llm-interaction.md` ≥ 1.
 
 ### Required integration points
 1. Telemetry surface (`packages/hooks-base/src/telemetry.ts`) untouched OR additive-only per DEC-HOOK-PHASE-1-001.
@@ -418,7 +418,7 @@ compose discipline. Adds (a) explicit refusal of loose initial intents ("validat
 "parser", etc.), (b) a mandatory self-check step before every yakcc_resolve call,
 (c) the descent rule for misses (decompose, query each leaf, compose upward,
 NEW_ATOM_PROPOSAL), and (d) a verbatim URL-parser walkthrough as the canonical
-protocol. D4 ADR docs/adr/discovery-llm-interaction.md gains a Q9 section
+protocol. D4 ADR docs/archive/developer/adr/discovery-llm-interaction.md gains a Q9 section
 documenting the addition. Telemetry surface unchanged (additive-only path
 preserved); descent-depth assertion uses Design A heuristic with a documented
 placeholder threshold pending #569 follow-up tuning. Single source of truth preserved

@@ -9,7 +9,7 @@
 
 ## Context
 
-D1 (`docs/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
+D1 (`docs/archive/developer/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
 storage schema for multi-dimensional embeddings: 5 `FLOAT[384]` columns in a `sqlite-vec` `vec0`
 virtual table (`contract_embeddings`), keyed on `spec_hash`, using `Xenova/all-MiniLM-L6-v2`.
 Each column encodes a separate semantic axis of a SpecYak spec:
@@ -39,8 +39,8 @@ triggers auto-accept.
 
 | Domain | Authority | ADR |
 |---|---|---|
-| Storage schema (5 vectors, model, column names, migration 7) | D1 | `docs/adr/discovery-multi-dim-embeddings.md` |
-| Query surface (LLM-facing schema, CLI flags, programmatic API, confidence thresholds, iteration) | D2 (this ADR) | `docs/adr/discovery-query-language.md` |
+| Storage schema (5 vectors, model, column names, migration 7) | D1 | `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` |
+| Query surface (LLM-facing schema, CLI flags, programmatic API, confidence thresholds, iteration) | D2 (this ADR) | `docs/archive/developer/adr/discovery-query-language.md` |
 | Ranking algorithm formula, D5 quality triggers | D3 | TBD |
 
 Neither ADR overrides the other. If a future WI requires both storage and query changes, each must

@@ -1,4 +1,4 @@
-# Authority: DEC-V3-DISCOVERY-D4-001 (docs/adr/discovery-llm-interaction.md) — changes to this file require a D4 ADR revision.
+# Authority: DEC-V3-DISCOVERY-D4-001 (docs/archive/developer/adr/discovery-llm-interaction.md) — changes to this file require a D4 ADR revision.
 # Revision: DEC-WI578-HOOK-PROMPT-SPECIFIC-FIRST-001 (github.com/cneckar/yakcc/issues/578)
 
 You have access to the yakcc discovery system via the `yakcc_resolve` tool.

@@ -42,9 +42,9 @@
  *     "hybrid"      — DEFAULT: auto-accept only when score > 0.92
  *
  *   Cross-reference:
- *     docs/adr/discovery-llm-interaction.md — D4 ADR (canonical authority)
- *     docs/adr/discovery-ranking.md         — D3 ADR (4-band thresholds, tiebreakers)
- *     docs/adr/discovery-query-language.md  — D2 ADR (QueryIntentCard, auto-accept)
+ *     docs/archive/developer/adr/discovery-llm-interaction.md — D4 ADR (canonical authority)
+ *     docs/archive/developer/adr/discovery-ranking.md         — D3 ADR (4-band thresholds, tiebreakers)
+ *     docs/archive/developer/adr/discovery-query-language.md  — D2 ADR (QueryIntentCard, auto-accept)
  *     DEC-V3-DISCOVERY-D4-001 (MASTER_PLAN.md)
  *     D-HOOK-6 (embedded-library-call discipline)
  */
@@ -58,46 +58,46 @@ import type { BlockTripletRow, CandidateNearMiss, QueryCandidate, Registry } fro
 
 /**
  * D3 strong threshold: combinedScore ≥ 0.85 = "strong" band.
- * Source: docs/adr/discovery-ranking.md §Q4.
+ * Source: docs/archive/developer/adr/discovery-ranking.md §Q4.
  */
 export const STRONG_THRESHOLD = 0.85;
 
 /**
  * D3 confident threshold: combinedScore ≥ 0.70 = "confident" band.
  * "matched" status fires when at least one candidate meets this floor.
- * Source: docs/adr/discovery-ranking.md §Q4.
+ * Source: docs/archive/developer/adr/discovery-ranking.md §Q4.
  */
 export const CONFIDENT_THRESHOLD = 0.70;
 
 /**
  * D3 weak threshold: combinedScore ≥ 0.50 = "weak" band.
  * "weak_only" fires when best candidate is ≥ 0.50 but < 0.70.
- * Source: docs/adr/discovery-ranking.md §Q4.
+ * Source: docs/archive/developer/adr/discovery-ranking.md §Q4.
  */
 export const WEAK_THRESHOLD = 0.50;
 
 /**
  * D4 Q5 hybrid auto-accept secondary threshold.
  * Auto-accept fires in "hybrid" mode only when combinedScore > 0.92.
- * Source: docs/adr/discovery-llm-interaction.md §Q5.
+ * Source: docs/archive/developer/adr/discovery-llm-interaction.md §Q5.
  */
 export const HYBRID_AUTO_ACCEPT_THRESHOLD = 0.92;
 
 /**
  * D2 auto-accept gap threshold: gap-to-top-2 must exceed 0.15.
- * Source: docs/adr/discovery-query-language.md §Q3.
+ * Source: docs/archive/developer/adr/discovery-query-language.md §Q3.
  */
 export const AUTO_ACCEPT_GAP_THRESHOLD = 0.15;
 
 /**
  * D4 Q6 F2 disambiguation trigger: ≥ 5 candidates within ε=0.02 of top score.
- * Source: docs/adr/discovery-llm-interaction.md §Q6 F2.
+ * Source: docs/archive/developer/adr/discovery-llm-interaction.md §Q6 F2.
  */
 export const DISAMBIGUATION_MIN_TIES = 5;
 
 /**
  * D3 / D4 tiebreaker ε: candidates within ε=0.02 of top score are "tied".
- * Source: docs/adr/discovery-ranking.md §Q4.
+ * Source: docs/archive/developer/adr/discovery-ranking.md §Q4.
  */
 export const TIEBREAKER_EPSILON = 0.02;
 

@@ -18,7 +18,7 @@
  *
  *   Cross-references:
  *     DEC-V3-DISCOVERY-D4-001  — D4 ADR governing the prompt file
- *     docs/adr/discovery-llm-interaction.md §Q8 — WI-578 revision record
+ *     docs/archive/developer/adr/discovery-llm-interaction.md §Q8 — WI-578 revision record
  *     docs/system-prompts/yakcc-discovery.md — the canonical prompt text
  */
 

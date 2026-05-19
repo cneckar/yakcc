@@ -68,7 +68,7 @@ yakcc uninstall --purge
 |---|---|---|
 | B6 — air-gap operation (no outbound) | Proven | Full pipeline runs with zero network calls |
 | B1 — hook latency vs native code write | Proven | Sub-millisecond warm-cache; see `bench/B1-latency/` |
-| B4-v3 — token-spend matrix (hooked vs unhooked) | In flight | Numbers land when [DEC-BENCH-B4-V3-001](MASTER_PLAN.md) is complete |
+| B4-v3 — token-spend matrix (hooked vs unhooked) | In flight | Numbers land when [DEC-BENCH-B4-V3-001](docs/archive/developer/MASTER_PLAN.md) is complete |
 
 To reproduce B6 and B1 locally: see `bench/B6-airgap/README.md` and `bench/B1-latency/README.md`.
 
@@ -97,11 +97,17 @@ The most common issues:
 
 ## Contributing
 
-Working on yakcc itself? See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the contributor orientation. The developer docs (architecture decisions, design rationale, verification ladder, ADRs) live at:
+Working on yakcc itself? See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the contributor orientation. The developer documentation lives in the archive:
 
-- [DESIGN.md](DESIGN.md)
-- [MASTER_PLAN.md](MASTER_PLAN.md)
-- [docs/adr/](docs/adr/)
+- [docs/archive/developer/MASTER_PLAN.md](docs/archive/developer/MASTER_PLAN.md) — decision log + work-item history
+- [docs/archive/developer/DESIGN.md](docs/archive/developer/DESIGN.md) — architecture rationale + contract philosophy
+- [docs/archive/developer/VERIFICATION.md](docs/archive/developer/VERIFICATION.md) — verification ladder + triplet identity + TCB
+- [docs/archive/developer/FEDERATION.md](docs/archive/developer/FEDERATION.md) — F0..F4 federation trust/scale axis
+- [docs/archive/developer/MANIFESTO.md](docs/archive/developer/MANIFESTO.md) — project voice and intent
+- [docs/archive/developer/AGENTS.md](docs/archive/developer/AGENTS.md) — sister-agent operating guide
+- [docs/archive/developer/PRIOR_ART.md](docs/archive/developer/PRIOR_ART.md) — defensive publication of substrate's novel mechanisms
+- [docs/archive/developer/V2_SELF_HOSTING_DEMO.md](docs/archive/developer/V2_SELF_HOSTING_DEMO.md) — v2 self-hosting walkthrough
+- [docs/archive/developer/adr/](docs/archive/developer/adr/) — architecture decision records
 
 ## License
 

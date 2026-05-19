@@ -4,7 +4,7 @@
  * @title Evaluation harness helpers — D5 metric computation (M1..M5) + corpus schema
  * @status accepted
  * @rationale
- *   This module implements the D5 ADR (docs/adr/discovery-quality-measurement.md) metric
+ *   This module implements the D5 ADR (docs/archive/developer/adr/discovery-quality-measurement.md) metric
  *   computation functions for the discovery evaluation harness. Five decisions are captured here:
  *
  *   1. INLINE CORPUS SHAPE (5–10 entries, bootstrap baseline WI):

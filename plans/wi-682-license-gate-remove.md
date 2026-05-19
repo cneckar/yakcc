@@ -41,7 +41,7 @@ The gate's wire-points and surface area are:
 | MRI demo acceptance | `examples/v0.7-mri-demo/test/acceptance.test.ts:16-23, 36-78, 156-179`, `examples/v0.7-mri-demo/README.md:38, 44-58` | Test A is wholly "license refusal"; Test C asserts `detectLicense`/`licenseGate`/`LicenseRefusedError` are exported. |
 | Federation demo acceptance | `examples/v1-federation-demo/test/acceptance.test.ts:54, 656-720` (`describe("demo: GPL-prepared input is refused at registryA's shave path; registryB never sees the refused source")`) | One whole `describe()` block proves "refused source does not propagate via federation"; relies on the gate to fire. |
 | Audit script | `scripts/audit-property-tests.mjs:1067-1070, 1262-1269` | Markdown summary templating special-cases `LicenseRefusedError` as "expected (GPL fixture)". |
-| ADR | `docs/adr/hook-layer-architecture.md:261` | One bullet `→ detectLicense + licenseGate (accept/refuse)`. |
+| ADR | `docs/archive/developer/adr/hook-layer-architecture.md:261` | One bullet `→ detectLicense + licenseGate (accept/refuse)`. |
 | DESIGN.md | `DESIGN.md:238-242, 556-559` | Two paragraphs describing the gate's policy. |
 | README (shave package) | `packages/shave/README.md:10-12, 36, 56-60, 87, 147-151` | Pipeline-stages bullet, API table, error table, plus a whole "License gate locality" section. |
 | MASTER_PLAN.md | `MASTER_PLAN.md:1147, 1155, 1171, 1220, 1328-1337, 1386, 2210, 2273-2311, 2384-2418` | Plan-history milestones + Decision Log + v0.7 WI descriptions. Historical record — kept, with a forward-pointer to the supersession DEC. |
@@ -200,7 +200,7 @@ After the delete, `ls packages/shave/src/license/` must report "No such file or 
 - Delete the `LicenseRefusedError` row from the error-classes table (L87).
 - Delete the "License gate locality" section (L147-151+).
 
-### 4.20 `docs/adr/hook-layer-architecture.md`
+### 4.20 `docs/archive/developer/adr/hook-layer-architecture.md`
 
 - Update L259-263: delete the `→ detectLicense + licenseGate (accept/refuse)` line under the `shave.universalize` step.
 
@@ -267,7 +267,7 @@ The reviewer must verify each gate explicitly and name it in `REVIEW_VERDICT`.
 | # | Gate | Verification |
 |---|---|---|
 | 1 | License directory gone | `ls packages/shave/src/license/` → "No such file or directory" |
-| 2 | No license imports anywhere in source | `rg "licenseGate\|detectLicense\|LicenseRefusedError" packages/ bench/ docs/adr/ examples/v0.7-mri-demo/ examples/v1-federation-demo/ scripts/ DESIGN.md MASTER_PLAN.md` returns **zero** matches. (Exclude `examples/v1-wave-3-wasm-lower-demo/test/*.json` frozen fixtures and `docs/plans/wi-373-universalize-persist.md` historical plan from the search.) |
+| 2 | No license imports anywhere in source | `rg "licenseGate\|detectLicense\|LicenseRefusedError" packages/ bench/ docs/archive/developer/adr/ examples/v0.7-mri-demo/ examples/v1-federation-demo/ scripts/ DESIGN.md MASTER_PLAN.md` returns **zero** matches. (Exclude `examples/v1-wave-3-wasm-lower-demo/test/*.json` frozen fixtures and `docs/plans/wi-373-universalize-persist.md` historical plan from the search.) |
 | 3 | Regression-net test passes | New `packages/shave/src/universalize-no-license-gate.test.ts` runs green; both `it()` blocks pass. |
 | 4 | Full shave suite green | `pnpm -F @yakcc/shave test` — all tests pass; deleted gate tests are **gone** (not skipped). |
 | 5 | Full hooks-base suite green | `pnpm -F @yakcc/hooks-base test` — all tests pass after removing the atomize SPDX/license block. |
@@ -305,7 +305,7 @@ Status: **active 2026-05-17.** Issue #682. Workflow id: `682-license-gate-remove
 
 | ID | Title | Description | Deps | Gate | State |
 |---|---|---|---|---|---|
-| WI-682-license-gate-remove | Remove shave license gate per operator DEC | Delete `packages/shave/src/license/` directory; remove every `licenseGate` / `detectLicense` / `LicenseRefusedError` import and call across `packages/shave/`, `packages/hooks-base/`, `packages/compile/`, `packages/cli/`, `bench/B4-tokens-v3/harness/`, `examples/v0.7-mri-demo/`, `examples/v1-federation-demo/`, `scripts/audit-property-tests.mjs`; delete GPL fixture `examples/v0.7-mri-demo/src/gpl-fixture.ts` and the GPL-fixture entry in `bootstrap/expected-failures.json`; update docs `DESIGN.md`, `docs/adr/hook-layer-architecture.md`, `packages/shave/README.md`, `examples/v0.7-mri-demo/README.md`; add `DEC-LICENSE-GATE-REMOVE-001` annotation at touch site with operator quote verbatim; add regression-net test `packages/shave/src/universalize-no-license-gate.test.ts` asserting `universalize()` accepts SPDX-free source. Full workspace `pnpm -w lint` + `pnpm -w typecheck` + `pnpm -w build` green; full shave + hooks-base suites green. Land via PR. | — | reviewer (read-only) → PR | active 2026-05-17 |
+| WI-682-license-gate-remove | Remove shave license gate per operator DEC | Delete `packages/shave/src/license/` directory; remove every `licenseGate` / `detectLicense` / `LicenseRefusedError` import and call across `packages/shave/`, `packages/hooks-base/`, `packages/compile/`, `packages/cli/`, `bench/B4-tokens-v3/harness/`, `examples/v0.7-mri-demo/`, `examples/v1-federation-demo/`, `scripts/audit-property-tests.mjs`; delete GPL fixture `examples/v0.7-mri-demo/src/gpl-fixture.ts` and the GPL-fixture entry in `bootstrap/expected-failures.json`; update docs `DESIGN.md`, `docs/archive/developer/adr/hook-layer-architecture.md`, `packages/shave/README.md`, `examples/v0.7-mri-demo/README.md`; add `DEC-LICENSE-GATE-REMOVE-001` annotation at touch site with operator quote verbatim; add regression-net test `packages/shave/src/universalize-no-license-gate.test.ts` asserting `universalize()` accepts SPDX-free source. Full workspace `pnpm -w lint` + `pnpm -w typecheck` + `pnpm -w build` green; full shave + hooks-base suites green. Land via PR. | — | reviewer (read-only) → PR | active 2026-05-17 |
 
 Dependency waves: single WI; no parallelism. Critical path = WI-682-license-gate-remove.
 
@@ -375,7 +375,7 @@ Authority-written via `cc-policy workflow scope-sync` against `tmp/scope-682-lic
 - `examples/v0.7-mri-demo/README.md`
 - `examples/v1-federation-demo/test/acceptance.test.ts`
 - `scripts/audit-property-tests.mjs`
-- `docs/adr/hook-layer-architecture.md`
+- `docs/archive/developer/adr/hook-layer-architecture.md`
 - `DESIGN.md`
 - `MASTER_PLAN.md`
 - `packages/shave/README.md`

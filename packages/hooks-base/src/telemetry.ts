@@ -6,7 +6,7 @@
  * @title Telemetry capture: JSONL append-only writer with BLAKE3 intent hashing
  * @status accepted
  * @rationale
- *   Per D-HOOK-5 (docs/adr/hook-layer-architecture.md):
+ *   Per D-HOOK-5 (docs/archive/developer/adr/hook-layer-architecture.md):
  *   - Telemetry is local-only by default; written to ~/.yakcc/telemetry/<session-id>.jsonl.
  *   - One TelemetryEvent per emission event; JSONL (newline-delimited JSON) is the storage format
  *     so the file is append-only and trivially readable with standard tools.
@@ -54,7 +54,7 @@ import {
 /**
  * One telemetry record per emission event.
  *
- * Schema is verbatim from D-HOOK-5 in docs/adr/hook-layer-architecture.md.
+ * Schema is verbatim from D-HOOK-5 in docs/archive/developer/adr/hook-layer-architecture.md.
  * Every field is required; null values are explicit (never undefined).
  */
 export type TelemetryEvent = {

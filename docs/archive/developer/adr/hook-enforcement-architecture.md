@@ -347,4 +347,4 @@ can always determine which layer produced a result and what the verdict was.
 - `plans/wi-579-hook-enforcement-architecture.md` — parent plan (S1-S6 spec)
 - `plans/wi-579-s6-closer.md` — S6 closer plan (this ADR + corpus + bench)
 - `docs/enforcement-config.md` — enforcement-config.ts user guide
-- `docs/adr/hook-layer-architecture.md` — hook layer architecture ADR (broader context)
+- `docs/archive/developer/adr/hook-layer-architecture.md` — hook layer architecture ADR (broader context)
