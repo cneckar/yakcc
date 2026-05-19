@@ -1,4 +1,4 @@
-﻿/**
+/**
  * import-intercept.test.ts -- Unit tests for import-intercept module (WI-508 Slice 1).
  */
 

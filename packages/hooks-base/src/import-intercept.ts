@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // @decision DEC-WI508-INTERCEPT-001
 // title: import-intercept scan -- AST-based pre-emit foreign import detection
 // status: decided (WI-508-IMPORT-INTERCEPT Slice 1)

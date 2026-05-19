@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 /**
  * atomize-delegates.test.ts — WI-424 regression: atomize.ts delegates persistence
  * to universalize({persist:true}) — single authority (Sacred Practice #12).

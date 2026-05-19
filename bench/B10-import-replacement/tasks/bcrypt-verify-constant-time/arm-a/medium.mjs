@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/tasks/bcrypt-verify-constant-time/arm-a/medium.mjs
 //

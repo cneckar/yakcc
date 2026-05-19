@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/tasks/debounce-with-flush-cancel/arm-a/coarse.mjs
 //

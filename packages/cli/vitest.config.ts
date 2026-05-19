@@ -1,4 +1,4 @@
-﻿// @decision DEC-CLI-VITEST-CONFIG-002 — workspace-source aliases.
+// @decision DEC-CLI-VITEST-CONFIG-002 — workspace-source aliases.
 // Original -001 covered @yakcc/seeds; -002 extends to all workspace deps per
 // #352 follow-up. See packages/registry/vitest.config.ts DEC-REGISTRY-VITEST-CONFIG-001
 // for full rationale on @yakcc/contracts.

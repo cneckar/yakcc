@@ -1,4 +1,4 @@
-﻿# B5 Coherence Benchmark — LLM Judge Prompt (Frozen)
+# B5 Coherence Benchmark — LLM Judge Prompt (Frozen)
 
 > **FROZEN TEMPLATE** — Do not modify this file without updating DEC-BENCH-B5-SLICE2-001.
 > Changes invalidate comparability across runs. See rubric-eval.mjs for versioning.

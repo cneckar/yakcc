@@ -1,4 +1,4 @@
-﻿{
+{
   "description": "B5 coherence benchmark — Slice 2 conversation corpus spec (N=50)",
   "conversationsFile": "bench/B5-coherence/conversations.jsonl",
   "sha256": "e25d3e259110c6dd34dfccde111ae7a3b14a7f4285e00a96b7c2cdc57dcba799",

@@ -1,4 +1,4 @@
-﻿# B5 — Hallucination Rebound / Multi-Turn Coherence Benchmark
+# B5 — Hallucination Rebound / Multi-Turn Coherence Benchmark
 
 <!--
 @decision DEC-V0-BENCH-SLICE3-RELABEL-001

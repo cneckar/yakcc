@@ -1,4 +1,4 @@
-﻿/**
+/**
  * import-intercept-integration.test.ts -- Integration tests for WI-508 import-intercept.
  *
  * Production sequence exercised (Compound-Interaction Test, DEC-WI508-INTERCEPT-006):

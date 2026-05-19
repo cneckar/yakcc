@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B5-coherence/llm-judge.mjs
 // B5 coherence benchmark — Tier-2 LLM-as-judge integration

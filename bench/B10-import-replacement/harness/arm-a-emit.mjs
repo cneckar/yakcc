@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/harness/arm-a-emit.mjs
 //

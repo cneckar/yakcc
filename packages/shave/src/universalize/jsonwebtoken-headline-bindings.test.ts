@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 /**
  * WI-510 Slice 6 --- per-entry shave of two jsonwebtoken headline bindings.
  *

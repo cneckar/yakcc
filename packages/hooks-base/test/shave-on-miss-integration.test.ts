@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 /**
  * shave-on-miss-integration.test.ts — Integration tests for WI-508 Slice 2.
  *

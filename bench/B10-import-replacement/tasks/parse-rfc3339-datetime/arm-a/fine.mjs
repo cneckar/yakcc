@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/tasks/parse-rfc3339-datetime/arm-a/fine.mjs
 //

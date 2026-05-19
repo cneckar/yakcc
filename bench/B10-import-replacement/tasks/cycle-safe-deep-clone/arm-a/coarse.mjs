@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B10-import-replacement/tasks/cycle-safe-deep-clone/arm-a/coarse.mjs
 //

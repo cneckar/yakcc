@@ -1,4 +1,4 @@
-﻿/**
+/**
  * hooks-install.test.ts — integration tests for `yakcc hooks claude-code install`.
  *
  * Production sequence exercised:

@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 /**
  * WI-510 Slice 6 --- per-entry shave of bcryptjs headline binding (UMD IIFE engine-gap proof).
  * WI-585 --- ENGINE GAP CLOSED: UMD IIFE walk fix lands here (2026-05-16).

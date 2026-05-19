@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 /**
  * telemetry.ts â€" Local-only telemetry capture for the yakcc hook layer (Phase 1 MVP).
  *

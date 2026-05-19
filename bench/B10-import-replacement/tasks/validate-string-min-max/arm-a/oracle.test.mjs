@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // T-A-3: validate-string-min-max oracle (engine-gap-disclosed)
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * hook-intercept.test.ts - Integration and failure-mode tests for hookIntercept().
  *
  * Production sequence exercised (in-process path):

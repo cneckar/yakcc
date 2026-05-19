@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // bench/B5-coherence/rubric-eval.mjs
 // B5 coherence rubric evaluator — Tier-1 offline classifier + Tier-2 LLM judge
