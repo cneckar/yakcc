@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // T-A-3: bcrypt-verify-constant-time oracle (engine-gap-disclosed)
 // Note: oracle tests the constant-time comparison property (security intent),
 // not bcrypt hash equivalence (engine gap #585 prevents that).

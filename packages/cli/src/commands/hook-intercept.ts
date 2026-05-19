@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 //
 // hook-intercept.ts - Phase-1 stdin-reading subprocess for yakcc tool-call interception
 //

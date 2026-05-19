@@ -1,4 +1,4 @@
-﻿/**
+/**
  * import-gate.test.ts -- Tests for compile-time import gate (WI-508 Slice 1).
  *
  * Tests the exported @yakcc/compile surface: assertNoUnexpandedImports(),

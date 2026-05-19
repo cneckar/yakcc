@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 /**
  * shave-on-miss.test.ts — Unit tests for the shave-on-miss background queue.
  *

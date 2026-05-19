@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // @decision DEC-V2-PROPTEST-PATH-A-001: hand-authored property-test corpus for
 // @yakcc/shave corpus/documented-usage.ts atoms. Two-file pattern: this file
 // (.props.ts) is vitest-free and holds the corpus; the sibling .props.test.ts

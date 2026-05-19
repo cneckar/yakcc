@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 // T-A-3: cycle-safe-deep-clone oracle
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
