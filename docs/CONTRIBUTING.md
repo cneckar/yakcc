@@ -4,19 +4,24 @@ Working on yakcc itself? Start here.
 
 ## Where the developer docs live
 
-The full developer documentation — architecture decisions, design rationale, verification ladder, agent cornerstones, federation spec, and ADRs — lives at these paths in the repository:
+The full developer documentation — architecture decisions, design rationale, verification ladder, agent cornerstones, federation spec, and ADRs — lives in [`docs/archive/developer/`](archive/developer/) to keep the top-level focused on end-user material.
 
-- [`DESIGN.md`](../DESIGN.md) — extended design rationale and contract philosophy
-- [`MASTER_PLAN.md`](../MASTER_PLAN.md) — architecture decisions and work-item history
-- [`VERIFICATION.md`](../VERIFICATION.md) — verification ladder, triplet identity, TCB
-- [`AGENTS.md`](../AGENTS.md) — agent cornerstones and orchestration model
-- [`FEDERATION.md`](../FEDERATION.md) — F0..F4 federation trust/scale axis
-- [`docs/adr/`](adr/) — architecture decision records (9 ADRs)
+- [`MASTER_PLAN.md`](archive/developer/MASTER_PLAN.md) — decision log and work-item history (load-bearing audit trail)
+- [`DESIGN.md`](archive/developer/DESIGN.md) — extended design rationale and contract philosophy
+- [`VERIFICATION.md`](archive/developer/VERIFICATION.md) — verification ladder, triplet identity, TCB
+- [`AGENTS.md`](archive/developer/AGENTS.md) — sister-agent operating guide and orchestration cornerstones
+- [`FEDERATION.md`](archive/developer/FEDERATION.md) — F0..F4 federation trust/scale axis
+- [`MANIFESTO.md`](archive/developer/MANIFESTO.md) — project voice and intent
+- [`PRIOR_ART.md`](archive/developer/PRIOR_ART.md) — defensive publication of substrate's novel mechanisms
+- [`V2_SELF_HOSTING_DEMO.md`](archive/developer/V2_SELF_HOSTING_DEMO.md) — v2 self-hosting technical walkthrough
+- [`adr/`](archive/developer/adr/) — architecture decision records
+
+The original root-level paths (`MASTER_PLAN.md`, `DESIGN.md`, etc.) are now 3-line stubs pointing at the archive, preserving external links and PR references.
 
 ## Where to start
 
-1. Read `DESIGN.md` for the design principles and contract philosophy.
-2. Read `MASTER_PLAN.md` for open work items and prior decisions.
+1. Read [`DESIGN.md`](archive/developer/DESIGN.md) for the design principles and contract philosophy.
+2. Read [`MASTER_PLAN.md`](archive/developer/MASTER_PLAN.md) for open work items and prior decisions.
 3. Check [github.com/cneckar/yakcc/issues](https://github.com/cneckar/yakcc/issues) for the open issue queue — pick a `ready` issue.
 4. Work in a git worktree on a feature branch — never directly on `main`.
 5. Follow the `@decision` annotation format for any significant new code (50+ lines).

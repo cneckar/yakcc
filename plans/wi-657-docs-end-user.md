@@ -11,10 +11,10 @@
 
 ## DESCOPE NOTE (2026-05-18)
 
-**Implementer scope reduction:** The original plan required `git mv` of MASTER_PLAN.md, DESIGN.md, VERIFICATION.md, FEDERATION.md, MANIFESTO.md, AGENTS.md, docs/PRIOR_ART.md, docs/V2_SELF_HOSTING_DEMO.md, docs/V2_SELF_SHAVE_DEMO.md, and docs/adr/* into `docs/archive/developer/`. That requires `can_write_governance` capability, which the implementer stage does not hold.
+**Implementer scope reduction:** The original plan required `git mv` of MASTER_PLAN.md, DESIGN.md, VERIFICATION.md, FEDERATION.md, MANIFESTO.md, AGENTS.md, docs/PRIOR_ART.md, docs/V2_SELF_HOSTING_DEMO.md, docs/V2_SELF_SHAVE_DEMO.md, and docs/archive/developer/adr/* into `docs/archive/developer/`. That requires `can_write_governance` capability, which the implementer stage does not hold.
 
 **Descoped implementation (what was actually done):**
-- `README.md` rewritten end-user-focused (8 sections per issue body). Developer docs remain at their current root paths; a "Contributing" section at the bottom points to `DESIGN.md`, `MASTER_PLAN.md`, and `docs/adr/` at their current locations (not archive paths).
+- `README.md` rewritten end-user-focused (8 sections per issue body). Developer docs remain at their current root paths; a "Contributing" section at the bottom points to `DESIGN.md`, `MASTER_PLAN.md`, and `docs/archive/developer/adr/` at their current locations (not archive paths).
 - `docs/TROUBLESHOOTING.md` created with 9 seeded entries.
 - `docs/ADVANCED.md` created with 8 sections including v2 self-shave bragging-rights blurb.
 - `docs/CONTRIBUTING.md` created pointing at existing developer doc locations.
@@ -27,7 +27,7 @@ The archive/move work (Slice 1 of the original plan) remains available for a fol
 
 ## 1. Problem statement
 
-Today's top-level docs surface mixes developer internals (`MASTER_PLAN.md`, `DESIGN.md`, `VERIFICATION.md`, `FEDERATION.md`, `MANIFESTO.md`, `AGENTS.md`, `docs/PRIOR_ART.md`, `docs/V2_SELF_HOSTING_DEMO.md`, `docs/adr/*`) with end-user material (`README.md`, `docs/USING_YAKCC.md`, `docs/ALPHA.md`). The developer material dominates the root, and `README.md`'s "Further reading" funnels first-time visitors straight into 2600-line decision logs.
+Today's top-level docs surface mixes developer internals (`MASTER_PLAN.md`, `DESIGN.md`, `VERIFICATION.md`, `FEDERATION.md`, `MANIFESTO.md`, `AGENTS.md`, `docs/PRIOR_ART.md`, `docs/V2_SELF_HOSTING_DEMO.md`, `docs/archive/developer/adr/*`) with end-user material (`README.md`, `docs/USING_YAKCC.md`, `docs/ALPHA.md`). The developer material dominates the root, and `README.md`'s "Further reading" funnels first-time visitors straight into 2600-line decision logs.
 
 Operator decision (2026-05-17): **first-class docs target end users.** Developer docs move into `docs/archive/developer/` (preserved, accessible, but no longer prominent). Root gets a small set of 3-line stubs pointing at the new locations to preserve external links.
 
@@ -46,7 +46,7 @@ Operator descope (2026-05-18): **archive moves deferred** — implementer procee
 - Every cross-doc link inside scope resolves post-move.
 
 **Non-goals.**
-- **Source-code comment links are out of scope.** `packages/**` and `scripts/**` are in the workflow's `forbidden_paths`. Source files contain references like `// Status: decided (MASTER_PLAN.md ...)` and `docs/adr/...`. The archive stubs (Slice 1) preserve those targets at the old root so existing source-code references keep resolving via the stub redirect; they do **not** point at the archived copy. Cleanup of source-code references is tracked separately and not in scope here.
+- **Source-code comment links are out of scope.** `packages/**` and `scripts/**` are in the workflow's `forbidden_paths`. Source files contain references like `// Status: decided (MASTER_PLAN.md ...)` and `docs/archive/developer/adr/...`. The archive stubs (Slice 1) preserve those targets at the old root so existing source-code references keep resolving via the stub redirect; they do **not** point at the archived copy. Cleanup of source-code references is tracked separately and not in scope here.
 - **No rewriting of archived content.** Archive files are historical artifacts. Only mechanical relocations + intra-archive link fixes are allowed.
 - **No changes to `CLAUDE.md`, `.github/**`, `.claude/**`.** Explicitly forbidden by scope manifest.
 - **`FEDERATION_PROTOCOL.md` is OUT of scope** for this WI — it is a developer-facing protocol spec at root but the issue body does not enumerate it. Leave it untouched; a follow-up issue can decide whether to archive.
@@ -66,7 +66,7 @@ Operator descope (2026-05-18): **archive moves deferred** — implementer procee
 | `docs/PRIOR_ART.md` | `docs/archive/developer/PRIOR_ART.md` | 275 | Defensive publication |
 | `docs/V2_SELF_HOSTING_DEMO.md` | `docs/archive/developer/V2_SELF_HOSTING_DEMO.md` | 179 | Pass-1 internals |
 | `docs/V2_SELF_SHAVE_DEMO.md` | `docs/archive/developer/V2_SELF_SHAVE_DEMO.md` | 254 | Two-pass cycle (developer-detail) |
-| `docs/adr/*` (9 files) | `docs/archive/developer/adr/*` | — | Architecture decision records |
+| `docs/archive/developer/adr/*` (9 files) | `docs/archive/developer/adr/*` | — | Architecture decision records |
 
 **Total moved:** ~7100 lines across 18 files. All performed via `git mv` so `git log --follow` keeps history.
 
@@ -149,9 +149,9 @@ Short file (~30 lines): "Working on yakcc itself? Start here." Brief pointer to 
 
 - §1 Prerequisites: keep as-is.
 - §2 Installation: keep current multi-step (#361 note already present) + add TODO that collapses with #656.
-- §5 cross-link `docs/adr/hook-layer-architecture.md` → `docs/archive/developer/adr/hook-layer-architecture.md`.
+- §5 cross-link `docs/archive/developer/adr/hook-layer-architecture.md` → `docs/archive/developer/adr/hook-layer-architecture.md`.
 - §7 cross-link `FEDERATION.md` → root stub still resolves (no change needed but updated to archive direct for cleanliness).
-- §9 cross-link `docs/adr/hook-layer-architecture.md` → archive path.
+- §9 cross-link `docs/archive/developer/adr/hook-layer-architecture.md` → archive path.
 - §10 cross-link `docs/V2_SELF_HOSTING_DEMO.md` → archive path.
 - §12 "Where to go next" — rewrite to point at:
   - `docs/TROUBLESHOOTING.md`
@@ -172,9 +172,9 @@ Short file (~30 lines): "Working on yakcc itself? Start here." Brief pointer to 
 Two pass approach, executed at end of Slice 1 (moves+stubs) and Slice 4 (after USING_YAKCC/ALPHA updates):
 
 **Pass A — intra-archive links.** Inside `docs/archive/developer/**`, fix relative paths that broke from the move:
-- `docs/adr/X.md` → `adr/X.md` (since adr/ moves under archive/developer/ alongside the other archived root docs)
+- `docs/archive/developer/adr/X.md` → `adr/X.md` (since adr/ moves under archive/developer/ alongside the other archived root docs)
 - Sibling refs like `[MASTER_PLAN.md](MASTER_PLAN.md)` keep working because all the archived files are now siblings in the same dir
-- ADR files at `docs/archive/developer/adr/discovery-X.md` referring to `docs/adr/discovery-Y.md` → fix to relative `discovery-Y.md`
+- ADR files at `docs/archive/developer/adr/discovery-X.md` referring to `docs/archive/developer/adr/discovery-Y.md` → fix to relative `discovery-Y.md`
 - ADR files referring to `MASTER_PLAN.md` → `../MASTER_PLAN.md`
 - `PRIOR_ART.md` references to `DESIGN.md`, `VERIFICATION.md`, etc. — already siblings post-move; collapse `../DESIGN.md` → `DESIGN.md`
 
@@ -234,7 +234,7 @@ All four sub-slices land in one commit chain on `feature/657-docs-end-user`, one
 - `docs/archive/developer/` directory exists with: `MASTER_PLAN.md`, `DESIGN.md`, `VERIFICATION.md`, `FEDERATION.md`, `MANIFESTO.md`, `AGENTS.md`, `PRIOR_ART.md`, `V2_SELF_HOSTING_DEMO.md`, `V2_SELF_SHAVE_DEMO.md`, `adr/` (with 9 ADR files).
 - Root stubs exist at: `MASTER_PLAN.md`, `DESIGN.md`, `VERIFICATION.md`, `FEDERATION.md`, `MANIFESTO.md`, `AGENTS.md` — each ≤ 5 lines and conforming to the §3c template.
 - New files exist: `docs/TROUBLESHOOTING.md`, `docs/ADVANCED.md`, `docs/CONTRIBUTING.md`.
-- `README.md` does NOT contain `docs/adr/` or `docs/archive/developer/MASTER_PLAN.md` deep-pointer block at top of file (relocated to CONTRIBUTING).
+- `README.md` does NOT contain `docs/archive/developer/adr/` or `docs/archive/developer/MASTER_PLAN.md` deep-pointer block at top of file (relocated to CONTRIBUTING).
 
 **`required_authority_invariants`**:
 - No source code touched (`packages/`, `scripts/`, `bench/`, `examples/`, `bootstrap/` untouched).
@@ -314,7 +314,7 @@ All four sub-slices land in one commit chain on `feature/657-docs-end-user`, one
 | `git mv` history-preservation regression on rename-detection threshold | Use `git mv` (not `mv && git add`); reviewer verifies with `git log --follow` |
 | Stub link target relative-path arithmetic off-by-one (e.g., `docs/archive/developer/MASTER_PLAN.md` from a root stub needs `docs/archive/developer/MASTER_PLAN.md`, but from `docs/USING_YAKCC.md` it needs `archive/developer/MASTER_PLAN.md`) | Link verification script (§5) catches at implementer time, not at user time |
 | README v2-self-shave content lost during rewrite | `forbidden_shortcuts` lists it; `required_real_path_checks` greps for `self-shave` in ADVANCED.md |
-| Source code references like `// docs/adr/hook-layer-architecture.md` become silently stale | Out-of-scope (forbidden_paths); tracked in §2 non-goals; follow-up issue can clean up source comments |
+| Source code references like `// docs/archive/developer/adr/hook-layer-architecture.md` become silently stale | Out-of-scope (forbidden_paths); tracked in §2 non-goals; follow-up issue can clean up source comments |
 | Sister-agent conflict on root files (Wrath touching README via #656) | Sister coordination in §0 acknowledges; README TODO marker is the explicit handoff point |
 
 ## 10. Outputs

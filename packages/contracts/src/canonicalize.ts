@@ -25,7 +25,7 @@ import type { ContractSpec, NonFunctionalProperties } from "./index.js";
 //   rule). The function uses the same hand-rolled canonical encoder so key ordering
 //   and number serialization are identical to storeBlock's embedding text.
 //   Canonical site for the 1 - L²/4 formula re-stated in storage.ts (DEC-V3-IMPL-QUERY-007).
-//   References: docs/adr/discovery-query-language.md §Q1, docs/adr/discovery-ranking.md §Q3.
+//   References: docs/archive/developer/adr/discovery-query-language.md §Q1, docs/archive/developer/adr/discovery-ranking.md §Q3.
 
 /**
  * A query parameter with optional name (at query time the LLM may not know
@@ -47,7 +47,7 @@ export interface QueryTypeSignatureParam {
  * @decision DEC-V3-DISCOVERY-D2-001 — Query schema. QueryIntentCard is intentionally
  *   smaller than SpecYak: no id/hash/strictness/proof fields; all dimension fields
  *   are optional; freeform description strings replace structured array types.
- *   Reference: docs/adr/discovery-query-language.md §Q1.
+ *   Reference: docs/archive/developer/adr/discovery-query-language.md §Q1.
  */
 export interface QueryIntentCard {
   // Dimension fields — each is optional; omitting skips that dimension

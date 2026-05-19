@@ -51,7 +51,7 @@
  *   WI-423 delegation pattern applied to shave() (PR #431).
  *
  * Cross-reference: DEC-HOOK-PHASE-2-001, DEC-HOOK-PHASE-1-001, DEC-HOOK-LAYER-001,
- *   docs/adr/hook-layer-architecture.md D-HOOK-7.
+ *   docs/archive/developer/adr/hook-layer-architecture.md D-HOOK-7.
  */
 
 import type { Registry } from "@yakcc/registry";

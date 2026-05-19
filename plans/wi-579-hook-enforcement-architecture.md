@@ -852,9 +852,9 @@ registry. Close #579.
 - Bench baseline JSONL committed to `bench/B*/` directories per existing
   convention; the diff between pre-#579 and post-#579 numbers documented in
   the closer issue body.
-- `docs/adr/hook-enforcement-architecture.md` ADR cross-referencing every
+- `docs/archive/developer/adr/hook-enforcement-architecture.md` ADR cross-referencing every
   `DEC-HOOK-ENF-*` ID (issue body acceptance: "documented in
-  docs/adr/hook-enforcement-architecture.md").
+  docs/archive/developer/adr/hook-enforcement-architecture.md").
 
 ## Acceptance (= #579 closer)
 - All 6 layers shipped; Layer 6 corpus ≥ 50 rows passes in CI.

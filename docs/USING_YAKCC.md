@@ -2,7 +2,7 @@
 
 End-user walkthrough: from a fresh TypeScript project to seeing registry hits in Claude Code in under 15 minutes.
 
-This document is for people who want to **use** yakcc in their own project. If you want to **contribute** to yakcc itself, see [`README.md`](../README.md) and [`MASTER_PLAN.md`](../MASTER_PLAN.md).
+This document is for people who want to **use** yakcc in their own project. If you want to **contribute** to yakcc itself, see [`README.md`](../README.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
@@ -155,7 +155,7 @@ What you'll see:
 
 ## 5. Walking through a registry hit
 
-When the hook substitutes a registry atom, the emitted code carries an inline contract comment showing exactly which atom was used (per D-HOOK-4 in [`docs/adr/hook-layer-architecture.md`](adr/hook-layer-architecture.md)):
+When the hook substitutes a registry atom, the emitted code carries an inline contract comment showing exactly which atom was used (per D-HOOK-4 in [`docs/archive/developer/adr/hook-layer-architecture.md`](archive/developer/adr/hook-layer-architecture.md)):
 
 ```ts
 // @atom parseIntList (string => number[]; never throws on well-formed input) — yakcc:7f3a1c20
@@ -217,7 +217,7 @@ yakcc federation mirror \
   --registry .yakcc/registry.sqlite
 ```
 
-Every transferred block is integrity-checked by recomputing its BlockMerkleRoot from the received bytes (per [`FEDERATION.md`](../FEDERATION.md) F1 axis). Tampered transfers fail loud.
+Every transferred block is integrity-checked by recomputing its BlockMerkleRoot from the received bytes (per [`FEDERATION.md`](archive/developer/FEDERATION.md) F1 axis). Tampered transfers fail loud.
 
 ### Serve your registry to others
 
@@ -360,7 +360,7 @@ Re-running `yakcc uninstall` is safe — it is idempotent. Running it on a proje
 
 ## 10. Telemetry — am I actually saving work?
 
-Every hook invocation appends one JSON line to `~/.yakcc/telemetry/<session-id>.jsonl` (per D-HOOK-5 in `docs/adr/hook-layer-architecture.md`). The file is **local-only**; nothing leaves your machine.
+Every hook invocation appends one JSON line to `~/.yakcc/telemetry/<session-id>.jsonl` (per D-HOOK-5 in `docs/archive/developer/adr/hook-layer-architecture.md`). The file is **local-only**; nothing leaves your machine.
 
 Schema (one event per emission):
 
@@ -403,7 +403,7 @@ If you already have a TypeScript package with conventions you want represented i
 yakcc bootstrap
 ```
 
-This shaves every file in the workspace, decomposes JSDoc-annotated exports into atoms, and writes a manifest at `bootstrap/expected-roots.json`. Add `--verify` to also byte-compare the produced manifest against a committed one (the self-hosting proof; see [`docs/V2_SELF_HOSTING_DEMO.md`](V2_SELF_HOSTING_DEMO.md)):
+This shaves every file in the workspace, decomposes JSDoc-annotated exports into atoms, and writes a manifest at `bootstrap/expected-roots.json`. Add `--verify` to also byte-compare the produced manifest against a committed one (the self-hosting proof; see [`docs/archive/developer/V2_SELF_HOSTING_DEMO.md`](archive/developer/V2_SELF_HOSTING_DEMO.md)):
 
 ```sh
 yakcc bootstrap --verify
@@ -437,14 +437,15 @@ yakcc registry rebuild --path .yakcc/registry.sqlite
 ## 13. Where to go next
 
 - [`README.md`](../README.md) — yakcc-the-project overview, monorepo layout, contributor quickstart.
-- [`MASTER_PLAN.md`](../MASTER_PLAN.md) — architecture decisions and work-item history.
-- [`DESIGN.md`](../DESIGN.md) — extended design rationale and contract philosophy.
-- [`VERIFICATION.md`](../VERIFICATION.md) — verification ladder, triplet identity, TCB.
-- [`FEDERATION.md`](../FEDERATION.md) — F0..F4 federation trust/scale axis.
-- [`MANIFESTO.md`](../MANIFESTO.md) — project voice and intent.
-- [`docs/PRIOR_ART.md`](PRIOR_ART.md) — defensive publication of the substrate's novel mechanisms.
-- [`docs/V2_SELF_HOSTING_DEMO.md`](V2_SELF_HOSTING_DEMO.md) — the `yakcc bootstrap --verify` self-hosting proof.
-- [`docs/adr/hook-layer-architecture.md`](adr/hook-layer-architecture.md) — D-HOOK-1..6 hook-layer decisions.
+- [`docs/CONTRIBUTING.md`](CONTRIBUTING.md) — contributor orientation and pointers into the developer-docs archive.
+- [`docs/archive/developer/MASTER_PLAN.md`](archive/developer/MASTER_PLAN.md) — architecture decisions and work-item history.
+- [`docs/archive/developer/DESIGN.md`](archive/developer/DESIGN.md) — extended design rationale and contract philosophy.
+- [`docs/archive/developer/VERIFICATION.md`](archive/developer/VERIFICATION.md) — verification ladder, triplet identity, TCB.
+- [`docs/archive/developer/FEDERATION.md`](archive/developer/FEDERATION.md) — F0..F4 federation trust/scale axis.
+- [`docs/archive/developer/MANIFESTO.md`](archive/developer/MANIFESTO.md) — project voice and intent.
+- [`docs/archive/developer/PRIOR_ART.md`](archive/developer/PRIOR_ART.md) — defensive publication of the substrate's novel mechanisms.
+- [`docs/archive/developer/V2_SELF_HOSTING_DEMO.md`](archive/developer/V2_SELF_HOSTING_DEMO.md) — the `yakcc bootstrap --verify` self-hosting proof.
+- [`docs/archive/developer/adr/hook-layer-architecture.md`](archive/developer/adr/hook-layer-architecture.md) — D-HOOK-1..6 hook-layer decisions.
 
 ---
 

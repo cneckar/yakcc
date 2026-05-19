@@ -25,7 +25,7 @@
  *      event through the full pipeline; the final block replays a multi-event
  *      session and verifies the drift window catches degraded behavior.
  *
- *   Cross-reference: plans/wi-579-s6-closer.md, docs/adr/hook-enforcement-architecture.md
+ *   Cross-reference: plans/wi-579-s6-closer.md, docs/archive/developer/adr/hook-enforcement-architecture.md
  *   Production trigger: every PR touching packages/hooks-base/src/** will exercise it.
  */
 

@@ -19,7 +19,7 @@ is purely orchestration:
    (S1-S5 seeds) to 50 rows (10 per layer × 5 layers).
 2. **E2E test** — write `enforcement-e2e.test.ts` exercising all 5 layers in a
    single realistic multi-event session.
-3. **ADR** — write `docs/adr/hook-enforcement-architecture.md` documenting the
+3. **ADR** — write `docs/archive/developer/adr/hook-enforcement-architecture.md` documenting the
    full 6-layer architecture with all DEC-HOOK-ENF-* ID cross-references.
 4. **Bench scaffold** — create placeholder JSON files for B1/B4/B5/B9/B10
    baselines; actual bench runs are deferred (heavy compute).
@@ -67,7 +67,7 @@ New rows cover edge cases not in the S1-S5 seeds:
 
 ## 4. ADR Decision IDs
 
-The ADR (`docs/adr/hook-enforcement-architecture.md`) cross-references all
+The ADR (`docs/archive/developer/adr/hook-enforcement-architecture.md`) cross-references all
 DEC-HOOK-ENF-* IDs from S1-S5:
 
 **Config authority:**
@@ -143,7 +143,7 @@ The following are explicitly out of scope for S6 and require follow-up WIs:
 - `enforcement-eval-corpus.json` has exactly 50 rows (10 per layer × 5 layers)
 - Corpus structural invariants updated in `enforcement-eval-corpus.test.ts`
 - `enforcement-e2e.test.ts` exercises all 5 layers in a single flow
-- `docs/adr/hook-enforcement-architecture.md` created with all 32 DEC-HOOK-ENF-*
+- `docs/archive/developer/adr/hook-enforcement-architecture.md` created with all 32 DEC-HOOK-ENF-*
   IDs listed and cross-referenced
 - 5 bench placeholder JSON files created (B1/B4/B5/B9/B10), each with `status: "placeholder"`
 - This plan file present

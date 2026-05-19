@@ -119,7 +119,7 @@ No other ALPHA.md edits. Do not touch §1 / §3 (rest of table) / §4 / §5 / §
 ### Forbidden paths (any change here voids the WI)
 - `packages/**` — no code changes, no exceptions
 - `bench/B1-latency/**`, `bench/B2-bloat/**`, `bench/B4-tokens/**`, `bench/B5-coherence/**`, `bench/B6-airgap/**`, `bench/B7-commit/**`, `bench/B8-synthetic/**`, `bench/B9-min-surface/**`, `bench/B10-import-replacement/**`, `bench/v0-release-smoke/**` — other bench dirs untouched
-- `docs/USING_YAKCC.md`, `docs/TROUBLESHOOTING.md`, `docs/ADVANCED.md`, `docs/CONTRIBUTING.md`, `docs/PRIOR_ART.md`, `docs/V2_*`, `docs/REGISTRY_LICENSE_POLICY.md`, `docs/enforcement-config.md`, `docs/adr/**`, `docs/system-prompts/**` — out of scope (the #657 reshape is its own WI)
+- `docs/USING_YAKCC.md`, `docs/TROUBLESHOOTING.md`, `docs/ADVANCED.md`, `docs/CONTRIBUTING.md`, `docs/PRIOR_ART.md`, `docs/V2_*`, `docs/REGISTRY_LICENSE_POLICY.md`, `docs/enforcement-config.md`, `docs/archive/developer/adr/**`, `docs/system-prompts/**` — out of scope (the #657 reshape is its own WI)
 - `.github/**`, `.claude/**`, `MASTER_PLAN.md`, `DESIGN.md`, `VERIFICATION.md`, `FEDERATION.md`, `MANIFESTO.md`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `examples/**`, `scripts/**`, `bootstrap/**` — out of scope
 
 ### Authority domains

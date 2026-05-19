@@ -41,7 +41,7 @@
  *
  *   Cross-reference:
  *     DEC-HOOK-PHASE-3-L3-MCP-001 — envelope shape, 4-band thresholds, D-HOOK-6
- *     docs/adr/discovery-llm-interaction.md — D4 ADR (canonical authority)
+ *     docs/archive/developer/adr/discovery-llm-interaction.md — D4 ADR (canonical authority)
  *     docs/system-prompts/yakcc-discovery.md — verbatim system-prompt text
  *     packages/cli/src/commands/registry-init.ts — DEFAULT_REGISTRY_PATH authority
  */

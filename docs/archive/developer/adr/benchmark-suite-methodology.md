@@ -221,7 +221,7 @@ This ADR should be re-opened if any of the following occur:
 
 Phase 0 (this ADR) ships:
 
-- This document at `docs/adr/benchmark-suite-methodology.md`
+- This document at `docs/archive/developer/adr/benchmark-suite-methodology.md`
 - `DEC-BENCHMARK-SUITE-001` row in MASTER_PLAN's Decision Log
 - Sub-tickets #185–#193 are referenced; their pre-assigned-decision sections cite this ADR
 
@@ -256,7 +256,7 @@ Sub-ticket implementation (each is its own WI):
 - Sub-tickets: #185 (B1), #186 (B2), #187 (B3), #188 (B4), #189 (B5), #190 (B6), #191 (B7), #192 (B8-SYNTHETIC), #193 (B8-CURVE)
 - Cornerstones: `AGENTS.md`
 - Related decisions:
-  - `DEC-HOOK-LAYER-001` (`docs/adr/hook-layer-architecture.md`) — gates B3/B4/B5/B7/B8
+  - `DEC-HOOK-LAYER-001` (`docs/archive/developer/adr/hook-layer-architecture.md`) — gates B3/B4/B5/B7/B8
   - `DEC-AS-BACKEND-PIVOT-001` — gates B1
   - `DEC-V3-INITIATIVE-001` — measurement-first guardrail; coordinates with B3/B4/B8 timing
   - `DEC-CI-FAST-PATH-001/002/003` (#196 ADR, TBD) — B6 lands as Tier 1 CI gate

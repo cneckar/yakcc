@@ -9,14 +9,14 @@
 
 ## Context
 
-D1 (`docs/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
+D1 (`docs/archive/developer/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
 multi-dimensional storage schema: 5 `FLOAT[384]` columns in a `sqlite-vec` `vec0` virtual table
 (`contract_embeddings`), one per SpecYak semantic axis (`embedding_behavior`,
 `embedding_guarantees`, `embedding_error_conditions`, `embedding_non_functional`,
 `embedding_property_tests`). D1 committed the absent-dimension rule: a missing SpecYak source
 field yields a zero vector; query-time must skip zero-vector dimensions.
 
-D2 (`docs/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`) established the
+D2 (`docs/archive/developer/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`) established the
 LLM-facing query surface: `QueryIntentCard` with freeform per-dimension texts, per-dimension
 `weights`, and `topK` (default 10). D2 committed the `Candidate` result type carrying
 `perDimensionScores: PerDimensionScores` and `combinedScore: number` in [0, 1], the auto-accept
@@ -24,7 +24,7 @@ threshold (top-1 `combinedScore > 0.85` AND gap-to-top-2 > 0.15), and the progra
 (`Registry.findCandidatesByQuery`). D2 deferred the LLM tool call shape and the interaction
 protocol to D4.
 
-D3 (`docs/adr/discovery-ranking.md`, `DEC-V3-DISCOVERY-D3-001`) established the ranking
+D3 (`docs/archive/developer/adr/discovery-ranking.md`, `DEC-V3-DISCOVERY-D3-001`) established the ranking
 algorithm: per-dimension weighted cosine renormalized over the surviving non-null dimension set,
 a 5-stage pipeline (vector KNN → structural filter → strictness filter → reserved Stage 4 →
 final ranking + tiebreaker), the tiebreaker hierarchy (property-test depth → usage history →
@@ -44,10 +44,10 @@ this ADR.
 
 | Domain | Authority | ADR |
 |---|---|---|
-| Storage schema (5 columns, model, zero-vector rule, migration 7) | D1 | `docs/adr/discovery-multi-dim-embeddings.md` |
-| Query surface (QueryIntentCard, Candidate shape, CLI flags, auto-accept thresholds, cross-provider invariant) | D2 | `docs/adr/discovery-query-language.md` |
-| Ranking formula, aggregation strategy, pipeline, tiebreakers, score normalization, negative-space behavior | D3 | `docs/adr/discovery-ranking.md` |
-| Tool call shape, evidence rendering contract, 4-band protocol, system-prompt text, confidence calibration, failure-mode shapes, D5 boundary | D4 (this ADR) | `docs/adr/discovery-llm-interaction.md` |
+| Storage schema (5 columns, model, zero-vector rule, migration 7) | D1 | `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` |
+| Query surface (QueryIntentCard, Candidate shape, CLI flags, auto-accept thresholds, cross-provider invariant) | D2 | `docs/archive/developer/adr/discovery-query-language.md` |
+| Ranking formula, aggregation strategy, pipeline, tiebreakers, score normalization, negative-space behavior | D3 | `docs/archive/developer/adr/discovery-ranking.md` |
+| Tool call shape, evidence rendering contract, 4-band protocol, system-prompt text, confidence calibration, failure-mode shapes, D5 boundary | D4 (this ADR) | `docs/archive/developer/adr/discovery-llm-interaction.md` |
 
 Neither D1, D2, nor D3 is modified by D4. If a future WI touches more than one of these authority
 domains, all owning ADRs must be revised.

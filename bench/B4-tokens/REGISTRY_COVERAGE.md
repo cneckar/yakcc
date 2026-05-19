@@ -6,7 +6,7 @@ Reshuffled: 2026-05-16 | WI: WI-607 | Classification: shave-first per DEC-BENCH-
 
 ## Methodology change
 
-Coverage gaps are now classified shave-first. The 2026-05-13 scan flagged 5 GAPs and 3 PARTIALs as "NEEDS_FILING" seed-writing tasks (issues #465, #467, #468, #469). After review (issue #607), all 8 are reclassified as shave-queue: an existing npm package would yield the needed atom when shaved, matching the WI-510 cascade pattern (lodash, date-fns, uuid, nanoid, jsonwebtoken, bcryptjs already shaved). Seed-writing is reserved for true L0 primitives (parsing building blocks; current 26 seeds in `packages/seeds/src/blocks/`) where no real-package equivalent exists. Per `DEC-BENCH-COVERAGE-SHAVE-FIRST-001` (see `docs/adr/benchmark-suite-methodology.md`).
+Coverage gaps are now classified shave-first. The 2026-05-13 scan flagged 5 GAPs and 3 PARTIALs as "NEEDS_FILING" seed-writing tasks (issues #465, #467, #468, #469). After review (issue #607), all 8 are reclassified as shave-queue: an existing npm package would yield the needed atom when shaved, matching the WI-510 cascade pattern (lodash, date-fns, uuid, nanoid, jsonwebtoken, bcryptjs already shaved). Seed-writing is reserved for true L0 primitives (parsing building blocks; current 26 seeds in `packages/seeds/src/blocks/`) where no real-package equivalent exists. Per `DEC-BENCH-COVERAGE-SHAVE-FIRST-001` (see `docs/archive/developer/adr/benchmark-suite-methodology.md`).
 
 ## Coverage Matrix
 

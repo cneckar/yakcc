@@ -9,14 +9,14 @@
 
 ## Context
 
-D1 (`docs/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
+D1 (`docs/archive/developer/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
 multi-dimensional storage schema: 5 `FLOAT[384]` columns in a `sqlite-vec` `vec0` virtual table
 (`contract_embeddings`), one per SpecYak semantic axis (`embedding_behavior`,
 `embedding_guarantees`, `embedding_error_conditions`, `embedding_non_functional`,
 `embedding_property_tests`). D1 committed the absent-dimension rule: a missing SpecYak source
 field yields a zero vector; query-time must skip zero-vector dimensions.
 
-D2 (`docs/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`) established the
+D2 (`docs/archive/developer/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`) established the
 LLM-facing query surface: `QueryIntentCard` with freeform per-dimension texts, per-dimension
 `weights`, and `topK` (default 10). D2 committed the `Candidate` result type carrying
 `perDimensionScores: PerDimensionScores` and `combinedScore: number` in [0, 1], the auto-accept
@@ -24,7 +24,7 @@ threshold (top-1 `combinedScore > 0.85` AND gap-to-top-2 > 0.15), and the progra
 (`Registry.findCandidatesByQuery`). The auto-accept gate is D2's authority; D5 only measures
 calibration against it.
 
-D3 (`docs/adr/discovery-ranking.md`, `DEC-V3-DISCOVERY-D3-001`) established the ranking
+D3 (`docs/archive/developer/adr/discovery-ranking.md`, `DEC-V3-DISCOVERY-D3-001`) established the ranking
 algorithm: per-dimension weighted cosine renormalized over the surviving non-null dimension set,
 a 5-stage pipeline (vector KNN → structural filter → strictness filter → reserved Stage 4 →
 final ranking + tiebreaker), the tiebreaker hierarchy (property-test depth → usage history →
@@ -32,7 +32,7 @@ test history → atom age → lex `BlockMerkleRoot`; ε = 0.02), and the `Candid
 (`failedAtLayer: 'structural' | 'strictness' | 'property_test' | 'min_score'`). D3 committed the
 score bands (≥ 0.85 strong, 0.70–0.85 confident, 0.50–0.70 weak, < 0.50 poor).
 
-D4 (`docs/adr/discovery-llm-interaction.md`, `DEC-V3-DISCOVERY-D4-001`) established the LLM
+D4 (`docs/archive/developer/adr/discovery-llm-interaction.md`, `DEC-V3-DISCOVERY-D4-001`) established the LLM
 interaction design: single `yakcc_resolve` tool, the evidence rendering contract, the 4-band
 protocol, the verbatim system-prompt text, the caller-side `ConfidenceMode` enum (default
 `"hybrid"` with a 0.92 stricter auto-accept threshold), and three pinned failure-mode shapes.
@@ -64,11 +64,11 @@ The score band boundaries (0.85 / 0.70 / 0.50) are also measurable by D5 via per
 
 | Domain | Authority | ADR |
 |---|---|---|
-| Storage schema (5 columns, model, zero-vector rule, migration 7) | D1 | `docs/adr/discovery-multi-dim-embeddings.md` |
-| Query surface (QueryIntentCard, Candidate shape, CLI flags, auto-accept thresholds, cross-provider invariant) | D2 | `docs/adr/discovery-query-language.md` |
-| Ranking formula, aggregation strategy, pipeline, tiebreakers, score normalization, negative-space behavior | D3 | `docs/adr/discovery-ranking.md` |
-| Tool call shape, evidence rendering contract, 4-band protocol, system-prompt text, confidence calibration, failure-mode shapes | D4 | `docs/adr/discovery-llm-interaction.md` |
-| Quality measurement methodology (metrics, corpus structure, harness shape, calibration, pending log, CI gate, D3 knob feedback loop) | D5 (this ADR) | `docs/adr/discovery-quality-measurement.md` |
+| Storage schema (5 columns, model, zero-vector rule, migration 7) | D1 | `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` |
+| Query surface (QueryIntentCard, Candidate shape, CLI flags, auto-accept thresholds, cross-provider invariant) | D2 | `docs/archive/developer/adr/discovery-query-language.md` |
+| Ranking formula, aggregation strategy, pipeline, tiebreakers, score normalization, negative-space behavior | D3 | `docs/archive/developer/adr/discovery-ranking.md` |
+| Tool call shape, evidence rendering contract, 4-band protocol, system-prompt text, confidence calibration, failure-mode shapes | D4 | `docs/archive/developer/adr/discovery-llm-interaction.md` |
+| Quality measurement methodology (metrics, corpus structure, harness shape, calibration, pending log, CI gate, D3 knob feedback loop) | D5 (this ADR) | `docs/archive/developer/adr/discovery-quality-measurement.md` |
 
 None of D1, D2, D3, or D4 is modified by D5. If a future WI touches more than one of these
 authority domains, all owning ADRs must be revised.
@@ -157,7 +157,7 @@ Post-calibration results (seed-derived corpus, local Xenova/all-MiniLM-L6-v2):
 - M2 = 80% PASS, M3 = 100% PASS, M4 = 0.85 PASS, M5 poor = 0.038 PASS
 
 The constant `M1_HIT_THRESHOLD` in `packages/registry/src/discovery-eval-helpers.ts` is the
-canonical value. Cross-reference: `docs/adr/discovery-ranking.md` When-to-revisit section amended
+canonical value. Cross-reference: `docs/archive/developer/adr/discovery-ranking.md` When-to-revisit section amended
 with the store/query text symmetry gap. See `tmp/discovery-eval/baseline-single-vector-calibrated-2026-05-10.json`.
 
 ---
@@ -815,10 +815,10 @@ be in place before the dual-gate semantics are enforced in PRs.
 - Issue #151 (D1 — V3-DISCOVERY-D1)
 - Issue #150 (parent initiative — WI-V3-DISCOVERY-SYSTEM)
 - `DEC-V3-DISCOVERY-D5-001` (`MASTER_PLAN.md`) — This decision log entry
-- `DEC-V3-DISCOVERY-D4-001` (`MASTER_PLAN.md`) — LLM interaction design (D4), `docs/adr/discovery-llm-interaction.md`
-- `DEC-V3-DISCOVERY-D3-001` (`MASTER_PLAN.md`) — Ranking + scoring algorithm (D3), `docs/adr/discovery-ranking.md`
-- `DEC-V3-DISCOVERY-D2-001` (`MASTER_PLAN.md`) — Query language / API surface (D2), `docs/adr/discovery-query-language.md`
-- `DEC-V3-DISCOVERY-D1-001` (`MASTER_PLAN.md`) — Multi-dimensional embedding schema (D1), `docs/adr/discovery-multi-dim-embeddings.md`
+- `DEC-V3-DISCOVERY-D4-001` (`MASTER_PLAN.md`) — LLM interaction design (D4), `docs/archive/developer/adr/discovery-llm-interaction.md`
+- `DEC-V3-DISCOVERY-D3-001` (`MASTER_PLAN.md`) — Ranking + scoring algorithm (D3), `docs/archive/developer/adr/discovery-ranking.md`
+- `DEC-V3-DISCOVERY-D2-001` (`MASTER_PLAN.md`) — Query language / API surface (D2), `docs/archive/developer/adr/discovery-query-language.md`
+- `DEC-V3-DISCOVERY-D1-001` (`MASTER_PLAN.md`) — Multi-dimensional embedding schema (D1), `docs/archive/developer/adr/discovery-multi-dim-embeddings.md`
 - `DEC-VECTOR-RETRIEVAL-004` (`packages/registry/src/index.ts`) — `IntentQuery` is a local structural type (circular-dep avoidance; harness location rationale Q3)
 - `DEC-EMBED-010` (`MASTER_PLAN.md`) — Local embeddings via `transformers.js`, provider interface (cross-provider invariant from D2)
 - `DEC-CI-OFFLINE-001` (`MASTER_PLAN.md`) — Single canonical offline-embedding-provider authority

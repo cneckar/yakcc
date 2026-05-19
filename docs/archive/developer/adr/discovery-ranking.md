@@ -9,7 +9,7 @@
 
 ## Context
 
-D1 (`docs/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
+D1 (`docs/archive/developer/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
 multi-dimensional storage schema: 5 `FLOAT[384]` columns in a `sqlite-vec` `vec0` virtual table
 (`contract_embeddings`), one per SpecYak semantic axis:
 
@@ -28,7 +28,7 @@ rank inflation — a query that includes the property-tests dimension must not s
 that have no property tests merely because their zero vector is not maximally dissimilar to the
 query vector.
 
-D2 (`docs/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`) established the
+D2 (`docs/archive/developer/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`) established the
 LLM-facing query surface: `QueryIntentCard` with per-dimension optional freeform texts and
 per-dimension `weights`, plus the `Candidate` result type carrying `perDimensionScores:
 PerDimensionScores` and `combinedScore: number` in [0, 1]. D2 explicitly deferred the
@@ -52,9 +52,9 @@ for `findCandidatesByIntent`.
 
 | Domain | Authority | ADR |
 |---|---|---|
-| Storage schema (5 columns, model, zero-vector rule, migration 7) | D1 | `docs/adr/discovery-multi-dim-embeddings.md` |
-| Query surface (QueryIntentCard, Candidate shape, CLI flags, auto-accept thresholds, cross-provider invariant) | D2 | `docs/adr/discovery-query-language.md` |
-| Ranking formula, aggregation strategy, pipeline, tiebreakers, score normalization, negative-space behavior | D3 (this ADR) | `docs/adr/discovery-ranking.md` |
+| Storage schema (5 columns, model, zero-vector rule, migration 7) | D1 | `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` |
+| Query surface (QueryIntentCard, Candidate shape, CLI flags, auto-accept thresholds, cross-provider invariant) | D2 | `docs/archive/developer/adr/discovery-query-language.md` |
+| Ranking formula, aggregation strategy, pipeline, tiebreakers, score normalization, negative-space behavior | D3 (this ADR) | `docs/archive/developer/adr/discovery-ranking.md` |
 
 Neither D1 nor D2 is modified by D3. If a future WI touches more than one of these authority
 domains, both owning ADRs must be revised.

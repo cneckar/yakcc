@@ -9,7 +9,7 @@
 
 ## Context
 
-D1 (`docs/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
+D1 (`docs/archive/developer/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`) established the
 multi-dimensional storage schema: 5 `FLOAT[384]` columns in a `sqlite-vec` `vec0` virtual table
 (`contract_embeddings`), one per SpecYak semantic axis. D1 also established the migration
 shape constraint: because `vec0` does NOT support `ALTER TABLE ADD COLUMN`, migration 7 must be a
@@ -58,15 +58,15 @@ locking serializes any edge-case concurrent opens).
 
 | Concern | Owner | ADR |
 |---|---|---|
-| Target multi-dim schema shape (5 `FLOAT[384]` columns, absent-dimension zero-vector rule) | D1 | `docs/adr/discovery-multi-dim-embeddings.md` |
-| Migration shape constraint (`vec0` lacks `ALTER TABLE` → clean re-create only) | D1 | `docs/adr/discovery-multi-dim-embeddings.md` |
+| Target multi-dim schema shape (5 `FLOAT[384]` columns, absent-dimension zero-vector rule) | D1 | `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` |
+| Migration shape constraint (`vec0` lacks `ALTER TABLE` → clean re-create only) | D1 | `docs/archive/developer/adr/discovery-multi-dim-embeddings.md` |
 | Schema-versioning *mechanism* (extend existing `SCHEMA_VERSION` / `schema_version` table) | **D6 (this ADR)** | — |
 | Atomic vs incremental for v3.0 | **D6 (this ADR)** | — |
 | Compute cost model + parallelism trigger | **D6 (this ADR)** | — |
 | Idempotency contract (per-`spec_hash` skip, transaction wrap, crash recovery) | **D6 (this ADR)** | — |
 | Migration verification gates (G1/G2/G3) | **D6 (this ADR)** | — |
 | Future-migration protocol (codify existing `MIGRATION_N_DDL` pattern) | **D6 (this ADR)** | — |
-| Post-migration measurement (hit-rate, recall, MRR, calibration) | D5 | `docs/adr/discovery-quality-measurement.md` |
+| Post-migration measurement (hit-rate, recall, MRR, calibration) | D5 | `docs/archive/developer/adr/discovery-quality-measurement.md` |
 
 **D1 → D6 handoff:** D1's pseudocode says "clean re-create: drop + recreate + lazy-repopulate."
 D6 translates that into an operational protocol: the idempotency gates, the crash-recovery
@@ -390,7 +390,7 @@ This pseudocode is prescriptive but not source. The actual TypeScript lands in t
 
 // @decision DEC-V3-DISCOVERY-D6-001: Migration 6 → 7: clean re-create of
 // contract_embeddings as a 5-column vec0 virtual table.
-// Status: decided (docs/adr/discovery-migration.md)
+// Status: decided (docs/archive/developer/adr/discovery-migration.md)
 // Rationale: vec0 lacks ALTER TABLE ADD COLUMN; clean re-create is the only
 // safe path (per DEC-V3-DISCOVERY-D1-001 Q4). Backfill runs in openRegistry
 // (storage.ts) because it requires @yakcc/contracts generateMultiDimEmbedding.
@@ -607,11 +607,11 @@ the named implementation WIs under their own scope manifests.
 ## References
 
 - Issue #156 (D6 — V3-DISCOVERY-D6, this work item)
-- Issue #155 (D5 — V3-DISCOVERY-D5), `docs/adr/discovery-quality-measurement.md`, `DEC-V3-DISCOVERY-D5-001`
-- Issue #154 (D4 — V3-DISCOVERY-D4), `docs/adr/discovery-llm-interaction.md`, `DEC-V3-DISCOVERY-D4-001`
-- Issue #153 (D3 — V3-DISCOVERY-D3), `docs/adr/discovery-ranking.md`, `DEC-V3-DISCOVERY-D3-001`
-- Issue #152 (D2 — V3-DISCOVERY-D2), `docs/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`
-- Issue #151 (D1 — V3-DISCOVERY-D1), `docs/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`
+- Issue #155 (D5 — V3-DISCOVERY-D5), `docs/archive/developer/adr/discovery-quality-measurement.md`, `DEC-V3-DISCOVERY-D5-001`
+- Issue #154 (D4 — V3-DISCOVERY-D4), `docs/archive/developer/adr/discovery-llm-interaction.md`, `DEC-V3-DISCOVERY-D4-001`
+- Issue #153 (D3 — V3-DISCOVERY-D3), `docs/archive/developer/adr/discovery-ranking.md`, `DEC-V3-DISCOVERY-D3-001`
+- Issue #152 (D2 — V3-DISCOVERY-D2), `docs/archive/developer/adr/discovery-query-language.md`, `DEC-V3-DISCOVERY-D2-001`
+- Issue #151 (D1 — V3-DISCOVERY-D1), `docs/archive/developer/adr/discovery-multi-dim-embeddings.md`, `DEC-V3-DISCOVERY-D1-001`
 - Issue #150 (parent initiative — WI-V3-DISCOVERY-SYSTEM)
 - `DEC-V3-DISCOVERY-D6-001` (`MASTER_PLAN.md`) — This decision log entry
 - `DEC-EMBED-010` (`MASTER_PLAN.md`) — Local embeddings via `transformers.js`, provider interface

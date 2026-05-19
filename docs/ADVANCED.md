@@ -221,4 +221,4 @@ This is the "moat" claim: if yakcc can shave and recompile itself without drift,
 
 For the full fresh-clone reproduction with captured output and the "If equivalence fails" taxonomy, see [docs/V2_SELF_SHAVE_DEMO.md](V2_SELF_SHAVE_DEMO.md).
 
-For pass-1 internals (bootstrap mechanics, manifest semantics, CI integration) see [docs/V2_SELF_HOSTING_DEMO.md](V2_SELF_HOSTING_DEMO.md).
+For pass-1 internals (bootstrap mechanics, manifest semantics, CI integration) see [docs/archive/developer/V2_SELF_HOSTING_DEMO.md](archive/developer/V2_SELF_HOSTING_DEMO.md).

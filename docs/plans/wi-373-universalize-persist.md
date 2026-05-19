@@ -33,7 +33,7 @@
 ### Who has the problem
 
 - **`yakcc compile <candidate>` users** — every user-typed source that is not already in the registry hits the throw on `assembleCandidate()`'s second invocation (the first time you compile fresh code).
-- **v0.5 hook layer (Phase 2 substitution, #194)** — when an agent emits novel code and the hook tries to ingest it via the assemble-candidate path, it hits the same throw. Hook layer Phase 2 is not yet filed as a sub-issue, but `docs/adr/hook-layer-architecture.md:152, 206` enumerate it as the next phase.
+- **v0.5 hook layer (Phase 2 substitution, #194)** — when an agent emits novel code and the hook tries to ingest it via the assemble-candidate path, it hits the same throw. Hook layer Phase 2 is not yet filed as a sub-issue, but `docs/archive/developer/adr/hook-layer-architecture.md:152, 206` enumerate it as the next phase.
 - **v0.7 MRI demo** (`examples/v0.7-mri-demo/test/acceptance.test.ts`) and **v1 federation demo** consume `universalize()` directly; they currently work around persistence by calling `shave()` instead. This is a documented two-step workaround.
 
 ### Cost of not solving
@@ -286,7 +286,7 @@ Estimated agent effort: **M (15-40 turns)**. The implementer's burden is mostly 
 
 ## 7. Hook-layer interaction (issue body §"Why this matters")
 
-The hook-layer Phase 2 substitution issue (WI-HOOK-PHASE-2-SUBSTITUTION) is **enumerated in the hook-layer ADR (`docs/adr/hook-layer-architecture.md:206`) but not yet filed as a discrete GitHub issue**. Per `docs/adr/hook-layer-architecture.md:206`: *"WI-HOOK-PHASE-2-SUBSTITUTION: Smart substitution: rewrite tool-call output per D-HOOK-2; integrate D2 findCandidatesByQuery post-WI-V3-DISCOVERY-IMPL-QUERY"*.
+The hook-layer Phase 2 substitution issue (WI-HOOK-PHASE-2-SUBSTITUTION) is **enumerated in the hook-layer ADR (`docs/archive/developer/adr/hook-layer-architecture.md:206`) but not yet filed as a discrete GitHub issue**. Per `docs/archive/developer/adr/hook-layer-architecture.md:206`: *"WI-HOOK-PHASE-2-SUBSTITUTION: Smart substitution: rewrite tool-call output per D-HOOK-2; integrate D2 findCandidatesByQuery post-WI-V3-DISCOVERY-IMPL-QUERY"*.
 
 **Existing hook-layer code already handles persistence on its own.** `packages/hooks-base/src/atomize.ts:510-572` does:
 
