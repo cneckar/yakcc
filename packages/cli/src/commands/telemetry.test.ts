@@ -31,7 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (origEnv === undefined) {
-    delete process.env.YAKCC_TELEMETRY_DIR;
+    process.env.YAKCC_TELEMETRY_DIR = undefined;
   } else {
     process.env.YAKCC_TELEMETRY_DIR = origEnv;
   }
@@ -66,10 +66,10 @@ describe("telemetry command", () => {
   it("default listing with session files: shows file names and event counts", async () => {
     mkdirSync(telemetryDir, { recursive: true });
     const sessionFile = join(telemetryDir, "session-abc.jsonl");
-    const events = [
+    const events = `${[
       '{"t":1000,"outcome":"passthrough","toolName":"Edit"}',
       '{"t":2000,"outcome":"registry-hit","toolName":"Write"}',
-    ].join("\n") + "\n";
+    ].join("\n")}\n`;
     writeFileSync(sessionFile, events, "utf-8");
 
     const logger = new CollectingLogger();
@@ -88,7 +88,7 @@ describe("telemetry command", () => {
       '{"t":2,"outcome":"registry-hit"}',
       '{"t":3,"outcome":"synthesis-required"}',
     ];
-    writeFileSync(join(telemetryDir, "session-xyz.jsonl"), lines.join("\n") + "\n", "utf-8");
+    writeFileSync(join(telemetryDir, "session-xyz.jsonl"), `${lines.join("\n")}\n`, "utf-8");
 
     const logger = new CollectingLogger();
     const code = await telemetry(["--tail", "2"], logger);

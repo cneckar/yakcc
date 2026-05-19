@@ -13,7 +13,7 @@
 //   session), and the default listing (session files with event counts + last-seen
 //   timestamps). Zero network I/O; pure local reads (B6 air-gap compliance).
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { resolveTelemetryDir } from "@yakcc/hooks-base/telemetry.js";
@@ -123,7 +123,9 @@ export async function telemetry(argv: readonly string[], logger: Logger): Promis
   // Ensure the directory exists (may never have been written to yet)
   if (!existsSync(dir)) {
     logger.log(`${dir}`);
-    logger.log("  (no sessions yet — use Claude Code with the hook installed to generate telemetry)");
+    logger.log(
+      "  (no sessions yet — use Claude Code with the hook installed to generate telemetry)",
+    );
     return 0;
   }
 
@@ -140,7 +142,9 @@ export async function telemetry(argv: readonly string[], logger: Logger): Promis
 
   if (files.length === 0) {
     logger.log(`${dir}`);
-    logger.log("  (no session files yet — use Claude Code with the hook installed to generate telemetry)");
+    logger.log(
+      "  (no session files yet — use Claude Code with the hook installed to generate telemetry)",
+    );
     return 0;
   }
 
@@ -182,8 +186,8 @@ export async function telemetry(argv: readonly string[], logger: Logger): Promis
     logger.log(`  ${name}   (${count} events, latest ${rel})`);
   }
   logger.log("");
-  logger.log(`Tip: yakcc telemetry --tail 10   to inspect recent events`);
-  logger.log(`     yakcc telemetry --path        to print the directory path`);
+  logger.log("Tip: yakcc telemetry --tail 10   to inspect recent events");
+  logger.log("     yakcc telemetry --path        to print the directory path");
 
   return 0;
 }
