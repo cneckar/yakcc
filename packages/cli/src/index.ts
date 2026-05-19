@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 // @decision DEC-CLI-INDEX-001: runCli() is the single public entry point for the yakcc
 // CLI. It dispatches on argv[0] (command) and argv[1] (subcommand for multi-word
 // commands like "registry init"). Each command handler is a real function calling into
@@ -38,7 +38,10 @@ import { bootstrap } from "./commands/bootstrap.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
 import { runFederation } from "./commands/federation.js";
+import { hookIntercept } from "./commands/hook-intercept.js";
 import { hooksAiderInstall } from "./commands/hooks-aider-install.js";
+import { hooksClineInstall } from "./commands/hooks-cline-install.js";
+import { hooksContinueInstall } from "./commands/hooks-continue-install.js";
 import { hooksCursorInstall } from "./commands/hooks-cursor-install.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { hooksWindsurfInstall } from "./commands/hooks-windsurf-install.js";
@@ -166,6 +169,13 @@ COMMANDS
   hooks cursor install                Wire yakcc tool-call interception for Cursor
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc cursor hook entry
+  hooks cline install                 Wire yakcc tool-call interception for Cline
+                [--target <dir>]      Target project directory (default: .)
+                [--uninstall]         Remove the yakcc cline hook entry
+  hooks continue install              Wire yakcc tool-call interception for Continue.dev
+                [--target <dir>]      Target project directory (default: .)
+                [--uninstall]         Remove the yakcc continue hook entry
+  hook-intercept                      (internal -- invoked by IDE hook configs via PreToolUse)
   federation serve --registry <p>     Start a read-only HTTP registry server
                 [--port <n>] [--host <h>]
   federation mirror --remote <url>    Mirror all blocks from a remote registry peer
@@ -340,10 +350,40 @@ export async function runCli(
         );
         return 1;
       }
+      // `yakcc hooks cline install [--target <dir>]`
+      if (subcommand === "cline") {
+        const [hooksSub, ...hooksRest] = rest;
+        if (hooksSub === "install") {
+          return hooksClineInstall(hooksRest, logger);
+        }
+        logger.error(
+          `error: unknown hooks cline subcommand: ${hooksSub ?? "(none)"}. Did you mean 'hooks cline install'?`,
+        );
+        return 1;
+      }
+      // `yakcc hooks continue install [--target <dir>]`
+      if (subcommand === "continue") {
+        const [hooksSub, ...hooksRest] = rest;
+        if (hooksSub === "install") {
+          return hooksContinueInstall(hooksRest, logger);
+        }
+        logger.error(
+          `error: unknown hooks continue subcommand: ${hooksSub ?? "(none)"}. Did you mean 'hooks continue install'?`,
+        );
+        return 1;
+      }
       logger.error(
-        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install', 'hooks cursor install', 'hooks windsurf install', or 'hooks aider install'?`,
+        `error: unknown hooks subcommand: ${subcommand ?? "(none)"}. Did you mean 'hooks claude-code install', 'hooks cursor install', 'hooks windsurf install', 'hooks aider install', 'hooks cline install', or 'hooks continue install'?`,
       );
       return 1;
+    }
+
+    case "hook-intercept": {
+      // `yakcc hook-intercept` -- Phase-1 stdin-reading subprocess (DEC-CLI-HOOK-INTERCEPT-001).
+      // Claude Code PreToolUse hook spawns this for every Edit/Write/MultiEdit call.
+      // Reads stdin, appends one telemetry JSONL line, ALWAYS exits 0 with empty stdout.
+      const hookInterceptArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return hookIntercept(hookInterceptArgv, logger);
     }
 
     case undefined:
