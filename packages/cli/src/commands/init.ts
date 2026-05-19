@@ -53,6 +53,7 @@
 //   Backward compat preserved: --target and --peer semantics unchanged.
 
 import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
@@ -525,8 +526,10 @@ export async function init(
         ? "Hooks: skipped (--skip-hooks)."
         : "Hooks: no IDEs detected.";
 
+  const telemetryDir = process.env.YAKCC_TELEMETRY_DIR ?? join(homedir(), ".yakcc", "telemetry");
   logger.log("");
   logger.log(`Installed in ${targetDir}. ${hookedLine} Registry: ${seedCount} atoms.`);
+  logger.log(`Telemetry: ${telemetryDir}/<session>.jsonl (written on next Edit/Write tool call)`);
 
   // @decision DEC-CLI-INIT-NO-IDE-HINT-001 (WI-687-S7 / #746 AC2)
   // title: When auto-detect finds nothing and --skip-hooks was not passed, surface a
