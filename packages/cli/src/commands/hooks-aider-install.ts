@@ -38,6 +38,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { removeInstalledHooks, updateInstalledHooks } from "../lib/rc-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -99,6 +100,7 @@ export async function hooksAiderInstall(
   argv: readonly string[],
   logger: Logger,
   overrideAiderDir?: string,
+  overrideTargetDir?: string,
 ): Promise<number> {
   let parsed: ReturnType<
     typeof parseArgs<{
@@ -128,6 +130,9 @@ export async function hooksAiderInstall(
   // overrideAiderDir is the injection seam for tests; production uses ~/.aider/.
   const aiderDir = overrideAiderDir ?? join(homedir(), ".aider");
   const markerPath = join(aiderDir, AIDER_HOOK_MARKER_FILENAME);
+  // Project dir for .yakccrc.json: overrideTargetDir for tests, or --target flag.
+  // Undefined when neither is provided (called from yakcc init, which manages rc itself).
+  const targetDir = overrideTargetDir ?? parsed.values.target;
 
   try {
     mkdirSync(aiderDir, { recursive: true });
@@ -148,6 +153,7 @@ export async function hooksAiderInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    if (targetDir !== undefined) removeInstalledHooks(targetDir, ["aider"]);
     logger.log(`yakcc aider hook marker removed: ${markerPath}`);
     return 0;
   }
@@ -181,6 +187,7 @@ export async function hooksAiderInstall(
     return 1;
   }
 
+  if (targetDir !== undefined) updateInstalledHooks(targetDir, ["aider"]);
   logger.log(`yakcc aider hook marker installed: ${markerPath}`);
   logger.log(
     "note: Aider hook wiring via --lint-cmd/--test-cmd deferred — see marker for details.",

@@ -33,6 +33,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { removeInstalledHooks, updateInstalledHooks } from "../lib/rc-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -94,6 +95,7 @@ export async function hooksContinueInstall(
   argv: readonly string[],
   logger: Logger,
   overrideContinueDir?: string,
+  overrideTargetDir?: string,
 ): Promise<number> {
   let parsed: ReturnType<
     typeof parseArgs<{
@@ -123,6 +125,9 @@ export async function hooksContinueInstall(
   // overrideContinueDir is the injection seam for tests; production uses ~/.continue/.
   const continueDir = overrideContinueDir ?? join(homedir(), ".continue");
   const markerPath = join(continueDir, CONTINUE_HOOK_MARKER_FILENAME);
+  // Project dir for .yakccrc.json: overrideTargetDir for tests, or --target flag.
+  // Undefined when neither is provided (called from yakcc init, which manages rc itself).
+  const targetDir = overrideTargetDir ?? parsed.values.target;
 
   try {
     mkdirSync(continueDir, { recursive: true });
@@ -143,6 +148,7 @@ export async function hooksContinueInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    if (targetDir !== undefined) removeInstalledHooks(targetDir, ["continue"]);
     logger.log(`yakcc continue hook marker removed: ${markerPath}`);
     return 0;
   }
@@ -174,6 +180,7 @@ export async function hooksContinueInstall(
     return 1;
   }
 
+  if (targetDir !== undefined) updateInstalledHooks(targetDir, ["continue"]);
   logger.log(`yakcc continue hook marker installed: ${markerPath}`);
   logger.log(
     "note: Continue.dev tool-call interception API not yet stable — see marker for details.",

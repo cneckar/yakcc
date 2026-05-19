@@ -157,10 +157,13 @@ describe("uninstall — default, installedHooks-driven (EC-S2-T1)", () => {
 describe("uninstall — fallback to detectInstalledIdes() (EC-S2-T2)", () => {
   it("removes claude-code hook when no .yakccrc.json and overrideHome has .claude/", async () => {
     const fakeHome = join(tmpDir, "fakehome-t2");
-    // Install claude-code hook manually (bypass init to skip writing .yakccrc.json)
+    // Install claude-code hook manually, then remove the rc to force Tier 3 detection.
+    // (hooksClaudeCodeInstall now writes .yakccrc.json as part of #759 fix;
+    // deleting it here tests the Tier 3 filesystem-detection fallback path.)
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
     const { hooksClaudeCodeInstall } = await import("./hooks-install.js");
     await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    rmSync(join(tmpDir, ".yakccrc.json"), { force: true });
 
     // Confirm hook is present and no rc exists
     expect(claudeCodeHookPresent(tmpDir)).toBe(true);

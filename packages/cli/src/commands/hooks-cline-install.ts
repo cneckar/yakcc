@@ -37,6 +37,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { removeInstalledHooks, updateInstalledHooks } from "../lib/rc-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -98,6 +99,7 @@ export async function hooksClineInstall(
   argv: readonly string[],
   logger: Logger,
   overrideClineDir?: string,
+  overrideTargetDir?: string,
 ): Promise<number> {
   let parsed: ReturnType<
     typeof parseArgs<{
@@ -127,6 +129,9 @@ export async function hooksClineInstall(
   // overrideClineDir is the injection seam for tests; production uses ~/.config/cline/.
   const clineDir = overrideClineDir ?? join(homedir(), ".config", "cline");
   const markerPath = join(clineDir, CLINE_HOOK_MARKER_FILENAME);
+  // Project dir for .yakccrc.json: overrideTargetDir for tests, or --target flag.
+  // Undefined when neither is provided (called from yakcc init, which manages rc itself).
+  const targetDir = overrideTargetDir ?? parsed.values.target;
 
   try {
     mkdirSync(clineDir, { recursive: true });
@@ -147,6 +152,7 @@ export async function hooksClineInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    if (targetDir !== undefined) removeInstalledHooks(targetDir, ["cline"]);
     logger.log(`yakcc cline hook marker removed: ${markerPath}`);
     return 0;
   }
@@ -178,6 +184,7 @@ export async function hooksClineInstall(
     return 1;
   }
 
+  if (targetDir !== undefined) updateInstalledHooks(targetDir, ["cline"]);
   logger.log(`yakcc cline hook marker installed: ${markerPath}`);
   logger.log("note: Cline tool-call interception API not yet stable — see marker for details.");
   return 0;

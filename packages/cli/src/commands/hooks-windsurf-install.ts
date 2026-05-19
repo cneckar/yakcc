@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { removeInstalledHooks, updateInstalledHooks } from "../lib/rc-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -172,6 +173,7 @@ export async function hooksWindsurfInstall(
       logger.error(`error: cannot write ${settingsPath}: ${String(err)}`);
       return 1;
     }
+    removeInstalledHooks(targetDir, ["windsurf"]);
     logger.log(`yakcc windsurf hook removed from ${settingsPath}`);
     return 0;
   }
@@ -211,6 +213,7 @@ export async function hooksWindsurfInstall(
     // Non-fatal: the settings.json update succeeded.
   }
 
+  updateInstalledHooks(targetDir, ["windsurf"]);
   if (alreadyInstalled) {
     logger.log(`yakcc windsurf hook already installed at ${settingsPath} (idempotent).`);
   } else {
