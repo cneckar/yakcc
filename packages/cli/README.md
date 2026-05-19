@@ -1,48 +1,76 @@
 # @yakcc/cli
 
-The `yakcc` command-line interface.
+> **Shave once, reuse forever.**
 
-## Commands
+Yakcc is a content-addressed block registry for assembling programs from verified, reusable building blocks. Instead of generating the same parsing logic, data transformation, or utility function over and over, your IDE's AI assistant shaves it once into an atomic, tested block and stores it in a local registry. The next time you need it — in any project, on any machine — the registry serves the exact same bytes, with proof that it works.
 
-| Command | What it does today |
-|---|---|
-| `yakcc registry init [path]` | Create a SQLite + sqlite-vec registry at the given path (default: `.yakcc/registry.db`). Safe to run more than once; skips migration if schema is current. |
-| `yakcc registry seed <dir>` | Walk a directory of block JSON files and register each block into the live registry. |
-| `yakcc shave <source-dir>` | Recursively decompose a permissively-licensed TS/JS source tree into registry atoms. Uses static intent extraction (ts-morph + JSDoc) by default; no API key required. |
-| `yakcc search <query>` | Structural search: filter the registry by input/output type signature and non-functional properties. Prints candidates with ids, behavior summaries, and similarity scores. |
-| `yakcc query <intent> [--top k] [--rerank] [--registry p] [--card-file f]` | Vector search: find blocks semantically close to an intent string (or an IntentCard JSON file via `--card-file`). Uses `Registry.findCandidatesByIntent()` (WI-025). Free-text `<intent>` is wrapped into a minimal behavior-only IntentQuery. Prints ranked results with cosine distance and (when `--rerank`) structural scores. |
-| `yakcc propose` | Submit a contract spec to the registry. Reads a JSON `ContractSpec` from stdin or a `--file` argument. Prints the assigned `ContractId` on success. |
-| `yakcc compile <entry>` | Walk sub-contracts from the entry point, bind each to a registry implementation, and emit a runnable TypeScript artifact plus a provenance manifest. |
-| `yakcc federation serve --registry <db> [--port n] [--host h]` | Start a read-only HTTP registry server that exposes the F1 federation wire protocol (WI-020). Blocks until SIGINT/SIGTERM. |
-| `yakcc federation mirror --remote <url> --registry <db>` | Mirror all blocks from a remote registry peer into the local registry. Prints a `MirrorReport` as JSON on completion. Exits 0 even when some blocks fail (recoverable); exits 1 on `SchemaVersionMismatchError`. |
-| `yakcc federation pull --remote <url> --root <merkleRoot> [--registry <db>]` | Pull a single block by its `BlockMerkleRoot` from a remote peer. Without `--registry`: diagnostic-only (prints root + specHash, no persistence). With `--registry <db>`: pulls and persists the block idempotently via `storeBlock` (WI-030). |
-| `yakcc bootstrap [--registry p] [--manifest p] [--report p]` | Walk all `packages/*/src` and `examples/*/src` TypeScript files, shave each into a `:memory:` registry, and write `bootstrap/expected-roots.json` (sorted deterministic manifest). Add `--verify` to byte-compare against the committed manifest; exits 1 with a structured diff on mismatch. |
-| `yakcc hooks claude-code install` | Install the Yakcc Claude Code hook into the current Claude Code project settings. |
-| `yakcc hooks cursor install` | Install the Yakcc Cursor hook marker file. |
-| `yakcc hooks codex install` | Install the Yakcc Codex CLI hook marker file. |
+This package is the `yakcc` command-line interface.
 
-## Quickstart
+## Install
 
 ```sh
-# 1. Create a registry in the current project
-yakcc registry init
-
-# 2. Shave an existing library into atoms and register them
-yakcc shave ./node_modules/some-lib/src
-
-# 3. Search the registry
-yakcc search "parse a JSON array of integers"
-
-# 4. Compile a top-level contract to a runnable TS file
-yakcc compile my-contract.json --out dist/program.ts
+npm install -g @yakcc/cli@alpha
+# or
+pnpm add -g @yakcc/cli@alpha
 ```
+
+> v0.5.0-alpha.0 is the **first public alpha**. Install via the `alpha` tag so a plain `npm install @yakcc/cli` doesn't pull pre-release bits.
+
+## 60-second quickstart
+
+```sh
+# In any project directory:
+yakcc init
+```
+
+`yakcc init` creates a `.yakcc/` directory, wires up hooks for whichever supported IDEs it detects (Claude Code, Cursor, Cline, Continue.dev, Windsurf, Aider), and seeds the local registry with bootstrap atoms.
+
+From there, your IDE's AI assistant consults the registry whenever it emits code. Matching atoms get served directly; novel emissions get atomized into the registry for next time.
+
+## What you get
+
+- **Reproducibility by construction.** Every assembled program carries a provenance manifest naming every constituent block by its content-address. Bit-for-bit reproducibility is the default, not a build option.
+- **Verified building blocks.** Every block carries property tests. You always know what was tested and how.
+- **6-IDE adapter cascade.** Claude Code, Cursor, Cline, Continue.dev, Windsurf, Aider.
+- **Offline-first.** No API key required for most operations. Vector search uses a local embedding model; shaving uses static TypeScript analysis by default.
+- **Federation.** Registries can mirror each other over HTTP; every transferred block is integrity-checked.
+
+## Common commands
+
+| Command | What it does |
+|---|---|
+| `yakcc init [--target <dir>] [--peer <url>]` | Set up yakcc in a project; auto-detects supported IDEs. |
+| `yakcc compile <entry>` | Walk sub-contracts from the entry point and emit a runnable artifact + provenance manifest. |
+| `yakcc shave <source-dir>` | Decompose a permissively-licensed TS/JS tree into registry atoms (static analysis, no API key). |
+| `yakcc query <intent>` | Vector search for atoms matching a natural-language intent. |
+| `yakcc registry rebuild` | Regenerate registry embeddings. |
+| `yakcc bootstrap --verify` | Confirm registry/atom-corpus health (byte-compare against committed manifest). |
+| `yakcc federation serve` | Run a read-only HTTP registry peer. |
+| `yakcc federation mirror --remote <url>` | Mirror all blocks from a remote peer into the local registry. |
+| `yakcc uninstall [--purge]` | Remove yakcc from a project. |
+
+Run `yakcc --help` for the full surface.
 
 ## Exit codes
 
 - `0` — success
-- `1` — usage error (unknown command, missing required argument)
+- `1` — usage error
 - `2` — runtime error (registry not found, compilation failed, type error)
+
+## Documentation
+
+- Full walkthrough: [docs/USING_YAKCC.md](https://github.com/cneckar/yakcc/blob/main/docs/USING_YAKCC.md)
+- Alpha tester guide: [docs/ALPHA.md](https://github.com/cneckar/yakcc/blob/main/docs/ALPHA.md)
+- Advanced topics (federation, airgap, custom embeddings): [docs/ADVANCED.md](https://github.com/cneckar/yakcc/blob/main/docs/ADVANCED.md)
+- Troubleshooting: [docs/TROUBLESHOOTING.md](https://github.com/cneckar/yakcc/blob/main/docs/TROUBLESHOOTING.md)
+
+## Reporting issues
+
+File at [github.com/cneckar/yakcc/issues](https://github.com/cneckar/yakcc/issues). Alpha-tester feedback is the most valuable signal we get right now.
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Yakcc consists of two distinct artifacts with different licenses:
+
+- **Substrate code** (this package) — [Apache License 2.0](./LICENSE).
+- **Atom content** (registry contents under `dist/blocks/`) — public domain via [The Unlicense](./LICENSE-ATOMS).
