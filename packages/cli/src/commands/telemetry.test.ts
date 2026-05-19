@@ -31,7 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (origEnv === undefined) {
-    process.env.YAKCC_TELEMETRY_DIR = undefined;
+    Reflect.deleteProperty(process.env, "YAKCC_TELEMETRY_DIR");
   } else {
     process.env.YAKCC_TELEMETRY_DIR = origEnv;
   }
