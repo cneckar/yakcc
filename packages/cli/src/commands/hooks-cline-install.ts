@@ -37,6 +37,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -98,6 +99,7 @@ export async function hooksClineInstall(
   argv: readonly string[],
   logger: Logger,
   overrideClineDir?: string,
+  overrideCwd?: string,
 ): Promise<number> {
   let parsed: ReturnType<
     typeof parseArgs<{
@@ -148,6 +150,14 @@ export async function hooksClineInstall(
       return 1;
     }
     logger.log(`yakcc cline hook marker removed: ${markerPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001) ---
+    // The rc lives at the project root (cwd), not at the cline config dir.
+    const rcDir = overrideCwd ?? process.cwd();
+    try {
+      removeInstalledHook(rcDir, "cline");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -180,5 +190,13 @@ export async function hooksClineInstall(
 
   logger.log(`yakcc cline hook marker installed: ${markerPath}`);
   logger.log("note: Cline tool-call interception API not yet stable — see marker for details.");
+  // --- WI-759: update .yakccrc.json.installedHooks (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001) ---
+  // The rc lives at the project root (cwd), not at the cline config dir.
+  const rcDir = overrideCwd ?? process.cwd();
+  try {
+    addInstalledHook(rcDir, "cline");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+  }
   return 0;
 }

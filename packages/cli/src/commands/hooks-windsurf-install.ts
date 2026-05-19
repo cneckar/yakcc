@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -173,6 +174,12 @@ export async function hooksWindsurfInstall(
       return 1;
     }
     logger.log(`yakcc windsurf hook removed from ${settingsPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks ---
+    try {
+      removeInstalledHook(targetDir, "windsurf");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -221,6 +228,12 @@ export async function hooksWindsurfInstall(
     logger.log(
       "note: Windsurf tool-call interception API not yet stable — see marker for details.",
     );
+  }
+  // --- WI-759: update .yakccrc.json.installedHooks ---
+  try {
+    addInstalledHook(targetDir, "windsurf");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
   }
   return 0;
 }
