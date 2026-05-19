@@ -116,10 +116,12 @@ The template asks for:
 - What you tried (exact commands)
 - What you expected
 - What happened
-- Telemetry sample (last ~10 lines of `~/.yakcc/telemetry/*.jsonl`)
+- Telemetry sample (run `yakcc telemetry --tail 10` to get the last 10 events from your latest session)
 - Any error output / logs
 
 The telemetry sample is the most useful diagnostic we have. Please include it. It's local-only, never leaves your machine until you paste it into a GitHub issue.
+
+> **Note:** telemetry lives in `~/.yakcc/telemetry/` (your home dir), not in `<project>/.yakcc/`. Run `yakcc telemetry --path` to confirm the location. See [`docs/USING_YAKCC.md §4d`](USING_YAKCC.md) for the full two-directory layout explanation.
 
 ### Triage SLA
 

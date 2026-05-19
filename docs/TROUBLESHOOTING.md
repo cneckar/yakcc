@@ -2,7 +2,7 @@
 
 Common failures, diagnostic steps, and fixes. Each entry follows the pattern: symptom → diagnostic command → fix → related issue.
 
-If your problem is not here, [file an issue](https://github.com/cneckar/yakcc/issues/new?template=alpha-feedback.md). Include the output of `yakcc --version` and the last 10 lines of `~/.yakcc/telemetry/*.jsonl`.
+If your problem is not here, [file an issue](https://github.com/cneckar/yakcc/issues/new?template=alpha-feedback.md). Include the output of `yakcc --version` and the output of `yakcc telemetry --tail 10`.
 
 ---
 
@@ -31,7 +31,32 @@ Then restart the IDE. Re-running is idempotent — it will not create duplicate 
 
 ---
 
-## 2. Claude Code doesn't fire the hook on Edit/Write/MultiEdit
+## 2. Telemetry files not found — looking in the wrong directory
+
+**Symptom:** You ran `yakcc init`, completed a Claude Code session with Edits or Writes, then looked in `<project>/.yakcc/telemetry/` and found it empty. You conclude the hook is broken or no-oping.
+
+**Explanation:** yakcc creates **two directories named `.yakcc`** with different purposes:
+
+| Directory | Contents |
+|---|---|
+| `<project>/.yakcc/` | Registry SQLite, mode config — per-project data |
+| `~/.yakcc/` | Telemetry JSONL files — per-user, cross-project |
+
+Telemetry is written to `~/.yakcc/telemetry/<session-id>.jsonl`, **not** to `<project>/.yakcc/`. This is by design: a Claude Code session can span multiple projects, so telemetry is user-scoped (D-HOOK-5).
+
+**Diagnostic:**
+
+```sh
+yakcc telemetry           # list session files with event counts + timestamps
+yakcc telemetry --path    # print the exact telemetry directory path
+yakcc telemetry --tail 5  # show the last 5 raw telemetry events
+```
+
+If `yakcc telemetry` shows no sessions, the hook has not fired yet. See §3 (Claude Code hook not firing) below.
+
+---
+
+## 3. Claude Code doesn't fire the hook on Edit/Write/MultiEdit
 
 **Symptom:** Claude Code sessions proceed but `~/.yakcc/telemetry/` stays empty or the telemetry file is not updated after edits.
 
@@ -56,7 +81,7 @@ If the entry is present and Claude Code has been restarted but the telemetry fil
 
 ---
 
-## 3. Registry seems empty after `yakcc init`
+## 4. Registry seems empty after `yakcc init`
 
 **Symptom:** `yakcc query "any query"` returns no results, or `yakcc search "anything"` returns nothing, immediately after running `yakcc init`.
 
@@ -93,7 +118,7 @@ yakcc query "store a block by content address"
 
 ---
 
-## 4. Every emission shows `outcome: "passthrough"`
+## 5. Every emission shows `outcome: "passthrough"`
 
 **Symptom:** Telemetry shows `"outcome": "passthrough"` for every hook invocation, even after seeding the registry.
 
@@ -116,7 +141,7 @@ This regenerates all embedding vectors for the current default model (`bge-small
 
 ---
 
-## 5. `outcome: "synthesis-required"` for most emissions
+## 6. `outcome: "synthesis-required"` for most emissions
 
 **Symptom:** Telemetry mostly shows `"outcome": "synthesis-required"` — the registry has atoms but nothing matches your code.
 
@@ -130,7 +155,7 @@ This regenerates all embedding vectors for the current default model (`bge-small
 
 ---
 
-## 6. Federation mirror fails with integrity error
+## 7. Federation mirror fails with integrity error
 
 **Symptom:** `yakcc federation mirror` exits with an integrity error like `BlockMerkleRoot mismatch` or `integrity check failed`.
 
@@ -151,7 +176,7 @@ yakcc federation mirror --remote <peer-url> --registry .yakcc/registry.sqlite --
 
 ---
 
-## 7. Bootstrap is slow
+## 8. Bootstrap is slow
 
 **Symptom:** `yakcc bootstrap` or `yakcc seed --yakcc` takes 30+ minutes when prior runs completed in ~5 minutes.
 
@@ -171,7 +196,7 @@ If the regression persists after pulling, check issue [#377](https://github.com/
 
 ---
 
-## 8. Windows-specific issues
+## 9. Windows-specific issues
 
 **`yakcc init` produces no output / no-ops on Windows:**
 

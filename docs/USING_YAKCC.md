@@ -153,6 +153,27 @@ What you'll see:
 
 ---
 
+### 4d. Local directory layout — where things live
+
+yakcc creates **two directories named `.yakcc`** in normal use. They are in different parent directories and hold different state:
+
+| Directory | Contents | Created by |
+|---|---|---|
+| `<project>/.yakcc/` | `registry.sqlite` (atom store), `config/`, `registry/` | `yakcc init` |
+| `~/.yakcc/` | `telemetry/<session-id>.jsonl` — one per Claude Code session | Hook on first Edit/Write |
+
+**Telemetry is always written to `~/.yakcc/telemetry/`, not `<project>/.yakcc/`.** This is intentional: a single Claude Code session can touch multiple projects, so telemetry is aggregated per-user rather than fragmented per-project (D-HOOK-5).
+
+Use the `yakcc telemetry` command to inspect it without having to remember the path:
+
+```sh
+yakcc telemetry           # list session files with event counts + timestamps
+yakcc telemetry --tail 5  # print the last 5 events from the latest session
+yakcc telemetry --path    # print the resolved telemetry directory
+```
+
+---
+
 ## 5. Walking through a registry hit
 
 When the hook substitutes a registry atom, the emitted code carries an inline contract comment showing exactly which atom was used (per D-HOOK-4 in [`docs/archive/developer/adr/hook-layer-architecture.md`](archive/developer/adr/hook-layer-architecture.md)):

@@ -597,7 +597,13 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
     expect(allLog).toContain("claude-code");
   });
 
-  it("success output is ≤6 lines on default happy path (G6)", async () => {
+  it("success output is ≤8 lines on default happy path (G6 + WI-760 telemetry lines)", async () => {
+    // @decision DEC-CLI-INIT-WI760-G6-UPDATE-001
+    // title: G6 line-count limit raised from 6 to 8 to accommodate WI-760 telemetry discoverability
+    // status: accepted (WI-760)
+    // rationale: WI-760 adds a "telemetry will land in" line from hooksClaudeCodeInstall and a
+    //   "Telemetry:" summary line from init itself. Both are required per the WI-760 acceptance
+    //   criteria. The prior G6=6 constraint is updated to G6=8 to reflect these two additions.
     const fakeHome = join(tmpDir, "fakehome");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
 
@@ -608,7 +614,7 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
 
     // Count non-empty log lines
     const nonEmptyLines = logger.logLines.filter((l) => l.trim().length > 0);
-    expect(nonEmptyLines.length).toBeLessThanOrEqual(6);
+    expect(nonEmptyLines.length).toBeLessThanOrEqual(8);
   });
 
   // EC-S7-T1: no-detect path surfaces a structured hint (DEC-CLI-INIT-NO-IDE-HINT-001)
