@@ -610,6 +610,40 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
     const nonEmptyLines = logger.logLines.filter((l) => l.trim().length > 0);
     expect(nonEmptyLines.length).toBeLessThanOrEqual(6);
   });
+
+  // EC-S7-T1: no-detect path surfaces a structured hint (DEC-CLI-INIT-NO-IDE-HINT-001)
+  it("no-detect path surfaces a hint with `--ide` and the known IDE names", async () => {
+    // On Windows, buildCandidatePaths uses process.env.APPDATA for Cursor (not home-relative),
+    // so we must temporarily redirect APPDATA to a non-existent path inside fakeHome to
+    // guarantee detectInstalledIdes returns [] (Sacred Practice #5: real I/O, no deep mocks).
+    const fakeHome = join(tmpDir, "fakehome-empty");
+    mkdirSync(fakeHome, { recursive: true });
+    const savedAppdata = process.env.APPDATA;
+    process.env.APPDATA = join(fakeHome, "AppData", "Roaming");
+
+    let logger: CollectingLogger;
+    try {
+      logger = new CollectingLogger();
+      await init(["--target", tmpDir, "--no-seed"], logger, { overrideHome: fakeHome });
+    } finally {
+      // Always restore APPDATA, even on test failure (prevent state leakage)
+      if (savedAppdata === undefined) {
+        // biome-ignore lint/performance/noDelete: restoring env to absent state
+        delete process.env.APPDATA;
+      } else {
+        process.env.APPDATA = savedAppdata;
+      }
+    }
+
+    const allLog = logger.logLines.join("\n");
+    // Hint references the recovery flag and the opt-out
+    expect(allLog).toContain("--ide");
+    expect(allLog).toContain("--skip-hooks");
+    // Hint lists IDE names — sample at least 3 of the 6 (avoid coupling to exact ordering)
+    const { KNOWN_IDE_NAMES } = await import("../lib/ide-detect.js");
+    const namesInHint = KNOWN_IDE_NAMES.filter((n) => allLog.includes(n));
+    expect(namesInHint.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -767,5 +801,83 @@ describe("init — compound interaction: real sequence end-to-end", () => {
     expect(allLog).toContain("Installed in");
     expect(allLog).toContain("Hooked into:");
     expect(allLog).toContain("claude-code");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 22: windsurf / aider auto-detect through init (S7 / WI-687-S7 / #746 AC1)
+//
+// The lifecycle integration test covers all 6 adapters end-to-end, but those
+// tests seed each adapter explicitly via --ide flag. These two cases exercise
+// the AUTO-DETECT path through init() for the two adapters that previously
+// lacked init.test.ts coverage of that path (claude-code/cursor/cline/continue
+// were already covered by suites 1, 11, 19, 20, 21).
+// EC-S7-T2 (windsurf) and EC-S7-T3 (aider).
+// ---------------------------------------------------------------------------
+
+describe("init — auto-detect-through-init: windsurf", () => {
+  it("auto-detects windsurf when ~/.windsurf/ exists in fakeHome", async () => {
+    const fakeHome = join(tmpDir, "fakehome-windsurf-auto");
+    mkdirSync(join(fakeHome, ".windsurf"), { recursive: true });
+
+    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+      overrideHome: fakeHome,
+    });
+    expect(code).toBe(0);
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("windsurf")).toBe(true);
+  });
+});
+
+describe("init — auto-detect-through-init: aider", () => {
+  it("auto-detects aider when ~/.aider/ exists in fakeHome", async () => {
+    const fakeHome = join(tmpDir, "fakehome-aider-auto");
+    mkdirSync(join(fakeHome, ".aider"), { recursive: true });
+
+    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+      overrideHome: fakeHome,
+    });
+    expect(code).toBe(0);
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("aider")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 23: capstone — all six IDEs auto-detected through init (S7 capstone)
+//
+// Proves the S7 acceptance: when every IDE config dir is present, init() runs
+// the real production sequence (detectInstalledIdes → installHookForIde each)
+// and ALL six IDEs land in installedHooks. This is the single test that
+// demonstrates "yakcc init auto-detect expansion to all 6 IDEs" end-to-end
+// through init() (lifecycle integration test exercises the round-trip; this
+// suite exercises only the init-side auto-detect glue).
+// EC-S7-T4.
+// ---------------------------------------------------------------------------
+
+describe("init — auto-detect-through-init: all six IDEs (S7 capstone)", () => {
+  it("auto-detects all 6 known IDEs when every config dir exists", async () => {
+    const fakeHome = join(tmpDir, "fakehome-all-six");
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+    mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
+    mkdirSync(join(fakeHome, ".config", "cline"), { recursive: true });
+    mkdirSync(join(fakeHome, ".continue"), { recursive: true });
+    mkdirSync(join(fakeHome, ".windsurf"), { recursive: true });
+    mkdirSync(join(fakeHome, ".aider"), { recursive: true });
+
+    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+      overrideHome: fakeHome,
+    });
+    expect(code).toBe(0);
+
+    const rc = readRc(tmpDir);
+    const installed = rc?.installedHooks as string[];
+    const { KNOWN_IDE_NAMES } = await import("../lib/ide-detect.js");
+    for (const ide of KNOWN_IDE_NAMES) {
+      expect(installed.includes(ide)).toBe(true);
+    }
+    // Future-proof: a 7th IDE adapter that forgets to extend auto-detect glue
+    // will fail this assertion (Sacred Practice #12 / DEC-WI687-SLICING-001).
+    expect(installed).toHaveLength(KNOWN_IDE_NAMES.length);
   });
 });

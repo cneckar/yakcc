@@ -554,5 +554,23 @@ export async function init(
   logger.log("");
   logger.log(`Installed in ${targetDir}. ${hookedLine} Registry: ${seedCount} atoms.`);
 
+  // @decision DEC-CLI-INIT-NO-IDE-HINT-001 (WI-687-S7 / #746 AC2)
+  // title: When auto-detect finds nothing and --skip-hooks was not passed, surface a
+  //        structured hint so the first-30-seconds GTM surface does not dead-end silently.
+  // status: accepted (WI-746-S7)
+  // rationale:
+  //   AC2 of #746 requires the user to receive actionable guidance when no IDE config
+  //   dirs are found. A silent "Hooks: no IDEs detected." leaves a fresh user with no
+  //   recovery path. The hint is non-interactive (parent plan NG6 / DEC-CLI-INIT-002:
+  //   init must remain scriptable and non-blocking on stdin). The IDE list is derived
+  //   from KNOWN_IDE_NAMES — NOT a hand-typed parallel list — so the hint never drifts
+  //   when a future S-slice adds a 7th adapter (Sacred Practice #12 / DEC-WI687-SLICING-001).
+  if (!skipHooks && installedHooks.length === 0) {
+    logger.log("  Tip: no IDE config dirs found in your home directory. Re-run with");
+    logger.log("       `yakcc init --ide <name>` to install for a specific IDE");
+    logger.log(`       (supported: ${KNOWN_IDE_NAMES.join(", ")}),`);
+    logger.log("       or `yakcc init --skip-hooks` to skip hook setup entirely.");
+  }
+
   return 0;
 }
