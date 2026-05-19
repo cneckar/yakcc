@@ -7,6 +7,7 @@ dist/
 .env
 .env.local
 .yakcc/
+.yakccrc.json
 tmp/
 # NOTE: tmp/discovery-eval/baseline-single-vector-2026-05-10.json and
 # tmp/discovery-eval/measurement-first-decision.md are committed via `git add --force`
