@@ -38,6 +38,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { addInstalledHook, removeInstalledHook } from "../lib/rc-hooks.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -124,6 +125,11 @@ export async function hooksAiderInstall(
     return 1;
   }
 
+  // Project root used for .yakccrc.json bookkeeping. --target overrides cwd.
+  // createRcIfAbsent is true only when --target was explicitly given.
+  const targetDir = parsed.values.target ?? ".";
+  const createRcIfAbsent = parsed.values.target !== undefined;
+
   // Resolve the Aider config directory.
   // overrideAiderDir is the injection seam for tests; production uses ~/.aider/.
   const aiderDir = overrideAiderDir ?? join(homedir(), ".aider");
@@ -148,12 +154,22 @@ export async function hooksAiderInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    try {
+      removeInstalledHook(targetDir, "aider");
+    } catch (err) {
+      logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+    }
     logger.log(`yakcc aider hook marker removed: ${markerPath}`);
     return 0;
   }
 
   // --- Install path ---
   if (isYakccInstalled(markerPath)) {
+    try {
+      addInstalledHook(targetDir, "aider", { createIfAbsent: createRcIfAbsent });
+    } catch (err) {
+      logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+    }
     logger.log(`yakcc aider hook already installed at ${markerPath} (idempotent).`);
     return 0;
   }
@@ -181,6 +197,11 @@ export async function hooksAiderInstall(
     return 1;
   }
 
+  try {
+    addInstalledHook(targetDir, "aider", { createIfAbsent: createRcIfAbsent });
+  } catch (err) {
+    logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+  }
   logger.log(`yakcc aider hook marker installed: ${markerPath}`);
   logger.log(
     "note: Aider hook wiring via --lint-cmd/--test-cmd deferred — see marker for details.",

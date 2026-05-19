@@ -37,6 +37,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { addInstalledHook, removeInstalledHook } from "../lib/rc-hooks.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -123,6 +124,12 @@ export async function hooksClineInstall(
     return 1;
   }
 
+  // Project root used for .yakccrc.json bookkeeping. --target overrides cwd.
+  // createRcIfAbsent is true only when --target was explicitly given; without it
+  // the cline dir is global and it's ambiguous which project's rc to create.
+  const targetDir = parsed.values.target ?? ".";
+  const createRcIfAbsent = parsed.values.target !== undefined;
+
   // Resolve the Cline config directory.
   // overrideClineDir is the injection seam for tests; production uses ~/.config/cline/.
   const clineDir = overrideClineDir ?? join(homedir(), ".config", "cline");
@@ -147,12 +154,22 @@ export async function hooksClineInstall(
       logger.error(`error: cannot remove ${markerPath}: ${String(err)}`);
       return 1;
     }
+    try {
+      removeInstalledHook(targetDir, "cline");
+    } catch (err) {
+      logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+    }
     logger.log(`yakcc cline hook marker removed: ${markerPath}`);
     return 0;
   }
 
   // --- Install path ---
   if (isYakccInstalled(markerPath)) {
+    try {
+      addInstalledHook(targetDir, "cline", { createIfAbsent: createRcIfAbsent });
+    } catch (err) {
+      logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+    }
     logger.log(`yakcc cline hook already installed at ${markerPath} (idempotent).`);
     return 0;
   }
@@ -178,6 +195,11 @@ export async function hooksClineInstall(
     return 1;
   }
 
+  try {
+    addInstalledHook(targetDir, "cline", { createIfAbsent: createRcIfAbsent });
+  } catch (err) {
+    logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+  }
   logger.log(`yakcc cline hook marker installed: ${markerPath}`);
   logger.log("note: Cline tool-call interception API not yet stable — see marker for details.");
   return 0;

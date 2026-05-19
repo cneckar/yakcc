@@ -388,3 +388,61 @@ describe("runCli dispatch -- hook-intercept (Defect A coverage)", () => {
     expect(logger.errLines).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 13: .yakccrc.json installedHooks bookkeeping (#759)
+// ---------------------------------------------------------------------------
+
+function readRc(dir: string): Record<string, unknown> | null {
+  const p = join(dir, ".yakccrc.json");
+  if (!existsSync(p)) return null;
+  return JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+}
+
+describe("hooks claude-code install — rc bookkeeping", () => {
+  it("creates .yakccrc.json with installedHooks when none exists", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect(Array.isArray(rc?.installedHooks)).toBe(true);
+    expect((rc?.installedHooks as string[]).includes("claude-code")).toBe(true);
+  });
+
+  it("merges into an existing rc file without clobbering other fields", async () => {
+    writeFileSync(
+      join(tmpDir, ".yakccrc.json"),
+      JSON.stringify({ version: 1, registry: { path: ".yakcc/registry.sqlite" }, mode: "local", installedHooks: [] }, null, 2),
+      "utf-8",
+    );
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect(rc?.mode).toBe("local");
+    expect((rc?.installedHooks as string[]).includes("claude-code")).toBe(true);
+  });
+
+  it("does not duplicate installedHooks on idempotent re-install", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    const hooks = rc?.installedHooks as string[];
+    expect(hooks.filter((h) => h === "claude-code").length).toBe(1);
+  });
+
+  it("removes claude-code from installedHooks on --uninstall", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir, "--uninstall"], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("claude-code")).toBe(false);
+  });
+
+  it("--uninstall when not installed does not touch rc", async () => {
+    writeFileSync(
+      join(tmpDir, ".yakccrc.json"),
+      JSON.stringify({ version: 1, registry: { path: ".yakcc/registry.sqlite" }, installedHooks: ["cursor"] }, null, 2),
+      "utf-8",
+    );
+    await hooksClaudeCodeInstall(["--target", tmpDir, "--uninstall"], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("cursor")).toBe(true);
+  });
+});

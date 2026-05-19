@@ -12,7 +12,7 @@
  *   hook wiring yet; idempotent install/uninstall.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -174,5 +174,54 @@ describe("hooksContinueInstall — invalid flags", () => {
     const code = await hooksContinueInstall(["--bogus-flag"], logger, fakeContinueDir);
     expect(code).toBe(1);
     expect(logger.errLines.some((l) => l.includes("error:"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 5: .yakccrc.json installedHooks bookkeeping (#759)
+// ---------------------------------------------------------------------------
+
+function readRc(dir: string): Record<string, unknown> | null {
+  const p = join(dir, ".yakccrc.json");
+  if (!existsSync(p)) return null;
+  return JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+}
+
+describe("hooksContinueInstall — rc bookkeeping", () => {
+  it("creates .yakccrc.json with installedHooks when none exists", async () => {
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect((rc?.installedHooks as string[]).includes("continue")).toBe(true);
+  });
+
+  it("merges into an existing rc without clobbering other fields", async () => {
+    writeFileSync(
+      join(tmpDir, ".yakccrc.json"),
+      JSON.stringify({ version: 1, registry: { path: ".yakcc/registry.sqlite" }, mode: "local", installedHooks: [] }, null, 2),
+      "utf-8",
+    );
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const rc = readRc(tmpDir);
+    expect(rc?.mode).toBe("local");
+    expect((rc?.installedHooks as string[]).includes("continue")).toBe(true);
+  });
+
+  it("does not duplicate installedHooks on idempotent re-install", async () => {
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    const hooks = (readRc(tmpDir)?.installedHooks as string[]) ?? [];
+    expect(hooks.filter((h) => h === "continue").length).toBe(1);
+  });
+
+  it("removes continue from installedHooks on --uninstall", async () => {
+    await hooksContinueInstall(["--target", tmpDir], new CollectingLogger(), fakeContinueDir);
+    await hooksContinueInstall(
+      ["--target", tmpDir, "--uninstall"],
+      new CollectingLogger(),
+      fakeContinueDir,
+    );
+    const rc = readRc(tmpDir);
+    expect((rc?.installedHooks as string[]).includes("continue")).toBe(false);
   });
 });

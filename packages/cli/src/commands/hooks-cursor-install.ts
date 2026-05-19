@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { addInstalledHook, removeInstalledHook } from "../lib/rc-hooks.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -170,6 +171,11 @@ export async function hooksCursorInstall(argv: readonly string[], logger: Logger
       logger.error(`error: cannot write ${settingsPath}: ${String(err)}`);
       return 1;
     }
+    try {
+      removeInstalledHook(targetDir, "cursor");
+    } catch (err) {
+      logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+    }
     logger.log(`yakcc cursor hook removed from ${settingsPath}`);
     return 0;
   }
@@ -209,6 +215,11 @@ export async function hooksCursorInstall(argv: readonly string[], logger: Logger
     // Non-fatal: the settings.json update succeeded.
   }
 
+  try {
+    addInstalledHook(targetDir, "cursor");
+  } catch (err) {
+    logger.error(`warning: cannot update .yakccrc.json: ${String(err)}`);
+  }
   if (alreadyInstalled) {
     logger.log(`yakcc cursor hook already installed at ${settingsPath} (idempotent).`);
   } else {

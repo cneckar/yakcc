@@ -212,14 +212,14 @@ async function installHookForIde(
     case "cline": {
       const { join } = await import("node:path");
       const clineDir = join(home, ".config", "cline");
-      const code = await hooksClineInstall([], logger, clineDir);
+      const code = await hooksClineInstall(["--target", targetDir], logger, clineDir);
       if (code !== 0) throw new Error(`cline hook install failed (exit ${code})`);
       break;
     }
     case "continue": {
       const { join } = await import("node:path");
       const continueDir = join(home, ".continue");
-      const code = await hooksContinueInstall([], logger, continueDir);
+      const code = await hooksContinueInstall(["--target", targetDir], logger, continueDir);
       if (code !== 0) throw new Error(`continue hook install failed (exit ${code})`);
       break;
     }
@@ -231,7 +231,7 @@ async function installHookForIde(
     case "aider": {
       const { join } = await import("node:path");
       const aiderDir = join(home, ".aider");
-      const code = await hooksAiderInstall([], logger, aiderDir);
+      const code = await hooksAiderInstall(["--target", targetDir], logger, aiderDir);
       if (code !== 0) throw new Error(`aider hook install failed (exit ${code})`);
       break;
     }
