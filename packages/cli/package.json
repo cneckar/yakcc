@@ -42,7 +42,7 @@
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
-    "build:publish": "rm -rf dist && tsup && node scripts/copy-seed-blocks.mjs && node scripts/sync-publish-assets.mjs",
+    "build:publish": "rm -rf dist && tsup && node scripts/ensure-bootstrap-corpus.mjs && node scripts/copy-seed-blocks.mjs && node scripts/sync-publish-assets.mjs",
     "build:binary": "node scripts/build-binary.mjs",
     "prepublishOnly": "pnpm run build:publish",
     "typecheck": "tsc --noEmit -p .",
