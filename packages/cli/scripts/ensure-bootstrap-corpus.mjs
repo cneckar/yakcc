@@ -83,10 +83,20 @@ async function main() {
     );
   }
 
-  const result = spawnSync(process.execPath, [BIN, "bootstrap"], {
-    stdio: "inherit",
-    cwd: REPO_ROOT,
-  });
+  // Redirect --manifest and --report to throwaway paths under packages/cli/dist/
+  // so the committed bootstrap/expected-roots.json (the load-bearing manifest
+  // per DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001) is NOT mutated by the publish run.
+  // Only the sqlite (gitignored) is the artifact we want from this invocation.
+  const TMP_MANIFEST = join(CLI_ROOT, "dist", ".publish-bootstrap-manifest.json");
+  const TMP_REPORT = join(CLI_ROOT, "dist", ".publish-bootstrap-report.json");
+  const result = spawnSync(
+    process.execPath,
+    [BIN, "bootstrap", "--manifest", TMP_MANIFEST, "--report", TMP_REPORT],
+    {
+      stdio: "inherit",
+      cwd: REPO_ROOT,
+    },
+  );
 
   if (result.status !== 0) {
     process.stderr.write(`[ensure-bootstrap-corpus] yakcc bootstrap exited with status ${result.status}\n`);
