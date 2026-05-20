@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_TELEMETRY_ENDPOINT } from "../src/telemetry-config.js";
 import {
   CompositeSink,
   FileSink,
@@ -221,10 +222,12 @@ describe("FileSink — JSONL writer (real FS)", () => {
 describe("HttpsBatcherSink — size-based batch flush (DEC-TELEMETRY-EXPORT-BATCHING-004)", () => {
   it("flushes when buffer reaches 50 events and POSTs to the endpoint", async () => {
     const fetchCalls: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url: Parameters<typeof globalThis.fetch>[0]) => {
-      fetchCalls.push(url.toString());
-      return new Response(null, { status: 200 });
-    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (url: Parameters<typeof globalThis.fetch>[0]) => {
+        fetchCalls.push(url.toString());
+        return new Response(null, { status: 200 });
+      },
+    );
 
     const sink = new HttpsBatcherSink("https://metrics.yakcc.com/test-size", "size-test");
 
@@ -278,6 +281,76 @@ describe("HttpsBatcherSink — size-based batch flush (DEC-TELEMETRY-EXPORT-BATC
 });
 
 // ---------------------------------------------------------------------------
+// DEC-WPE-TELEMETRY-PATH-001 — compound integration test
+// Proves the full production sequence: no env vars → resolveTelemetryConfig →
+// selectSink → HttpsBatcherSink → fetch is called with .../v1/telemetry/ingest
+// This is the compound-interaction test required by the implementer mandate.
+// ---------------------------------------------------------------------------
+
+describe("DEC-WPE-TELEMETRY-PATH-001 — default endpoint POST target ends with /v1/telemetry/ingest", () => {
+  it("DEFAULT_TELEMETRY_ENDPOINT itself ends with /v1/telemetry/ingest", () => {
+    // Fast structural assertion — no sink needed.
+    expect(DEFAULT_TELEMETRY_ENDPOINT.endsWith("/v1/telemetry/ingest")).toBe(true);
+  });
+
+  it("selectSink({}) → HttpsBatcherSink POSTs to https://metrics.yakcc.com/v1/telemetry/ingest (compound: env→config→sink→fetch)", async () => {
+    // Production sequence: no env vars → default config → CompositeSink(HttpsBatcherSink)
+    // → 50 events → size flush → fetch called with the full ingest URL.
+    // @mock-exempt: fetch is the external HTTP boundary.
+    const fetchCalls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (url: Parameters<typeof globalThis.fetch>[0]) => {
+        fetchCalls.push(url.toString());
+        return new Response(null, { status: 200 });
+      },
+    );
+
+    // Compound: traverse the real production path (env resolution → config → sink factory).
+    const sink = selectSink({} /* no env vars → uses DEFAULT_TELEMETRY_ENDPOINT */);
+    expect(sink).toBeInstanceOf(CompositeSink);
+
+    // Trigger a size flush via 50 events.
+    for (let i = 0; i < 50; i++) {
+      sink.send(makeEvent({ t: i }));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fetchCalls.length).toBeGreaterThan(0);
+    // Primary assertion: the POST URL must end with /v1/telemetry/ingest.
+    expect(fetchCalls[0]).toBe("https://metrics.yakcc.com/v1/telemetry/ingest");
+    // Guard against regression to bare host.
+    expect(fetchCalls[0]).not.toBe("https://metrics.yakcc.com");
+
+    (sink as CompositeSink).dispose();
+  });
+
+  it("custom YAKCC_TELEMETRY_ENDPOINT override is passed through as the POST target (coherence check)", async () => {
+    // DEC-WPE-TELEMETRY-PATH-001: overriders supply full URL including their path.
+    const customUrl = "https://example.test/v1/telemetry/ingest";
+    const fetchCalls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (url: Parameters<typeof globalThis.fetch>[0]) => {
+        fetchCalls.push(url.toString());
+        return new Response(null, { status: 200 });
+      },
+    );
+
+    const sink = selectSink({ YAKCC_TELEMETRY_ENDPOINT: customUrl });
+    expect(sink).toBeInstanceOf(CompositeSink);
+
+    for (let i = 0; i < 50; i++) {
+      sink.send(makeEvent({ t: i }));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fetchCalls.length).toBeGreaterThan(0);
+    expect(fetchCalls[0]).toBe(customUrl);
+
+    (sink as CompositeSink).dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Case 4: HttpsBatcherSink — time-based flush (fake timers + mocked fetch)
 // @mock-exempt: fetch is the external HTTP boundary; fake timers avoid 5s test wait
 // ---------------------------------------------------------------------------
@@ -286,10 +359,12 @@ describe("HttpsBatcherSink — time-based batch flush (DEC-TELEMETRY-EXPORT-BATC
   it("flushes after 5000ms interval when buffer is non-empty", async () => {
     vi.useFakeTimers();
     const fetchCalls: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url: Parameters<typeof globalThis.fetch>[0]) => {
-      fetchCalls.push(url.toString());
-      return new Response(null, { status: 200 });
-    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (url: Parameters<typeof globalThis.fetch>[0]) => {
+        fetchCalls.push(url.toString());
+        return new Response(null, { status: 200 });
+      },
+    );
 
     // Note: makeHttpsSink registers for afterEach disposal BEFORE vi.useRealTimers(),
     // ensuring clearInterval runs under the same fake-timer environment as setInterval.

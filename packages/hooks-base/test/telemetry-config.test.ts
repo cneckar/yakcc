@@ -72,11 +72,20 @@ describe("DEC-TELEMETRY-EXPORT-CONFIG-002 — case 3: endpoint=file://", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Case 4/5: YAKCC_TELEMETRY_ENDPOINT="https://<host>" → Composite
+// Case 4/5: YAKCC_TELEMETRY_ENDPOINT="https://<host>/<path>" → Composite
 // ---------------------------------------------------------------------------
 
 describe("DEC-TELEMETRY-EXPORT-CONFIG-002 — cases 4/5: https endpoint", () => {
-  it("case 4: non-default https endpoint is returned as-is", () => {
+  it("case 4: non-default https endpoint (full URL) is returned as-is", () => {
+    const cfg = resolveTelemetryConfig({
+      YAKCC_TELEMETRY_ENDPOINT: "https://custom.metrics.example.com/v1/telemetry/ingest",
+    });
+    expect(cfg.disabled).toBe(false);
+    expect(cfg.endpoint).toBe("https://custom.metrics.example.com/v1/telemetry/ingest");
+  });
+
+  it("case 4b: bare host custom override is returned as-is (operator controls path)", () => {
+    // DEC-WPE-TELEMETRY-PATH-001: overriders supply full URL; path is their responsibility
     const cfg = resolveTelemetryConfig({
       YAKCC_TELEMETRY_ENDPOINT: "https://custom.metrics.example.com",
     });
@@ -84,7 +93,7 @@ describe("DEC-TELEMETRY-EXPORT-CONFIG-002 — cases 4/5: https endpoint", () => 
     expect(cfg.endpoint).toBe("https://custom.metrics.example.com");
   });
 
-  it("case 5: default endpoint (metrics.yakcc.com) is accepted as-is", () => {
+  it("case 5: default endpoint (metrics.yakcc.com/v1/telemetry/ingest) is accepted as-is", () => {
     const cfg = resolveTelemetryConfig({
       YAKCC_TELEMETRY_ENDPOINT: DEFAULT_TELEMETRY_ENDPOINT,
     });
@@ -147,7 +156,13 @@ describe("DEC-TELEMETRY-EXPORT-CONFIG-002 — case 7: FULL_INTENT", () => {
 // ---------------------------------------------------------------------------
 
 describe("DEFAULT_TELEMETRY_ENDPOINT", () => {
-  it("is the canonical metrics endpoint", () => {
-    expect(DEFAULT_TELEMETRY_ENDPOINT).toBe("https://metrics.yakcc.com");
+  it("is the full ingest URL including /v1/telemetry/ingest path (DEC-WPE-TELEMETRY-PATH-001)", () => {
+    // DEC-WPE-TELEMETRY-PATH-001: the yakforge receiver only serves POST /v1/telemetry/ingest.
+    // The default endpoint must be the complete POST target, not a bare host.
+    expect(DEFAULT_TELEMETRY_ENDPOINT).toBe("https://metrics.yakcc.com/v1/telemetry/ingest");
+  });
+
+  it("ends with /v1/telemetry/ingest", () => {
+    expect(DEFAULT_TELEMETRY_ENDPOINT.endsWith("/v1/telemetry/ingest")).toBe(true);
   });
 });
