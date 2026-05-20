@@ -38,6 +38,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -99,6 +100,7 @@ export async function hooksAiderInstall(
   argv: readonly string[],
   logger: Logger,
   overrideAiderDir?: string,
+  overrideCwd?: string,
 ): Promise<number> {
   let parsed: ReturnType<
     typeof parseArgs<{
@@ -149,6 +151,13 @@ export async function hooksAiderInstall(
       return 1;
     }
     logger.log(`yakcc aider hook marker removed: ${markerPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001) ---
+    const rcDir = overrideCwd ?? process.cwd();
+    try {
+      removeInstalledHook(rcDir, "aider");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -185,5 +194,12 @@ export async function hooksAiderInstall(
   logger.log(
     "note: Aider hook wiring via --lint-cmd/--test-cmd deferred — see marker for details.",
   );
+  // --- WI-759: update .yakccrc.json.installedHooks (DEC-CLI-YAKCCRC-HOMEHOOK-TARGET-001) ---
+  const rcDir = overrideCwd ?? process.cwd();
+  try {
+    addInstalledHook(rcDir, "aider");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+  }
   return 0;
 }

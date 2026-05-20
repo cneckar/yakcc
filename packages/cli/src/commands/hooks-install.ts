@@ -16,9 +16,11 @@
 // Supersedes DEC-CLI-HOOKS-INSTALL-001 (v0 CLAUDE.md stub; WI-009).
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -198,6 +200,12 @@ export async function hooksClaudeCodeInstall(
       return 1;
     }
     logger.log(`yakcc hook removed from ${settingsPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks ---
+    try {
+      removeInstalledHook(targetDir, "claude-code");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -220,11 +228,19 @@ export async function hooksClaudeCodeInstall(
     }
   }
 
+  const telemetryDir = process.env.YAKCC_TELEMETRY_DIR ?? join(homedir(), ".yakcc", "telemetry");
   if (alreadyInstalled) {
     logger.log(`yakcc hook already installed at ${settingsPath} (idempotent).`);
   } else {
     logger.log(`yakcc hook installed at ${settingsPath}`);
     logger.log(`tool-call interception: ${HOOK_MATCHER} → ${HOOK_COMMAND}`);
+    logger.log(`telemetry will land in ${telemetryDir}/<session>.jsonl`);
+  }
+  // --- WI-759: update .yakccrc.json.installedHooks ---
+  try {
+    addInstalledHook(targetDir, "claude-code");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
   }
   return 0;
 }

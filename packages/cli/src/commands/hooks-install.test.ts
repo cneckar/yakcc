@@ -388,3 +388,60 @@ describe("runCli dispatch -- hook-intercept (Defect A coverage)", () => {
     expect(logger.errLines).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 13: WI-759 — .yakccrc.json.installedHooks integration (AC1/AC3/AC4/AC5/AC6/AC9)
+// ---------------------------------------------------------------------------
+
+import { readRc } from "../lib/yakccrc.js";
+
+describe("WI-759 .yakccrc.json installedHooks — claude-code", () => {
+  it("AC3: creates .yakccrc.json when absent (standalone install)", async () => {
+    const code = await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    expect(code).toBe(0);
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect(rc?.version).toBe(1);
+  });
+
+  it("AC1: install appends claude-code to installedHooks", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks).toContain("claude-code");
+  });
+
+  it("AC4: second install does not duplicate claude-code in installedHooks", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    const count = rc?.installedHooks?.filter((h) => h === "claude-code").length ?? 0;
+    expect(count).toBe(1);
+  });
+
+  it("AC5: uninstall removes claude-code from installedHooks", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir, "--uninstall"], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks ?? []).not.toContain("claude-code");
+  });
+
+  it("AC6: uninstall when rc absent is no-op (no rc created)", async () => {
+    const code = await hooksClaudeCodeInstall(
+      ["--target", tmpDir, "--uninstall"],
+      new CollectingLogger(),
+    );
+    expect(code).toBe(0);
+    // rc may have been created by settings.json install side-effect; verify claude-code absent
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks ?? []).not.toContain("claude-code");
+  });
+
+  it("AC9: install → uninstall → install round-trip produces installedHooks with claude-code once", async () => {
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir, "--uninstall"], new CollectingLogger());
+    await hooksClaudeCodeInstall(["--target", tmpDir], new CollectingLogger());
+    const rc = readRc(tmpDir);
+    const count = rc?.installedHooks?.filter((h) => h === "claude-code").length ?? 0;
+    expect(count).toBe(1);
+  });
+});

@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Logger } from "../index.js";
+import { RC_FILENAME, addInstalledHook, removeInstalledHook } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -171,6 +172,12 @@ export async function hooksCursorInstall(argv: readonly string[], logger: Logger
       return 1;
     }
     logger.log(`yakcc cursor hook removed from ${settingsPath}`);
+    // --- WI-759: update .yakccrc.json.installedHooks ---
+    try {
+      removeInstalledHook(targetDir, "cursor");
+    } catch (err) {
+      logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
+    }
     return 0;
   }
 
@@ -217,6 +224,12 @@ export async function hooksCursorInstall(argv: readonly string[], logger: Logger
     logger.log("session env var: CURSOR_SESSION_ID");
     logger.log(`marker: ${markerPath}`);
     logger.log("note: Cursor tool-call interception API not yet stable — see marker for details.");
+  }
+  // --- WI-759: update .yakccrc.json.installedHooks ---
+  try {
+    addInstalledHook(targetDir, "cursor");
+  } catch (err) {
+    logger.error(`warning: cannot update ${RC_FILENAME}: ${String(err)} — continuing`);
   }
   return 0;
 }

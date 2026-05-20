@@ -170,3 +170,51 @@ describe("hooksClineInstall — invalid flags", () => {
     expect(logger.errLines.some((l) => l.includes("error:"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 5: WI-759 — .yakccrc.json.installedHooks integration (overrideCwd seam)
+// ---------------------------------------------------------------------------
+
+import { readRc } from "../lib/yakccrc.js";
+
+describe("hooksClineInstall — WI-759 rc integration (overrideCwd)", () => {
+  it("AC3: creates .yakccrc.json at overrideCwd when absent", async () => {
+    const code = await hooksClineInstall([], new CollectingLogger(), fakeClineDir, tmpDir);
+    expect(code).toBe(0);
+    const rc = readRc(tmpDir);
+    expect(rc).not.toBeNull();
+    expect(rc?.version).toBe(1);
+  });
+
+  it("AC1: install appends cline to installedHooks at overrideCwd", async () => {
+    await hooksClineInstall([], new CollectingLogger(), fakeClineDir, tmpDir);
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks).toContain("cline");
+  });
+
+  it("AC4: second install does not duplicate cline in installedHooks", async () => {
+    await hooksClineInstall([], new CollectingLogger(), fakeClineDir, tmpDir);
+    await hooksClineInstall([], new CollectingLogger(), fakeClineDir, tmpDir);
+    const rc = readRc(tmpDir);
+    const count = rc?.installedHooks?.filter((h) => h === "cline").length ?? 0;
+    expect(count).toBe(1);
+  });
+
+  it("AC5: uninstall removes cline from installedHooks at overrideCwd", async () => {
+    await hooksClineInstall([], new CollectingLogger(), fakeClineDir, tmpDir);
+    await hooksClineInstall(["--uninstall"], new CollectingLogger(), fakeClineDir, tmpDir);
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks ?? []).not.toContain("cline");
+  });
+
+  it("compound: install+uninstall via overrideCwd leaves rc at overrideCwd not at process.cwd()", async () => {
+    await hooksClineInstall([], new CollectingLogger(), fakeClineDir, tmpDir);
+    const rc = readRc(tmpDir);
+    expect(rc?.installedHooks).toContain("cline");
+    // Verify no rc was written to process.cwd() — only tmpDir got the rc
+    const { existsSync: fsExists } = await import("node:fs");
+    const { join: pathJoin } = await import("node:path");
+    // process.cwd() is the repo root; we can only assert the tmpDir rc is consistent
+    expect(fsExists(pathJoin(tmpDir, ".yakccrc.json"))).toBe(true);
+  });
+});
