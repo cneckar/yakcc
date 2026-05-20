@@ -9,7 +9,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./src/import-classifier.js": "./dist/import-classifier.js",
-    "./telemetry.js": "./dist/telemetry.js"
+    "./telemetry.js": { "import": "./dist/telemetry.js", "types": "./dist/telemetry.d.ts" },
+    "./telemetry-wire.js": { "import": "./dist/telemetry-wire.js", "types": "./dist/telemetry-wire.d.ts" }
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
