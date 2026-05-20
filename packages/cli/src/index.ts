@@ -177,10 +177,11 @@ COMMANDS
   hooks continue install              Wire yakcc tool-call interception for Continue.dev
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc continue hook entry
-  stats [hits|atoms|sessions]         Surface hit rate, atom inventory, and LoC-saved metrics
-        [--since <iso-date>]          Window to a date (default: lifetime)
-        [--json]                      Machine-readable JSON output
-        [--registry <p>]              Registry path (default: .yakcc/registry.sqlite)
+  stats [hits|atoms|sessions]         Surface hit rate, atom reuse, and LoC-saved deltas
+        [--since <iso-date>]          Window telemetry scan (default: lifetime)
+        [--json]                      Machine-readable output for piping
+        [--top <n>]                   Max atoms/sessions to show (default: 10)
+        [--registry <path>]           Registry path (default: .yakcc/registry.sqlite)
   telemetry [--path] [--tail <n>]     Show telemetry sessions in ~/.yakcc/telemetry/ (or YAKCC_TELEMETRY_DIR)
   hook-intercept                      (internal -- invoked by IDE hook configs via PreToolUse)
   federation serve --registry <p>     Start a read-only HTTP registry server
@@ -394,8 +395,8 @@ export async function runCli(
     }
 
     case "stats": {
-      // `yakcc stats [hits|atoms|sessions] [--since <date>] [--json] [--registry <p>]`
-      // Surface hit rate, atom inventory, and LoC-saved deltas (WI-764).
+      // `yakcc stats [hits|atoms|sessions] [--since <date>] [--json] [--top <n>] [--registry <p>]`
+      // Surface hit rate, atom reuse, and LoC-saved deltas (WI-764).
       const statsArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return stats(statsArgv, logger);
     }
