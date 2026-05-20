@@ -54,6 +54,7 @@ import { registryRebuild } from "./commands/registry-rebuild.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
 import { shave } from "./commands/shave.js";
+import { stats } from "./commands/stats.js";
 import { telemetry } from "./commands/telemetry.js";
 import { uninstall } from "./commands/uninstall.js";
 
@@ -176,6 +177,7 @@ COMMANDS
   hooks continue install              Wire yakcc tool-call interception for Continue.dev
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc continue hook entry
+  stats [--since <iso-date>] [--json]  Show Tier-1 telemetry metrics (intercepts, outcomes, sessions, match quality)
   telemetry [--path] [--tail <n>]     Show telemetry sessions in ~/.yakcc/telemetry/ (or YAKCC_TELEMETRY_DIR)
   hook-intercept                      (internal -- invoked by IDE hook configs via PreToolUse)
   federation serve --registry <p>     Start a read-only HTTP registry server
@@ -386,6 +388,17 @@ export async function runCli(
       // Reads stdin, appends one telemetry JSONL line, ALWAYS exits 0 with empty stdout.
       const hookInterceptArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return hookIntercept(hookInterceptArgv, logger);
+    }
+
+    case "stats": {
+      // `yakcc stats [--since <iso-date>] [--json]` -- Tier-1 telemetry metrics (WI-764).
+      // Reads every *.jsonl under resolveTelemetryDir() via readTelemetrySessions()
+      // (@yakcc/hooks-base — single reader authority, DEC-CLI-STATS-READER-SEAM-001).
+      // Computes and prints intercept counts, outcome breakdown, per-tool hit rates,
+      // session/days-active summary, and cosine-distance match-quality buckets.
+      // Non-interactive: never reads stdin (NG6).
+      const statsArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return stats(statsArgv, logger);
     }
 
     case "telemetry": {

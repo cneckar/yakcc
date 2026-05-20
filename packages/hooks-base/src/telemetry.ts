@@ -33,7 +33,7 @@
  *   the existing try/catch at call sites in index.ts is the outer safety net.
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { blake3 } from "@noble/hashes/blake3.js";
@@ -360,6 +360,123 @@ export function appendTelemetryEvent(event: TelemetryEvent, sessionId: string, d
     // Backstop: sink implementations should catch their own errors, but if one
     // throws anyway we swallow here so the JSONL write is never affected.
   }
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry JSONL reader — typed parser seam for `yakcc stats` (DEC-CLI-STATS-READER-SEAM-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * One parsed session file: its events and the count of lines that failed to parse.
+ *
+ * @decision DEC-CLI-STATS-READER-SEAM-001
+ * @title Single JSONL→TelemetryEvent parser seam in @yakcc/hooks-base
+ * @status accepted (WI-764)
+ * @rationale
+ *   `telemetry.ts` already owns `TelemetryEvent` and `resolveTelemetryDir()`.
+ *   Placing the typed parser here keeps the schema and its parser co-located in
+ *   one module, enforcing Sacred Practice #12 (single source of truth). The
+ *   `yakcc stats` command and any future consumers read via this seam only —
+ *   they never contain a second JSON.parse loop over telemetry lines.
+ *   The `yakcc telemetry` command's raw-string helpers (countLines / lastNLines)
+ *   are unaffected — they serve a different need (display raw JSON) and this
+ *   export is additive.
+ */
+export interface ParsedSessionFile {
+  /** Filename minus ".jsonl" — the session identifier. */
+  readonly sessionId: string;
+  /** Absolute path to the JSONL file. */
+  readonly path: string;
+  /** Successfully parsed events in file order. */
+  readonly events: readonly TelemetryEvent[];
+  /** Count of lines that could not be parsed (corrupt / truncated). */
+  readonly skippedLines: number;
+}
+
+/**
+ * Minimal structural check: a value counts as a TelemetryEvent only when it
+ * has the required numeric `t` and string `outcome` and `toolName` fields.
+ * Full type-level validation is not attempted — any missing optional field is
+ * tolerated. Corrupt or structurally-invalid objects are counted as skipped.
+ */
+function isMinimalTelemetryEvent(value: unknown): value is TelemetryEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec["t"] === "number" &&
+    typeof rec["outcome"] === "string" &&
+    typeof rec["toolName"] === "string"
+  );
+}
+
+/**
+ * Read and parse every `*.jsonl` file under `dir`.
+ *
+ * - Returns `[]` when `dir` does not exist (fresh installs with no telemetry yet).
+ * - Corrupt or truncated lines are skipped (never thrown); the count is recorded
+ *   in `ParsedSessionFile.skippedLines`.
+ * - Lines that pass `JSON.parse` but fail the minimal structural check (missing
+ *   `t`, `outcome`, or `toolName`) are also counted as skipped.
+ * - Events are returned in file-order within each session.
+ *
+ * @param dir - Absolute path to the telemetry directory (from `resolveTelemetryDir()`).
+ * @returns Parsed session files in readdir order (typically alphabetical / creation order).
+ */
+export function readTelemetrySessions(dir: string): readonly ParsedSessionFile[] {
+  if (!existsSync(dir)) {
+    return [];
+  }
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+
+  const results: ParsedSessionFile[] = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".jsonl")) continue;
+
+    const filePath = join(dir, entry);
+    const sessionId = entry.slice(0, -".jsonl".length);
+
+    let content: string;
+    try {
+      content = readFileSync(filePath, "utf-8");
+    } catch {
+      // Unreadable file: treat as empty session.
+      results.push({ sessionId, path: filePath, events: [], skippedLines: 0 });
+      continue;
+    }
+
+    const events: TelemetryEvent[] = [];
+    let skippedLines = 0;
+
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue; // blank / trailing newline
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        skippedLines++;
+        continue;
+      }
+
+      if (isMinimalTelemetryEvent(parsed)) {
+        events.push(parsed);
+      } else {
+        skippedLines++;
+      }
+    }
+
+    results.push({ sessionId, path: filePath, events, skippedLines });
+  }
+
+  return results;
 }
 
 // ---------------------------------------------------------------------------
