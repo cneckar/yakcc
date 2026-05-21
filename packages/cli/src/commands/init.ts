@@ -568,9 +568,7 @@ export async function init(
     try {
       mirrorCode = await Promise.race([
         federationRunner(mirrorArgs, logger),
-        new Promise<number>((resolve) =>
-          setTimeout(() => resolve(1), MIRROR_TIMEOUT_MS),
-        ),
+        new Promise<number>((resolve) => setTimeout(() => resolve(1), MIRROR_TIMEOUT_MS)),
       ]);
     } catch {
       mirrorCode = 1;
