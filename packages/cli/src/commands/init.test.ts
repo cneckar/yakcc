@@ -265,9 +265,13 @@ describe("init — --peer <url>", () => {
     // injected to avoid waiting for a TCP timeout on localhost:19999. --no-seed
     // avoids slow corpus seeding (unrelated to this test).
     const logger = new CollectingLogger();
-    const code = await init(["--target", tmpDir, "--peer", "http://localhost:19999", "--no-seed"], logger, {
-      runFederation: noOpMirror,
-    });
+    const code = await init(
+      ["--target", tmpDir, "--peer", "http://localhost:19999", "--no-seed"],
+      logger,
+      {
+        runFederation: noOpMirror,
+      },
+    );
 
     // Exit 0 — mirror failure is a warning, not a fatal error
     expect(code).toBe(0);
@@ -540,50 +544,54 @@ describe("init — --no-seed flag", () => {
 // ---------------------------------------------------------------------------
 
 describe("init — seed by default", () => {
-  it("default (no --no-seed) calls seedYakccCorpus and registry is non-empty when corpus exists", { timeout: 300_000 }, async () => {
-    // Find the bootstrap corpus path (worktree-aware walk)
-    const { existsSync: eSync } = await import("node:fs");
-    const { dirname, join: pjoin } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
+  it(
+    "default (no --no-seed) calls seedYakccCorpus and registry is non-empty when corpus exists",
+    { timeout: 300_000 },
+    async () => {
+      // Find the bootstrap corpus path (worktree-aware walk)
+      const { existsSync: eSync } = await import("node:fs");
+      const { dirname, join: pjoin } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
 
-    let corpusPath: string | null = null;
-    let dir = dirname(fileURLToPath(import.meta.url));
-    for (let i = 0; i < 30; i++) {
-      const candidate = pjoin(dir, "bootstrap", "yakcc.registry.sqlite");
-      if (eSync(candidate)) {
-        corpusPath = candidate;
-        break;
+      let corpusPath: string | null = null;
+      let dir = dirname(fileURLToPath(import.meta.url));
+      for (let i = 0; i < 30; i++) {
+        const candidate = pjoin(dir, "bootstrap", "yakcc.registry.sqlite");
+        if (eSync(candidate)) {
+          corpusPath = candidate;
+          break;
+        }
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
       }
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
 
-    if (corpusPath === null) {
-      // Skip this test if bootstrap corpus is not available in this environment.
-      // The corpus is a monorepo artifact; binary-distribution follow-up (#361).
-      return;
-    }
+      if (corpusPath === null) {
+        // Skip this test if bootstrap corpus is not available in this environment.
+        // The corpus is a monorepo artifact; binary-distribution follow-up (#361).
+        return;
+      }
 
-    const logger = new CollectingLogger();
-    // noOpMirror: this test cares about seed behaviour, not mirror
-    const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
-      overrideHome: tmpDir,
-      corpusPath,
-      runFederation: noOpMirror,
-    });
-    expect(code).toBe(0);
+      const logger = new CollectingLogger();
+      // noOpMirror: this test cares about seed behaviour, not mirror
+      const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
+        overrideHome: tmpDir,
+        corpusPath,
+        runFederation: noOpMirror,
+      });
+      expect(code).toBe(0);
 
-    // Registry should have atoms from the bootstrap corpus.
-    const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
-    const registryPath = join(tmpDir, ".yakcc", "registry.sqlite");
-    const reg = await openRegistry(registryPath, {
-      embeddings: createOfflineEmbeddingProvider(),
-    });
-    const manifest = await reg.exportManifest();
-    await reg.close();
-    expect(manifest.length).toBeGreaterThanOrEqual(1);
-  });
+      // Registry should have atoms from the bootstrap corpus.
+      const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
+      const registryPath = join(tmpDir, ".yakcc", "registry.sqlite");
+      const reg = await openRegistry(registryPath, {
+        embeddings: createOfflineEmbeddingProvider(),
+      });
+      const manifest = await reg.exportManifest();
+      await reg.close();
+      expect(manifest.length).toBeGreaterThanOrEqual(1);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1043,10 +1051,14 @@ describe("init — runFederation seam: default-peer mirror invocation (DEC-WPE-D
     // We assert it is called exactly once with the expected mirror args.
     const { stub, calls } = captureMirror();
 
-    const code = await init(["--target", tmpDir, "--no-seed", "--skip-hooks"], new CollectingLogger(), {
-      overrideHome: tmpDir,
-      runFederation: stub,
-    });
+    const code = await init(
+      ["--target", tmpDir, "--no-seed", "--skip-hooks"],
+      new CollectingLogger(),
+      {
+        overrideHome: tmpDir,
+        runFederation: stub,
+      },
+    );
 
     expect(code).toBe(0);
     // Mirror must be called exactly once
