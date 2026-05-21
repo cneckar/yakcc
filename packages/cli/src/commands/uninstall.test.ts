@@ -137,9 +137,15 @@ describe("uninstall — default, installedHooks-driven (EC-S2-T1)", () => {
   it("preserves other .yakccrc.json keys (version, mode, registry) verbatim (EC-S2-I3)", async () => {
     const fakeHome = join(tmpDir, "fakehome-i3");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    // --local: explicitly set mode='local' so this test proves uninstall preserves the
+    // mode value verbatim regardless of what it is. DEC-WPE-DEFAULT-PEER-001 changed the
+    // default mode from 'local' to 'global'; using --local here makes the assertion
+    // independent of the default and is semantically correct for the EC-S2-I3 invariant.
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      { overrideHome: fakeHome },
+    );
 
     await uninstall(["--target", tmpDir], new CollectingLogger());
 
