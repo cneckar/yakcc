@@ -42,7 +42,7 @@
 // @decision DEC-CLI-INIT-002
 // title: Single-command `yakcc init` collapses init+seed+hooks-install into one entry;
 //        auto-detects IDEs; supersedes the no-auto-seed clause of DEC-CLI-INIT-001
-// status: accepted (WI-656-S1)
+// status: superseded-by-addendum (WI-656-S1; amended by DEC-WPE-DEFAULT-PEER-001)
 // rationale:
 //   Operator decision 2026-05-17 to collapse the first-touch surface. Every
 //   user-facing first-impression flows through `yakcc init`. The 6 new flags
@@ -51,6 +51,52 @@
 //   IDE auto-detection uses DEC-CLI-IDE-DETECT-SEMANTICS-001 (config-dir probe).
 //   Installer dispatch uses a thin table (DEC-CLI-IDE-INSTALLER-DISPATCH-001).
 //   Backward compat preserved: --target and --peer semantics unchanged.
+//
+// @decision DEC-WPE-DEFAULT-PEER-001
+// title: registry.yakcc.com becomes the default federation peer on yakcc init
+// status: accepted (WI-WPE-C / #771 — Slice 2: registry default mirror-on-init)
+// rationale:
+//   REVERSAL OF DEC-CLI-INIT-001 / DEC-CLI-INIT-002 offline-first posture:
+//   Previously, `yakcc init` (no flags) wrote mode="local" with no federation
+//   peer, implementing an offline-first default. This decision reverses that
+//   for the init first-touch surface only. yakforge now runs a public registry
+//   at registry.yakcc.com; the GTM goal requires new users to get a populated
+//   registry on first boot without passing any flags.
+//
+//   NARROWING OF DEC-AXIS-017 F-axis-opt-in framing:
+//   DEC-AXIS-017 frames federation as opt-in via the F-axis. This decision
+//   narrows that framing for the `init` first-touch surface: the default peer
+//   (registry.yakcc.com) is registered automatically on `yakcc init`, making
+//   the public registry the out-of-box experience. The F-axis opt-in posture
+//   is preserved for all other federation operations; only init is affected.
+//
+//   MODE LADDER (unchanged):
+//   --airgapped > --peer > --local > default(global/registry.yakcc.com)
+//   --local and --airgapped remain valid explicit opt-outs; each writes no
+//   default peer and does not mirror. Default init is semantically "global"
+//   — that mode value is written to .yakccrc.json to signal peer registration.
+//
+//   DEFAULT PEER: lives in a single named constant (DEFAULT_REGISTRY_PEER_URL).
+//   The mirror path reuses the existing runFederation(["mirror", ...]) seam;
+//   no parallel mirror mechanism is introduced. Mirror failure is non-fatal
+//   (warning only) — the registry is still initialized and the peer is recorded.
+//
+//   GRACEFUL DEGRADATION (registry may be down at first-boot time):
+//   The mirror attempt is bounded by MIRROR_TIMEOUT_MS (10 s). If the mirror
+//   times out or fails, init logs one concise warning and continues — the peer
+//   URL is still written to .yakccrc.json so `yakcc federation mirror` can be
+//   re-run manually later. This prevents `yakcc init` from hanging on a cold
+//   start when registry.yakcc.com is temporarily unreachable.
+//
+//   TESTABILITY SEAM: InitOptions.runFederation may be injected by tests to
+//   replace the real runFederation call. Without this seam, every init test
+//   that exercises the default-peer path would attempt a real HTTP call to
+//   registry.yakcc.com (or hang on the timeout). The seam lets tests assert
+//   the correct mirror args without network I/O. Production callers omit the
+//   option; the real runFederation from ./federation.js is used by default.
+//
+//   ROLLBACK: revert the slice PR; yakcc init returns to offline-first default;
+//   no .yakccrc.json migration needed (change affects new init runs only).
 
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -82,6 +128,26 @@ const YAKCC_SUBDIRS = ["registry", "telemetry", "config"] as const;
 /** Default registry path relative to target. */
 const DEFAULT_REGISTRY_SUBPATH = ".yakcc/registry.sqlite";
 
+/**
+ * Default public registry peer URL.
+ *
+ * A bare `yakcc init` (no flags) registers this peer under
+ * `.yakccrc.json` federation.peers[] and runs a mirror against it.
+ * `--local` and `--airgapped` are explicit opt-outs that suppress
+ * the default peer. (DEC-WPE-DEFAULT-PEER-001)
+ */
+const DEFAULT_REGISTRY_PEER_URL = "https://registry.yakcc.com";
+
+/**
+ * Maximum milliseconds to wait for the mirror-on-init attempt.
+ *
+ * Mirror failure (timeout or HTTP error) is non-fatal: init exits 0 and
+ * logs a one-line warning. This bound prevents `yakcc init` from hanging
+ * indefinitely when registry.yakcc.com is temporarily unreachable.
+ * (DEC-WPE-DEFAULT-PEER-001 — graceful degradation)
+ */
+const MIRROR_TIMEOUT_MS = 10_000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -89,10 +155,11 @@ const DEFAULT_REGISTRY_SUBPATH = ".yakcc/registry.sqlite";
 /**
  * Mode written to .yakccrc.json.
  *
- * - "local": default; no federation peer, offline-first.
- * - "airgapped": explicit offline intent; semantically equivalent to "local"
- *   today (see NG2 — no yakcc.dev server yet); written for forward-compat.
- * - "global": --peer <url> was provided; will mirror from that peer on init.
+ * - "local": --local flag; no federation peer, offline-first.
+ * - "airgapped": --airgapped flag; explicit offline intent; no peer; written
+ *   for forward-compat with future air-gap policy enforcement.
+ * - "global": --peer <url> was provided OR default (no flags); will mirror
+ *   from the registered peer on init. (DEC-WPE-DEFAULT-PEER-001)
  */
 type YakccMode = "local" | "airgapped" | "global";
 
@@ -226,6 +293,17 @@ export interface InitOptions {
    * Forwarded to seedYakccCorpus() (DEC-CLI-SEED-YAKCC-001).
    */
   corpusPath?: string;
+  /**
+   * Injectable federation runner for the mirror-on-init path (DEC-WPE-DEFAULT-PEER-001).
+   *
+   * When omitted, the real `runFederation` from ./federation.js is used.
+   * Tests inject a stub to avoid real HTTP calls and assert that the correct
+   * mirror arguments are passed without needing registry.yakcc.com to be live.
+   *
+   * Signature matches runFederation's public contract:
+   *   (argv: string[], logger: Logger) => Promise<number>
+   */
+  runFederation?: (argv: string[], logger: Logger) => Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,8 +390,10 @@ export async function init(
   const ideRaw = parsed.values.ide;
 
   // Determine mode (written to .yakccrc.json for forward-compat).
-  // Priority: --airgapped > --peer (implies global) > --local > default (local).
-  let mode: YakccMode = "local";
+  // Priority: --airgapped > --peer (implies global) > --local > default (global/registry.yakcc.com).
+  // DEC-WPE-DEFAULT-PEER-001: default is now "global" — bare `yakcc init` registers
+  // DEFAULT_REGISTRY_PEER_URL. --local and --airgapped are explicit offline opt-outs.
+  let mode: YakccMode = "global";
   if (isAirgapped) {
     mode = "airgapped";
   } else if (peerUrl !== undefined) {
@@ -450,18 +530,54 @@ export async function init(
   }
 
   // -------------------------------------------------------------------------
-  // 8. Mirror peer (if --peer provided)
+  // 8. Mirror peer
+  //
+  // DEC-WPE-DEFAULT-PEER-001: when no --peer flag is given AND --local /
+  // --airgapped are not set, effectivePeerUrl falls back to
+  // DEFAULT_REGISTRY_PEER_URL so a bare `yakcc init` mirrors the public
+  // registry. --local and --airgapped leave effectivePeerUrl undefined,
+  // skipping the mirror entirely.
+  //
+  // The runFederation(["mirror", ...]) seam is reused — no parallel mirror
+  // mechanism is introduced (Evaluation Contract forbidden shortcut).
+  // Mirror failure is non-fatal (warning) — the registry is still
+  // initialized and the peer URL is recorded in .yakccrc.json.
   // -------------------------------------------------------------------------
 
-  if (peerUrl !== undefined) {
-    logger.log(`  mirroring blocks from peer: ${peerUrl}`);
-    const { runFederation } = await import("./federation.js");
-    const mirrorCode = await runFederation(
-      ["mirror", "--remote", peerUrl, "--registry", registryPath],
-      logger,
-    );
+  const effectivePeerUrl =
+    peerUrl !== undefined
+      ? peerUrl
+      : !isAirgapped && parsed.values.local !== true
+        ? DEFAULT_REGISTRY_PEER_URL
+        : undefined;
+
+  if (effectivePeerUrl !== undefined) {
+    // DEC-WPE-DEFAULT-PEER-001 — graceful degradation:
+    // Use the injected runner (tests) or the real runFederation (production).
+    // Wrap in a bounded timeout so init never hangs when the registry is down.
+    const federationRunner =
+      opts?.runFederation ??
+      (async (argv: string[], log: Logger) => {
+        const { runFederation: realRun } = await import("./federation.js");
+        return realRun(argv, log);
+      });
+
+    const mirrorArgs = ["mirror", "--remote", effectivePeerUrl, "--registry", registryPath];
+
+    let mirrorCode: number;
+    try {
+      mirrorCode = await Promise.race([
+        federationRunner(mirrorArgs, logger),
+        new Promise<number>((resolve) => setTimeout(() => resolve(1), MIRROR_TIMEOUT_MS)),
+      ]);
+    } catch {
+      mirrorCode = 1;
+    }
+
     if (mirrorCode !== 0) {
-      logger.error(`warning: mirror from ${peerUrl} failed (exit ${mirrorCode}) — continuing`);
+      logger.error(
+        `Note: could not reach ${effectivePeerUrl} — run 'yakcc federation mirror' later.`,
+      );
     }
   }
 
@@ -475,6 +591,11 @@ export async function init(
 
   const existingRc = readRc(targetDir);
 
+  // The peer URL to record in federation.peers[] — either the explicit --peer
+  // value or the default registry peer (DEC-WPE-DEFAULT-PEER-001). undefined
+  // when --local or --airgapped (explicit offline opt-outs).
+  const peerUrlToRecord = effectivePeerUrl;
+
   let rc: YakccRc;
   if (existingRc !== null) {
     // Spread existing rc fields. Ensure registry is always set (a minimal rc created by
@@ -484,12 +605,12 @@ export async function init(
       mode,
       registry: existingRc.registry ?? { path: DEFAULT_REGISTRY_SUBPATH },
     };
-    if (peerUrl !== undefined) {
+    if (peerUrlToRecord !== undefined) {
       const existingFed = rc.federation as { peers: string[] } | undefined;
       if (existingFed === undefined) {
-        rc = { ...rc, federation: { peers: [peerUrl] } };
-      } else if (!existingFed.peers.includes(peerUrl)) {
-        rc = { ...rc, federation: { peers: [...existingFed.peers, peerUrl] } };
+        rc = { ...rc, federation: { peers: [peerUrlToRecord] } };
+      } else if (!existingFed.peers.includes(peerUrlToRecord)) {
+        rc = { ...rc, federation: { peers: [...existingFed.peers, peerUrlToRecord] } };
       }
     }
     // Merge installedHooks (dedupe).
@@ -501,7 +622,7 @@ export async function init(
       version: 1,
       mode,
       registry: { path: DEFAULT_REGISTRY_SUBPATH },
-      ...(peerUrl !== undefined ? { federation: { peers: [peerUrl] } } : {}),
+      ...(peerUrlToRecord !== undefined ? { federation: { peers: [peerUrlToRecord] } } : {}),
       installedHooks,
     };
   }

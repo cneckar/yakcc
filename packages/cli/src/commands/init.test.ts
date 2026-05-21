@@ -5,26 +5,33 @@
  *   init(argv, logger, opts?)
  *   → parseArgs → mkdirSync(.yakcc/) → registryInit
  *   → detectInstalledIdes → installHookForIde(each) → seedYakccCorpus
- *   → [optional federation mirror] → writeRc(.yakccrc.json) → summary log
+ *   → [optional federation mirror via runFederation seam] → writeRc(.yakccrc.json) → summary log
  *
  * Tests cover the original behavior (suites 1–9) plus the new WI-656-S1 flags
  * (suites 10–18). All new-flag tests pass opts.overrideHome to control which
  * IDEs appear detected without touching the real home directory.
  *
  * @decision DEC-CLI-INIT-TEST-001
- * title: Tests use temp directories; federation mirror not exercised (no test server)
- * status: updated (WI-656-S1 — additive extension)
+ * title: Tests use temp directories; federation mirror stubbed via InitOptions.runFederation seam
+ * status: updated (WI-656-S1 — additive; WI-WPE-C — mirror seam injection)
  * rationale:
  *   Each test creates a fresh OS temp directory so runs are isolated. The
  *   --peer path is validated (URL parsing + .yakccrc.json write) but the actual
- *   federation mirror call against a live HTTP server is out of scope — that is
- *   covered by the federation test suite. CollectingLogger captures output
- *   without mocking. Sacred Practice #5: no mocks on fs internals — all file
- *   I/O is real, against the temp directory.
+ *   federation mirror call against a live HTTP server is avoided — tests inject
+ *   a stub via opts.runFederation (DEC-WPE-DEFAULT-PEER-001 seam). This prevents
+ *   tests from hanging when registry.yakcc.com is unreachable and keeps the suite
+ *   fast. CollectingLogger captures output without mocking. Sacred Practice #5:
+ *   no mocks on fs internals — all file I/O is real, against the temp directory.
  *
  *   WI-656-S1 extension: opts.overrideHome injects a fake HOME so IDE detection
  *   probes a controlled directory. Seed is disabled by default in new-flag tests
  *   (--no-seed) to keep them fast; seed behavior is covered by suite 14.
+ *
+ *   WI-WPE-C mirror seam: tests that exercise the default-peer path inject
+ *   noOpMirror (returns 0 immediately) or captureMirror (records call args).
+ *   Tests that only care about filesystem layout use --local to skip the mirror
+ *   entirely. The three canonical seam tests (suite 24) assert: default invokes
+ *   the seam with correct args; --local skips it; --airgapped skips it.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -33,6 +40,7 @@ import { join } from "node:path";
 import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Logger } from "../index.js";
 import { CollectingLogger, runCli } from "../index.js";
 import { init } from "./init.js";
 
@@ -63,13 +71,42 @@ function readSettings(dir: string): Record<string, unknown> | null {
 }
 
 // ---------------------------------------------------------------------------
+// Mirror seam stubs (DEC-WPE-DEFAULT-PEER-001 testability seam)
+//
+// noOpMirror: returns 0 immediately — used when a test exercises the default-peer
+//   registration path but does not care about mirror behaviour.
+// captureMirror: records all call args — used by suite 24 to assert the correct
+//   mirror args are passed without performing real network I/O.
+// ---------------------------------------------------------------------------
+
+/** No-op mirror stub: signals success without real HTTP. */
+const noOpMirror = async (_argv: string[], _logger: Logger): Promise<number> => 0;
+
+/**
+ * Build a capturing mirror stub. Returns { stub, calls } — stub is the function
+ * to inject; calls is the live array that accumulates each argv array received.
+ */
+function captureMirror(): {
+  stub: (argv: string[], logger: Logger) => Promise<number>;
+  calls: string[][];
+} {
+  const calls: string[][] = [];
+  const stub = async (argv: string[], _logger: Logger): Promise<number> => {
+    calls.push([...argv]);
+    return 0;
+  };
+  return { stub, calls };
+}
+
+// ---------------------------------------------------------------------------
 // Suite 1: fresh init produces the expected directory layout
 // ---------------------------------------------------------------------------
 
 describe("init — fresh directory", () => {
   it("creates .yakcc/ with subdirectories", async () => {
     const logger = new CollectingLogger();
-    const code = await init(["--target", tmpDir], logger);
+    // --local --no-seed: skip mirror and corpus seeding; this test only cares about filesystem layout
+    const code = await init(["--target", tmpDir, "--local", "--no-seed"], logger);
 
     expect(code).toBe(0);
     expect(existsSync(join(tmpDir, ".yakcc"))).toBe(true);
@@ -79,13 +116,15 @@ describe("init — fresh directory", () => {
   });
 
   it("creates .yakcc/registry.sqlite", async () => {
-    const code = await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; only testing SQLite creation
+    const code = await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
     expect(code).toBe(0);
     expect(existsSync(join(tmpDir, ".yakcc", "registry.sqlite"))).toBe(true);
   });
 
   it("creates .claude/settings.json with PreToolUse hook entry", async () => {
-    const code = await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; only testing hook install
+    const code = await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
     expect(code).toBe(0);
     const settings = readSettings(tmpDir);
     expect(settings).not.toBeNull();
@@ -97,15 +136,16 @@ describe("init — fresh directory", () => {
   });
 
   it("creates .yakccrc.json", async () => {
-    const code = await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; only testing rc file creation
+    const code = await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
     expect(code).toBe(0);
     expect(existsSync(join(tmpDir, ".yakccrc.json"))).toBe(true);
   });
 
   it("prints concise summary output (DEC-CLI-INIT-002 replaces verbose next-steps)", async () => {
     const logger = new CollectingLogger();
-    // Use --no-seed + overrideHome to empty dir so test is fast (no corpus, no real HOME)
-    await init(["--target", tmpDir, "--no-seed"], logger, { overrideHome: tmpDir });
+    // Use --no-seed + --local + overrideHome to empty dir so test is fast (no corpus, no real HOME, no mirror)
+    await init(["--target", tmpDir, "--no-seed", "--local"], logger, { overrideHome: tmpDir });
     const allLog = logger.logLines.join("\n");
     // New summary line per DEC-CLI-INIT-002 / G6
     expect(allLog).toContain("Installed in");
@@ -119,22 +159,33 @@ describe("init — fresh directory", () => {
 
 describe(".yakccrc.json content", () => {
   it("version field is 1", async () => {
-    await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; this test only cares about the version field
+    await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
     const rc = readRc(tmpDir);
     expect(rc).not.toBeNull();
     expect(rc?.version).toBe(1);
   });
 
   it("registry.path matches default registry subpath", async () => {
-    await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; this test only cares about the registry.path field
+    await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
     const rc = readRc(tmpDir);
     expect(rc?.registry).toEqual({ path: ".yakcc/registry.sqlite" });
   });
 
-  it("no federation key when --peer is not provided", async () => {
-    await init(["--target", tmpDir], new CollectingLogger());
+  it("federation key is present with default peer when no --peer/--local/--airgapped flag is given (DEC-WPE-DEFAULT-PEER-001)", async () => {
+    // DEC-WPE-DEFAULT-PEER-001: bare `yakcc init` now registers registry.yakcc.com
+    // as the default federation peer. noOpMirror is injected so the test does not
+    // perform real HTTP I/O — we assert the RC is written correctly, not the mirror.
+    await init(["--target", tmpDir, "--skip-hooks", "--no-seed"], new CollectingLogger(), {
+      overrideHome: tmpDir,
+      runFederation: noOpMirror,
+    });
     const rc = readRc(tmpDir);
-    expect(rc?.federation).toBeUndefined();
+    const fed = rc?.federation as Record<string, unknown> | undefined;
+    expect(fed).toBeDefined();
+    expect(Array.isArray(fed?.peers)).toBe(true);
+    expect((fed?.peers as string[]).includes("https://registry.yakcc.com")).toBe(true);
   });
 });
 
@@ -147,7 +198,8 @@ describe("init — --target <dir>", () => {
     const subDir = join(tmpDir, "my-project");
     mkdirSync(subDir);
 
-    const code = await init(["--target", subDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; this test only cares about target-dir isolation
+    const code = await init(["--target", subDir, "--local", "--no-seed"], new CollectingLogger());
 
     expect(code).toBe(0);
     expect(existsSync(join(subDir, ".yakcc", "registry.sqlite"))).toBe(true);
@@ -165,15 +217,17 @@ describe("init — --target <dir>", () => {
 
 describe("init — idempotent re-run", () => {
   it("running twice exits 0 both times", async () => {
-    const code1 = await init(["--target", tmpDir], new CollectingLogger());
-    const code2 = await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; this test only cares about idempotency of exit code
+    const code1 = await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
+    const code2 = await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
     expect(code1).toBe(0);
     expect(code2).toBe(0);
   });
 
   it("running twice does not duplicate PreToolUse entries", async () => {
-    await init(["--target", tmpDir], new CollectingLogger());
-    await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; this test only cares about hook-install idempotency
+    await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
+    await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
 
     const settings = readSettings(tmpDir);
     const hooks = settings?.hooks as Record<string, unknown[]>;
@@ -189,8 +243,9 @@ describe("init — idempotent re-run", () => {
   });
 
   it("running twice does not corrupt .yakccrc.json", async () => {
-    await init(["--target", tmpDir], new CollectingLogger());
-    await init(["--target", tmpDir], new CollectingLogger());
+    // --local --no-seed: skip mirror and seeding; this test only cares about rc idempotency
+    await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
+    await init(["--target", tmpDir, "--local", "--no-seed"], new CollectingLogger());
 
     const rc = readRc(tmpDir);
     expect(rc).not.toBeNull();
@@ -206,9 +261,17 @@ describe("init — idempotent re-run", () => {
 describe("init — --peer <url>", () => {
   it("writes federation.peers into .yakccrc.json (mirror failure is non-fatal)", async () => {
     // The mirror will fail (no real HTTP server), but init should still succeed
-    // because mirror failure is non-fatal per DEC-CLI-INIT-001.
+    // because mirror failure is non-fatal per DEC-CLI-INIT-001. noOpMirror is
+    // injected to avoid waiting for a TCP timeout on localhost:19999. --no-seed
+    // avoids slow corpus seeding (unrelated to this test).
     const logger = new CollectingLogger();
-    const code = await init(["--target", tmpDir, "--peer", "http://localhost:19999"], logger);
+    const code = await init(
+      ["--target", tmpDir, "--peer", "http://localhost:19999", "--no-seed"],
+      logger,
+      {
+        runFederation: noOpMirror,
+      },
+    );
 
     // Exit 0 — mirror failure is a warning, not a fatal error
     expect(code).toBe(0);
@@ -222,8 +285,13 @@ describe("init — --peer <url>", () => {
 
   it("re-run with same peer URL does not duplicate peer entry", async () => {
     const peerUrl = "http://localhost:19999";
-    await init(["--target", tmpDir, "--peer", peerUrl], new CollectingLogger());
-    await init(["--target", tmpDir, "--peer", peerUrl], new CollectingLogger());
+    // noOpMirror + --no-seed: this test cares about peer deduplication, not mirror or seeding
+    await init(["--target", tmpDir, "--peer", peerUrl, "--no-seed"], new CollectingLogger(), {
+      runFederation: noOpMirror,
+    });
+    await init(["--target", tmpDir, "--peer", peerUrl, "--no-seed"], new CollectingLogger(), {
+      runFederation: noOpMirror,
+    });
 
     const rc = readRc(tmpDir);
     const fed = rc?.federation as Record<string, unknown>;
@@ -234,8 +302,13 @@ describe("init — --peer <url>", () => {
   it("second peer URL is appended alongside the first", async () => {
     const peer1 = "http://localhost:19999";
     const peer2 = "http://localhost:19998";
-    await init(["--target", tmpDir, "--peer", peer1], new CollectingLogger());
-    await init(["--target", tmpDir, "--peer", peer2], new CollectingLogger());
+    // noOpMirror + --no-seed: this test cares about peer list accumulation, not mirror or seeding
+    await init(["--target", tmpDir, "--peer", peer1, "--no-seed"], new CollectingLogger(), {
+      runFederation: noOpMirror,
+    });
+    await init(["--target", tmpDir, "--peer", peer2, "--no-seed"], new CollectingLogger(), {
+      runFederation: noOpMirror,
+    });
 
     const rc = readRc(tmpDir);
     const fed = rc?.federation as Record<string, unknown>;
@@ -293,10 +366,12 @@ describe("init — invalid flags", () => {
 
 describe("init — smoke test: query against initialized registry", () => {
   it("registry produced by init is openable and queryable (offline embeddings, empty registry)", async () => {
-    // Initialize the registry; --no-seed to avoid corpus lookup in test env.
-    const initCode = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
-      overrideHome: tmpDir,
-    });
+    // Initialize the registry; --no-seed to avoid corpus lookup; --local to skip mirror.
+    const initCode = await init(
+      ["--target", tmpDir, "--no-seed", "--local"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir },
+    );
     expect(initCode).toBe(0);
 
     // Open the registry with the offline embedding provider (no network I/O).
@@ -324,7 +399,8 @@ describe("init — smoke test: query against initialized registry", () => {
 describe("runCli dispatch", () => {
   it("routes 'init' correctly to the init handler", async () => {
     const logger = new CollectingLogger();
-    const code = await runCli(["init", "--target", tmpDir], logger);
+    // --local --no-seed: skip mirror and seeding; this test only cares that the CLI routes to init correctly
+    const code = await runCli(["init", "--target", tmpDir, "--local", "--no-seed"], logger);
 
     expect(code).toBe(0);
     expect(existsSync(join(tmpDir, ".yakcc", "registry.sqlite"))).toBe(true);
@@ -346,8 +422,10 @@ describe("init — --skip-hooks", () => {
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
     mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
 
+    // noOpMirror: this test cares about --skip-hooks behaviour, not mirror
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed"], logger, {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     expect(code).toBe(0);
@@ -359,8 +437,10 @@ describe("init — --skip-hooks", () => {
   });
 
   it("--skip-hooks writes installedHooks: [] to .yakccrc.json", async () => {
+    // noOpMirror: this test cares about installedHooks content, not mirror
     await init(["--target", tmpDir, "--skip-hooks", "--no-seed"], new CollectingLogger(), {
       overrideHome: tmpDir,
+      runFederation: noOpMirror,
     });
     const rc = readRc(tmpDir);
     expect(rc?.installedHooks).toEqual([]);
@@ -378,10 +458,11 @@ describe("init — --ide flag", () => {
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
     mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
 
+    // noOpMirror: this test cares about --ide selection, not mirror
     const code = await init(
       ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
       new CollectingLogger(),
-      { overrideHome: fakeHome },
+      { overrideHome: fakeHome, runFederation: noOpMirror },
     );
 
     expect(code).toBe(0);
@@ -396,10 +477,11 @@ describe("init — --ide flag", () => {
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
     mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
 
+    // noOpMirror: this test cares about --ide multi-selection, not mirror
     const code = await init(
       ["--target", tmpDir, "--ide", "claude-code,cursor", "--no-seed"],
       new CollectingLogger(),
-      { overrideHome: fakeHome },
+      { overrideHome: fakeHome, runFederation: noOpMirror },
     );
 
     expect(code).toBe(0);
@@ -409,6 +491,7 @@ describe("init — --ide flag", () => {
 
   it("--ide bogus exits 1 with a message listing the four known IDE names", async () => {
     const logger = new CollectingLogger();
+    // Validation fails before mirror is attempted — no runFederation injection needed
     const code = await init(["--target", tmpDir, "--ide", "bogus-ide", "--no-seed"], logger, {
       overrideHome: tmpDir,
     });
@@ -422,6 +505,7 @@ describe("init — --ide flag", () => {
   });
 
   it("--ide bogus does NOT touch the filesystem before validation", async () => {
+    // Validation fails before mirror is attempted — no runFederation injection needed
     await init(["--target", tmpDir, "--ide", "bogus-ide", "--no-seed"], new CollectingLogger(), {
       overrideHome: tmpDir,
     });
@@ -436,8 +520,10 @@ describe("init — --ide flag", () => {
 
 describe("init — --no-seed flag", () => {
   it("--no-seed does not call seedYakccCorpus (registry stays empty)", async () => {
+    // noOpMirror: this test cares about --no-seed behaviour, not mirror
     const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
       overrideHome: tmpDir,
+      runFederation: noOpMirror,
     });
     expect(code).toBe(0);
 
@@ -458,48 +544,54 @@ describe("init — --no-seed flag", () => {
 // ---------------------------------------------------------------------------
 
 describe("init — seed by default", () => {
-  it("default (no --no-seed) calls seedYakccCorpus and registry is non-empty when corpus exists", async () => {
-    // Find the bootstrap corpus path (worktree-aware walk)
-    const { existsSync: eSync } = await import("node:fs");
-    const { dirname, join: pjoin } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
+  it(
+    "default (no --no-seed) calls seedYakccCorpus and registry is non-empty when corpus exists",
+    { timeout: 300_000 },
+    async () => {
+      // Find the bootstrap corpus path (worktree-aware walk)
+      const { existsSync: eSync } = await import("node:fs");
+      const { dirname, join: pjoin } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
 
-    let corpusPath: string | null = null;
-    let dir = dirname(fileURLToPath(import.meta.url));
-    for (let i = 0; i < 30; i++) {
-      const candidate = pjoin(dir, "bootstrap", "yakcc.registry.sqlite");
-      if (eSync(candidate)) {
-        corpusPath = candidate;
-        break;
+      let corpusPath: string | null = null;
+      let dir = dirname(fileURLToPath(import.meta.url));
+      for (let i = 0; i < 30; i++) {
+        const candidate = pjoin(dir, "bootstrap", "yakcc.registry.sqlite");
+        if (eSync(candidate)) {
+          corpusPath = candidate;
+          break;
+        }
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
       }
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
 
-    if (corpusPath === null) {
-      // Skip this test if bootstrap corpus is not available in this environment.
-      // The corpus is a monorepo artifact; binary-distribution follow-up (#361).
-      return;
-    }
+      if (corpusPath === null) {
+        // Skip this test if bootstrap corpus is not available in this environment.
+        // The corpus is a monorepo artifact; binary-distribution follow-up (#361).
+        return;
+      }
 
-    const logger = new CollectingLogger();
-    const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
-      overrideHome: tmpDir,
-      corpusPath,
-    });
-    expect(code).toBe(0);
+      const logger = new CollectingLogger();
+      // noOpMirror: this test cares about seed behaviour, not mirror
+      const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
+        overrideHome: tmpDir,
+        corpusPath,
+        runFederation: noOpMirror,
+      });
+      expect(code).toBe(0);
 
-    // Registry should have atoms from the bootstrap corpus.
-    const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
-    const registryPath = join(tmpDir, ".yakcc", "registry.sqlite");
-    const reg = await openRegistry(registryPath, {
-      embeddings: createOfflineEmbeddingProvider(),
-    });
-    const manifest = await reg.exportManifest();
-    await reg.close();
-    expect(manifest.length).toBeGreaterThanOrEqual(1);
-  });
+      // Registry should have atoms from the bootstrap corpus.
+      const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
+      const registryPath = join(tmpDir, ".yakcc", "registry.sqlite");
+      const reg = await openRegistry(registryPath, {
+        embeddings: createOfflineEmbeddingProvider(),
+      });
+      const manifest = await reg.exportManifest();
+      await reg.close();
+      expect(manifest.length).toBeGreaterThanOrEqual(1);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -537,12 +629,17 @@ describe("init — --local flag", () => {
     expect(rc?.mode).toBe("local");
   });
 
-  it("default (no flag) also writes mode: 'local' to .yakccrc.json", async () => {
+  it("default (no flag) writes mode: 'global' to .yakccrc.json (DEC-WPE-DEFAULT-PEER-001)", async () => {
+    // DEC-WPE-DEFAULT-PEER-001 reverses the prior offline-first default:
+    // bare `yakcc init` now writes mode="global" (not "local") to signal
+    // that registry.yakcc.com is registered as the default federation peer.
+    // noOpMirror: this test cares about mode field, not whether mirror actually ran
     await init(["--target", tmpDir, "--no-seed", "--skip-hooks"], new CollectingLogger(), {
       overrideHome: tmpDir,
+      runFederation: noOpMirror,
     });
     const rc = readRc(tmpDir);
-    expect(rc?.mode).toBe("local");
+    expect(rc?.mode).toBe("global");
   });
 });
 
@@ -553,10 +650,11 @@ describe("init — --local flag", () => {
 describe("init — --peer flag sets mode: global (EC DEC-CLI-INIT-001 backward compat)", () => {
   it("--peer <url> writes mode: 'global' AND federation.peers[]", async () => {
     const logger = new CollectingLogger();
+    // noOpMirror: this test cares about mode + peers content; mirror success is irrelevant
     const code = await init(
       ["--target", tmpDir, "--peer", "http://localhost:19999", "--no-seed", "--skip-hooks"],
       logger,
-      { overrideHome: tmpDir },
+      { overrideHome: tmpDir, runFederation: noOpMirror },
     );
 
     expect(code).toBe(0);
@@ -575,7 +673,8 @@ describe("init — --peer flag sets mode: global (EC DEC-CLI-INIT-001 backward c
 describe("init — summary output (G6: ≤6 lines on happy path)", () => {
   it("success output contains 'Installed in' + target dir", async () => {
     const logger = new CollectingLogger();
-    await init(["--target", tmpDir, "--no-seed", "--skip-hooks"], logger, {
+    // --local: skip mirror; this test only checks summary content
+    await init(["--target", tmpDir, "--no-seed", "--skip-hooks", "--local"], logger, {
       overrideHome: tmpDir,
     });
     const allLog = logger.logLines.join("\n");
@@ -588,8 +687,10 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
 
     const logger = new CollectingLogger();
+    // noOpMirror: this test checks hook summary line, not mirror behaviour
     await init(["--target", tmpDir, "--no-seed", "--ide", "claude-code"], logger, {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     const allLog = logger.logLines.join("\n");
@@ -599,17 +700,22 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
 
   it("success output is ≤8 lines on default happy path (G6 + WI-760 telemetry lines)", async () => {
     // @decision DEC-CLI-INIT-WI760-G6-UPDATE-001
-    // title: G6 line-count limit raised from 6 to 8 to accommodate WI-760 telemetry discoverability
-    // status: accepted (WI-760)
+    // title: G6 line-count limit is 8 to accommodate WI-760 telemetry discoverability
+    // status: accepted (WI-760; confirmed stable with DEC-WPE-DEFAULT-PEER-001 mirror seam)
     // rationale: WI-760 adds a "telemetry will land in" line from hooksClaudeCodeInstall and a
     //   "Telemetry:" summary line from init itself. Both are required per the WI-760 acceptance
     //   criteria. The prior G6=6 constraint is updated to G6=8 to reflect these two additions.
+    //   DEC-WPE-DEFAULT-PEER-001 mirror path does not add a log line on the happy path (the
+    //   pre-mirror log was removed; only a warning is emitted on failure). noOpMirror is
+    //   injected here so the count is deterministic even when registry.yakcc.com is unreachable.
     const fakeHome = join(tmpDir, "fakehome");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
 
     const logger = new CollectingLogger();
+    // noOpMirror: deterministic line count — mirror is exercised but adds 0 lines on success
     await init(["--target", tmpDir, "--no-seed", "--ide", "claude-code"], logger, {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     // Count non-empty log lines
@@ -630,7 +736,11 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
     let logger: CollectingLogger;
     try {
       logger = new CollectingLogger();
-      await init(["--target", tmpDir, "--no-seed"], logger, { overrideHome: fakeHome });
+      // noOpMirror: this test cares about the no-IDE hint, not mirror
+      await init(["--target", tmpDir, "--no-seed"], logger, {
+        overrideHome: fakeHome,
+        runFederation: noOpMirror,
+      });
     } finally {
       // Always restore APPDATA, even on test failure (prevent state leakage)
       if (savedAppdata === undefined) {
@@ -658,24 +768,30 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
 
 describe("init — .yakccrc.json schema invariants (NG4: version stays 1, additive only)", () => {
   it("version is still 1 after WI-656-S1 extension", async () => {
+    // noOpMirror: this test cares about schema version, not mirror
     await init(["--target", tmpDir, "--no-seed", "--skip-hooks"], new CollectingLogger(), {
       overrideHome: tmpDir,
+      runFederation: noOpMirror,
     });
     const rc = readRc(tmpDir);
     expect(rc?.version).toBe(1);
   });
 
   it("installedHooks is present after install", async () => {
+    // noOpMirror: this test cares about installedHooks field, not mirror
     await init(["--target", tmpDir, "--no-seed", "--skip-hooks"], new CollectingLogger(), {
       overrideHome: tmpDir,
+      runFederation: noOpMirror,
     });
     const rc = readRc(tmpDir);
     expect(Array.isArray(rc?.installedHooks)).toBe(true);
   });
 
   it("mode field is present", async () => {
+    // noOpMirror: this test cares about mode field presence, not mirror
     await init(["--target", tmpDir, "--no-seed", "--skip-hooks"], new CollectingLogger(), {
       overrideHome: tmpDir,
+      runFederation: noOpMirror,
     });
     const rc = readRc(tmpDir);
     expect(rc?.mode).toBeDefined();
@@ -693,8 +809,10 @@ describe("init — --ide cline: installs cline marker via installHookForIde", ()
     mkdirSync(join(fakeHome, ".config", "cline"), { recursive: true });
 
     const logger = new CollectingLogger();
+    // noOpMirror: this test cares about cline hook install, not mirror
     const code = await init(["--target", tmpDir, "--ide", "cline", "--no-seed"], logger, {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     expect(code).toBe(0);
@@ -709,8 +827,10 @@ describe("init — --ide cline: installs cline marker via installHookForIde", ()
     const fakeHome = join(tmpDir, "fakehome-cline-marker");
     mkdirSync(join(fakeHome, ".config", "cline"), { recursive: true });
 
+    // noOpMirror: this test cares about the marker content, not mirror
     await init(["--target", tmpDir, "--ide", "cline", "--no-seed"], new CollectingLogger(), {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     const markerPath = join(fakeHome, ".config", "cline", "yakcc-cline-hook.json");
@@ -730,8 +850,10 @@ describe("init — --ide continue: installs continue marker via installHookForId
     mkdirSync(join(fakeHome, ".continue"), { recursive: true });
 
     const logger = new CollectingLogger();
+    // noOpMirror: this test cares about continue hook install, not mirror
     const code = await init(["--target", tmpDir, "--ide", "continue", "--no-seed"], logger, {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     expect(code).toBe(0);
@@ -746,8 +868,10 @@ describe("init — --ide continue: installs continue marker via installHookForId
     const fakeHome = join(tmpDir, "fakehome-continue-marker");
     mkdirSync(join(fakeHome, ".continue"), { recursive: true });
 
+    // noOpMirror: this test cares about the marker content, not mirror
     await init(["--target", tmpDir, "--ide", "continue", "--no-seed"], new CollectingLogger(), {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     const markerPath = join(fakeHome, ".continue", "yakcc-continue-hook.json");
@@ -774,8 +898,12 @@ describe("init — compound interaction: real sequence end-to-end", () => {
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
 
     const logger = new CollectingLogger();
+    // noOpMirror: compound test covers the real production sequence; mirror seam
+    // is separately verified by suite 24. Injecting here keeps the test fast
+    // and avoids network dependency in the cross-component integration coverage.
     const code = await init(["--target", tmpDir, "--no-seed"], logger, {
       overrideHome: fakeHome,
+      runFederation: noOpMirror,
     });
 
     // 1. Exit 0
@@ -796,9 +924,10 @@ describe("init — compound interaction: real sequence end-to-end", () => {
     expect(preToolUse.length).toBeGreaterThan(0);
 
     // 4. .yakccrc.json has mode + installedHooks
+    // DEC-WPE-DEFAULT-PEER-001: default mode is now "global" (not "local")
     const rc = readRc(tmpDir);
     expect(rc?.version).toBe(1);
-    expect(rc?.mode).toBe("local");
+    expect(rc?.mode).toBe("global");
     expect(Array.isArray(rc?.installedHooks)).toBe(true);
     expect((rc?.installedHooks as string[]).includes("claude-code")).toBe(true);
 
@@ -826,7 +955,8 @@ describe("init — auto-detect-through-init: windsurf", () => {
     const fakeHome = join(tmpDir, "fakehome-windsurf-auto");
     mkdirSync(join(fakeHome, ".windsurf"), { recursive: true });
 
-    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+    // --local: skip mirror; this test only cares about IDE auto-detection
+    const code = await init(["--target", tmpDir, "--no-seed", "--local"], new CollectingLogger(), {
       overrideHome: fakeHome,
     });
     expect(code).toBe(0);
@@ -840,7 +970,8 @@ describe("init — auto-detect-through-init: aider", () => {
     const fakeHome = join(tmpDir, "fakehome-aider-auto");
     mkdirSync(join(fakeHome, ".aider"), { recursive: true });
 
-    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+    // --local: skip mirror; this test only cares about IDE auto-detection
+    const code = await init(["--target", tmpDir, "--no-seed", "--local"], new CollectingLogger(), {
       overrideHome: fakeHome,
     });
     expect(code).toBe(0);
@@ -864,14 +995,27 @@ describe("init — auto-detect-through-init: aider", () => {
 describe("init — auto-detect-through-init: all six IDEs (S7 capstone)", () => {
   it("auto-detects all 6 known IDEs when every config dir exists", async () => {
     const fakeHome = join(tmpDir, "fakehome-all-six");
+    // claude-code: always ~/.claude/
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
+    // cursor: platform-specific path (buildCandidatePaths uses different dirs per platform)
+    // darwin: ~/Library/Application Support/Cursor
+    // win32:  %APPDATA%/Cursor (or ~/AppData/Roaming/Cursor)
+    // linux:  ~/.config/Cursor
+    if (process.platform === "darwin") {
+      mkdirSync(join(fakeHome, "Library", "Application Support", "Cursor"), { recursive: true });
+    } else if (process.platform === "win32") {
+      mkdirSync(join(fakeHome, "AppData", "Roaming", "Cursor"), { recursive: true });
+    } else {
+      mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
+    }
     mkdirSync(join(fakeHome, ".config", "cline"), { recursive: true });
     mkdirSync(join(fakeHome, ".continue"), { recursive: true });
     mkdirSync(join(fakeHome, ".windsurf"), { recursive: true });
     mkdirSync(join(fakeHome, ".aider"), { recursive: true });
 
-    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+    // --local: skip mirror; capstone tests IDE auto-detection, not federation behaviour.
+    // Mirror seam is separately verified by suite 24.
+    const code = await init(["--target", tmpDir, "--no-seed", "--local"], new CollectingLogger(), {
       overrideHome: fakeHome,
     });
     expect(code).toBe(0);
@@ -885,5 +1029,92 @@ describe("init — auto-detect-through-init: all six IDEs (S7 capstone)", () => 
     // Future-proof: a 7th IDE adapter that forgets to extend auto-detect glue
     // will fail this assertion (Sacred Practice #12 / DEC-WI687-SLICING-001).
     expect(installed).toHaveLength(KNOWN_IDE_NAMES.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 24: runFederation seam tests (Evaluation Contract — DEC-WPE-DEFAULT-PEER-001)
+//
+// These three tests are the canonical proof that:
+//   1. Default `yakcc init` invokes runFederation(["mirror", ...]) with the
+//      correct args (registry.yakcc.com + local registry path).
+//   2. --local suppresses the mirror entirely.
+//   3. --airgapped suppresses the mirror entirely.
+//
+// All three use the captureMirror / noOpMirror seam (DEC-WPE-DEFAULT-PEER-001
+// testability seam) to avoid real HTTP calls to registry.yakcc.com.
+// ---------------------------------------------------------------------------
+
+describe("init — runFederation seam: default-peer mirror invocation (DEC-WPE-DEFAULT-PEER-001)", () => {
+  it("default init invokes runFederation(['mirror', '--remote', 'https://registry.yakcc.com', ...])", async () => {
+    // captureMirror records every call to the injected federation runner.
+    // We assert it is called exactly once with the expected mirror args.
+    const { stub, calls } = captureMirror();
+
+    const code = await init(
+      ["--target", tmpDir, "--no-seed", "--skip-hooks"],
+      new CollectingLogger(),
+      {
+        overrideHome: tmpDir,
+        runFederation: stub,
+      },
+    );
+
+    expect(code).toBe(0);
+    // Mirror must be called exactly once
+    expect(calls).toHaveLength(1);
+    // TypeScript: assert non-undefined before indexing (vitest `toHaveLength` already guarantees this)
+    const mirrorArgv = calls[0] as string[];
+    // First positional must be "mirror"
+    expect(mirrorArgv[0]).toBe("mirror");
+    // --remote must point to the default public registry
+    const remoteIdx = mirrorArgv.indexOf("--remote");
+    expect(remoteIdx).toBeGreaterThanOrEqual(0);
+    expect(mirrorArgv[remoteIdx + 1]).toBe("https://registry.yakcc.com");
+    // --registry must be present (the local sqlite path)
+    expect(mirrorArgv.includes("--registry")).toBe(true);
+    // Default peer must be recorded in .yakccrc.json
+    const rc = readRc(tmpDir);
+    const fed = rc?.federation as Record<string, unknown> | undefined;
+    expect((fed?.peers as string[]).includes("https://registry.yakcc.com")).toBe(true);
+  });
+
+  it("--local flag skips runFederation entirely (no mirror, no default peer)", async () => {
+    const { stub, calls } = captureMirror();
+
+    const code = await init(
+      ["--target", tmpDir, "--no-seed", "--skip-hooks", "--local"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir, runFederation: stub },
+    );
+
+    expect(code).toBe(0);
+    // runFederation must NOT be called when --local is set
+    expect(calls).toHaveLength(0);
+    // No default peer in .yakccrc.json
+    const rc = readRc(tmpDir);
+    const fed = rc?.federation as Record<string, unknown> | undefined;
+    // federation key may be absent entirely, or peers must not include the default URL
+    const peers = (fed?.peers as string[] | undefined) ?? [];
+    expect(peers.includes("https://registry.yakcc.com")).toBe(false);
+  });
+
+  it("--airgapped flag skips runFederation entirely (no mirror, no default peer)", async () => {
+    const { stub, calls } = captureMirror();
+
+    const code = await init(
+      ["--target", tmpDir, "--no-seed", "--skip-hooks", "--airgapped"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir, runFederation: stub },
+    );
+
+    expect(code).toBe(0);
+    // runFederation must NOT be called when --airgapped is set
+    expect(calls).toHaveLength(0);
+    // No default peer in .yakccrc.json
+    const rc = readRc(tmpDir);
+    const fed = rc?.federation as Record<string, unknown> | undefined;
+    const peers = (fed?.peers as string[] | undefined) ?? [];
+    expect(peers.includes("https://registry.yakcc.com")).toBe(false);
   });
 });

@@ -278,8 +278,12 @@ async function runB6a() {
     return true;
   }
 
-  // Step 1: yakcc init --target <workdir>
-  runStep(1, "yakcc init --target <workdir>", ["init", "--target", workdir]);
+  // Step 1: yakcc init --target <workdir> --airgapped
+  // B6a is the air-gapped scenario, so init must use --airgapped per DEC-WPE-DEFAULT-PEER-001.
+  // Since that decision, bare `yakcc init` registers registry.yakcc.com as the default peer
+  // and attempts an outbound mirror — which would break the ZERO-outbound assertion here.
+  // --airgapped opts out of the default mirror and exercises the actual air-gap code path.
+  runStep(1, "yakcc init --target <workdir> --airgapped", ["init", "--target", workdir, "--airgapped"]);
 
   // Step 2: Write sample .ts source file + spec.yak for compile
   step(2, "Write sample TypeScript source file (substrate-able + novel-glue mix) + spec.yak");
