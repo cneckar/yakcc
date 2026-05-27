@@ -12,8 +12,13 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { type SpecYak, parseGranularity, specHash } from "@yakcc/contracts";
-import { type Registry, openRegistry } from "@yakcc/registry";
+import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+
+/** Internal options for propose — embeddings seam for test injection. */
+export interface ProposeOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
 
 /**
@@ -27,7 +32,11 @@ import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
  * @param logger - Output sink; defaults to console via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function propose(argv: readonly string[], logger: Logger): Promise<number> {
+export async function propose(
+  argv: readonly string[],
+  logger: Logger,
+  opts?: ProposeOptions,
+): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     options: {
@@ -76,7 +85,7 @@ export async function propose(argv: readonly string[], logger: Logger): Promise<
   // Open the registry and check for a match.
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
