@@ -822,8 +822,15 @@ describe("federation pull --registry persist (WI-030)", () => {
     );
 
     expect(code).toBe(1);
-    // Error message must name the open failure (not a generic "pull failed").
-    expect(logger.errLines.some((l) => l.includes("failed to open registry"))).toBe(true);
+    // Error message must name the registry access failure (not a generic "pull failed").
+    // With the write-lock layer, a non-existent directory fails at lock acquisition
+    // ("failed to acquire registry write lock") rather than openRegistry; both are
+    // valid "failed to open" semantics.
+    expect(
+      logger.errLines.some(
+        (l) => l.includes("failed to open registry") || l.includes("failed to acquire registry write lock"),
+      ),
+    ).toBe(true);
     // Transport must NOT have been invoked (fail-fast ordering).
     expect(fetchBlockCalled).toBe(false);
   });

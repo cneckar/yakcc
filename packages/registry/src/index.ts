@@ -1132,3 +1132,9 @@ export {
   type RebuildRegistryOptions,
   type RebuildResult,
 } from "./rebuild.js";
+export {
+  acquireWriteLock,
+  lockFilePathFor,
+  type ReleaseLock,
+  type WriteLockOptions,
+} from "./lock.js";

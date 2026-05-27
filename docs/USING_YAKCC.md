@@ -455,7 +455,55 @@ yakcc registry rebuild --path .yakcc/registry.sqlite
 
 ---
 
-## 13. Where to go next
+## 13. Concurrency model
+
+yakcc uses SQLite with WAL (Write-Ahead Logging) mode as its registry backend. Understanding
+the concurrency model helps when running multiple yakcc processes against the same registry.
+
+### Readers
+
+**Many concurrent readers are fine.** WAL mode allows unlimited simultaneous read operations
+with no interference between readers or between a reader and a single writer. Run as many
+`yakcc query`, `yakcc search`, `yakcc compile`, or hook-intercept processes as you like —
+they never block each other or block a writer.
+
+### Writers
+
+**Only one writer at a time per registry.** The commands that write to the registry are:
+
+- `yakcc shave`
+- `yakcc bootstrap`
+- `yakcc registry rebuild`
+- `yakcc federation mirror`
+- `yakcc federation pull` (only when `--registry` is supplied)
+
+yakcc enforces this with an **advisory write lock** — a `.write.lock` file in the same
+directory as `registry.sqlite`. The first writer acquires the lock; subsequent writers
+wait (polling) and error after a configurable timeout if the lock is never released.
+
+**Default timeout:** 30 seconds. Override with `YAKCC_WRITE_LOCK_TIMEOUT_MS=<ms>`.
+
+If a writer is killed mid-run the lock file may be left behind. yakcc detects this
+automatically (the recorded PID is no longer alive) and steals the lock on the next write.
+If automatic detection fails, remove `.yakcc/.write.lock` manually.
+
+### Multi-developer teams
+
+Don't share a single `.yakcc/registry.sqlite` over NFS or a network mount. Each
+developer's local clone has their own registry; the `yakcc federation mirror` command
+handles cross-developer atom sharing. Lock files over NFS are notoriously unreliable and
+are explicitly **not** supported.
+
+### CI environments
+
+`bootstrap-accumulate.yml` is single-process by design — one CI job writes to the
+registry at a time. If you need parallel CI jobs that each read from a shared registry,
+have them all use `yakcc search` / `yakcc compile` (reader paths that don't acquire the
+write lock).
+
+---
+
+## 14. Where to go next
 
 - [`README.md`](../README.md) — yakcc-the-project overview, monorepo layout, contributor quickstart.
 - [`docs/CONTRIBUTING.md`](CONTRIBUTING.md) — contributor orientation and pointers into the developer-docs archive.

@@ -33,7 +33,7 @@ import {
 } from "@yakcc/federation";
 import type { ServeHandle, Transport } from "@yakcc/federation";
 import type { Registry, RegistryOptions } from "@yakcc/registry";
-import { openRegistry } from "@yakcc/registry";
+import { acquireWriteLock, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -238,10 +238,19 @@ async function runFederationMirror(
     return 1;
   }
 
+  let releaseMirrorLock: (() => void) | null = null;
+  try {
+    releaseMirrorLock = await acquireWriteLock(registryPath);
+  } catch (err) {
+    logger.error(`error: failed to acquire registry write lock: ${String(err)}`);
+    return 1;
+  }
+
   let registry: Registry;
   try {
     registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
+    releaseMirrorLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
   }
@@ -262,6 +271,7 @@ async function runFederationMirror(
     return 1;
   } finally {
     await registry.close();
+    releaseMirrorLock?.();
   }
 }
 
@@ -344,13 +354,21 @@ async function runFederationPull(
     return 1;
   }
 
-  // Open registry BEFORE pull: fail-fast on bad path (DEC-CLI-PULL-PERSIST-001).
-  // Only opened when --registry is present.
+  // Acquire write lock and open registry BEFORE pull: fail-fast on bad path
+  // (DEC-CLI-PULL-PERSIST-001). Only when --registry is present (pull-only is read-only).
+  let releasePullLock: (() => void) | null = null;
   let registry: Registry | null = null;
   if (hasRegistry) {
     try {
+      releasePullLock = await acquireWriteLock(registryPath as string);
+    } catch (err) {
+      logger.error(`error: failed to acquire registry write lock: ${String(err)}`);
+      return 1;
+    }
+    try {
       registry = await openRegistry(registryPath as string, { embeddings: opts?.embeddings });
     } catch (err) {
+      releasePullLock();
       logger.error(`error: failed to open registry at ${registryPath as string}: ${String(err)}`);
       return 1;
     }
@@ -390,6 +408,7 @@ async function runFederationPull(
     if (registry !== null) {
       await registry.close();
     }
+    releasePullLock?.();
   }
 }
 

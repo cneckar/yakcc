@@ -19,7 +19,7 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { Registry } from "@yakcc/registry";
-import { openRegistry } from "@yakcc/registry";
+import { acquireWriteLock, openRegistry } from "@yakcc/registry";
 import {
   FOREIGN_POLICY_DEFAULT,
   type ForeignPolicy,
@@ -96,10 +96,19 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
   const registryPath = parsed.values.registry ?? ".yakcc/registry.sqlite";
   const offline = parsed.values.offline === true;
 
+  let releaseLock: (() => void) | null = null;
+  try {
+    releaseLock = await acquireWriteLock(resolve(registryPath));
+  } catch (err) {
+    logger.error(`error: failed to acquire registry write lock: ${(err as Error).message}`);
+    return 1;
+  }
+
   let registry: Registry;
   try {
     registry = await openRegistry(resolve(registryPath));
   } catch (err) {
+    releaseLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${(err as Error).message}`);
     return 1;
   }
@@ -154,5 +163,6 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
     return 1;
   } finally {
     await registry.close();
+    releaseLock?.();
   }
 }

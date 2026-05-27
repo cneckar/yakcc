@@ -248,6 +248,43 @@ If you hit a Windows failure not listed here, file at [github.com/cneckar/yakcc/
 
 ---
 
+## 10. "Registry write lock held by PID ..."
+
+**Symptom:** A writer command (`yakcc shave`, `yakcc bootstrap`, `yakcc registry rebuild`,
+`yakcc federation mirror`, or `yakcc federation pull`) prints:
+
+```
+error: failed to acquire registry write lock: Registry write lock held by PID <N>
+(since <timestamp>); if that process is dead, remove .yakcc/.write.lock manually
+```
+
+**Cause:** Another yakcc writer process is currently running against the same registry, or a previous writer was killed mid-run and left the lock file behind.
+
+**Diagnostic flow:**
+
+1. **Check whether the holder is still running.** Look up PID `<N>` in your process list (`ps aux | grep <N>` on Linux/macOS). If the process exists and is a `yakcc` command, wait for it to finish. The lock is released automatically when it exits.
+
+2. **Automatic stale-lock detection.** If the holder PID is no longer alive, yakcc will steal the lock automatically on the next attempt. This usually happens within one poll cycle (100 ms). If you see the error persisting after the holder is dead, proceed to step 3.
+
+3. **Manual removal.** If automatic detection does not fire (e.g. the PID was reused by an unrelated process), remove the lock file manually:
+
+   ```sh
+   rm .yakcc/.write.lock
+   ```
+
+   Then retry your command.
+
+**Increasing the timeout:** If your registry operations regularly take longer than 30 seconds (large `yakcc bootstrap` runs), increase the lock timeout:
+
+```sh
+export YAKCC_WRITE_LOCK_TIMEOUT_MS=120000  # 2 minutes
+yakcc bootstrap
+```
+
+**NFS / network mounts:** Advisory file locks over NFS are unreliable. Do not place `.yakcc/registry.sqlite` on an NFS mount; each developer should have their own local registry. Use `yakcc federation mirror` for cross-machine atom sharing.
+
+---
+
 ## Still stuck?
 
 - Check [github.com/cneckar/yakcc/issues](https://github.com/cneckar/yakcc/issues) for known open issues.
