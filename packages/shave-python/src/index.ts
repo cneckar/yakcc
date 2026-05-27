@@ -2,14 +2,10 @@
 //
 // @yakcc/shave-python — Python raise adapter (WI-782).
 //
-// Slice 1 of 4: package scaffolding + libcst subprocess primitive.
-// The exported API surface is the subprocess wrapper and its types only;
-// AST → IR mapping, purity inference, and end-to-end raise come in slices 2–4.
-//
-// @decision DEC-POLYGLOT-IR-CANONICAL-001 (parent — polyglot architecture ADR)
-// @decision DEC-POLYGLOT-IR-ENVELOPE-001 (held-the-line; this adapter throws
-//   CannotRaiseToIRError from @yakcc/contracts for out-of-envelope Python
-//   constructs — wired in slice 4)
+// Slice 2 of 4: typed function signature extraction + Python → TS type mapping.
+// The exported API now includes the libcst subprocess wrapper (slice 1) plus
+// the signature extractor and type-map helpers.  Body translation, purity
+// inference, and end-to-end raise come in slices 2b, 3, and 4.
 
 export {
   AdapterSubprocessError,
@@ -18,3 +14,10 @@ export {
   type LibcstParseResult,
   type PythonAstNode,
 } from "./libcst-parser.js";
+export {
+  extractFunctionSignatures,
+  MissingTypeAnnotationError,
+  type FunctionSignature,
+  type RaisedParam,
+} from "./parse-fn-signature.js";
+export { mapPythonType, UnsupportedTypeError } from "./type-map.js";
