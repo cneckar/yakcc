@@ -828,7 +828,9 @@ describe("federation pull --registry persist (WI-030)", () => {
     // valid "failed to open" semantics.
     expect(
       logger.errLines.some(
-        (l) => l.includes("failed to open registry") || l.includes("failed to acquire registry write lock"),
+        (l) =>
+          l.includes("failed to open registry") ||
+          l.includes("failed to acquire registry write lock"),
       ),
     ).toBe(true);
     // Transport must NOT have been invoked (fail-fast ordering).
