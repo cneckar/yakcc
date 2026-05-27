@@ -9,8 +9,8 @@
 // `RegistryOptions.commonsSubmit`, plus a `bind(registry)` setter to wire the
 // registry handle for the success-callback after openRegistry resolves.
 
-import { createCommonsSubmitter } from "@yakcc/federation";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
+import { createCommonsSubmitter } from "@yakcc/federation";
 import type { BlockTripletRow, Registry, RegistryOptions } from "@yakcc/registry";
 
 /** Default commons URL when YAKCC_COMMONS_URL is not set. */
@@ -92,9 +92,7 @@ export function makeCommonsBinding(policy: CommonsBindingPolicy): CommonsBinding
       // Best-effort mark-submitted. If markBlockSubmitted throws (e.g. the
       // registry was already closed by command cleanup), we swallow — the
       // POST already landed on the server and is idempotent anyway.
-      bound
-        ?.markBlockSubmitted(rootStr as BlockMerkleRoot, Date.now())
-        .catch(() => {});
+      bound?.markBlockSubmitted(rootStr as BlockMerkleRoot, Date.now()).catch(() => {});
     },
   });
 

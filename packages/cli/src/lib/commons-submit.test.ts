@@ -2,7 +2,6 @@
 //
 // Tests for makeCommonsBinding (WI-794 slice 4 / commons-push CLI helper).
 
-import { openRegistry } from "@yakcc/registry";
 import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
 import {
   blockMerkleRoot,
@@ -10,8 +9,9 @@ import {
   specHash as computeSpecHash,
   validateProofManifestL0,
 } from "@yakcc/contracts";
-import type { BlockTripletRow, Registry } from "@yakcc/registry";
 import type { CanonicalAstHash, SpecHash } from "@yakcc/contracts";
+import { openRegistry } from "@yakcc/registry";
+import type { BlockTripletRow, Registry } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_COMMONS_URL, makeCommonsBinding } from "./commons-submit.js";
 
