@@ -359,6 +359,7 @@ export async function init(
         local: { type: "boolean" };
         airgapped: { type: "boolean" };
         "skip-hooks": { type: "boolean" };
+        "skip-polyglot-hints": { type: "boolean" };
         ide: { type: "string" };
         "no-seed": { type: "boolean" };
       };

@@ -1141,7 +1141,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    const out = logger.output.join("\n");
+    const out = logger.logLines.join("\n");
     expect(out).toContain("Python project detected (pyproject.toml)");
     expect(out).toContain("npm install @yakcc/shave-python @yakcc/compile-python");
     expect(out).toContain("yakcc shave <dir> --language=py");
@@ -1152,7 +1152,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    expect(logger.output.join("\n")).toContain("Python project detected (setup.py)");
+    expect(logger.logLines.join("\n")).toContain("Python project detected (setup.py)");
   });
 
   it("emits a Go hint with not-yet-published caveat for go.mod", async () => {
@@ -1160,7 +1160,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    const out = logger.output.join("\n");
+    const out = logger.logLines.join("\n");
     expect(out).toContain("Go project detected (go.mod)");
     expect(out).toContain("not yet published on npm");
     expect(out).toContain("npm install @yakcc/shave-go");
@@ -1171,7 +1171,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    const out = logger.output.join("\n");
+    const out = logger.logLines.join("\n");
     expect(out).toContain("Rust project detected (Cargo.toml)");
     expect(out).toContain("not yet published on npm");
     expect(out).toContain("npm install @yakcc/shave-rust");
@@ -1183,7 +1183,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    const out = logger.output.join("\n");
+    const out = logger.logLines.join("\n");
     expect(out).toContain("Python project detected");
     expect(out).toContain("Go project detected");
   });
@@ -1193,7 +1193,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    const out = logger.output.join("\n");
+    const out = logger.logLines.join("\n");
     expect(out).not.toContain("project detected");
     expect(out).not.toContain("@yakcc/shave-python");
     expect(out).not.toContain("@yakcc/shave-go");
@@ -1209,7 +1209,7 @@ describe("init — polyglot adapter detection (#785)", () => {
       logger,
     );
     expect(code).toBe(0);
-    const out = logger.output.join("\n");
+    const out = logger.logLines.join("\n");
     expect(out).not.toContain("project detected");
   });
 
@@ -1221,7 +1221,7 @@ describe("init — polyglot adapter detection (#785)", () => {
       const logger = new CollectingLogger();
       const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
       expect(code).toBe(0);
-      expect(logger.output.join("\n")).not.toContain("project detected");
+      expect(logger.logLines.join("\n")).not.toContain("project detected");
     } finally {
       if (prev === undefined) {
         // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
