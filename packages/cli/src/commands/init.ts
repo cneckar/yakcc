@@ -607,7 +607,7 @@ export async function init(
       const config: YakccEmbeddingConfig = { provider: "openai" };
       if (process.env.YAKCC_EMBEDDING_MODEL) config.model = process.env.YAKCC_EMBEDDING_MODEL;
       if (process.env.YAKCC_EMBEDDING_DIMENSIONS) {
-        const d = parseInt(process.env.YAKCC_EMBEDDING_DIMENSIONS, 10);
+        const d = Number.parseInt(process.env.YAKCC_EMBEDDING_DIMENSIONS, 10);
         if (!Number.isNaN(d)) config.dimensions = d;
       }
       return config;
@@ -622,7 +622,7 @@ export async function init(
       if (process.env.YAKCC_EMBEDDING_BASE_URL) config.baseUrl = process.env.YAKCC_EMBEDDING_BASE_URL;
       if (process.env.YAKCC_EMBEDDING_MODEL) config.model = process.env.YAKCC_EMBEDDING_MODEL;
       if (process.env.YAKCC_EMBEDDING_DIMENSION) {
-        const d = parseInt(process.env.YAKCC_EMBEDDING_DIMENSION, 10);
+        const d = Number.parseInt(process.env.YAKCC_EMBEDDING_DIMENSION, 10);
         if (!Number.isNaN(d)) config.dimension = d;
       }
       return config;
