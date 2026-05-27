@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createLocalEmbeddingProvider,
   createOfflineEmbeddingProvider,
+  createOpenAICompatibleEmbeddingProvider,
+  createOpenAIEmbeddingProvider,
+  createVoyageEmbeddingProvider,
   generateEmbedding,
+  resolveEmbeddingProviderFromEnv,
 } from "./embeddings.js";
 import type { ContractSpec } from "./index.js";
 
@@ -193,5 +197,265 @@ describe("EmbeddingProvider (offline / BLAKE3 stub)", () => {
     await provider.embed("first call");
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hosted providers — unit tests with mock fetch (no real network I/O)
+// ---------------------------------------------------------------------------
+
+describe("createOpenAIEmbeddingProvider — unit (mock fetch)", () => {
+  it("modelId includes provider kind and model name", () => {
+    const provider = createOpenAIEmbeddingProvider({
+      model: "text-embedding-3-large",
+      apiKey: "sk-test",
+    });
+    expect(provider.modelId).toContain("openai/");
+    expect(provider.modelId).toContain("text-embedding-3-large");
+  });
+
+  it("dimension defaults to 3072 for text-embedding-3-large", () => {
+    const provider = createOpenAIEmbeddingProvider({
+      model: "text-embedding-3-large",
+      apiKey: "sk-test",
+    });
+    expect(provider.dimension).toBe(3072);
+  });
+
+  it("dimension uses provided dimensions param", () => {
+    const provider = createOpenAIEmbeddingProvider({
+      model: "text-embedding-3-large",
+      apiKey: "sk-test",
+      dimensions: 384,
+    });
+    expect(provider.dimension).toBe(384);
+    expect(provider.modelId).toContain("@384");
+  });
+
+  it("embed() calls fetch with correct URL and auth header", async () => {
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{ index: 0, embedding: new Array(3072).fill(0.1) }],
+      }),
+    });
+    const provider = createOpenAIEmbeddingProvider({
+      model: "text-embedding-3-large",
+      apiKey: "sk-test-key",
+      _fetch: fakeFetch as typeof fetch,
+    });
+
+    const vec = await provider.embed("hello world");
+    expect(vec).toBeInstanceOf(Float32Array);
+    expect(vec.length).toBe(3072);
+    expect(fakeFetch).toHaveBeenCalledOnce();
+    const [url, init] = fakeFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.openai.com/v1/embeddings");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-test-key");
+  });
+
+  it("batch() sends all texts in a single request per batch", async () => {
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          { index: 0, embedding: new Array(1536).fill(0.1) },
+          { index: 1, embedding: new Array(1536).fill(0.2) },
+        ],
+      }),
+    });
+    const provider = createOpenAIEmbeddingProvider({
+      model: "text-embedding-ada-002",
+      apiKey: "sk-test",
+      _fetch: fakeFetch as typeof fetch,
+    });
+
+    const vecs = await provider.batch!(["text one", "text two"]);
+    expect(vecs).toHaveLength(2);
+    expect(vecs[0]).toBeInstanceOf(Float32Array);
+    expect(fakeFetch).toHaveBeenCalledOnce();
+  });
+
+  it("embed() retries on 429 and succeeds on second attempt", async () => {
+    const fakeFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => "rate limited" })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ index: 0, embedding: new Array(1536).fill(0.3) }] }),
+      });
+    const provider = createOpenAIEmbeddingProvider({
+      model: "text-embedding-ada-002",
+      apiKey: "sk-test",
+      _fetch: fakeFetch as typeof fetch,
+      _retryBaseMs: 1,
+    });
+
+    const vec = await provider.embed("retry test");
+    expect(vec).toBeInstanceOf(Float32Array);
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("createVoyageEmbeddingProvider — unit (mock fetch)", () => {
+  it("modelId is voyage/<model>", () => {
+    const provider = createVoyageEmbeddingProvider({ model: "voyage-code-2", apiKey: "pa-test" });
+    expect(provider.modelId).toBe("voyage/voyage-code-2");
+  });
+
+  it("dimension defaults to 1536 for voyage-code-2", () => {
+    const provider = createVoyageEmbeddingProvider({ model: "voyage-code-2", apiKey: "pa-test" });
+    expect(provider.dimension).toBe(1536);
+  });
+
+  it("embed() calls Voyage API endpoint", async () => {
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ index: 0, embedding: new Array(1536).fill(0.5) }] }),
+    });
+    const provider = createVoyageEmbeddingProvider({
+      model: "voyage-code-2",
+      apiKey: "pa-test",
+      _fetch: fakeFetch as typeof fetch,
+    });
+
+    const vec = await provider.embed("some code");
+    expect(vec).toBeInstanceOf(Float32Array);
+    const [url] = fakeFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.voyageai.com/v1/embeddings");
+  });
+});
+
+describe("createOpenAICompatibleEmbeddingProvider — unit (mock fetch)", () => {
+  it("modelId is openai-compatible/<model>", () => {
+    const provider = createOpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimension: 768,
+    });
+    expect(provider.modelId).toBe("openai-compatible/nomic-embed-text");
+  });
+
+  it("uses the provided dimension", () => {
+    const provider = createOpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimension: 768,
+    });
+    expect(provider.dimension).toBe(768);
+  });
+
+  it("embed() calls the custom baseUrl", async () => {
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ index: 0, embedding: new Array(768).fill(0.1) }] }),
+    });
+    const provider = createOpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimension: 768,
+      _fetch: fakeFetch as typeof fetch,
+    });
+
+    await provider.embed("test");
+    const [url] = fakeFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:11434/v1/embeddings");
+  });
+
+  it("omits Authorization header when no apiKey", async () => {
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ index: 0, embedding: new Array(768).fill(0.1) }] }),
+    });
+    const provider = createOpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:11434/v1",
+      model: "nomic-embed-text",
+      dimension: 768,
+      _fetch: fakeFetch as typeof fetch,
+    });
+
+    await provider.embed("no auth");
+    const [, init] = fakeFetch.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveEmbeddingProviderFromEnv — unit tests (no network I/O)
+// ---------------------------------------------------------------------------
+
+describe("resolveEmbeddingProviderFromEnv", () => {
+  it("returns null when YAKCC_EMBEDDING_PROVIDER is not set", () => {
+    const prev = process.env.YAKCC_EMBEDDING_PROVIDER;
+    delete process.env.YAKCC_EMBEDDING_PROVIDER;
+    try {
+      expect(resolveEmbeddingProviderFromEnv()).toBeNull();
+    } finally {
+      if (prev !== undefined) process.env.YAKCC_EMBEDDING_PROVIDER = prev;
+    }
+  });
+
+  it("returns null when YAKCC_EMBEDDING_PROVIDER=local", () => {
+    const prev = process.env.YAKCC_EMBEDDING_PROVIDER;
+    process.env.YAKCC_EMBEDDING_PROVIDER = "local";
+    try {
+      expect(resolveEmbeddingProviderFromEnv()).toBeNull();
+    } finally {
+      if (prev !== undefined) process.env.YAKCC_EMBEDDING_PROVIDER = prev;
+      else delete process.env.YAKCC_EMBEDDING_PROVIDER;
+    }
+  });
+
+  it("returns an openai provider when YAKCC_EMBEDDING_PROVIDER=openai", () => {
+    const saved = {
+      YAKCC_EMBEDDING_PROVIDER: process.env.YAKCC_EMBEDDING_PROVIDER,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      YAKCC_EMBEDDING_MODEL: process.env.YAKCC_EMBEDDING_MODEL,
+    };
+    process.env.YAKCC_EMBEDDING_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.YAKCC_EMBEDDING_MODEL = "text-embedding-3-small";
+    try {
+      const provider = resolveEmbeddingProviderFromEnv();
+      expect(provider).not.toBeNull();
+      expect(provider?.modelId).toContain("openai/");
+      expect(provider?.modelId).toContain("text-embedding-3-small");
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v !== undefined) process.env[k] = v;
+        else delete process.env[k];
+      }
+    }
+  });
+
+  it("throws when YAKCC_EMBEDDING_PROVIDER=openai and OPENAI_API_KEY is missing", () => {
+    const savedProvider = process.env.YAKCC_EMBEDDING_PROVIDER;
+    const savedKey = process.env.OPENAI_API_KEY;
+    process.env.YAKCC_EMBEDDING_PROVIDER = "openai";
+    delete process.env.OPENAI_API_KEY;
+    try {
+      expect(() => resolveEmbeddingProviderFromEnv()).toThrow(/OPENAI_API_KEY/);
+    } finally {
+      if (savedProvider !== undefined) process.env.YAKCC_EMBEDDING_PROVIDER = savedProvider;
+      else delete process.env.YAKCC_EMBEDDING_PROVIDER;
+      if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
+    }
+  });
+
+  it("throws on unknown provider kind", () => {
+    const prev = process.env.YAKCC_EMBEDDING_PROVIDER;
+    process.env.YAKCC_EMBEDDING_PROVIDER = "unknown-provider";
+    try {
+      expect(() => resolveEmbeddingProviderFromEnv()).toThrow(/Unknown YAKCC_EMBEDDING_PROVIDER/);
+    } finally {
+      if (prev !== undefined) process.env.YAKCC_EMBEDDING_PROVIDER = prev;
+      else delete process.env.YAKCC_EMBEDDING_PROVIDER;
+    }
   });
 });

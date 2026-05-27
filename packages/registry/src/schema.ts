@@ -56,8 +56,8 @@
  * no-ops when `currentVersion >= SCHEMA_VERSION`.
  *
  * L2-I2 invariant: this constant must equal the highest MIGRATION_N_DDL number
- * (currently 10 after the v9 → v10 migration adding source_file_state table;
- * DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / issue #363).
+ * (currently 11 after the v10 → v11 migration adding registry_meta table;
+ * DEC-EMBED-REGISTRY-META-001 / WI-778-BYO-EMBEDDING / issue #778).
  *
  * @decision DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001
  * @title SCHEMA_VERSION 8 → 9; single-phase additive migration adding block_occurrences table
@@ -76,8 +76,22 @@
  *   stores per-file BLAKE3-256 content hashes enabling the bootstrap fast path
  *   to skip re-shaving unchanged files (DEC-V2-SHAVE-CACHE-STORAGE-001).
  *   Two-phase migration is over-engineered: starting empty, no partial-state risk.
+ *
+ * @decision DEC-EMBED-REGISTRY-META-001
+ * @title SCHEMA_VERSION 10 → 11; single-phase additive migration adding registry_meta table
+ * @status accepted (WI-778-BYO-EMBEDDING, issue #778)
+ * @rationale BYO embedding model (hosted OpenAI/Voyage/OpenAI-compatible) requires the
+ *   registry to persistently store which embedding model was used so that:
+ *   (a) a mismatch between the stored model and the current provider is detected at
+ *       `openRegistry` time (not just at `findCandidatesByQuery` time), and
+ *   (b) `yakcc registry rebuild` can update the stored model ID after migrating all
+ *       embeddings to a new provider.
+ *   The registry_meta table is a generic key-value store (key TEXT PRIMARY KEY,
+ *   value TEXT) covering "embedding_model_id" and "embedding_dimension" initially.
+ *   Pure DDL addition; no backfill required (openRegistry writes the initial row on
+ *   first open; rebuild updates it). CREATE TABLE IF NOT EXISTS is idempotent.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -776,6 +790,36 @@ const MIGRATION_10_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 10 → 11: add registry_meta table for embedding model metadata
+// (DEC-EMBED-REGISTRY-META-001 / WI-778-BYO-EMBEDDING / issue #778)
+// ---------------------------------------------------------------------------
+
+/**
+ * SQL statements for migration 11.
+ *
+ * Creates the `registry_meta` table — a generic key-value store for registry-level
+ * metadata. Initially stores "embedding_model_id" and "embedding_dimension" to
+ * enable cross-session model-mismatch detection (BYO embedding model, issue #778).
+ *
+ * Schema:
+ *   key   TEXT PRIMARY KEY — metadata key (e.g. "embedding_model_id")
+ *   value TEXT NOT NULL    — serialized value (always a string; numeric values are
+ *                            stored as their decimal string representation)
+ *
+ * Pure DDL addition; CREATE TABLE IF NOT EXISTS is naturally idempotent.
+ * No backfill required: openRegistry writes the initial row on first open after
+ * migration; rebuild updates it when the provider changes.
+ *
+ * No ownership columns — DEC-NO-OWNERSHIP-011.
+ */
+const MIGRATION_11_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS registry_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`,
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -818,6 +862,8 @@ export interface MigrationsDb {
  *            DEC-V2-REGISTRY-SCHEMA-BUMP-V9-001).
  *   9 → 10: add source_file_state table + content_hash index for per-file content-hash caching
  *            (DEC-V2-SHAVE-CACHE-STORAGE-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / issue #363).
+ *   10 → 11: add registry_meta key-value table for embedding model metadata
+ *            (DEC-EMBED-REGISTRY-META-001 / WI-778-BYO-EMBEDDING / issue #778).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -1073,5 +1119,20 @@ export function applyMigrations(db: MigrationsDb): void {
       db.exec(sql);
     }
     db.prepare("UPDATE schema_version SET version = ?").run(10);
+  }
+
+  // Migration 10 → 11: add registry_meta table
+  // (DEC-EMBED-REGISTRY-META-001 / WI-778-BYO-EMBEDDING / issue #778).
+  //
+  // Pure DDL — CREATE TABLE IF NOT EXISTS is naturally idempotent.
+  // No backfill required: openRegistry writes the first row on first open.
+  // A crash between the DDL and the version bump leaves the table present at
+  // version=10; re-entry runs CREATE TABLE IF NOT EXISTS as a no-op and bumps
+  // to 11 normally.
+  if (currentVersion < 11) {
+    for (const sql of MIGRATION_11_DDL) {
+      db.exec(sql);
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(11);
   }
 }

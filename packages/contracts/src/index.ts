@@ -246,8 +246,18 @@ export {
 export {
   type EmbeddingProvider,
   LOCAL_KNOWN_MODELS,
+  OPENAI_KNOWN_DIMENSIONS,
+  VOYAGE_KNOWN_DIMENSIONS,
+  HOSTED_EMBED_BATCH_SIZE_DEFAULT,
+  type OpenAIEmbeddingConfig,
+  type VoyageEmbeddingConfig,
+  type OpenAICompatibleEmbeddingConfig,
   createLocalEmbeddingProvider,
   createOfflineEmbeddingProvider,
+  createOpenAIEmbeddingProvider,
+  createVoyageEmbeddingProvider,
+  createOpenAICompatibleEmbeddingProvider,
+  resolveEmbeddingProviderFromEnv,
   generateEmbedding,
 } from "./embeddings.js";
 export { type SpecHash, type SpecYak, type SpecYakParameter, validateSpecYak } from "./spec-yak.js";
