@@ -103,7 +103,10 @@ describe("detectInstalledIdes — cursor detection (linux path)", () => {
     Object.defineProperty(process, "platform", { value: "linux", configurable: true });
   });
   afterAll(() => {
-    Object.defineProperty(process, "platform", { value: origPlatformCursorLinux, configurable: true });
+    Object.defineProperty(process, "platform", {
+      value: origPlatformCursorLinux,
+      configurable: true,
+    });
   });
 
   it("detects cursor via ~/.config/Cursor/ on linux", () => {
