@@ -553,7 +553,7 @@ describe("init — --no-seed flag", () => {
 describe("init — seed by default", () => {
   it(
     "default (no --no-seed) calls seedYakccCorpus and registry is non-empty when corpus exists",
-    { timeout: 300_000 },
+    { timeout: 60_000 },
     async () => {
       // Find the bootstrap corpus path (worktree-aware walk)
       const { existsSync: eSync } = await import("node:fs");
@@ -579,20 +579,27 @@ describe("init — seed by default", () => {
         return;
       }
 
+      // Inject the offline-blake3-stub embedding provider so the seed path
+      // does not load the BGE model. The model load was making this test
+      // exceed its 300s timeout (closes #802); with the stub, seed completes
+      // well under 60s on commodity hardware.
+      const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
+      const offlineEmbeddings = createOfflineEmbeddingProvider();
+
       const logger = new CollectingLogger();
       // noOpMirror: this test cares about seed behaviour, not mirror
       const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
         overrideHome: tmpDir,
         corpusPath,
         runFederation: noOpMirror,
+        embeddings: offlineEmbeddings,
       });
       expect(code).toBe(0);
 
       // Registry should have atoms from the bootstrap corpus.
-      const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
       const registryPath = join(tmpDir, ".yakcc", "registry.sqlite");
       const reg = await openRegistry(registryPath, {
-        embeddings: createOfflineEmbeddingProvider(),
+        embeddings: offlineEmbeddings,
       });
       const manifest = await reg.exportManifest();
       await reg.close();
