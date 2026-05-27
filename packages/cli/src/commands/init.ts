@@ -311,6 +311,16 @@ export interface InitOptions {
    *   (argv: string[], logger: Logger) => Promise<number>
    */
   runFederation?: (argv: string[], logger: Logger) => Promise<number>;
+  /**
+   * Optional embedding provider to use when seeding the registry. When
+   * omitted, openRegistry's default resolver is used (env var or local BGE).
+   *
+   * Tests inject an offline-blake3-stub provider to avoid the multi-second
+   * BGE model load that otherwise dominates the seed integration test's
+   * runtime (closes #802). Production callers should leave this undefined
+   * so the user's actual provider configuration applies.
+   */
+  embeddings?: import("@yakcc/contracts").EmbeddingProvider;
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +525,10 @@ export async function init(
   if (!noSeed) {
     let registry: Registry | null = null;
     try {
-      registry = await openRegistry(registryPath);
+      registry = await openRegistry(
+        registryPath,
+        opts?.embeddings !== undefined ? { embeddings: opts.embeddings } : undefined,
+      );
     } catch (err) {
       logger.error(`warning: cannot open registry for seed: ${String(err)} — continuing`);
     }
