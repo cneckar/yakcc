@@ -248,6 +248,45 @@ If you hit a Windows failure not listed here, file at [github.com/cneckar/yakcc/
 
 ---
 
+## 10. `Registry write lock held by PID …`
+
+**Symptom:** A `yakcc shave`, `yakcc bootstrap`, `yakcc federation mirror`, `yakcc federation pull`, or `yakcc registry rebuild` command prints:
+
+```
+Registry write lock held by PID 12345 (since 2026-05-27T10:00:00.000Z);
+if that process is dead, remove .yakcc/.write.lock manually
+```
+
+and exits with a non-zero code.
+
+**Explanation:** Yakcc enforces a single-writer policy per registry file. Only one write-path process may hold the lock at a time. If another process is actively writing, it will release the lock when it finishes. If the timeout expires before the lock is released, yakcc gives up and prints the message above.
+
+**Diagnostic:**
+
+```sh
+# Check whether PID 12345 is actually running.
+ps -p 12345
+
+# Inspect the lock file contents.
+cat .yakcc/.write.lock
+```
+
+**Fix — holder is still running:** Wait for the other `yakcc` process to finish. Use `YAKCC_WRITE_LOCK_TIMEOUT_MS=60000` to extend the wait window if needed.
+
+**Fix — holder is dead (kill -9 or crash):** Remove the stale lock file manually:
+
+```sh
+rm .yakcc/.write.lock
+```
+
+Then re-run your command. Yakcc detects dead PIDs automatically on the next retry cycle (~100 ms), but if the process table reuses the PID for a different unrelated process, automatic detection may not fire. Manual removal is always safe.
+
+**Fix — NFS / network mount:** File locking is unreliable over NFS. Do not place `.yakcc/registry.sqlite` on a network mount. Each developer should use a local registry; federation (mirror/pull) handles cross-machine sharing.
+
+**Related:** See [§12 Concurrency model](USING_YAKCC.md#12-concurrency-model) in `USING_YAKCC.md`.
+
+---
+
 ## Still stuck?
 
 - Check [github.com/cneckar/yakcc/issues](https://github.com/cneckar/yakcc/issues) for known open issues.

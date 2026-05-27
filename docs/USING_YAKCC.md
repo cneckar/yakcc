@@ -440,7 +440,43 @@ yakcc registry rebuild --path .yakcc/registry.sqlite
 
 ---
 
-## 12. Troubleshooting
+## 12. Concurrency model
+
+Yakcc uses SQLite in WAL (Write-Ahead Logging) mode. Understanding the concurrency model helps you avoid lock errors in team workflows.
+
+### Many concurrent readers — always safe
+
+Any number of `yakcc query`, `yakcc search`, `yakcc compile`, and hook-intercept processes can read the registry simultaneously. WAL mode allows readers to proceed concurrently with a single writer without blocking.
+
+### Exactly one writer at a time per registry
+
+Write operations — `yakcc shave`, `yakcc bootstrap`, `yakcc federation pull`, `yakcc federation mirror`, and `yakcc registry rebuild` — acquire a cooperative cross-process write lock (`.yakcc/.write.lock`) at startup and release it on exit. If a second writer arrives while the lock is held, it waits up to 30 seconds (configurable via `YAKCC_WRITE_LOCK_TIMEOUT_MS`) before exiting with an error:
+
+```
+Registry write lock held by PID 12345 (since 2026-05-27T10:00:00.000Z);
+if that process is dead, remove .yakcc/.write.lock manually
+```
+
+If the lock file is stale (the holder process has died), yakcc detects this automatically and steals the lock within one poll cycle (~100 ms).
+
+### Multi-developer teams
+
+Each developer's local clone has their own `.yakcc/registry.sqlite`. Do **not** share a single registry file over an NFS mount or network share — file locking over NFS is unreliable. Use `yakcc federation mirror` for cross-developer atom sharing: each developer's registry acts as a peer, and atoms flow between registries via content-addressed pull/mirror operations.
+
+### CI environments
+
+CI is the canonical single-writer environment for `yakcc bootstrap` (see `.github/workflows/bootstrap-accumulate.yml`). Jobs that run bootstrap are single-process by design; they do not require special lock configuration.
+
+### Configuring the write-lock timeout
+
+```sh
+# Wait up to 60 seconds before giving up (default is 30 000 ms).
+YAKCC_WRITE_LOCK_TIMEOUT_MS=60000 yakcc shave src/
+```
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -455,7 +491,7 @@ yakcc registry rebuild --path .yakcc/registry.sqlite
 
 ---
 
-## 13. Where to go next
+## 14. Where to go next
 
 - [`README.md`](../README.md) — yakcc-the-project overview, monorepo layout, contributor quickstart.
 - [`docs/CONTRIBUTING.md`](CONTRIBUTING.md) — contributor orientation and pointers into the developer-docs archive.

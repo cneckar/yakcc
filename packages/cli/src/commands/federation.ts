@@ -33,7 +33,7 @@ import {
 } from "@yakcc/federation";
 import type { ServeHandle, Transport } from "@yakcc/federation";
 import type { Registry, RegistryOptions } from "@yakcc/registry";
-import { openRegistry } from "@yakcc/registry";
+import { acquireWriteLock, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -238,10 +238,19 @@ async function runFederationMirror(
     return 1;
   }
 
+  let releaseLock: () => void;
+  try {
+    releaseLock = await acquireWriteLock(registryPath);
+  } catch (err) {
+    logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
+    return 1;
+  }
+
   let registry: Registry;
   try {
     registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
+    releaseLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
   }
@@ -262,6 +271,7 @@ async function runFederationMirror(
     return 1;
   } finally {
     await registry.close();
+    releaseLock();
   }
 }
 
@@ -347,10 +357,19 @@ async function runFederationPull(
   // Open registry BEFORE pull: fail-fast on bad path (DEC-CLI-PULL-PERSIST-001).
   // Only opened when --registry is present.
   let registry: Registry | null = null;
+  // Acquire write lock only when we will actually persist to a registry.
+  let releaseLock: () => void = () => {};
   if (hasRegistry) {
+    try {
+      releaseLock = await acquireWriteLock(registryPath as string);
+    } catch (err) {
+      logger.error(`error: failed to open registry at ${registryPath as string}: ${String(err)}`);
+      return 1;
+    }
     try {
       registry = await openRegistry(registryPath as string, { embeddings: opts?.embeddings });
     } catch (err) {
+      releaseLock();
       logger.error(`error: failed to open registry at ${registryPath as string}: ${String(err)}`);
       return 1;
     }
@@ -386,10 +405,11 @@ async function runFederationPull(
     logger.error(`error: pull failed: ${String(err)}`);
     return 1;
   } finally {
-    // Resource-cleanup invariant: close registry handle on all paths.
+    // Resource-cleanup invariant: close registry handle and release lock on all paths.
     if (registry !== null) {
       await registry.close();
     }
+    releaseLock();
   }
 }
 

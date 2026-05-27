@@ -2066,6 +2066,13 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
   //       where durability-on-crash is irrelevant. OFF was considered and rejected
   //       (evaluation contract §6 — forbidden shortcut).
   db.pragma("synchronous = NORMAL");
+  // @decision DEC-CONCURRENCY-LOCK-001 (busy_timeout layer)
+  // 5 s busy wait before SQLite returns SQLITE_BUSY. This is the second defensive
+  // layer: the cooperative write lock (lock.ts) should prevent concurrent writers,
+  // but busy_timeout guards against races during lock acquisition and any tool that
+  // bypasses the lock entirely (e.g. direct sqlite3 CLI usage). Most contention
+  // windows are <100 ms; 5 000 ms is generous but finite.
+  db.pragma("busy_timeout = 5000");
   // Enable foreign key enforcement.
   db.pragma("foreign_keys = ON");
 
