@@ -1160,17 +1160,21 @@ export function applyMigrations(db: MigrationsDb): void {
   // Migration 11 → 12: add submitted_at column to blocks
   // (DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 / WI-794 slice 1 / issue #794).
   //
-  // ALTER TABLE ADD COLUMN is NOT natively idempotent in SQLite (no IF NOT EXISTS).
-  // Guard with PRAGMA table_info("blocks") so a crash between ADD COLUMN and the
-  // version bump is recoverable on re-entry: the second run sees the column already
-  // present and skips the ALTER, then proceeds to bump the version normally.
+  // SQLite has no ADD COLUMN IF NOT EXISTS. Wrap the ALTER in try/catch so the
+  // migration is recoverable: a crash between ADD COLUMN and the version bump
+  // leaves the column present at version=11; re-entry catches the
+  // "duplicate column name" SQLite error, treats it as a no-op, and proceeds
+  // to bump the version normally.
   if (currentVersion < 12) {
-    const columns = db
-      .prepare<[], { name: string }>('PRAGMA table_info("blocks")')
-      .all() as Array<{ name: string }>;
-    const hasSubmittedAt = columns.some((c) => c.name === "submitted_at");
-    if (!hasSubmittedAt) {
+    try {
       db.exec("ALTER TABLE blocks ADD COLUMN submitted_at INTEGER NULL");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // SQLite emits "duplicate column name: submitted_at" when the column
+      // already exists. Any other error is a real failure and must propagate.
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
     }
     db.prepare("UPDATE schema_version SET version = ?").run(12);
   }
