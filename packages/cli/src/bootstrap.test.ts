@@ -79,9 +79,15 @@ export function add(a: number, b: number): number {
 }
 `;
 
-/** A TypeScript source WITHOUT an SPDX header — triggers license gate failure. */
-const NO_SPDX_SOURCE = `// No license header here — should fail
-export function noLicense(x: number): number {
+/**
+ * A TypeScript source with a real failure mode that survives the post-DEC-682
+ * (license gate removed; #714 / closes #800) era. Today this is a SyntaxError
+ * fixture — the parser refuses to consume the malformed function signature.
+ * The constant name is kept for backwards-compatibility with downstream tests
+ * that still reference this fixture by name; the rename is a follow-up cleanup.
+ */
+const NO_SPDX_SOURCE = `// SPDX-License-Identifier: MIT
+export function broken(x: number {  // intentional syntax error: missing ')'
   return x * 2;
 }
 `;
@@ -174,50 +180,18 @@ describe("bootstrap on a fixture mini-project produces a manifest", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 3: exits 1 on file-shave failure (no SPDX header)
+// Suite 3: exits 1 on file-shave failure (generic failure path)
+//
+// Originally tested that a missing-SPDX-header file made bootstrap exit 1
+// via the shave license gate. The license gate was removed in PR #714 per
+// DEC-682 (closes #800), so the "missing SPDX → exit 1" invariant no longer
+// holds and the original test was deleted. The generic "exit 1 on any
+// shave failure" invariant is still load-bearing and is covered transitively
+// by Suite 8 (`bootstrap expected-failures exemption > still exits 1 when a
+// non-exempted file also fails`) which constructs a real failing fixture
+// using NO_SPDX_SOURCE (now a SyntaxError fixture). Keeping a dedicated suite
+// header here as a stub so future test authors notice the removal context.
 // ---------------------------------------------------------------------------
-
-describe("bootstrap exits 1 on file-shave failure", () => {
-  it("exits 1 when a file lacks SPDX header", async () => {
-    const projDir = makeFixtureProject(suiteDir, "proj-nospdx", [
-      {
-        relativePath: "packages/bad/src/b.ts",
-        content: NO_SPDX_SOURCE,
-      },
-    ]);
-
-    const registryPath = join(suiteDir, "nospdx-r.sqlite");
-    const manifestPath = join(suiteDir, "nospdx-m.json");
-    const reportPath = join(suiteDir, "nospdx-rep.json");
-
-    const logger = new CollectingLogger();
-    const origCwd = process.cwd();
-    process.chdir(projDir);
-    let code: number;
-    try {
-      code = await bootstrap(
-        ["--registry", registryPath, "--manifest", manifestPath, "--report", reportPath],
-        logger,
-      );
-    } finally {
-      process.chdir(origCwd);
-    }
-
-    expect(code).toBe(1);
-    // The error logger should mention the failed file.
-    const allErrors = logger.errLines.join("\n");
-    expect(allErrors.length).toBeGreaterThan(0);
-
-    // The report should still be written and show failure.
-    if (existsSync(reportPath)) {
-      const report = JSON.parse(readFileSync(reportPath, "utf-8")) as Array<{
-        outcome: string;
-      }>;
-      const failures = report.filter((r) => r.outcome === "failure");
-      expect(failures.length).toBeGreaterThanOrEqual(1);
-    }
-  }, 60_000);
-});
 
 // ---------------------------------------------------------------------------
 // Suite 4: manifest is sorted by blockMerkleRoot
