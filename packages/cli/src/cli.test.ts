@@ -192,14 +192,19 @@ describe("registry init", () => {
 // ---------------------------------------------------------------------------
 
 describe("seed", () => {
-  it("ingested all 20 corpus blocks during beforeAll setup", async () => {
+  it("seed completes and emits a 'seeded N contracts' log line (DEC-CI-OFFLINE-006)", async () => {
     // Re-run seed to verify idempotency and output format.
+    // The seed corpus grows over time (was 20 atoms at WI-T05; now larger as
+    // new blocks are added to packages/seeds/src/blocks/). The test now
+    // asserts the log shape — `seeded N contracts; ids: …` — rather than a
+    // hard-coded count, so adding new seed blocks does not flake CI.
+    // (closes #801)
     const logger = new CollectingLogger();
     const code = await seed(["--registry", registryPath], logger, {
       embeddings: offlineEmbeddings,
     });
     expect(code).toBe(0);
-    expect(logger.logLines.some((l) => l.includes("seeded 20 contracts"))).toBe(true);
+    expect(logger.logLines.some((l) => /seeded \d+ contracts/.test(l))).toBe(true);
   });
 
   it("is idempotent — repeated seed via runCli top-level exits 0 with consistent count (DEC-CI-OFFLINE-006)", async () => {
