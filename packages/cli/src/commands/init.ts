@@ -153,7 +153,25 @@ const DEFAULT_REGISTRY_PEER_URL = "https://registry.yakcc.com";
  * indefinitely when registry.yakcc.com is temporarily unreachable.
  * (DEC-WPE-DEFAULT-PEER-001 — graceful degradation)
  */
-const MIRROR_TIMEOUT_MS = 10_000;
+// @decision DEC-WPE-MIRROR-TIMEOUT-002 (closes #790)
+// title: bump mirror-on-init timeout from 10s → 60s to match real corpus size
+// status: accepted (FuckGoblin #790 triage 2026-05-27)
+// rationale:
+//   The original 10s bound (WI-WPE-C #771) was tight: the public corpus pulls
+//   ~4 MB and routinely takes several seconds on a healthy network. When the
+//   bound fired, the user saw a spurious "Note: could not reach …" even though
+//   `yakcc federation mirror` succeeded seconds later from the same shell.
+//   60s gives the mirror room to finish on commodity broadband. The user
+//   explicitly invoked `yakcc init` and is actively waiting; the 60s ceiling
+//   still guards against the genuine unreachable case (DNS fail, TLS error,
+//   server outage) where the underlying socket I/O surfaces a failure quickly.
+//   Sentinel exit codes below distinguish timeout from non-zero-exit from
+//   exception so the surfaced log message points at the actual cause.
+const MIRROR_TIMEOUT_MS = 60_000;
+
+/** Sentinel exit codes used internally to differentiate mirror failure modes. */
+const MIRROR_FAIL_TIMEOUT = 124; // POSIX timeout convention
+const MIRROR_FAIL_EXCEPTION = 125;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -588,20 +606,41 @@ export async function init(
 
     const mirrorArgs = ["mirror", "--remote", effectivePeerUrl, "--registry", registryPath];
 
+    // DEC-WPE-MIRROR-TIMEOUT-002 (#790): distinguish timeout / exception / non-zero-exit
+    // so the surfaced log message points at the actual cause instead of the generic
+    // "could not reach" that obscured real reachability errors.
     let mirrorCode: number;
+    let mirrorException: unknown = null;
     try {
       mirrorCode = await Promise.race([
         federationRunner(mirrorArgs, logger),
-        new Promise<number>((resolve) => setTimeout(() => resolve(1), MIRROR_TIMEOUT_MS)),
+        new Promise<number>((resolve) =>
+          setTimeout(() => resolve(MIRROR_FAIL_TIMEOUT), MIRROR_TIMEOUT_MS),
+        ),
       ]);
-    } catch {
-      mirrorCode = 1;
+    } catch (err) {
+      mirrorException = err;
+      mirrorCode = MIRROR_FAIL_EXCEPTION;
     }
 
     if (mirrorCode !== 0) {
-      logger.error(
-        `Note: could not reach ${effectivePeerUrl} — run 'yakcc federation mirror' later.`,
-      );
+      if (mirrorCode === MIRROR_FAIL_TIMEOUT) {
+        logger.error(
+          `Note: mirror from ${effectivePeerUrl} did not complete within ${
+            MIRROR_TIMEOUT_MS / 1000
+          }s — run 'yakcc federation mirror --remote ${effectivePeerUrl} --registry ${registryPath}' to retry without the time bound.`,
+        );
+      } else if (mirrorCode === MIRROR_FAIL_EXCEPTION) {
+        const detail =
+          mirrorException instanceof Error ? `${mirrorException.message}` : String(mirrorException);
+        logger.error(
+          `Note: mirror from ${effectivePeerUrl} threw an error (${detail}) — run 'yakcc federation mirror --remote ${effectivePeerUrl} --registry ${registryPath}' to see full output.`,
+        );
+      } else {
+        logger.error(
+          `Note: mirror from ${effectivePeerUrl} exited ${mirrorCode} — run 'yakcc federation mirror --remote ${effectivePeerUrl} --registry ${registryPath}' to see full output.`,
+        );
+      }
     }
   }
 
