@@ -169,6 +169,7 @@ class SqliteRegistry implements Registry {
   private readonly db: Database.Database;
   private readonly embeddings: EmbeddingProvider;
   private readonly autoRebuild: boolean;
+  private readonly commonsSubmit: ((row: BlockTripletRow) => void) | undefined;
   private closed = false;
 
   // ---------------------------------------------------------------------------
@@ -190,10 +191,16 @@ class SqliteRegistry implements Registry {
     [string, string, number, number, string]
   >;
 
-  constructor(db: Database.Database, embeddings: EmbeddingProvider, autoRebuild = false) {
+  constructor(
+    db: Database.Database,
+    embeddings: EmbeddingProvider,
+    autoRebuild = false,
+    commonsSubmit?: (row: BlockTripletRow) => void,
+  ) {
     this.db = db;
     this.embeddings = embeddings;
     this.autoRebuild = autoRebuild;
+    this.commonsSubmit = commonsSubmit;
     // Prepare the occurrence write-path statements once for the lifetime of this
     // registry instance. See @decision DEC-V2-OCCURRENCE-WRITE-PERF-001.
     this.stmtDeleteOccurrences = db.prepare<[string, string]>(
@@ -360,8 +367,12 @@ class SqliteRegistry implements Registry {
     // the BlockTriplet contract: keys match manifest.artifacts[*].path in order).
     const artifactEntries = [...row.artifacts.entries()];
 
+    // Capture INSERT OR IGNORE result outside the transaction closure so the
+    // novelty signal survives into the post-txn commons-push seam below
+    // (DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 / WI-794 slice 3).
+    let insertChanges = 0;
     const txn = this.db.transaction(() => {
-      insertBlock.run(
+      const r = insertBlock.run(
         row.blockMerkleRoot,
         row.specHash,
         Buffer.from(row.specCanonicalBytes),
@@ -387,6 +398,7 @@ class SqliteRegistry implements Registry {
         row.sourceFile ?? null,
         row.sourceOffset ?? null,
       );
+      insertChanges = Number(r.changes ?? 0);
       // Only write the embedding if the spec_hash doesn't already have one.
       // Check by attempting DELETE (no-op if absent) then INSERT.
       // This is safe for idempotent re-stores of the same spec_hash because
@@ -405,6 +417,19 @@ class SqliteRegistry implements Registry {
     });
 
     txn();
+
+    // Commons-push fire-and-forget seam (DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 /
+    // WI-794 slice 3). Only fires on novel insert (changes > 0). Any exception
+    // from the hook is swallowed to preserve storeBlock's latency contract —
+    // the local capture already succeeded; commons reachability is best-effort.
+    if (insertChanges > 0 && this.commonsSubmit !== undefined) {
+      try {
+        this.commonsSubmit(row);
+      } catch {
+        // Swallow: the local write succeeded. The unsubmitted row remains
+        // queryable via listUnsubmittedBlocks(), so a later flush can pick it up.
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -2171,6 +2196,23 @@ export interface RegistryOptions {
    * @default false
    */
   autoRebuild?: boolean | undefined;
+
+  /**
+   * Optional fire-and-forget commons-push hook (WI-794 slice 3 /
+   * DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001). When set AND a `storeBlock()` call
+   * results in a novel insert (sqlite changes > 0), the hook is invoked
+   * synchronously-but-not-awaited with the just-stored BlockTripletRow.
+   *
+   * The hook MUST NOT throw and MUST NOT block — exceptions are swallowed by
+   * the seam to preserve storeBlock's latency contract. Callers wire this to
+   * `createCommonsSubmitter(...)` from `@yakcc/federation`.
+   *
+   * When omitted, no push fires (the registry stays entirely local). The
+   * registry layer does not gate on air-gapped or :memory: itself — that
+   * policy lives at the caller (CLI), which decides whether to construct a
+   * submitter at all.
+   */
+  commonsSubmit?: ((row: BlockTripletRow) => void) | undefined;
 }
 
 /**
@@ -2346,7 +2388,12 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
     );
   }
 
-  return new SqliteRegistry(db, embeddingProvider, options?.autoRebuild ?? false);
+  return new SqliteRegistry(
+    db,
+    embeddingProvider,
+    options?.autoRebuild ?? false,
+    options?.commonsSubmit,
+  );
 }
 
 // ---------------------------------------------------------------------------
