@@ -27,7 +27,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KNOWN_IDE_NAMES, buildCandidatePaths, detectInstalledIdes } from "./ide-detect.js";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +94,18 @@ describe("detectInstalledIdes — claude-code detection", () => {
 });
 
 describe("detectInstalledIdes — cursor detection (linux path)", () => {
+  // These tests set up ~/.config/Cursor which is the linux cursor path.
+  // On darwin, buildCandidatePaths() only probes ~/Library/Application Support/Cursor,
+  // so without the platform mock the test setup would never match. Mock process.platform
+  // to "linux" for the entire block to make detection deterministic on all host OSes.
+  const origPlatformCursorLinux = process.platform;
+  beforeAll(() => {
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  });
+  afterAll(() => {
+    Object.defineProperty(process, "platform", { value: origPlatformCursorLinux, configurable: true });
+  });
+
   it("detects cursor via ~/.config/Cursor/ on linux", () => {
     const configDir = join(fakeHome, ".config", "Cursor");
     mkdirAt(configDir);
@@ -230,6 +242,16 @@ describe("detectInstalledIdes — aider detection", () => {
 // ---------------------------------------------------------------------------
 
 describe("detectInstalledIdes — multiple IDEs simultaneously", () => {
+  // Cursor's linux path (~/.config/Cursor) is used in these tests. Mock process.platform
+  // to "linux" so buildCandidatePaths() selects the linux cursor candidate on all host OSes.
+  const origPlatformMultiIde = process.platform;
+  beforeAll(() => {
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  });
+  afterAll(() => {
+    Object.defineProperty(process, "platform", { value: origPlatformMultiIde, configurable: true });
+  });
+
   it("detects all six IDEs when all config dirs exist", () => {
     mkdirAt(join(fakeHome, ".claude"));
     mkdirAt(join(fakeHome, ".config", "Cursor"));
@@ -366,6 +388,17 @@ describe("detectInstalledIdes — no false positives", () => {
 // ---------------------------------------------------------------------------
 
 describe("detectInstalledIdes — no shell-out (B6a air-gap gate)", () => {
+  // The runtime smoke test below creates ~/.config/Cursor (linux path) and expects 6
+  // detected IDEs. Mock process.platform to "linux" so buildCandidatePaths() probes the
+  // linux cursor candidate on all host OSes, making the assertion deterministic.
+  const origPlatformB6a = process.platform;
+  beforeAll(() => {
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  });
+  afterAll(() => {
+    Object.defineProperty(process, "platform", { value: origPlatformB6a, configurable: true });
+  });
+
   it("ide-detect.ts source does not import node:child_process", async () => {
     // ESM namespace objects are non-configurable (vitest limitation documented
     // at https://vitest.dev/guide/browser/#limitations), so we cannot spy on
