@@ -1137,7 +1137,7 @@ describe("init — runFederation seam: default-peer mirror invocation (DEC-WPE-D
 
 describe("init — polyglot adapter detection (#785)", () => {
   it("emits a Python hint when pyproject.toml exists in target dir", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), "[project]\nname=\"x\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
@@ -1167,7 +1167,7 @@ describe("init — polyglot adapter detection (#785)", () => {
   });
 
   it("emits a Rust hint with not-yet-published caveat for Cargo.toml", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "Cargo.toml"), "[package]\nname=\"x\"\nversion=\"0.0.1\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "Cargo.toml"), '[package]\nname="x"\nversion="0.0.1"\n');
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
@@ -1178,7 +1178,7 @@ describe("init — polyglot adapter detection (#785)", () => {
   });
 
   it("emits multiple hints for a multi-language project", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), "[project]\nname=\"x\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
     writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
@@ -1201,7 +1201,7 @@ describe("init — polyglot adapter detection (#785)", () => {
   });
 
   it("--skip-polyglot-hints suppresses all hints", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), "[project]\nname=\"x\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
     writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
     const logger = new CollectingLogger();
     const code = await init(
@@ -1214,7 +1214,7 @@ describe("init — polyglot adapter detection (#785)", () => {
   });
 
   it("YAKCC_POLYGLOT_HINTS=0 suppresses all hints", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), "[project]\nname=\"x\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
     const prev = process.env.YAKCC_POLYGLOT_HINTS;
     process.env.YAKCC_POLYGLOT_HINTS = "0";
     try {
@@ -1223,22 +1223,26 @@ describe("init — polyglot adapter detection (#785)", () => {
       expect(code).toBe(0);
       expect(logger.output.join("\n")).not.toContain("project detected");
     } finally {
-      if (prev === undefined) delete process.env.YAKCC_POLYGLOT_HINTS;
-      else process.env.YAKCC_POLYGLOT_HINTS = prev;
+      if (prev === undefined) {
+        // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+        delete process.env.YAKCC_POLYGLOT_HINTS;
+      } else {
+        process.env.YAKCC_POLYGLOT_HINTS = prev;
+      }
     }
   });
 
   it("init exits 0 (non-interactive) even when hints fire", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), "[project]\nname=\"x\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
     writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
-    writeFileSyncForPolyglot(join(tmpDir, "Cargo.toml"), "[package]\nname=\"x\"\nversion=\"0.0.1\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "Cargo.toml"), '[package]\nname="x"\nversion="0.0.1"\n');
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
   });
 
   it("does NOT install anything automatically (no node_modules side-effects)", async () => {
-    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), "[project]\nname=\"x\"\n");
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
