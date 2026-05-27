@@ -236,6 +236,13 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     async recreateEmbeddingsTable(_newDimension: number): Promise<void> {
       throw new Error("not implemented in mock");
     },
+    async listUnsubmittedBlocks(_limit: number): Promise<readonly BlockMerkleRoot[]> {
+      return [];
+    },
+    async markBlockSubmitted(
+      _blockMerkleRoot: BlockMerkleRoot,
+      _submittedAt: number,
+    ): Promise<void> {},
     async close(): Promise<void> {},
   };
 }

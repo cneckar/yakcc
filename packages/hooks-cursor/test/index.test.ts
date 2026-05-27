@@ -293,6 +293,8 @@ describe("onCodeEmissionIntent — passthrough (error) path", () => {
       getStoredEmbeddingModelId: registry.getStoredEmbeddingModelId.bind(registry),
       getStoredEmbeddingDimension: registry.getStoredEmbeddingDimension.bind(registry),
       recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
+      listUnsubmittedBlocks: registry.listUnsubmittedBlocks.bind(registry),
+      markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, { telemetryDir: TEST_TELEMETRY_DIR });

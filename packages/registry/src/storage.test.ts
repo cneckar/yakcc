@@ -4437,3 +4437,88 @@ describe("openRegistry — DEC-EMBED-REGISTRY-META-002 (#811) — explicit-inten
     await reg2.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 / issue #794 slice 1 — submitted_at queue
+// ---------------------------------------------------------------------------
+
+describe("commons-push local queue (#794 slice 1)", () => {
+  it("listUnsubmittedBlocks returns blocks with submitted_at IS NULL in created_at order", async () => {
+    const registry = await openIsolatedRegistry();
+    const spec1 = makeSymmetricSpecYak("first unsubmitted spec");
+    const spec2 = makeSymmetricSpecYak("second unsubmitted spec");
+    await registry.storeBlock(makeBlockRow(spec1));
+    await registry.storeBlock(makeBlockRow(spec2));
+
+    const unsubmitted = await registry.listUnsubmittedBlocks(10);
+    expect(unsubmitted.length).toBeGreaterThanOrEqual(2);
+    for (const root of unsubmitted) {
+      expect(root).toMatch(/^[0-9a-f]{64}$/);
+    }
+    await registry.close();
+  });
+
+  it("markBlockSubmitted updates submitted_at and removes the row from unsubmitted", async () => {
+    const registry = await openIsolatedRegistry();
+    const spec = makeSymmetricSpecYak("mark-and-skip spec");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+
+    const before = await registry.listUnsubmittedBlocks(10);
+    expect(before).toContain(row.blockMerkleRoot);
+
+    await registry.markBlockSubmitted(row.blockMerkleRoot, 1700000000000);
+
+    const after = await registry.listUnsubmittedBlocks(10);
+    expect(after).not.toContain(row.blockMerkleRoot);
+    await registry.close();
+  });
+
+  it("markBlockSubmitted on an unknown merkleRoot is a no-op (does not throw)", async () => {
+    const registry = await openIsolatedRegistry();
+    const fakeRoot =
+      "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" as unknown as Parameters<
+        typeof registry.markBlockSubmitted
+      >[0];
+    await expect(registry.markBlockSubmitted(fakeRoot, 1)).resolves.toBeUndefined();
+    await registry.close();
+  });
+
+  it("listUnsubmittedBlocks rejects non-integer or non-positive limits", async () => {
+    const registry = await openIsolatedRegistry();
+    await expect(registry.listUnsubmittedBlocks(0)).rejects.toThrow(/limit must be an integer/);
+    await expect(registry.listUnsubmittedBlocks(-5)).rejects.toThrow(/limit must be an integer/);
+    await expect(registry.listUnsubmittedBlocks(1.5)).rejects.toThrow(/limit must be an integer/);
+    await registry.close();
+  });
+
+  it("markBlockSubmitted rejects negative or non-finite submittedAt", async () => {
+    const registry = await openIsolatedRegistry();
+    const spec = makeSymmetricSpecYak("validation spec");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+    await expect(registry.markBlockSubmitted(row.blockMerkleRoot, -1)).rejects.toThrow(
+      /submittedAt must be a non-negative/,
+    );
+    await expect(
+      registry.markBlockSubmitted(row.blockMerkleRoot, Number.NaN),
+    ).rejects.toThrow(/submittedAt must be a non-negative/);
+    await expect(
+      registry.markBlockSubmitted(row.blockMerkleRoot, Number.POSITIVE_INFINITY),
+    ).rejects.toThrow(/submittedAt must be a non-negative/);
+    await registry.close();
+  });
+
+  it("listUnsubmittedBlocks honors the limit", async () => {
+    const registry = await openIsolatedRegistry();
+    for (let i = 0; i < 5; i++) {
+      const spec = makeSymmetricSpecYak(`limit-test spec ${i}`);
+      await registry.storeBlock(makeBlockRow(spec));
+    }
+    const got2 = await registry.listUnsubmittedBlocks(2);
+    expect(got2.length).toBeLessThanOrEqual(2);
+    const got10 = await registry.listUnsubmittedBlocks(10);
+    expect(got10.length).toBeGreaterThanOrEqual(2);
+    await registry.close();
+  });
+});

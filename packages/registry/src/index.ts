@@ -1189,6 +1189,31 @@ export interface Registry {
    * @decision DEC-EMBED-REGISTRY-META-001 (WI-778-BYO-EMBEDDING / issue #778)
    */
   recreateEmbeddingsTable(newDimension: number): Promise<void>;
+
+  /**
+   * List up to `limit` block_merkle_roots that have NOT yet been submitted to
+   * the commons (`submitted_at IS NULL`). Returned in created_at ASC order
+   * so older atoms are flushed first.
+   *
+   * The local-queue mechanism for commons push (WI-794 / DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001).
+   * Slice 1 ships only the read primitive; the network flush wiring is a
+   * subsequent slice.
+   *
+   * @decision DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 (issue #794)
+   */
+  listUnsubmittedBlocks(limit: number): Promise<readonly BlockMerkleRoot[]>;
+
+  /**
+   * Mark a block as submitted to the commons by writing the current
+   * milliseconds-epoch timestamp into its `submitted_at` column.
+   *
+   * No-op (does not throw) if `block_merkle_root` is unknown — the contract
+   * here is "best effort idempotent record"; the actual atom dedupe lives
+   * on the server side (`BlockMerkleRoot`).
+   *
+   * @decision DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 (issue #794)
+   */
+  markBlockSubmitted(blockMerkleRoot: BlockMerkleRoot, submittedAt: number): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
