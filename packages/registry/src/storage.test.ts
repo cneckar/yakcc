@@ -4522,3 +4522,65 @@ describe("commons-push local queue (#794 slice 1)", () => {
     await registry.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 / issue #794 slice 3 — registry seam
+// for commons-push fire-and-forget. The seam fires only on novel inserts and
+// swallows exceptions to preserve storeBlock's latency contract.
+// ---------------------------------------------------------------------------
+
+describe("commons-push storeBlock seam (#794 slice 3)", () => {
+  it("invokes commonsSubmit exactly once for a novel insert", async () => {
+    const submits: string[] = [];
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+      commonsSubmit: (row) => submits.push(row.blockMerkleRoot),
+    });
+    const spec = makeSymmetricSpecYak("seam novel insert");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+    expect(submits).toEqual([row.blockMerkleRoot]);
+    await registry.close();
+  });
+
+  it("does NOT invoke commonsSubmit on a duplicate storeBlock (INSERT OR IGNORE no-op)", async () => {
+    const submits: string[] = [];
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+      commonsSubmit: (row) => submits.push(row.blockMerkleRoot),
+    });
+    const spec = makeSymmetricSpecYak("seam duplicate insert");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+    await registry.storeBlock(row); // duplicate
+    expect(submits).toHaveLength(1);
+    await registry.close();
+  });
+
+  it("swallows commonsSubmit exceptions without breaking storeBlock", async () => {
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+      commonsSubmit: () => {
+        throw new Error("synthetic submit error");
+      },
+    });
+    const spec = makeSymmetricSpecYak("seam throws");
+    const row = makeBlockRow(spec);
+    // Must not throw despite the hook throwing.
+    await expect(registry.storeBlock(row)).resolves.toBeUndefined();
+    // Row is still stored locally (we can verify via listUnsubmittedBlocks).
+    const stored = await registry.listUnsubmittedBlocks(10);
+    expect(stored).toContain(row.blockMerkleRoot);
+    await registry.close();
+  });
+
+  it("no-op when commonsSubmit is omitted from RegistryOptions", async () => {
+    const registry = await openRegistry(":memory:", {
+      embeddings: mockEmbeddingProvider(),
+    });
+    const spec = makeSymmetricSpecYak("no seam configured");
+    const row = makeBlockRow(spec);
+    await expect(registry.storeBlock(row)).resolves.toBeUndefined();
+    await registry.close();
+  });
+});

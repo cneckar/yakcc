@@ -76,3 +76,10 @@ export type { MirrorOptions } from "./mirror.js";
 
 export { serveRegistry } from "./serve.js";
 export type { ServeHandle, ServeOptions } from "./serve.js";
+
+// ---------------------------------------------------------------------------
+// Commons push submitter (WI-794 slice 3 / DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001)
+// ---------------------------------------------------------------------------
+
+export { createCommonsSubmitter } from "./submit.js";
+export type { CommonsSubmitterOptions } from "./submit.js";
