@@ -1994,6 +1994,38 @@ class SqliteRegistry implements Registry {
       .run("embedding_dimension", String(newDimension));
   }
 
+  // -------------------------------------------------------------------------
+  // commons-push local queue (DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 / WI-794 slice 1)
+  // -------------------------------------------------------------------------
+
+  async listUnsubmittedBlocks(limit: number): Promise<readonly BlockMerkleRoot[]> {
+    this.assertOpen();
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error(`listUnsubmittedBlocks: limit must be an integer ≥ 1, got ${limit}`);
+    }
+    const rows = this.db
+      .prepare<[number], { block_merkle_root: string }>(
+        "SELECT block_merkle_root FROM blocks WHERE submitted_at IS NULL ORDER BY created_at ASC, block_merkle_root ASC LIMIT ?",
+      )
+      .all(limit) as Array<{ block_merkle_root: string }>;
+    return rows.map((r) => r.block_merkle_root as BlockMerkleRoot);
+  }
+
+  async markBlockSubmitted(
+    blockMerkleRoot: BlockMerkleRoot,
+    submittedAt: number,
+  ): Promise<void> {
+    this.assertOpen();
+    if (!Number.isFinite(submittedAt) || submittedAt < 0) {
+      throw new Error(
+        `markBlockSubmitted: submittedAt must be a non-negative finite number, got ${submittedAt}`,
+      );
+    }
+    this.db
+      .prepare("UPDATE blocks SET submitted_at = ? WHERE block_merkle_root = ?")
+      .run(submittedAt, blockMerkleRoot);
+  }
+
   // close
   // -------------------------------------------------------------------------
 

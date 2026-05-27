@@ -91,7 +91,28 @@
  *   Pure DDL addition; no backfill required (openRegistry writes the initial row on
  *   first open; rebuild updates it). CREATE TABLE IF NOT EXISTS is idempotent.
  */
-export const SCHEMA_VERSION = 11;
+/**
+ * @decision DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001
+ * @title SCHEMA_VERSION 11 → 12; single-phase additive migration adding submitted_at column
+ *        on the blocks table for the commons-push local queue (WI-794 slice 1)
+ * @status decided (WI-794 slice 1)
+ * @rationale
+ *   #794 wires every novel storeBlock to an async POST to registry.yakcc.com. The local
+ *   queue is the offline-tolerance mechanism: when the commons is unreachable, the atom
+ *   is stored locally with `submitted_at = NULL`. A later CLI invocation that reaches
+ *   the network can list unsubmitted blocks and POST them. This slice ships only the
+ *   schema column + the two helpers (`listUnsubmittedBlocks`, `markBlockSubmitted`);
+ *   the actual push wiring and server endpoint are subsequent slices.
+ *
+ *   Pure ALTER TABLE ADD COLUMN; SQLite makes this O(1). Default is NULL (= unsubmitted).
+ *   Existing rows become valid queue entries — the first run after migration treats every
+ *   pre-existing atom as needing submission, matching the issue's "anonymous public
+ *   commons accepts all valid atoms" stance.
+ *
+ *   ALTER TABLE ADD COLUMN is NOT idempotent under "IF NOT EXISTS" syntax (SQLite has no
+ *   such clause for ADD COLUMN). The migration guards by checking PRAGMA table_info first.
+ */
+export const SCHEMA_VERSION = 12;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1134,5 +1155,27 @@ export function applyMigrations(db: MigrationsDb): void {
       db.exec(sql);
     }
     db.prepare("UPDATE schema_version SET version = ?").run(11);
+  }
+
+  // Migration 11 → 12: add submitted_at column to blocks
+  // (DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 / WI-794 slice 1 / issue #794).
+  //
+  // SQLite has no ADD COLUMN IF NOT EXISTS. Wrap the ALTER in try/catch so the
+  // migration is recoverable: a crash between ADD COLUMN and the version bump
+  // leaves the column present at version=11; re-entry catches the
+  // "duplicate column name" SQLite error, treats it as a no-op, and proceeds
+  // to bump the version normally.
+  if (currentVersion < 12) {
+    try {
+      db.exec("ALTER TABLE blocks ADD COLUMN submitted_at INTEGER NULL");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // SQLite emits "duplicate column name: submitted_at" when the column
+      // already exists. Any other error is a real failure and must propagate.
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(12);
   }
 }

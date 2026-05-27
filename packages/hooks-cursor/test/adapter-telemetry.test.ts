@@ -285,6 +285,8 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       getStoredEmbeddingModelId: registry.getStoredEmbeddingModelId.bind(registry),
       getStoredEmbeddingDimension: registry.getStoredEmbeddingDimension.bind(registry),
       recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
+      listUnsubmittedBlocks: registry.listUnsubmittedBlocks.bind(registry),
+      markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {
