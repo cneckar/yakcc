@@ -144,62 +144,51 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("onCodeEmissionIntent — registry-hit path", () => {
-  it(
-    "returns kind=registry-hit when a close semantic match exists in the registry",
-    async () => {
-      // Seed a block whose behavior string is intentionally close to the query intent.
-      const matchingSpec = makeSpecYak(
-        "parse-integer",
-        "Parse an integer from a string",
-      );
-      const row = makeBlockRow(matchingSpec);
-      await registry.storeBlock(row);
+  it("returns kind=registry-hit when a close semantic match exists in the registry", async () => {
+    // Seed a block whose behavior string is intentionally close to the query intent.
+    const matchingSpec = makeSpecYak("parse-integer", "Parse an integer from a string");
+    const row = makeBlockRow(matchingSpec);
+    await registry.storeBlock(row);
 
-      // Also seed noise blocks to ensure the KNN search actually ranks them.
-      const noiseSpecs = [
-        makeSpecYak("check-digit", "Check whether a character is a digit"),
-        makeSpecYak("sort-array", "Sort an array of numbers in ascending order"),
-      ];
-      for (const spec of noiseSpecs) {
-        await registry.storeBlock(makeBlockRow(spec));
-      }
-
-      // Use a very permissive threshold so the mock embedder's close-but-not-identical
-      // vectors still register as a hit. The production threshold (0.30) is tested
-      // with a real embedding provider; here we verify the conditional logic fires.
-      const hook = createHook(registry, { threshold: 1.5 });
-      const ctx: EmissionContext = { intent: "Parse an integer from a string" };
-      const response: HookResponse = await hook.onCodeEmissionIntent(ctx);
-
-      expect(response.kind).toBe("registry-hit");
-      if (response.kind === "registry-hit") {
-        // id must be a 64-char hex ContractId derived from the block's spec bytes.
-        expect(response.id).toMatch(/^[0-9a-f]{64}$/);
-      }
-    },
-    10_000,
-  );
-
-  it(
-    "registry-hit id is stable across repeated calls for the same block",
-    async () => {
-      const spec = makeSpecYak("add-numbers", "Add two numbers together");
+    // Also seed noise blocks to ensure the KNN search actually ranks them.
+    const noiseSpecs = [
+      makeSpecYak("check-digit", "Check whether a character is a digit"),
+      makeSpecYak("sort-array", "Sort an array of numbers in ascending order"),
+    ];
+    for (const spec of noiseSpecs) {
       await registry.storeBlock(makeBlockRow(spec));
+    }
 
-      const hook = createHook(registry, { threshold: 1.5 });
-      const ctx: EmissionContext = { intent: "Add two numbers together" };
+    // Use a very permissive threshold so the mock embedder's close-but-not-identical
+    // vectors still register as a hit. The production threshold (0.30) is tested
+    // with a real embedding provider; here we verify the conditional logic fires.
+    const hook = createHook(registry, { threshold: 1.5 });
+    const ctx: EmissionContext = { intent: "Parse an integer from a string" };
+    const response: HookResponse = await hook.onCodeEmissionIntent(ctx);
 
-      const r1 = await hook.onCodeEmissionIntent(ctx);
-      const r2 = await hook.onCodeEmissionIntent(ctx);
+    expect(response.kind).toBe("registry-hit");
+    if (response.kind === "registry-hit") {
+      // id must be a 64-char hex ContractId derived from the block's spec bytes.
+      expect(response.id).toMatch(/^[0-9a-f]{64}$/);
+    }
+  }, 10_000);
 
-      expect(r1.kind).toBe("registry-hit");
-      expect(r2.kind).toBe("registry-hit");
-      if (r1.kind === "registry-hit" && r2.kind === "registry-hit") {
-        expect(r1.id).toBe(r2.id);
-      }
-    },
-    10_000,
-  );
+  it("registry-hit id is stable across repeated calls for the same block", async () => {
+    const spec = makeSpecYak("add-numbers", "Add two numbers together");
+    await registry.storeBlock(makeBlockRow(spec));
+
+    const hook = createHook(registry, { threshold: 1.5 });
+    const ctx: EmissionContext = { intent: "Add two numbers together" };
+
+    const r1 = await hook.onCodeEmissionIntent(ctx);
+    const r2 = await hook.onCodeEmissionIntent(ctx);
+
+    expect(r1.kind).toBe("registry-hit");
+    expect(r2.kind).toBe("registry-hit");
+    if (r1.kind === "registry-hit" && r2.kind === "registry-hit") {
+      expect(r1.id).toBe(r2.id);
+    }
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -207,69 +196,57 @@ describe("onCodeEmissionIntent — registry-hit path", () => {
 // ---------------------------------------------------------------------------
 
 describe("onCodeEmissionIntent — synthesis-required path", () => {
-  it(
-    "returns kind=synthesis-required when the registry is empty",
-    async () => {
-      // No blocks stored — any query must produce synthesis-required.
-      const hook = createHook(registry); // default threshold
-      const ctx: EmissionContext = { intent: "Compute the Fibonacci sequence" };
-      const response = await hook.onCodeEmissionIntent(ctx);
+  it("returns kind=synthesis-required when the registry is empty", async () => {
+    // No blocks stored — any query must produce synthesis-required.
+    const hook = createHook(registry); // default threshold
+    const ctx: EmissionContext = { intent: "Compute the Fibonacci sequence" };
+    const response = await hook.onCodeEmissionIntent(ctx);
 
-      expect(response.kind).toBe("synthesis-required");
-      if (response.kind === "synthesis-required") {
-        expect(response.proposal.behavior).toBe(ctx.intent);
-        // Skeleton has empty collections for all array fields.
-        expect(response.proposal.inputs).toHaveLength(0);
-        expect(response.proposal.outputs).toHaveLength(0);
-        expect(response.proposal.guarantees).toHaveLength(0);
-        expect(response.proposal.errorConditions).toHaveLength(0);
-        expect(response.proposal.propertyTests).toHaveLength(0);
-      }
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("synthesis-required");
+    if (response.kind === "synthesis-required") {
+      expect(response.proposal.behavior).toBe(ctx.intent);
+      // Skeleton has empty collections for all array fields.
+      expect(response.proposal.inputs).toHaveLength(0);
+      expect(response.proposal.outputs).toHaveLength(0);
+      expect(response.proposal.guarantees).toHaveLength(0);
+      expect(response.proposal.errorConditions).toHaveLength(0);
+      expect(response.proposal.propertyTests).toHaveLength(0);
+    }
+  }, 10_000);
 
-  it(
-    "returns kind=synthesis-required when no candidate beats the threshold (strict threshold)",
-    async () => {
-      // Seed a block with an unrelated behavior.
-      const spec = makeSpecYak("base64-encode", "Encode bytes as a base64 string");
-      await registry.storeBlock(makeBlockRow(spec));
+  it("returns kind=synthesis-required when no candidate beats the threshold (strict threshold)", async () => {
+    // Seed a block with an unrelated behavior.
+    const spec = makeSpecYak("base64-encode", "Encode bytes as a base64 string");
+    await registry.storeBlock(makeBlockRow(spec));
 
-      // Use a zero threshold — no candidate can ever beat 0.0 cosine distance.
-      const hook = createHook(registry, { threshold: 0.0 });
-      const ctx: EmissionContext = {
-        intent: "Completely different operation: validate email address format",
-      };
-      const response = await hook.onCodeEmissionIntent(ctx);
+    // Use a zero threshold — no candidate can ever beat 0.0 cosine distance.
+    const hook = createHook(registry, { threshold: 0.0 });
+    const ctx: EmissionContext = {
+      intent: "Completely different operation: validate email address format",
+    };
+    const response = await hook.onCodeEmissionIntent(ctx);
 
-      expect(response.kind).toBe("synthesis-required");
-      if (response.kind === "synthesis-required") {
-        expect(response.proposal.behavior).toBe(ctx.intent);
-      }
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("synthesis-required");
+    if (response.kind === "synthesis-required") {
+      expect(response.proposal.behavior).toBe(ctx.intent);
+    }
+  }, 10_000);
 
-  it(
-    "proposal behavior includes intent (not sourceContext) when sourceContext is provided",
-    async () => {
-      const hook = createHook(registry);
-      const ctx: EmissionContext = {
-        intent: "filter the list",
-        sourceContext: "by removing nulls",
-      };
-      const response = await hook.onCodeEmissionIntent(ctx);
+  it("proposal behavior includes intent (not sourceContext) when sourceContext is provided", async () => {
+    const hook = createHook(registry);
+    const ctx: EmissionContext = {
+      intent: "filter the list",
+      sourceContext: "by removing nulls",
+    };
+    const response = await hook.onCodeEmissionIntent(ctx);
 
-      // Empty registry → synthesis-required. The behavior query was built from
-      // intent + sourceContext; the proposal behavior is the intent alone.
-      expect(response.kind).toBe("synthesis-required");
-      if (response.kind === "synthesis-required") {
-        expect(response.proposal.behavior).toBe(ctx.intent);
-      }
-    },
-    10_000,
-  );
+    // Empty registry → synthesis-required. The behavior query was built from
+    // intent + sourceContext; the proposal behavior is the intent alone.
+    expect(response.kind).toBe("synthesis-required");
+    if (response.kind === "synthesis-required") {
+      expect(response.proposal.behavior).toBe(ctx.intent);
+    }
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -277,47 +254,44 @@ describe("onCodeEmissionIntent — synthesis-required path", () => {
 // ---------------------------------------------------------------------------
 
 describe("onCodeEmissionIntent — passthrough (error) path", () => {
-  it(
-    "returns kind=passthrough when the registry throws on findCandidatesByIntent",
-    async () => {
-      // Build a registry mock whose findCandidatesByIntent always throws.
-      const brokenRegistry: Registry = {
-        storeBlock: registry.storeBlock.bind(registry),
-        selectBlocks: registry.selectBlocks.bind(registry),
-        getBlock: registry.getBlock.bind(registry),
-        findByCanonicalAstHash: registry.findByCanonicalAstHash.bind(registry),
-        getProvenance: registry.getProvenance.bind(registry),
-        enumerateSpecs: registry.enumerateSpecs.bind(registry),
-        close: registry.close.bind(registry),
-        findCandidatesByIntent: async () => {
-          throw new Error("simulated DB failure");
-        },
-        findCandidatesByQuery: async () => {
-          throw new Error("simulated DB failure");
-        },
-        exportManifest: registry.exportManifest.bind(registry),
-        getForeignRefs: registry.getForeignRefs.bind(registry),
-        storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
-        listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
-        storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
-        getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
-        listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
-        getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
-        listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
-        listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
-        replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
-        storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
-        getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
-      };
+  it("returns kind=passthrough when the registry throws on findCandidatesByIntent", async () => {
+    // Build a registry mock whose findCandidatesByIntent always throws.
+    const brokenRegistry: Registry = {
+      storeBlock: registry.storeBlock.bind(registry),
+      selectBlocks: registry.selectBlocks.bind(registry),
+      getBlock: registry.getBlock.bind(registry),
+      findByCanonicalAstHash: registry.findByCanonicalAstHash.bind(registry),
+      getProvenance: registry.getProvenance.bind(registry),
+      enumerateSpecs: registry.enumerateSpecs.bind(registry),
+      close: registry.close.bind(registry),
+      findCandidatesByIntent: async () => {
+        throw new Error("simulated DB failure");
+      },
+      findCandidatesByQuery: async () => {
+        throw new Error("simulated DB failure");
+      },
+      exportManifest: registry.exportManifest.bind(registry),
+      getForeignRefs: registry.getForeignRefs.bind(registry),
+      storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
+      listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
+      storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
+      getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
+      listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
+      getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
+      listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
+      listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
+      replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
+      storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
+      getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
+      listCatalogPage: registry.listCatalogPage.bind(registry),
+    };
 
-      const hook = createHook(brokenRegistry);
-      const ctx: EmissionContext = { intent: "some emission intent" };
-      const response = await hook.onCodeEmissionIntent(ctx);
+    const hook = createHook(brokenRegistry);
+    const ctx: EmissionContext = { intent: "some emission intent" };
+    const response = await hook.onCodeEmissionIntent(ctx);
 
-      expect(response.kind).toBe("passthrough");
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("passthrough");
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -379,46 +353,42 @@ describe("registerCommand", () => {
 // ---------------------------------------------------------------------------
 
 describe("compound interaction — full production sequence", () => {
-  it(
-    "exercises the real production sequence: open → seed → createHook → register → emit → result",
-    async () => {
-      // Step 1: seed the registry with a known block.
-      const spec = makeSpecYak("reverse-string", "Reverse a string");
-      const row = makeBlockRow(spec);
-      await registry.storeBlock(row);
+  it("exercises the real production sequence: open → seed → createHook → register → emit → result", async () => {
+    // Step 1: seed the registry with a known block.
+    const spec = makeSpecYak("reverse-string", "Reverse a string");
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
 
-      // Step 2: create the hook (as done once per Codex CLI session).
-      const markerDir = join(tmpdir(), `yakcc-codex-e2e-${process.pid}`);
-      const hook = createHook(registry, { threshold: 1.5, markerDir });
+    // Step 2: create the hook (as done once per Codex CLI session).
+    const markerDir = join(tmpdir(), `yakcc-codex-e2e-${process.pid}`);
+    const hook = createHook(registry, { threshold: 1.5, markerDir });
 
-      try {
-        // Step 3: register the command (wires the hook into Codex CLI stub).
-        hook.registerCommand();
-        expect(existsSync(join(markerDir, COMMAND_MARKER_FILENAME))).toBe(true);
+    try {
+      // Step 3: register the command (wires the hook into Codex CLI stub).
+      hook.registerCommand();
+      expect(existsSync(join(markerDir, COMMAND_MARKER_FILENAME))).toBe(true);
 
-        // Step 4: emit an intent that matches the seeded block.
-        const hitResponse = await hook.onCodeEmissionIntent({
-          intent: "Reverse a string",
-        });
-        expect(hitResponse.kind).toBe("registry-hit");
+      // Step 4: emit an intent that matches the seeded block.
+      const hitResponse = await hook.onCodeEmissionIntent({
+        intent: "Reverse a string",
+      });
+      expect(hitResponse.kind).toBe("registry-hit");
 
-        // Step 5: emit an intent with no match → synthesis-required.
-        // Use a strict zero-threshold hook to force synthesis-required reliably
-        // regardless of mock embedding proximity.
-        const strictHook = createHook(registry, { threshold: 0.0, markerDir });
-        const strictMiss = await strictHook.onCodeEmissionIntent({
-          intent: "Compute a 3D convex hull from point cloud data",
-        });
-        expect(strictMiss.kind).toBe("synthesis-required");
-        if (strictMiss.kind === "synthesis-required") {
-          expect(strictMiss.proposal.behavior).toContain("convex hull");
-        }
-      } finally {
-        if (existsSync(markerDir)) {
-          rmSync(markerDir, { recursive: true, force: true });
-        }
+      // Step 5: emit an intent with no match → synthesis-required.
+      // Use a strict zero-threshold hook to force synthesis-required reliably
+      // regardless of mock embedding proximity.
+      const strictHook = createHook(registry, { threshold: 0.0, markerDir });
+      const strictMiss = await strictHook.onCodeEmissionIntent({
+        intent: "Compute a 3D convex hull from point cloud data",
+      });
+      expect(strictMiss.kind).toBe("synthesis-required");
+      if (strictMiss.kind === "synthesis-required") {
+        expect(strictMiss.proposal.behavior).toContain("convex hull");
       }
-    },
-    15_000,
-  );
+    } finally {
+      if (existsSync(markerDir)) {
+        rmSync(markerDir, { recursive: true, force: true });
+      }
+    }
+  }, 15_000);
 });

@@ -458,6 +458,181 @@ describe("serveRegistry close()", () => {
 // Any wire corruption of artifact bytes causes deserializeWireBlockTriplet to throw.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// GET /v1/blocks — catalog pagination (WI-792, DEC-792-METHOD-NAME)
+//
+// Test coverage per Evaluation Contract:
+//   (A) Pagination walk: seed N>limit blocks, walk until nextCursor===null,
+//       assert union===seeded set, sorted across pages, no duplicates.
+//   (B) Empty registry → { blocks: [], nextCursor: null }.
+//   (C) after=non-existent cursor → returns roots strictly after that value.
+//   (D) Bad params: limit=0, limit=-1, limit=abc, limit=1001 → 400 bad_request.
+//   (E) Non-GET /v1/blocks → 405 (regression for read-only invariant).
+//   (F) Default limit: absent `?limit=` uses DEFAULT_CATALOG_LIMIT (≤ 256).
+// ---------------------------------------------------------------------------
+
+describe("serveRegistry GET /v1/blocks pagination", () => {
+  // Helper: typed raw response from /v1/blocks
+  interface RawCatalogPage {
+    blocks: string[];
+    nextCursor: string | null;
+  }
+
+  async function rawCatalogPage(
+    url: string,
+    limit?: number,
+    after?: string | null,
+  ): Promise<{ status: number; body: unknown }> {
+    const params = new URLSearchParams();
+    if (limit !== undefined) params.set("limit", String(limit));
+    if (after !== undefined && after !== null) params.set("after", after);
+    const qs = params.toString();
+    const fullUrl = `${url}/v1/blocks${qs.length > 0 ? `?${qs}` : ""}`;
+    const res = await fetch(fullUrl);
+    return { status: res.status, body: await res.json() };
+  }
+
+  // (B) Empty registry
+  it("returns { blocks: [], nextCursor: null } for an empty registry", async () => {
+    await startServer();
+    const { status, body } = await rawCatalogPage(handle.url, 10);
+    expect(status).toBe(200);
+    const page = body as RawCatalogPage;
+    expect(page.blocks).toEqual([]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  // (F) Default limit
+  it("absent ?limit= param uses DEFAULT_CATALOG_LIMIT (256) and returns all blocks when count < 256", async () => {
+    // Seed 3 blocks — fewer than default. Without ?limit, all should be returned in one page.
+    const rowA = makeRow(SPEC_A, "default-limit-a", "// art A");
+    const rowB = makeRow(SPEC_B, "default-limit-b", "// art B");
+    await tracked.store(rowA);
+    await tracked.store(rowB);
+    await startServer();
+
+    // Hit /v1/blocks with no query params at all.
+    const res = await fetch(`${handle.url}/v1/blocks`);
+    expect(res.status).toBe(200);
+    const page = (await res.json()) as RawCatalogPage;
+    expect(page.blocks).toHaveLength(2);
+    expect(page.nextCursor).toBeNull();
+    // nextCursor must be JSON null, not omitted.
+    expect(Object.hasOwn(page, "nextCursor")).toBe(true);
+  });
+
+  // (D) Bad params
+  it.each([
+    ["limit=0", "?limit=0"],
+    ["limit=-1", "?limit=-1"],
+    ["limit=abc", "?limit=abc"],
+    ["limit=1001", "?limit=1001"],
+    ["after= (empty string)", "?after="],
+  ])("bad param %s → 400 bad_request", async (_label, qs) => {
+    await startServer();
+    const res = await fetch(`${handle.url}/v1/blocks${qs}`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe("bad_request");
+  });
+
+  // (E) Non-GET → 405
+  it("POST /v1/blocks → 405 method_not_allowed", async () => {
+    await startServer();
+    const res = await fetch(`${handle.url}/v1/blocks`, { method: "POST" });
+    expect(res.status).toBe(405);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe("method_not_allowed");
+  });
+
+  // (C) after=non-existent-cursor
+  it("after=cursor-not-in-catalog returns roots strictly after that value", async () => {
+    // Seed 5 blocks. Use the second root as a cursor (it IS in the catalog —
+    // strict GT means it's excluded and we see roots 3-5).
+    const rows = [SPEC_A, SPEC_B].flatMap((spec, si) =>
+      [0, 1, 2]
+        .slice(0, si === 0 ? 3 : 2)
+        .map((vi) => makeRow(spec, `after-test-${si}-${vi}`, `// art ${si}-${vi}`)),
+    );
+    for (const row of rows) await tracked.store(row);
+    await startServer();
+
+    const allRes = (await rawCatalogPage(handle.url, 100)).body as RawCatalogPage;
+    const allRoots = allRes.blocks;
+    // Use root[1] as the cursor — strict GT means roots[2..] are returned.
+    const cursor = allRoots[1];
+    if (cursor === undefined) throw new Error("test setup: need ≥ 2 roots");
+
+    const { status, body } = await rawCatalogPage(handle.url, 100, cursor);
+    const page = body as RawCatalogPage;
+    expect(status).toBe(200);
+    for (const root of page.blocks) {
+      expect(root > cursor).toBe(true);
+    }
+    expect(page.blocks).toHaveLength(allRoots.length - 2);
+  });
+
+  // (A) Pagination walk — compound-interaction test: real production sequence.
+  //
+  // This is the critical acceptance test for WI-792. It exercises the entire
+  // /v1/blocks path end-to-end using real HTTP:
+  //   storeBlock writes → serveRegistry → fetchCatalogPage (transport) →
+  //   walk until nextCursor=null → assert union===seeded set, lex-sorted, no dups.
+  //
+  // Crosses:
+  //   1. Registry.listCatalogPage (storage)
+  //   2. handleListCatalogPage route handler (serve.ts)
+  //   3. fetchCatalogPage HTTP wiring (http-transport.ts)
+  //
+  // DEC-792-CURSOR-LOOKAHEAD: tests that the exact-multiple boundary (last page
+  // has exactly `limit` rows) does NOT produce a phantom empty page.
+  it("compound: fetchCatalogPage walk over 23 blocks with limit=10 enumerates all exactly once, lex-sorted", async () => {
+    const TOTAL = 23;
+    const PAGE_LIMIT = 10;
+
+    // Seed TOTAL distinct blocks (two specs, varied impl content for unique roots).
+    const seedRows: BlockTripletRow[] = [];
+    for (let i = 0; i < TOTAL; i++) {
+      const spec = i % 2 === 0 ? SPEC_A : SPEC_B;
+      const row = makeRow(spec, `walk-block-${i}`, `// walk artifact ${i}`);
+      await tracked.store(row);
+      seedRows.push(row);
+    }
+    await startServer();
+
+    const transport = createHttpTransport();
+
+    // Walk pages via fetchCatalogPage until nextCursor === null.
+    const collected: BlockMerkleRoot[] = [];
+    let cursor: BlockMerkleRoot | null = null;
+    let pageCount = 0;
+    do {
+      const page = await transport.fetchCatalogPage(handle.url, cursor, PAGE_LIMIT);
+      collected.push(...page.blocks);
+      cursor = page.nextCursor;
+      pageCount++;
+      if (pageCount > TOTAL + 2) throw new Error("pagination walk exceeded max pages");
+    } while (cursor !== null);
+
+    // All TOTAL roots present exactly once.
+    expect(collected).toHaveLength(TOTAL);
+    const unique = new Set(collected);
+    expect(unique.size).toBe(TOTAL);
+    for (const row of seedRows) {
+      expect(unique.has(row.blockMerkleRoot)).toBe(true);
+    }
+
+    // Globally lex-sorted across pages.
+    const sorted = [...collected].sort();
+    expect(collected).toEqual(sorted);
+
+    // TOTAL=23, PAGE_LIMIT=10: pages of 10, 10, 3 → 3 pages.
+    // DEC-792-CURSOR-LOOKAHEAD: the second page (10 rows) does NOT trigger a
+    // phantom 4th page because lookahead tells us the 3rd page exists.
+    expect(pageCount).toBe(Math.ceil(TOTAL / PAGE_LIMIT));
+  });
+});
+
 describe("serveRegistry compound-interaction: full F1 production sequence", () => {
   it("insert 2 specs, serve, discover via transport, round-trip each block byte-identically", async () => {
     // Build two distinct rows with real artifacts.

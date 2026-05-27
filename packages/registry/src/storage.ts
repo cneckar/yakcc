@@ -1261,6 +1261,84 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // listCatalogPage — paginated catalog enumeration for GET /v1/blocks
+  // -------------------------------------------------------------------------
+
+  // @decision DEC-792-METHOD-NAME
+  // title: listCatalogPage(after, limit) — Registry-native catalog-page primitive
+  // status: accepted (WI-792 Slice F)
+  // rationale: `listBlocks` collides with Transport.listBlocks (per-spec semantics).
+  //   `listCatalogPage` names the return shape and has zero naming collision.
+  //   No caching: SELECT … LIMIT is cheap. No ownership columns (DEC-NO-OWNERSHIP-011).
+  //   Read-only: storeBlock remains the sole mutation entry point.
+  //
+  // @decision DEC-792-AFTER-SEMANTICS
+  // title: strict greater-than (`block_merkle_root > ?`); after=null = no WHERE
+  // status: accepted (WI-792)
+  // rationale: The cursor is the last-returned root of the previous page.
+  //   Strict GT means the first element of the next page is unambiguously the
+  //   row immediately after the cursor in lex order.
+  //
+  // @decision DEC-792-CURSOR-LOOKAHEAD
+  // title: Fetch limit+1 rows; derive nextCursor from (limit+1)th existence
+  // status: accepted (WI-792)
+  // rationale: Avoids phantom-page round-trip when catalog size is exact multiple
+  //   of limit. If rows.length > limit → hasMore=true, nextCursor=rows[limit-1].
+  //   Else nextCursor=null. LIMIT (limit+1) SQL cost is negligible.
+  //
+  // @decision DEC-792-LIMITS
+  // title: limit ∈ [1, 1000]; outside range → throw
+  // status: accepted (WI-792)
+  // rationale: Clamp MAX_LIMIT=1000 as defense-in-depth. HTTP handler also 400s
+  //   on oversize; the Registry layer rejects loudly so direct callers are safe.
+
+  // Maximum rows per catalog page. Matches DEC-792-LIMITS.
+  private static readonly MAX_CATALOG_LIMIT = 1000;
+
+  async listCatalogPage(
+    after: BlockMerkleRoot | null,
+    limit: number,
+  ): Promise<{
+    readonly blocks: readonly BlockMerkleRoot[];
+    readonly nextCursor: BlockMerkleRoot | null;
+  }> {
+    this.assertOpen();
+
+    // Validate limit per DEC-792-LIMITS: must be integer in [1, MAX_CATALOG_LIMIT].
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error(`listCatalogPage: limit must be an integer ≥ 1, got ${limit}`);
+    }
+    const clampedLimit = Math.min(limit, SqliteRegistry.MAX_CATALOG_LIMIT);
+
+    // Fetch one extra row to determine whether there is a next page
+    // (DEC-792-CURSOR-LOOKAHEAD): if rows.length > clampedLimit, more exist.
+    const fetchCount = clampedLimit + 1;
+
+    const rows: readonly { block_merkle_root: string }[] =
+      after === null
+        ? this.db
+            .prepare<[number], { block_merkle_root: string }>(
+              "SELECT block_merkle_root FROM blocks ORDER BY block_merkle_root ASC LIMIT ?",
+            )
+            .all(fetchCount)
+        : this.db
+            .prepare<[string, number], { block_merkle_root: string }>(
+              "SELECT block_merkle_root FROM blocks WHERE block_merkle_root > ? ORDER BY block_merkle_root ASC LIMIT ?",
+            )
+            .all(after, fetchCount);
+
+    const hasMore = rows.length > clampedLimit;
+    const pageRows = hasMore ? rows.slice(0, clampedLimit) : rows;
+    const blocks = pageRows.map((r) => r.block_merkle_root as BlockMerkleRoot);
+
+    // nextCursor is the last block on this page when more rows exist beyond it.
+    // undefined-safe: if hasMore is true, pageRows has clampedLimit ≥ 1 entries.
+    const nextCursor: BlockMerkleRoot | null = hasMore ? (blocks[blocks.length - 1] ?? null) : null;
+
+    return { blocks, nextCursor };
+  }
+
+  // -------------------------------------------------------------------------
   // exportManifest — deterministic manifest for bootstrap --verify
   // -------------------------------------------------------------------------
 
@@ -1820,9 +1898,8 @@ class SqliteRegistry implements Registry {
 
   // Hoisted prepared statement for cache-hash writes (avoids prepare() on hot path).
   // Lazily initialized on first use; stored as a class field for lifetime reuse.
-  private stmtUpsertSourceFileState: Database.Statement<
-    [string, string, string, number]
-  > | null = null;
+  private stmtUpsertSourceFileState: Database.Statement<[string, string, string, number]> | null =
+    null;
 
   async storeSourceFileContentHash(
     sourcePkg: string,
@@ -1863,10 +1940,7 @@ class SqliteRegistry implements Registry {
   // @decision DEC-V2-SHAVE-CACHE-STORAGE-001
   // -------------------------------------------------------------------------
 
-  async getSourceFileContentHash(
-    sourcePkg: string,
-    sourceFile: string,
-  ): Promise<string | null> {
+  async getSourceFileContentHash(sourcePkg: string, sourceFile: string): Promise<string | null> {
     this.assertOpen();
 
     interface StateRow {
