@@ -53,7 +53,8 @@ function makeMutant(
   found: string,
 ): Mutant {
   const { line, col } = lineCol(source, matchIndex);
-  const mutatedSource = source.slice(0, matchIndex) + replacement + source.slice(matchIndex + matchLen);
+  const mutatedSource =
+    source.slice(0, matchIndex) + replacement + source.slice(matchIndex + matchLen);
   return {
     id: ++_mutantId,
     originalSource: source,
@@ -78,12 +79,14 @@ function tokenOperator(
     name,
     apply(source) {
       const mutants: Mutant[] = [];
-      const global = new RegExp(pattern.source, pattern.flags + "g");
-      let m: RegExpExecArray | null;
-      while ((m = global.exec(source)) !== null) {
+      const global = new RegExp(pattern.source, `${pattern.flags}g`);
+      let m = global.exec(source);
+      while (m !== null) {
         const matched = m[0];
-        const rep = typeof replacement === "function" ? replacement(matched, ...m.slice(1)) : replacement;
+        const rep =
+          typeof replacement === "function" ? replacement(matched, ...m.slice(1)) : replacement;
         mutants.push(makeMutant(source, m.index, matched.length, rep, name, matched));
+        m = global.exec(source);
       }
       return mutants;
     },
@@ -101,9 +104,19 @@ const arithPlusToMinus: MutationOperator = {
     const mutants: Mutant[] = [];
     // Match binary + not preceded/followed by + or = and not inside ++/+=
     const re = /(?<=[^\s+\-*/=<>!&|^~(,?:\n])\s*\+\s*(?=[^\s+=])/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
-      mutants.push(makeMutant(source, m.index, m[0].length, m[0].replace("+", "-"), "arith-plus-to-minus", m[0]));
+    let m = re.exec(source);
+    while (m !== null) {
+      mutants.push(
+        makeMutant(
+          source,
+          m.index,
+          m[0].length,
+          m[0].replace("+", "-"),
+          "arith-plus-to-minus",
+          m[0],
+        ),
+      );
+      m = re.exec(source);
     }
     return mutants;
   },
@@ -148,25 +161,18 @@ const boolNegationStrip: MutationOperator = {
     const mutants: Mutant[] = [];
     // Match `!` not followed by `=` and not `!!`
     const re = /!(?!=|!)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
+    let m = re.exec(source);
+    while (m !== null) {
       mutants.push(makeMutant(source, m.index, 1, "", "bool-negation-strip", "!"));
+      m = re.exec(source);
     }
     return mutants;
   },
 };
 
-const boolTrueToFalse = tokenOperator(
-  "bool-true-to-false",
-  /\btrue\b/,
-  "false",
-);
+const boolTrueToFalse = tokenOperator("bool-true-to-false", /\btrue\b/, "false");
 
-const boolFalseToTrue = tokenOperator(
-  "bool-false-to-true",
-  /\bfalse\b/,
-  "true",
-);
+const boolFalseToTrue = tokenOperator("bool-false-to-true", /\bfalse\b/, "true");
 
 // ---------------------------------------------------------------------------
 // Control flow operators (3)
@@ -179,13 +185,16 @@ const ctrlNegateIf: MutationOperator = {
     const mutants: Mutant[] = [];
     // Match `if (` — negate the parenthesized condition by wrapping with `!(`
     const re = /\bif\s*\(/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
+    let m = re.exec(source);
+    while (m !== null) {
       // Insert `!(` after `if (` and close with `)` before the original `)`
       // Simple approach: replace `if (` with `if (!(`
       const original = m[0];
       const replacement = original.replace(/\($/, "(!(");
-      mutants.push(makeMutant(source, m.index, original.length, replacement, "ctrl-negate-if", original));
+      mutants.push(
+        makeMutant(source, m.index, original.length, replacement, "ctrl-negate-if", original),
+      );
+      m = re.exec(source);
     }
     return mutants;
   },
@@ -197,9 +206,19 @@ const ctrlThrowToReturn: MutationOperator = {
   apply(source) {
     const mutants: Mutant[] = [];
     const re = /\bthrow\s+new\s+[A-Za-z][A-Za-z0-9]*Error\s*\([^)]*\)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
-      mutants.push(makeMutant(source, m.index, m[0].length, "return undefined as any", "ctrl-throw-to-return", m[0]));
+    let m = re.exec(source);
+    while (m !== null) {
+      mutants.push(
+        makeMutant(
+          source,
+          m.index,
+          m[0].length,
+          "return undefined as any",
+          "ctrl-throw-to-return",
+          m[0],
+        ),
+      );
+      m = re.exec(source);
     }
     return mutants;
   },
@@ -212,10 +231,20 @@ const ctrlReturnToUndefined: MutationOperator = {
     const mutants: Mutant[] = [];
     // Match return with a non-trivial expression (not return; or return undefined)
     const re = /\breturn\s+(?!undefined\b|null\b|;)([^;{}\n]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
+    let m = re.exec(source);
+    while (m !== null) {
       const original = m[0];
-      mutants.push(makeMutant(source, m.index, original.length, "return undefined", "ctrl-return-to-undefined", original));
+      mutants.push(
+        makeMutant(
+          source,
+          m.index,
+          original.length,
+          "return undefined",
+          "ctrl-return-to-undefined",
+          original,
+        ),
+      );
+      m = re.exec(source);
     }
     return mutants;
   },
@@ -232,18 +261,10 @@ const constZeroToOne = tokenOperator(
   "1",
 );
 
-const constOneToZero = tokenOperator(
-  "const-one-to-zero",
-  /(?<![.\w])1(?![.\w])/,
-  "0",
-);
+const constOneToZero = tokenOperator("const-one-to-zero", /(?<![.\w])1(?![.\w])/, "0");
 
 // Replace empty string "" with " "
-const constEmptyStringToSpace = tokenOperator(
-  "const-emptystr-to-space",
-  /""/,
-  '" "',
-);
+const constEmptyStringToSpace = tokenOperator("const-emptystr-to-space", /""/, '" "');
 
 const constNullToUndefined = tokenOperator("const-null-to-undef", /\bnull\b/, "undefined");
 const constUndefinedToNull = tokenOperator("const-undef-to-null", /\bundefined\b/, "null");
@@ -259,14 +280,15 @@ const loopLtToLte: MutationOperator = {
     const mutants: Mutant[] = [];
     // Find for(...; ...<...; ...) patterns
     const forRe = /\bfor\s*\([^)]*\)/g;
-    let fm: RegExpExecArray | null;
-    while ((fm = forRe.exec(source)) !== null) {
+    let fm = forRe.exec(source);
+    while (fm !== null) {
       const forStmt = fm[0];
       const ltIdx = forStmt.indexOf("<");
       if (ltIdx >= 0 && forStmt[ltIdx + 1] !== "=") {
         const absIdx = fm.index + ltIdx;
         mutants.push(makeMutant(source, absIdx, 1, "<=", "loop-lt-to-lte", "<"));
       }
+      fm = forRe.exec(source);
     }
     return mutants;
   },
@@ -277,14 +299,15 @@ const loopLteToLt: MutationOperator = {
   apply(source) {
     const mutants: Mutant[] = [];
     const forRe = /\bfor\s*\([^)]*\)/g;
-    let fm: RegExpExecArray | null;
-    while ((fm = forRe.exec(source)) !== null) {
+    let fm = forRe.exec(source);
+    while (fm !== null) {
       const forStmt = fm[0];
       const lteIdx = forStmt.indexOf("<=");
       if (lteIdx >= 0) {
         const absIdx = fm.index + lteIdx;
         mutants.push(makeMutant(source, absIdx, 2, "<", "loop-lte-to-lt", "<="));
       }
+      fm = forRe.exec(source);
     }
     return mutants;
   },
@@ -296,8 +319,8 @@ const loopInitZeroToOne: MutationOperator = {
   apply(source) {
     const mutants: Mutant[] = [];
     const forRe = /\bfor\s*\([^)]*\)/g;
-    let fm: RegExpExecArray | null;
-    while ((fm = forRe.exec(source)) !== null) {
+    let fm = forRe.exec(source);
+    while (fm !== null) {
       const forStmt = fm[0];
       // Find `= 0` in the init part (before first ;)
       const initPart = forStmt.slice(0, forStmt.indexOf(";"));
@@ -306,6 +329,7 @@ const loopInitZeroToOne: MutationOperator = {
         const absIdx = fm.index + zeroIdx + initPart.slice(zeroIdx).indexOf("0");
         mutants.push(makeMutant(source, absIdx, 1, "1", "loop-init-zero-to-one", "0"));
       }
+      fm = forRe.exec(source);
     }
     return mutants;
   },

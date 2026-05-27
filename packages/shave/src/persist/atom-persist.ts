@@ -235,8 +235,7 @@ export async function persistNovelGlueAtom(
   // mutants before admitting the atom to the registry.
   // Bypassed when skipMutationGate is true or YAKCC_SKIP_MUTATION_GATE=1.
   const gateSkipped =
-    options?.skipMutationGate === true ||
-    process.env["YAKCC_SKIP_MUTATION_GATE"] === "1";
+    options?.skipMutationGate === true || process.env.YAKCC_SKIP_MUTATION_GATE === "1";
 
   if (!gateSkipped) {
     const corpusTestSource = new TextDecoder().decode(corpusResult.bytes);
@@ -257,9 +256,7 @@ export async function persistNovelGlueAtom(
         .map((s) => s.mutant.description)
         .join("; ");
       throw new Error(
-        `Mutation gate: atom rejected — kill rate ${(gateResult.killRate * 100).toFixed(0)}% < ${(killRateThreshold * 100).toFixed(0)}% threshold. ` +
-          `Surviving mutants: ${survivorDescs || "(none listed)"}. ` +
-          `Use --skip-mutation-gate or set YAKCC_SKIP_MUTATION_GATE=1 to bypass.`,
+        `Mutation gate: atom rejected — kill rate ${(gateResult.killRate * 100).toFixed(0)}% < ${(killRateThreshold * 100).toFixed(0)}% threshold. Surviving mutants: ${survivorDescs || "(none listed)"}. Use --skip-mutation-gate or set YAKCC_SKIP_MUTATION_GATE=1 to bypass.`,
       );
     }
   }

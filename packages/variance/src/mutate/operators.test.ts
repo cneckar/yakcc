@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ALL_OPERATORS, generateMutants, resetMutantId } from "./operators.js";
 
 beforeEach(() => {
@@ -38,7 +38,10 @@ describe("ALL_OPERATORS", () => {
     const names = ALL_OPERATORS.map((o) => o.name);
     const categories = ["arith-", "cmp-", "bool-", "ctrl-", "const-", "loop-"];
     for (const cat of categories) {
-      expect(names.some((n) => n.startsWith(cat)), `no operator for category ${cat}`).toBe(true);
+      expect(
+        names.some((n) => n.startsWith(cat)),
+        `no operator for category ${cat}`,
+      ).toBe(true);
     }
   });
 });
@@ -51,7 +54,7 @@ describe("arith-mul-to-div", () => {
   it("replaces * with /", () => {
     const mutants = applyOperator("arith-mul-to-div", "return a * b;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("a / b");
+    expect(mutants[0]?.mutatedSource).toContain("a / b");
   });
 
   it("does not match **", () => {
@@ -64,7 +67,7 @@ describe("arith-div-to-mul", () => {
   it("replaces / with *", () => {
     const mutants = applyOperator("arith-div-to-mul", "return a / b;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("a * b");
+    expect(mutants[0]?.mutatedSource).toContain("a * b");
   });
 });
 
@@ -72,7 +75,7 @@ describe("arith-mod-to-mul", () => {
   it("replaces % with *", () => {
     const mutants = applyOperator("arith-mod-to-mul", "return n % 2;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("n * 2");
+    expect(mutants[0]?.mutatedSource).toContain("n * 2");
   });
 });
 
@@ -80,7 +83,7 @@ describe("arith-pow-to-mul", () => {
   it("replaces ** with *", () => {
     const mutants = applyOperator("arith-pow-to-mul", "return x ** 2;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("x * 2");
+    expect(mutants[0]?.mutatedSource).toContain("x * 2");
   });
 });
 
@@ -101,7 +104,7 @@ describe("cmp-stricteq-to-strictneq", () => {
   it("replaces === with !==", () => {
     const mutants = applyOperator("cmp-stricteq-to-strictneq", "if (a === b) return 1;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("a !== b");
+    expect(mutants[0]?.mutatedSource).toContain("a !== b");
   });
 });
 
@@ -109,7 +112,7 @@ describe("cmp-strictneq-to-stricteq", () => {
   it("replaces !== with ===", () => {
     const mutants = applyOperator("cmp-strictneq-to-stricteq", "if (a !== b) return 1;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("a === b");
+    expect(mutants[0]?.mutatedSource).toContain("a === b");
   });
 });
 
@@ -117,7 +120,7 @@ describe("cmp-gt-to-gte", () => {
   it("replaces > with >=", () => {
     const mutants = applyOperator("cmp-gt-to-gte", "if (n > 0) return 1;");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain(">=");
+    expect(mutants[0]?.mutatedSource).toContain(">=");
   });
 });
 
@@ -125,7 +128,7 @@ describe("cmp-gte-to-gt", () => {
   it("replaces >= with >", () => {
     const mutants = applyOperator("cmp-gte-to-gt", "if (n >= 0) return 1;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("n > 0");
+    expect(mutants[0]?.mutatedSource).toContain("n > 0");
   });
 });
 
@@ -133,7 +136,7 @@ describe("cmp-lt-to-lte", () => {
   it("replaces < with <=", () => {
     const mutants = applyOperator("cmp-lt-to-lte", "if (n < 10) return 1;");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("<=");
+    expect(mutants[0]?.mutatedSource).toContain("<=");
   });
 });
 
@@ -141,7 +144,7 @@ describe("cmp-lte-to-lt", () => {
   it("replaces <= with <", () => {
     const mutants = applyOperator("cmp-lte-to-lt", "if (n <= 10) return 1;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("n < 10");
+    expect(mutants[0]?.mutatedSource).toContain("n < 10");
   });
 });
 
@@ -149,7 +152,7 @@ describe("cmp-gtlt", () => {
   it("replaces > with <", () => {
     const mutants = applyOperator("cmp-gtlt", "if (a > b) return 1;");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("a < b");
+    expect(mutants[0]?.mutatedSource).toContain("a < b");
   });
 });
 
@@ -157,7 +160,7 @@ describe("cmp-ltgt", () => {
   it("replaces < with >", () => {
     const mutants = applyOperator("cmp-ltgt", "if (a < b) return 1;");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("a > b");
+    expect(mutants[0]?.mutatedSource).toContain("a > b");
   });
 });
 
@@ -169,7 +172,7 @@ describe("bool-and-to-or", () => {
   it("replaces && with ||", () => {
     const mutants = applyOperator("bool-and-to-or", "if (a && b) return 1;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("a || b");
+    expect(mutants[0]?.mutatedSource).toContain("a || b");
   });
 });
 
@@ -177,7 +180,7 @@ describe("bool-or-to-and", () => {
   it("replaces || with &&", () => {
     const mutants = applyOperator("bool-or-to-and", "if (a || b) return 1;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("a && b");
+    expect(mutants[0]?.mutatedSource).toContain("a && b");
   });
 });
 
@@ -199,7 +202,7 @@ describe("bool-true-to-false", () => {
   it("replaces true with false", () => {
     const mutants = applyOperator("bool-true-to-false", "return true;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("return false");
+    expect(mutants[0]?.mutatedSource).toContain("return false");
   });
 });
 
@@ -207,7 +210,7 @@ describe("bool-false-to-true", () => {
   it("replaces false with true", () => {
     const mutants = applyOperator("bool-false-to-true", "return false;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("return true");
+    expect(mutants[0]?.mutatedSource).toContain("return true");
   });
 });
 
@@ -219,7 +222,7 @@ describe("ctrl-negate-if", () => {
   it("negates if condition", () => {
     const mutants = applyOperator("ctrl-negate-if", "if (x > 0) { return x; }");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("if (!(");
+    expect(mutants[0]?.mutatedSource).toContain("if (!(");
   });
 
   it("does not fire on source without if", () => {
@@ -233,7 +236,7 @@ describe("ctrl-throw-to-return", () => {
     const src = 'if (n < 0) { throw new RangeError("negative"); }';
     const mutants = applyOperator("ctrl-throw-to-return", src);
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("return undefined as any");
+    expect(mutants[0]?.mutatedSource).toContain("return undefined as any");
   });
 
   it("does not fire on plain throw", () => {
@@ -246,7 +249,7 @@ describe("ctrl-return-to-undefined", () => {
   it("replaces return value with return undefined", () => {
     const mutants = applyOperator("ctrl-return-to-undefined", "return a + b;");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("return undefined");
+    expect(mutants[0]?.mutatedSource).toContain("return undefined");
   });
 
   it("does not replace bare return", () => {
@@ -289,7 +292,7 @@ describe("const-emptystr-to-space", () => {
   it('replaces "" with " "', () => {
     const mutants = applyOperator("const-emptystr-to-space", 'if (s === "") return -1;');
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain('" "');
+    expect(mutants[0]?.mutatedSource).toContain('" "');
   });
 });
 
@@ -297,7 +300,7 @@ describe("const-null-to-undef", () => {
   it("replaces null with undefined", () => {
     const mutants = applyOperator("const-null-to-undef", "return null;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("return undefined");
+    expect(mutants[0]?.mutatedSource).toContain("return undefined");
   });
 });
 
@@ -305,7 +308,7 @@ describe("const-undef-to-null", () => {
   it("replaces undefined with null", () => {
     const mutants = applyOperator("const-undef-to-null", "return undefined;");
     expect(mutants).toHaveLength(1);
-    expect(mutants[0]!.mutatedSource).toContain("return null");
+    expect(mutants[0]?.mutatedSource).toContain("return null");
   });
 });
 
@@ -317,7 +320,7 @@ describe("loop-lt-to-lte", () => {
   it("changes < to <= in for loop condition", () => {
     const mutants = applyOperator("loop-lt-to-lte", "for (let i = 0; i < n; i++) { }");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("i <=");
+    expect(mutants[0]?.mutatedSource).toContain("i <=");
   });
 
   it("does not fire on source without a for loop", () => {
@@ -336,7 +339,7 @@ describe("loop-lte-to-lt", () => {
   it("changes <= to < in for loop condition", () => {
     const mutants = applyOperator("loop-lte-to-lt", "for (let i = 0; i <= n; i++) { }");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("i <");
+    expect(mutants[0]?.mutatedSource).toContain("i <");
   });
 
   it("does not fire for a for loop with < condition (inner-if false branch)", () => {
@@ -350,7 +353,7 @@ describe("loop-init-zero-to-one", () => {
   it("changes loop initializer 0 to 1", () => {
     const mutants = applyOperator("loop-init-zero-to-one", "for (let i = 0; i < n; i++) { }");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toMatch(/let i = 1/);
+    expect(mutants[0]?.mutatedSource).toMatch(/let i = 1/);
   });
 
   it("does not fire for a for loop with non-zero initializer (inner-if false branch)", () => {
@@ -364,7 +367,7 @@ describe("loop-incr-to-decr", () => {
   it("replaces ++ with -- after a variable", () => {
     const mutants = applyOperator("loop-incr-to-decr", "for (let i = 0; i < n; i++) { }");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("i--");
+    expect(mutants[0]?.mutatedSource).toContain("i--");
   });
 });
 
@@ -376,7 +379,7 @@ describe("obo-minus-one", () => {
   it("removes - 1 from an expression", () => {
     const mutants = applyOperator("obo-minus-one", "return arr[n - 1];");
     expect(mutants.length).toBeGreaterThan(0);
-    expect(mutants[0]!.mutatedSource).toContain("arr[n]");
+    expect(mutants[0]?.mutatedSource).toContain("arr[n]");
   });
 
   it("does not fire when no - 1 pattern exists", () => {
@@ -430,7 +433,7 @@ export function digitOrThrow(input, position) {
     const mutants = generateMutants(src);
     expect(mutants[0]?.id).toBeGreaterThanOrEqual(1);
     for (let i = 1; i < mutants.length; i++) {
-      expect(mutants[i]!.id).toBeGreaterThan(mutants[i - 1]!.id);
+      expect(mutants[i]?.id).toBeGreaterThan(mutants[i - 1]?.id);
     }
   });
 

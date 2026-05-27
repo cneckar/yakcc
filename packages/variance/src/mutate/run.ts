@@ -17,7 +17,13 @@ import vm from "node:vm";
 import * as fc from "fast-check";
 
 import { generateMutants } from "./operators.js";
-import type { MutationInput, MutationOptions, MutationResult, Mutant, SurvivorInfo } from "./types.js";
+import type {
+  Mutant,
+  MutationInput,
+  MutationOptions,
+  MutationResult,
+  SurvivorInfo,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // In-memory result cache (canonicalAstHash → MutationResult).
@@ -181,7 +187,11 @@ export function executeMutantTest(
  * Select up to `max` mutants from `all`, using a deterministic order.
  * When a seed is provided the order is permuted reproducibly.
  */
-export function selectMutants(all: readonly Mutant[], max: number, seed?: number): readonly Mutant[] {
+export function selectMutants(
+  all: readonly Mutant[],
+  max: number,
+  seed?: number,
+): readonly Mutant[] {
   if (all.length <= max) return all;
   if (seed === undefined) return all.slice(0, max);
   // Fisher-Yates partial shuffle deterministically seeded

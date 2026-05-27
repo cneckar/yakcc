@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import * as fc from "fast-check";
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { resetMutantId } from "./operators.js";
 import {
   clearMutationCache,
   createMutantFn,
@@ -12,7 +13,6 @@ import {
   selectMutants,
   stripTypes,
 } from "./run.js";
-import { resetMutantId } from "./operators.js";
 
 beforeEach(() => {
   clearMutationCache();
@@ -188,7 +188,9 @@ describe("stripTypes", () => {
   });
 
   it("removes export keyword", () => {
-    const stripped = stripTypes("export function add(a: number, b: number): number { return a + b; }");
+    const stripped = stripTypes(
+      "export function add(a: number, b: number): number { return a + b; }",
+    );
     expect(stripped).not.toContain("export");
     expect(stripped).toContain("function add");
   });
@@ -199,7 +201,7 @@ describe("stripTypes", () => {
   });
 
   it("removes 'as Type' casts", () => {
-    const stripped = stripTypes('const c = input[pos] as string;');
+    const stripped = stripTypes("const c = input[pos] as string;");
     expect(stripped).not.toContain("as string");
   });
 
@@ -219,7 +221,7 @@ describe("createMutantFn", () => {
     const stripped = stripTypes(ADD_IMPL);
     const fn = createMutantFn(stripped, "add");
     expect(fn).not.toBeUndefined();
-    expect(fn!(3, 4)).toBe(7);
+    expect(fn?.(3, 4)).toBe(7);
   });
 
   it("returns undefined for syntactically invalid source", () => {
@@ -236,7 +238,7 @@ describe("createMutantFn", () => {
     const stripped = stripTypes(ADD_IMPL_MINUS);
     const fn = createMutantFn(stripped, "add");
     expect(fn).not.toBeUndefined();
-    expect(fn!(10, 3)).toBe(7);
+    expect(fn?.(10, 3)).toBe(7);
   });
 });
 
@@ -273,27 +275,27 @@ describe("executeMutantTest", () => {
   const preparedTest = prepareTestScript(ADD_CORPUS_REAL);
 
   it("returns false (survived) for a correct implementation", () => {
-    const addFn = createMutantFn(strippedAdd, "add")!;
+    const addFn = createMutantFn(strippedAdd, "add") as (...args: unknown[]) => unknown;
     const killed = executeMutantTest(preparedTest, "add", addFn, 5000);
     expect(killed).toBe(false);
   });
 
   it("returns true (killed) for a broken implementation (subtraction)", () => {
-    const addMinusFn = createMutantFn(strippedAddMinus, "add")!;
+    const addMinusFn = createMutantFn(strippedAddMinus, "add") as (...args: unknown[]) => unknown;
     const killed = executeMutantTest(preparedTest, "add", addMinusFn, 5000);
     // add(a, b) = a - b breaks commutativity (add(1,2)=-1, add(2,1)=1)
     expect(killed).toBe(true);
   });
 
   it("returns false for a stub test (no assertions)", () => {
-    const addFn = createMutantFn(strippedAdd, "add")!;
+    const addFn = createMutantFn(strippedAdd, "add") as (...args: unknown[]) => unknown;
     const stubPrepared = prepareTestScript(ADD_CORPUS_STUB);
     const killed = executeMutantTest(stubPrepared, "add", addFn, 5000);
     expect(killed).toBe(false);
   });
 
   it("returns false on timeout (inconclusive) — timeout error treated as survived", () => {
-    const addFn = createMutantFn(strippedAdd, "add")!;
+    const addFn = createMutantFn(strippedAdd, "add") as (...args: unknown[]) => unknown;
     // Simulate the vm timeout path: script that throws with "timed out" in message
     const timeoutScript = `throw new Error("Script execution timed out after 5000ms");`;
     const killed = executeMutantTest(timeoutScript, "add", addFn, 5000);
@@ -313,7 +315,7 @@ describe("executeMutantTest", () => {
       "  });",
       "});",
     ].join("\n");
-    const addMinusFn = createMutantFn(strippedAddMinus, "add")!;
+    const addMinusFn = createMutantFn(strippedAddMinus, "add") as (...args: unknown[]) => unknown;
     const killed = executeMutantTest(corpusWithTest, "add", addMinusFn, 5000);
     // add(a,b) = a-b breaks commutativity → killed
     expect(killed).toBe(true);
@@ -329,7 +331,7 @@ describe("executeMutantTest", () => {
       "  });",
       "});",
     ].join("\n");
-    const addFn = createMutantFn(strippedAdd, "add")!;
+    const addFn = createMutantFn(strippedAdd, "add") as (...args: unknown[]) => unknown;
     // expect shim is no-op — doesn't actually assert — so mutant always survives
     const killed = executeMutantTest(corpusWithExpect, "add", addFn, 5000);
     expect(killed).toBe(false);
@@ -360,7 +362,7 @@ describe("selectMutants", () => {
     const selected = selectMutants(mutants, 5);
     expect(selected).toHaveLength(5);
     // Without seed: first 5
-    expect(selected[0]!.id).toBe(1);
+    expect(selected[0]?.id).toBe(1);
   });
 
   it("permutes with a seed for reproducible selection", () => {
@@ -559,7 +561,11 @@ describe("runMutationTesting — result invariants (property)", () => {
 
   it("killed + survivors.length === total for non-skipped results", async () => {
     const result = await runMutationTesting(
-      { implSource: ADD_IMPL, corpusTestSource: ADD_CORPUS_REAL, canonicalAstHash: "invariant-test" },
+      {
+        implSource: ADD_IMPL,
+        corpusTestSource: ADD_CORPUS_REAL,
+        canonicalAstHash: "invariant-test",
+      },
       { maxMutants: 5, seed: 7 },
     );
     if (!result.skipped) {
