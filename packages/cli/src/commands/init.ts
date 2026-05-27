@@ -99,6 +99,7 @@
 //   no .yakccrc.json migration needed (change affects new init runs only).
 
 import { existsSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -373,6 +374,7 @@ export async function init(
         local: { type: "boolean" },
         airgapped: { type: "boolean" },
         "skip-hooks": { type: "boolean" },
+        "skip-polyglot-hints": { type: "boolean" },
         ide: { type: "string" },
         "no-seed": { type: "boolean" },
       },
@@ -383,7 +385,7 @@ export async function init(
     logger.error(`error: ${(err as Error).message}`);
     logger.error("Usage: yakcc init [--target <dir>] [--peer <url>] [--local] [--airgapped]");
     logger.error(
-      "                  [--skip-hooks] [--ide <claude-code|cursor|cline|continue|windsurf|aider,...>] [--no-seed]",
+      "                  [--skip-hooks] [--ide <claude-code|cursor|cline|continue|windsurf|aider,...>] [--no-seed] [--skip-polyglot-hints]",
     );
     return 1;
   }
@@ -392,6 +394,8 @@ export async function init(
   const peerUrl = parsed.values.peer;
   const isAirgapped = parsed.values.airgapped === true;
   const skipHooks = parsed.values["skip-hooks"] === true;
+  const skipPolyglotHints =
+    parsed.values["skip-polyglot-hints"] === true || process.env.YAKCC_POLYGLOT_HINTS === "0";
   const noSeed = parsed.values["no-seed"] === true;
   const ideRaw = parsed.values.ide;
 
@@ -716,5 +720,108 @@ export async function init(
     logger.log("       or `yakcc init --skip-hooks` to skip hook setup entirely.");
   }
 
+  // @decision DEC-POLYGLOT-ADAPTER-PACKAGING-001 (WI-POLYGLOT-INIT-AUTODETECT #785)
+  // title: After init, scan target dir for polyglot ecosystem config files and
+  //        emit non-interactive install hints for the matching @yakcc adapter packages.
+  // status: accepted (WI-785; ADR Q7)
+  // rationale:
+  //   Polyglot adapters (@yakcc/shave-python, @yakcc/shave-go, @yakcc/shave-rust) are
+  //   optional add-ons; `yakcc init` must not auto-install them (no surprise network
+  //   activity, no surprise dependencies). But surfacing the existence of the right
+  //   adapter when a Python/Go/Rust project is detected closes the discovery gap.
+  //   Mirrors the IDE-hint pattern (DEC-CLI-INIT-NO-IDE-HINT-001): non-interactive,
+  //   exits 0, no stdin, suppressible via --skip-polyglot-hints or YAKCC_POLYGLOT_HINTS=0,
+  //   and self-suppressing when the adapter is already installed (require.resolve).
+  if (!skipPolyglotHints) {
+    emitPolyglotHints(targetDir, logger);
+  }
+
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Polyglot adapter detection (DEC-POLYGLOT-ADAPTER-PACKAGING-001 / #785)
+// ---------------------------------------------------------------------------
+
+interface PolyglotEcosystem {
+  readonly name: string;
+  readonly configFiles: readonly string[];
+  readonly adapterPackages: readonly string[];
+  /** Marker module to probe via require.resolve to detect installed adapters. */
+  readonly installedMarker: string;
+  /** When true, append the "not yet available on npm" caveat to the hint. */
+  readonly notYetPublished: boolean;
+  /** Optional follow-up shell command shown beneath the install line. */
+  readonly followUp?: string;
+}
+
+const POLYGLOT_ECOSYSTEMS: readonly PolyglotEcosystem[] = [
+  {
+    name: "Python",
+    configFiles: ["pyproject.toml", "setup.py"],
+    adapterPackages: ["@yakcc/shave-python", "@yakcc/compile-python"],
+    installedMarker: "@yakcc/shave-python",
+    notYetPublished: true,
+    followUp: "yakcc shave <dir> --language=py",
+  },
+  {
+    name: "Go",
+    configFiles: ["go.mod"],
+    adapterPackages: ["@yakcc/shave-go"],
+    installedMarker: "@yakcc/shave-go",
+    notYetPublished: true,
+  },
+  {
+    name: "Rust",
+    configFiles: ["Cargo.toml"],
+    adapterPackages: ["@yakcc/shave-rust"],
+    installedMarker: "@yakcc/shave-rust",
+    notYetPublished: true,
+  },
+];
+
+/**
+ * Scan `targetDir` for polyglot ecosystem markers and emit install hints to
+ * the logger. Self-suppressing per-ecosystem when the adapter is already
+ * resolvable via require.resolve.
+ *
+ * Pure detection (no install, no stdin, no network).
+ */
+function emitPolyglotHints(targetDir: string, logger: Logger): void {
+  for (const eco of POLYGLOT_ECOSYSTEMS) {
+    const matchedConfig = eco.configFiles.find((f) => existsSync(join(targetDir, f)));
+    if (matchedConfig === undefined) continue;
+    if (isAdapterInstalled(eco.installedMarker)) continue;
+    logger.log("");
+    logger.log(`  hint: ${eco.name} project detected (${matchedConfig})`);
+    if (eco.notYetPublished) {
+      logger.log(
+        `        Install the ${eco.name} shave/compile adapters (not yet published on npm):`,
+      );
+    } else {
+      logger.log(`        Install the ${eco.name} shave/compile adapters:`);
+    }
+    logger.log(`          npm install ${eco.adapterPackages.join(" ")}`);
+    if (eco.followUp !== undefined) {
+      logger.log(`        Then run: ${eco.followUp}`);
+    }
+  }
+}
+
+/**
+ * True when the adapter package can be resolved from the current Node module
+ * search path (already installed). False when require.resolve throws.
+ *
+ * We use createRequire(import.meta.url) so resolution starts from this file's
+ * location, matching where the adapter would be installed by the surrounding
+ * project (the yakcc CLI itself or the user's project node_modules).
+ */
+function isAdapterInstalled(pkgName: string): boolean {
+  try {
+    const req = createRequire(import.meta.url);
+    req.resolve(pkgName);
+    return true;
+  } catch {
+    return false;
+  }
 }
