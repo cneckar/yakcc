@@ -29,6 +29,8 @@
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
+import { runMutationTesting } from "@yakcc/variance";
+import type { MutationResult } from "@yakcc/variance";
 import { extractCorpus } from "../corpus/index.js";
 import type { CorpusAtomSpec, CorpusExtractionOptions } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
@@ -114,6 +116,33 @@ export interface PersistOptions {
         readonly sourceOffset: number | null;
       }
     | undefined;
+
+  // @decision DEC-MUTATE-PERSIST-001
+  // title: skipMutationGate bypasses the mutation-testing gate in PersistOptions
+  // status: decided (WI-776)
+  // rationale:
+  //   The mutation-testing gate runs fast-check assertions against mutated impls
+  //   using node:vm. In dev workflows and test suites, the gate can be bypassed
+  //   via this option. The CLI default is to enforce (false). Bootstrap path
+  //   enforces the gate but writes failures to bootstrap/report.json rather than
+  //   aborting (handled by the bootstrap orchestrator, not by this function).
+  //   When skipMutationGate is true (or process.env.YAKCC_SKIP_MUTATION_GATE=1),
+  //   storeBlock is called unconditionally.
+  /**
+   * When true, skip the mutation-testing gate for this atom.
+   *
+   * Default: false (gate is enforced). Set to true for development or test
+   * workflows. Can also be bypassed by setting YAKCC_SKIP_MUTATION_GATE=1.
+   */
+  readonly skipMutationGate?: boolean | undefined;
+
+  /**
+   * Minimum fraction of non-equivalent mutants that must be killed by the
+   * corpus property tests for the atom to be admitted.
+   *
+   * Default: 0.80. Range [0, 1].
+   */
+  readonly mutationKillRateThreshold?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +230,36 @@ export async function persistNovelGlueAtom(
     sourceFile: sc?.sourceFile ?? null,
     sourceOffset: sc?.sourceOffset ?? null,
   };
+
+  // Mutation-testing gate: verify corpus tests kill a minimum fraction of
+  // mutants before admitting the atom to the registry.
+  // Bypassed when skipMutationGate is true or YAKCC_SKIP_MUTATION_GATE=1.
+  const gateSkipped =
+    options?.skipMutationGate === true || process.env.YAKCC_SKIP_MUTATION_GATE === "1";
+
+  if (!gateSkipped) {
+    const corpusTestSource = new TextDecoder().decode(corpusResult.bytes);
+    const killRateThreshold = options?.mutationKillRateThreshold ?? 0.8;
+    const gateResult: MutationResult = await runMutationTesting(
+      {
+        implSource: entry.source,
+        corpusTestSource,
+        canonicalAstHash: entry.canonicalAstHash,
+        atomName: intentCard.behavior.slice(0, 60),
+      },
+      { killRateThreshold },
+    );
+    if (!gateResult.skipped && gateResult.killRate < killRateThreshold) {
+      const survivorDescs = gateResult.survivors
+        .filter((s) => s.reason === "tests_passed")
+        .slice(0, 3)
+        .map((s) => s.mutant.description)
+        .join("; ");
+      throw new Error(
+        `Mutation gate: atom rejected — kill rate ${(gateResult.killRate * 100).toFixed(0)}% < ${(killRateThreshold * 100).toFixed(0)}% threshold. Surviving mutants: ${survivorDescs || "(none listed)"}. Use --skip-mutation-gate or set YAKCC_SKIP_MUTATION_GATE=1 to bypass.`,
+      );
+    }
+  }
 
   // Persist to registry. storeBlock is idempotent: storing the same
   // blockMerkleRoot twice is a no-op (per Registry contract).
