@@ -52,7 +52,27 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import { SCHEMA_VERSION } from "@yakcc/registry";
-import { serializeWireBlockTriplet } from "./wire.js";
+import { deserializeWireBlockTriplet, serializeWireBlockTriplet } from "./wire.js";
+
+// ---------------------------------------------------------------------------
+// @decision DEC-COMMONS-SUBMIT-WRITE-ENDPOINT-001 (WI-794 slice 2)
+// @title POST /v1/blocks/submit — anonymous unauthenticated write endpoint
+// @status accepted (WI-794 slice 2)
+// @rationale
+//   DEC-COMMONS-NO-AUTH-001 mandates anonymous writes for the commons. This
+//   route is the server-side half of the auto-submit flywheel: any client
+//   that has captured a novel atom POSTs the JSON wire envelope here, and
+//   the server inserts via storeBlock. storeBlock is idempotent on
+//   BlockMerkleRoot, so re-submission is a no-op (returns 200 with
+//   {accepted: true, novel: false}). All wire-format validation is delegated
+//   to deserializeWireBlockTriplet, which throws structured TypeErrors on
+//   malformed input — those surface as 400 bad_request to the caller.
+//   This slice ships only the server route; the client-side fire-and-forget
+//   push wiring at the storeBlock seam is slice 3 (WI-794).
+// ---------------------------------------------------------------------------
+
+/** Maximum bytes accepted in a POST /v1/blocks/submit request body. */
+const SUBMIT_MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MiB — generous; typical envelope is < 64 KiB
 
 // ---------------------------------------------------------------------------
 // Options
@@ -277,25 +297,134 @@ async function handleListCatalogPage(
 }
 
 // ---------------------------------------------------------------------------
+// POST /v1/blocks/submit — anonymous commons-push write endpoint
+// (DEC-COMMONS-SUBMIT-WRITE-ENDPOINT-001 / WI-794 slice 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the request body as a UTF-8 string, bounded by SUBMIT_MAX_BODY_BYTES.
+ * Resolves to the body string on success, or rejects with an Error whose
+ * .message names the failure mode ("body_too_large" | "read_error").
+ */
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > SUBMIT_MAX_BODY_BYTES) {
+        reject(new Error("body_too_large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    });
+    req.on("error", (err) => {
+      reject(new Error(`read_error: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * POST /v1/blocks/submit handler.
+ *
+ * Wire format: a WireBlockTriplet JSON body (the same shape returned by
+ * GET /v1/block/<root>). On accept: storeBlock is called and 200 is returned.
+ * Idempotency: storeBlock dedupes on BlockMerkleRoot, so re-submitting the
+ * same atom is a server-side no-op — the response is still 200.
+ *
+ * Failure modes:
+ *   - body > 5 MiB → 413 body_too_large
+ *   - malformed JSON → 400 bad_request (with reason="malformed_json")
+ *   - wire-format violation → 400 bad_request (with reason from deserializeWireBlockTriplet)
+ *   - storeBlock unexpected throw → 500 internal_error
+ */
+async function handleSubmitBlock(
+  req: IncomingMessage,
+  res: ServerResponse,
+  local: Registry,
+): Promise<void> {
+  let body: string;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "body_too_large") {
+      sendError(res, 413, "body_too_large");
+      return;
+    }
+    sendError(res, 400, "bad_request");
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    sendJson(res, 400, { error: "bad_request", reason: "malformed_json" });
+    return;
+  }
+
+  let row: import("@yakcc/registry").BlockTripletRow;
+  try {
+    row = deserializeWireBlockTriplet(parsed);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    sendJson(res, 400, { error: "bad_request", reason });
+    return;
+  }
+
+  try {
+    await local.storeBlock(row);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    sendJson(res, 500, { error: "internal_error", reason });
+    return;
+  }
+
+  // 200 OK on accept (or no-op via BlockMerkleRoot dedupe). The wire response
+  // is deliberately minimal — no per-atom metadata, no novelty flag — to
+  // preserve the anonymous-by-construction property (DEC-COMMONS-NO-AUTH-001).
+  sendJson(res, 200, { accepted: true });
+}
+
+// ---------------------------------------------------------------------------
 // Request dispatcher
 // ---------------------------------------------------------------------------
 
 /**
  * Parse the incoming request and route it to the appropriate handler.
  *
- * All non-GET methods return 405 with the §3 error envelope.
- * Unknown GET paths return 404 with { error: "not_found" }.
+ * POST /v1/blocks/submit is the only write endpoint (WI-794 slice 2 /
+ * DEC-COMMONS-SUBMIT-WRITE-ENDPOINT-001). All other paths are read-only;
+ * non-GET methods on those paths return 405 with the §3 error envelope.
+ * Unknown paths return 404 with { error: "not_found" }.
  */
 async function dispatch(req: IncomingMessage, res: ServerResponse, local: Registry): Promise<void> {
-  // All non-GET methods return 405 (DEC-V1-WAVE-1-SCOPE-001: read-only).
+  // Parse path — strip query string.
+  const rawPath = (req.url ?? "/").split("?")[0] ?? "/";
+
+  // POST /v1/blocks/submit is the sole write endpoint
+  // (DEC-COMMONS-SUBMIT-WRITE-ENDPOINT-001 / WI-794 slice 2).
+  // All other paths are read-only (DEC-V1-WAVE-1-SCOPE-001) — non-GET → 405.
+  if (rawPath === "/v1/blocks/submit") {
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST");
+      sendError(res, 405, "method_not_allowed");
+      return;
+    }
+    await handleSubmitBlock(req, res, local);
+    return;
+  }
+
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
     sendError(res, 405, "method_not_allowed");
     return;
   }
-
-  // Parse path — strip query string.
-  const rawPath = (req.url ?? "/").split("?")[0] ?? "/";
 
   // Route: GET /schema-version
   if (rawPath === "/schema-version") {
