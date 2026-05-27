@@ -299,3 +299,8 @@ export {
   type ExtractedSignature,
 } from "./source-extract.js";
 export { pickPrimaryDeclaration, type PrimaryDeclaration } from "./source-pick.js";
+export {
+  AmbiguousPurityError,
+  CannotRaiseToIRError,
+  type SourceLocation,
+} from "./polyglot-errors.js";
