@@ -105,7 +105,13 @@ import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
-import { RC_FILENAME, type YakccEmbeddingConfig, type YakccRc, readRc, writeRc } from "../lib/yakccrc.js";
+import {
+  RC_FILENAME,
+  type YakccEmbeddingConfig,
+  type YakccRc,
+  readRc,
+  writeRc,
+} from "../lib/yakccrc.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
@@ -619,7 +625,8 @@ export async function init(
     }
     if (providerKind === "openai-compatible") {
       const config: YakccEmbeddingConfig = { provider: "openai-compatible" };
-      if (process.env.YAKCC_EMBEDDING_BASE_URL) config.baseUrl = process.env.YAKCC_EMBEDDING_BASE_URL;
+      if (process.env.YAKCC_EMBEDDING_BASE_URL)
+        config.baseUrl = process.env.YAKCC_EMBEDDING_BASE_URL;
       if (process.env.YAKCC_EMBEDDING_MODEL) config.model = process.env.YAKCC_EMBEDDING_MODEL;
       if (process.env.YAKCC_EMBEDDING_DIMENSION) {
         const d = Number.parseInt(process.env.YAKCC_EMBEDDING_DIMENSION, 10);
