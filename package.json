@@ -7,7 +7,7 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency=4",
     "lint": "turbo run lint && node scripts/check-no-bom.mjs",
     "check-bom": "node scripts/check-no-bom.mjs",
     "check-bom:test": "node --test scripts/check-no-bom.test.mjs",
