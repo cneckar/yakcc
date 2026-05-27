@@ -80,13 +80,14 @@ export function mapPythonType(annotation: string): string {
   if (subscript !== null) {
     const { container, inner } = subscript;
     // Normalize PEP 585 modern / typing module legacy spellings.
-    const normalizedContainer = container === "List"
-      ? "list"
-      : container === "Dict"
-        ? "dict"
-        : container === "Tuple"
-          ? "tuple"
-          : container;
+    const normalizedContainer =
+      container === "List"
+        ? "list"
+        : container === "Dict"
+          ? "dict"
+          : container === "Tuple"
+            ? "tuple"
+            : container;
 
     switch (normalizedContainer) {
       case "list": {

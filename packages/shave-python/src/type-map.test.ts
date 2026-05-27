@@ -3,7 +3,7 @@
 // Tests for the Python → TS-subset IR type mapping (WI-782 slice 2).
 
 import { describe, expect, it } from "vitest";
-import { mapPythonType, UnsupportedTypeError } from "./type-map.js";
+import { UnsupportedTypeError, mapPythonType } from "./type-map.js";
 
 describe("mapPythonType — primitives", () => {
   it.each([

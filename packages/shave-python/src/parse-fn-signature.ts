@@ -12,7 +12,7 @@
 // (slice 3), snake_case → camelCase normalization (slice 3).
 
 import type { LibcstParseResult } from "./libcst-parser.js";
-import { mapPythonType, UnsupportedTypeError } from "./type-map.js";
+import { UnsupportedTypeError, mapPythonType } from "./type-map.js";
 
 export interface RaisedParam {
   /** Parameter name as written in Python (no normalization yet — slice 3). */
@@ -77,9 +77,7 @@ interface EnvelopeFunction {
  * Throws on the first error encountered (missing annotation or unsupported
  * type).  Callers that want all errors should walk the envelope themselves.
  */
-export function extractFunctionSignatures(
-  envelope: LibcstParseResult,
-): FunctionSignature[] {
+export function extractFunctionSignatures(envelope: LibcstParseResult): FunctionSignature[] {
   const moduleRecord = envelope.module as unknown as { functions?: EnvelopeFunction[] };
   const fns = moduleRecord.functions ?? [];
   return fns.map((fn) => extractOne(fn));

@@ -7,10 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { LibcstParseResult } from "./libcst-parser.js";
-import {
-  extractFunctionSignatures,
-  MissingTypeAnnotationError,
-} from "./parse-fn-signature.js";
+import { MissingTypeAnnotationError, extractFunctionSignatures } from "./parse-fn-signature.js";
 import { UnsupportedTypeError } from "./type-map.js";
 
 interface EnvelopeFunction {
