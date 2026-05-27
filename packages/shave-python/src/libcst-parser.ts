@@ -23,8 +23,8 @@
 
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Thrown when the libcst subprocess fails for any reason — Python not on
@@ -127,8 +127,7 @@ export async function parsePythonSource(
   source: string,
   options: LibcstParseOptions = {},
 ): Promise<LibcstParseResult> {
-  const python =
-    options.pythonExecutable ?? process.env.YAKCC_PY ?? DEFAULT_PYTHON;
+  const python = options.pythonExecutable ?? process.env.YAKCC_PY ?? DEFAULT_PYTHON;
   const script = options.scriptPath ?? defaultScriptPath();
   const spawnFn = options.spawnImpl ?? (spawn as unknown as SpawnImpl);
 

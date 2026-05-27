@@ -15,8 +15,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AdapterSubprocessError,
   type LibcstParseOptions,
-  parsePythonSource,
   type SpawnImpl,
+  parsePythonSource,
 } from "./libcst-parser.js";
 
 interface MockStream extends EventEmitter {
@@ -194,10 +194,10 @@ describe("parsePythonSource (#782 slice 1)", () => {
     let capturedCmd = "";
     const spawnFn: SpawnImpl = (command, _args) => {
       capturedCmd = command;
-      const child = mockSpawn({ stdout: JSON.stringify({ version: 1, module: { type: "Module" } }), exitCode: 0 })(
-        command,
-        _args,
-      );
+      const child = mockSpawn({
+        stdout: JSON.stringify({ version: 1, module: { type: "Module" } }),
+        exitCode: 0,
+      })(command, _args);
       return child;
     };
     // Note: not passing pythonExecutable in opts — should fall through to YAKCC_PY.
