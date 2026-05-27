@@ -18,13 +18,15 @@
  *   suite uses its own tmpdir to prevent cross-test interference.
  *
  * @decision DEC-CLI-BOOTSTRAP-TEST-002
- * @title Fixture mini-projects use real SPDX-licensed TypeScript source
+ * @title Fixture mini-projects use real TypeScript source with deterministic failure modes
  * @status accepted
- * @rationale The shave pipeline has a license gate that requires a recognized
- *   SPDX header. Tests that expect success use "// SPDX-License-Identifier: MIT"
- *   headers. Tests that expect failure omit or use invalid headers. This tests
- *   the real production failure mode (license gate refusal) rather than mocking
- *   internal behaviour.
+ * @rationale Tests that expect success use valid TypeScript source (VALID_TS_SOURCE).
+ *   Tests that expect failure use RECURSION_DEPTH_SOURCE — a 15-level deeply nested
+ *   function that triggers RecursionDepthExceededError in decompose(). The license
+ *   gate was removed (DEC-LICENSE-GATE-REMOVE-001, WI-682, 2026-05-17), so the old
+ *   no-SPDX fixture no longer produces a failure. RecursionDepthExceededError is a
+ *   deterministic real failure mode that exercises the same bootstrap exit-code
+ *   propagation invariant without depending on license policy.
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -79,10 +81,50 @@ export function add(a: number, b: number): number {
 }
 `;
 
-/** A TypeScript source WITHOUT an SPDX header — triggers license gate failure. */
-const NO_SPDX_SOURCE = `// No license header here — should fail
-export function noLicense(x: number): number {
-  return x * 2;
+/**
+ * A TypeScript source with 15 levels of nested if-blocks.
+ * Triggers RecursionDepthExceededError (depth 25 > DEFAULT_MAX_DEPTH=24) in decompose().
+ *
+ * Note: NO_SPDX_SOURCE was the prior fixture here. It was replaced by this fixture
+ * after DEC-LICENSE-GATE-REMOVE-001 (WI-682, 2026-05-17) removed the ingest-side
+ * license gate. A source file lacking an SPDX header now shaves successfully,
+ * so the old fixture no longer triggered a failure. This fixture exercises the
+ * same bootstrap invariant — "exit 1 when any file fails to shave" — via a
+ * RecursionDepthExceededError that is deterministic and unaffected by license policy.
+ */
+const RECURSION_DEPTH_SOURCE = `export function deeplyNested(): number {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+  if (true) {
+    return 42;
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  }
+  return 0;
 }
 `;
 
@@ -174,21 +216,21 @@ describe("bootstrap on a fixture mini-project produces a manifest", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 3: exits 1 on file-shave failure (no SPDX header)
+// Suite 3: exits 1 on file-shave failure (recursion depth exceeded)
 // ---------------------------------------------------------------------------
 
 describe("bootstrap exits 1 on file-shave failure", () => {
-  it("exits 1 when a file lacks SPDX header", async () => {
-    const projDir = makeFixtureProject(suiteDir, "proj-nospdx", [
+  it("exits 1 when a file exceeds the recursion depth limit", async () => {
+    const projDir = makeFixtureProject(suiteDir, "proj-deepnest", [
       {
         relativePath: "packages/bad/src/b.ts",
-        content: NO_SPDX_SOURCE,
+        content: RECURSION_DEPTH_SOURCE,
       },
     ]);
 
-    const registryPath = join(suiteDir, "nospdx-r.sqlite");
-    const manifestPath = join(suiteDir, "nospdx-m.json");
-    const reportPath = join(suiteDir, "nospdx-rep.json");
+    const registryPath = join(suiteDir, "deepnest-r.sqlite");
+    const manifestPath = join(suiteDir, "deepnest-m.json");
+    const reportPath = join(suiteDir, "deepnest-rep.json");
 
     const logger = new CollectingLogger();
     const origCwd = process.cwd();
@@ -475,13 +517,17 @@ describe("bootstrap --verify exits 1 with structured diff on mismatch", () => {
 //
 // These tests exercise the expected-failures.json exemption mechanism without
 // running the full shave pipeline. They use a real temp-file sqlite registry
-// but a fixture project where failures are synthetic (no-SPDX header) and the
-// expected-failures.json file is written inline so we control path+errorClass.
+// but a fixture project where failures are synthetic (recursion depth exceeded)
+// and the expected-failures.json file is written inline so we control path+errorClass.
+//
+// Prior to DEC-LICENSE-GATE-REMOVE-001 (WI-682, 2026-05-17) these fixtures used
+// NO_SPDX_SOURCE (a file lacking an SPDX header). Post-WI-682 that file shaves
+// successfully, so RECURSION_DEPTH_SOURCE is used instead.
 //
 // Production sequence exercised (Compound-Interaction requirement):
 //   bootstrap([...flags, "--expected-failures", efPath], logger)
 //   → loadExpectedFailures(efPath)
-//   → shave loop produces FileOutcomeFailure for no-SPDX file
+//   → shave loop produces FileOutcomeFailure for deeply-nested file (RecursionDepthExceededError)
 //   → reclassification maps it to FileOutcomeExpectedFailure via path+errorClass key
 //   → summary shows expected-failures count, exit 0
 //   → report.json contains outcome:"expected-failure"
@@ -508,14 +554,18 @@ describe("bootstrap expected-failures exemption", () => {
 
   it("still exits 1 when a non-exempted file also fails", async () => {
     // Two bad files; only one is in expected-failures.json. The other must still fail.
+    // Both use RECURSION_DEPTH_SOURCE (RecursionDepthExceededError) — the post-WI-682
+    // canonical failure mode. NO_SPDX_SOURCE was used here before DEC-LICENSE-GATE-REMOVE-001
+    // removed the ingest-side license gate (WI-682, 2026-05-17), after which no-SPDX
+    // files shave successfully and no longer produce a FileOutcomeFailure.
     const projDir = makeFixtureProject(suiteDir, "proj-ef-partial", [
       {
         relativePath: "packages/foo/src/bad1.ts",
-        content: NO_SPDX_SOURCE,
+        content: RECURSION_DEPTH_SOURCE,
       },
       {
         relativePath: "packages/foo/src/bad2.ts",
-        content: NO_SPDX_SOURCE,
+        content: RECURSION_DEPTH_SOURCE,
       },
     ]);
 
