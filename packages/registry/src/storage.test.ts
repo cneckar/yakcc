@@ -4308,3 +4308,131 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
     await registry.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// DEC-EMBED-REGISTRY-META-002 / issue #811 — open-time guard only fires on
+// explicit provider intent (options.embeddings OR YAKCC_EMBEDDING_PROVIDER).
+// Default openRegistry calls from non-embedding paths (registry init, propose,
+// bootstrap) must not throw on a stored/default mismatch.
+// ---------------------------------------------------------------------------
+
+function makeMockProviderWithId(modelId: string, dim = 384): EmbeddingProvider {
+  return {
+    modelId,
+    dimension: dim,
+    async embed(text: string): Promise<Float32Array> {
+      const vec = new Float32Array(dim);
+      for (let i = 0; i < dim; i++) {
+        vec[i] = (text.charCodeAt(i % text.length) || 0) / 128;
+      }
+      return vec;
+    },
+  };
+}
+
+describe("openRegistry — DEC-EMBED-REGISTRY-META-002 (#811) — explicit-intent guard", () => {
+  let savedEnv: string | undefined;
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    savedEnv = process.env.YAKCC_EMBEDDING_PROVIDER;
+    // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+    delete process.env.YAKCC_EMBEDDING_PROVIDER;
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    tmpDir = mkdtempSync(join(tmpdir(), "yakcc-issue811-test-"));
+    dbPath = join(tmpDir, "r.sqlite");
+  });
+
+  afterEach(async () => {
+    if (savedEnv === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+      delete process.env.YAKCC_EMBEDDING_PROVIDER;
+    } else {
+      process.env.YAKCC_EMBEDDING_PROVIDER = savedEnv;
+    }
+    const { rmSync } = await import("node:fs");
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("default re-open (no explicit provider, no env) does NOT throw even when stored model differs", async () => {
+    // Seed with explicit "mock/seeded-provider"
+    const reg1 = await openRegistry(dbPath, {
+      embeddings: makeMockProviderWithId("mock/seeded-provider"),
+    });
+    const spec = makeSpecYak("Seeded model spec");
+    await reg1.storeBlock(makeBlockRow(spec));
+    await reg1.close();
+
+    // Re-open with NO options, NO env var — must NOT throw (#811 fix).
+    const reg2 = await openRegistry(dbPath);
+    expect(reg2).toBeDefined();
+    await reg2.close();
+  });
+
+  it("default re-open does NOT overwrite the stored embedding_model_id", async () => {
+    const reg1 = await openRegistry(dbPath, {
+      embeddings: makeMockProviderWithId("mock/seeded-provider"),
+    });
+    const spec = makeSpecYak("Seeded model spec — stored id preserved");
+    await reg1.storeBlock(makeBlockRow(spec));
+    expect(await reg1.getStoredEmbeddingModelId()).toBe("mock/seeded-provider");
+    await reg1.close();
+
+    // Re-open with no options/env — stored model id must remain unchanged.
+    const reg2 = await openRegistry(dbPath);
+    expect(await reg2.getStoredEmbeddingModelId()).toBe("mock/seeded-provider");
+    await reg2.close();
+  });
+
+  it("explicit options.embeddings with mismatching modelId DOES throw (guard preserved)", async () => {
+    const reg1 = await openRegistry(dbPath, {
+      embeddings: makeMockProviderWithId("mock/seeded-provider"),
+    });
+    const spec = makeSpecYak("Seeded model spec for explicit-intent guard");
+    await reg1.storeBlock(makeBlockRow(spec));
+    await reg1.close();
+
+    // Re-open with an EXPLICIT different provider — must throw with reason embedding_model_mismatch.
+    await expect(
+      openRegistry(dbPath, { embeddings: makeMockProviderWithId("mock/other-provider") }),
+    ).rejects.toMatchObject({
+      reason: "embedding_model_mismatch",
+    });
+  });
+
+  it("YAKCC_EMBEDDING_PROVIDER set to mismatching model DOES throw (guard preserved)", async () => {
+    const reg1 = await openRegistry(dbPath, {
+      embeddings: makeMockProviderWithId("mock/seeded-provider"),
+    });
+    const spec = makeSpecYak("Seeded model spec for env-intent guard");
+    await reg1.storeBlock(makeBlockRow(spec));
+    await reg1.close();
+
+    // Re-open with YAKCC_EMBEDDING_PROVIDER=local — env-set explicit intent should throw
+    // because the default local provider (Xenova/bge-small-en-v1.5) mismatches the
+    // stored mock/seeded-provider.
+    process.env.YAKCC_EMBEDDING_PROVIDER = "local";
+    await expect(openRegistry(dbPath)).rejects.toMatchObject({
+      reason: "embedding_model_mismatch",
+    });
+  });
+
+  it("autoRebuild bypasses the guard even when explicit intent mismatches", async () => {
+    const reg1 = await openRegistry(dbPath, {
+      embeddings: makeMockProviderWithId("mock/seeded-provider"),
+    });
+    const spec = makeSpecYak("Seeded model spec for autoRebuild bypass");
+    await reg1.storeBlock(makeBlockRow(spec));
+    await reg1.close();
+
+    // Explicit mismatch + autoRebuild=true → no throw, opens normally.
+    const reg2 = await openRegistry(dbPath, {
+      embeddings: makeMockProviderWithId("mock/other-provider"),
+      autoRebuild: true,
+    });
+    expect(reg2).toBeDefined();
+    await reg2.close();
+  });
+});
