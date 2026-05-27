@@ -599,3 +599,22 @@ function intersectCweSets(arrays: readonly (readonly CweId[])[]): readonly CweId
   if (first === undefined) return [];
   return first.filter((cwe) => rest.every((arr) => arr.includes(cwe)));
 }
+
+// ---------------------------------------------------------------------------
+// Mutation-testing gate (re-exported for callers such as @yakcc/shave)
+// ---------------------------------------------------------------------------
+// @decision DEC-MUTATE-EXPORT-001
+// title: Mutation-testing gate is exported from @yakcc/variance main index
+// status: decided
+// rationale: Callers (shave persist path, bootstrap path) import a single entry
+//   point. Re-exporting from the sub-module barrel here avoids callers having to
+//   reach into implementation-internal paths.
+export type {
+  Mutant,
+  SurvivorInfo,
+  SurvivorReason,
+  MutationResult,
+  MutationInput,
+  MutationOptions,
+} from "./mutate/index.js";
+export { runMutationTesting, clearMutationCache } from "./mutate/index.js";
