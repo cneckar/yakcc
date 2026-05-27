@@ -827,10 +827,15 @@ export async function regenerateCorpus(
       cacheMisses++;
       if (result.wasError) {
         shaveFailures++;
-      } else {
-        // Store new rows in cache (createdAt=0 for byte-stability)
-        cacheEntries[contentHash] = result.rows.map((r) => serializeRow({ ...r, createdAt: 0 }));
       }
+      // Store entry unconditionally (createdAt=0 for byte-stability).
+      // On wasError, result.rows is [], so we store an empty entry —
+      // this preserves the cold/warm determinism contract: warm pass for
+      // this file will be a cache hit producing the same (empty) rows.
+      // Without this, a transient/persistent shave error on cold pass would
+      // cause a cache miss on warm pass, breaking
+      // "cold-then-warm produces byte-identical atoms" (closes #798).
+      cacheEntries[contentHash] = result.rows.map((r) => serializeRow({ ...r, createdAt: 0 }));
     }
 
     // Map every blockMerkleRoot produced by this file to its source path.
