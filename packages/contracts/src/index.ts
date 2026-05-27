@@ -304,3 +304,14 @@ export {
   CannotRaiseToIRError,
   type SourceLocation,
 } from "./polyglot-errors.js";
+export {
+  type AssertionDef,
+  type AssertionValue,
+  type GeneratorDef,
+  type InputDef,
+  type PropertyDef,
+  type PropertySpec,
+  validatePropertySpec,
+} from "./proof-properties.js";
+export { emitFastCheckTests } from "./proof-emitters/fast-check.js";
+export { emitHypothesisTests } from "./proof-emitters/hypothesis.js";

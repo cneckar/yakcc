@@ -34,7 +34,14 @@
  *   the seam with correct args; --local skips it; --airgapped skips it.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync as writeFileSyncForPolyglot,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
@@ -1116,5 +1123,130 @@ describe("init — runFederation seam: default-peer mirror invocation (DEC-WPE-D
     const fed = rc?.federation as Record<string, unknown> | undefined;
     const peers = (fed?.peers as string[] | undefined) ?? [];
     expect(peers.includes("https://registry.yakcc.com")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 25: Polyglot adapter detection (DEC-POLYGLOT-ADAPTER-PACKAGING-001 / #785)
+//
+// Scans target dir for pyproject.toml / setup.py / go.mod / Cargo.toml after
+// init completes. Hints are non-interactive (exit 0, no stdin). Suppressible
+// via --skip-polyglot-hints or YAKCC_POLYGLOT_HINTS=0. Self-suppress when the
+// adapter is already installed (require.resolve).
+// ---------------------------------------------------------------------------
+
+describe("init — polyglot adapter detection (#785)", () => {
+  it("emits a Python hint when pyproject.toml exists in target dir", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("Python project detected (pyproject.toml)");
+    expect(out).toContain("npm install @yakcc/shave-python @yakcc/compile-python");
+    expect(out).toContain("yakcc shave <dir> --language=py");
+  });
+
+  it("emits a Python hint when setup.py exists (alternative marker)", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "setup.py"), "from setuptools import setup\nsetup()\n");
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    expect(logger.logLines.join("\n")).toContain("Python project detected (setup.py)");
+  });
+
+  it("emits a Go hint with not-yet-published caveat for go.mod", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("Go project detected (go.mod)");
+    expect(out).toContain("not yet published on npm");
+    expect(out).toContain("npm install @yakcc/shave-go");
+  });
+
+  it("emits a Rust hint with not-yet-published caveat for Cargo.toml", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "Cargo.toml"), '[package]\nname="x"\nversion="0.0.1"\n');
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("Rust project detected (Cargo.toml)");
+    expect(out).toContain("not yet published on npm");
+    expect(out).toContain("npm install @yakcc/shave-rust");
+  });
+
+  it("emits multiple hints for a multi-language project", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
+    writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("Python project detected");
+    expect(out).toContain("Go project detected");
+  });
+
+  it("emits NO hint in a TS-only project (no language config files)", async () => {
+    // No pyproject.toml / setup.py / go.mod / Cargo.toml written.
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).not.toContain("project detected");
+    expect(out).not.toContain("@yakcc/shave-python");
+    expect(out).not.toContain("@yakcc/shave-go");
+    expect(out).not.toContain("@yakcc/shave-rust");
+  });
+
+  it("--skip-polyglot-hints suppresses all hints", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
+    writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
+    const logger = new CollectingLogger();
+    const code = await init(
+      ["--target", tmpDir, "--skip-hooks", "--no-seed", "--local", "--skip-polyglot-hints"],
+      logger,
+    );
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).not.toContain("project detected");
+  });
+
+  it("YAKCC_POLYGLOT_HINTS=0 suppresses all hints", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
+    const prev = process.env.YAKCC_POLYGLOT_HINTS;
+    process.env.YAKCC_POLYGLOT_HINTS = "0";
+    try {
+      const logger = new CollectingLogger();
+      const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+      expect(code).toBe(0);
+      expect(logger.logLines.join("\n")).not.toContain("project detected");
+    } finally {
+      if (prev === undefined) {
+        // biome-ignore lint/performance/noDelete: process.env requires delete to truly unset
+        delete process.env.YAKCC_POLYGLOT_HINTS;
+      } else {
+        process.env.YAKCC_POLYGLOT_HINTS = prev;
+      }
+    }
+  });
+
+  it("init exits 0 (non-interactive) even when hints fire", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
+    writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/x\n");
+    writeFileSyncForPolyglot(join(tmpDir, "Cargo.toml"), '[package]\nname="x"\nversion="0.0.1"\n');
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+  });
+
+  it("does NOT install anything automatically (no node_modules side-effects)", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "pyproject.toml"), '[project]\nname="x"\n');
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    // node_modules must not appear under the target as a side-effect of detection
+    expect(existsSync(join(tmpDir, "node_modules"))).toBe(false);
   });
 });
