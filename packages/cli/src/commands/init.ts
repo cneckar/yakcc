@@ -632,9 +632,7 @@ export async function init(
         );
       } else if (mirrorCode === MIRROR_FAIL_EXCEPTION) {
         const detail =
-          mirrorException instanceof Error
-            ? `${mirrorException.message}`
-            : String(mirrorException);
+          mirrorException instanceof Error ? `${mirrorException.message}` : String(mirrorException);
         logger.error(
           `Note: mirror from ${effectivePeerUrl} threw an error (${detail}) — run 'yakcc federation mirror --remote ${effectivePeerUrl} --registry ${registryPath}' to see full output.`,
         );
