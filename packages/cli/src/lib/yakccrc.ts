@@ -151,6 +151,35 @@ export function addInstalledHook(targetDir: string, ide: string): void {
 }
 
 /**
+ * Write the embedding provider configuration to `.yakccrc.json` at `targetDir`.
+ *
+ * Semantics (DEC-CLI-YAKCCRC-AUTHORITY-001):
+ *   - If .yakccrc.json does not exist: CREATE a minimal rc with version=1 and
+ *     the given embeddings config.
+ *   - If .yakccrc.json exists: merge the embeddings field, preserving all
+ *     other fields verbatim (EC-S2-I3).
+ *   - If config is null: remove the embeddings field (resets to local default).
+ *
+ * @param targetDir - Absolute or relative path to the project root.
+ * @param config    - Embedding config to persist, or null to clear.
+ */
+export function setEmbeddingsConfig(targetDir: string, config: YakccEmbeddingConfig | null): void {
+  const existing = readRc(targetDir);
+  let rc: YakccRc;
+  if (existing !== null) {
+    if (config === null) {
+      const { embeddings: _dropped, ...rest } = existing;
+      rc = rest as YakccRc;
+    } else {
+      rc = { ...existing, embeddings: config };
+    }
+  } else {
+    rc = config !== null ? { version: 1, embeddings: config } : { version: 1 };
+  }
+  writeRc(targetDir, rc);
+}
+
+/**
  * Remove `ide` from `.yakccrc.json.installedHooks` at `targetDir`.
  *
  * Semantics:

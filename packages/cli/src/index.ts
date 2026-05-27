@@ -237,7 +237,7 @@ export async function runCli(
 
     case "registry": {
       if (subcommand === "init") {
-        return registryInit(rest, logger);
+        return registryInit(rest, logger, { embeddings: opts?.embeddings });
       }
       if (subcommand === "rebuild") {
         // @decision DEC-EMBED-MODEL-MIGRATION-001
@@ -273,7 +273,7 @@ export async function runCli(
 
     case "propose": {
       const proposeArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
-      return propose(proposeArgv, logger);
+      return propose(proposeArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "query": {

@@ -11,8 +11,13 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
-import { type Registry, openRegistry } from "@yakcc/registry";
+import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+
+/** Internal options for registryInit — embeddings seam for test injection. */
+export interface RegistryInitOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
 
 /** Default registry path, relative to cwd. */
 export const DEFAULT_REGISTRY_PATH = ".yakcc/registry.sqlite";
@@ -27,7 +32,7 @@ export const DEFAULT_REGISTRY_PATH = ".yakcc/registry.sqlite";
  * @param logger - Output sink; defaults to console via the caller.
  * @returns Process exit code (0 = success, 1 = error).
  */
-export async function registryInit(argv: readonly string[], logger: Logger): Promise<number> {
+export async function registryInit(argv: readonly string[], logger: Logger, opts?: RegistryInitOptions): Promise<number> {
   const { values } = parseArgs({
     args: [...argv],
     options: {
@@ -46,7 +51,7 @@ export async function registryInit(argv: readonly string[], logger: Logger): Pro
   // Open (or create) the registry — applyMigrations() inside is idempotent.
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath);
+    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
