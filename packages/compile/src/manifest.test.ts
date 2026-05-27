@@ -227,6 +227,15 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
       const rowMeta = rows.get(merkleRoot);
       return rowMeta?.foreignRefs ?? [];
     },
+    async getStoredEmbeddingModelId(): Promise<string | null> {
+      return null;
+    },
+    async getStoredEmbeddingDimension(): Promise<number | null> {
+      return null;
+    },
+    async recreateEmbeddingsTable(_newDimension: number): Promise<void> {
+      throw new Error("not implemented in mock");
+    },
     async close(): Promise<void> {},
   };
 }

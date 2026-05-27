@@ -1154,6 +1154,41 @@ export interface Registry {
 
   /** Release all resources held by this registry instance. */
   close(): Promise<void>;
+
+  /**
+   * Read the embedding model ID stored in registry_meta (if any).
+   *
+   * Returns the stored model ID string, or null if none has been written yet
+   * (e.g. a fresh registry opened for the first time before any blocks were stored).
+   *
+   * Used by `rebuildRegistry` to detect cross-dimension migrations.
+   *
+   * @decision DEC-EMBED-REGISTRY-META-001 (WI-778-BYO-EMBEDDING / issue #778)
+   */
+  getStoredEmbeddingModelId(): Promise<string | null>;
+
+  /**
+   * Read the embedding dimension stored in registry_meta (if any).
+   *
+   * Returns the stored dimension, or null if none has been written yet.
+   *
+   * @decision DEC-EMBED-REGISTRY-META-001 (WI-778-BYO-EMBEDDING / issue #778)
+   */
+  getStoredEmbeddingDimension(): Promise<number | null>;
+
+  /**
+   * Recreate the `contract_embeddings` vec0 virtual table with a new dimension.
+   *
+   * Drops the existing `contract_embeddings` table and recreates it with
+   * `embedding FLOAT[newDimension]`. Called by `rebuildRegistry` when the new
+   * provider's output dimension differs from the currently stored dimension.
+   *
+   * WARNING: This destroys all existing embedding vectors. Call only when
+   * immediately followed by a full re-embedding pass (rebuildRegistry).
+   *
+   * @decision DEC-EMBED-REGISTRY-META-001 (WI-778-BYO-EMBEDDING / issue #778)
+   */
+  recreateEmbeddingsTable(newDimension: number): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

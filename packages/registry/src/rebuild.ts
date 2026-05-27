@@ -17,9 +17,11 @@
 //   - onProgress callback enables CLI progress reporting without coupling to console.log.
 //   - Idempotent: calling twice produces identical embeddings (deterministic provider).
 //
-//   This is single-dimension-to-single-dimension only. The bge-small-en-v1.5 swap is
-//   384→384 (same schema-FLOAT[384] column); no DDL changes required.
-//   (DEC-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT-001 constraint preserved.)
+//   Cross-dimension rebuild (issue #778 / WI-778-BYO-EMBEDDING):
+//   When the new provider's dimension differs from the stored dimension, rebuildRegistry
+//   calls registry.recreateEmbeddingsTable(newDimension) before the per-block loop.
+//   recreateEmbeddingsTable drops and recreates the vec0 virtual table with the new
+//   FLOAT[N] schema, then proceeds with the normal storeBlock loop.
 //
 //   DEC-EMBED-010 is PRESERVED: rebuildRegistry creates a new embedding index consistent
 //   with the current provider. It does NOT bypass the cross-provider rejection gate —
@@ -54,57 +56,51 @@ export interface RebuildResult {
   readonly reembedded: number;
   /** Model ID of the embedding provider used for the rebuild. */
   readonly modelId: string;
+  /** Output dimension of the embedding provider used for the rebuild. */
+  readonly dimension: number;
 }
 
 /**
- * Re-embed all stored blocks in a registry using the given (or registry-default) embedding provider.
+ * Re-embed all stored blocks in a registry using the given embedding provider.
  *
- * This is the canonical migration path after an embedding model swap
- * (e.g. MiniLM-L6-v2 → bge-small-en-v1.5, DEC-EMBED-MODEL-DEFAULT-002, PR #336).
+ * This is the canonical migration path after an embedding model swap.
  * It iterates every stored block via `enumerateSpecs → selectBlocks → getBlock`
  * and re-stores each block via `storeBlock()`, which triggers `DELETE+INSERT` on
  * `contract_embeddings` — replacing the stale embedding vector with a fresh one
  * from the current provider.
  *
+ * Cross-dimension migration (e.g. 384→1536 when switching to OpenAI/Voyage):
+ * When `embeddings.dimension` differs from the stored dimension (read via
+ * `registry.getStoredEmbeddingDimension()`), rebuildRegistry calls
+ * `registry.recreateEmbeddingsTable(embeddings.dimension)` before the per-block loop
+ * to drop and recreate the vec0 virtual table with the new `FLOAT[N]` schema.
+ * After the rebuild, `registry_meta` is updated with the new model ID and dimension.
+ *
  * Idempotent: calling twice on the same registry with the same provider produces
  * identical embeddings (each call replaces the same vector with the same new value).
- *
- * Safe for same-dimension swaps (384→384): no DDL changes are needed because
- * the `contract_embeddings` schema is FLOAT[384] — both MiniLM-L6-v2 and
- * bge-small-en-v1.5 use 384 dimensions. Cross-dimension migration (384→768) is
- * out of scope for this WI (DEC-V3-DISCOVERY-D5-EMBED-MODEL-EXPERIMENT-001).
  *
  * NOT a bypass of DEC-EMBED-010: after a successful rebuild, the registry's
  * stored vectors are consistent with the provider's modelId, so the cross-provider
  * rejection gate will no longer fire for that provider.
  *
- * Lifted from the test-local `reembedRegistry` helper at
- * `packages/registry/src/discovery-eval-full-corpus.test.ts:375`
- * (DEC-V3-DISCOVERY-EVAL-FIX-001 H4). That helper should import from this module
- * to avoid drift; see the authority note in the @decision block above.
- *
- * @param registry   - An already-opened Registry instance. The registry's own
- *   embedding provider (the one passed to openRegistry) is used for re-embedding.
- * @param embeddings - The embedding provider whose modelId to record in the result.
- *   Pass the same provider used when calling openRegistry(). Required for the result
- *   modelId field; the actual embedding happens via storeBlock() on the registry.
+ * @param registry   - An already-opened Registry instance.
+ * @param embeddings - The embedding provider to use for re-embedding.
  * @param options    - Optional configuration including a progress callback.
- * @returns The number of blocks re-embedded and the provider model ID used.
- *
- * @example
- * // After a model swap: open registry with the new provider and rebuild.
- * const provider = createLocalEmbeddingProvider(); // bge-small-en-v1.5
- * const registry = await openRegistry(dbPath, { embeddings: provider });
- * const result = await rebuildRegistry(registry, provider, {
- *   onProgress: (done, total) => console.log(`${done}/${total} blocks rebuilt`),
- * });
- * console.log(`Rebuilt ${result.reembedded} blocks with ${result.modelId}`);
+ * @returns The number of blocks re-embedded, the provider model ID, and output dimension.
  */
 export async function rebuildRegistry(
   registry: Registry,
   embeddings: EmbeddingProvider,
   options?: RebuildRegistryOptions,
 ): Promise<RebuildResult> {
+  // @decision DEC-EMBED-REGISTRY-META-001 (WI-778): dimension-aware rebuild.
+  // Check if the new provider's dimension differs from the stored dimension.
+  // If so, recreate the vec0 table with the new dimension before re-embedding.
+  const storedDimension = await registry.getStoredEmbeddingDimension();
+  if (storedDimension !== null && storedDimension !== embeddings.dimension) {
+    await registry.recreateEmbeddingsTable(embeddings.dimension);
+  }
+
   const specHashes = await registry.enumerateSpecs();
 
   // Pre-count total blocks for accurate progress reporting.
@@ -135,5 +131,6 @@ export async function rebuildRegistry(
   return {
     reembedded,
     modelId: embeddings.modelId,
+    dimension: embeddings.dimension,
   };
 }

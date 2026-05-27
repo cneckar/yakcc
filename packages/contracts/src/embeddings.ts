@@ -33,6 +33,16 @@ export interface EmbeddingProvider {
    * Must be deterministic: same input → same output, byte-for-byte.
    */
   embed(text: string): Promise<Float32Array>;
+  /**
+   * Optional batch embed. When implemented, sends `texts` as a single API
+   * request rather than one request per text (more cost/rate-limit efficient).
+   * Returns one Float32Array per input text, in the same order.
+   *
+   * Hosted providers (OpenAI, Voyage, openai-compatible) implement this.
+   * Local and offline providers do not implement it — callers fall back to
+   * repeated `embed()` calls when batch() is absent.
+   */
+  batch?(texts: string[]): Promise<Float32Array[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,4 +321,521 @@ export async function generateEmbedding(
   const p = provider ?? getDefaultProvider();
   const text = canonicalizeText(spec);
   return p.embed(text);
+}
+
+// ---------------------------------------------------------------------------
+// Hosted embedding providers
+// ---------------------------------------------------------------------------
+
+// @decision DEC-EMBED-HOSTED-PROVIDER-001
+// @title Hosted embedding providers: OpenAI, Voyage, OpenAI-compatible (issue #778)
+// @status accepted (WI-778-BYO-EMBEDDING)
+// @rationale BGE-small-en-v1.5 has known recall weaknesses on abstract/mathematical
+//   code (external feedback 2026-05-19). Alpha testers who need higher-quality recall
+//   can opt in to a hosted API via env vars. Default (local BGE-small) is unchanged;
+//   no network calls without explicit opt-in (B6 air-gap cornerstone preserved).
+//   Provider interface is unchanged; hosted providers implement the same embed() contract.
+
+/** Default number of texts per batch API request (OpenAI / Voyage). */
+export const HOSTED_EMBED_BATCH_SIZE_DEFAULT = 64;
+
+const HOSTED_RETRY_MAX = 4;
+const HOSTED_RETRY_BASE_MS = 2_000;
+
+/** Retry a fetch call on 429 / 5xx with exponential backoff (max 4 retries, base 2 s). */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  fetchImpl: typeof fetch = fetch,
+  retryBaseMs: number = HOSTED_RETRY_BASE_MS,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= HOSTED_RETRY_MAX; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((r) => setTimeout(r, retryBaseMs * 2 ** (attempt - 1)));
+    }
+    let res: Response;
+    try {
+      res = await fetchImpl(url, init);
+    } catch (err) {
+      lastErr = err;
+      continue;
+    }
+    if (res.status !== 429 && res.status < 500) return res;
+    lastErr = new Error(`HTTP ${res.status} from ${url}`);
+  }
+  throw lastErr ?? new Error(`fetch failed after ${HOSTED_RETRY_MAX} retries`);
+}
+
+// @decision DEC-EMBED-HOSTED-DISCLOSURE-001: First-use warning for hosted providers.
+// @status accepted (WI-778-BYO-EMBEDDING)
+// @rationale Hosted APIs send user code and intent text to third-party services,
+//   breaking the B6 air-gap for embedding operations. Users must be informed on
+//   first use. Set YAKCC_EMBEDDING_DISCLOSURE_ACK=1 to silence after reading.
+const _warnedProviderKinds = new Set<string>();
+
+function warnHostedProviderOnce(kind: string): void {
+  if (typeof process !== "undefined" && process.env.YAKCC_EMBEDDING_DISCLOSURE_ACK === "1")
+    return;
+  if (_warnedProviderKinds.has(kind)) return;
+  _warnedProviderKinds.add(kind);
+  // biome-ignore lint/suspicious/noConsole: intentional first-use disclosure
+  console.warn(
+    `warning: YAKCC_EMBEDDING_PROVIDER=${kind} sends emission intent text + atom\n` +
+      `impl source to ${kind}. This breaks the air-gap (B6) cornerstone for embedding\n` +
+      `operations. Set YAKCC_EMBEDDING_DISCLOSURE_ACK=1 to silence this warning.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI provider
+// ---------------------------------------------------------------------------
+
+/**
+ * Known output dimensions for OpenAI embedding models.
+ *
+ * text-embedding-3-small and text-embedding-3-large support the `dimensions`
+ * parameter to reduce the output dimension. When `dimensions` is not specified,
+ * these are the defaults. ada-002 is fixed at 1536.
+ */
+export const OPENAI_KNOWN_DIMENSIONS: ReadonlyMap<string, number> = new Map([
+  ["text-embedding-ada-002", 1536],
+  ["text-embedding-3-small", 1536],
+  ["text-embedding-3-large", 3072],
+]);
+
+/** Configuration for the OpenAI embedding provider. */
+export interface OpenAIEmbeddingConfig {
+  /** Model name, e.g. "text-embedding-3-large". */
+  readonly model: string;
+  /** OpenAI API key (OPENAI_API_KEY). */
+  readonly apiKey: string;
+  /**
+   * Request a specific output dimension from the model (text-embedding-3-* only).
+   * When omitted, the model's native dimension is used.
+   * Pass `dimensions: 384` to match the default registry schema.
+   */
+  readonly dimensions?: number;
+  /** Number of texts per batch API request. Defaults to HOSTED_EMBED_BATCH_SIZE_DEFAULT. */
+  readonly batchSize?: number;
+  /** @internal Test seam: injectable fetch implementation. */
+  readonly _fetch?: typeof fetch;
+  /** @internal Test seam: retry base delay in ms (default 2000). */
+  readonly _retryBaseMs?: number;
+}
+
+/**
+ * Create an EmbeddingProvider backed by the OpenAI embeddings API.
+ *
+ * Sends code/intent text to OpenAI — breaks air-gap (B6) for embedding
+ * operations. Set YAKCC_EMBEDDING_DISCLOSURE_ACK=1 to silence the first-use warning.
+ *
+ * Uses the batch API (`input: string[]`) for efficiency. Retries 429/5xx
+ * with exponential backoff (max 4 retries, base 2 s).
+ *
+ * Model selection priority:
+ *   1. `config.model` (explicit)
+ *   2. `YAKCC_EMBEDDING_MODEL` env var (if not explicit)
+ *
+ * @param config - API key, model, optional dimension override.
+ */
+export function createOpenAIEmbeddingProvider(config: OpenAIEmbeddingConfig): EmbeddingProvider {
+  const dimension =
+    config.dimensions ??
+    OPENAI_KNOWN_DIMENSIONS.get(config.model) ??
+    1536;
+  const batchSize = config.batchSize ?? HOSTED_EMBED_BATCH_SIZE_DEFAULT;
+  const fetchImpl = config._fetch ?? fetch;
+  const retryBaseMs = config._retryBaseMs ?? HOSTED_RETRY_BASE_MS;
+  let warned = false;
+
+  const embeddingRequest = async (texts: string[]): Promise<Float32Array[]> => {
+    if (!warned) {
+      warnHostedProviderOnce("openai");
+      warned = true;
+    }
+
+    const body: Record<string, unknown> = {
+      input: texts,
+      model: config.model,
+    };
+    if (config.dimensions !== undefined) {
+      body.dimensions = config.dimensions;
+    }
+
+    const res = await fetchWithRetry(
+      "https://api.openai.com/v1/embeddings",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      },
+      fetchImpl,
+      retryBaseMs,
+    );
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`OpenAI embeddings API error ${res.status}: ${txt}`);
+    }
+
+    const json = (await res.json()) as {
+      data: Array<{ index: number; embedding: number[] }>;
+    };
+
+    // Reconstruct in original order (API guarantees index field).
+    const result = new Array<Float32Array>(texts.length);
+    for (const item of json.data) {
+      result[item.index] = new Float32Array(item.embedding);
+    }
+    return result as Float32Array[];
+  };
+
+  return {
+    dimension,
+    modelId: `openai/${config.model}${config.dimensions !== undefined ? `@${config.dimensions}` : ""}`,
+
+    async embed(text: string): Promise<Float32Array> {
+      const [vec] = await embeddingRequest([text]);
+      if (vec === undefined) throw new Error("OpenAI returned no embedding");
+      return vec;
+    },
+
+    async batch(texts: string[]): Promise<Float32Array[]> {
+      const results: Float32Array[] = [];
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const chunk = texts.slice(i, i + batchSize);
+        const chunkResults = await embeddingRequest(chunk);
+        results.push(...chunkResults);
+      }
+      return results;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Voyage provider
+// ---------------------------------------------------------------------------
+
+/**
+ * Known output dimensions for Voyage embedding models.
+ */
+export const VOYAGE_KNOWN_DIMENSIONS: ReadonlyMap<string, number> = new Map([
+  ["voyage-code-2", 1536],
+  ["voyage-2", 1024],
+  ["voyage-large-2", 1536],
+  ["voyage-large-2-instruct", 1024],
+  ["voyage-3", 1024],
+  ["voyage-3-lite", 512],
+  ["voyage-code-3", 1024],
+]);
+
+/** Configuration for the Voyage AI embedding provider. */
+export interface VoyageEmbeddingConfig {
+  /** Model name, e.g. "voyage-code-2". */
+  readonly model: string;
+  /** Voyage API key (VOYAGE_API_KEY). */
+  readonly apiKey: string;
+  /** Number of texts per batch API request. Defaults to HOSTED_EMBED_BATCH_SIZE_DEFAULT. */
+  readonly batchSize?: number;
+  /** @internal Test seam: injectable fetch implementation. */
+  readonly _fetch?: typeof fetch;
+  /** @internal Test seam: retry base delay in ms (default 2000). */
+  readonly _retryBaseMs?: number;
+}
+
+/**
+ * Create an EmbeddingProvider backed by the Voyage AI embeddings API.
+ *
+ * Sends code/intent text to Voyage — breaks air-gap (B6) for embedding operations.
+ * Set YAKCC_EMBEDDING_DISCLOSURE_ACK=1 to silence the first-use warning.
+ *
+ * Uses the batch API (`input: string[]`) for efficiency. Retries 429/5xx
+ * with exponential backoff (max 4 retries, base 2 s).
+ */
+export function createVoyageEmbeddingProvider(config: VoyageEmbeddingConfig): EmbeddingProvider {
+  const dimension = VOYAGE_KNOWN_DIMENSIONS.get(config.model) ?? 1024;
+  const batchSize = config.batchSize ?? HOSTED_EMBED_BATCH_SIZE_DEFAULT;
+  const fetchImpl = config._fetch ?? fetch;
+  const retryBaseMs = config._retryBaseMs ?? HOSTED_RETRY_BASE_MS;
+  let warned = false;
+
+  const embeddingRequest = async (texts: string[]): Promise<Float32Array[]> => {
+    if (!warned) {
+      warnHostedProviderOnce("voyage");
+      warned = true;
+    }
+
+    const res = await fetchWithRetry(
+      "https://api.voyageai.com/v1/embeddings",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({ input: texts, model: config.model }),
+      },
+      fetchImpl,
+      retryBaseMs,
+    );
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Voyage embeddings API error ${res.status}: ${txt}`);
+    }
+
+    const json = (await res.json()) as {
+      data: Array<{ index: number; embedding: number[] }>;
+    };
+
+    const result = new Array<Float32Array>(texts.length);
+    for (const item of json.data) {
+      result[item.index] = new Float32Array(item.embedding);
+    }
+    return result as Float32Array[];
+  };
+
+  return {
+    dimension,
+    modelId: `voyage/${config.model}`,
+
+    async embed(text: string): Promise<Float32Array> {
+      const [vec] = await embeddingRequest([text]);
+      if (vec === undefined) throw new Error("Voyage returned no embedding");
+      return vec;
+    },
+
+    async batch(texts: string[]): Promise<Float32Array[]> {
+      const results: Float32Array[] = [];
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const chunk = texts.slice(i, i + batchSize);
+        const chunkResults = await embeddingRequest(chunk);
+        results.push(...chunkResults);
+      }
+      return results;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-compatible provider (Ollama, LM Studio, vLLM, etc.)
+// ---------------------------------------------------------------------------
+
+/** Configuration for an OpenAI-compatible embedding endpoint. */
+export interface OpenAICompatibleEmbeddingConfig {
+  /**
+   * Base URL of the OpenAI-compatible server, e.g. "http://localhost:11434/v1".
+   * Must NOT have a trailing slash.
+   */
+  readonly baseUrl: string;
+  /** Model name, e.g. "nomic-embed-text". */
+  readonly model: string;
+  /**
+   * Output dimension of the model. Required because dimensions cannot be
+   * inferred for arbitrary self-hosted models.
+   */
+  readonly dimension: number;
+  /** Optional API key. Omit for unauthenticated local servers. */
+  readonly apiKey?: string;
+  /** Number of texts per batch request. Defaults to HOSTED_EMBED_BATCH_SIZE_DEFAULT. */
+  readonly batchSize?: number;
+  /** @internal Test seam: injectable fetch implementation. */
+  readonly _fetch?: typeof fetch;
+  /** @internal Test seam: retry base delay in ms (default 2000). */
+  readonly _retryBaseMs?: number;
+}
+
+/**
+ * Create an EmbeddingProvider backed by any OpenAI-compatible embeddings endpoint.
+ *
+ * Supports Ollama, LM Studio, vLLM, and any server that implements
+ * `POST /v1/embeddings` with `{ input: string[], model: string }` request and
+ * `{ data: [{ index: number, embedding: number[] }] }` response.
+ *
+ * Local endpoints (Ollama, LM Studio) do NOT send data externally — air-gap
+ * is preserved if the server runs locally. The first-use warning is only shown
+ * if `YAKCC_EMBEDDING_PROVIDER=openai-compatible` (generic label for user clarity).
+ *
+ * Retries 429/5xx with exponential backoff (max 4 retries, base 2 s).
+ */
+export function createOpenAICompatibleEmbeddingProvider(
+  config: OpenAICompatibleEmbeddingConfig,
+): EmbeddingProvider {
+  const batchSize = config.batchSize ?? HOSTED_EMBED_BATCH_SIZE_DEFAULT;
+  const fetchImpl = config._fetch ?? fetch;
+  const retryBaseMs = config._retryBaseMs ?? HOSTED_RETRY_BASE_MS;
+  let warned = false;
+
+  const embeddingRequest = async (texts: string[]): Promise<Float32Array[]> => {
+    if (!warned) {
+      warnHostedProviderOnce("openai-compatible");
+      warned = true;
+    }
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (config.apiKey !== undefined) {
+      headers.Authorization = `Bearer ${config.apiKey}`;
+    }
+
+    const res = await fetchWithRetry(
+      `${config.baseUrl}/embeddings`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ input: texts, model: config.model }),
+      },
+      fetchImpl,
+      retryBaseMs,
+    );
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`OpenAI-compatible embeddings API error ${res.status}: ${txt}`);
+    }
+
+    const json = (await res.json()) as {
+      data: Array<{ index: number; embedding: number[] }>;
+    };
+
+    const result = new Array<Float32Array>(texts.length);
+    for (const item of json.data) {
+      result[item.index] = new Float32Array(item.embedding);
+    }
+    return result as Float32Array[];
+  };
+
+  return {
+    dimension: config.dimension,
+    modelId: `openai-compatible/${config.model}`,
+
+    async embed(text: string): Promise<Float32Array> {
+      const [vec] = await embeddingRequest([text]);
+      if (vec === undefined) throw new Error("OpenAI-compatible server returned no embedding");
+      return vec;
+    },
+
+    async batch(texts: string[]): Promise<Float32Array[]> {
+      const results: Float32Array[] = [];
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const chunk = texts.slice(i, i + batchSize);
+        const chunkResults = await embeddingRequest(chunk);
+        results.push(...chunkResults);
+      }
+      return results;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Env-var-driven provider resolution
+// ---------------------------------------------------------------------------
+
+// @decision DEC-EMBED-ENV-RESOLUTION-001
+// @title resolveEmbeddingProviderFromEnv reads YAKCC_EMBEDDING_PROVIDER and creates provider
+// @status accepted (WI-778-BYO-EMBEDDING)
+// @rationale Single function encapsulates env-var precedence. Priority:
+//   1. CLI flags (handled by callers via explicit config — not this function's concern)
+//   2. Env vars (YAKCC_EMBEDDING_PROVIDER + model/key vars)
+//   3. Persisted rc (read by CLI init path — callers may pass rc config)
+//   4. Default: local BGE-small (zero network, no API key required)
+
+/**
+ * Resolve an EmbeddingProvider from environment variables.
+ *
+ * Reads `YAKCC_EMBEDDING_PROVIDER` and the accompanying model/key env vars.
+ * Returns `null` if no provider env var is set (caller should use the local default).
+ *
+ * Provider env-var matrix:
+ * ```
+ * YAKCC_EMBEDDING_PROVIDER=openai
+ *   YAKCC_EMBEDDING_MODEL  (default: "text-embedding-3-large")
+ *   OPENAI_API_KEY
+ *   YAKCC_EMBEDDING_DIMENSIONS  (optional; for text-embedding-3-* models)
+ *
+ * YAKCC_EMBEDDING_PROVIDER=voyage
+ *   YAKCC_EMBEDDING_MODEL  (default: "voyage-code-2")
+ *   VOYAGE_API_KEY
+ *
+ * YAKCC_EMBEDDING_PROVIDER=openai-compatible
+ *   YAKCC_EMBEDDING_BASE_URL   (required, e.g. "http://localhost:11434/v1")
+ *   YAKCC_EMBEDDING_MODEL      (required)
+ *   YAKCC_EMBEDDING_DIMENSION  (required)
+ *   YAKCC_EMBEDDING_API_KEY    (optional)
+ * ```
+ *
+ * @returns An EmbeddingProvider, or null if YAKCC_EMBEDDING_PROVIDER is not set.
+ * @throws If provider is set but required env vars are missing.
+ */
+export function resolveEmbeddingProviderFromEnv(): EmbeddingProvider | null {
+  if (typeof process === "undefined") return null;
+  const providerKind = process.env.YAKCC_EMBEDDING_PROVIDER;
+  if (providerKind === undefined || providerKind === "" || providerKind === "local") return null;
+
+  if (providerKind === "openai") {
+    const apiKey = process.env.OPENAI_API_KEY ?? "";
+    if (!apiKey) {
+      throw new Error(
+        "YAKCC_EMBEDDING_PROVIDER=openai requires OPENAI_API_KEY to be set",
+      );
+    }
+    const model = process.env.YAKCC_EMBEDDING_MODEL ?? "text-embedding-3-large";
+    const dimsRaw = process.env.YAKCC_EMBEDDING_DIMENSIONS;
+    if (dimsRaw !== undefined) {
+      const dimensions = parseInt(dimsRaw, 10);
+      return createOpenAIEmbeddingProvider({ model, apiKey, dimensions });
+    }
+    return createOpenAIEmbeddingProvider({ model, apiKey });
+  }
+
+  if (providerKind === "voyage") {
+    const apiKey = process.env.VOYAGE_API_KEY ?? "";
+    if (!apiKey) {
+      throw new Error(
+        "YAKCC_EMBEDDING_PROVIDER=voyage requires VOYAGE_API_KEY to be set",
+      );
+    }
+    const model = process.env.YAKCC_EMBEDDING_MODEL ?? "voyage-code-2";
+    return createVoyageEmbeddingProvider({ model, apiKey });
+  }
+
+  if (providerKind === "openai-compatible") {
+    const baseUrl = process.env.YAKCC_EMBEDDING_BASE_URL ?? "";
+    if (!baseUrl) {
+      throw new Error(
+        "YAKCC_EMBEDDING_PROVIDER=openai-compatible requires YAKCC_EMBEDDING_BASE_URL to be set",
+      );
+    }
+    const model = process.env.YAKCC_EMBEDDING_MODEL ?? "";
+    if (!model) {
+      throw new Error(
+        "YAKCC_EMBEDDING_PROVIDER=openai-compatible requires YAKCC_EMBEDDING_MODEL to be set",
+      );
+    }
+    const dimRaw = process.env.YAKCC_EMBEDDING_DIMENSION ?? "";
+    if (!dimRaw) {
+      throw new Error(
+        "YAKCC_EMBEDDING_PROVIDER=openai-compatible requires YAKCC_EMBEDDING_DIMENSION to be set",
+      );
+    }
+    const dimension = parseInt(dimRaw, 10);
+    if (Number.isNaN(dimension) || dimension <= 0) {
+      throw new Error(
+        `YAKCC_EMBEDDING_DIMENSION must be a positive integer, got: ${dimRaw}`,
+      );
+    }
+    const apiKey = process.env.YAKCC_EMBEDDING_API_KEY;
+    if (apiKey !== undefined) {
+      return createOpenAICompatibleEmbeddingProvider({ baseUrl, model, dimension, apiKey });
+    }
+    return createOpenAICompatibleEmbeddingProvider({ baseUrl, model, dimension });
+  }
+
+  throw new Error(
+    `Unknown YAKCC_EMBEDDING_PROVIDER: "${providerKind}". ` +
+      `Valid values: local, openai, voyage, openai-compatible`,
+  );
 }

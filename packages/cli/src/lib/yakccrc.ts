@@ -49,12 +49,35 @@ export const RC_FILENAME = ".yakccrc.json";
 // ---------------------------------------------------------------------------
 
 /**
+ * Embedding provider configuration stored in .yakccrc.json.
+ *
+ * Written by `yakcc init` when YAKCC_EMBEDDING_PROVIDER is set at init time.
+ * Re-read by CLI commands to determine the active provider without requiring
+ * env vars to be set on every invocation.
+ *
+ * @decision DEC-EMBED-ENV-RESOLUTION-001 (WI-778-BYO-EMBEDDING / issue #778)
+ */
+export interface YakccEmbeddingConfig {
+  /** Provider kind: "openai", "voyage", "openai-compatible", or "local". */
+  provider: string;
+  /** Model name (e.g. "text-embedding-3-large"). */
+  model?: string;
+  /** Custom base URL for openai-compatible providers. */
+  baseUrl?: string;
+  /** Output dimension (required for openai-compatible; optional for others). */
+  dimension?: number;
+  /** Requested output dimension for OpenAI text-embedding-3-* models. */
+  dimensions?: number;
+}
+
+/**
  * Flexible rc schema — only the fields this module mutates are typed; the rest
  * are preserved verbatim (EC-S2-I3: version stays 1, additive-only, no removal).
  */
 export interface YakccRc {
   version: number;
   installedHooks?: string[];
+  embeddings?: YakccEmbeddingConfig;
   [key: string]: unknown;
 }
 

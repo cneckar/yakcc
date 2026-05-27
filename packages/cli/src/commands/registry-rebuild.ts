@@ -6,19 +6,14 @@
 // rationale: After the bge-small-en-v1.5 swap (DEC-EMBED-MODEL-DEFAULT-002, PR #336),
 //   existing registries contain embeddings from the old model (all-MiniLM-L6-v2).
 //   This command re-embeds all stored blocks using the current provider, restoring
-//   consistency without data loss. Atoms (BlockTripletRow data) are preserved byte-for-byte;
-//   only the contract_embeddings rows (derived index) are regenerated.
+//   consistency without data loss.
 //
-//   Implementation: opens the registry with the current default provider, calls
-//   rebuildRegistry() from @yakcc/registry, and reports progress + final count.
-//
-//   Design constraints:
-//   - Idempotent: safe to run twice.
-//   - Same-dimension only (384→384): no schema changes; DDL for contract_embeddings
-//     is unchanged. Cross-dimension migration is out of scope for this WI.
-//   - DEC-EMBED-010 preserved: after rebuild, the registry's vectors are consistent
-//     with the provider; the cross-provider rejection gate will pass for this provider.
-//   - NOT silent: reports progress and final count. Fail loudly on error.
+//   Issue #778 (WI-778-BYO-EMBEDDING): added --embedding-provider, --embedding-model,
+//   --embedding-base-url, --embedding-dimensions, and --embedding-dimension flags so
+//   callers can swap to a hosted provider in one command. Cross-dimension migration
+//   (e.g. 384→1536 for Voyage) is handled automatically by rebuildRegistry via
+//   recreateEmbeddingsTable(). Uses autoRebuild:true to bypass the openRegistry
+//   model-mismatch check (DEC-EMBED-REGISTRY-META-001).
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -42,11 +37,26 @@ export interface RegistryRebuildOptions {
 }
 
 /**
- * Handler for `yakcc registry rebuild [--path <p>]`.
+ * Handler for `yakcc registry rebuild [--path <p>]
+ *   [--embedding-provider <local|openai|voyage|openai-compatible>]
+ *   [--embedding-model <model>]
+ *   [--embedding-base-url <url>]
+ *   [--embedding-dimensions <N>]
+ *   [--embedding-dimension <N>]`.
  *
- * Re-embeds all blocks in an existing registry using the current default embedding
- * provider. Useful after a model swap (DEC-EMBED-MODEL-DEFAULT-002) to migrate
- * existing registries to the new model without data loss.
+ * Re-embeds all blocks in an existing registry using the specified provider.
+ * Useful after a model swap to migrate existing registries to a new model.
+ *
+ * CLI flag precedence (highest to lowest):
+ *   --embedding-provider  > YAKCC_EMBEDDING_PROVIDER env var > local default
+ *   --embedding-model     > YAKCC_EMBEDDING_MODEL env var
+ *   --embedding-base-url  > YAKCC_EMBEDDING_BASE_URL env var
+ *   --embedding-dimensions > YAKCC_EMBEDDING_DIMENSIONS env var (OpenAI only)
+ *   --embedding-dimension  > YAKCC_EMBEDDING_DIMENSION env var (openai-compatible only)
+ *
+ * Cross-dimension migration (e.g. 384→1536 for Voyage/OpenAI):
+ *   rebuildRegistry automatically detects the dimension change and calls
+ *   recreateEmbeddingsTable() before re-embedding all blocks. Atom data is preserved.
  *
  * - Preserves all BlockTripletRow data byte-for-byte.
  * - Regenerates contract_embeddings vectors using the current provider.
@@ -56,26 +66,54 @@ export interface RegistryRebuildOptions {
  * Exit codes:
  * - 0: success (registry rebuilt)
  * - 1: usage or runtime error
- *
- * @param argv   - Remaining argv after `registry rebuild` has been consumed.
- * @param logger - Output sink; defaults to console via the caller.
- * @param opts   - Internal options (embeddings for test injection).
  */
 export async function registryRebuild(
   argv: readonly string[],
   logger: Logger,
   opts?: RegistryRebuildOptions,
 ): Promise<number> {
-  const { values } = parseArgs({
-    args: [...argv],
-    options: {
-      path: { type: "string", short: "p" },
-    },
-    allowPositionals: false,
-    strict: true,
-  });
+  let parsed: ReturnType<
+    typeof parseArgs<{
+      options: {
+        path: { type: "string"; short: "p" };
+        "embedding-provider": { type: "string" };
+        "embedding-model": { type: "string" };
+        "embedding-base-url": { type: "string" };
+        "embedding-dimensions": { type: "string" };
+        "embedding-dimension": { type: "string" };
+      };
+    }>
+  >;
 
-  const registryPath = values.path ?? DEFAULT_REGISTRY_PATH;
+  try {
+    parsed = parseArgs({
+      args: [...argv],
+      options: {
+        path: { type: "string", short: "p" },
+        "embedding-provider": { type: "string" },
+        "embedding-model": { type: "string" },
+        "embedding-base-url": { type: "string" },
+        "embedding-dimensions": { type: "string" },
+        "embedding-dimension": { type: "string" },
+      },
+      allowPositionals: false,
+      strict: true,
+    });
+  } catch (err) {
+    logger.error(`error: ${(err as Error).message}`);
+    logger.error(
+      "Usage: yakcc registry rebuild [--path <p>] [--embedding-provider <local|openai|voyage|openai-compatible>]",
+    );
+    logger.error(
+      "                               [--embedding-model <model>] [--embedding-base-url <url>]",
+    );
+    logger.error(
+      "                               [--embedding-dimensions <N>] [--embedding-dimension <N>]",
+    );
+    return 1;
+  }
+
+  const registryPath = parsed.values.path ?? DEFAULT_REGISTRY_PATH;
 
   // Ensure parent directory exists (mirrors registry-init pattern).
   const parent = dirname(registryPath);
@@ -90,18 +128,56 @@ export async function registryRebuild(
   }
 
   // Resolve the embedding provider to use for rebuilding.
-  // If tests inject a provider, use it; otherwise the default (bge-small-en-v1.5)
-  // is loaded lazily inside openRegistry.
+  // Priority: opts.embeddings (test injection) > CLI flags > env vars > local default.
   let embeddingProvider = opts?.embeddings;
+
   if (embeddingProvider === undefined) {
-    // Load the default provider so we can pass it to rebuildRegistry() for modelId reporting.
-    const { createLocalEmbeddingProvider } = await import("@yakcc/contracts");
-    embeddingProvider = createLocalEmbeddingProvider();
+    const providerFlag = parsed.values["embedding-provider"];
+    const modelFlag = parsed.values["embedding-model"];
+    const baseUrlFlag = parsed.values["embedding-base-url"];
+    const dimensionsFlag = parsed.values["embedding-dimensions"];
+    const dimensionFlag = parsed.values["embedding-dimension"];
+
+    const contracts = await import("@yakcc/contracts");
+
+    if (providerFlag !== undefined) {
+      // CLI flags override env vars: temporarily set env vars from flags, then resolve.
+      // Captures original env vars to restore after resolution (no lasting side-effects).
+      const saved = {
+        YAKCC_EMBEDDING_PROVIDER: process.env.YAKCC_EMBEDDING_PROVIDER,
+        YAKCC_EMBEDDING_MODEL: process.env.YAKCC_EMBEDDING_MODEL,
+        YAKCC_EMBEDDING_BASE_URL: process.env.YAKCC_EMBEDDING_BASE_URL,
+        YAKCC_EMBEDDING_DIMENSIONS: process.env.YAKCC_EMBEDDING_DIMENSIONS,
+        YAKCC_EMBEDDING_DIMENSION: process.env.YAKCC_EMBEDDING_DIMENSION,
+      };
+      process.env.YAKCC_EMBEDDING_PROVIDER = providerFlag;
+      if (modelFlag !== undefined) process.env.YAKCC_EMBEDDING_MODEL = modelFlag;
+      if (baseUrlFlag !== undefined) process.env.YAKCC_EMBEDDING_BASE_URL = baseUrlFlag;
+      if (dimensionsFlag !== undefined) process.env.YAKCC_EMBEDDING_DIMENSIONS = dimensionsFlag;
+      if (dimensionFlag !== undefined) process.env.YAKCC_EMBEDDING_DIMENSION = dimensionFlag;
+      try {
+        embeddingProvider =
+          contracts.resolveEmbeddingProviderFromEnv() ?? contracts.createLocalEmbeddingProvider();
+      } finally {
+        for (const [k, v] of Object.entries(saved)) {
+          if (v !== undefined) process.env[k] = v;
+          else delete process.env[k];
+        }
+      }
+    } else {
+      embeddingProvider =
+        contracts.resolveEmbeddingProviderFromEnv() ?? contracts.createLocalEmbeddingProvider();
+    }
   }
 
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath, { embeddings: embeddingProvider });
+    // autoRebuild: true suppresses the model-mismatch throw in openRegistry
+    // (DEC-EMBED-REGISTRY-META-001) since we're about to rebuild anyway.
+    registry = await openRegistry(registryPath, {
+      embeddings: embeddingProvider,
+      autoRebuild: true,
+    });
   } catch (err) {
     releaseLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
@@ -110,11 +186,12 @@ export async function registryRebuild(
 
   let lastReported = -1;
   try {
-    logger.log(`rebuilding registry at ${registryPath}…`);
+    logger.log(
+      `rebuilding registry at ${registryPath} with model "${embeddingProvider.modelId}" (dim=${embeddingProvider.dimension})…`,
+    );
 
     const result = await rebuildRegistry(registry, embeddingProvider, {
       onProgress(done, total) {
-        // Report every 100 blocks to avoid log spam on large registries.
         const pct = Math.floor((done / total) * 100);
         if (pct !== lastReported && pct % 10 === 0) {
           lastReported = pct;
@@ -124,7 +201,8 @@ export async function registryRebuild(
     });
 
     logger.log(
-      `registry rebuilt: ${result.reembedded} blocks re-embedded with model ${result.modelId} at ${registryPath}`,
+      `registry rebuilt: ${result.reembedded} blocks re-embedded with model "${result.modelId}" ` +
+        `(dim=${result.dimension}) at ${registryPath}`,
     );
     return 0;
   } catch (err) {

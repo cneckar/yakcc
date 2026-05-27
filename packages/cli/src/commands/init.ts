@@ -105,7 +105,13 @@ import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
-import { RC_FILENAME, type YakccRc, readRc, writeRc } from "../lib/yakccrc.js";
+import {
+  RC_FILENAME,
+  type YakccEmbeddingConfig,
+  type YakccRc,
+  readRc,
+  writeRc,
+} from "../lib/yakccrc.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
@@ -596,6 +602,41 @@ export async function init(
   // when --local or --airgapped (explicit offline opt-outs).
   const peerUrlToRecord = effectivePeerUrl;
 
+  // @decision DEC-EMBED-ENV-RESOLUTION-001 (WI-778): persist embedding provider to rc.
+  // If YAKCC_EMBEDDING_PROVIDER is set at init time, record it in .yakccrc.json so
+  // subsequent CLI invocations use the same provider without requiring env vars to be set.
+  // API keys are NOT stored (security boundary); users must set key env vars each session.
+  const embeddingConfig: YakccEmbeddingConfig | undefined = (() => {
+    const providerKind = process.env.YAKCC_EMBEDDING_PROVIDER;
+    if (!providerKind || providerKind === "local") return undefined;
+    if (providerKind === "openai") {
+      const config: YakccEmbeddingConfig = { provider: "openai" };
+      if (process.env.YAKCC_EMBEDDING_MODEL) config.model = process.env.YAKCC_EMBEDDING_MODEL;
+      if (process.env.YAKCC_EMBEDDING_DIMENSIONS) {
+        const d = Number.parseInt(process.env.YAKCC_EMBEDDING_DIMENSIONS, 10);
+        if (!Number.isNaN(d)) config.dimensions = d;
+      }
+      return config;
+    }
+    if (providerKind === "voyage") {
+      const config: YakccEmbeddingConfig = { provider: "voyage" };
+      if (process.env.YAKCC_EMBEDDING_MODEL) config.model = process.env.YAKCC_EMBEDDING_MODEL;
+      return config;
+    }
+    if (providerKind === "openai-compatible") {
+      const config: YakccEmbeddingConfig = { provider: "openai-compatible" };
+      if (process.env.YAKCC_EMBEDDING_BASE_URL)
+        config.baseUrl = process.env.YAKCC_EMBEDDING_BASE_URL;
+      if (process.env.YAKCC_EMBEDDING_MODEL) config.model = process.env.YAKCC_EMBEDDING_MODEL;
+      if (process.env.YAKCC_EMBEDDING_DIMENSION) {
+        const d = Number.parseInt(process.env.YAKCC_EMBEDDING_DIMENSION, 10);
+        if (!Number.isNaN(d)) config.dimension = d;
+      }
+      return config;
+    }
+    return undefined;
+  })();
+
   let rc: YakccRc;
   if (existingRc !== null) {
     // Spread existing rc fields. Ensure registry is always set (a minimal rc created by
@@ -617,6 +658,10 @@ export async function init(
     const existingHooks = rc.installedHooks ?? [];
     const merged = [...new Set([...existingHooks, ...installedHooks])];
     rc = { ...rc, installedHooks: merged };
+    // Persist embedding config if newly provided (don't clobber existing config with undefined).
+    if (embeddingConfig !== undefined) {
+      rc = { ...rc, embeddings: embeddingConfig };
+    }
   } else {
     rc = {
       version: 1,
@@ -624,6 +669,7 @@ export async function init(
       registry: { path: DEFAULT_REGISTRY_SUBPATH },
       ...(peerUrlToRecord !== undefined ? { federation: { peers: [peerUrlToRecord] } } : {}),
       installedHooks,
+      ...(embeddingConfig !== undefined ? { embeddings: embeddingConfig } : {}),
     };
   }
 

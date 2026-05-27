@@ -379,6 +379,9 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
       storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
       getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
       listCatalogPage: registry.listCatalogPage.bind(registry),
+      getStoredEmbeddingModelId: registry.getStoredEmbeddingModelId.bind(registry),
+      getStoredEmbeddingDimension: registry.getStoredEmbeddingDimension.bind(registry),
+      recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
     };
 
     const ctx: EmissionContext = { intent: "some emission intent" };

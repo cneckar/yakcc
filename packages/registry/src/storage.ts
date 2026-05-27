@@ -1957,6 +1957,43 @@ class SqliteRegistry implements Registry {
   }
 
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // registry_meta accessors (DEC-EMBED-REGISTRY-META-001 / WI-778)
+  // -------------------------------------------------------------------------
+
+  async getStoredEmbeddingModelId(): Promise<string | null> {
+    this.assertOpen();
+    const row = this.db
+      .prepare<[string], { value: string }>("SELECT value FROM registry_meta WHERE key = ?")
+      .get("embedding_model_id");
+    return row?.value ?? null;
+  }
+
+  async getStoredEmbeddingDimension(): Promise<number | null> {
+    this.assertOpen();
+    const row = this.db
+      .prepare<[string], { value: string }>("SELECT value FROM registry_meta WHERE key = ?")
+      .get("embedding_dimension");
+    if (row === undefined) return null;
+    const n = parseInt(row.value, 10);
+    return Number.isNaN(n) ? null : n;
+  }
+
+  async recreateEmbeddingsTable(newDimension: number): Promise<void> {
+    this.assertOpen();
+    // Drop and recreate the vec0 virtual table with the new dimension.
+    // This destroys all existing embedding vectors — callers must follow with
+    // a full rebuildRegistry pass (DEC-EMBED-REGISTRY-META-001).
+    this.db.exec("DROP TABLE IF EXISTS contract_embeddings");
+    this.db.exec(
+      `CREATE VIRTUAL TABLE contract_embeddings USING vec0(spec_hash TEXT PRIMARY KEY, embedding FLOAT[${newDimension}])`,
+    );
+    // Update the stored dimension in registry_meta.
+    this.db
+      .prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)")
+      .run("embedding_dimension", String(newDimension));
+  }
+
   // close
   // -------------------------------------------------------------------------
 
@@ -2193,14 +2230,62 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
     backfillTxn();
   }
 
-  // Resolve the embedding provider: use provided, or import the local default.
+  // Resolve the embedding provider: use provided, or check env vars, or use local default.
+  // Priority: explicit options.embeddings > YAKCC_EMBEDDING_PROVIDER env var > local BGE-small.
   let embeddingProvider: EmbeddingProvider;
   if (options?.embeddings !== undefined) {
     embeddingProvider = options.embeddings;
   } else {
-    const { createLocalEmbeddingProvider } = await import("@yakcc/contracts");
-    embeddingProvider = createLocalEmbeddingProvider();
+    const contracts = await import("@yakcc/contracts");
+    const envProvider = contracts.resolveEmbeddingProviderFromEnv();
+    embeddingProvider = envProvider ?? contracts.createLocalEmbeddingProvider();
   }
+
+  // @decision DEC-EMBED-REGISTRY-META-001: Check stored model ID at open time.
+  // After migration 11 the registry_meta table exists. We read the stored
+  // embedding_model_id and compare it against the current provider's modelId.
+  // Mismatch with existing embeddings → throw a clear error pointing at rebuild.
+  // No stored ID (fresh registry or pre-v11 first open) → store the current one.
+  const storedModelIdRow = db
+    .prepare<[string], { value: string }>("SELECT value FROM registry_meta WHERE key = ?")
+    .get("embedding_model_id");
+  const storedModelId: string | null = storedModelIdRow?.value ?? null;
+
+  if (storedModelId !== null && storedModelId !== embeddingProvider.modelId) {
+    // Check whether any embeddings actually exist — if the registry is empty,
+    // there's nothing to mismatch and we can just update the metadata.
+    const embCount = (
+      db.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM contract_embeddings").get() as
+        | { n: number }
+        | undefined
+    )?.n ?? 0;
+
+    // @decision DEC-EMBED-REGISTRY-META-001: autoRebuild bypasses mismatch throw.
+    // When autoRebuild is true (explicit opt-in), the caller is about to rebuild
+    // anyway (e.g. `yakcc registry rebuild`). Suppress the throw so the registry
+    // opens successfully; rebuildRegistry will fix the vectors immediately after.
+    if (embCount > 0 && !(options?.autoRebuild ?? false)) {
+      throw Object.assign(
+        new Error(
+          `Registry was embedded with model "${storedModelId}", but the current ` +
+            `provider uses "${embeddingProvider.modelId}". ` +
+            `Run \`yakcc registry rebuild\` to re-embed with the current provider, ` +
+            `or set YAKCC_EMBEDDING_PROVIDER and model env vars to match the stored model.`,
+        ),
+        { reason: "embedding_model_mismatch" },
+      );
+    }
+  }
+
+  // Upsert the current provider's metadata so future opens can detect mismatches.
+  db.prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)").run(
+    "embedding_model_id",
+    embeddingProvider.modelId,
+  );
+  db.prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)").run(
+    "embedding_dimension",
+    String(embeddingProvider.dimension),
+  );
 
   return new SqliteRegistry(db, embeddingProvider, options?.autoRebuild ?? false);
 }

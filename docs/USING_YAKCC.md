@@ -518,4 +518,100 @@ write lock).
 
 ---
 
+## 10. Embedding provider configuration
+
+By default yakcc uses a **local BGE-small-en-v1.5** model (~25 MB, no network, no API key). This is free, private, and works offline. It is the right choice for most users.
+
+If you find that abstract or mathematical code doesn't surface well in search results, you can opt in to a hosted embedding API. This sends your code's intent text and atom source to a third-party service.
+
+### 10.1 Provider overview
+
+| Provider | Air-gap | Cost | Notes |
+|---|---|---|---|
+| **local** (default) | ✅ fully offline | Free | BGE-small-en-v1.5, ~80 MB model download on first use |
+| **openai** | ❌ sends code to OpenAI | ~$0.10–$1 / M tokens | Best recall; `text-embedding-3-large` recommended |
+| **voyage** | ❌ sends code to Voyage | ~$0.10–$0.50 / M tokens | `voyage-code-2` specialized for code retrieval |
+| **openai-compatible** | Depends on server location | Free (self-hosted GPU) | Ollama, LM Studio, vLLM — keeps data local if server is local |
+
+### 10.2 Opt in via env vars
+
+```sh
+# OpenAI
+export YAKCC_EMBEDDING_PROVIDER=openai
+export YAKCC_EMBEDDING_MODEL=text-embedding-3-large
+export OPENAI_API_KEY=sk-...
+yakcc init      # initializes registry with OpenAI embeddings
+
+# OpenAI with dimension reduction (keeps 384-dim schema, reduces cost)
+export YAKCC_EMBEDDING_PROVIDER=openai
+export YAKCC_EMBEDDING_MODEL=text-embedding-3-small
+export YAKCC_EMBEDDING_DIMENSIONS=384
+export OPENAI_API_KEY=sk-...
+yakcc init
+
+# Voyage (code-specialized)
+export YAKCC_EMBEDDING_PROVIDER=voyage
+export YAKCC_EMBEDDING_MODEL=voyage-code-2
+export VOYAGE_API_KEY=pa-...
+yakcc init
+
+# Self-hosted Ollama (local GPU, no data leaves your machine)
+export YAKCC_EMBEDDING_PROVIDER=openai-compatible
+export YAKCC_EMBEDDING_BASE_URL=http://localhost:11434/v1
+export YAKCC_EMBEDDING_MODEL=nomic-embed-text
+export YAKCC_EMBEDDING_DIMENSION=768
+yakcc init
+```
+
+First use of a hosted provider prints a one-time warning:
+
+```
+warning: YAKCC_EMBEDDING_PROVIDER=openai sends emission intent text + atom
+impl source to openai. This breaks the air-gap (B6) cornerstone for embedding
+operations. Set YAKCC_EMBEDDING_DISCLOSURE_ACK=1 to silence this warning.
+```
+
+Set `YAKCC_EMBEDDING_DISCLOSURE_ACK=1` to silence it after you've read it.
+
+### 10.3 Migrate an existing registry
+
+If you initialized with the default local provider and want to switch to OpenAI:
+
+```sh
+export YAKCC_EMBEDDING_PROVIDER=openai
+export YAKCC_EMBEDDING_MODEL=text-embedding-3-large
+export OPENAI_API_KEY=sk-...
+
+yakcc registry rebuild
+```
+
+For cross-dimension migrations (e.g. local 384-dim → Voyage 1536-dim), `registry rebuild` automatically drops and recreates the embedding index with the new schema. Atom content is preserved; only the embedding vectors are regenerated.
+
+You can also pass the provider directly as CLI flags without setting env vars:
+
+```sh
+yakcc registry rebuild \
+  --embedding-provider openai \
+  --embedding-model text-embedding-3-large
+```
+
+### 10.4 Persist config across sessions
+
+`yakcc init` writes the embedding config to `.yakccrc.json` when env vars are set at init time (API keys are NOT stored). Subsequent CLI invocations read the stored provider without requiring env vars to be re-set.
+
+```json
+{
+  "version": 1,
+  "mode": "global",
+  "embeddings": {
+    "provider": "openai",
+    "model": "text-embedding-3-large"
+  }
+}
+```
+
+API keys must still be provided via env vars on each session (`OPENAI_API_KEY`, `VOYAGE_API_KEY`).
+
+---
+
 _If something in this walkthrough doesn't match what you observe, please [file an issue](https://github.com/cneckar/yakcc/issues/new). The walkthrough lives at `docs/USING_YAKCC.md` and is intended to track shipped software exactly._

@@ -282,6 +282,9 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
       getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
       listCatalogPage: registry.listCatalogPage.bind(registry),
+      getStoredEmbeddingModelId: registry.getStoredEmbeddingModelId.bind(registry),
+      getStoredEmbeddingDimension: registry.getStoredEmbeddingDimension.bind(registry),
+      recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {
