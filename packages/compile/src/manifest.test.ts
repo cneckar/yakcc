@@ -205,6 +205,17 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     ): Promise<string | null> {
       return null;
     },
+    // #792: catalog-page stubs (DEC-792-CATALOG-PAGE-001).
+    // This mock never uses listCatalogPage; stub satisfies Registry interface.
+    async listCatalogPage(
+      _after: BlockMerkleRoot | null,
+      _limit: number,
+    ): Promise<{
+      readonly blocks: readonly BlockMerkleRoot[];
+      readonly nextCursor: BlockMerkleRoot | null;
+    }> {
+      return { blocks: [], nextCursor: null };
+    },
     async getProvenance(merkleRoot: BlockMerkleRoot): Promise<Provenance> {
       const rowMeta = rows.get(merkleRoot);
       const testHistory = rowMeta?.hasPassing

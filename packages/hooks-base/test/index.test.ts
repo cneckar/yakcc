@@ -221,7 +221,9 @@ describe("writeMarkerCommand", () => {
     const payload = { command: "/yakcc", registeredAt: "2026-01-01T00:00:00Z" };
     writeMarkerCommand(testMarkerDir, "marker.json", payload);
 
-    const content = JSON.parse(readFileSync(join(testMarkerDir, "marker.json"), "utf-8")) as typeof payload;
+    const content = JSON.parse(
+      readFileSync(join(testMarkerDir, "marker.json"), "utf-8"),
+    ) as typeof payload;
     expect(content.command).toBe("/yakcc");
     expect(content.registeredAt).toBe("2026-01-01T00:00:00Z");
   });
@@ -254,50 +256,42 @@ describe("DEFAULT_REGISTRY_HIT_THRESHOLD", () => {
 // ---------------------------------------------------------------------------
 
 describe("executeRegistryQuery — registry-hit path", () => {
-  it(
-    "returns kind=registry-hit when a close semantic match exists",
-    async () => {
-      const spec = makeSpecYak("parse-integer", "Parse an integer from a string");
-      await registry.storeBlock(makeBlockRow(spec));
+  it("returns kind=registry-hit when a close semantic match exists", async () => {
+    const spec = makeSpecYak("parse-integer", "Parse an integer from a string");
+    await registry.storeBlock(makeBlockRow(spec));
 
-      // Noise blocks to exercise KNN ranking.
-      for (const [name, behavior] of [
-        ["check-digit", "Check whether a character is a digit"],
-        ["sort-array", "Sort an array of numbers in ascending order"],
-      ] as [string, string][]) {
-        await registry.storeBlock(makeBlockRow(makeSpecYak(name, behavior)));
-      }
+    // Noise blocks to exercise KNN ranking.
+    for (const [name, behavior] of [
+      ["check-digit", "Check whether a character is a digit"],
+      ["sort-array", "Sort an array of numbers in ascending order"],
+    ] as [string, string][]) {
+      await registry.storeBlock(makeBlockRow(makeSpecYak(name, behavior)));
+    }
 
-      const ctx: EmissionContext = { intent: "Parse an integer from a string" };
-      // Permissive threshold so mock embedder's close vectors register as hit.
-      const response: HookResponse = await executeRegistryQuery(registry, ctx, { threshold: 1.5 });
+    const ctx: EmissionContext = { intent: "Parse an integer from a string" };
+    // Permissive threshold so mock embedder's close vectors register as hit.
+    const response: HookResponse = await executeRegistryQuery(registry, ctx, { threshold: 1.5 });
 
-      expect(response.kind).toBe("registry-hit");
-      if (response.kind === "registry-hit") {
-        expect(response.id).toMatch(/^[0-9a-f]{64}$/);
-      }
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("registry-hit");
+    if (response.kind === "registry-hit") {
+      expect(response.id).toMatch(/^[0-9a-f]{64}$/);
+    }
+  }, 10_000);
 
-  it(
-    "registry-hit id is stable across repeated calls for the same block",
-    async () => {
-      const spec = makeSpecYak("add-numbers", "Add two numbers together");
-      await registry.storeBlock(makeBlockRow(spec));
+  it("registry-hit id is stable across repeated calls for the same block", async () => {
+    const spec = makeSpecYak("add-numbers", "Add two numbers together");
+    await registry.storeBlock(makeBlockRow(spec));
 
-      const ctx: EmissionContext = { intent: "Add two numbers together" };
-      const r1 = await executeRegistryQuery(registry, ctx, { threshold: 1.5 });
-      const r2 = await executeRegistryQuery(registry, ctx, { threshold: 1.5 });
+    const ctx: EmissionContext = { intent: "Add two numbers together" };
+    const r1 = await executeRegistryQuery(registry, ctx, { threshold: 1.5 });
+    const r2 = await executeRegistryQuery(registry, ctx, { threshold: 1.5 });
 
-      expect(r1.kind).toBe("registry-hit");
-      expect(r2.kind).toBe("registry-hit");
-      if (r1.kind === "registry-hit" && r2.kind === "registry-hit") {
-        expect(r1.id).toBe(r2.id);
-      }
-    },
-    10_000,
-  );
+    expect(r1.kind).toBe("registry-hit");
+    expect(r2.kind).toBe("registry-hit");
+    if (r1.kind === "registry-hit" && r2.kind === "registry-hit") {
+      expect(r1.id).toBe(r2.id);
+    }
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -305,64 +299,52 @@ describe("executeRegistryQuery — registry-hit path", () => {
 // ---------------------------------------------------------------------------
 
 describe("executeRegistryQuery — synthesis-required path", () => {
-  it(
-    "returns kind=synthesis-required when the registry is empty",
-    async () => {
-      const ctx: EmissionContext = { intent: "Compute the Fibonacci sequence" };
-      const response = await executeRegistryQuery(registry, ctx, {
-        threshold: DEFAULT_REGISTRY_HIT_THRESHOLD,
-      });
+  it("returns kind=synthesis-required when the registry is empty", async () => {
+    const ctx: EmissionContext = { intent: "Compute the Fibonacci sequence" };
+    const response = await executeRegistryQuery(registry, ctx, {
+      threshold: DEFAULT_REGISTRY_HIT_THRESHOLD,
+    });
 
-      expect(response.kind).toBe("synthesis-required");
-      if (response.kind === "synthesis-required") {
-        expect(response.proposal.behavior).toBe(ctx.intent);
-        expect(response.proposal.inputs).toHaveLength(0);
-        expect(response.proposal.outputs).toHaveLength(0);
-        expect(response.proposal.guarantees).toHaveLength(0);
-        expect(response.proposal.errorConditions).toHaveLength(0);
-        expect(response.proposal.propertyTests).toHaveLength(0);
-      }
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("synthesis-required");
+    if (response.kind === "synthesis-required") {
+      expect(response.proposal.behavior).toBe(ctx.intent);
+      expect(response.proposal.inputs).toHaveLength(0);
+      expect(response.proposal.outputs).toHaveLength(0);
+      expect(response.proposal.guarantees).toHaveLength(0);
+      expect(response.proposal.errorConditions).toHaveLength(0);
+      expect(response.proposal.propertyTests).toHaveLength(0);
+    }
+  }, 10_000);
 
-  it(
-    "returns kind=synthesis-required when strict threshold prevents any hit",
-    async () => {
-      const spec = makeSpecYak("base64-encode", "Encode bytes as a base64 string");
-      await registry.storeBlock(makeBlockRow(spec));
+  it("returns kind=synthesis-required when strict threshold prevents any hit", async () => {
+    const spec = makeSpecYak("base64-encode", "Encode bytes as a base64 string");
+    await registry.storeBlock(makeBlockRow(spec));
 
-      const ctx: EmissionContext = {
-        intent: "Completely unrelated: validate email address format",
-      };
-      // Zero threshold: no candidate ever wins.
-      const response = await executeRegistryQuery(registry, ctx, { threshold: 0.0 });
+    const ctx: EmissionContext = {
+      intent: "Completely unrelated: validate email address format",
+    };
+    // Zero threshold: no candidate ever wins.
+    const response = await executeRegistryQuery(registry, ctx, { threshold: 0.0 });
 
-      expect(response.kind).toBe("synthesis-required");
-      if (response.kind === "synthesis-required") {
-        expect(response.proposal.behavior).toBe(ctx.intent);
-      }
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("synthesis-required");
+    if (response.kind === "synthesis-required") {
+      expect(response.proposal.behavior).toBe(ctx.intent);
+    }
+  }, 10_000);
 
-  it(
-    "proposal behavior is the intent (not the concatenated query string) when sourceContext is provided",
-    async () => {
-      const ctx: EmissionContext = {
-        intent: "filter the list",
-        sourceContext: "by removing nulls",
-      };
-      const response = await executeRegistryQuery(registry, ctx, { threshold: 0.0 });
+  it("proposal behavior is the intent (not the concatenated query string) when sourceContext is provided", async () => {
+    const ctx: EmissionContext = {
+      intent: "filter the list",
+      sourceContext: "by removing nulls",
+    };
+    const response = await executeRegistryQuery(registry, ctx, { threshold: 0.0 });
 
-      expect(response.kind).toBe("synthesis-required");
-      if (response.kind === "synthesis-required") {
-        // Skeleton behavior is ctx.intent only, not the concatenated query string.
-        expect(response.proposal.behavior).toBe("filter the list");
-      }
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("synthesis-required");
+    if (response.kind === "synthesis-required") {
+      // Skeleton behavior is ctx.intent only, not the concatenated query string.
+      expect(response.proposal.behavior).toBe("filter the list");
+    }
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -370,45 +352,42 @@ describe("executeRegistryQuery — synthesis-required path", () => {
 // ---------------------------------------------------------------------------
 
 describe("executeRegistryQuery — passthrough (error) path", () => {
-  it(
-    "returns kind=passthrough when the registry throws on findCandidatesByQuery",
-    async () => {
-      const brokenRegistry: Registry = {
-        storeBlock: registry.storeBlock.bind(registry),
-        selectBlocks: registry.selectBlocks.bind(registry),
-        getBlock: registry.getBlock.bind(registry),
-        findByCanonicalAstHash: registry.findByCanonicalAstHash.bind(registry),
-        getProvenance: registry.getProvenance.bind(registry),
-        enumerateSpecs: registry.enumerateSpecs.bind(registry),
-        close: registry.close.bind(registry),
-        findCandidatesByIntent: registry.findCandidatesByIntent.bind(registry),
-        findCandidatesByQuery: async () => {
-          throw new Error("simulated DB failure");
-        },
-        exportManifest: registry.exportManifest.bind(registry),
-        getForeignRefs: registry.getForeignRefs.bind(registry),
-        storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
-        listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
-        storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
-        getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
-        listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
-        getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
-        listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
-        listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
-        replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
-        storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
-        getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
-      };
+  it("returns kind=passthrough when the registry throws on findCandidatesByQuery", async () => {
+    const brokenRegistry: Registry = {
+      storeBlock: registry.storeBlock.bind(registry),
+      selectBlocks: registry.selectBlocks.bind(registry),
+      getBlock: registry.getBlock.bind(registry),
+      findByCanonicalAstHash: registry.findByCanonicalAstHash.bind(registry),
+      getProvenance: registry.getProvenance.bind(registry),
+      enumerateSpecs: registry.enumerateSpecs.bind(registry),
+      close: registry.close.bind(registry),
+      findCandidatesByIntent: registry.findCandidatesByIntent.bind(registry),
+      findCandidatesByQuery: async () => {
+        throw new Error("simulated DB failure");
+      },
+      exportManifest: registry.exportManifest.bind(registry),
+      getForeignRefs: registry.getForeignRefs.bind(registry),
+      storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
+      listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
+      storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
+      getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
+      listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
+      getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
+      listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
+      listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
+      replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
+      storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
+      getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
+      listCatalogPage: registry.listCatalogPage.bind(registry),
+    };
 
-      const ctx: EmissionContext = { intent: "some emission intent" };
-      const response = await executeRegistryQuery(brokenRegistry, ctx, {
-        threshold: DEFAULT_REGISTRY_HIT_THRESHOLD,
-      });
+    const ctx: EmissionContext = { intent: "some emission intent" };
+    const response = await executeRegistryQuery(brokenRegistry, ctx, {
+      threshold: DEFAULT_REGISTRY_HIT_THRESHOLD,
+    });
 
-      expect(response.kind).toBe("passthrough");
-    },
-    10_000,
-  );
+    expect(response.kind).toBe("passthrough");
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -416,49 +395,45 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
 // ---------------------------------------------------------------------------
 
 describe("compound interaction — full production sequence", () => {
-  it(
-    "exercises the shared hooks-base logic across the real registry interaction lifecycle",
-    async () => {
-      // Step 1: verify type exports are usable (compile-time proof via type annotations).
-      const _optionsTypeCheck: HookOptions = { threshold: 0.3, markerDir: "/tmp" };
-      void _optionsTypeCheck;
+  it("exercises the shared hooks-base logic across the real registry interaction lifecycle", async () => {
+    // Step 1: verify type exports are usable (compile-time proof via type annotations).
+    const _optionsTypeCheck: HookOptions = { threshold: 0.3, markerDir: "/tmp" };
+    void _optionsTypeCheck;
 
-      // Step 2: seed the registry.
-      const spec = makeSpecYak("reverse-string", "Reverse a string");
-      await registry.storeBlock(makeBlockRow(spec));
+    // Step 2: seed the registry.
+    const spec = makeSpecYak("reverse-string", "Reverse a string");
+    await registry.storeBlock(makeBlockRow(spec));
 
-      // Step 3: registry-hit path via executeRegistryQuery.
-      const hitCtx: EmissionContext = { intent: "Reverse a string" };
-      const hitResponse = await executeRegistryQuery(registry, hitCtx, { threshold: 1.5 });
-      expect(hitResponse.kind).toBe("registry-hit");
-      if (hitResponse.kind === "registry-hit") {
-        expect(hitResponse.id).toMatch(/^[0-9a-f]{64}$/);
+    // Step 3: registry-hit path via executeRegistryQuery.
+    const hitCtx: EmissionContext = { intent: "Reverse a string" };
+    const hitResponse = await executeRegistryQuery(registry, hitCtx, { threshold: 1.5 });
+    expect(hitResponse.kind).toBe("registry-hit");
+    if (hitResponse.kind === "registry-hit") {
+      expect(hitResponse.id).toMatch(/^[0-9a-f]{64}$/);
+    }
+
+    // Step 4: synthesis-required path (strict threshold).
+    const missCtx: EmissionContext = { intent: "Compute a 3D convex hull" };
+    const missResponse = await executeRegistryQuery(registry, missCtx, { threshold: 0.0 });
+    expect(missResponse.kind).toBe("synthesis-required");
+    if (missResponse.kind === "synthesis-required") {
+      expect(missResponse.proposal.behavior).toContain("convex hull");
+      // Skeleton built by buildSkeletonSpec — verify its shape.
+      expect(missResponse.proposal.nonFunctional.purity).toBe("pure");
+    }
+
+    // Step 5: writeMarkerCommand writes a well-formed JSON marker file.
+    const markerDir = join(tmpdir(), `yakcc-base-e2e-${process.pid}`);
+    try {
+      writeMarkerCommand(markerDir, "test-command.json", {
+        command: "yakcc",
+        registeredAt: new Date().toISOString(),
+      });
+      expect(existsSync(join(markerDir, "test-command.json"))).toBe(true);
+    } finally {
+      if (existsSync(markerDir)) {
+        rmSync(markerDir, { recursive: true, force: true });
       }
-
-      // Step 4: synthesis-required path (strict threshold).
-      const missCtx: EmissionContext = { intent: "Compute a 3D convex hull" };
-      const missResponse = await executeRegistryQuery(registry, missCtx, { threshold: 0.0 });
-      expect(missResponse.kind).toBe("synthesis-required");
-      if (missResponse.kind === "synthesis-required") {
-        expect(missResponse.proposal.behavior).toContain("convex hull");
-        // Skeleton built by buildSkeletonSpec — verify its shape.
-        expect(missResponse.proposal.nonFunctional.purity).toBe("pure");
-      }
-
-      // Step 5: writeMarkerCommand writes a well-formed JSON marker file.
-      const markerDir = join(tmpdir(), `yakcc-base-e2e-${process.pid}`);
-      try {
-        writeMarkerCommand(markerDir, "test-command.json", {
-          command: "yakcc",
-          registeredAt: new Date().toISOString(),
-        });
-        expect(existsSync(join(markerDir, "test-command.json"))).toBe(true);
-      } finally {
-        if (existsSync(markerDir)) {
-          rmSync(markerDir, { recursive: true, force: true });
-        }
-      }
-    },
-    15_000,
-  );
+    }
+  }, 15_000);
 });
