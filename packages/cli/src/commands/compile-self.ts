@@ -49,8 +49,10 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { openRegistry } from "@yakcc/registry";
-import type { BlockTripletRow, Registry } from "@yakcc/registry";
+import type { BlockTripletRow, Registry, RegistryOptions } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+import { makeCommonsBinding } from "../lib/commons-submit.js";
+import { readRc } from "../lib/yakccrc.js";
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing options
@@ -345,7 +347,17 @@ async function _runPipeline(
   sourceFilesEmitted: number;
   plumbingFilesEmitted: number;
 }> {
-  const registry: Registry = await openRegistry(registryPath, NULL_EMBEDDING_OPTS);
+  // Commons-push binding (WI-823 slice 4b).
+  const rc = readRc(".");
+  const airgapped = rc?.mode === "airgapped";
+  const commonsBinding = makeCommonsBinding({ registryPath, airgapped });
+
+  const openOpts: RegistryOptions = { ...NULL_EMBEDDING_OPTS };
+  if (commonsBinding.commonsSubmit !== undefined) {
+    openOpts.commonsSubmit = commonsBinding.commonsSubmit;
+  }
+  const registry: Registry = await openRegistry(registryPath, openOpts);
+  commonsBinding.bind(registry);
 
   try {
     // Step 1: Enumerate all atoms via exportManifest (single authority — Sacred Practice #12).

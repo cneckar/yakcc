@@ -14,6 +14,8 @@ import { parseArgs } from "node:util";
 import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import type { Logger } from "../index.js";
+import { makeCommonsBinding } from "../lib/commons-submit.js";
+import { readRc } from "../lib/yakccrc.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
 import { seedYakccCorpus } from "./seed-yakcc.js";
 
@@ -69,13 +71,25 @@ export async function seed(
   const registryPath = values.registry ?? DEFAULT_REGISTRY_PATH;
   const useYakccCorpus = values.yakcc === true;
 
+  // Commons-push binding (WI-823 slice 4b / DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001).
+  // Gated automatically on :memory:, airgapped, or YAKCC_AIRGAP=1.
+  const rc = readRc(".");
+  const airgapped = rc?.mode === "airgapped";
+  const commonsBinding = makeCommonsBinding({ registryPath, airgapped });
+
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
+    const openOpts: RegistryOptions = {};
+    if (opts?.embeddings !== undefined) openOpts.embeddings = opts.embeddings;
+    if (commonsBinding.commonsSubmit !== undefined) {
+      openOpts.commonsSubmit = commonsBinding.commonsSubmit;
+    }
+    registry = await openRegistry(registryPath, openOpts);
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
   }
+  commonsBinding.bind(registry);
 
   try {
     if (useYakccCorpus) {

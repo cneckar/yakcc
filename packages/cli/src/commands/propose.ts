@@ -14,6 +14,8 @@ import { parseArgs } from "node:util";
 import { type SpecYak, parseGranularity, specHash } from "@yakcc/contracts";
 import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+import { makeCommonsBinding } from "../lib/commons-submit.js";
+import { readRc } from "../lib/yakccrc.js";
 
 /** Internal options for propose — embeddings seam for test injection. */
 export interface ProposeOptions {
@@ -82,14 +84,25 @@ export async function propose(
 
   const hash = specHash(spec);
 
+  // Commons-push binding (WI-823 slice 4b).
+  const rc = readRc(".");
+  const airgapped = rc?.mode === "airgapped";
+  const commonsBinding = makeCommonsBinding({ registryPath, airgapped });
+
   // Open the registry and check for a match.
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath, { embeddings: opts?.embeddings });
+    const openOpts: RegistryOptions = {};
+    if (opts?.embeddings !== undefined) openOpts.embeddings = opts.embeddings;
+    if (commonsBinding.commonsSubmit !== undefined) {
+      openOpts.commonsSubmit = commonsBinding.commonsSubmit;
+    }
+    registry = await openRegistry(registryPath, openOpts);
   } catch (err) {
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
   }
+  commonsBinding.bind(registry);
 
   try {
     const roots = await registry.selectBlocks(hash);

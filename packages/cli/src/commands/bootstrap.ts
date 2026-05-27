@@ -80,6 +80,8 @@ import type {
 import { acquireWriteLock, openRegistry } from "@yakcc/registry";
 import { shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
+import { makeCommonsBinding } from "../lib/commons-submit.js";
+import { readRc } from "../lib/yakccrc.js";
 import { PLUMBING_INCLUDE_GLOBS, plumbingPathAllowed } from "./plumbing-globs.js";
 
 // ---------------------------------------------------------------------------
@@ -1008,15 +1010,27 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     return 1;
   }
 
+  // Commons-push binding (WI-823 slice 4b). Bootstrap can produce 3000+ atoms
+  // in a single run; each novel insert fires a fire-and-forget POST. Air-gap or
+  // :memory: gating in makeCommonsBinding skips push entirely.
+  const rc = readRc(".");
+  const airgapped = rc?.mode === "airgapped";
+  const commonsBinding = makeCommonsBinding({ registryPath, airgapped });
+
   // Open registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
   let registry: Registry;
   try {
-    registry = await openRegistry(registryPath, BOOTSTRAP_EMBEDDING_OPTS);
+    const openOpts: RegistryOptions = { ...BOOTSTRAP_EMBEDDING_OPTS };
+    if (commonsBinding.commonsSubmit !== undefined) {
+      openOpts.commonsSubmit = commonsBinding.commonsSubmit;
+    }
+    registry = await openRegistry(registryPath, openOpts);
   } catch (err) {
     releaseBootstrapLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${(err as Error).message}`);
     return 1;
   }
+  commonsBinding.bind(registry);
 
   // Adapt Registry → ShaveRegistryView (same pattern as shave.ts lines ~79-87).
   //
