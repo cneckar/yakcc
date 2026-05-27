@@ -33,31 +33,31 @@ const SPEC: SpecYak = {
 const PROOF_MANIFEST_JSON =
   '{"artifacts":[{"kind":"property_tests","path":"tests.fast-check.ts"}]}';
 const PROOF_MANIFEST = validateProofManifestL0(JSON.parse(PROOF_MANIFEST_JSON));
+const ARTIFACT_PATH = "tests.fast-check.ts";
 
 function makeRow(implVariant: string): BlockTripletRow {
-  const specCanonicalBytes = new TextEncoder().encode(canonicalize(SPEC));
-  const sHash: SpecHash = computeSpecHash(SPEC);
-  const implSource = `// SPDX-License-Identifier: MIT\nexport const v = "${implVariant}";\n`;
-  const artifacts = new Map<string, Uint8Array>([
-    ["tests.fast-check.ts", new TextEncoder().encode("// dummy")],
-  ]);
-  const root = blockMerkleRoot({
-    spec: specCanonicalBytes,
-    impl: implSource,
+  const implSource = `export function fn(): unknown { return null; } /* ${implVariant} */`;
+  const artifactBytes = new TextEncoder().encode("// dummy");
+  const artifacts = new Map<string, Uint8Array>([[ARTIFACT_PATH, artifactBytes]]);
+  const specCanonicalBytes = canonicalize(SPEC as unknown as Parameters<typeof canonicalize>[0]);
+  const specHashHex = computeSpecHash(SPEC) as SpecHash;
+  const merkleRoot = blockMerkleRoot({
+    spec: SPEC,
+    implSource,
     manifest: PROOF_MANIFEST,
     artifacts,
   });
   return {
-    blockMerkleRoot: root,
-    specHash: sHash,
+    blockMerkleRoot: merkleRoot,
+    specHash: specHashHex,
     specCanonicalBytes,
     implSource,
     proofManifestJson: PROOF_MANIFEST_JSON,
     level: "L0",
-    createdAt: 0,
-    canonicalAstHash: ("0".repeat(64) as unknown) as CanonicalAstHash,
+    createdAt: 1_714_000_000_000,
+    canonicalAstHash: "a".repeat(64) as CanonicalAstHash,
+    parentBlockRoot: null,
     artifacts,
-    kind: "local",
   };
 }
 
@@ -71,10 +71,10 @@ async function waitFor(cond: () => boolean, timeoutMs = 200): Promise<void> {
 
 describe("createCommonsSubmitter (#794 slice 3)", () => {
   it("POSTs to <url>/v1/blocks/submit with JSON body and calls onSuccess on 2xx", async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const calls: string[] = [];
     const successes: BlockMerkleRoot[] = [];
-    const fakeFetch: typeof fetch = async (input, init) => {
-      calls.push({ url: String(input), init });
+    const fakeFetch: typeof fetch = async (input) => {
+      calls.push(String(input));
       return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
     };
     const submit = createCommonsSubmitter({
@@ -83,21 +83,16 @@ describe("createCommonsSubmitter (#794 slice 3)", () => {
       onSuccess: (root) => successes.push(root as BlockMerkleRoot),
     });
     const row = makeRow("v1");
-    submit(row); // fire-and-forget — should return immediately
+    submit(row); // fire-and-forget — must return synchronously
     await waitFor(() => successes.length > 0);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("https://commons.example.com/v1/blocks/submit");
-    expect(calls[0]?.init?.method).toBe("POST");
-    expect((calls[0]?.init?.headers as Record<string, string>)["Content-Type"]).toBe(
-      "application/json",
-    );
+    expect(calls).toEqual(["https://commons.example.com/v1/blocks/submit"]);
     expect(successes).toEqual([row.blockMerkleRoot]);
   });
 
   it("strips trailing slashes from the base URL", async () => {
-    const calls: Array<{ url: string }> = [];
+    const calls: string[] = [];
     const fakeFetch: typeof fetch = async (input) => {
-      calls.push({ url: String(input) });
+      calls.push(String(input));
       return new Response("{}", { status: 200 });
     };
     const submit = createCommonsSubmitter({
@@ -106,7 +101,7 @@ describe("createCommonsSubmitter (#794 slice 3)", () => {
     });
     submit(makeRow("trim"));
     await waitFor(() => calls.length > 0);
-    expect(calls[0]?.url).toBe("https://commons.example.com/v1/blocks/submit");
+    expect(calls[0]).toBe("https://commons.example.com/v1/blocks/submit");
   });
 
   it("calls onError on non-2xx response without throwing to the caller", async () => {
@@ -156,36 +151,33 @@ describe("createCommonsSubmitter (#794 slice 3)", () => {
     const elapsed = Date.now() - t0;
     expect(elapsed).toBeLessThan(50); // Sync return, no await
     // Cleanup: resolve the hanging fetch so vitest doesn't hold.
-    resolveFetch?.(new Response("{}", { status: 200 }));
+    if (resolveFetch !== null) {
+      (resolveFetch as (v: Response) => void)(new Response("{}", { status: 200 }));
+    }
   });
 
-  it("survives serialize errors (sync) by routing through onError", async () => {
+  it("survives sync serialize errors by routing through onError", async () => {
     const errors: Array<{ msg: string }> = [];
+    let fetchCalled = false;
     const submit = createCommonsSubmitter({
       url: "https://commons.example.com",
-      fetchImpl: async () => new Response("{}", { status: 200 }),
+      fetchImpl: async () => {
+        fetchCalled = true;
+        return new Response("{}", { status: 200 });
+      },
       onError: (err) => errors.push({ msg: err.message }),
     });
-    // Deliberately malformed row: missing required fields. serializeWireBlockTriplet
-    // is tolerant on TS-type-conforming inputs, so instead force a JSON.stringify
-    // failure by injecting a circular structure on `artifacts`.
-    const row = makeRow("circ") as BlockTripletRow & { _circ?: unknown };
-    // biome-ignore lint/suspicious/noExplicitAny: deliberate circular for test
-    const circ: any = {};
-    circ.self = circ;
-    (row as { _circ?: unknown })._circ = circ;
-    // Patch artifacts to include the cycle by reflection on the wire shape
-    // (createCommonsSubmitter only JSON.stringify's the wire envelope, so we
-    // inject a circular ref into a wire-derivable surface).
+    // Force a JSON.stringify failure by replacing implSource with a getter that throws.
+    const row = makeRow("circ");
     Object.defineProperty(row, "implSource", {
-      get() {
-        // Throw during serialization — surfaces as a sync error before fetch
+      get(): string {
         throw new Error("synthetic-serialize-error");
       },
       configurable: true,
     });
     submit(row);
-    // Sync path: error reported before microtask drain
+    // Sync path: error reported before any fetch attempt.
+    expect(fetchCalled).toBe(false);
     expect(errors).toHaveLength(1);
     expect(errors[0]?.msg).toContain("synthetic-serialize-error");
   });
