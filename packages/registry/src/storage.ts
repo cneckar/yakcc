@@ -2232,7 +2232,14 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
 
   // Resolve the embedding provider: use provided, or check env vars, or use local default.
   // Priority: explicit options.embeddings > YAKCC_EMBEDDING_PROVIDER env var > local BGE-small.
+  // Track whether the caller expressed explicit provider intent — used below to
+  // decide whether a stored/current mismatch should fail-loud or silently use
+  // the stored model (issue #811: non-embedding paths like `registry init` open
+  // the registry without caring about embeddings; they must not blow up just
+  // because the registry was seeded with a different model than the BGE default).
   let embeddingProvider: EmbeddingProvider;
+  const callerSetExplicitProvider =
+    options?.embeddings !== undefined || process.env.YAKCC_EMBEDDING_PROVIDER !== undefined;
   if (options?.embeddings !== undefined) {
     embeddingProvider = options.embeddings;
   } else {
@@ -2246,6 +2253,13 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
   // embedding_model_id and compare it against the current provider's modelId.
   // Mismatch with existing embeddings → throw a clear error pointing at rebuild.
   // No stored ID (fresh registry or pre-v11 first open) → store the current one.
+  // @decision DEC-EMBED-REGISTRY-META-002 (closes #811): the open-time guard only
+  // fail-louds when the CALLER set an explicit provider (options.embeddings or
+  // YAKCC_EMBEDDING_PROVIDER). When neither is set, the caller has no embedding
+  // intent — non-embedding CLI paths (registry init, propose, bootstrap) just
+  // need the file open; they must not throw on a stored/default mismatch.
+  // In that case we trust the stored model and leave it unchanged; the attached
+  // default embeddingProvider is only exercised when someone actually embeds.
   const storedModelIdRow = db
     .prepare<[string], { value: string }>("SELECT value FROM registry_meta WHERE key = ?")
     .get("embedding_model_id");
@@ -2264,7 +2278,11 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
     // When autoRebuild is true (explicit opt-in), the caller is about to rebuild
     // anyway (e.g. `yakcc registry rebuild`). Suppress the throw so the registry
     // opens successfully; rebuildRegistry will fix the vectors immediately after.
-    if (embCount > 0 && !(options?.autoRebuild ?? false)) {
+    if (
+      embCount > 0 &&
+      !(options?.autoRebuild ?? false) &&
+      callerSetExplicitProvider
+    ) {
       throw Object.assign(
         new Error(
           `Registry was embedded with model "${storedModelId}", but the current ` +
@@ -2278,14 +2296,23 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
   }
 
   // Upsert the current provider's metadata so future opens can detect mismatches.
-  db.prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)").run(
-    "embedding_model_id",
-    embeddingProvider.modelId,
-  );
-  db.prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)").run(
-    "embedding_dimension",
-    String(embeddingProvider.dimension),
-  );
+  // @decision DEC-EMBED-REGISTRY-META-002 (closes #811): only overwrite the stored
+  // model when the caller expressed explicit intent (options.embeddings or
+  // YAKCC_EMBEDDING_PROVIDER), OR when nothing is stored yet (fresh registry).
+  // Otherwise we leave the stored model as-is so a default `openRegistry` call
+  // from a non-embedding path (registry init, propose, etc.) does not silently
+  // rewrite the stored model id from e.g. "yakcc/offline-blake3-stub" to BGE.
+  const shouldUpdateStored = storedModelId === null || callerSetExplicitProvider;
+  if (shouldUpdateStored) {
+    db.prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)").run(
+      "embedding_model_id",
+      embeddingProvider.modelId,
+    );
+    db.prepare("INSERT OR REPLACE INTO registry_meta(key, value) VALUES (?, ?)").run(
+      "embedding_dimension",
+      String(embeddingProvider.dimension),
+    );
+  }
 
   return new SqliteRegistry(db, embeddingProvider, options?.autoRebuild ?? false);
 }
