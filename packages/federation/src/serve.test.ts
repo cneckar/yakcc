@@ -688,3 +688,101 @@ describe("serveRegistry compound-interaction: full F1 production sequence", () =
     expect(sv.schemaVersion).toBe(SCHEMA_VERSION);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite: POST /v1/blocks/submit (DEC-COMMONS-SUBMIT-WRITE-ENDPOINT-001 / #794 slice 2)
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/blocks/submit (#794 slice 2)", () => {
+  let registry: Registry;
+  let handle: ServeHandle;
+
+  beforeEach(async () => {
+    registry = await openRegistry(":memory:", { embeddings: ZERO_EMBEDDINGS });
+    handle = await serveRegistry(registry, { port: 0, host: "127.0.0.1" });
+  });
+
+  afterEach(async () => {
+    await handle.close();
+    await registry.close();
+  });
+
+  async function postSubmit(body: string | Uint8Array, contentType = "application/json") {
+    return fetch(`${handle.url}/v1/blocks/submit`, {
+      method: "POST",
+      headers: { "Content-Type": contentType },
+      body,
+    });
+  }
+
+  it("accepts a valid wire envelope and stores the block", async () => {
+    const row = makeRow(SPEC_A, "submit-v1", "// submit artifact");
+    const { serializeWireBlockTriplet } = await import("./wire.js");
+    const envelope = serializeWireBlockTriplet(row);
+
+    const r = await postSubmit(JSON.stringify(envelope));
+    expect(r.status).toBe(200);
+    const j = (await r.json()) as { accepted: boolean };
+    expect(j.accepted).toBe(true);
+
+    // Verify the block landed in the registry
+    const stored = await registry.getBlock(row.blockMerkleRoot);
+    expect(stored).not.toBeNull();
+    expect(stored?.blockMerkleRoot).toBe(row.blockMerkleRoot);
+  });
+
+  it("is idempotent: re-submitting the same envelope returns 200 (no-op via storeBlock dedupe)", async () => {
+    const row = makeRow(SPEC_A, "submit-idem", "// idempotent artifact");
+    const { serializeWireBlockTriplet } = await import("./wire.js");
+    const envelope = serializeWireBlockTriplet(row);
+    const body = JSON.stringify(envelope);
+
+    const r1 = await postSubmit(body);
+    expect(r1.status).toBe(200);
+    const r2 = await postSubmit(body);
+    expect(r2.status).toBe(200);
+  });
+
+  it("rejects malformed JSON with 400 bad_request + reason=malformed_json", async () => {
+    const r = await postSubmit("{ this is not valid json");
+    expect(r.status).toBe(400);
+    const j = (await r.json()) as { error: string; reason: string };
+    expect(j.error).toBe("bad_request");
+    expect(j.reason).toBe("malformed_json");
+  });
+
+  it("rejects a structurally invalid wire envelope with 400 bad_request", async () => {
+    const r = await postSubmit(JSON.stringify({ foo: "bar" }));
+    expect(r.status).toBe(400);
+    const j = (await r.json()) as { error: string; reason?: string };
+    expect(j.error).toBe("bad_request");
+    // The reason carries the deserialize error message — must mention a missing field.
+    expect(typeof j.reason).toBe("string");
+  });
+
+  it("rejects GET on /v1/blocks/submit with 405 method_not_allowed", async () => {
+    const r = await fetch(`${handle.url}/v1/blocks/submit`);
+    expect(r.status).toBe(405);
+    expect(r.headers.get("Allow")).toBe("POST");
+  });
+
+  it("rejects an oversized body with 413 body_too_large", async () => {
+    // 6 MiB > 5 MiB ceiling
+    const big = "x".repeat(6 * 1024 * 1024);
+    const r = await postSubmit(big);
+    expect(r.status).toBe(413);
+    const j = (await r.json()) as { error: string };
+    expect(j.error).toBe("body_too_large");
+  });
+
+  it("does not break the existing GET /schema-version after a write", async () => {
+    const row = makeRow(SPEC_A, "submit-then-read", "// after-write read");
+    const { serializeWireBlockTriplet } = await import("./wire.js");
+    await postSubmit(JSON.stringify(serializeWireBlockTriplet(row)));
+
+    const sv = await fetch(`${handle.url}/schema-version`);
+    expect(sv.status).toBe(200);
+    const svj = (await sv.json()) as { schemaVersion: number };
+    expect(svj.schemaVersion).toBe(SCHEMA_VERSION);
+  });
+});
