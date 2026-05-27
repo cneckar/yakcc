@@ -1214,6 +1214,20 @@ export interface Registry {
    * @decision DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 (issue #794)
    */
   markBlockSubmitted(blockMerkleRoot: BlockMerkleRoot, submittedAt: number): Promise<void>;
+
+  /**
+   * Flush the local commons-push queue: POST all unsubmitted blocks to
+   * `registry.yakcc.com/v1/blocks/submit` (or `YAKCC_COMMONS_URL`), marking
+   * each one `submitted_at` on success.
+   *
+   * No-op for airgapped installs and `:memory:` registries.
+   *
+   * @param opts.limit  Max blocks to process per call (default 100).
+   * @returns Counts of successfully submitted and failed blocks.
+   *
+   * @decision DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 (WI-794)
+   */
+  flushCommonsQueue(opts?: { limit?: number }): Promise<{ submitted: number; failed: number }>;
 }
 
 // ---------------------------------------------------------------------------

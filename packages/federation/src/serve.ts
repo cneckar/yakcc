@@ -310,11 +310,15 @@ function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let rejected = false;
     req.on("data", (chunk: Buffer) => {
       total += chunk.length;
       if (total > SUBMIT_MAX_BODY_BYTES) {
-        reject(new Error("body_too_large"));
-        req.destroy();
+        if (!rejected) {
+          rejected = true;
+          reject(new Error("body_too_large"));
+          req.resume(); // drain remaining data so the 413 response can be flushed
+        }
         return;
       }
       chunks.push(chunk);

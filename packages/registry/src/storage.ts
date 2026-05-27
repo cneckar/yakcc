@@ -8,6 +8,16 @@
 // writers; the registry is a CLI tool). Async wrappers are added at the
 // Promise boundary to match the Registry interface.
 
+// @decision DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 (WI-794)
+// Status: decided
+// Rationale: The commons push hook fires at the storeBlock seam so every atom
+// origin (hook, shave, bootstrap, manual) produces the same outbound flow.
+// Push is fire-and-forget; storeBlock returns immediately. Offline atoms queue
+// in submitted_at IS NULL rows and are flushed by flushCommonsQueue on the next
+// CLI invocation. No push fires for :memory: registries (test synthetic boundary)
+// or when airgapped=true (YAKCC_AIRGAP=1 env var or RegistryOptions.airgapped).
+// Anonymous POST, no auth, no identity — DEC-COMMONS-NO-AUTH-001.
+
 // @decision DEC-STORAGE-FAIL-LOUD-001: No in-memory fallback on SQLite open
 // failure. Status: decided (WI-003)
 // Rationale: A silent fallback would mask DB errors and let callers believe
@@ -66,6 +76,61 @@ import type {
 } from "./index.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
 import { structuralMatch } from "./search.js";
+
+// ---------------------------------------------------------------------------
+// Commons push constants and helpers (WI-794 / DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001)
+// ---------------------------------------------------------------------------
+
+/** Default commons URL. Override with YAKCC_COMMONS_URL env var. */
+const COMMONS_DEFAULT_URL = "https://registry.yakcc.com";
+
+/**
+ * Serialize a BlockTripletRow to the WireBlockTriplet JSON shape for commons
+ * submission. Mirrors serializeWireBlockTriplet from @yakcc/federation wire.ts
+ * but is inlined here to avoid a circular registry → federation import.
+ */
+function serializeForCommons(row: BlockTripletRow): string {
+  const artifactBytes: Record<string, string> = {};
+  for (const [path, bytes] of row.artifacts) {
+    artifactBytes[path] = Buffer.from(bytes).toString("base64");
+  }
+  return JSON.stringify({
+    blockMerkleRoot: row.blockMerkleRoot,
+    specHash: row.specHash,
+    specCanonicalBytes: Buffer.from(row.specCanonicalBytes).toString("base64"),
+    implSource: row.implSource,
+    proofManifestJson: row.proofManifestJson,
+    artifactBytes,
+    level: row.level,
+    createdAt: row.createdAt,
+    canonicalAstHash: row.canonicalAstHash,
+    parentBlockRoot: row.parentBlockRoot ?? null,
+  });
+}
+
+/**
+ * Fire-and-forget POST of a block to the commons. Returns true on a 2xx
+ * response, false on any network error or non-2xx status. Never throws.
+ *
+ * @decision DEC-COMMONS-NO-AUTH-001: anonymous POST, no headers beyond Content-Type.
+ * @decision DEC-COMMONS-NO-BATCHING-001: per-atom submission.
+ */
+async function postToCommons(
+  row: BlockTripletRow,
+  commonsUrl: string,
+  fetchImpl: typeof globalThis.fetch,
+): Promise<boolean> {
+  try {
+    const resp = await fetchImpl(`${commonsUrl}/v1/blocks/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: serializeForCommons(row),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -169,6 +234,9 @@ class SqliteRegistry implements Registry {
   private readonly db: Database.Database;
   private readonly embeddings: EmbeddingProvider;
   private readonly autoRebuild: boolean;
+  private readonly airgapped: boolean;
+  /** The fetch implementation used for commons push; injectable for testing. */
+  private readonly _fetchImpl: typeof globalThis.fetch;
   private closed = false;
 
   // ---------------------------------------------------------------------------
@@ -190,10 +258,18 @@ class SqliteRegistry implements Registry {
     [string, string, number, number, string]
   >;
 
-  constructor(db: Database.Database, embeddings: EmbeddingProvider, autoRebuild = false) {
+  constructor(
+    db: Database.Database,
+    embeddings: EmbeddingProvider,
+    autoRebuild = false,
+    airgapped = false,
+    fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+  ) {
     this.db = db;
     this.embeddings = embeddings;
     this.autoRebuild = autoRebuild;
+    this.airgapped = airgapped;
+    this._fetchImpl = fetchImpl;
     // Prepare the occurrence write-path statements once for the lifetime of this
     // registry instance. See @decision DEC-V2-OCCURRENCE-WRITE-PERF-001.
     this.stmtDeleteOccurrences = db.prepare<[string, string]>(
@@ -360,8 +436,8 @@ class SqliteRegistry implements Registry {
     // the BlockTriplet contract: keys match manifest.artifacts[*].path in order).
     const artifactEntries = [...row.artifacts.entries()];
 
-    const txn = this.db.transaction(() => {
-      insertBlock.run(
+    const txn = this.db.transaction((): boolean => {
+      const result = insertBlock.run(
         row.blockMerkleRoot,
         row.specHash,
         Buffer.from(row.specCanonicalBytes),
@@ -387,6 +463,7 @@ class SqliteRegistry implements Registry {
         row.sourceFile ?? null,
         row.sourceOffset ?? null,
       );
+      const wasNovel = result.changes === 1;
       // Only write the embedding if the spec_hash doesn't already have one.
       // Check by attempting DELETE (no-op if absent) then INSERT.
       // This is safe for idempotent re-stores of the same spec_hash because
@@ -402,9 +479,31 @@ class SqliteRegistry implements Registry {
         const [artifactPath, artifactBytes] = entry;
         insertArtifact.run(row.blockMerkleRoot, artifactPath, Buffer.from(artifactBytes), i);
       }
+      return wasNovel;
     });
 
-    txn();
+    const wasNovel = txn();
+
+    // Fire-and-forget commons push for novel atoms (DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001).
+    // Skips: airgapped installs, :memory: registries (test synthetic boundary).
+    // On network failure the atom stays queued (submitted_at IS NULL) and will be
+    // flushed by flushCommonsQueue on the next CLI invocation.
+    if (wasNovel && !this.airgapped && this.db.name !== ":memory:") {
+      const commonsUrl = process.env["YAKCC_COMMONS_URL"] ?? COMMONS_DEFAULT_URL;
+      const blockMerkleRootForPush = row.blockMerkleRoot;
+      void postToCommons(row, commonsUrl, this._fetchImpl).then((ok) => {
+        if (ok) {
+          // Mark submitted on success; ignore errors here (best-effort).
+          try {
+            this.db
+              .prepare("UPDATE blocks SET submitted_at = ? WHERE block_merkle_root = ?")
+              .run(Date.now(), blockMerkleRootForPush);
+          } catch {
+            // Swallow — the queue will retry on next flush.
+          }
+        }
+      });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -2026,6 +2125,42 @@ class SqliteRegistry implements Registry {
       .run(submittedAt, blockMerkleRoot);
   }
 
+  // -------------------------------------------------------------------------
+  // flushCommonsQueue — submit all queued (unsubmitted) atoms to the commons
+  // (DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 / WI-794)
+  // -------------------------------------------------------------------------
+
+  async flushCommonsQueue(opts?: { limit?: number }): Promise<{ submitted: number; failed: number }> {
+    this.assertOpen();
+
+    // No-op for airgapped installs and :memory: registries (test boundary).
+    if (this.airgapped || this.db.name === ":memory:") {
+      return { submitted: 0, failed: 0 };
+    }
+
+    const limit = opts?.limit ?? 100;
+    const roots = await this.listUnsubmittedBlocks(limit);
+    const commonsUrl = process.env["YAKCC_COMMONS_URL"] ?? COMMONS_DEFAULT_URL;
+
+    let submitted = 0;
+    let failed = 0;
+
+    for (const root of roots) {
+      const blockRow = await this.getBlock(root);
+      if (blockRow === null) continue;
+
+      const ok = await postToCommons(blockRow, commonsUrl, this._fetchImpl);
+      if (ok) {
+        await this.markBlockSubmitted(root, Date.now());
+        submitted++;
+      } else {
+        failed++;
+      }
+    }
+
+    return { submitted, failed };
+  }
+
   // close
   // -------------------------------------------------------------------------
 
@@ -2171,6 +2306,25 @@ export interface RegistryOptions {
    * @default false
    */
   autoRebuild?: boolean | undefined;
+
+  /**
+   * When true, disables all network operations including commons atom submission.
+   * Equivalent to running with `YAKCC_AIRGAP=1` env var.
+   *
+   * @decision DEC-COMMONS-ALWAYS-ON-001: the only way to opt out of commons
+   *   contribution is full airgap mode — there is no per-atom or per-session toggle.
+   *
+   * @default false (or true when YAKCC_AIRGAP=1 env var is set)
+   */
+  airgapped?: boolean | undefined;
+
+  /**
+   * Override the fetch implementation used for commons push.
+   * For testing only — allows intercepting outbound POSTs without real network I/O.
+   * Not part of the public API surface; may change without notice.
+   * @internal
+   */
+  _fetchImpl?: typeof globalThis.fetch | undefined;
 }
 
 /**
@@ -2346,7 +2500,13 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
     );
   }
 
-  return new SqliteRegistry(db, embeddingProvider, options?.autoRebuild ?? false);
+  // Resolve airgap: explicit option takes priority, then YAKCC_AIRGAP env var.
+  const airgapped =
+    options?.airgapped === true || process.env["YAKCC_AIRGAP"] === "1";
+
+  const fetchImpl = options?._fetchImpl ?? globalThis.fetch;
+
+  return new SqliteRegistry(db, embeddingProvider, options?.autoRebuild ?? false, airgapped, fetchImpl);
 }
 
 // ---------------------------------------------------------------------------

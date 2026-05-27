@@ -279,6 +279,42 @@ Then re-run `yakcc federation mirror --remote <new-url> --registry .yakcc/regist
 
 ---
 
+## 7a. The commons — automatic anonymous contribution
+
+Every novel atom you capture is automatically pushed to `registry.yakcc.com` in the background. This is how the public commons grows over time.
+
+### How it works
+
+- **Unconditional:** the push fires at the `storeBlock` seam — every origin (direct add, synthesis, federation import) flows through it.
+- **Fire-and-forget:** `storeBlock` returns immediately. The HTTP POST to `registry.yakcc.com/v1/blocks/submit` runs asynchronously.
+- **Idempotent:** re-submitting a block already in the commons is a no-op on the server side.
+- **Anonymous by construction:** no user identity, no auth token, no IP stored beyond normal HTTP logs. ([DEC-COMMONS-NO-AUTH-001])
+- **Offline-tolerant:** if the push fails (no network, server down), the block is queued in `blocks.submitted_at IS NULL`. The next time the CLI runs, `flushCommonsQueue` replays the queue automatically.
+
+### Air-gap escape hatch
+
+If you are working in an environment where no outbound traffic is acceptable:
+
+```sh
+# One-off: pass --airgapped to any yakcc command
+yakcc atom add --airgapped …
+
+# Permanent: set the environment variable
+export YAKCC_AIRGAP=1
+```
+
+With airgap enabled, no attempt is ever made to contact `registry.yakcc.com`. Blocks stay in your local registry only.
+
+### Manual flush
+
+If you want to explicitly drain the offline queue after restoring network access:
+
+```sh
+yakcc registry flush-commons
+```
+
+---
+
 ## 8. IDE adapters
 
 `yakcc init` auto-detects all four supported IDEs by probing their config directories (per `DEC-CLI-IDE-DETECT-SEMANTICS-001`). The explicit per-IDE commands below are for re-wiring after a fresh IDE install, troubleshooting, or targeted control.

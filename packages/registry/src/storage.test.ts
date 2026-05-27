@@ -169,20 +169,15 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(11);
+    expect(SCHEMA_VERSION).toBe(12);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→6→7→8→9→10.
-    // Migration 4 bumps schema_version to 4 (parent_block_root; NULL default is correct).
-    // Migration 5 bumps schema_version to 5 (block_artifacts table).
-    // Migration 6 bumps schema_version to 6 (foreign-block columns + block_foreign_refs).
-    // Migration 7 bumps schema_version to 7 (source provenance columns + workspace_plumbing).
-    // Migration 8 bumps schema_version to 8 (source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001).
-    // Migration 9 bumps schema_version to 9 (block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix).
-    // Migration 10 bumps schema_version to 10 (source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001).
+    // On a fresh DB, applyMigrations runs migrations 0→1→2→3(DDL only, no bump)→4→5→...→12.
+    // Migration 11 bumps schema_version to 11 (registry_meta table).
+    // Migration 12 bumps schema_version to 12 (submitted_at column; DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001).
     // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
-    expect(row?.version).toBe(11);
+    expect(row?.version).toBe(12);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -269,7 +264,7 @@ describe("schema migrations", () => {
       | { version: number }
       | undefined;
     // Second application is a no-op; version stays at 10 (all migrations already ran).
-    expect(row?.version).toBe(11);
+    expect(row?.version).toBe(12);
 
     db.close();
   });
@@ -335,7 +330,7 @@ describe("schema migrations", () => {
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(11);
+    expect(vRow?.version).toBe(12);
 
     db.close();
   });
@@ -888,8 +883,10 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     // migration 6 DDL (bumped to 6, kind/foreign_* columns + block_foreign_refs),
     // migration 7 DDL (bumped to 7, source provenance columns + workspace_plumbing),
     // migration 8 DDL (bumped to 8, source_file_glue table; DEC-V2-GLUE-CAPTURE-AUTHORITY-001),
-    // migration 9 DDL (bumped to 9, block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix), and
-    // migration 10 DDL (bumped to 10, source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001).
+    // migration 9 DDL (bumped to 9, block_occurrences table; DEC-STORAGE-IDEMPOTENT-001 fix),
+    // migration 10 DDL (bumped to 10, source_file_state table; DEC-V2-SHAVE-CACHE-STORAGE-001),
+    // migration 11 DDL (bumped to 11, registry_meta table; DEC-EMBED-REGISTRY-META-001), and
+    // migration 12 DDL (bumped to 12, submitted_at column; DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001).
     // The preMigrationVersion capture in openRegistry ensures the backfill still
     // ran even though later migrations would otherwise have bumped past 3.
     const db2 = new Database(dbPath);
@@ -897,7 +894,7 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const versionAfterBackfill = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionAfterBackfill).toBe(11);
+    expect(versionAfterBackfill).toBe(12);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -1004,7 +1001,7 @@ describe("migration 3 → 4: parent_block_root column", () => {
     const ver = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(ver).toBe(11);
+    expect(ver).toBe(12);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
@@ -1917,7 +1914,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vPost = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vPost).toBe(11);
+    expect(vPost).toBe(12);
 
     // kind column now present.
     const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -1978,15 +1975,15 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vAfterFirst = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterFirst).toBe(11);
-    expect(SCHEMA_VERSION).toBe(11);
+    expect(vAfterFirst).toBe(12);
+    expect(SCHEMA_VERSION).toBe(12);
 
     // Second run — must be a complete no-op; no throws; version stays at 10.
     expect(() => applyMigrations(db)).not.toThrow();
     const vAfterSecond = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterSecond).toBe(11);
+    expect(vAfterSecond).toBe(12);
 
     // Verify column count is stable (no duplicate columns created).
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3713,7 +3710,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {
       version: number;
     };
-    expect(versionRow.version).toBe(11);
+    expect(versionRow.version).toBe(12);
 
     // blocks table has the three new provenance columns.
     const blockCols = (
@@ -3796,15 +3793,15 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const v1 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v1).toBe(11);
-    expect(SCHEMA_VERSION).toBe(11);
+    expect(v1).toBe(12);
+    expect(SCHEMA_VERSION).toBe(12);
 
     // Second run — must be a complete no-op.
     expect(() => applyMigrations(db)).not.toThrow();
     const v2 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v2).toBe(11);
+    expect(v2).toBe(12);
 
     // Column count is stable — no duplicate columns.
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3842,7 +3839,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionPost = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionPost).toBe(11);
+    expect(versionPost).toBe(12);
 
     // The workspace_plumbing table exists (P1 creates it empty).
     const tables = (
@@ -4520,5 +4517,227 @@ describe("commons-push local queue (#794 slice 1)", () => {
     const got10 = await registry.listUnsubmittedBlocks(10);
     expect(got10.length).toBeGreaterThanOrEqual(2);
     await registry.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001 / issue #794 slice 2 — push seam
+// ---------------------------------------------------------------------------
+
+/** Flush enough microtask ticks for fire-and-forget push to complete. */
+async function flushPushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 8; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+describe("commons-push fire-and-forget seam (#794 slice 2)", () => {
+  it("novel storeBlock on a file-based registry calls _fetchImpl once", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-push-novel-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+    const calls: string[] = [];
+    const mockFetch = async (url: string): Promise<Response> => {
+      calls.push(url);
+      return { ok: true, status: 200 } as unknown as Response;
+    };
+
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), _fetchImpl: mockFetch });
+    const spec = makeSymmetricSpecYak("novel push seam spec");
+    await reg.storeBlock(makeBlockRow(spec));
+    await flushPushMicrotasks();
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toContain("/v1/blocks/submit");
+
+    await reg.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("re-storing the same block does not call _fetchImpl again", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-push-idem-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+    let callCount = 0;
+    const mockFetch = async (): Promise<Response> => {
+      callCount++;
+      return { ok: true, status: 200 } as unknown as Response;
+    };
+
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), _fetchImpl: mockFetch });
+    const spec = makeSymmetricSpecYak("idempotent push seam spec");
+    const row = makeBlockRow(spec);
+    await reg.storeBlock(row);
+    await flushPushMicrotasks();
+    const afterFirst = callCount;
+
+    await reg.storeBlock(row);
+    await flushPushMicrotasks();
+    const afterSecond = callCount;
+
+    expect(afterFirst).toBe(1);
+    expect(afterSecond).toBe(1); // no second push
+
+    await reg.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it(":memory: registry skips push entirely", async () => {
+    let callCount = 0;
+    const mockFetch = async (): Promise<Response> => {
+      callCount++;
+      return { ok: true } as unknown as Response;
+    };
+    const { openRegistry: openReg } = await import("./storage.js");
+    const reg = await openReg(":memory:", { embeddings: mockEmbeddingProvider(), _fetchImpl: mockFetch });
+
+    const spec = makeSymmetricSpecYak("memory skip push spec");
+    await reg.storeBlock(makeBlockRow(spec));
+    await flushPushMicrotasks();
+
+    expect(callCount).toBe(0);
+    await reg.close();
+  });
+
+  it("airgapped: true skips push on file-based registry", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-push-airgap-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+    let callCount = 0;
+    const mockFetch = async (): Promise<Response> => {
+      callCount++;
+      return { ok: true } as unknown as Response;
+    };
+
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), airgapped: true, _fetchImpl: mockFetch });
+    const spec = makeSymmetricSpecYak("airgapped push spec");
+    await reg.storeBlock(makeBlockRow(spec));
+    await flushPushMicrotasks();
+
+    expect(callCount).toBe(0);
+
+    await reg.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("offline fetch leaves block in listUnsubmittedBlocks queue", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-push-offline-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+    const mockFetch = async (): Promise<Response> => {
+      throw new Error("network unreachable");
+    };
+
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), _fetchImpl: mockFetch });
+    const spec = makeSymmetricSpecYak("offline push spec");
+    const row = makeBlockRow(spec);
+    await reg.storeBlock(row);
+    await flushPushMicrotasks();
+
+    const unsubmitted = await reg.listUnsubmittedBlocks(10);
+    expect(unsubmitted).toContain(row.blockMerkleRoot);
+
+    await reg.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("successful push marks block as submitted (removes from queue)", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-push-ok-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+    const mockFetch = async (): Promise<Response> => ({ ok: true, status: 200 } as unknown as Response);
+
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), _fetchImpl: mockFetch });
+    const spec = makeSymmetricSpecYak("successful push spec");
+    const row = makeBlockRow(spec);
+    await reg.storeBlock(row);
+    await flushPushMicrotasks();
+
+    const unsubmitted = await reg.listUnsubmittedBlocks(10);
+    expect(unsubmitted).not.toContain(row.blockMerkleRoot);
+
+    await reg.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("flushCommonsQueue drains unsubmitted blocks on success", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-flush-ok-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+
+    // First pass: offline — blocks land in queue
+    const failFetch = async (): Promise<Response> => { throw new Error("offline"); };
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), _fetchImpl: failFetch });
+    for (let i = 0; i < 3; i++) {
+      await reg.storeBlock(makeBlockRow(makeSymmetricSpecYak(`flush-test spec ${i}`)));
+    }
+    await flushPushMicrotasks();
+    const queuedBefore = await reg.listUnsubmittedBlocks(10);
+    expect(queuedBefore.length).toBeGreaterThanOrEqual(3);
+    await reg.close();
+
+    // Second pass: online — flushCommonsQueue should drain
+    const successFetch = async (): Promise<Response> => ({ ok: true, status: 200 } as unknown as Response);
+    const reg2 = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), _fetchImpl: successFetch });
+    const result = await reg2.flushCommonsQueue({ limit: 10 });
+    expect(result.submitted).toBeGreaterThanOrEqual(3);
+    expect(result.failed).toBe(0);
+    const queuedAfter = await reg2.listUnsubmittedBlocks(10);
+    expect(queuedAfter.length).toBe(0);
+    await reg2.close();
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("flushCommonsQueue returns { submitted: 0, failed: 0 } for :memory: registry", async () => {
+    const { openRegistry: openReg } = await import("./storage.js");
+    const reg = await openReg(":memory:", { embeddings: mockEmbeddingProvider() });
+    const result = await reg.flushCommonsQueue();
+    expect(result).toEqual({ submitted: 0, failed: 0 });
+    await reg.close();
+  });
+
+  it("flushCommonsQueue returns { submitted: 0, failed: 0 } for airgapped registry", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openRegistry: openReg } = await import("./storage.js");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "yakcc-flush-airgap-"));
+    const dbPath = join(tmpDir, "registry.sqlite");
+    const reg = await openReg(dbPath, { embeddings: mockEmbeddingProvider(), airgapped: true });
+
+    // Manually insert a block as unsubmitted
+    const spec = makeSymmetricSpecYak("airgap flush spec");
+    await reg.storeBlock(makeBlockRow(spec));
+    const result = await reg.flushCommonsQueue();
+    expect(result).toEqual({ submitted: 0, failed: 0 });
+
+    await reg.close();
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });
