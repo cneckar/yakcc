@@ -4341,8 +4341,9 @@ describe("openRegistry — DEC-EMBED-REGISTRY-META-002 (#811) — explicit-inten
     delete process.env.YAKCC_EMBEDDING_PROVIDER;
     const { mkdtempSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
-    tmpDir = mkdtempSync(join(tmpdir(), "yakcc-issue811-test-"));
-    dbPath = join(tmpDir, "r.sqlite");
+    const { join: pathJoin } = await import("node:path");
+    tmpDir = mkdtempSync(pathJoin(tmpdir(), "yakcc-issue811-test-"));
+    dbPath = pathJoin(tmpDir, "r.sqlite");
   });
 
   afterEach(async () => {
