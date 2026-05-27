@@ -2066,6 +2066,16 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
   //       where durability-on-crash is irrelevant. OFF was considered and rejected
   //       (evaluation contract §6 — forbidden shortcut).
   db.pragma("synchronous = NORMAL");
+  // @decision DEC-WAL-BUSY-TIMEOUT-001
+  // @title Set busy_timeout = 5000ms so SQLite retries on lock contention
+  // @status decided (WI-777 — SQLite concurrency hardening)
+  // @rationale The WAL single-writer contract means concurrent writers (e.g. two
+  //   `yakcc shave` processes against the same registry) will occasionally block
+  //   at the SQLite layer. Without busy_timeout, SQLITE_BUSY is returned immediately,
+  //   surfacing a cryptic error to the user. With 5000ms the DB retries internally
+  //   for up to 5s before giving up. For contention windows >5s the advisory write
+  //   lock (acquireWriteLock) kicks in first and produces a clear diagnostic.
+  db.pragma("busy_timeout = 5000");
   // Enable foreign key enforcement.
   db.pragma("foreign_keys = ON");
 

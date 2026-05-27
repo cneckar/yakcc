@@ -77,7 +77,7 @@ import type {
   RegistryOptions,
   SourceFileGlueEntry,
 } from "@yakcc/registry";
-import { openRegistry } from "@yakcc/registry";
+import { acquireWriteLock, openRegistry } from "@yakcc/registry";
 import { shave as shaveImpl } from "@yakcc/shave";
 import type { Logger } from "../index.js";
 import { PLUMBING_INCLUDE_GLOBS, plumbingPathAllowed } from "./plumbing-globs.js";
@@ -999,11 +999,21 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
     mkdirSync(dirname(outputPath), { recursive: true });
   }
 
+  // Acquire write lock before opening the registry (DEC-WRITE-LOCK-001).
+  let releaseBootstrapLock: (() => void) | null = null;
+  try {
+    releaseBootstrapLock = await acquireWriteLock(registryPath);
+  } catch (err) {
+    logger.error(`error: failed to acquire registry write lock: ${(err as Error).message}`);
+    return 1;
+  }
+
   // Open registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
   let registry: Registry;
   try {
     registry = await openRegistry(registryPath, BOOTSTRAP_EMBEDDING_OPTS);
   } catch (err) {
+    releaseBootstrapLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${(err as Error).message}`);
     return 1;
   }
@@ -1325,6 +1335,7 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   } catch (err) {
     logger.error(`error: workspace plumbing capture failed: ${(err as Error).message}`);
     await registry.close();
+    releaseBootstrapLock?.();
     return 1;
   }
 
@@ -1362,11 +1373,13 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   } catch (err) {
     logger.error(`error: failed to export manifest: ${(err as Error).message}`);
     await registry.close();
+    releaseBootstrapLock?.();
     return 1;
   }
 
   // Close registry — done with the shave-run DB.
   await registry.close();
+  releaseBootstrapLock?.();
 
   // --- Additive merge (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 part (a)) ---
   // Load prior entries from the committed manifest (if it exists) and merge

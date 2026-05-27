@@ -26,6 +26,7 @@ import { parseArgs } from "node:util";
 import {
   type Registry,
   type RegistryOptions,
+  acquireWriteLock,
   openRegistry,
   rebuildRegistry,
 } from "@yakcc/registry";
@@ -80,6 +81,14 @@ export async function registryRebuild(
   const parent = dirname(registryPath);
   mkdirSync(parent, { recursive: true });
 
+  let releaseLock: (() => void) | null = null;
+  try {
+    releaseLock = await acquireWriteLock(registryPath);
+  } catch (err) {
+    logger.error(`error: failed to acquire registry write lock: ${String(err)}`);
+    return 1;
+  }
+
   // Resolve the embedding provider to use for rebuilding.
   // If tests inject a provider, use it; otherwise the default (bge-small-en-v1.5)
   // is loaded lazily inside openRegistry.
@@ -94,6 +103,7 @@ export async function registryRebuild(
   try {
     registry = await openRegistry(registryPath, { embeddings: embeddingProvider });
   } catch (err) {
+    releaseLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${String(err)}`);
     return 1;
   }
@@ -122,5 +132,6 @@ export async function registryRebuild(
     return 1;
   } finally {
     await registry.close();
+    releaseLock?.();
   }
 }
