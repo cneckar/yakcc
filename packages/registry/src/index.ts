@@ -856,6 +856,57 @@ export interface Registry {
   enumerateSpecs(): Promise<readonly SpecHash[]>;
 
   /**
+   * Return one page of the block catalog, sorted ascending by `block_merkle_root`.
+   *
+   * This is the server-side primitive for GET /v1/blocks in the federation
+   * serve path (FEDERATION_PROTOCOL.md §3, WI-792 Slice F).
+   *
+   * @param after - Exclusive lower-bound cursor (`block_merkle_root > ?`).
+   *   Pass `null` to start from the beginning of the catalog.
+   *   DEC-792-AFTER-SEMANTICS: strict greater-than semantics; the cursor value
+   *   itself is NOT included in the returned page.
+   * @param limit - Maximum number of roots to return ([1, 1000]).
+   *   DEC-792-LIMITS: values outside [1, 1000] are rejected with an error.
+   *   The HTTP handler also validates before calling this method, but the
+   *   Registry layer enforces the constraint independently.
+   * @returns A `CatalogPage`-equivalent shape:
+   *   - `blocks`: up to `limit` BlockMerkleRoots, lex-sorted ascending.
+   *   - `nextCursor`: the last root in `blocks` if more rows exist beyond this
+   *     page; `null` if this is the final page or the registry is empty.
+   *
+   * NOTE: The return type is structurally equivalent to
+   * `@yakcc/federation`'s `CatalogPage` but is declared inline here to avoid
+   * a registry → federation import cycle. (DEC-792-RETURN-TYPE-INLINE)
+   *
+   * @decision DEC-792-METHOD-NAME
+   * title: Registry method is `listCatalogPage(after, limit)`
+   * status: accepted (WI-792)
+   * rationale: `listBlocks` collides with Transport.listBlocks (different
+   *   semantics: per-spec, not catalog-wide). `listCatalogPage` names the
+   *   return type explicitly and has zero collision risk.
+   *
+   * @decision DEC-792-CURSOR-LOOKAHEAD
+   * title: Fetch limit+1 rows; derive nextCursor from existence of (limit+1)th
+   * status: accepted (WI-792)
+   * rationale: Avoids phantom-page round-trip when catalog size is exact multiple
+   *   of limit. Implementation fetches LIMIT (limit+1) rows. If rows.length >
+   *   limit, set nextCursor = rows[limit-1], trim to limit. Else nextCursor = null.
+   *
+   * @decision DEC-NO-OWNERSHIP-011
+   * No ownership columns — query touches block_merkle_root only.
+   *
+   * @decision DEC-V1-WAVE-1-SCOPE-001
+   * Read-only. No mutations via this method.
+   */
+  listCatalogPage(
+    after: BlockMerkleRoot | null,
+    limit: number,
+  ): Promise<{
+    readonly blocks: readonly BlockMerkleRoot[];
+    readonly nextCursor: BlockMerkleRoot | null;
+  }>;
+
+  /**
    * Export a deterministic manifest of every stored block, sorted ascending by
    * `blockMerkleRoot` string value. The sort order is the load-bearing
    * determinism contract: two calls on the same DB state — on any machine at

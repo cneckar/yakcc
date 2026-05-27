@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 // @decision DEC-SERVE-E-020: serveRegistry — read-only HTTP mirror server (Slice E).
 // Status: decided (WI-020 Dispatch E, FEDERATION_PROTOCOL.md §3)
-// Title: serve.ts — F1 read-only registry HTTP server (four Slice-E endpoints)
+// Title: serve.ts — F1 read-only registry HTTP server (five GET endpoints)
 // Rationale:
 //   serveRegistry exposes a local Registry over HTTP following FEDERATION_PROTOCOL.md §3.
-//   It is strictly GET-only (all non-GET methods → 405). The four Slice-E endpoints are:
+//   It is strictly GET-only (all non-GET methods → 405). The five endpoints are:
 //     GET /schema-version       → { schemaVersion: number }
 //     GET /v1/specs             → { specHashes: SpecHash[] }
 //     GET /v1/spec/<specHash>   → { specHash, blockMerkleRoots: BlockMerkleRoot[] } | 404
 //     GET /v1/block/<root>      → WireBlockTriplet via serializeWireBlockTriplet | 404
-//   /v1/manifest and /v1/blocks are intentionally deferred to Slice F (not in scope here).
+//     GET /v1/blocks            → { blocks: BlockMerkleRoot[], nextCursor: BlockMerkleRoot | null }
+//   /v1/blocks shipped in WI-792 (DEC-792-MANIFEST-DEFERRED). Only /v1/manifest
+//   remains deferred to Slice F-2.
 //   No mutation endpoint exists — not even behind a flag (DEC-V1-WAVE-1-SCOPE-001).
 //   port: 0 binds an OS-assigned port (useful for tests). close() shuts down cleanly.
 //
@@ -28,6 +30,22 @@
 //
 // @decision DEC-V1-WAVE-1-SCOPE-001: F1 read-only mirror only in v1 wave-1.
 // Status: decided (MASTER_PLAN.md DEC-V1-WAVE-1-SCOPE-001)
+//
+// @decision DEC-792-MANIFEST-DEFERRED
+// title: /v1/manifest stays deferred to Slice F-2; /v1/blocks shipped in WI-792
+// status: accepted (WI-792)
+// rationale: /v1/manifest requires computing rootsDigest (full table scan +
+//   BLAKE3 over all roots) — separable surface with its own test requirements.
+//   /v1/blocks is needed now by yakforge R2RegistryAdapter (cneckar/yakforge#28).
+//   Split defers /v1/manifest without blocking /v1/blocks consumers.
+//
+// @decision DEC-792-LIMITS
+// title: Default limit=256, max=1000, min=1; bad input → 400 bad_request
+// status: accepted (WI-792)
+// rationale: Default 256 is efficient for HTTP/2 multiplexed slots and friendly
+//   for debug curl. Max 1000 matches FEDERATION_PROTOCOL.md §3 example as upper
+//   sane bound. The server rejects outside [1,1000] with 400 — no silent clamp
+//   at the HTTP layer (Registry layer clamps defensively for direct callers).
 
 import * as http from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
@@ -83,6 +101,24 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 function sendError(res: ServerResponse, status: number, code: string): void {
   sendJson(res, status, { error: code });
 }
+
+// ---------------------------------------------------------------------------
+// Pagination constants for GET /v1/blocks (DEC-792-LIMITS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Default number of blocks per catalog page when the `?limit=` query param
+ * is absent. 256 is efficient for HTTP/2 multiplexed slots and friendly for
+ * debug `curl`. (DEC-792-LIMITS)
+ */
+const DEFAULT_CATALOG_LIMIT = 256;
+
+/**
+ * Maximum accepted `?limit=` value. Requests with limit > MAX_CATALOG_LIMIT
+ * return 400 `bad_request`. Matches the FEDERATION_PROTOCOL.md §3 example
+ * as the upper sane bound. (DEC-792-LIMITS)
+ */
+const MAX_CATALOG_LIMIT = 1000;
 
 // ---------------------------------------------------------------------------
 // Route handlers
@@ -165,6 +201,81 @@ async function handleGetBlock(
   sendJson(res, 200, serializeWireBlockTriplet(row));
 }
 
+/**
+ * GET /v1/blocks?limit=<N>&after=<cursor>
+ *
+ * Returns one page of the block catalog as `{ blocks: BlockMerkleRoot[],
+ * nextCursor: BlockMerkleRoot | null }` — the CatalogPage wire shape from
+ * FEDERATION_PROTOCOL.md §3 and `@yakcc/federation`'s `types.ts:71`.
+ *
+ * Query parameters:
+ *   - `limit`: integer in [1, 1000]. Absent → DEFAULT_CATALOG_LIMIT (256).
+ *     Present-but-invalid (non-integer, ≤ 0, > MAX_CATALOG_LIMIT) → 400.
+ *   - `after`: exclusive lower-bound cursor (block_merkle_root value from the
+ *     previous page's nextCursor). Absent or empty-string → null (start from
+ *     beginning). Present → passed to Registry.listCatalogPage unchanged.
+ *
+ * The `nextCursor` field is ALWAYS present in the response (never omitted),
+ * either as a BlockMerkleRoot string or as JSON `null`. This is load-bearing
+ * for `fetchCatalogPage` in `http-transport.ts:176` which parses it directly.
+ *
+ * @decision DEC-792-METHOD-NAME: calls local.listCatalogPage(after, limit).
+ * @decision DEC-792-AFTER-SEMANTICS: `after=` is a strict-GT cursor; empty/absent → null.
+ * @decision DEC-792-LIMITS: validates limit before calling Registry layer.
+ * @decision DEC-792-RETURN-TYPE-INLINE: returns the CatalogPage structural shape
+ *   without importing `CatalogPage` from this package (avoids serve.ts having
+ *   an intra-package named-type dependency that could become a maintenance hazard).
+ */
+async function handleListCatalogPage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  local: Registry,
+): Promise<void> {
+  // Re-parse the full URL to access query params. The dispatcher already
+  // stripped the query string from rawPath for path routing, so we must
+  // re-derive it from req.url here. "http://x" is a throwaway base — only
+  // the searchParams are used.
+  const searchParams = new URL(req.url ?? "/", "http://x").searchParams;
+
+  // Parse `limit` — DEC-792-LIMITS.
+  let limit: number;
+  const limitRaw = searchParams.get("limit");
+  if (limitRaw === null) {
+    limit = DEFAULT_CATALOG_LIMIT;
+  } else {
+    // Must be a whole-number decimal integer, no leading zeros after a minus.
+    const limitNum = Number(limitRaw);
+    if (!Number.isInteger(limitNum) || limitNum < 1 || limitNum > MAX_CATALOG_LIMIT) {
+      sendError(res, 400, "bad_request");
+      return;
+    }
+    limit = limitNum;
+  }
+
+  // Parse `after` — DEC-792-AFTER-SEMANTICS.
+  // Absent → null (start from beginning). Present-but-empty → 400 bad_request.
+  let after: BlockMerkleRoot | null;
+  const afterRaw = searchParams.get("after");
+  if (afterRaw === null) {
+    after = null;
+  } else if (afterRaw.length === 0) {
+    sendError(res, 400, "bad_request");
+    return;
+  } else {
+    after = afterRaw as BlockMerkleRoot;
+  }
+
+  const page = await local.listCatalogPage(after, limit);
+
+  // Explicitly construct the response object so `nextCursor` is always present
+  // as `null` (not `undefined`) — JSON.stringify omits undefined properties,
+  // which would break fetchCatalogPage's direct property read in http-transport.ts:176.
+  sendJson(res, 200, {
+    blocks: page.blocks,
+    nextCursor: page.nextCursor,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Request dispatcher
 // ---------------------------------------------------------------------------
@@ -218,6 +329,12 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, local: Regist
     }
   }
 
+  // Route: GET /v1/blocks?limit=<N>&after=<cursor>  (WI-792, DEC-792-METHOD-NAME)
+  if (rawPath === "/v1/blocks") {
+    await handleListCatalogPage(req, res, local);
+    return;
+  }
+
   // Unknown path → 404 not_found.
   sendError(res, 404, "not_found");
 }
@@ -244,13 +361,16 @@ export interface ServeHandle {
 /**
  * Start a read-only HTTP server exposing `registry` as a federation peer.
  *
- * Implements the Slice-E GET endpoints of FEDERATION_PROTOCOL.md §3:
+ * Implements the GET endpoints of FEDERATION_PROTOCOL.md §3:
  *   GET /schema-version                  → { schemaVersion: number }
  *   GET /v1/specs                        → { specHashes: SpecHash[] }
  *   GET /v1/spec/<specHash>              → { specHash, blockMerkleRoots } | 404
  *   GET /v1/block/<merkleRoot>           → WireBlockTriplet | 404
+ *   GET /v1/blocks[?limit=N][&after=<cursor>]
+ *                                        → { blocks: BlockMerkleRoot[], nextCursor: BlockMerkleRoot | null }
  *
- * /v1/manifest and /v1/blocks are intentionally deferred to Slice F.
+ * /v1/blocks shipped in WI-792 (DEC-792-MANIFEST-DEFERRED). Only /v1/manifest
+ * remains deferred to Slice F-2 (rootsDigest computation is a separate surface).
  *
  * All non-GET methods return 405 { error: "method_not_allowed" }.
  * Unknown GET paths return 404 { error: "not_found" }.
@@ -261,6 +381,7 @@ export interface ServeHandle {
  * Per DEC-V1-WAVE-1-SCOPE-001: READ-ONLY. No mutation endpoint.
  * Per DEC-SERVE-SPECS-ENUMERATION-020 (WI-026 closure): GET /v1/specs calls
  * registry.enumerateSpecs() directly — no callback needed in options.
+ * Per DEC-792-METHOD-NAME: GET /v1/blocks calls registry.listCatalogPage() directly.
  *
  * @param registry - The local Registry to serve blocks from.
  * @param options  - Bind address and port.
