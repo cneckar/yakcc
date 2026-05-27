@@ -612,6 +612,68 @@ yakcc registry rebuild \
 
 API keys must still be provided via env vars on each session (`OPENAI_API_KEY`, `VOYAGE_API_KEY`).
 
+## 11. The commons — how novel atoms flow to `registry.yakcc.com`
+
+Every novel atom captured by your install — via `yakcc shave`, an IDE hook intercept, or the bootstrap corpus walk — is automatically POSTed to the shared public commons at `https://registry.yakcc.com`. This is the load-bearing flywheel of the yakcc ecosystem: every install everywhere contributes every novel atom always, and every install reads from the same growing pool.
+
+**This is by design, not a privacy concern.** Atoms are atomic functional blocks: pure functions with documented contracts and property tests, identified by content-addressed `BlockMerkleRoot` (BLAKE3 hash). They have no per-user identity, no project-specific code, no secrets — the strict-subset shave gate enforces that. (`DEC-COMMONS-ALWAYS-ON-001` / `DEC-COMMONS-NO-AUTH-001`)
+
+### What flows
+
+For each new atom your install captures:
+
+- **What the server sees:** the atom envelope itself (spec hash, impl source, proof manifest, artifact bytes) — content-addressed, anonymous, no user identifier.
+- **What the server does NOT see:** your machine name, install ID, IP-based analytics, contributor metadata, project path. The atom payload is the only thing that crosses the wire.
+- **Idempotency:** if the same atom already exists on the commons (matched by `BlockMerkleRoot`), the submission is a server-side no-op. Re-running `yakcc shave` over the same files is free.
+
+### When it fires
+
+Each `storeBlock` that produces a novel insert triggers an async fire-and-forget POST to `<commons>/v1/blocks/submit`. The POST runs on a detached promise so your local capture latency is unchanged whether or not the commons is reachable.
+
+If the commons is unreachable when the atom is stored, the atom is queued locally (`submitted_at IS NULL` in the registry's `blocks` table). A later CLI invocation that reaches the network drains the queue — no atom is lost.
+
+### How to disable it
+
+There is exactly one supported escape hatch: **air-gap mode**, a deployment posture for sensitive environments. Two ways to enable:
+
+```bash
+# Per-install (writes mode="airgapped" to .yakccrc.json)
+yakcc init --airgapped
+
+# Per-shell (overrides any rc mode)
+export YAKCC_AIRGAP=1
+```
+
+Air-gap mode disables ALL network operations: no commons submission, no federation pull, no federation mirror, no embedding model download. It is structural — the only way an install does not contribute. There is no middle ground where the install has network access but withholds atoms.
+
+### Why no opt-in flow
+
+A consent prompt for content with no owner, no privacy surface, and no project-specific information would be a security-theater step that adds friction without protecting anything real. The commons is the product. Restricting contribution defeats the architecture. If you need air-gap, use air-gap; otherwise, your install joins the flywheel.
+
+### Pointing somewhere else
+
+For self-hosted commons (yakforge deployments, internal mirrors), override the URL:
+
+```bash
+export YAKCC_COMMONS_URL=https://commons.internal.example.com
+```
+
+The override applies until you unset it. Tests and dev/staging mirrors use this to route POSTs away from the public commons.
+
+### Verifying contributions
+
+Each row in your local `blocks` table carries a `submitted_at` timestamp (`NULL` = pending). Inspect via:
+
+```bash
+sqlite3 .yakcc/registry.sqlite "SELECT block_merkle_root, submitted_at FROM blocks ORDER BY submitted_at LIMIT 5;"
+```
+
+Where `submitted_at IS NULL`, the next invocation that reaches the network will retry. Already-submitted rows are skipped (the `markBlockSubmitted` write happens after the 2xx response).
+
+### Slice rollout status (2026-05-27)
+
+This slice (#794 slice 4) wires the commons submitter into `yakcc shave` only. Follow-up slices will extend the wiring to `yakcc bootstrap`, `yakcc seed`, `yakcc propose`, IDE hook intercepts, and the manual `yakcc atom add` flow. Until then, those paths still store atoms locally but do not push them to the commons — atoms remain queued (`submitted_at IS NULL`) and will be flushed once the rest of the wiring lands.
+
 ---
 
 _If something in this walkthrough doesn't match what you observe, please [file an issue](https://github.com/cneckar/yakcc/issues/new). The walkthrough lives at `docs/USING_YAKCC.md` and is intended to track shipped software exactly._

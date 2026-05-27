@@ -27,6 +27,8 @@ import {
   shave as shaveImpl,
 } from "@yakcc/shave";
 import type { Logger } from "../index.js";
+import { makeCommonsBinding } from "../lib/commons-submit.js";
+import { readRc } from "../lib/yakccrc.js";
 
 /** Valid values for --foreign-policy. */
 const VALID_FOREIGN_POLICIES: readonly ForeignPolicy[] = ["allow", "reject", "tag"];
@@ -104,14 +106,33 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
     return 1;
   }
 
+  // Compose the commons-push binding (WI-794 slice 4 /
+  // DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001). makeCommonsBinding gates on
+  // :memory:, airgapped mode in .yakccrc, and YAKCC_AIRGAP=1 — returning a
+  // no-op submitter when any gate trips. Otherwise every novel storeBlock
+  // POSTs to the commons fire-and-forget.
+  const absRegistryPath = resolve(registryPath);
+  const rcDir = ".";
+  const rc = readRc(rcDir);
+  const airgapped = rc?.mode === "airgapped";
+  const commonsBinding = makeCommonsBinding({
+    registryPath: absRegistryPath,
+    airgapped,
+  });
+
   let registry: Registry;
   try {
-    registry = await openRegistry(resolve(registryPath));
+    registry = await openRegistry(absRegistryPath, {
+      ...(commonsBinding.commonsSubmit !== undefined
+        ? { commonsSubmit: commonsBinding.commonsSubmit }
+        : {}),
+    });
   } catch (err) {
     releaseLock();
     logger.error(`error: failed to open registry at ${registryPath}: ${(err as Error).message}`);
     return 1;
   }
+  commonsBinding.bind(registry);
 
   // Adapt Registry → ShaveRegistryView (nullish mismatch on getBlock).
   const shaveRegistry = {
