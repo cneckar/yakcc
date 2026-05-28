@@ -38,7 +38,8 @@
     "LICENSE-ATOMS"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "latest"
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
