@@ -1,4 +1,10 @@
 {
   "schemaVersion": 1,
-  "entries": []
+  "entries": [
+    {
+      "path": "packages/compile-python/src/lower.ts",
+      "errorClass": "DidNotReachAtomError",
+      "rationale": "lower.ts line 512 contains a TemplateExpression whose ConditionalExpression spans are not currently decomposable by the shave pipeline. The file was added in ce0dbba (closes #783). This is a known shave-pipeline limitation (TemplateExpression + conditional spans), not a bug in lower.ts. Tracked for future shave-pipeline work; documented here per DEC-V2-BOOT-EXPECTED-FAILURES-001."
+    }
+  ]
 }
