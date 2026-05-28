@@ -27,6 +27,7 @@ bootstrap/yakcc.registry.sqlite
 bootstrap/yakcc.registry.sqlite-wal
 bootstrap/yakcc.registry.sqlite-shm
 bootstrap/report.json
+bootstrap/.write.lock
 
 # B1-latency corpus — 100MB binary, content-addressed; regenerated on demand.
 # corpus-spec.json (the hash) IS committed; the binary is NOT.
