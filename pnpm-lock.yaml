@@ -199,6 +199,9 @@ importers:
       '@yakcc/compile':
         specifier: workspace:*
         version: link:../compile
+      '@yakcc/compile-python':
+        specifier: workspace:*
+        version: link:../compile-python
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts

@@ -461,3 +461,30 @@ adds the implementation constraints above.
 - `packages/registry/src/index.ts` — `findCandidatesByIntent`, `IntentQuery`, `CandidateMatch`, `FindCandidatesOptions` (lines 254–464)
 - `packages/cli/src/commands/query.ts` — Current `yakcc query` implementation (DEC-CLI-QUERY-001)
 - `packages/cli/src/commands/search.ts` — Current `yakcc search` implementation (DEC-CLI-SEARCH-001)
+
+---
+
+## D2 Amendment: Output-target language filter (DEC-DISCOVERY-D2-LANGUAGE-001)
+
+QueryIntentCard.language is the OUTPUT TARGET language (what to lower the
+atom to), not the atom's source language. Atoms have no source language in
+the registry -- the registry stores IR atoms in TS-subset form regardless
+of the original language they were raised from.
+
+When language is unset or "ts": no filter applied; backward-compatible
+default behavior.
+
+When language is set to a non-ts target:
+1. Candidates are retrieved as usual (embedding similarity + structural ranking)
+2. For each candidate, the corresponding @yakcc/compile-<lang> adapter's
+   canLowerTo(atom, language) is consulted
+3. Candidates returning false are dropped from results
+4. Candidates returning "unknown" (adapter not installed for that language)
+   are retained with a lowerability="unknown" annotation
+5. Candidates returning true are retained with lowerability="yes"
+
+Compile-adapter primitive: PR #846 / @yakcc/compile-python's canLowerTo.
+Go/Rust adapters are not yet shipped -- language=go|rs returns all candidates
+with lowerability="unknown".
+
+References: #784 (this WI), #846 (canLowerTo primitive).

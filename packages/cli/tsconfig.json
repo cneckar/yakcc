@@ -12,6 +12,7 @@
     { "path": "../registry" },
     { "path": "../ir" },
     { "path": "../compile" },
+    { "path": "../compile-python" },
     { "path": "../hooks-claude-code" },
     { "path": "../seeds" }
   ]
