@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: MIT
+import type { BlockTripletRow } from "@yakcc/registry";
+import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
+import { compileToPython, toSnakeCase } from "./index.js";
+
+// ---------------------------------------------------------------------------
+// Minimal BlockTripletRow stub for tests
+// ---------------------------------------------------------------------------
+
+function makeRow(
+  implSource: string,
+  artifacts: Map<string, Uint8Array> = new Map(),
+): BlockTripletRow {
+  return {
+    blockMerkleRoot: "dead" as BlockMerkleRoot,
+    specHash: "dead" as SpecHash,
+    specCanonicalBytes: new Uint8Array(),
+    implSource,
+    proofManifestJson: "{}",
+    level: "L0",
+    createdAt: 0,
+    canonicalAstHash: "dead" as CanonicalAstHash,
+    artifacts,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helper to extract the first meaningful Python lines (skip imports)
+// ---------------------------------------------------------------------------
+
+function extractBody(source: string): string[] {
+  return source.split("\n").filter((l) => l.trim().length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// 1. toSnakeCase unit tests
+// ---------------------------------------------------------------------------
+
+describe("toSnakeCase", () => {
+  it("converts camelCase to snake_case", () => {
+    expect(toSnakeCase("digitOrThrow")).toBe("digit_or_throw");
+    expect(toSnakeCase("eofCheck")).toBe("eof_check");
+    expect(toSnakeCase("peekChar")).toBe("peek_char");
+    expect(toSnakeCase("commaSeparatedIntegers")).toBe("comma_separated_integers");
+  });
+
+  it("leaves already-snake identifiers unchanged", () => {
+    expect(toSnakeCase("pos")).toBe("pos");
+    expect(toSnakeCase("value")).toBe("value");
+    expect(toSnakeCase("digit")).toBe("digit");
+  });
+
+  it("handles consecutive capitals (acronyms)", () => {
+    expect(toSnakeCase("parseJSON")).toBe("parse_json");
+    expect(toSnakeCase("toHTML")).toBe("to_html");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. digit — basic function with throw
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — digit", () => {
+  const src = `
+export function digit(s: string): number {
+  if (s.length !== 1 || s < "0" || s > "9") {
+    throw new RangeError(\`Not a digit: \${JSON.stringify(s)}\`);
+  }
+  return s.charCodeAt(0) - 48;
+}`;
+
+  it("emits a def with correct signature", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("def digit(s: str) -> float:");
+  });
+
+  it("lowers charCodeAt(0) to ord()", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("ord(s)");
+  });
+
+  it("lowers throw to raise", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("raise RangeError");
+  });
+
+  it("lowers JSON.stringify to repr", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("repr(s)");
+  });
+
+  it("emits number→float warning", () => {
+    const { warnings } = compileToPython(makeRow(src));
+    expect(warnings.some((w) => w.kind === "number-to-float")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. eofCheck — void return, RangeError and SyntaxError
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — eofCheck", () => {
+  const src = `
+export function eofCheck(input: string, position: number): void {
+  if (position > input.length) {
+    throw new RangeError(\`Position \${position} overruns input of length \${input.length}\`);
+  }
+  if (position < input.length) {
+    throw new SyntaxError(
+      \`Expected end of input at position \${position} but found \${JSON.stringify(input.slice(position))}\`,
+    );
+  }
+}`;
+
+  it("emits correct signature with None return", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("def eof_check(input: str, position: float) -> None:");
+  });
+
+  it("lowers len(input) for .length access", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("len(input)");
+  });
+
+  it("lowers template literal to f-string", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain('f"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. peekChar — T | null return type
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — peekChar", () => {
+  const src = `
+export function peekChar(input: string, position: number): string | null {
+  if (position < 0) {
+    throw new RangeError(\`Position \${position} is negative\`);
+  }
+  if (position >= input.length) {
+    return null;
+  }
+  return input[position] as string;
+}`;
+
+  it("emits Optional[str] return type", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("Optional[str]");
+    expect(source).toContain("from typing import Optional");
+  });
+
+  it("lowers null to None", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("return None");
+  });
+
+  it("lowers element access", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("input[position]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Simple map() → list comprehension
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — map comprehension", () => {
+  const src = `
+export function doubleAll(xs: number[]): number[] {
+  return xs.map((x) => x * 2);
+}`;
+
+  it("lowers map to list comprehension", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("[x * 2 for x in xs]");
+  });
+
+  it("uses list[float] for number[]", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("list[float]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. filter() → list comprehension
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — filter comprehension", () => {
+  const src = `
+export function positives(xs: number[]): number[] {
+  return xs.filter((x) => x > 0);
+}`;
+
+  it("lowers filter to list comprehension with if", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("[x for x in xs if x > 0]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. reduce() → functools.reduce
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — reduce", () => {
+  const src = `
+export function sumAll(xs: number[]): number {
+  return xs.reduce((acc, x) => acc + x, 0);
+}`;
+
+  it("lowers reduce to functools.reduce", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("functools.reduce");
+    expect(source).toContain("import functools");
+  });
+
+  it("emits lambda with correct body", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("lambda acc, x: acc + x");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Ternary expression
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — ternary", () => {
+  const src = `
+export function absVal(x: number): number {
+  return x < 0 ? -x : x;
+}`;
+
+  it("lowers ternary to Python conditional expression", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("if x < 0 else");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Record<string, V> → dict[str, V]
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — Record type", () => {
+  const src = `
+export function countChars(s: string): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] as string;
+    const prev = (result[c] ?? 0) as number;
+    result[c] = prev + 1;
+  }
+  return result;
+}`;
+
+  it("lowers Record<string, number> to dict[str, float]", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("dict[str, float]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. While loop with push → append
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — while + push", () => {
+  const src = `
+export function collectDigits(input: string, pos: number): number[] {
+  const values: number[] = [];
+  let p = pos;
+  while (p < input.length) {
+    const c = input[p] as string;
+    if (c < "0" || c > "9") break;
+    values.push(c.charCodeAt(0) - 48);
+    p++;
+  }
+  return values;
+}`;
+
+  it("lowers push to append", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("values.append");
+  });
+
+  it("lowers while loop", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("while p < len(input):");
+  });
+
+  it("lowers break", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("break");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11. boolean operators
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — boolean operators", () => {
+  const src = `
+export function both(a: boolean, b: boolean): boolean {
+  return a && b;
+}`;
+
+  it("lowers && to and", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("a and b");
+  });
+});
+
+describe("compileToPython — logical or", () => {
+  const src = `
+export function either(a: boolean, b: boolean): boolean {
+  return a || b;
+}`;
+
+  it("lowers || to or", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("a or b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12. readonly tuple return
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — readonly tuple", () => {
+  const src = `
+export function digitOrThrow(input: string, position: number): readonly [number, number] {
+  if (position < 0) {
+    throw new RangeError(\`Position \${position} is negative\`);
+  }
+  const c = input[position] as string;
+  if (c < "0" || c > "9") {
+    throw new SyntaxError(\`Expected digit at position \${position} but found \${JSON.stringify(c)}\`);
+  }
+  return [c.charCodeAt(0) - 48, position + 1] as const;
+}`;
+
+  it("emits tuple return type", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("tuple[float, float]");
+  });
+
+  it("converts function name to snake_case", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("def digit_or_throw(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13. hypothesis test emission when proof/properties.json present
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — hypothesis test emission", () => {
+  const propertiesJson = JSON.stringify({
+    schemaVersion: 1,
+    properties: [
+      {
+        name: "non-negative output",
+        inputs: [{ name: "x", generator: { kind: "float", min: 0, max: 100 } }],
+        assertion: { kind: "gte", expected: { kind: "literal", value: 0 } },
+      },
+    ],
+  });
+
+  const src = `
+export function half(x: number): number {
+  return x / 2;
+}`;
+
+  it("emits hypothesis test when proof/properties.json present", () => {
+    const artifacts = new Map([
+      ["proof/properties.json", new TextEncoder().encode(propertiesJson)],
+    ]);
+    const { testSource } = compileToPython(makeRow(src, artifacts));
+    expect(testSource).toContain("from hypothesis import given");
+    expect(testSource).toContain("def test_half_");
+    expect(testSource).toContain("assert");
+  });
+
+  it("returns empty testSource when no proof/properties.json", () => {
+    const { testSource } = compileToPython(makeRow(src));
+    expect(testSource).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 14. !== lowered to !=
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — strict inequality", () => {
+  const src = `
+export function notOne(x: number): boolean {
+  return x !== 1;
+}`;
+
+  it("lowers !== to !=", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("!=");
+    expect(source).not.toContain("!==");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 15. true/false literals
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — boolean literals", () => {
+  const src = `
+export function alwaysTrue(): boolean {
+  return true;
+}`;
+
+  it("lowers true to True", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("return True");
+  });
+});
