@@ -2,6 +2,16 @@
 
 Variance scoring and star-topology contract design rules for Yakcc specs.
 
+## Install
+
+```bash
+pnpm add @yakcc/variance
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). Variance scoring and design rule APIs are stable.
+
 ## What this package provides
 
 - **`varianceScore`** — compute a weighted composite similarity score (in [0, 1])
@@ -116,4 +126,4 @@ const merged = applyContractDesignRules([specA, specB, specC]);
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).

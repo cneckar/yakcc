@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/shave",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.5.0-alpha.0",
+  "description": "The universalizer pipeline — decompose a TypeScript/JavaScript source file into content-addressed Yakcc registry atoms.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,6 +12,30 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/shave"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/shave#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "shave",
+    "universalizer",
+    "typescript",
+    "ast"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",

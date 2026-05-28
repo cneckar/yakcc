@@ -6,5 +6,12 @@
     "rootDir": "src",
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "src/**/*.props.test.ts",
+    "src/**/__fixtures__/**"
+  ]
 }

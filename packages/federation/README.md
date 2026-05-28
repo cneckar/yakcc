@@ -2,6 +2,16 @@
 
 F1 read-only content-addressed block mirror for Yakcc registries.
 
+## Install
+
+```bash
+pnpm add @yakcc/federation
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). HTTP transport and local mirror APIs are stable.
+
 ## What this package provides
 
 `@yakcc/federation` implements the F1 read-only mirror tier of the Yakcc trust
@@ -150,4 +160,4 @@ await registryB.close();
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).
