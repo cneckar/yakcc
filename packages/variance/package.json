@@ -12,14 +12,12 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "private": true,
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cneckar/yakcc.git",
