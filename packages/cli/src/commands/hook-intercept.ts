@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: MIT
 //
-// hook-intercept.ts - Phase-1 stdin-reading subprocess for yakcc tool-call interception
+// hook-intercept.ts - Phase-2 stdin-reading subprocess for yakcc tool-call interception
 //
 // @decision DEC-CLI-HOOK-INTERCEPT-001
-// title: yakcc hook-intercept is a stdin-reading subprocess that captures telemetry
-//        per D-HOOK-5 and always exits 0 with empty stdout; no registry query, no substitution
-// status: decided (WI-753)
+// title: yakcc hook-intercept delegates to executeRegistryQueryWithSubstitution; no direct telemetry write
+// status: updated (WI-831) — Phase-1 contract superseded by Phase-2 substrate delegation.
 // rationale:
-//   The "write side" (IDE hook installers) shipped in WI-656 / #216. This is the "read
-//   side" -- the subprocess that Claude Code PreToolUse hook spawns for every
-//   Edit/Write/MultiEdit tool call. Phase-1 contract:
-//   - Read process.stdin to EOF; best-effort JSON parse.
-//   - Extract tool_name, session_id, tool_input.new_string|content.
-//   - Append one JSONL line to ~/.yakcc/telemetry/<session-id>.jsonl per D-HOOK-5 schema.
-//   - Exit 0 with empty stdout (Claude Code interprets as "allow tool unchanged").
-//   - ANY failure inside the handler -> silent exit 0 (DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001).
+//   Phase-1 (WI-753) hard-coded five TelemetryEvent fields with placeholder values and
+//   appended the event directly from the CLI seam. Phase-2 (WI-831) replaces those five
+//   lines with a single substrate call: executeRegistryQueryWithSubstitution() already
+//   calls captureTelemetry() internally (packages/hooks-base/src/index.ts:640-657).
+//   Sacred Practice #12 (one telemetry writer): the CLI no longer constructs or appends
+//   a TelemetryEvent. The substrate is the single JSONL write site.
+//   Phase-1 historical record preserved in MASTER_PLAN.md for archeology.
+//   See DEC-WI831-WIRE-001 below.
 //
-//   Phase-2 (registry query + substitution) is WI-HOOK-PHASE-2-SUBSTITUTION and is NOT
-//   implemented here. Sacred Practice #12: appendTelemetryEvent/hashIntent/resolveSessionId/
-//   resolveTelemetryDir are consumed from @yakcc/hooks-base, NOT reimplemented here.
+// @decision DEC-WI831-WIRE-001
+// title: hook-intercept Phase-2 — delegates to executeRegistryQueryWithSubstitution; telemetry-only delivery
+// status: decided (WI-831)
+// rationale:
+//   The CLI seam opens the registry, builds an EmissionContext from intentText, and calls
+//   executeRegistryQueryWithSubstitution(). The substrate handles:
+//     - Registry query (findCandidatesByIntent KNN via sqlite-vec)
+//     - Substitution decision (D2 auto-accept: combinedScore > 0.85 AND gap > 0.15)
+//     - Enforcement layers L1-L4
+//     - captureTelemetry() with real atomHash, candidateCount, topScore, substituted, outcome
+//   The hook returns 0 with empty stdout regardless of substitution result (DEC-WI831-006:
+//   inline injection is a separate WI). The 500ms hard cap (DEC-WI831-002) uses Promise.race
+//   with a configurable timer seam (HookInterceptOptions.schedulerFn) for test control.
 //
 // @decision DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001
 // title: Any exception inside hook-intercept body must be swallowed; process always exits 0
-// status: decided (WI-753)
+// status: decided (WI-753), preserved (WI-831)
 // rationale:
 //   Claude Code PreToolUse contract interprets non-zero exit code as "block the tool call".
 //   Telemetry-write failure (disk full, permission denied) blocking the user Edit/Write/MultiEdit
@@ -30,17 +39,38 @@
 //   hook-layer ADR principle "hook must never block tool emission" override Sacred Practice #5
 //   (fail loudly) for this specific surface. The override is BOUNDED to hook-intercept only.
 
-import type {
-  appendTelemetryEvent as AppendTelemetryEventFn,
-  TelemetryEvent,
-} from "@yakcc/hooks-base/telemetry.js";
+import { existsSync } from "node:fs";
 import {
-  appendTelemetryEvent,
-  hashIntent,
-  resolveSessionId,
-  resolveTelemetryDir,
-} from "@yakcc/hooks-base/telemetry.js";
+  DEFAULT_REGISTRY_HIT_THRESHOLD,
+  HOOK_LATENCY_BUDGET_MS,
+  executeRegistryQueryWithSubstitution,
+} from "@yakcc/hooks-base";
+import type { EmissionContext } from "@yakcc/hooks-base";
+import { resolveSessionId, resolveTelemetryDir } from "@yakcc/hooks-base/telemetry.js";
+import { openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
+
+// ---------------------------------------------------------------------------
+// Latency budget constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft budget (from substrate) — substrate's own HOOK_LATENCY_BUDGET_MS is 200ms.
+ * Retained here for documentary visibility; the substrate enforces this internally.
+ *
+ * @decision DEC-WI831-002 (latency budget § substrate soft budget)
+ */
+const _SUBSTRATE_SOFT_BUDGET_MS = HOOK_LATENCY_BUDGET_MS;
+void _SUBSTRATE_SOFT_BUDGET_MS; // consumed for documentation only
+
+/**
+ * Hard cap imposed at the CLI seam. If the substrate call does not resolve
+ * within 500ms, the timer wins, the hook exits 0 with no telemetry written.
+ *
+ * @decision DEC-WI831-002 (latency budget § hard cap)
+ */
+export const CLI_HOOK_LATENCY_HARD_CAP_MS = 500;
 
 // ---------------------------------------------------------------------------
 // Windows-illegal filename character sanitization
@@ -64,10 +94,32 @@ function sanitizeSessionId(raw: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Tool name allowlist (Phase 1 only intercepts Edit/Write/MultiEdit)
+// Tool name allowlist (intercepts Edit/Write/MultiEdit)
 // ---------------------------------------------------------------------------
 
 const ALLOWED_TOOL_NAMES = new Set<string>(["Edit", "Write", "MultiEdit"]);
+
+// ---------------------------------------------------------------------------
+// SchedulerFn — injectable timer abstraction for tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a Promise that resolves after `ms` milliseconds using the provided
+ * scheduler function. In production, uses `globalThis.setTimeout`. In tests,
+ * the `schedulerFn` is replaced with a zero-delay or never-resolving stub.
+ *
+ * @decision DEC-WI831-002 (latency budget § timer injection seam)
+ */
+type SchedulerFn = (ms: number) => Promise<void>;
+
+const DEFAULT_SCHEDULER: SchedulerFn = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const id = globalThis.setTimeout(resolve, ms);
+    // Unref so the timer doesn't keep the process alive past the tool call.
+    if (typeof (id as unknown as { unref?: () => void }).unref === "function") {
+      (id as unknown as { unref: () => void }).unref();
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // HookInterceptOptions - TEST-ONLY injection seam
@@ -78,8 +130,11 @@ const ALLOWED_TOOL_NAMES = new Set<string>(["Edit", "Write", "MultiEdit"]);
  * without spawning a subprocess or writing to the real home directory.
  *
  * In production, all defaults resolve to the real implementations.
- * In tests, inject NodeJS.ReadableStream stubs, tmpdir paths, and throwing
- * stubs to prove the silent-fail contract.
+ * In tests, inject NodeJS.ReadableStream stubs, tmpdir paths, substrate stubs,
+ * and timer stubs to prove the silent-fail and latency-cap contracts.
+ *
+ * @decision DEC-WI831-002 (schedulerFn seam for timeout enforcement tests)
+ * @decision DEC-WI831-003 (telemetryDir / registryPath injection for missing-registry tests)
  */
 export interface HookInterceptOptions {
   /**
@@ -90,19 +145,37 @@ export interface HookInterceptOptions {
   /**
    * Directory where JSONL telemetry files are written.
    * Defaults to resolveTelemetryDir(). Tests inject mkdtempSync path.
+   * This value is passed through to the substrate's captureTelemetry call.
    */
   telemetryDir?: string;
   /**
-   * appendTelemetryEvent implementation.
-   * Defaults to the real function from @yakcc/hooks-base.
-   * Tests inject a throwing stub to prove DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001.
+   * Path to the SQLite registry file.
+   * Defaults to DEFAULT_REGISTRY_PATH (".yakcc/registry.sqlite", cwd-relative).
+   * Tests inject a path to a fixture registry or a nonexistent path.
+   * @decision DEC-WI831-003 (registry resolution)
    */
-  appendEvent?: typeof AppendTelemetryEventFn;
+  registryPath?: string;
   /**
    * Timestamp function.
    * Defaults to Date.now. Tests can pin for deterministic latencyMs.
    */
   now?: () => number;
+  /**
+   * Timer scheduler for the 500ms hard cap (DEC-WI831-002).
+   * Defaults to globalThis.setTimeout-based DEFAULT_SCHEDULER.
+   * Tests inject a zero-delay scheduler (fast timeout) or never-resolving scheduler.
+   */
+  schedulerFn?: SchedulerFn;
+  /**
+   * executeRegistryQueryWithSubstitution implementation.
+   * Defaults to the real function from @yakcc/hooks-base.
+   * Tests inject a stub that resolves/rejects/hangs to prove substrate-delegation,
+   * fail-silent, and timeout-enforcement contracts.
+   *
+   * NOTE: The injectable is typed to match the real substrate signature so callers
+   * cannot accidentally pass an incompatible stub.
+   */
+  executeSubstrateFn?: typeof executeRegistryQueryWithSubstitution;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,17 +183,19 @@ export interface HookInterceptOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Phase-1 hook-intercept subprocess handler.
+ * Phase-2 hook-intercept subprocess handler.
  *
- * Reads stdin to EOF, best-effort parses as JSON, builds a TelemetryEvent
- * per D-HOOK-5 schema, and appends it to the session file.
+ * Reads stdin to EOF, parses the PreToolUse JSON, builds an EmissionContext,
+ * opens the local registry, and delegates to executeRegistryQueryWithSubstitution.
+ * The substrate writes telemetry internally. The hook always exits 0 with empty
+ * stdout — substituted code is NOT injected (DEC-WI831-006; telemetry-only delivery).
  *
- * ALWAYS returns 0 -- even on parse failure, permission denied, or any
- * other error. See DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001.
+ * ALWAYS returns 0 -- even on parse failure, missing registry, substrate error, or
+ * any other exception. See DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001.
  *
- * @param argv     - Remaining argv (unused in Phase 1; accepted for CLI parity).
- * @param logger   - Output sink. MUST NOT emit anything -- logger.log() is never
- *                   called. Accepted for CLI handler signature parity.
+ * @param argv     - Remaining argv (unused; accepted for CLI handler parity).
+ * @param logger   - Output sink. MUST NOT emit anything — logger is never called.
+ *                   Accepted for CLI handler signature parity.
  * @param options  - Optional injection seam for testing. Production callers omit this.
  * @returns Always 0.
  */
@@ -129,17 +204,19 @@ export async function hookIntercept(
   logger: Logger,
   options?: HookInterceptOptions,
 ): Promise<number> {
-  // Suppress unused variable lint warning -- argv and logger are accepted for
-  // signature parity with other CLI handlers; Phase 1 does not use them.
+  // Suppress unused variable lint warning — argv and logger are accepted for
+  // signature parity with other CLI handlers; the hook does not use them.
   void argv;
   void logger;
 
   const stdinStream = options?.stdin ?? process.stdin;
   const telemetryDir = options?.telemetryDir ?? resolveTelemetryDir();
-  const appendEvent = options?.appendEvent ?? appendTelemetryEvent;
+  const registryPath = options?.registryPath ?? DEFAULT_REGISTRY_PATH;
   const now = options?.now ?? Date.now;
+  const schedulerFn = options?.schedulerFn ?? DEFAULT_SCHEDULER;
+  const executeSubstrate = options?.executeSubstrateFn ?? executeRegistryQueryWithSubstitution;
 
-  const start = now();
+  void now; // `now` available for future latency measurements at CLI seam
 
   try {
     // -----------------------------------------------------------------------
@@ -188,7 +265,6 @@ export async function hookIntercept(
     // -----------------------------------------------------------------------
     // Step 4: Extract session_id
     // Precedence: payload.session_id > CLAUDE_SESSION_ID env > process-UUID fallback
-    // See plan section 2 "Why session ID resolution is delicate".
     // -----------------------------------------------------------------------
     let sessionId: string;
     const payloadSessionId = payload.session_id;
@@ -200,8 +276,7 @@ export async function hookIntercept(
     }
 
     // -----------------------------------------------------------------------
-    // Step 5: Extract intent text (plan section 3.2 derivation)
-    // new_string -> content -> "" (empty string)
+    // Step 5: Extract intent text (derivation: new_string -> content -> "")
     // -----------------------------------------------------------------------
     const toolInput =
       typeof payload.tool_input === "object" && payload.tool_input !== null
@@ -215,29 +290,51 @@ export async function hookIntercept(
           : "";
 
     // -----------------------------------------------------------------------
-    // Step 6: Build TelemetryEvent per D-HOOK-5 schema (plan section 3)
+    // Step 6: Gate on registry existence (DEC-WI831-003)
+    // If the registry file does not exist, exit 0 with no telemetry write.
+    // The top-level catch would handle the openRegistry throw too, but an
+    // explicit existsSync gate makes the behavior observable in tests.
     // -----------------------------------------------------------------------
-    const end = now();
-    const event: TelemetryEvent = {
-      t: end,
-      intentHash: hashIntent(intentText),
-      toolName: validToolName,
-      candidateCount: 0, // Phase 1: no registry query
-      topScore: null, // Phase 1: no registry query
-      substituted: false, // Phase 1: never substitutes
-      substitutedAtomHash: null, // Phase 1: never substitutes
-      latencyMs: end - start,
-      outcome: "passthrough", // D-HOOK-5 canonical value per plan section 3
-    };
+    if (!existsSync(registryPath)) {
+      // DEC-WI831-003: absent registry → silent no-op; no telemetry event written.
+      return 0;
+    }
 
     // -----------------------------------------------------------------------
-    // Step 7: Append telemetry event
-    // Any exception here is swallowed -- DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001.
+    // Step 7 NEW: Open registry + delegate to substrate with 500ms hard cap
+    // (DEC-WI831-002, DEC-WI831-003, DEC-WI831-004)
+    //
+    // The substrate (executeRegistryQueryWithSubstitution) handles:
+    //   - KNN query via sqlite-vec
+    //   - Enforcement layers L1-L4
+    //   - Substitution decision (D2 auto-accept)
+    //   - captureTelemetry() with real atomHash, candidateCount, topScore,
+    //     substituted, outcome (Sacred Practice #12: single JSONL writer)
+    //
+    // DEC-WI831-006: we do NOT inspect the return value or write substituted
+    // code to stdout. Telemetry-only delivery. The hook always exits 0.
     // -----------------------------------------------------------------------
-    appendEvent(event, sessionId, telemetryDir);
+    const registry = await openRegistry(registryPath);
+    // DEC-WI831-004: no explicit embeddings option; substrate default resolution.
+
+    const ctx: EmissionContext = { intent: intentText };
+    const originalCode = intentText;
+
+    const substrateCall = executeSubstrate(registry, ctx, originalCode, validToolName, {
+      threshold: DEFAULT_REGISTRY_HIT_THRESHOLD,
+      sessionId,
+      telemetryDir,
+    });
+
+    // 500ms hard cap: if the substrate doesn't resolve in time, the timer fires.
+    // Either branch resolves to undefined; we don't inspect the substrate's return.
+    // On timeout, the substrate's in-flight work is orphaned but harmless — it
+    // will finish writing its own telemetry whenever it completes.
+    // No duplicate hook-side write can occur (there is no hook-side write).
+    await Promise.race([substrateCall, schedulerFn(CLI_HOOK_LATENCY_HARD_CAP_MS)]);
   } catch {
-    // Top-level catch: swallows ANY exception -- stdin read error, JSON parse,
-    // hash failure, disk full, permission denied, anything.
+    // Top-level catch: swallows ANY exception — stdin read error, JSON parse,
+    // openRegistry failure (missing file, corrupt DB), substrate error, anything.
     // DEC-CLI-HOOK-INTERCEPT-FAIL-SILENT-001: the hook must NEVER block the user tool call.
   }
 
