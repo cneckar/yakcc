@@ -1,6 +1,6 @@
 {
   "name": "@yakcc/registry",
-  "version": "0.5.0-alpha.0",
+  "version": "0.6.0-alpha.0",
   "description": "The store for Yakcc contracts and their implementations — SQLite-backed content-addressed registry with vector search.",
   "license": "Apache-2.0",
   "type": "module",

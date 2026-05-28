@@ -1,6 +1,6 @@
 {
   "name": "@yakcc/federation",
-  "version": "0.5.0-alpha.0",
+  "version": "0.6.0-alpha.0",
   "description": "F1 read-only content-addressed block mirror for Yakcc registries — HTTP transport and local/remote pull primitives.",
   "license": "Apache-2.0",
   "type": "module",

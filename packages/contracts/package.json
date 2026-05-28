@@ -1,6 +1,6 @@
 {
   "name": "@yakcc/contracts",
-  "version": "0.5.0-alpha.0",
+  "version": "0.6.0-alpha.0",
   "description": "Shared vocabulary and canonical types for the Yakcc monorepo — contract shapes, embeddings, merkle proofs, and granularity primitives.",
   "license": "Apache-2.0",
   "type": "module",
