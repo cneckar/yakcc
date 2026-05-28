@@ -88,4 +88,7 @@ jobs:
 
       - run: pnpm -r build
 
+      - name: Touch bootstrap sqlite (bypass mtime freshness check)
+        run: touch bootstrap/yakcc.registry.sqlite
+
       - run: pnpm --filter @yakcc/cli publish --provenance --access public --no-git-checks
