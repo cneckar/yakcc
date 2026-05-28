@@ -14,13 +14,7 @@
  *   blocks at shave-time.
  */
 
-import {
-  type FunctionDeclaration,
-  Node,
-  Project,
-  SyntaxKind,
-  type TypeNode,
-} from "ts-morph";
+import { type FunctionDeclaration, Node, Project, SyntaxKind, type TypeNode } from "ts-morph";
 import { toSnakeCase } from "./names.js";
 import type { LowerWarning } from "./types.js";
 
@@ -339,7 +333,12 @@ function lowerExpr(node: Node, ctx: Ctx): string {
     const text = node.getText();
     // PascalCase identifiers are class/type names — preserve them unchanged.
     // camelCase identifiers (starting lowercase) are converted to snake_case.
-    if (text.length > 0 && text[0] === text[0]!.toUpperCase() && text[0] !== text[0]!.toLowerCase()) {
+    const firstChar = text[0];
+    if (
+      firstChar &&
+      firstChar === firstChar.toUpperCase() &&
+      firstChar !== firstChar.toLowerCase()
+    ) {
       return text;
     }
     return toSnakeCase(text);
@@ -378,10 +377,7 @@ function lowerExpr(node: Node, ctx: Ctx): string {
     return `(${whenTrue} if ${c} else ${whenFalse})`;
   }
 
-  if (
-    k === SyntaxKind.TemplateExpression ||
-    k === SyntaxKind.NoSubstitutionTemplateLiteral
-  ) {
+  if (k === SyntaxKind.TemplateExpression || k === SyntaxKind.NoSubstitutionTemplateLiteral) {
     return lowerTemplate(node, ctx);
   }
 
@@ -769,7 +765,10 @@ export function lowerTypeNode(typeNode: TypeNode, ctx: Ctx): string {
   const k = typeNode.getKind();
 
   if (k === SyntaxKind.NumberKeyword) {
-    ctx.warnings.push({ kind: "number-to-float", message: "number → float: precision loss possible" });
+    ctx.warnings.push({
+      kind: "number-to-float",
+      message: "number → float: precision loss possible",
+    });
     return "float";
   }
 
@@ -839,7 +838,10 @@ export function lowerTypeNode(typeNode: TypeNode, ctx: Ctx): string {
 
   // Intersection type: A & B → A (approximate, warn)
   if (k === SyntaxKind.IntersectionType) {
-    ctx.warnings.push({ kind: "intersection-type", message: "intersection type approximated as first member" });
+    ctx.warnings.push({
+      kind: "intersection-type",
+      message: "intersection type approximated as first member",
+    });
     const it = typeNode.asKindOrThrow(SyntaxKind.IntersectionType);
     const first = it.getTypeNodes()[0];
     return first ? lowerTypeNode(first, ctx) : "Any";
@@ -903,8 +905,12 @@ function lowerUnion(typeNode: TypeNode, ctx: Ctx): string {
 
   if (nonNull.length === 1 && nonNull.length < types.length) {
     ctx.needsOptional = true;
-    const inner = lowerTypeNode(nonNull[0]!, ctx);
-    return `Optional[${inner}]`;
+    const [innerType] = nonNull;
+    if (innerType) {
+      const inner = lowerTypeNode(innerType, ctx);
+      return `Optional[${inner}]`;
+    }
+    return "Any";
   }
 
   const parts = types.map((t) => lowerTypeNode(t, ctx));

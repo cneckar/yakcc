@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
-import { describe, expect, it } from "vitest";
-import { compileToPython, toSnakeCase } from "./index.js";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/registry";
+import { describe, expect, it } from "vitest";
+import { compileToPython, toSnakeCase } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Minimal BlockTripletRow stub for tests
 // ---------------------------------------------------------------------------
 
-function makeRow(implSource: string, artifacts: Map<string, Uint8Array> = new Map()): BlockTripletRow {
+function makeRow(
+  implSource: string,
+  artifacts: Map<string, Uint8Array> = new Map(),
+): BlockTripletRow {
   return {
     blockMerkleRoot: "dead" as BlockMerkleRoot,
     specHash: "dead" as SpecHash,

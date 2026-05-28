@@ -47,9 +47,7 @@ export function compileToPython(
   }
 
   // Assemble the .py source
-  const allLines = importLines.length > 0
-    ? [...importLines, "", ...pyLines]
-    : pyLines;
+  const allLines = importLines.length > 0 ? [...importLines, "", ...pyLines] : pyLines;
 
   const source = allLines.join("\n");
 
@@ -65,8 +63,8 @@ function buildTestSource(
   opts?: CompilePythonOptions,
 ): string {
   // Look for proof/properties.json in the artifact map
-  const propertiesBytes = atom.artifacts.get("proof/properties.json")
-    ?? atom.artifacts.get("properties.json");
+  const propertiesBytes =
+    atom.artifacts.get("proof/properties.json") ?? atom.artifacts.get("properties.json");
   if (!propertiesBytes) return "";
 
   let spec: ReturnType<typeof validatePropertySpec> | undefined;
