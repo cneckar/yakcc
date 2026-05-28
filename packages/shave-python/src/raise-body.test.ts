@@ -5,12 +5,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  renderBody,
-  renderExpr,
-  renderStmt,
   UnsupportedAstError,
   type WireExpr,
   type WireStmt,
+  renderBody,
+  renderExpr,
+  renderStmt,
 } from "./raise-body.js";
 
 describe("renderExpr — primitives", () => {
@@ -18,17 +18,13 @@ describe("renderExpr — primitives", () => {
     expect(renderExpr({ type: "Name", name: "x" })).toBe("x");
   });
   it("renders Integer (preserves precision via string)", () => {
-    expect(renderExpr({ type: "Integer", value: "9007199254740993" })).toBe(
-      "9007199254740993",
-    );
+    expect(renderExpr({ type: "Integer", value: "9007199254740993" })).toBe("9007199254740993");
   });
   it("renders Float", () => {
     expect(renderExpr({ type: "Float", value: "3.14" })).toBe("3.14");
   });
   it("renders String with JSON.stringify (handles quotes/escapes)", () => {
-    expect(renderExpr({ type: "String", value: 'hello "world"' })).toBe(
-      '"hello \\"world\\""',
-    );
+    expect(renderExpr({ type: "String", value: 'hello "world"' })).toBe('"hello \\"world\\""');
   });
   it("renders Bool", () => {
     expect(renderExpr({ type: "Bool", value: true })).toBe("true");
@@ -96,7 +92,12 @@ describe("renderStmt", () => {
   it("renders Return with value", () => {
     const stmt: WireStmt = {
       type: "Return",
-      value: { type: "BinaryOp", op: "+", left: { type: "Name", name: "x" }, right: { type: "Name", name: "y" } },
+      value: {
+        type: "BinaryOp",
+        op: "+",
+        left: { type: "Name", name: "x" },
+        right: { type: "Name", name: "y" },
+      },
     };
     expect(renderStmt(stmt)).toBe("  return (x + y);");
   });
@@ -110,9 +111,7 @@ describe("renderStmt", () => {
     expect(renderStmt({ type: "Return", value: null }, "    ")).toBe("    return;");
   });
   it("rejects Unsupported stmt", () => {
-    expect(() => renderStmt({ type: "Unsupported", reason: "While" })).toThrow(
-      UnsupportedAstError,
-    );
+    expect(() => renderStmt({ type: "Unsupported", reason: "While" })).toThrow(UnsupportedAstError);
   });
 });
 

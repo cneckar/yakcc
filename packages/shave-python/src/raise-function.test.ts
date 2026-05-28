@@ -5,8 +5,8 @@
 
 import { describe, expect, it } from "vitest";
 import type { FunctionSignature } from "./parse-fn-signature.js";
-import { renderFunctionDeclaration } from "./raise-function.js";
 import type { WireStmt } from "./raise-body.js";
+import { renderFunctionDeclaration } from "./raise-function.js";
 
 function sig(over: Partial<FunctionSignature> = {}): FunctionSignature {
   return {
@@ -24,7 +24,7 @@ describe("renderFunctionDeclaration", () => {
     const out = renderFunctionDeclaration(sig({ name: "noop", returnType: "void" }), [
       { type: "Pass" },
     ]);
-    expect(out).toBe(`export function noop(): void {\n  void 0;\n}`);
+    expect(out).toBe("export function noop(): void {\n  void 0;\n}");
   });
 
   it("renders typed add function with return binop", () => {
@@ -49,7 +49,7 @@ describe("renderFunctionDeclaration", () => {
       },
     ];
     expect(renderFunctionDeclaration(s, body)).toBe(
-      `export function add(x: number, y: number): number {\n  return (x + y);\n}`,
+      "export function add(x: number, y: number): number {\n  return (x + y);\n}",
     );
   });
 
@@ -64,11 +64,7 @@ describe("renderFunctionDeclaration", () => {
       params: [{ name: "key", tsType: "string", pythonAnnotation: "str" }],
       returnType: "number | null",
     });
-    const out = renderFunctionDeclaration(s, [
-      { type: "Return", value: { type: "None" } },
-    ]);
-    expect(out).toBe(
-      `export function lookup(key: string): number | null {\n  return null;\n}`,
-    );
+    const out = renderFunctionDeclaration(s, [{ type: "Return", value: { type: "None" } }]);
+    expect(out).toBe("export function lookup(key: string): number | null {\n  return null;\n}");
   });
 });

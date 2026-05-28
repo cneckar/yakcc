@@ -5,7 +5,7 @@
 // composition layer: it does not parse, it only stitches.
 
 import type { FunctionSignature } from "./parse-fn-signature.js";
-import { renderBody, type WireStmt } from "./raise-body.js";
+import { type WireStmt, renderBody } from "./raise-body.js";
 
 /**
  * Render the full TS-subset IR text for one Python function.
@@ -23,9 +23,7 @@ export function renderFunctionDeclaration(
   signature: FunctionSignature,
   body: readonly WireStmt[],
 ): string {
-  const paramList = signature.params
-    .map((p) => `${p.name}: ${p.tsType}`)
-    .join(", ");
+  const paramList = signature.params.map((p) => `${p.name}: ${p.tsType}`).join(", ");
   const bodyText = body.length === 0 ? "  void 0;" : renderBody(body, "  ");
   return `export function ${signature.name}(${paramList}): ${signature.returnType} {\n${bodyText}\n}`;
 }
