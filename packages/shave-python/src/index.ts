@@ -2,10 +2,10 @@
 //
 // @yakcc/shave-python — Python raise adapter (WI-782).
 //
-// Slice 2 of 4: typed function signature extraction + Python → TS type mapping.
-// The exported API now includes the libcst subprocess wrapper (slice 1) plus
-// the signature extractor and type-map helpers.  Body translation, purity
-// inference, and end-to-end raise come in slices 2b, 3, and 4.
+// Slice 2b of 4: typed signature + Python→TS type map (slice 2) + body
+// translation for return statements with literal/name/binop expressions.
+// Purity inference, naming normalization, and CannotRaiseToIRError wiring
+// come in slices 3 and 4.
 
 export {
   AdapterSubprocessError,
@@ -21,3 +21,12 @@ export {
   type RaisedParam,
 } from "./parse-fn-signature.js";
 export { mapPythonType, UnsupportedTypeError } from "./type-map.js";
+export {
+  renderBody,
+  renderExpr,
+  renderStmt,
+  UnsupportedAstError,
+  type WireExpr,
+  type WireStmt,
+} from "./raise-body.js";
+export { renderFunctionDeclaration } from "./raise-function.js";
