@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/variance",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.6.0-alpha.0",
+  "description": "Variance scoring and star-topology contract design rules for Yakcc specs.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,6 +12,29 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/variance"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/variance#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "variance",
+    "scoring",
+    "typescript"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",
