@@ -1,0 +1,34 @@
+# B3 pre-sprint task list template
+# DEC-WI187-008 clause 1: fill this in BEFORE the sprint engineer begins coding.
+# The classifier (column 3) must be a different identity from the sprint engineer.
+#
+# Columns: slug,category,classifier
+# - slug: kebab-case task identifier (used in yakcc bench b3 task-begin / task-end)
+# - category: boilerplate | glue | novel-logic  (frozen at task-begin; no post-hoc changes)
+# - classifier: identity of the independent reviewer who assigned this category
+#
+# Usage with the harness:
+#   yakcc bench b3 report --sprint b3-on --tasks bench/B3-cache-hit/tasks.csv
+#
+# ── REPLACE THE EXAMPLE ROWS BELOW WITH YOUR ACTUAL TASK LIST ──────────────────
+#
+# Cross-reference: bench/B3-cache-hit/PROTOCOL.md §6 (taxonomy definitions)
+#                  PLAN.md §4.8 / #187
+
+slug,category,classifier
+implement-user-creation,boilerplate,alice
+add-crud-routes-for-posts,boilerplate,alice
+write-test-scaffolding-for-auth,boilerplate,alice
+add-schema-migration-up-down,boilerplate,alice
+generate-openapi-schema-for-v2,boilerplate,alice
+wire-new-service-into-di-container,glue,alice
+adapt-logger-to-new-sink-interface,glue,alice
+connect-cache-layer-to-query-service,glue,alice
+bridge-legacy-dto-to-new-domain-model,glue,alice
+integrate-third-party-payment-client,glue,alice
+design-rate-limiter-with-backoff,novel-logic,alice
+implement-custom-dsl-parser,novel-logic,alice
+build-adaptive-caching-strategy,novel-logic,alice
+author-concurrency-safe-queue,novel-logic,alice
+prototype-embedding-search-ranker,novel-logic,alice
+# ... add more rows to reach N ≥ 30 tasks total before starting the sprint ...

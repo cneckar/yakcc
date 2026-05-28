@@ -34,6 +34,7 @@
 // RegistryOptions["embeddings"] keeps @yakcc/registry as the one type-level authority.
 
 import type { RegistryOptions } from "@yakcc/registry";
+import { benchB3 } from "./commands/bench-b3.js";
 import { bootstrap } from "./commands/bootstrap.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
@@ -177,6 +178,14 @@ COMMANDS
   hooks continue install              Wire yakcc tool-call interception for Continue.dev
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc continue hook entry
+  bench b3 task-begin <slug>           Record start of an engineering task (B3 cache-hit harness, #187)
+           --category <cat>            Task category: boilerplate | glue | novel-logic  (required)
+           --classifier <name>         Independent reviewer identity  (required)
+           [--sprint <id>]             Sprint identifier (default: "default")
+  bench b3 task-end <slug>             Record end of an engineering task
+           [--outcome <outcome>]       completed (default) | abandoned | blocked
+  bench b3 report [--sprint <id>]      Aggregate and display B3 cache-hit report
+                  [--json] [--tasks]
   stats [--since <iso-date>] [--json]  Show Tier-1 telemetry metrics (intercepts, outcomes, sessions, match quality)
   telemetry [--path] [--tail <n>]     Show telemetry sessions in ~/.yakcc/telemetry/ (or YAKCC_TELEMETRY_DIR)
   hook-intercept                      (internal -- invoked by IDE hook configs via PreToolUse)
@@ -399,6 +408,18 @@ export async function runCli(
       // Non-interactive: never reads stdin (NG6).
       const statsArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return stats(statsArgv, logger);
+    }
+
+    case "bench": {
+      // `yakcc bench b3 <task-begin|task-end|report>` -- B3 cache-hit telemetry harness (WI-187).
+      // DEC-WI187-005: reporter is a CLI subcommand under bench b3, not a standalone script.
+      if (subcommand === "b3") {
+        return benchB3(rest, logger);
+      }
+      logger.error(
+        `error: unknown bench subcommand: ${subcommand ?? "(none)"}. Did you mean 'bench b3'?`,
+      );
+      return 1;
     }
 
     case "telemetry": {
