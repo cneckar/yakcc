@@ -7,7 +7,7 @@
     "types": ["node"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "dist/**", "src/__fixtures__/**"],
+  "exclude": ["node_modules", "dist/**", "src/**/*.test.ts", "src/**/*.props.test.ts", "src/__fixtures__/**", "src/**/__fixtures__/**"],
   "references": [
     { "path": "../contracts" },
     { "path": "../ir" },

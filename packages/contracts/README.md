@@ -3,6 +3,17 @@
 The shape of a Yakcc contract. This package is the shared vocabulary for the
 entire monorepo: every other package imports its types from here.
 
+## Install
+
+```bash
+pnpm add @yakcc/contracts
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). API is stable for the core contract types;
+see CHANGELOG for per-release changes.
+
 ## What this package provides
 
 - **`ContractSpec`** — the structured behavioral specification of a basic block.
@@ -66,4 +77,4 @@ const root = blockMerkleRoot(triplet); // Merkle root over all four fields
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).
