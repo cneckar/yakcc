@@ -1,27 +1,71 @@
 # @decision DEC-WI834-004
-# title: Release workflow trigger — canonical Changesets PR auto-flow on push to main
-# status: accepted
-# rationale: changesets/action@v1 is no-op-safe when NPM_TOKEN is unset; the Version PR is
-#   still opened. Workflow ships before operator claims @yakcc scope on npm, matching the
-#   "infrastructure exists when the operator is ready" idiom. See PLAN.md for full rationale.
+# title: Release workflow split — version-PR on main; publish on `release` tag with environment gate
+# status: accepted (updated 2026-05-28 for WI-842 — operator added GitHub Environment `release`
+#   with NPM_TOKEN scoped to it, deployment policy = tag pattern `release`, required reviewer
+#   = cneckar)
+# rationale:
+#   - Two jobs because the env's deployment policy gates the secret on tag `release`, but the
+#     Changesets Version-PR auto-flow runs on push to main (no tag, no secret needed).
+#   - `version` job: push to main → opens Version PR via changesets/action@v1, no env, no
+#     NPM_TOKEN needed (action is no-op-safe without it).
+#   - `publish` job: push of tag `release` → declares `environment: release` so the secret
+#     resolves AND the manual approval gate fires. Runs `pnpm release` (= `changeset publish`)
+#     which publishes whatever package.json versions don't yet exist on npm.
+#   - Operator flow: merge to main → Changesets opens Version PR → merge it → bump versions on
+#     main → `git tag -f release && git push -f origin release` → approve in GH UI → publish.
 name: release
 
 on:
   push:
     branches: [main]
+    tags: [release]
 
 concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  release:
-    name: release (changesets)
+  version:
+    name: open version PR (changesets)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
-      id-token: write   # reserved for npm provenance once token is set
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+
+      - uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          title: "chore(release): version packages"
+          commit: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: publish to npm (gated on environment:release)
+    if: github.ref == 'refs/tags/release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      id-token: write   # reserved for npm provenance once enabled
 
     steps:
       - uses: actions/checkout@v4
@@ -40,14 +84,7 @@ jobs:
 
       - run: pnpm -r build
 
-      - id: changesets
-        name: Create Release Pull Request or Publish
-        uses: changesets/action@v1
-        with:
-          publish: pnpm release
-          version: pnpm version-packages
-          title: "chore(release): version packages"
-          commit: "chore(release): version packages"
+      - run: pnpm release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
