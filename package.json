@@ -32,10 +32,15 @@
     "bench:bloat:dry": "node bench/B2-bloat/harness/run.mjs --dry-run",
     "bench:import-replacement": "node bench/B10-import-replacement/harness/run.mjs",
     "bench:import-replacement:dry": "node bench/B10-import-replacement/harness/run.mjs --dry-run",
-    "bench:import-replacement:no-network": "node bench/B10-import-replacement/harness/run.mjs --no-network"
+    "bench:import-replacement:no-network": "node bench/B10-import-replacement/harness/run.mjs --no-network",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2"
   },

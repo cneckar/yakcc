@@ -1,0 +1,53 @@
+# @decision DEC-WI834-004
+# title: Release workflow trigger — canonical Changesets PR auto-flow on push to main
+# status: accepted
+# rationale: changesets/action@v1 is no-op-safe when NPM_TOKEN is unset; the Version PR is
+#   still opened. Workflow ships before operator claims @yakcc scope on npm, matching the
+#   "infrastructure exists when the operator is ready" idiom. See PLAN.md for full rationale.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  release:
+    name: release (changesets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write   # reserved for npm provenance once token is set
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+
+      - id: changesets
+        name: Create Release Pull Request or Publish
+        uses: changesets/action@v1
+        with:
+          publish: pnpm release
+          version: pnpm version-packages
+          title: "chore(release): version packages"
+          commit: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
