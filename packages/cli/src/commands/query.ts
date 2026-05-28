@@ -19,6 +19,12 @@ import { parseArgs } from "node:util";
 import { type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { IntentQuery } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+import {
+  type AnnotatedCandidateMatch,
+  type TargetLanguage,
+  applyLowerabilityFilter,
+  parseTargetLanguage,
+} from "./lowerability-filter.js";
 import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
 
 /** Internal options for query — not exposed in CLI args. */
@@ -56,6 +62,7 @@ export async function query(
       top: { type: "string", short: "k" },
       rerank: { type: "boolean" },
       "card-file": { type: "string" },
+      language: { type: "string" },
     },
     allowPositionals: true,
     strict: true,
@@ -69,6 +76,16 @@ export async function query(
     return 1;
   }
   const rerank = values.rerank === true ? "structural" : "none";
+
+  // Validate --language flag if provided
+  let language: TargetLanguage | undefined;
+  if (values.language !== undefined) {
+    language = parseTargetLanguage(values.language);
+    if (language === undefined) {
+      logger.error(`error: --language must be one of ts, py, go, rs -- got: ${values.language}`);
+      return 1;
+    }
+  }
 
   // Resolve the intent query.
   let intentQuery: IntentQuery;
@@ -128,10 +145,14 @@ export async function query(
   if (registry === null) return 1;
 
   try {
-    const results = await registry.findCandidatesByIntent(intentQuery, {
+    const rawResults = await registry.findCandidatesByIntent(intentQuery, {
       k: top,
       rerank,
     });
+
+    // Apply lowerability filter (pass-through when language is undefined/"ts").
+    const filterResult = applyLowerabilityFilter(rawResults, language);
+    const results = filterResult.candidates;
 
     if (results.length === 0) {
       logger.log("no results found");
@@ -158,13 +179,20 @@ export async function query(
       const blockShort = r.block.blockMerkleRoot.slice(0, 12);
       const behaviorTrunc = truncate(behaviorStr, 72);
 
+      // Build lowerability annotation (present only when filter was applied).
+      const lowerabilityPart = filterResult.filtered
+        ? ` [lowerability=${(r as AnnotatedCandidateMatch).lowerability}]`
+        : "";
+
       if (r.structuralScore !== undefined) {
         const structStr = r.structuralScore.toFixed(4);
         logger.log(
-          `${rank}. cosine=${cosStr} structural=${structStr} block=${blockShort} behavior="${behaviorTrunc}"`,
+          `${rank}. cosine=${cosStr} structural=${structStr}${lowerabilityPart} block=${blockShort} behavior="${behaviorTrunc}"`,
         );
       } else {
-        logger.log(`${rank}. cosine=${cosStr} block=${blockShort} behavior="${behaviorTrunc}"`);
+        logger.log(
+          `${rank}. cosine=${cosStr}${lowerabilityPart} block=${blockShort} behavior="${behaviorTrunc}"`,
+        );
       }
     }
 
