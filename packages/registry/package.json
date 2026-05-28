@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/registry",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.6.0-alpha.0",
+  "description": "The store for Yakcc contracts and their implementations — SQLite-backed content-addressed registry with vector search.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,28 @@
   "exports": {
     ".": "./dist/index.js"
   },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/registry"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/registry#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "registry",
+    "sqlite",
+    "content-addressed",
+    "typescript"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",

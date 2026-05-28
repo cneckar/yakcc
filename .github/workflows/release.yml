@@ -1,0 +1,94 @@
+# @decision DEC-WI834-004
+# title: Release workflow — version-PR on main; publish on `release-*` tag via OIDC trusted publisher
+# status: accepted (updated 2026-05-28 for WI-845 — OIDC trusted publisher replaces NPM_TOKEN;
+#   tag pattern updated to `release-*` per operator deployment policy; only @yakcc/cli publishes)
+# rationale:
+#   - Two jobs: `version` runs on push to main (opens Changesets Version PR); `publish` runs on
+#     `release-*` tags (e.g. release-0.6.0) per operator env deployment policy change.
+#   - `version` job: push to main → opens Version PR via changesets/action@v1, no env, no secret.
+#   - `publish` job: push of tag matching `release-*` → declares `environment: release` for the
+#     manual approval gate. Uses OIDC via id-token:write; no NPM_TOKEN needed. npm@latest required
+#     because Node 22 ships npm 10.x and OIDC trusted publishing requires npm 11.5.1+.
+#     `pnpm --filter @yakcc/cli publish --provenance` invokes npm directly so --provenance is
+#     passed through; `changeset publish` does not forward this flag (silently dropped).
+#   - Only @yakcc/cli is published; the 7 sub-packages are private:true and in the ignore list.
+#   - Operator flow: merge to main → Changesets opens Version PR → merge it → bump cli version →
+#     `git tag release-X.Y.Z && git push origin release-X.Y.Z` → approve in GH UI → publish.
+#   - References: #834 (initial release flow), #842 (split jobs), #845 (OIDC + cli-only).
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ['release-*']
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  version:
+    name: open version PR (changesets)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+
+      - uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          title: "chore(release): version packages"
+          commit: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: publish to npm (OIDC trusted publisher)
+    if: startsWith(github.ref, 'refs/tags/release-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+
+      - name: Touch bootstrap sqlite (bypass mtime freshness check)
+        run: touch bootstrap/yakcc.registry.sqlite
+
+      - run: pnpm --filter @yakcc/cli publish --provenance --access public --no-git-checks

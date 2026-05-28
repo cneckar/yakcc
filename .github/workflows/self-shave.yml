@@ -35,6 +35,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
+    # @decision DEC-CI-SKIP-MUTATION-GATE-BOOTSTRAP-001
+    # @title Bypass mutation-testing gate in self-shave CI (bootstrap + two-pass cycle)
+    # @status accepted (2026-05-28, closes #836)
+    # @rationale
+    #   WI-776 (commit a2fbc49) added a killRateThreshold=0.80 mutation-testing gate
+    #   in persistNovelGlueAtom(). The gate runs fast-check property assertions in a
+    #   node:vm sandbox for every novel atom — up to 20 mutants × 5 s per atom. With
+    #   ~450+ atoms in the workspace, this adds ≥50 min PER bootstrap pass.
+    #
+    #   The self-shave two-pass cycle runs bootstrap twice (pass 1 + pass 2 inside the
+    #   harness). Total wall-time exceeds the 120-min CI job timeout → workflow killed
+    #   without writing a verified-marker → every subsequent push sees a cache miss and
+    #   repeats the timeout (regression loop). Observed locally: 50+ min for one pass.
+    #
+    #   The mutation gate is a quality-assurance tool for interactive development;
+    #   it guards that corpus property tests detect broken impls. It is NOT a
+    #   content-address determinism requirement: blockMerkleRoot = BLAKE3(spec ||
+    #   impl || proof_root) is independent of mutation-test outcomes. Bypassing the
+    #   gate in CI restores the pre-WI-776 wall-time (~5 min/bootstrap) without
+    #   weakening the load-bearing S1 ≡ S3 byte-identity assertion.
+    #
+    #   Additionally the gate uses fast-check's default (random) seed inside node:vm,
+    #   introducing non-determinism between pass 1 and pass 2. Atoms near the 0.80
+    #   threshold can pass in one run and fail in another, causing stochastic file
+    #   failures that the exclusion-set logic can mask but not prevent entirely.
+    #
+    #   YAKCC_SKIP_MUTATION_GATE=1 is the documented bypass (DEC-MUTATE-PERSIST-001).
+    #   Setting it at the job level covers: (a) the bootstrap pass-1 step, and
+    #   (b) the bootstrap pass-2 invoked inside the test harness via
+    #   execSync(..., { env: { ...process.env } }).
+    env:
+      YAKCC_SKIP_MUTATION_GATE: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4

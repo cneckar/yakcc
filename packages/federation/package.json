@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/federation",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.6.0-alpha.0",
+  "description": "F1 read-only content-addressed block mirror for Yakcc registries — HTTP transport and local/remote pull primitives.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,27 @@
   "exports": {
     ".": "./dist/index.js"
   },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/federation"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/federation#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "federation",
+    "registry",
+    "content-addressed"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",

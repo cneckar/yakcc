@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/hooks-base",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.6.0-alpha.0",
+  "description": "Shared types and registry-query logic for all Yakcc IDE hooks — import classification, telemetry, and enforcement config.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,6 +12,28 @@
     "./telemetry.js": { "import": "./dist/telemetry.js", "types": "./dist/telemetry.d.ts" },
     "./telemetry-wire.js": { "import": "./dist/telemetry-wire.js", "types": "./dist/telemetry-wire.d.ts" }
   },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/hooks-base"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/hooks-base#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "hooks",
+    "ide",
+    "telemetry",
+    "typescript"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
