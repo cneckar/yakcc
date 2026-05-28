@@ -2,6 +2,16 @@
 
 Shared types and registry-query logic for all Yakcc IDE hooks.
 
+## Install
+
+```bash
+pnpm add @yakcc/hooks-base
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). Hook contract types and telemetry API are stable.
+
 ## What this package provides
 
 This package is a leaf shared by `@yakcc/hooks-claude-code`, `@yakcc/hooks-cursor`, and `@yakcc/hooks-codex`. It exists to satisfy Sacred Practice #12 (single source of truth): the hook contract and registry-query logic live in exactly one place.
@@ -33,4 +43,4 @@ import type { EmissionContext, HookResponse, HookOptions } from "@yakcc/hooks-ba
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).

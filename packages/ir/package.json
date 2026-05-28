@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/ir",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.5.0-alpha.0",
+  "description": "Intermediate representation for strict-TypeScript-subset basic blocks used in the Yakcc universalizer pipeline.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,30 @@
   "exports": {
     ".": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/ir"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/ir#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "ir",
+    "intermediate-representation",
+    "typescript",
+    "ast"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",

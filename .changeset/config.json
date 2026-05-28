@@ -1,0 +1,26 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": ["@changesets/changelog-github", { "repo": "cneckar/yakcc" }],
+  "commit": false,
+  "fixed": [["@yakcc/contracts", "@yakcc/federation", "@yakcc/hooks-base", "@yakcc/ir", "@yakcc/registry", "@yakcc/shave", "@yakcc/variance"]],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "@yakcc/cli",
+    "@yakcc/compile",
+    "@yakcc/seeds",
+    "@yakcc/hooks-claude-code",
+    "@yakcc/hooks-cursor",
+    "@yakcc/hooks-cline",
+    "@yakcc/hooks-codex",
+    "@yakcc/hooks-continue",
+    "@yakcc/hooks-windsurf",
+    "@yakcc/hooks-aider",
+    "@yakcc/example-json-schema-validator",
+    "@yakcc/example-parse-int-list",
+    "@yakcc/v2-self-shave-poc",
+    "@v1-federation-demo"
+  ]
+}
