@@ -1,6 +1,6 @@
 {
   "name": "@yakcc/ir",
-  "version": "0.5.0-alpha.0",
+  "version": "0.6.0-alpha.0",
   "description": "Intermediate representation for strict-TypeScript-subset basic blocks used in the Yakcc universalizer pipeline.",
   "license": "Apache-2.0",
   "type": "module",
