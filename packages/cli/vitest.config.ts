@@ -33,7 +33,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.props.ts", "test/**/*.test.ts"],
     pool: "forks",
     testTimeout: 60_000,
     hookTimeout: 60_000,

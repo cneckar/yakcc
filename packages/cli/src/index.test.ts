@@ -111,3 +111,42 @@ describe("registry rebuild discoverability — help text (DEC-EMBED-MODEL-MIGRAT
     expect(allOutput).toContain("registry rebuild");
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-187: bench b3 smoke tests (Evaluation Contract — index.test.ts smoke)
+// ---------------------------------------------------------------------------
+
+describe("bench b3 dispatch smoke (WI-187)", () => {
+  it("yakcc bench b3 --help lists task-begin, task-end, report subcommands", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["bench", "b3", "--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("task-begin");
+    expect(out).toContain("task-end");
+    expect(out).toContain("report");
+  });
+
+  it("yakcc bench b3 unknown exits non-zero with usage guidance", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["bench", "b3", "unknown-subcmd"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("unknown bench b3 subcommand");
+  });
+
+  it("yakcc bench (no b3 subcommand) exits non-zero", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["bench", "unknown"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("bench");
+  });
+
+  it("printUsage --help includes bench b3 task-begin line", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("bench b3");
+    expect(out).toContain("task-begin");
+  });
+});
