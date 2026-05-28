@@ -1,7 +1,6 @@
 # @decision DEC-WI834-004
 # title: Release workflow — version-PR on main; publish on `release-*` tag via OIDC trusted publisher
-# status: accepted (updated 2026-05-28 for WI-845 — OIDC trusted publisher replaces NPM_TOKEN;
-#   tag pattern updated to `release-*` per operator deployment policy; only @yakcc/cli publishes)
+# status: accepted (updated 2026-05-28 for WI-856 — dual publish: @yakcc/cli + unscoped yakcc wrapper)
 # rationale:
 #   - Two jobs: `version` runs on push to main (opens Changesets Version PR); `publish` runs on
 #     `release-*` tags (e.g. release-0.6.0) per operator env deployment policy change.
@@ -9,12 +8,16 @@
 #   - `publish` job: push of tag matching `release-*` → declares `environment: release` for the
 #     manual approval gate. Uses OIDC via id-token:write; no NPM_TOKEN needed. npm@latest required
 #     because Node 22 ships npm 10.x and OIDC trusted publishing requires npm 11.5.1+.
-#     `pnpm --filter @yakcc/cli publish --provenance` invokes npm directly so --provenance is
-#     passed through; `changeset publish` does not forward this flag (silently dropped).
-#   - Only @yakcc/cli is published; the 7 sub-packages are private:true and in the ignore list.
-#   - Operator flow: merge to main → Changesets opens Version PR → merge it → bump cli version →
-#     `git tag release-X.Y.Z && git push origin release-X.Y.Z` → approve in GH UI → publish.
-#   - References: #834 (initial release flow), #842 (split jobs), #845 (OIDC + cli-only).
+#     `pnpm --filter @yakcc/cli --filter yakcc publish --provenance` invokes npm directly so
+#     --provenance is passed through; `changeset publish` does not forward this flag (silently
+#     dropped). Both packages publish in one step.
+#   - @yakcc/cli: scoped package, --access public required. yakcc: unscoped wrapper, forwards bin.
+#   - The 7 sub-packages are private:true and in the ignore list.
+#   - Operator flow: merge to main → Changesets opens Version PR → merge it → bump cli+yakcc
+#     versions in lockstep (fixed group) → `git tag release-X.Y.Z && git push origin
+#     release-X.Y.Z` → approve in GH UI → publish.
+#   - References: #834 (initial release flow), #842 (split jobs), #845 (OIDC + cli-only),
+#     #856 (dual publish + unscoped yakcc wrapper).
 name: release
 
 on:
@@ -91,4 +94,4 @@ jobs:
       - name: Touch bootstrap sqlite (bypass mtime freshness check)
         run: touch bootstrap/yakcc.registry.sqlite
 
-      - run: pnpm --filter @yakcc/cli publish --provenance --access public --no-git-checks
+      - run: pnpm --filter @yakcc/cli --filter yakcc publish --provenance --access public --no-git-checks
