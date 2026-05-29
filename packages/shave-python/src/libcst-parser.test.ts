@@ -10,6 +10,7 @@
 // A future slice (likely slice 4) will add an opt-in integration test gated
 // on `process.env.YAKCC_PY` that exercises the real Python interpreter.
 
+import { execSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -204,4 +205,33 @@ describe("parsePythonSource (#782 slice 1)", () => {
     await parsePythonSource("pass", { spawnImpl: spawnFn, scriptPath: "/fake/x.py" });
     expect(capturedCmd).toBe("/custom/python");
   });
+});
+
+// ---------------------------------------------------------------------------
+// WI-875: floor-divide // emission (REGRESSION — real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-875: floor-divide // emission (REGRESSION — real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits FloorDivide as a // BinaryOp wire node", async () => {
+      const source = "def divmod_int(a: int, b: int) -> int:\n    return a // b\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module as any).functions[0];
+      const ret = fn.body[0];
+      expect(ret.type).toBe("Return");
+      expect(ret.value.type).toBe("BinaryOp");
+      expect(ret.value.op).toBe("//");
+    });
+  }
 });

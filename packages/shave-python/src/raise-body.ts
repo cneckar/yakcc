@@ -103,6 +103,7 @@ const ALLOWED_BINARY_OPS = new Set<string>([
   "-",
   "*",
   "/",
+  "//", // WI-875: Python floor-divide; rendered as Math.floor(left/right), not a TS operator
   "%",
   "==",
   "!=",
@@ -132,6 +133,11 @@ export function renderExpr(expr: WireExpr): string {
     case "BinaryOp": {
       if (!ALLOWED_BINARY_OPS.has(expr.op)) {
         throw new UnsupportedAstError(`BinaryOp '${expr.op}'`);
+      }
+      // WI-875: TS has no floor-divide operator; emit Math.floor(left / right)
+      // which matches Python semantics for integer division.
+      if (expr.op === "//") {
+        return `Math.floor(${renderExpr(expr.left)} / ${renderExpr(expr.right)})`;
       }
       // Always parenthesize to avoid precedence surprises across the Python → TS boundary.
       return `(${renderExpr(expr.left)} ${expr.op} ${renderExpr(expr.right)})`;

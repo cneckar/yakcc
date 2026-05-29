@@ -319,3 +319,29 @@ describe("UnsupportedAstError extends CannotRaiseToIRError (slice 4)", () => {
     expect(err.construct).toBe("async def");
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-875: floor-divide // operator
+// ---------------------------------------------------------------------------
+
+describe("WI-875: floor-divide // renders as Math.floor(a / b)", () => {
+  it("renders the // binary op as Math.floor(left / right)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "//",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    expect(renderExpr(expr)).toBe("Math.floor(a / b)");
+  });
+
+  it("accepts // in ALLOWED_BINARY_OPS (does not throw UnsupportedAstError)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "//",
+      left: { type: "Name", name: "x" },
+      right: { type: "Name", name: "y" },
+    };
+    expect(() => renderExpr(expr)).not.toThrow();
+  });
+});
