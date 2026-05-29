@@ -15,6 +15,7 @@ export default defineConfig({
       "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
       "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
       "@yakcc/compile": resolve(__dirname, "../compile/src/index.ts"),
+      "@yakcc/compile-python": resolve(__dirname, "../compile-python/src/index.ts"),
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),
       "@yakcc/shave": resolve(__dirname, "../shave/src/index.ts"),
       "@yakcc/federation": resolve(__dirname, "../federation/src/index.ts"),
