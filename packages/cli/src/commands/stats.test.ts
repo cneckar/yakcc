@@ -1,19 +1,30 @@
 // SPDX-License-Identifier: MIT
 //
-// stats.test.ts — real-fs integration tests for `yakcc stats` (WI-764 T-1..T-11)
+// stats.test.ts — real-fs integration tests for `yakcc stats` (WI-764 T-1..T-11 + WI-768 T-TIER2)
 //
 // All tests use mkdtempSync + real .jsonl fixture files (Sacred Practice #1).
 // No fs mocks, no reader stubs. CollectingLogger captures output.
 //
-// Tests cover the Evaluation Contract T-1..T-11 plus index.ts dispatch wiring.
+// Tests cover the Evaluation Contract T-1..T-11 (Tier-1), T-TIER2-1..T-TIER2-8 (Tier-2/3
+// integration from the stats() command handler perspective), plus index.ts dispatch wiring.
 //
-// @decision DEC-CLI-STATS-SCOPE-001 — Tier-1 only metrics verified here.
+// @decision DEC-CLI-STATS-SCOPE-001 — Tier-1 only metrics verified in T-1..T-11.
 // @decision DEC-CLI-STATS-COMMAND-001 — command shape, --since, --json verified here.
 // @decision DEC-CLI-STATS-READER-SEAM-001 — single reader authority; stats.ts has no JSON.parse over telemetry lines.
+// @decision DEC-CLI-STATS-TIER-2-001 — Tier-2 + Tier-3 integration verified in T-TIER2 section.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  canonicalize,
+  blockMerkleRoot as computeBlockMerkleRoot,
+  createOfflineEmbeddingProvider,
+  canonicalAstHash as deriveCanonicalAstHash,
+  specHash as deriveSpecHash,
+} from "@yakcc/contracts";
+import type { BlockTripletRow } from "@yakcc/registry";
+import { type CanonicalAstHash, openRegistry } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CollectingLogger, runCli } from "../index.js";
 import { stats } from "./stats.js";
@@ -523,6 +534,368 @@ describe("drift-alert sentinel exclusion", () => {
     const parsed = JSON.parse(logger.logLines[0] as string);
     // Only 2 real events — drift-alert sentinel is excluded
     expect(parsed.summary.totalEvents).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-TIER2: Tier-2 + Tier-3 integration tests for `stats --json` atoms block
+//
+// These tests exercise the full pipeline: file → readTelemetrySessions →
+// collectAtomReuse → printJsonOutput → atoms key in --json.
+//
+// Registry is driven through degraded mode (YAKCC_REGISTRY_PATH set to a
+// non-existent path) for all tests that don't need grain enrichment.
+// That is sufficient to prove the additive-forward invariant (Tier-1 keys
+// unchanged) and the empty-state / mixed-outcome behaviour defined in the
+// planner's Evaluation Contract.
+//
+// Note: the narrowing hit definition (outcome=registry-hit && substituted=true
+// && substitutedAtomHash !== null) is verified here at the integration level;
+// the unit-level percentile / tiebreak math is in stats-atoms.test.ts.
+// ---------------------------------------------------------------------------
+
+/** Build a minimal registry-hit event with the Tier-2 narrow hit criteria met. */
+function makeHitEvent(overrides: {
+  t?: number;
+  substitutedAtomHash?: string;
+  toolName?: string;
+}): string {
+  const event = {
+    t: overrides.t ?? Date.now(),
+    intentHash: "aabbccdd",
+    toolName: overrides.toolName ?? "Edit",
+    candidateCount: 1,
+    topScore: 0.05,
+    substituted: true,
+    substitutedAtomHash: overrides.substitutedAtomHash ?? "deadbeef0001",
+    latencyMs: 10,
+    outcome: "registry-hit",
+  };
+  return JSON.stringify(event);
+}
+
+// Helper: set YAKCC_REGISTRY_PATH to a path whose *parent directory* does not
+// exist. better-sqlite3's `new Database(path)` creates the file when the dir
+// exists (auto-create), but throws ENOENT when the parent directory is absent.
+// This reliably triggers the degraded-mode path in collectAtomReuse without
+// requiring a real registry SQLite file.
+function useAbsentRegistry(): void {
+  process.env.YAKCC_REGISTRY_PATH = join(tmpDir, "no-such-dir", "registry.db");
+}
+
+describe("T-TIER2-1: empty telemetry → atoms zero-shaped block present in --json", () => {
+  it("--json zero-state: atoms key present, top=[], hitRateP50=null, hitRateP90=null", async () => {
+    // No telemetry at all (dir absent)
+    useAbsentRegistry();
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    // atoms block must be present (additive-forward: key always emitted)
+    expect(parsed).toHaveProperty("atoms");
+    const { atoms } = parsed;
+    expect(atoms.top).toEqual([]);
+    expect(atoms.hitRateP50).toBeNull();
+    expect(atoms.hitRateP90).toBeNull();
+    // When there are zero hit events the empty-state path returns grainHistogram + locSaved
+    // (non-degraded zero-shape, per stats-atoms.ts line 172-180).
+    expect(atoms.degraded).toBe(false);
+    expect(atoms.grainHistogram).toEqual({ L0: 0, L1: 0, L2: 0, L3: 0, unknown: 0 });
+    expect(atoms.locSaved).toEqual({ total: 0, byAtom: [] });
+  });
+});
+
+describe("T-TIER2-2: Tier-1 keys unchanged when Tier-2 is computed (additive-forward invariant)", () => {
+  it("--json with hit events: Tier-1 keys outcomeBreakdown/perToolBreakdown/matchQuality/sessions all intact", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    // Mix of hit and non-hit events
+    const lines = [
+      makeHitEvent({ substitutedAtomHash: "atom0001" }),        // hit
+      makeHitEvent({ substitutedAtomHash: "atom0001" }),        // hit (same atom)
+      makeEvent({ toolName: "Write", outcome: "passthrough" }), // non-hit
+      makeEvent({ toolName: "Edit", outcome: "synthesis-required" }), // non-hit
+    ];
+    writeFileSync(join(telemetryDir, "session-t2-additive.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    // Tier-1 keys all present and correct
+    expect(parsed).toHaveProperty("version");
+    expect(parsed).toHaveProperty("generatedAt");
+    expect(parsed).toHaveProperty("window");
+    expect(parsed).toHaveProperty("summary");
+    expect(parsed).toHaveProperty("outcomeBreakdown");
+    expect(parsed).toHaveProperty("perToolBreakdown");
+    expect(parsed).toHaveProperty("matchQuality");
+    expect(parsed).toHaveProperty("sessions");
+
+    // Tier-1 correctness: 4 total events (2 hits + 1 passthrough + 1 synthesis-required)
+    expect(parsed.summary.totalEvents).toBe(4);
+    expect(parsed.outcomeBreakdown.registryHit).toBe(2);
+    expect(parsed.outcomeBreakdown.passthrough).toBe(1);
+    expect(parsed.outcomeBreakdown.synthesisRequired).toBe(1);
+
+    // Tier-2 atoms block also present
+    expect(parsed).toHaveProperty("atoms");
+  });
+});
+
+describe("T-TIER2-3: mixed outcomes — only narrow hits contribute to atoms.top", () => {
+  it("passthrough/synthesis-required events do not appear in atoms.top", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    const lines = [
+      // Narrow hit (qualifies)
+      makeHitEvent({ substitutedAtomHash: "qualifyHash001" }),
+      // registry-hit but substituted=false (does NOT qualify — misses narrow definition)
+      JSON.stringify({
+        t: Date.now(),
+        intentHash: "aabb",
+        toolName: "Edit",
+        candidateCount: 1,
+        topScore: 0.05,
+        substituted: false,
+        substitutedAtomHash: "shouldNotAppear",
+        latencyMs: 10,
+        outcome: "registry-hit",
+      }),
+      // registry-hit but substitutedAtomHash=null (does NOT qualify)
+      JSON.stringify({
+        t: Date.now(),
+        intentHash: "aabb",
+        toolName: "Edit",
+        candidateCount: 1,
+        topScore: 0.05,
+        substituted: true,
+        substitutedAtomHash: null,
+        latencyMs: 10,
+        outcome: "registry-hit",
+      }),
+      // passthrough — does not qualify
+      makeEvent({ toolName: "Write", outcome: "passthrough" }),
+      // synthesis-required — does not qualify
+      makeEvent({ toolName: "Edit", outcome: "synthesis-required" }),
+    ];
+    writeFileSync(join(telemetryDir, "session-t2-narrow.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    // Only "qualifyHash001" should appear
+    expect(parsed.atoms.top).toHaveLength(1);
+    expect(parsed.atoms.top[0].atomHash).toBe("qualifyHash001");
+    expect(parsed.atoms.top[0].hits).toBe(1);
+    // Tier-1 totalEvents still counts all 5 non-drift events
+    expect(parsed.summary.totalEvents).toBe(5);
+  });
+});
+
+describe("T-TIER2-4: degraded mode (registry absent) — top populated, grain fields null", () => {
+  it("atoms.degraded=true, atoms.top entries have level=null, lines=null; no crash", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    const lines = [
+      makeHitEvent({ substitutedAtomHash: "atomXXX" }),
+      makeHitEvent({ substitutedAtomHash: "atomXXX" }),
+      makeHitEvent({ substitutedAtomHash: "atomYYY" }),
+    ];
+    writeFileSync(join(telemetryDir, "session-t2-degraded.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    expect(parsed.atoms.degraded).toBe(true);
+    expect(parsed.atoms.degradedReason).toBe("registry-not-found");
+    // top is present; grain enrichment is null
+    expect(parsed.atoms.top.length).toBeGreaterThanOrEqual(1);
+    for (const entry of parsed.atoms.top) {
+      expect(entry.level).toBeNull();
+      expect(entry.lines).toBeNull();
+    }
+    // grainHistogram and locSaved are absent when degraded
+    expect(parsed.atoms).not.toHaveProperty("grainHistogram");
+    expect(parsed.atoms).not.toHaveProperty("locSaved");
+  });
+});
+
+describe("T-TIER2-5: top-N ordering — descending hits, ascending atomHash tiebreak", () => {
+  it("atom with 3 hits ranks above atom with 2 hits; equal-hit tie broken by asc hash", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    const lines = [
+      makeHitEvent({ substitutedAtomHash: "zzz-atom" }),   // 2 hits
+      makeHitEvent({ substitutedAtomHash: "zzz-atom" }),
+      makeHitEvent({ substitutedAtomHash: "aaa-atom" }),   // 3 hits
+      makeHitEvent({ substitutedAtomHash: "aaa-atom" }),
+      makeHitEvent({ substitutedAtomHash: "aaa-atom" }),
+      makeHitEvent({ substitutedAtomHash: "mmm-atom" }),   // 2 hits (tie with zzz-atom)
+      makeHitEvent({ substitutedAtomHash: "mmm-atom" }),
+    ];
+    writeFileSync(join(telemetryDir, "session-t2-order.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    const top = parsed.atoms.top as Array<{ atomHash: string; hits: number }>;
+    expect(top).toHaveLength(3);
+    // First: highest hits
+    expect(top[0]!.atomHash).toBe("aaa-atom");
+    expect(top[0]!.hits).toBe(3);
+    // Second: tiebreak asc hash: "mmm-atom" < "zzz-atom"
+    expect(top[1]!.atomHash).toBe("mmm-atom");
+    expect(top[1]!.hits).toBe(2);
+    // Third
+    expect(top[2]!.atomHash).toBe("zzz-atom");
+    expect(top[2]!.hits).toBe(2);
+  });
+});
+
+describe("T-TIER2-6: hitRateP50 / hitRateP90 with multiple distinct atoms", () => {
+  it("P50 and P90 over per-atom hit counts match nearest-rank formula", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    // 4 distinct atoms with hit counts: [1, 2, 3, 4] (sorted asc for percentile)
+    // nearest-rank P50 of [1,2,3,4]: ceil(0.5*4)-1 = idx 1 → 2
+    // nearest-rank P90 of [1,2,3,4]: ceil(0.9*4)-1 = idx 3 → 4
+    const atoms = ["atom-p-1", "atom-p-2", "atom-p-3", "atom-p-4"] as const;
+    const lines: string[] = [];
+    for (let i = 0; i < atoms.length; i++) {
+      const hash = atoms[i]!;
+      for (let j = 0; j <= i; j++) {
+        lines.push(makeHitEvent({ substitutedAtomHash: hash }));
+      }
+    }
+    writeFileSync(join(telemetryDir, "session-t2-pct.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    expect(parsed.atoms.hitRateP50).toBe(2);
+    expect(parsed.atoms.hitRateP90).toBe(4);
+  });
+});
+
+describe("T-TIER2-7: drift-alert sentinels excluded from atoms even when substitutedAtomHash present", () => {
+  it("drift-alert candidateCount=-1 events do not contribute to atoms.top hits", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    const driftEvent = JSON.stringify({
+      t: Date.now(),
+      intentHash: "drift:passthrough_rate:abc12345",
+      toolName: "Edit",
+      candidateCount: -1,
+      topScore: null,
+      substituted: true,
+      substitutedAtomHash: "drift-hash-should-not-count",
+      latencyMs: 0,
+      outcome: "drift-alert",
+    });
+    const realHit = makeHitEvent({ substitutedAtomHash: "real-hit-atom" });
+    writeFileSync(
+      join(telemetryDir, "session-t2-drift.jsonl"),
+      `${driftEvent}\n${realHit}\n`,
+      "utf-8",
+    );
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    // Only real-hit-atom should appear
+    expect(parsed.atoms.top).toHaveLength(1);
+    expect(parsed.atoms.top[0].atomHash).toBe("real-hit-atom");
+    // Tier-1 also excludes drift-alert: only 1 real event
+    expect(parsed.summary.totalEvents).toBe(1);
+  });
+});
+
+describe("T-TIER2-8: compound production-sequence with Tier-2 — full file→output pipeline", () => {
+  it("end-to-end: multiple sessions, mixed outcomes, atoms block in --json alongside all Tier-1 blocks", async () => {
+    mkdirSync(telemetryDir, { recursive: true });
+    useAbsentRegistry();
+
+    const dayA = new Date("2026-01-01T10:00:00Z").getTime();
+    const dayB = new Date("2026-01-02T12:00:00Z").getTime();
+
+    // Session A: 2 hits on atom-A, 1 passthrough
+    const sessionA = [
+      makeHitEvent({ t: dayA, substitutedAtomHash: "atom-A" }),
+      makeHitEvent({ t: dayA + 500, substitutedAtomHash: "atom-A" }),
+      makeEvent({ t: dayA + 1000, toolName: "Write", outcome: "passthrough" }),
+    ];
+    writeFileSync(
+      join(telemetryDir, "session-compound-a.jsonl"),
+      `${sessionA.join("\n")}\n`,
+      "utf-8",
+    );
+
+    // Session B: 1 hit on atom-B, 1 synthesis-required
+    const sessionB = [
+      makeHitEvent({ t: dayB, substitutedAtomHash: "atom-B" }),
+      makeEvent({ t: dayB + 1000, toolName: "Edit", outcome: "synthesis-required" }),
+    ];
+    writeFileSync(
+      join(telemetryDir, "session-compound-b.jsonl"),
+      `${sessionB.join("\n")}\n`,
+      "utf-8",
+    );
+
+    const logger = new CollectingLogger();
+    const code = await stats(["--json"], logger);
+    expect(code).toBe(0);
+    expect(logger.logLines).toHaveLength(1);
+    const parsed = JSON.parse(logger.logLines[0] as string);
+
+    // --- Tier-1 correctness ---
+    expect(parsed.summary.totalEvents).toBe(5);
+    expect(parsed.summary.sessionCount).toBe(2);
+    expect(parsed.summary.daysActive).toBe(2);
+    expect(parsed.outcomeBreakdown.registryHit).toBe(3);
+    expect(parsed.outcomeBreakdown.passthrough).toBe(1);
+    expect(parsed.outcomeBreakdown.synthesisRequired).toBe(1);
+
+    // --- Tier-2 correctness ---
+    // Only narrow hits qualify: atom-A (2 hits), atom-B (1 hit)
+    expect(parsed.atoms.top).toHaveLength(2);
+    // atom-A has more hits → first
+    expect(parsed.atoms.top[0].atomHash).toBe("atom-A");
+    expect(parsed.atoms.top[0].hits).toBe(2);
+    expect(parsed.atoms.top[1].atomHash).toBe("atom-B");
+    expect(parsed.atoms.top[1].hits).toBe(1);
+
+    // Percentiles: sorted hit counts = [1, 2]
+    // P50 nearest-rank: ceil(0.5*2)-1 = idx 0 → 1
+    // P90 nearest-rank: ceil(0.9*2)-1 = idx 1 → 2
+    expect(parsed.atoms.hitRateP50).toBe(1);
+    expect(parsed.atoms.hitRateP90).toBe(2);
+
+    // Degraded (absent registry) → no grainHistogram / locSaved
+    expect(parsed.atoms.degraded).toBe(true);
+
+    // All Tier-1 keys present and account for registry-hit events in both tiers
+    expect(parsed).toHaveProperty("version");
+    expect(parsed).toHaveProperty("matchQuality");
+    expect(parsed).toHaveProperty("sessions");
   });
 });
 
