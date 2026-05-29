@@ -1,3 +1,7 @@
+// @mock-exempt: WI-877 polyglot tests mock ./shave-python.js (the CLI helper that wraps
+// @yakcc/shave-python, an external subprocess boundary).  The mock is required so CLI
+// dispatch tests for --target python / .py extension run without a Python toolchain.
+// DEC-WI877-007: test seam is the public-API boundary of the adapter helper module.
 /**
  * shave.test.ts — unit tests for `yakcc shave` command argument parsing, error paths,
  * and L5 foreign-policy gate e2e behavior.

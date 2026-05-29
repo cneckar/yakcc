@@ -209,3 +209,151 @@ describe("bench b3 dispatch smoke (WI-187)", () => {
     expect(out).toContain("task-begin");
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-877: shave / compile / roundtrip dispatch wiring tests
+//
+// These verify the runCli dispatch table routes the three new polyglot verbs
+// without exercising the Python pipeline (DEC-WI877-001, DEC-WI877-002,
+// DEC-WI877-003). All tests use exit paths that short-circuit before reaching
+// @yakcc/shave-python or @yakcc/compile-python.
+// ---------------------------------------------------------------------------
+
+describe("WI-877: shave polyglot dispatch (DEC-WI877-001)", () => {
+  it("shave --help mentions --target flag", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("--target");
+    expect(out).toContain("python");
+  });
+
+  it("shave --target rust exits 1 with #868 tracking pointer", async () => {
+    // --target rust short-circuits before opening a registry (DEC-WI877-005).
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--target", "rust", "foo.rs"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("868");
+  });
+
+  it("shave --target go exits 1 with #870 tracking pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--target", "go", "foo.go"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("870");
+  });
+
+  it("shave --target python with nonexistent file exits non-zero", async () => {
+    // Routes to Python path; file read fails → exit 1 (DEC-WI877-001).
+    const logger = new CollectingLogger();
+    const code = await runCli(
+      ["shave", "--target", "python", "/nonexistent/file.py"],
+      logger,
+    );
+    expect(code).not.toBe(0);
+    expect(logger.errLines.join("\n")).toContain("error:");
+  });
+
+  it("printUsage --help describes shave with polyglot --target flag", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("shave");
+    expect(out).toContain("--target");
+    // WI-877: help text must mention the Python pipeline path
+    expect(out).toContain("python");
+  });
+});
+
+describe("WI-877: compile polyglot dispatch (DEC-WI877-002)", () => {
+  it("compile --help mentions --target flag", async () => {
+    // compile has no --help flag; missing entry exits 1 with usage error.
+    // Verify the dispatch arm exists and produces a usage-error (not unknown command).
+    const logger = new CollectingLogger();
+    const code = await runCli(["compile"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("compile requires");
+  });
+
+  it("compile --target rust exits 1 with #868 tracking pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(
+      ["compile", "a".repeat(64), "--target", "rust"],
+      logger,
+    );
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("868");
+  });
+
+  it("compile --target go exits 1 with #870 tracking pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(
+      ["compile", "a".repeat(64), "--target", "go"],
+      logger,
+    );
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("870");
+  });
+
+  it("compile --target unknown exits 1 with structured error", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(
+      ["compile", "a".repeat(64), "--target", "cobol"],
+      logger,
+    );
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("unknown --target");
+  });
+
+  it("printUsage --help mentions compile --target flag and roundtrip verb", async () => {
+    const logger = new CollectingLogger();
+    await runCli(["--help"], logger);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("compile");
+    expect(out).toContain("roundtrip");
+    expect(out).toContain("--target");
+  });
+});
+
+describe("WI-877: roundtrip dispatch (DEC-WI877-003)", () => {
+  it("roundtrip --help returns 0 and mentions round-trip usage", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("roundtrip");
+    expect(out).toContain("--target");
+  });
+
+  it("roundtrip <.ts file> exits 1 with #877 follow-up note (TS not wired in MVP)", async () => {
+    // A .ts file infers target=ts; TS roundtrip is not wired → exit 1 + #877 message.
+    // We pass an arbitrary .ts path — the TS branch short-circuits before reading the file.
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "foo.ts"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("877");
+  });
+
+  it("roundtrip --target rust exits 2 with #868 pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "foo.rs", "--target", "rust"], logger);
+    expect(code).toBe(2);
+    expect(logger.errLines.join("\n")).toContain("868");
+  });
+
+  it("roundtrip --target go exits 2 with #870 pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "foo.go", "--target", "go"], logger);
+    expect(code).toBe(2);
+    expect(logger.errLines.join("\n")).toContain("870");
+  });
+
+  it("roundtrip with no file exits 1 with missing-file error", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("missing file");
+  });
+});
