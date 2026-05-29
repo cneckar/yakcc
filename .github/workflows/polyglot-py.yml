@@ -1,0 +1,74 @@
+# @decision DEC-POLYGLOT-CI-OPTIONAL-001
+# Title: Per-language polyglot adapter CI in dedicated workflows
+# Status: accepted (WI-782 slice 4, operator approval 2026-05-27)
+# Rationale: pr-ci.yml stays TS-only. Each per-language adapter package owns
+# its own CI workflow that provisions the language toolchain and runs only when
+# the adapter package paths change (or on nightly). Same pattern as
+# closer-parity-as.yml. TS-only contributors and TS-only CI runs are unaffected.
+
+name: polyglot-py
+
+on:
+  pull_request:
+    paths:
+      - "packages/shave-python/**"
+      - "packages/compile-python/**"
+      - ".github/workflows/polyglot-py.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/shave-python/**"
+      - "packages/compile-python/**"
+  schedule:
+    # Nightly at 03:17 UTC — staggers with other nightly jobs
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: polyglot-py-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shave-python:
+    name: "@yakcc/shave-python — Python ${{ matrix.python-version }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install libcst
+        run: pip install libcst
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "9.15.0"
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dependency chain
+        run: pnpm --filter @yakcc/contracts build && pnpm --filter @yakcc/ir build
+
+      - name: typecheck @yakcc/shave-python
+        run: pnpm --filter @yakcc/shave-python typecheck
+
+      - name: test @yakcc/shave-python (unit + integration)
+        run: pnpm --filter @yakcc/shave-python test
+        env:
+          YAKCC_PY: python${{ matrix.python-version }}

@@ -627,6 +627,9 @@ importers:
       '@types/node':
         specifier: ^22.10.5
         version: 22.19.17
+      '@yakcc/ir':
+        specifier: workspace:*
+        version: link:../ir
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

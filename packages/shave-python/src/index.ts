@@ -2,10 +2,10 @@
 //
 // @yakcc/shave-python — Python raise adapter (WI-782).
 //
-// Slice 3 of 4: purity inference (static reject-list) + snake_case→camelCase
-// identifier normalization wired into the raise pipeline.
-// CannotRaiseToIRError reconciliation and pyright-based purity escalation
-// come in slice 4.
+// Slice 4 of 4 (final): full MVP mapping table (IfExp, LenCall, ListComp,
+// Raise, Call, UnaryOp), CannotRaiseToIRError taxonomy unification,
+// integration test suite, and polyglot-py.yml CI workflow.
+// Closes #782.
 
 export {
   AdapterSubprocessError,

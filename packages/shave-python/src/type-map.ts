@@ -7,9 +7,8 @@
 // common containers (list[T], dict[str,V], Optional[T], tuple[A,B], Union[A,B]).
 // Composite types are recursively mapped.
 //
-// Unsupported types throw a marker error so callers can surface them via
-// CannotRaiseToIRError (slice 4 wires that — slice 2 throws plain UnsupportedTypeError
-// so the dependency on @yakcc/contracts isn't load-bearing yet).
+// Slice 4: UnsupportedTypeError now extends CannotRaiseToIRError for unified
+// error hierarchy per #782 acceptance criteria.
 //
 // @decision DEC-POLYGLOT-SHAVE-PY-TYPE-MAP-001 (WI-782 slice 2)
 // @title Python → TS type mapping table; lossless within the documented subset
@@ -21,17 +20,27 @@
 //   "Type precision" section: int → number with warn-on-loss is deferred to
 //   slice 3+ once the warning channel exists.
 
+import { CannotRaiseToIRError, type SourceLocation } from "@yakcc/contracts";
+
+const UNKNOWN_TYPE_LOCATION: SourceLocation = { file: "<type-annotation>", line: 0, col: 0 };
+
 /**
  * Thrown when a Python type annotation cannot be mapped to a TS-subset IR
- * type using the current MVP table.  Slice 4 will wrap these in
- * `CannotRaiseToIRError` from `@yakcc/contracts`.
+ * type using the current MVP table.
+ *
+ * Extends `CannotRaiseToIRError` so callers can catch either class.
+ * The `pythonType` string is forwarded as the `construct` field of the parent.
  */
-export class UnsupportedTypeError extends Error {
+export class UnsupportedTypeError extends CannotRaiseToIRError {
   constructor(
     public readonly pythonType: string,
     message?: string,
   ) {
-    super(message ?? `Unsupported Python type for raise to TS-subset IR: ${pythonType}`);
+    super(
+      pythonType,
+      UNKNOWN_TYPE_LOCATION,
+      message ?? `Unsupported Python type for raise to TS-subset IR: ${pythonType}`,
+    );
     this.name = "UnsupportedTypeError";
   }
 }
