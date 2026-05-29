@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AdapterSubprocessError,
   type LibcstParseOptions,
+  type PythonAstNode,
   type SpawnImpl,
   parsePythonSource,
 } from "./libcst-parser.js";
@@ -227,11 +228,11 @@ describe("WI-875: floor-divide // emission (REGRESSION — real Python subproces
     it("emits FloorDivide as a // BinaryOp wire node", async () => {
       const source = "def divmod_int(a: int, b: int) -> int:\n    return a // b\n";
       const result = await parsePythonSource(source);
-      const fn = (result.module as any).functions[0];
-      const ret = fn.body[0];
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
       expect(ret.type).toBe("Return");
-      expect(ret.value.type).toBe("BinaryOp");
-      expect(ret.value.op).toBe("//");
+      expect((ret.value as PythonAstNode).type).toBe("BinaryOp");
+      expect((ret.value as PythonAstNode).op).toBe("//");
     });
   }
 });
