@@ -2,8 +2,8 @@
 //
 // @yakcc/shave-go -- Go raise adapter for the TS-subset IR (WI-870).
 //
-// Slice 1 of N: scaffold + go/ast subprocess seam + function-signature surface.
-// Purity inference, function-body raise, and init routing come in slices 2/3.
+// Slice 1: scaffold + go/ast subprocess seam + function-signature surface.
+// Slice 2: body raiser + purity inference + error taxonomy.
 //
 // @decision DEC-POLYGLOT-GO-001 (WI-870)
 // @title shave-go is the Go raise adapter, mirroring shave-python architecture
@@ -22,11 +22,18 @@
 export {
   AdapterSubprocessError,
   parseGoSource,
+  type GoAstBodyNode,
+  type GoAstDecl,
+  type GoAstExpr,
   type GoAstFunction,
+  type GoAstLocation,
   type GoAstParam,
   type GoAstParseOptions,
   type GoAstParseResult,
+  type GoAstStmt,
   type GoAstTypeParam,
+  type GoAstValueSpecDecl,
+  type GoAstUnsupportedDecl,
   type SpawnImpl,
 } from "./go-ast-parser.js";
 export {
@@ -38,3 +45,20 @@ export {
 } from "./parse-fn-signature.js";
 export { mapGoType, UnsupportedTypeError } from "./type-map.js";
 export { normalizeGoName, isExported, InvalidIdentifierError } from "./name-normalize.js";
+export {
+  GoAmbiguousPurityError,
+  GoChanRecvError,
+  GoChanSendError,
+  GoDeferError,
+  GoGoroutineError,
+  GoSelectError,
+  GoUnsupportedConstructError,
+  type SourceLocation,
+} from "./errors.js";
+export {
+  checkBodyPurity,
+  renderBody,
+  renderExpr,
+  renderStmt,
+} from "./raise-body.js";
+export { renderFunctionDeclaration } from "./raise-function.js";
