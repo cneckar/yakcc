@@ -34,6 +34,7 @@
 // RegistryOptions["embeddings"] keeps @yakcc/registry as the one type-level authority.
 
 import type { RegistryOptions } from "@yakcc/registry";
+import pkg from "../package.json" with { type: "json" };
 import { benchB3 } from "./commands/bench-b3.js";
 import { bootstrap } from "./commands/bootstrap.js";
 import { compileSelf } from "./commands/compile-self.js";
@@ -62,6 +63,22 @@ import { uninstall } from "./commands/uninstall.js";
 export * from "@yakcc/contracts";
 export * from "@yakcc/federation";
 export * from "@yakcc/registry";
+
+// ---------------------------------------------------------------------------
+// CLI version — single source of truth: packages/cli/package.json
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-CLI-VERSION-001
+ * @title CLI_VERSION is read from package.json via JSON import (single source of truth)
+ * @status accepted
+ * @rationale Closes #849. Rather than duplicating the version string, we import it
+ *   directly from the canonical location (packages/cli/package.json). TypeScript
+ *   5.7+ + resolveJsonModule:true + with { type: "json" } is the supported form
+ *   under NodeNext/verbatimModuleSyntax. This means version flags (--version, -v,
+ *   -V, version) and the help header both reference the same constant — no drift.
+ */
+const CLI_VERSION: string = pkg.version;
 
 // ---------------------------------------------------------------------------
 // CliOptions interface
@@ -130,7 +147,7 @@ export class CollectingLogger implements Logger {
 // ---------------------------------------------------------------------------
 
 function printUsage(logger: Logger): void {
-  logger.log(`yakcc — content-addressed basic-block registry
+  logger.log(`yakcc ${CLI_VERSION} — content-addressed basic-block registry
 
 USAGE
   yakcc <command> [options]
@@ -427,6 +444,14 @@ export async function runCli(
       // `yakcc telemetry [--path] [--tail <n>]` -- inspect local telemetry (WI-760).
       const telemetryArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return telemetry(telemetryArgv, logger);
+    }
+
+    case "--version":
+    case "-v":
+    case "-V":
+    case "version": {
+      logger.log(CLI_VERSION);
+      return 0;
     }
 
     case undefined:

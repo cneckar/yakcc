@@ -18,6 +18,7 @@
 // Uses CollectingLogger — no mocks (Sacred Practice #5, DEC-CLI-LOGGER-001).
 
 import { describe, expect, it } from "vitest";
+import pkg from "../package.json" with { type: "json" };
 import {
   CollectingLogger,
   IntegrityError,
@@ -37,6 +38,44 @@ describe("@yakcc/cli substrate facade exports", () => {
     expect(typeof deserializeWireBlockTriplet).toBe("function");
     expect(typeof IntegrityError).toBe("function");
     expect(typeof openRegistry).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEC-CLI-VERSION-001: --version / -v / -V / version flags (WI-849)
+// ---------------------------------------------------------------------------
+
+describe("WI-849: version flags (DEC-CLI-VERSION-001)", () => {
+  /**
+   * All four invocations must print exactly pkg.version (single source of truth)
+   * and exit 0. Help header must also contain the version string.
+   * This test exercises the real runCli dispatch path end-to-end.
+   */
+  for (const flag of ["--version", "-v", "-V", "version"] as const) {
+    it(`runCli(['${flag}']) exits 0 and prints package.json version`, async () => {
+      const logger = new CollectingLogger();
+      const code = await runCli([flag], logger);
+      expect(code).toBe(0);
+      expect(logger.logLines).toHaveLength(1);
+      expect(logger.logLines[0]).toBe(pkg.version);
+      expect(logger.errLines).toHaveLength(0);
+    });
+  }
+
+  it("version output is the canonical package.json value (no hard-coded string)", async () => {
+    // Regression guard: if package.json version changes, the CLI must reflect it.
+    const logger = new CollectingLogger();
+    await runCli(["--version"], logger);
+    expect(logger.logLines[0]).toBe(pkg.version);
+  });
+
+  it("printUsage (--help) header contains the version string", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+    const firstLine = logger.logLines[0]?.split("\n")[0] ?? "";
+    expect(firstLine).toContain(pkg.version);
+    expect(firstLine).toContain("yakcc");
   });
 });
 
