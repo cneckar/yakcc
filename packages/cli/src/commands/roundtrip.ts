@@ -109,9 +109,7 @@ function renderTable(rows: FunctionRow[]): string {
   }
 
   const separator = colWidths.map((w) => "-".repeat(w + 2)).join("+");
-  const header = headers
-    .map((h, i) => ` ${h.padEnd(colWidths[i] ?? 0)} `)
-    .join("|");
+  const header = headers.map((h, i) => ` ${h.padEnd(colWidths[i] ?? 0)} `).join("|");
 
   const lines: string[] = [header, separator];
   for (const row of rows) {
@@ -305,13 +303,13 @@ export async function roundtrip(argv: ReadonlyArray<string>, logger: Logger): Pr
 
   if (values.help) {
     logger.log(
-      `Usage: yakcc roundtrip <file> [--target <ts|python|rust|go>] [--out <dir>]\n` +
-        `  Chain shave → compile → diff for every function in <file>.\n` +
-        `  Outputs a per-function status table (shave | compile | round-trip | notes).\n` +
-        `  .py files use the Python pipeline (default). TS round-trip is not yet wired.\n` +
-        `  --target: override extension inference.\n` +
-        `  --out <dir>: persist per-function artifacts (<fn>.ir.ts, <fn>.module.py, <fn>.diff.txt).\n` +
-        `  Exit 0 if any function round-tripped; 1 if all failed; 2 if file unparseable.`,
+      "Usage: yakcc roundtrip <file> [--target <ts|python|rust|go>] [--out <dir>]\n" +
+        "  Chain shave → compile → diff for every function in <file>.\n" +
+        "  Outputs a per-function status table (shave | compile | round-trip | notes).\n" +
+        "  .py files use the Python pipeline (default). TS round-trip is not yet wired.\n" +
+        "  --target: override extension inference.\n" +
+        "  --out <dir>: persist per-function artifacts (<fn>.ir.ts, <fn>.module.py, <fn>.diff.txt).\n" +
+        "  Exit 0 if any function round-tripped; 1 if all failed; 2 if file unparseable.",
     );
     return 0;
   }
@@ -319,9 +317,7 @@ export async function roundtrip(argv: ReadonlyArray<string>, logger: Logger): Pr
   const filePath = positionals[0];
   if (filePath === undefined) {
     logger.error("error: missing file argument. Usage: yakcc roundtrip <file>");
-    logger.log(
-      `Usage: yakcc roundtrip <file> [--target <ts|python|rust|go>] [--out <dir>]`,
-    );
+    logger.log("Usage: yakcc roundtrip <file> [--target <ts|python|rust|go>] [--out <dir>]");
     return 1;
   }
 
@@ -351,7 +347,7 @@ export async function roundtrip(argv: ReadonlyArray<string>, logger: Logger): Pr
     );
   } else {
     logger.error(
-      `error: cannot infer language from file extension. Use --target to specify: ts, python, rust, or go`,
+      "error: cannot infer language from file extension. Use --target to specify: ts, python, rust, or go",
     );
   }
   return 2;

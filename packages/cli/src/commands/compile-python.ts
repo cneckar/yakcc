@@ -175,7 +175,11 @@ export async function runCompilePython(
       target: "python",
       warnings: result.warnings,
     };
-    writeFileSync(join(resolvedOutDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+    writeFileSync(
+      join(resolvedOutDir, "manifest.json"),
+      JSON.stringify(manifest, null, 2),
+      "utf-8",
+    );
 
     // Surface warnings to stderr.
     for (const w of result.warnings) {

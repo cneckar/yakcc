@@ -15,7 +15,7 @@
 //   status-table paths without Python or ts-morph.
 //   Cross-reference: PLAN.md §3.4 / #877
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,8 +73,8 @@ vi.mock("@yakcc/compile-python", () => ({
   compileToPython: vi.fn(),
 }));
 
-import * as shavePythonMod from "@yakcc/shave-python";
 import * as compilePythonMod from "@yakcc/compile-python";
+import * as shavePythonMod from "@yakcc/shave-python";
 
 const mockParsePythonSource = vi.mocked(shavePythonMod.parsePythonSource);
 const mockExtractFunctionSignatures = vi.mocked(shavePythonMod.extractFunctionSignatures);
@@ -136,8 +136,12 @@ describe("roundtrip — happy path: 2 functions, both round-trip cleanly", () =>
     ]);
     // Raised IR
     mockRaiseFn
-      .mockReturnValueOnce("export function add(x: number, y: number): number {\n  return (x + y);\n}")
-      .mockReturnValueOnce("export function sub(x: number, y: number): number {\n  return (x - y);\n}");
+      .mockReturnValueOnce(
+        "export function add(x: number, y: number): number {\n  return (x + y);\n}",
+      )
+      .mockReturnValueOnce(
+        "export function sub(x: number, y: number): number {\n  return (x - y);\n}",
+      );
     // compileToPython returns the original body source (clean round-trip)
     mockCompileToPython
       .mockReturnValueOnce({ source: "return x + y", testSource: "", warnings: [] })
@@ -303,9 +307,7 @@ describe("roundtrip — compound interaction: shave → compile → status table
       makeSig("triple", "return x + x + x"),
     ]);
     mockRaiseFn
-      .mockReturnValueOnce(
-        "export function double(x: number): number {\n  return (x + x);\n}",
-      )
+      .mockReturnValueOnce("export function double(x: number): number {\n  return (x + x);\n}")
       .mockReturnValueOnce(
         "export function triple(x: number): number {\n  return ((x + x) + x);\n}",
       );
