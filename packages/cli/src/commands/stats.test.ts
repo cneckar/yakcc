@@ -613,12 +613,16 @@ describe("T-TIER2-2: Tier-1 keys unchanged when Tier-2 is computed (additive-for
 
     // Mix of hit and non-hit events
     const lines = [
-      makeHitEvent({ substitutedAtomHash: "atom0001" }),        // hit
-      makeHitEvent({ substitutedAtomHash: "atom0001" }),        // hit (same atom)
+      makeHitEvent({ substitutedAtomHash: "atom0001" }), // hit
+      makeHitEvent({ substitutedAtomHash: "atom0001" }), // hit (same atom)
       makeEvent({ toolName: "Write", outcome: "passthrough" }), // non-hit
       makeEvent({ toolName: "Edit", outcome: "synthesis-required" }), // non-hit
     ];
-    writeFileSync(join(telemetryDir, "session-t2-additive.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+    writeFileSync(
+      join(telemetryDir, "session-t2-additive.jsonl"),
+      `${lines.join("\n")}\n`,
+      "utf-8",
+    );
 
     const logger = new CollectingLogger();
     const code = await stats(["--json"], logger);
@@ -709,7 +713,11 @@ describe("T-TIER2-4: degraded mode (registry absent) — top populated, grain fi
       makeHitEvent({ substitutedAtomHash: "atomXXX" }),
       makeHitEvent({ substitutedAtomHash: "atomYYY" }),
     ];
-    writeFileSync(join(telemetryDir, "session-t2-degraded.jsonl"), `${lines.join("\n")}\n`, "utf-8");
+    writeFileSync(
+      join(telemetryDir, "session-t2-degraded.jsonl"),
+      `${lines.join("\n")}\n`,
+      "utf-8",
+    );
 
     const logger = new CollectingLogger();
     const code = await stats(["--json"], logger);
@@ -736,12 +744,12 @@ describe("T-TIER2-5: top-N ordering — descending hits, ascending atomHash tieb
     useAbsentRegistry();
 
     const lines = [
-      makeHitEvent({ substitutedAtomHash: "zzz-atom" }),   // 2 hits
+      makeHitEvent({ substitutedAtomHash: "zzz-atom" }), // 2 hits
       makeHitEvent({ substitutedAtomHash: "zzz-atom" }),
-      makeHitEvent({ substitutedAtomHash: "aaa-atom" }),   // 3 hits
+      makeHitEvent({ substitutedAtomHash: "aaa-atom" }), // 3 hits
       makeHitEvent({ substitutedAtomHash: "aaa-atom" }),
       makeHitEvent({ substitutedAtomHash: "aaa-atom" }),
-      makeHitEvent({ substitutedAtomHash: "mmm-atom" }),   // 2 hits (tie with zzz-atom)
+      makeHitEvent({ substitutedAtomHash: "mmm-atom" }), // 2 hits (tie with zzz-atom)
       makeHitEvent({ substitutedAtomHash: "mmm-atom" }),
     ];
     writeFileSync(join(telemetryDir, "session-t2-order.jsonl"), `${lines.join("\n")}\n`, "utf-8");
@@ -754,14 +762,14 @@ describe("T-TIER2-5: top-N ordering — descending hits, ascending atomHash tieb
     const top = parsed.atoms.top as Array<{ atomHash: string; hits: number }>;
     expect(top).toHaveLength(3);
     // First: highest hits
-    expect(top[0]!.atomHash).toBe("aaa-atom");
-    expect(top[0]!.hits).toBe(3);
+    expect(top[0]?.atomHash).toBe("aaa-atom");
+    expect(top[0]?.hits).toBe(3);
     // Second: tiebreak asc hash: "mmm-atom" < "zzz-atom"
-    expect(top[1]!.atomHash).toBe("mmm-atom");
-    expect(top[1]!.hits).toBe(2);
+    expect(top[1]?.atomHash).toBe("mmm-atom");
+    expect(top[1]?.hits).toBe(2);
     // Third
-    expect(top[2]!.atomHash).toBe("zzz-atom");
-    expect(top[2]!.hits).toBe(2);
+    expect(top[2]?.atomHash).toBe("zzz-atom");
+    expect(top[2]?.hits).toBe(2);
   });
 });
 
@@ -775,8 +783,7 @@ describe("T-TIER2-6: hitRateP50 / hitRateP90 with multiple distinct atoms", () =
     // nearest-rank P90 of [1,2,3,4]: ceil(0.9*4)-1 = idx 3 → 4
     const atoms = ["atom-p-1", "atom-p-2", "atom-p-3", "atom-p-4"] as const;
     const lines: string[] = [];
-    for (let i = 0; i < atoms.length; i++) {
-      const hash = atoms[i]!;
+    for (const [i, hash] of atoms.entries()) {
       for (let j = 0; j <= i; j++) {
         lines.push(makeHitEvent({ substitutedAtomHash: hash }));
       }

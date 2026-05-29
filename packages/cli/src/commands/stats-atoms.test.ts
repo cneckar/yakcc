@@ -193,9 +193,7 @@ describe("T-TIER2-1: top-N atoms by hit count, stable tie-break", () => {
   });
 
   it("respects topN limit — emits at most topN entries", async () => {
-    const atoms = Array.from({ length: 15 }, (_, i) =>
-      `${i.toString(16).padStart(64, "0")}`,
-    );
+    const atoms = Array.from({ length: 15 }, (_, i) => `${i.toString(16).padStart(64, "0")}`);
     const events = atoms.map((h) => makeHitEvent(h));
 
     const result = await collectAtomReuse(events, {
