@@ -109,6 +109,10 @@ Working on yakcc itself? See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for th
 - [docs/archive/developer/V2_SELF_HOSTING_DEMO.md](docs/archive/developer/V2_SELF_HOSTING_DEMO.md) — v2 self-hosting walkthrough
 - [docs/archive/developer/adr/](docs/archive/developer/adr/) — architecture decision records
 
+## Releases
+
+See [docs/RELEASE.md](./docs/RELEASE.md) for the release process, trusted-publisher setup, and the per-new-package pre-config requirement.
+
 ## License
 
 Yakcc consists of two distinct artifacts with different licenses:
