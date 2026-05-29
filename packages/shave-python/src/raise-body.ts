@@ -36,7 +36,11 @@ const UNKNOWN_LOCATION: SourceLocation = { file: "<python-source>", line: 0, col
  */
 export class UnsupportedAstError extends CannotRaiseToIRError {
   constructor(public readonly reason: string) {
-    super(reason, UNKNOWN_LOCATION, `Unsupported Python construct for raise to TS-subset IR: ${reason}`);
+    super(
+      reason,
+      UNKNOWN_LOCATION,
+      `Unsupported Python construct for raise to TS-subset IR: ${reason}`,
+    );
     this.name = "UnsupportedAstError";
   }
 }
@@ -59,7 +63,12 @@ export type WireExpr =
       readonly right: WireExpr;
     }
   | { readonly type: "UnaryOp"; readonly op: string; readonly operand: WireExpr }
-  | { readonly type: "IfExp"; readonly test: WireExpr; readonly body: WireExpr; readonly orelse: WireExpr }
+  | {
+      readonly type: "IfExp";
+      readonly test: WireExpr;
+      readonly body: WireExpr;
+      readonly orelse: WireExpr;
+    }
   | { readonly type: "LenCall"; readonly arg: WireExpr }
   | { readonly type: "Call"; readonly func: string; readonly args: readonly WireExpr[] }
   | {
@@ -147,10 +156,9 @@ export function renderExpr(expr: WireExpr): string {
       if (expr.kind === "map") {
         // `[f(x) for x in xs]` → `(xs).map((x) => f(x))`
         return `(${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)})`;
-      } else {
-        // `[x for x in xs if p(x)]` → `(xs).filter((x) => p(x))`
-        return `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`;
       }
+      // `[x for x in xs if p(x)]` → `(xs).filter((x) => p(x))`
+      return `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`;
     case "Unsupported":
       throw new UnsupportedAstError(expr.reason);
   }

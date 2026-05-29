@@ -151,7 +151,12 @@ describe("renderExpr — IfExp ternary (slice 4)", () => {
   it("renders x if c else y → (c ? x : y)", () => {
     const expr: WireExpr = {
       type: "IfExp",
-      test: { type: "BinaryOp", op: ">", left: { type: "Name", name: "x" }, right: { type: "Integer", value: "0" } },
+      test: {
+        type: "BinaryOp",
+        op: ">",
+        left: { type: "Name", name: "x" },
+        right: { type: "Integer", value: "0" },
+      },
       body: { type: "Name", name: "x" },
       orelse: { type: "Integer", value: "0" },
     };
@@ -183,7 +188,12 @@ describe("renderExpr — LenCall (slice 4)", () => {
   it("renders len on complex expr with parens", () => {
     const expr: WireExpr = {
       type: "LenCall",
-      arg: { type: "BinaryOp", op: "+", left: { type: "Name", name: "a" }, right: { type: "Name", name: "b" } },
+      arg: {
+        type: "BinaryOp",
+        op: "+",
+        left: { type: "Name", name: "a" },
+        right: { type: "Name", name: "b" },
+      },
     };
     expect(renderExpr(expr)).toBe("((a + b)).length");
   });
@@ -219,7 +229,12 @@ describe("renderExpr — ListComp (slice 4)", () => {
       kind: "map",
       iter: { type: "Name", name: "xs" },
       param: "x",
-      elt: { type: "BinaryOp", op: "+", left: { type: "Name", name: "x" }, right: { type: "Integer", value: "1" } },
+      elt: {
+        type: "BinaryOp",
+        op: "+",
+        left: { type: "Name", name: "x" },
+        right: { type: "Integer", value: "1" },
+      },
     };
     expect(renderExpr(expr)).toBe("(xs).map((x) => (x + 1))");
   });
@@ -230,7 +245,12 @@ describe("renderExpr — ListComp (slice 4)", () => {
       kind: "filter",
       iter: { type: "Name", name: "items" },
       param: "item",
-      cond: { type: "BinaryOp", op: ">", left: { type: "Name", name: "item" }, right: { type: "Integer", value: "0" } },
+      cond: {
+        type: "BinaryOp",
+        op: ">",
+        left: { type: "Name", name: "item" },
+        right: { type: "Integer", value: "0" },
+      },
     };
     expect(renderExpr(expr)).toBe("(items).filter((item) => (item > 0))");
   });
