@@ -89,7 +89,7 @@ function synthesizePartialAtom(ir: string): BlockTripletRow {
   return {
     implSource: ir,
     artifacts: new Map<string, Uint8Array>(),
-  } as BlockTripletRow;
+  } as unknown as BlockTripletRow;
 }
 
 // ---------------------------------------------------------------------------

@@ -167,7 +167,7 @@ describe("roundtrip — mixed: 1 pass, 1 impure", () => {
     mockRaiseFn
       .mockReturnValueOnce("export function pureFn(): number {\n  return 1;\n}")
       .mockImplementationOnce(() => {
-        throw new ImpureFunctionError("reads env");
+        throw new ImpureFunctionError("impure_fn", "forbidden_call", "reads env");
       });
     mockCompileToPython.mockReturnValueOnce({ source: "return 1", testSource: "", warnings: [] });
 
@@ -189,7 +189,7 @@ describe("roundtrip — all fail → exit 1", () => {
     mockParsePythonSource.mockResolvedValue(makeEnvelope(["a", "b"]));
     mockExtractFunctionSignatures.mockReturnValue([makeSig("a"), makeSig("b")]);
     mockRaiseFn.mockImplementation(() => {
-      throw new ImpureFunctionError("impure");
+      throw new ImpureFunctionError("impure_fn", "forbidden_call", "impure");
     });
 
     const logger = new CollectingLogger();

@@ -248,7 +248,7 @@ describe("runShavePython — per-function failure: one impure, one pure", () => 
     mockExtractFunctionSignatures.mockReturnValue([makeSig("impure_fn"), makeSig("pure_fn")]);
     mockRaiseFunctionWithPurityAndNormalization
       .mockImplementationOnce(() => {
-        throw new ImpureFunctionError("reads global state");
+        throw new ImpureFunctionError("impure_fn", "forbidden_call", "reads global state");
       })
       .mockReturnValueOnce("export function pureFn(): number {\n  return 1;\n}");
 
@@ -269,7 +269,7 @@ describe("runShavePython — all functions failed → exit 1", () => {
     mockParsePythonSource.mockResolvedValue(makeEnvelope(["a", "b"]));
     mockExtractFunctionSignatures.mockReturnValue([makeSig("a"), makeSig("b")]);
     mockRaiseFunctionWithPurityAndNormalization.mockImplementation(() => {
-      throw new ImpureFunctionError("impure");
+      throw new ImpureFunctionError("impure_fn", "forbidden_call", "impure");
     });
 
     const logger = new CollectingLogger();
