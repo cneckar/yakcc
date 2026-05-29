@@ -60,8 +60,9 @@ import { stats } from "./commands/stats.js";
 import { telemetry } from "./commands/telemetry.js";
 import { uninstall } from "./commands/uninstall.js";
 
-// Re-export ContractId for callers who import from @yakcc/cli.
-export type { ContractId } from "@yakcc/contracts";
+export * from "@yakcc/contracts";
+export * from "@yakcc/federation";
+export * from "@yakcc/registry";
 
 // ---------------------------------------------------------------------------
 // CLI version — single source of truth: packages/cli/package.json

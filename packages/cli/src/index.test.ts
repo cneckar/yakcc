@@ -19,7 +19,27 @@
 
 import { describe, expect, it } from "vitest";
 import pkg from "../package.json" with { type: "json" };
-import { CollectingLogger, runCli } from "./index.js";
+import {
+  CollectingLogger,
+  IntegrityError,
+  blockMerkleRoot,
+  deserializeWireBlockTriplet,
+  openRegistry,
+  runCli,
+  serializeWireBlockTriplet,
+  specHash,
+} from "./index.js";
+
+describe("@yakcc/cli substrate facade exports", () => {
+  it("verifies substrate library APIs are re-exported from contracts/federation/registry", () => {
+    expect(typeof blockMerkleRoot).toBe("function");
+    expect(typeof specHash).toBe("function");
+    expect(typeof serializeWireBlockTriplet).toBe("function");
+    expect(typeof deserializeWireBlockTriplet).toBe("function");
+    expect(typeof IntegrityError).toBe("function");
+    expect(typeof openRegistry).toBe("function");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // DEC-CLI-VERSION-001: --version / -v / -V / version flags (WI-849)
