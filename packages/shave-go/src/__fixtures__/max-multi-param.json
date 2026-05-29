@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "packageName": "util",
+  "functions": [
+    {
+      "name": "Max",
+      "receiver": null,
+      "typeParams": [],
+      "params": [
+        { "name": "a", "goType": "int" },
+        { "name": "b", "goType": "int" },
+        { "name": "c", "goType": "int" }
+      ],
+      "results": [{ "name": "", "goType": "int" }],
+      "bodySource": "x := a; if b > x { x = b }; if c > x { x = c }; return x",
+      "body": {
+        "stmts": [
+          {
+            "type": "AssignStmt",
+            "line": 1,
+            "col": 2,
+            "lhs": [{ "type": "Ident", "line": 1, "col": 2, "name": "x" }],
+            "rhs": [{ "type": "Ident", "line": 1, "col": 6, "name": "a" }],
+            "tok": ":="
+          },
+          {
+            "type": "ReturnStmt",
+            "line": 2,
+            "col": 2,
+            "results": [{ "type": "Ident", "line": 2, "col": 9, "name": "x" }]
+          }
+        ]
+      }
+    }
+  ]
+}

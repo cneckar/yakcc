@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "packageName": "const",
+  "functions": [
+    {
+      "name": "Pi",
+      "receiver": null,
+      "typeParams": [],
+      "params": [],
+      "results": [{ "name": "", "goType": "float64" }],
+      "bodySource": "return 3.14159",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              { "type": "BasicLit", "line": 1, "col": 9, "kind": "FLOAT", "value": "3.14159" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

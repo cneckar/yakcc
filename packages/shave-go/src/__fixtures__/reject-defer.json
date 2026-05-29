@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "packageName": "bad",
+  "functions": [
+    {
+      "name": "WithCleanup",
+      "receiver": null,
+      "typeParams": [],
+      "params": [],
+      "results": [],
+      "bodySource": "defer cleanup()",
+      "body": {
+        "stmts": [
+          {
+            "type": "DeferStmt",
+            "line": 5,
+            "col": 2
+          }
+        ]
+      }
+    }
+  ]
+}
