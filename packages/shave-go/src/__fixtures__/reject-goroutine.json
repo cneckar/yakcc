@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "packageName": "bad",
+  "functions": [
+    {
+      "name": "LaunchWorker",
+      "receiver": null,
+      "typeParams": [],
+      "params": [],
+      "results": [],
+      "bodySource": "go doWork()",
+      "body": {
+        "stmts": [
+          {
+            "type": "GoStmt",
+            "line": 2,
+            "col": 3
+          }
+        ]
+      }
+    }
+  ]
+}

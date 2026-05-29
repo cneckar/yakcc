@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "packageName": "util",
+  "functions": [
+    {
+      "name": "IsEven",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "n", "goType": "int" }],
+      "results": [{ "name": "", "goType": "bool" }],
+      "bodySource": "return n % 2 == 0",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 9,
+                "op": "==",
+                "x": {
+                  "type": "BinaryExpr",
+                  "line": 1,
+                  "col": 9,
+                  "op": "%",
+                  "x": { "type": "Ident", "line": 1, "col": 9, "name": "n" },
+                  "y": { "type": "BasicLit", "line": 1, "col": 13, "kind": "INT", "value": "2" }
+                },
+                "y": { "type": "BasicLit", "line": 1, "col": 18, "kind": "INT", "value": "0" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

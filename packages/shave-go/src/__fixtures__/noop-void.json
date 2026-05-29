@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "packageName": "main",
+  "functions": [
+    {
+      "name": "Noop",
+      "receiver": null,
+      "typeParams": [],
+      "params": [],
+      "results": [],
+      "bodySource": "",
+      "body": {
+        "stmts": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "packageName": "bad",
+  "functions": [
+    {
+      "name": "PollChannels",
+      "receiver": null,
+      "typeParams": [],
+      "params": [],
+      "results": [],
+      "bodySource": "select { case v := <-ch: _ = v }",
+      "body": {
+        "stmts": [
+          {
+            "type": "SelectStmt",
+            "line": 4,
+            "col": 1
+          }
+        ]
+      }
+    }
+  ]
+}
