@@ -2,6 +2,16 @@
 
 The intermediate representation for strict-TypeScript-subset basic blocks.
 
+## Install
+
+```bash
+pnpm add @yakcc/ir
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). Strict-subset validator and IR node types are stable.
+
 ## What this package provides
 
 - **`validateStrictSubset(source)`** — validate a single source string against the strict-TS-subset grammar. Returns a `ValidationResult` with any `ValidationError` violations. The strict subset bans: `any`, `eval`, untyped imports, runtime reflection, mutable globals, top-level side effects (with a documented `// @cli-entry` exemption for CLI entry points, DEC-IR-CLI-ENTRY-EXEMPTION-001), classes (outside an explicit class-allowlist), and dynamic `import()`.
@@ -51,4 +61,4 @@ Project-mode self-validation of yakcc's own packages was performed in WI-V2-01; 
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).

@@ -1,35 +1,46 @@
 // SPDX-License-Identifier: MIT
 //
 // raise-body.ts — render Python AST body nodes (from the libcst envelope) as
-// TS-subset IR expressions and statements (WI-782 slice 2b).
+// TS-subset IR expressions and statements (WI-782 slices 2b + 4).
 //
-// Scope: Return, Pass, and a constrained expression subset (Name, Integer,
-// Float, String, Bool, None, BinaryOp).  Anything else in the envelope is
-// emitted by the Python side as `{type: "Unsupported", reason: <str>}` which
-// this module surfaces via UnsupportedAstError — slice 4 wraps in
-// CannotRaiseToIRError from @yakcc/contracts.
+// Slice 4 additions to the wire AST:
+//   Expr: IfExp (ternary), LenCall (len(x)→x.length), Call (simple calls),
+//         ListComp (map / filter patterns), UnaryOp
+//   Stmt: Raise (throw new ExcClass(msg))
+//
+// Slice 4 error taxonomy: UnsupportedAstError now extends CannotRaiseToIRError
+// from @yakcc/contracts so callers can catch either class.
 //
 // @decision DEC-POLYGLOT-SHAVE-PY-BODY-RAISE-001 (WI-782 slice 2b)
 // @title Body translation pass operates on a structured wire AST, not raw text
-// @status accepted (WI-782 slice 2b)
+// @status accepted
+//
+// @decision DEC-POLYGLOT-SHAVE-PY-ERROR-TAXONOMY-001 (WI-782 slice 4)
+// @title UnsupportedAstError extends CannotRaiseToIRError for unified error hierarchy
+// @status accepted (WI-782 slice 4)
 // @rationale
-//   An alternative was to keep `body_source` (Python text) and re-parse it on
-//   the TS side.  Two reasons against: (1) double-parse cost across files,
-//   (2) we'd hand-roll a Python parser in TS, defeating the libcst integration.
-//   The libcst pass already walks the AST; we just emit a structured wire
-//   shape that this module renders deterministically.
+//   Per #782 acceptance criteria all unsupported construct errors must be
+//   CannotRaiseToIRError instances. Extending rather than replacing preserves
+//   the `reason` property and existing catch-by-class tests.
+
+import { CannotRaiseToIRError, type SourceLocation } from "@yakcc/contracts";
+
+const UNKNOWN_LOCATION: SourceLocation = { file: "<python-source>", line: 0, col: 0 };
 
 /**
  * Thrown when a wire-AST node carries `{type: "Unsupported"}` — the Python
- * libcst pass encountered a construct outside the slice 2b subset.
+ * libcst pass encountered a construct outside the supported subset.
  *
- * Slice 4 will reroute these to `CannotRaiseToIRError` from `@yakcc/contracts`
- * with proper location info; for now the message just carries the libcst
- * reason string.
+ * Extends `CannotRaiseToIRError` so callers can catch either class.
+ * The `reason` string is forwarded as the `construct` field of the parent.
  */
-export class UnsupportedAstError extends Error {
+export class UnsupportedAstError extends CannotRaiseToIRError {
   constructor(public readonly reason: string) {
-    super(`Unsupported Python construct for raise to TS-subset IR: ${reason}`);
+    super(
+      reason,
+      UNKNOWN_LOCATION,
+      `Unsupported Python construct for raise to TS-subset IR: ${reason}`,
+    );
     this.name = "UnsupportedAstError";
   }
 }
@@ -51,11 +62,35 @@ export type WireExpr =
       readonly left: WireExpr;
       readonly right: WireExpr;
     }
+  | { readonly type: "UnaryOp"; readonly op: string; readonly operand: WireExpr }
+  | {
+      readonly type: "IfExp";
+      readonly test: WireExpr;
+      readonly body: WireExpr;
+      readonly orelse: WireExpr;
+    }
+  | { readonly type: "LenCall"; readonly arg: WireExpr }
+  | { readonly type: "Call"; readonly func: string; readonly args: readonly WireExpr[] }
+  | {
+      readonly type: "ListComp";
+      readonly kind: "map";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly elt: WireExpr;
+    }
+  | {
+      readonly type: "ListComp";
+      readonly kind: "filter";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly cond: WireExpr;
+    }
   | { readonly type: "Unsupported"; readonly reason: string };
 
 export type WireStmt =
   | { readonly type: "Return"; readonly value: WireExpr | null }
   | { readonly type: "Pass" }
+  | { readonly type: "Raise"; readonly excClass: string; readonly message: WireExpr | null }
   | { readonly type: "Unsupported"; readonly reason: string };
 
 // ---------------------------------------------------------------------------
@@ -68,6 +103,7 @@ const ALLOWED_BINARY_OPS = new Set<string>([
   "-",
   "*",
   "/",
+  "//", // WI-875: Python floor-divide; rendered as Math.floor(left/right), not a TS operator
   "%",
   "==",
   "!=",
@@ -76,6 +112,8 @@ const ALLOWED_BINARY_OPS = new Set<string>([
   "<=",
   ">=",
 ]);
+
+const ALLOWED_UNARY_OPS = new Set<string>(["-", "+", "!", "~"]);
 
 /** Render a single expression node to TS source text (no trailing semicolon). */
 export function renderExpr(expr: WireExpr): string {
@@ -96,11 +134,37 @@ export function renderExpr(expr: WireExpr): string {
       if (!ALLOWED_BINARY_OPS.has(expr.op)) {
         throw new UnsupportedAstError(`BinaryOp '${expr.op}'`);
       }
-      // Always parenthesize to avoid precedence surprises across the
-      // Python → TS boundary.  TS source is regenerated by toolchain
-      // anyway; reader-friendly precedence is a slice-3+ concern.
+      // WI-875: TS has no floor-divide operator; emit Math.floor(left / right)
+      // which matches Python semantics for integer division.
+      if (expr.op === "//") {
+        return `Math.floor(${renderExpr(expr.left)} / ${renderExpr(expr.right)})`;
+      }
+      // Always parenthesize to avoid precedence surprises across the Python → TS boundary.
       return `(${renderExpr(expr.left)} ${expr.op} ${renderExpr(expr.right)})`;
     }
+    case "UnaryOp": {
+      if (!ALLOWED_UNARY_OPS.has(expr.op)) {
+        throw new UnsupportedAstError(`UnaryOp '${expr.op}'`);
+      }
+      return `${expr.op}${renderExpr(expr.operand)}`;
+    }
+    case "IfExp":
+      // `x if c else y` → `(c ? x : y)` — always parenthesized for safety.
+      return `(${renderExpr(expr.test)} ? ${renderExpr(expr.body)} : ${renderExpr(expr.orelse)})`;
+    case "LenCall":
+      // `len(xs)` → `(xs).length` — wraps the arg to handle complex expressions.
+      return `(${renderExpr(expr.arg)}).length`;
+    case "Call": {
+      const args = expr.args.map(renderExpr).join(", ");
+      return `${expr.func}(${args})`;
+    }
+    case "ListComp":
+      if (expr.kind === "map") {
+        // `[f(x) for x in xs]` → `(xs).map((x) => f(x))`
+        return `(${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)})`;
+      }
+      // `[x for x in xs if p(x)]` → `(xs).filter((x) => p(x))`
+      return `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`;
     case "Unsupported":
       throw new UnsupportedAstError(expr.reason);
   }
@@ -117,9 +181,13 @@ export function renderStmt(stmt: WireStmt, indent = "  "): string {
     }
     case "Pass":
       // Python's pass has no direct TS equivalent inside a function body.
-      // The closest semantic is an empty statement; we emit `void 0;` so
-      // the function still compiles when this is the only body content.
+      // We emit `void 0;` so the function still compiles when this is the only body content.
       return `${indent}void 0;`;
+    case "Raise": {
+      // `raise ValueError("msg")` → `throw new ValueError("msg");`
+      const msgArg = stmt.message !== null ? renderExpr(stmt.message) : "";
+      return `${indent}throw new ${stmt.excClass}(${msgArg});`;
+    }
     case "Unsupported":
       throw new UnsupportedAstError(stmt.reason);
   }

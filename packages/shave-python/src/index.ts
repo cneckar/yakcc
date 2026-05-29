@@ -2,10 +2,10 @@
 //
 // @yakcc/shave-python — Python raise adapter (WI-782).
 //
-// Slice 2b of 4: typed signature + Python→TS type map (slice 2) + body
-// translation for return statements with literal/name/binop expressions.
-// Purity inference, naming normalization, and CannotRaiseToIRError wiring
-// come in slices 3 and 4.
+// Slice 4 of 4 (final): full MVP mapping table (IfExp, LenCall, ListComp,
+// Raise, Call, UnaryOp), CannotRaiseToIRError taxonomy unification,
+// integration test suite, and polyglot-py.yml CI workflow.
+// Closes #782.
 
 export {
   AdapterSubprocessError,
@@ -29,4 +29,24 @@ export {
   type WireExpr,
   type WireStmt,
 } from "./raise-body.js";
-export { renderFunctionDeclaration } from "./raise-function.js";
+export {
+  ImpureFunctionError,
+  renderFunctionDeclaration,
+  raiseFunctionWithPurityAndNormalization,
+} from "./raise-function.js";
+export type { ImpurityKind } from "./purity-check.js";
+export {
+  checkPurity,
+  checkFunctionPurity,
+  checkModuleImports,
+  FORBIDDEN_MODULES,
+  FORBIDDEN_BUILTINS,
+  FORBIDDEN_ATTRS,
+} from "./purity-check.js";
+export {
+  normalizeIdentifier,
+  normalizeSignatureNames,
+  normalizeBodyNames,
+  buildParamRenameMap,
+  normalizeExprNames,
+} from "./normalize-names.js";

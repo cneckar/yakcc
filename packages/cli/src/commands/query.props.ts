@@ -129,3 +129,40 @@ export const prop_query_missing_query_emits_error_mentioning_query_requires = fc
     return logger.errLines.some((l) => l.includes("query requires"));
   },
 );
+
+// ---------------------------------------------------------------------------
+// A3: query() --language validation — exit-before-I/O paths
+// ---------------------------------------------------------------------------
+
+/**
+ * prop_query_invalid_language_exits_1
+ *
+ * When --language is an unrecognized value, query() exits 1 before
+ * any registry I/O. Valid values are: ts, py, go, rs.
+ *
+ * Invariant: The language guard fires before openRegistry().
+ */
+export const prop_query_invalid_language_exits_1 = fc.asyncProperty(
+  fc.constantFrom("java", "python", "ruby", "cpp", "wasm", "PY", "GO", ""),
+  async (langVal) => {
+    const logger = new CollectingLogger();
+    const code = await query(["some query", "--language", langVal], logger);
+    return code === 1;
+  },
+);
+
+/**
+ * prop_query_invalid_language_emits_error_mentioning_language
+ *
+ * When --language is invalid, the error message mentions "--language".
+ *
+ * Invariant: The error is always attributed to the correct flag.
+ */
+export const prop_query_invalid_language_emits_error_mentioning_language = fc.asyncProperty(
+  fc.constantFrom("java", "python", "ruby", "cpp"),
+  async (langVal) => {
+    const logger = new CollectingLogger();
+    await query(["some query", "--language", langVal], logger);
+    return logger.errLines.some((l) => l.includes("--language"));
+  },
+);

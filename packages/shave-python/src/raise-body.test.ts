@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Tests for raise-body.ts — WireExpr / WireStmt renderers (WI-782 slice 2b).
+// Tests for raise-body.ts — WireExpr / WireStmt renderers (WI-782 slices 2b + 4).
 // Tests build wire envelopes directly; no subprocess.
 
 import { describe, expect, it } from "vitest";
@@ -122,5 +122,226 @@ describe("renderBody", () => {
       { type: "Return", value: { type: "Integer", value: "42" } },
     ];
     expect(renderBody(stmts)).toBe("  void 0;\n  return 42;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 4: new expression types
+// ---------------------------------------------------------------------------
+
+describe("renderExpr — UnaryOp (slice 4)", () => {
+  it("renders unary minus", () => {
+    expect(renderExpr({ type: "UnaryOp", op: "-", operand: { type: "Name", name: "x" } })).toBe(
+      "-x",
+    );
+  });
+  it("renders unary not", () => {
+    expect(renderExpr({ type: "UnaryOp", op: "!", operand: { type: "Bool", value: true } })).toBe(
+      "!true",
+    );
+  });
+  it("rejects unknown unary op", () => {
+    expect(() =>
+      renderExpr({ type: "UnaryOp", op: "**", operand: { type: "Name", name: "x" } }),
+    ).toThrow(UnsupportedAstError);
+  });
+});
+
+describe("renderExpr — IfExp ternary (slice 4)", () => {
+  it("renders x if c else y → (c ? x : y)", () => {
+    const expr: WireExpr = {
+      type: "IfExp",
+      test: {
+        type: "BinaryOp",
+        op: ">",
+        left: { type: "Name", name: "x" },
+        right: { type: "Integer", value: "0" },
+      },
+      body: { type: "Name", name: "x" },
+      orelse: { type: "Integer", value: "0" },
+    };
+    expect(renderExpr(expr)).toBe("((x > 0) ? x : 0)");
+  });
+
+  it("renders nested ternary", () => {
+    const inner: WireExpr = {
+      type: "IfExp",
+      test: { type: "Name", name: "a" },
+      body: { type: "Integer", value: "1" },
+      orelse: { type: "Integer", value: "2" },
+    };
+    const outer: WireExpr = {
+      type: "IfExp",
+      test: { type: "Name", name: "b" },
+      body: inner,
+      orelse: { type: "Integer", value: "3" },
+    };
+    expect(renderExpr(outer)).toBe("(b ? (a ? 1 : 2) : 3)");
+  });
+});
+
+describe("renderExpr — LenCall (slice 4)", () => {
+  it("renders len(xs) → (xs).length", () => {
+    expect(renderExpr({ type: "LenCall", arg: { type: "Name", name: "xs" } })).toBe("(xs).length");
+  });
+
+  it("renders len on complex expr with parens", () => {
+    const expr: WireExpr = {
+      type: "LenCall",
+      arg: {
+        type: "BinaryOp",
+        op: "+",
+        left: { type: "Name", name: "a" },
+        right: { type: "Name", name: "b" },
+      },
+    };
+    expect(renderExpr(expr)).toBe("((a + b)).length");
+  });
+});
+
+describe("renderExpr — Call (slice 4)", () => {
+  it("renders zero-arg call", () => {
+    expect(renderExpr({ type: "Call", func: "doSomething", args: [] })).toBe("doSomething()");
+  });
+  it("renders single-arg call", () => {
+    expect(
+      renderExpr({ type: "Call", func: "Math.abs", args: [{ type: "Name", name: "x" }] }),
+    ).toBe("Math.abs(x)");
+  });
+  it("renders multi-arg call", () => {
+    expect(
+      renderExpr({
+        type: "Call",
+        func: "Math.max",
+        args: [
+          { type: "Name", name: "x" },
+          { type: "Name", name: "y" },
+        ],
+      }),
+    ).toBe("Math.max(x, y)");
+  });
+});
+
+describe("renderExpr — ListComp (slice 4)", () => {
+  it("renders map pattern [f(x) for x in xs] → (xs).map((x) => f(x))", () => {
+    const expr: WireExpr = {
+      type: "ListComp",
+      kind: "map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      elt: {
+        type: "BinaryOp",
+        op: "+",
+        left: { type: "Name", name: "x" },
+        right: { type: "Integer", value: "1" },
+      },
+    };
+    expect(renderExpr(expr)).toBe("(xs).map((x) => (x + 1))");
+  });
+
+  it("renders filter pattern [x for x in xs if p(x)] → (xs).filter((x) => p(x))", () => {
+    const expr: WireExpr = {
+      type: "ListComp",
+      kind: "filter",
+      iter: { type: "Name", name: "items" },
+      param: "item",
+      cond: {
+        type: "BinaryOp",
+        op: ">",
+        left: { type: "Name", name: "item" },
+        right: { type: "Integer", value: "0" },
+      },
+    };
+    expect(renderExpr(expr)).toBe("(items).filter((item) => (item > 0))");
+  });
+
+  it("renders map with call elt", () => {
+    const expr: WireExpr = {
+      type: "ListComp",
+      kind: "map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      elt: { type: "Call", func: "square", args: [{ type: "Name", name: "x" }] },
+    };
+    expect(renderExpr(expr)).toBe("(xs).map((x) => square(x))");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 4: new statement types
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — Raise (slice 4)", () => {
+  it("renders raise ValueError('msg') → throw new ValueError('msg');", () => {
+    const stmt: WireStmt = {
+      type: "Raise",
+      excClass: "ValueError",
+      message: { type: "String", value: "negative" },
+    };
+    expect(renderStmt(stmt)).toBe('  throw new ValueError("negative");');
+  });
+
+  it("renders raise TypeError without message", () => {
+    const stmt: WireStmt = {
+      type: "Raise",
+      excClass: "TypeError",
+      message: null,
+    };
+    expect(renderStmt(stmt)).toBe("  throw new TypeError();");
+  });
+
+  it("renders raise with name expr as message", () => {
+    const stmt: WireStmt = {
+      type: "Raise",
+      excClass: "Error",
+      message: { type: "Name", name: "msg" },
+    };
+    expect(renderStmt(stmt)).toBe("  throw new Error(msg);");
+  });
+
+  it("honors custom indent", () => {
+    const stmt: WireStmt = {
+      type: "Raise",
+      excClass: "RangeError",
+      message: { type: "String", value: "out of range" },
+    };
+    expect(renderStmt(stmt, "    ")).toBe('    throw new RangeError("out of range");');
+  });
+});
+
+describe("UnsupportedAstError extends CannotRaiseToIRError (slice 4)", () => {
+  it("is instanceof CannotRaiseToIRError", async () => {
+    const { CannotRaiseToIRError } = await import("@yakcc/contracts");
+    const err = new UnsupportedAstError("async def");
+    expect(err).toBeInstanceOf(UnsupportedAstError);
+    expect(err).toBeInstanceOf(CannotRaiseToIRError);
+    expect(err.reason).toBe("async def");
+    expect(err.construct).toBe("async def");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-875: floor-divide // operator
+// ---------------------------------------------------------------------------
+
+describe("WI-875: floor-divide // renders as Math.floor(a / b)", () => {
+  it("renders the // binary op as Math.floor(left / right)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "//",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    expect(renderExpr(expr)).toBe("Math.floor(a / b)");
+  });
+
+  it("accepts // in ALLOWED_BINARY_OPS (does not throw UnsupportedAstError)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "//",
+      left: { type: "Name", name: "x" },
+      right: { type: "Name", name: "y" },
+    };
+    expect(() => renderExpr(expr)).not.toThrow();
   });
 });

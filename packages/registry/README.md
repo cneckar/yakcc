@@ -2,6 +2,16 @@
 
 The store for Yakcc contracts and their implementations.
 
+## Install
+
+```bash
+pnpm add @yakcc/registry
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). SQLite-backed registry with vector search is stable.
+
 ## What this package provides
 
 - **`Registry`** — the primary interface for all registry operations:
@@ -103,4 +113,4 @@ await registry.close();
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).

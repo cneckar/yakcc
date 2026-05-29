@@ -1,0 +1,44 @@
+{
+  "name": "yakcc",
+  "version": "0.6.0-alpha.0",
+  "description": "Content-addressed block registry — yakcc CLI (unscoped alias for @yakcc/cli).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "yakcc": "./bin.js"
+  },
+  "files": [
+    "bin.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@yakcc/cli": "0.6.0-alpha.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/yakcc"
+  },
+  "homepage": "https://github.com/cneckar/yakcc#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "code-generation",
+    "content-addressed",
+    "registry",
+    "claude-code",
+    "cursor",
+    "cline",
+    "continue.dev",
+    "windsurf",
+    "aider",
+    "ai-coding"
+  ]
+}
