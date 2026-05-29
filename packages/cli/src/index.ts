@@ -55,6 +55,7 @@ import { registryInit } from "./commands/registry-init.js";
 import { registryRebuild } from "./commands/registry-rebuild.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
+import { roundtrip } from "./commands/roundtrip.js";
 import { shave } from "./commands/shave.js";
 import { stats } from "./commands/stats.js";
 import { telemetry } from "./commands/telemetry.js";
@@ -167,8 +168,23 @@ COMMANDS
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
   registry rebuild [--path <p>]       Re-embed all blocks after an embedding model swap
   registry export --to <p>            Export registry as canonical SQLite (VACUUM INTO)
-  compile <entry> [--registry <p>]    Assemble a module from a contract id, spec file, or directory
+  shave <path> [--registry <p>]       Shave a source file into atoms (TS pipeline, default)
+        [--offline]                   .py extension or --target python → Python pipeline (WI-877)
+        [--target <ts|python|         Override language inference from file extension
+                  rust|go>]          rust/go: exits 1 with tracking-issue pointer (#868/#870)
+        [--out <path>]                Python target: stdout when omitted, file/dir with --out
+        [--function <name>]           Python target: process only one named function
+        [--foreign-policy             TS target only: how to handle foreign-block deps
+              <allow|reject|tag>]     (ignored with warning for --target python)
+  compile <entry> [--registry <p>]   Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
+               [--target <ts|python|  Language target (default: ts); python writes module.py
+                         rust|go>]    rust/go: exits 1 with tracking-issue pointer (#868/#870)
+               [--function <name>]    Python target: compile one named function
+  roundtrip <file>                   Chain shave → compile → diff; emit per-function status table
+            [--target <ts|python|     Language target (auto-detected from extension)
+                      rust|go>]       Python-only MVP; TS branch exits 1 with #877 follow-up note
+            [--out <dir>]             Persist per-function artifacts (.ir.ts, .module.py, .diff.txt)
   propose <contract-file>             Check registry for a matching contract
           [--registry <p>]
   query <text> [--registry <p>]       Vector-search registry by semantic intent
@@ -182,8 +198,6 @@ COMMANDS
   bootstrap [--registry <p>]          Shave all source files, write manifest + report
             [--manifest <p>]          Manifest path (default: bootstrap/expected-roots.json)
             [--report <p>]            Per-file report (default: bootstrap/report.json)
-  shave <path> [--registry <p>]       Shave a TS source file into atoms via universalize
-        [--offline]
   hooks claude-code install           Wire yakcc tool-call interception for Claude Code
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc hook entry
@@ -328,6 +342,14 @@ export async function runCli(
     case "shave": {
       const shaveArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return shave(shaveArgv, logger);
+    }
+
+    case "roundtrip": {
+      // `yakcc roundtrip <file> [--target <lang>] [--out <dir>]` (WI-877)
+      // Chains shave-python → compileToPython → per-function diff.
+      // Python-only MVP; TS branch exits 1 with follow-up note.
+      const roundtripArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return roundtrip(roundtripArgv, logger);
     }
 
     case "federation": {

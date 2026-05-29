@@ -63,6 +63,7 @@
     "@types/node": "^22.0.0",
     "@yakcc/compile-python": "workspace:*",
     "@yakcc/compile": "workspace:*",
+    "@yakcc/shave-python": "workspace:*",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/federation": "workspace:*",
     "@yakcc/hooks-base": "workspace:*",
