@@ -10,13 +10,9 @@
   "references": [
     { "path": "../contracts" },
     { "path": "../registry" },
-    { "path": "../federation" },
     { "path": "../ir" },
     { "path": "../compile" },
     { "path": "../compile-python" },
-    { "path": "../shave" },
-    { "path": "../shave-python" },
-    { "path": "../hooks-base" },
     { "path": "../hooks-claude-code" },
     { "path": "../seeds" }
   ]
