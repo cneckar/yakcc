@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
-// Tests for the go/ast subprocess wrapper (WI-870 slice 1).
+// Tests for the go/ast subprocess wrapper (WI-870 slice 1+2).
 //
 // All tests inject a mock spawn implementation so the suite does not require
 // Go (or any Go toolchain) to be installed.  The mock honors the same
 // lifecycle as node:child_process.ChildProcess: emits 'data' on stdout/stderr,
 // then 'close' with an exit code, then the promise resolves or rejects.
 //
-// A future slice will add an opt-in integration test gated on
-// `process.env.YAKCC_GO` that exercises a real Go subprocess.
+// Slice 2 bumped the schema version from 1 to 2.  The envelope validator is
+// updated accordingly and tests below reflect the new version.
 
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -30,19 +30,13 @@ interface MockProcess extends EventEmitter {
 }
 
 interface MockScript {
-  /** Optional bytes to emit on the child's stdout before close. */
   readonly stdout?: string;
-  /** Optional bytes to emit on the child's stderr before close. */
   readonly stderr?: string;
-  /** Exit code passed to the 'close' event. */
   readonly exitCode: number | null;
-  /** When set, the spawn call itself throws synchronously (e.g. ENOENT). */
   readonly spawnThrows?: string;
-  /** When set, the child emits 'error' before 'close' (e.g. ENOENT-on-stdin). */
   readonly emitErrorBeforeClose?: string;
 }
 
-/** Build a mock spawn that scripts the child's lifecycle. */
 function mockSpawn(script: MockScript): SpawnImpl & {
   readonly stdinChunks: string[];
   readonly callCount: () => number;
@@ -67,8 +61,6 @@ function mockSpawn(script: MockScript): SpawnImpl & {
       stderr,
     });
 
-    // Schedule the lifecycle on the next microtask so the caller has time to
-    // attach 'data'/'close' listeners before they fire.
     queueMicrotask(() => {
       if (script.stdout !== undefined) {
         stdout.emit("data", Buffer.from(script.stdout, "utf-8"));
@@ -100,16 +92,16 @@ function makeOpts(spawnImpl: SpawnImpl): GoAstParseOptions {
   };
 }
 
-/** Minimal valid envelope for a Go file with no functions. */
+/** Minimal valid envelope (version=2) for a Go file with no functions. */
 const EMPTY_ENVELOPE = JSON.stringify({
-  version: 1,
+  version: 2,
   packageName: "main",
   functions: [],
 });
 
-/** Envelope with one simple function. */
+/** Version-2 envelope with one simple function including body AST. */
 const ONE_FN_ENVELOPE = JSON.stringify({
-  version: 1,
+  version: 2,
   packageName: "math",
   functions: [
     {
@@ -122,11 +114,30 @@ const ONE_FN_ENVELOPE = JSON.stringify({
       ],
       results: [{ name: "", goType: "int" }],
       bodySource: "return a + b",
+      body: {
+        stmts: [
+          {
+            type: "ReturnStmt",
+            line: 1,
+            col: 2,
+            results: [
+              {
+                type: "BinaryExpr",
+                line: 1,
+                col: 9,
+                op: "+",
+                x: { type: "Ident", line: 1, col: 9, name: "a" },
+                y: { type: "Ident", line: 1, col: 13, name: "b" },
+              },
+            ],
+          },
+        ],
+      },
     },
   ],
 });
 
-describe("parseGoSource (#870 slice 1)", () => {
+describe("parseGoSource (#870 slice 1+2)", () => {
   let savedYakccGo: string | undefined;
 
   beforeEach(() => {
@@ -147,14 +158,14 @@ describe("parseGoSource (#870 slice 1)", () => {
   it("returns the parsed envelope on a successful subprocess run (empty functions)", async () => {
     const spawnFn = mockSpawn({ stdout: EMPTY_ENVELOPE, exitCode: 0 });
     const result = await parseGoSource("package main", makeOpts(spawnFn));
-    expect(result.version).toBe(1);
+    expect(result.version).toBe(2);
     expect(result.packageName).toBe("main");
     expect(result.functions).toEqual([]);
     expect(spawnFn.callCount()).toBe(1);
     expect(spawnFn.stdinChunks).toEqual(["package main"]);
   });
 
-  it("returns parsed envelope with one function declaration", async () => {
+  it("returns parsed envelope with one function declaration including body AST", async () => {
     const spawnFn = mockSpawn({ stdout: ONE_FN_ENVELOPE, exitCode: 0 });
     const result = await parseGoSource(
       "package math\nfunc Add(a, b int) int { return a+b }",
@@ -169,6 +180,10 @@ describe("parseGoSource (#870 slice 1)", () => {
       { name: "b", goType: "int" },
     ]);
     expect(fn?.results).toEqual([{ name: "", goType: "int" }]);
+    // Slice-2: body field is present with structured AST
+    expect(fn?.body).toBeDefined();
+    expect(fn?.body?.stmts).toHaveLength(1);
+    expect(fn?.body?.stmts[0]?.type).toBe("ReturnStmt");
   });
 
   it("rejects with AdapterSubprocessError when exit code is non-zero", async () => {
@@ -205,17 +220,17 @@ describe("parseGoSource (#870 slice 1)", () => {
 
   it("rejects when the JSON envelope has the wrong schema version", async () => {
     const spawnFn = mockSpawn({
-      stdout: JSON.stringify({ version: 2, packageName: "x", functions: [] }),
+      stdout: JSON.stringify({ version: 1, packageName: "x", functions: [] }),
       exitCode: 0,
     });
     await expect(parseGoSource("package main", makeOpts(spawnFn))).rejects.toThrow(
-      /schema version must be 1/,
+      /schema version must be 2/,
     );
   });
 
   it("rejects when the JSON envelope is missing packageName", async () => {
     const spawnFn = mockSpawn({
-      stdout: JSON.stringify({ version: 1, functions: [] }),
+      stdout: JSON.stringify({ version: 2, functions: [] }),
       exitCode: 0,
     });
     await expect(parseGoSource("package main", makeOpts(spawnFn))).rejects.toThrow(
@@ -225,7 +240,7 @@ describe("parseGoSource (#870 slice 1)", () => {
 
   it("rejects when the JSON envelope is missing functions array", async () => {
     const spawnFn = mockSpawn({
-      stdout: JSON.stringify({ version: 1, packageName: "main" }),
+      stdout: JSON.stringify({ version: 2, packageName: "main" }),
       exitCode: 0,
     });
     await expect(parseGoSource("package main", makeOpts(spawnFn))).rejects.toThrow(
@@ -261,7 +276,6 @@ describe("parseGoSource (#870 slice 1)", () => {
       })(command, _args);
       return child;
     };
-    // Note: not passing goExecutable in opts -- should fall through to YAKCC_GO.
     await parseGoSource("package main", { spawnImpl: spawnFn, scriptPath: "/fake/x.go" });
     expect(capturedCmd).toBe("/custom/go");
   });
