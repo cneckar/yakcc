@@ -60,6 +60,7 @@ BINARY_OP_MAP = {
     "Subtract": "-",
     "Multiply": "*",
     "Divide": "/",
+    "FloorDivide": "//",  # WI-875: Python a//b — TS renders as Math.floor(a/b)
     "Modulo": "%",
     "Equal": "==",
     "NotEqual": "!=",
