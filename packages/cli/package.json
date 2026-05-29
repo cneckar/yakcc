@@ -1,6 +1,6 @@
 {
   "name": "@yakcc/cli",
-  "version": "0.6.0-alpha.0",
+  "version": "0.7.0-alpha.0",
   "description": "Yakcc — content-addressed block registry for assembling programs from verified, reusable building blocks.",
   "license": "Apache-2.0",
   "repository": {

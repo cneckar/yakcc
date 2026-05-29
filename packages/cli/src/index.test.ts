@@ -18,7 +18,27 @@
 // Uses CollectingLogger — no mocks (Sacred Practice #5, DEC-CLI-LOGGER-001).
 
 import { describe, expect, it } from "vitest";
-import { CollectingLogger, runCli } from "./index.js";
+import {
+  CollectingLogger,
+  IntegrityError,
+  blockMerkleRoot,
+  deserializeWireBlockTriplet,
+  openRegistry,
+  runCli,
+  serializeWireBlockTriplet,
+  specHash,
+} from "./index.js";
+
+describe("@yakcc/cli substrate facade exports", () => {
+  it("verifies substrate library APIs are re-exported from contracts/federation/registry", () => {
+    expect(typeof blockMerkleRoot).toBe("function");
+    expect(typeof specHash).toBe("function");
+    expect(typeof serializeWireBlockTriplet).toBe("function");
+    expect(typeof deserializeWireBlockTriplet).toBe("function");
+    expect(typeof IntegrityError).toBe("function");
+    expect(typeof openRegistry).toBe("function");
+  });
+});
 
 describe("T5: compile-self dispatch wiring in runCli — A2 (DEC-CLI-INDEX-001)", () => {
   it("runCli(['compile-self']) no longer returns exit code 2 — A1 stub retired", async () => {
