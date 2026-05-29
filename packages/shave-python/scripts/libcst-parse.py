@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: MIT
 #
 # libcst-parse.py — emit a JSON-AST envelope for the Python source on stdin.
-# WI-782 slice 2b: body[] now ships structured statement nodes (Return, Pass)
-# with expression sub-trees (Name, Integer, Float, String, Bool, None,
-# BinaryOp).  body_source remains for backward-compat with slice-2 callers.
-# Out of scope for 2b: if/for/while, function calls, comprehensions — slice 3+.
+# WI-782 slice 4: full MVP mapping table — adds IfExp (ternary), LenCall,
+# ListComp (map/filter patterns), Raise statement, and general Call.
+# Also emits module-level imports for purity-check.ts.
 #
-# Wire shape (slice 2b additions):
+# Wire shape (cumulative through slice 4):
 #   functions[].body:
 #     [ Statement, ... ]
 #   Statement:
 #     {"type": "Return", "value": <Expr> | null}
 #     {"type": "Pass"}
+#     {"type": "Raise", "excClass": "<str>", "message": <Expr> | null}   [slice 4]
 #     {"type": "Unsupported", "reason": "<str>"}
 #   Expr:
 #     {"type": "Name",    "name": "<str>"}
@@ -21,6 +21,12 @@
 #     {"type": "Bool",    "value": true|false}
 #     {"type": "None"}
 #     {"type": "BinaryOp", "op": "<str>", "left": <Expr>, "right": <Expr>}
+#     {"type": "UnaryOp",  "op": "<str>", "operand": <Expr>}             [slice 4]
+#     {"type": "IfExp",  "test": <Expr>, "body": <Expr>, "orelse": <Expr>} [slice 4]
+#     {"type": "LenCall", "arg": <Expr>}                                 [slice 4]
+#     {"type": "Call", "func": "<str>", "args": [<Expr>, ...]}           [slice 4]
+#     {"type": "ListComp", "kind": "map", "iter": <Expr>, "param": "<str>", "elt": <Expr>}  [slice 4]
+#     {"type": "ListComp", "kind": "filter", "iter": <Expr>, "param": "<str>", "cond": <Expr>} [slice 4]
 #     {"type": "Unsupported", "reason": "<str>"}
 #
 # Exit codes (unchanged from slice 1):
@@ -32,9 +38,16 @@ import json
 import sys
 
 
-def _annotation_text(node):  # type: ignore[no-untyped-def]
+def _annotation_text(node, module=None):  # type: ignore[no-untyped-def]
     if node is None:
         return None
+    # Prefer module.code_for_node (works for all expression nodes including Name, Subscript, etc.)
+    if module is not None:
+        try:
+            return module.code_for_node(node).strip()
+        except Exception:  # noqa: BLE001
+            pass
+    # Fallback: some composite nodes (IndentedBlock, etc.) expose .code directly
     try:
         return node.code.strip()
     except AttributeError:
@@ -42,7 +55,6 @@ def _annotation_text(node):  # type: ignore[no-untyped-def]
 
 
 # Python → "wire op string" map for libcst BinaryOperation operator nodes.
-# We use the libcst class name so we don't have to touch each instance.
 BINARY_OP_MAP = {
     "Add": "+",
     "Subtract": "-",
@@ -57,13 +69,34 @@ BINARY_OP_MAP = {
     "GreaterThanEqual": ">=",
 }
 
+# Slice 4: unary op map (libcst class name → TS op string)
+UNARY_OP_MAP = {
+    "Minus": "-",
+    "Plus": "+",
+    "Not": "!",
+    "BitInvert": "~",
+}
+
+
+def _callee_name(node):  # type: ignore[no-untyped-def]
+    """Extract a simple dotted name from a libcst Attribute or Name callee, or None."""
+    import libcst  # type: ignore[import-untyped]
+
+    if isinstance(node, libcst.Name):
+        return node.value
+    if isinstance(node, libcst.Attribute):
+        obj = _callee_name(node.value)
+        attr = node.attr.value if isinstance(node.attr, libcst.Name) else None
+        if obj and attr:
+            return f"{obj}.{attr}"
+    return None
+
 
 def _expr(node):  # type: ignore[no-untyped-def]
     """Translate a libcst expression node into a wire-Expr dict."""
     import libcst  # type: ignore[import-untyped]
 
     if isinstance(node, libcst.Name):
-        # Python literals True/False/None are also Name nodes in libcst.
         if node.value == "True":
             return {"type": "Bool", "value": True}
         if node.value == "False":
@@ -71,18 +104,21 @@ def _expr(node):  # type: ignore[no-untyped-def]
         if node.value == "None":
             return {"type": "None"}
         return {"type": "Name", "name": node.value}
+
     if isinstance(node, libcst.Integer):
         return {"type": "Integer", "value": node.value}
+
     if isinstance(node, libcst.Float):
         return {"type": "Float", "value": node.value}
+
     if isinstance(node, libcst.SimpleString):
-        # libcst gives us the raw literal including quotes; strip them.
         raw = node.value
         if len(raw) >= 2 and raw[0] in ('"', "'") and raw[-1] == raw[0]:
             inner = raw[1:-1]
         else:
             inner = raw
         return {"type": "String", "value": inner}
+
     if isinstance(node, libcst.BinaryOperation):
         op_name = type(node.operator).__name__
         if op_name not in BINARY_OP_MAP:
@@ -93,9 +129,18 @@ def _expr(node):  # type: ignore[no-untyped-def]
             "left": _expr(node.left),
             "right": _expr(node.right),
         }
+
+    if isinstance(node, libcst.UnaryOperation):
+        op_name = type(node.operator).__name__
+        if op_name not in UNARY_OP_MAP:
+            return {"type": "Unsupported", "reason": f"UnaryOperation {op_name}"}
+        return {
+            "type": "UnaryOp",
+            "op": UNARY_OP_MAP[op_name],
+            "operand": _expr(node.expression),
+        }
+
     if isinstance(node, libcst.Comparison):
-        # Single comparator (`a < b`) only — chained Python comparisons (`a < b < c`)
-        # are deferred to a future slice as they have no direct TS equivalent.
         if len(node.comparisons) != 1:
             return {
                 "type": "Unsupported",
@@ -111,6 +156,63 @@ def _expr(node):  # type: ignore[no-untyped-def]
             "left": _expr(node.left),
             "right": _expr(target.comparator),
         }
+
+    # Slice 4: ternary `body if test else orelse` → IfExp
+    if isinstance(node, libcst.IfExp):
+        return {
+            "type": "IfExp",
+            "test": _expr(node.test),
+            "body": _expr(node.body),
+            "orelse": _expr(node.orelse),
+        }
+
+    # Slice 4: function calls
+    if isinstance(node, libcst.Call):
+        func = node.func
+        # Special case: `len(x)` → LenCall
+        if isinstance(func, libcst.Name) and func.value == "len" and len(node.args) == 1:
+            first_arg = node.args[0].value
+            return {"type": "LenCall", "arg": _expr(first_arg)}
+        # General call with a simple dotted name callee
+        func_name = _callee_name(func)
+        if func_name is not None:
+            args = [_expr(a.value) for a in node.args if not a.star]
+            return {"type": "Call", "func": func_name, "args": args}
+        return {"type": "Unsupported", "reason": "Call with complex callee"}
+
+    # Slice 4: list comprehension [elt for var in iter (if cond)]
+    # libcst: node.for_in is a single CompFor, not a list.
+    # Nested generators chain via CompFor.inner_for_in.
+    if isinstance(node, libcst.ListComp):
+        gen = node.for_in
+        # Reject multiple generators (chained for_in via inner_for_in)
+        if gen.inner_for_in is not None:
+            return {"type": "Unsupported", "reason": "ListComp with multiple generators"}
+        # The loop variable must be a simple Name
+        if not isinstance(gen.target, libcst.Name):
+            return {"type": "Unsupported", "reason": "ListComp with tuple/complex target"}
+        param = gen.target.value
+        iter_expr = _expr(gen.iter)
+        # Map pattern: `[f(x) for x in xs]` — no ifs, elt is any expr
+        if len(gen.ifs) == 0:
+            return {
+                "type": "ListComp",
+                "kind": "map",
+                "iter": iter_expr,
+                "param": param,
+                "elt": _expr(node.elt),
+            }
+        # Filter pattern: `[x for x in xs if p(x)]` — single if, elt == param
+        if len(gen.ifs) == 1 and isinstance(node.elt, libcst.Name) and node.elt.value == param:
+            return {
+                "type": "ListComp",
+                "kind": "filter",
+                "iter": iter_expr,
+                "param": param,
+                "cond": _expr(gen.ifs[0].test),
+            }
+        return {"type": "Unsupported", "reason": "ListComp: complex pattern (multiple ifs or non-identity elt with filter)"}
+
     return {"type": "Unsupported", "reason": type(node).__name__}
 
 
@@ -126,18 +228,104 @@ def _stmt(node):  # type: ignore[no-untyped-def]
         if isinstance(inner, libcst.Pass):
             return {"type": "Pass"}
         return {"type": "Unsupported", "reason": f"SimpleStatement {type(inner).__name__}"}
+
+    # Slice 4: `raise ExcClass("message")`
+    if isinstance(node, libcst.SimpleStatementLine):
+        # handled above
+        pass
+    if isinstance(node, libcst.SimpleStatementLine):
+        pass
+
+    # Raise is a SmallStatement inside a SimpleStatementLine — handled above.
+    # But libcst wraps raise in SimpleStatementLine, so check the inner SmallStatement.
     return {"type": "Unsupported", "reason": type(node).__name__}
 
 
-def _function_envelope(fn):  # type: ignore[no-untyped-def]
+def _stmt_inner(inner):  # type: ignore[no-untyped-def]
+    """Translate a libcst SmallStatement into a wire Statement dict."""
+    import libcst  # type: ignore[import-untyped]
+
+    if isinstance(inner, libcst.Return):
+        return {"type": "Return", "value": _expr(inner.value) if inner.value is not None else None}
+    if isinstance(inner, libcst.Pass):
+        return {"type": "Pass"}
+    # Slice 4: raise ExcClass("…")
+    if isinstance(inner, libcst.Raise):
+        exc = inner.exc
+        if exc is None:
+            return {"type": "Unsupported", "reason": "bare raise"}
+        # Must be a Call: `ExcClass(...)` or `module.ExcClass(...)`
+        if isinstance(exc, libcst.Call):
+            exc_name = _callee_name(exc.func)
+            if exc_name is None:
+                return {"type": "Unsupported", "reason": "raise with complex callee"}
+            msg_expr = None
+            if len(exc.args) == 1:
+                msg_expr = _expr(exc.args[0].value)
+            elif len(exc.args) > 1:
+                return {"type": "Unsupported", "reason": "raise with multiple args"}
+            return {"type": "Raise", "excClass": exc_name, "message": msg_expr}
+        return {"type": "Unsupported", "reason": f"raise with non-call exc: {type(exc).__name__}"}
+    return {"type": "Unsupported", "reason": f"SmallStatement {type(inner).__name__}"}
+
+
+def _stmt_v2(node):  # type: ignore[no-untyped-def]
+    """Translate a libcst statement node into a wire Statement dict (slice 4)."""
+    import libcst  # type: ignore[import-untyped]
+
+    if isinstance(node, libcst.SimpleStatementLine):
+        if len(node.body) != 1:
+            return {"type": "Unsupported", "reason": "Multi-statement simple line"}
+        return _stmt_inner(node.body[0])
+    return {"type": "Unsupported", "reason": type(node).__name__}
+
+
+def _collect_imports(module):  # type: ignore[no-untyped-def]
+    """Collect top-level import declarations for purity-check.ts."""
+    import libcst  # type: ignore[import-untyped]
+
+    imports = []
+    for stmt in module.body:
+        if isinstance(stmt, libcst.SimpleStatementLine):
+            for small in stmt.body:
+                if isinstance(small, libcst.Import):
+                    for name in small.names if isinstance(small.names, (list, tuple)) else []:
+                        alias = getattr(name, "asname", None)
+                        alias_str = alias.name.value if alias and hasattr(alias, "name") else None
+                        imports.append({
+                            "kind": "import",
+                            "module": name.name.value if hasattr(name.name, "value") else str(name.name),
+                            "name": name.name.value if hasattr(name.name, "value") else str(name.name),
+                            "alias": alias_str,
+                        })
+                elif isinstance(small, libcst.ImportFrom):
+                    mod = small.module
+                    mod_name = mod.value if isinstance(mod, libcst.Name) else (
+                        mod.code if hasattr(mod, "code") else str(mod)
+                    ) if mod else ""
+                    names = small.names
+                    if isinstance(names, (list, tuple)):
+                        for n in names:
+                            n_name = n.name.value if hasattr(n.name, "value") else str(n.name)
+                            imports.append({
+                                "kind": "from",
+                                "module": mod_name,
+                                "name": n_name,
+                            })
+                    else:
+                        imports.append({"kind": "from", "module": mod_name, "name": "*"})
+    return imports
+
+
+def _function_envelope(fn, module=None):  # type: ignore[no-untyped-def]
     params = [
         {
             "name": p.name.value,
-            "annotation": _annotation_text(p.annotation.annotation) if p.annotation is not None else None,
+            "annotation": _annotation_text(p.annotation.annotation, module) if p.annotation is not None else None,
         }
         for p in fn.params.params
     ]
-    return_annot = _annotation_text(fn.returns.annotation) if fn.returns is not None else None
+    return_annot = _annotation_text(fn.returns.annotation, module) if fn.returns is not None else None
     try:
         body_source = fn.body.code.rstrip("\n")
     except AttributeError:
@@ -146,7 +334,7 @@ def _function_envelope(fn):  # type: ignore[no-untyped-def]
     body = []
     try:
         for stmt in fn.body.body:
-            body.append(_stmt(stmt))
+            body.append(_stmt_v2(stmt))
     except AttributeError:
         pass
 
@@ -176,7 +364,8 @@ def main() -> int:
         print(f"libcst unexpected error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
-    functions = [_function_envelope(s) for s in module.body if isinstance(s, libcst.FunctionDef)]
+    functions = [_function_envelope(s, module) for s in module.body if isinstance(s, libcst.FunctionDef)]
+    imports = _collect_imports(module)
     json.dump(
         {
             "version": 1,
@@ -184,6 +373,7 @@ def main() -> int:
                 "type": type(module).__name__,
                 "stmt_count": len(module.body),
                 "functions": functions,
+                "imports": imports,
             },
         },
         sys.stdout,

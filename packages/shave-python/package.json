@@ -21,8 +21,8 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.10.5",
+    "@yakcc/ir": "workspace:*",
     "typescript": "^5.7.2",
     "vitest": "^4.1.5"
-  },
-  "//peerDependencyNote": "Slice 4 will add: python3 (>=3.10) with libcst — runtime peer for actual raise execution"
+  }
 }
