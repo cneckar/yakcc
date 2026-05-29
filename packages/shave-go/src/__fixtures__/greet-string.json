@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "packageName": "greet",
+  "functions": [
+    {
+      "name": "Greet",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "name", "goType": "string" }],
+      "results": [{ "name": "", "goType": "string" }],
+      "bodySource": "return \"Hello, \" + name",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 9,
+                "op": "+",
+                "x": {
+                  "type": "BasicLit",
+                  "line": 1,
+                  "col": 9,
+                  "kind": "STRING",
+                  "value": "\"Hello, \""
+                },
+                "y": { "type": "Ident", "line": 1, "col": 19, "name": "name" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

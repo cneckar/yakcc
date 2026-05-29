@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "packageName": "math",
+  "functions": [
+    {
+      "name": "Divide",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "num", "goType": "float64" }, { "name": "den", "goType": "float64" }],
+      "results": [{ "name": "", "goType": "float64" }, { "name": "", "goType": "error" }],
+      "bodySource": "return num / den, nil",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 9,
+                "op": "/",
+                "x": { "type": "Ident", "line": 1, "col": 9, "name": "num" },
+                "y": { "type": "Ident", "line": 1, "col": 15, "name": "den" }
+              },
+              { "type": "Ident", "line": 1, "col": 21, "name": "nil" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

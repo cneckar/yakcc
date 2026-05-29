@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "packageName": "bad",
+  "functions": [
+    {
+      "name": "ReadValue",
+      "receiver": null,
+      "typeParams": [],
+      "params": [],
+      "results": [{ "name": "", "goType": "int" }],
+      "bodySource": "return <-ch",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "ChanRecv",
+                "line": 1,
+                "col": 9
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
