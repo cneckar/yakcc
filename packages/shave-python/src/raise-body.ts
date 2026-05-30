@@ -11,6 +11,10 @@
 // Slice 4 error taxonomy: UnsupportedAstError now extends CannotRaiseToIRError
 // from @yakcc/contracts so callers can catch either class.
 //
+// WI-888 additions to the wire AST:
+//   Stmt: Docstring    — silently skipped by renderStmt (returns "")
+//   Stmt: ImpureStatement — throws ImpureFunctionError(kind:"forbidden_construct")
+//
 // @decision DEC-POLYGLOT-SHAVE-PY-BODY-RAISE-001 (WI-782 slice 2b)
 // @title Body translation pass operates on a structured wire AST, not raw text
 // @status accepted
@@ -22,8 +26,25 @@
 //   Per #782 acceptance criteria all unsupported construct errors must be
 //   CannotRaiseToIRError instances. Extending rather than replacing preserves
 //   the `reason` property and existing catch-by-class tests.
+//
+// @decision DEC-WI888-005 — ImpureStatement wire nodes throw at render time
+// @title ImpureStatement is consumed here, not by the checkFunctionPurity walker
+// @status accepted
+// @rationale Wire-node classification is a statement-level determination already
+//   made by the Python layer; no walker recursion is needed. Throw at render time
+//   is consistent with how Unsupported is handled. The purity walker handles
+//   Call/Attribute/Global *inside expressions*; ImpureStatement is a top-level stmt.
+//   Cross-reference: PLAN.md §4 / #888
+//
+// @decision DEC-WI888-007 — fnName plumbing into renderBody / renderStmt
+// @title Optional fnName parameter threads function name to ImpureFunctionError
+// @status accepted
+// @rationale Avoids a catch+rewrap layer in raise-function.ts. Existing callers
+//   that don't pass fnName get "<unknown>" as fallback — backward-compatible.
+//   Cross-reference: PLAN.md §4 / #888
 
 import { CannotRaiseToIRError, type SourceLocation } from "@yakcc/contracts";
+import { ImpureFunctionError } from "./purity-check.js";
 
 const UNKNOWN_LOCATION: SourceLocation = { file: "<python-source>", line: 0, col: 0 };
 
@@ -91,6 +112,17 @@ export type WireStmt =
   | { readonly type: "Return"; readonly value: WireExpr | null }
   | { readonly type: "Pass" }
   | { readonly type: "Raise"; readonly excClass: string; readonly message: WireExpr | null }
+  // WI-888: Docstring — first-statement string literal (PEP-257). renderStmt silently skips.
+  // DEC-WI888-001: emit to wire envelope for downstream tooling; TS renderer drops it.
+  | { readonly type: "Docstring"; readonly value: string }
+  // WI-888: ImpureStatement — bare expression statement (call or other expr).
+  // renderStmt throws ImpureFunctionError(kind:"forbidden_construct").
+  // DEC-WI888-002/003: bare_call = Expr(Call); bare_expression = everything else.
+  | {
+      readonly type: "ImpureStatement";
+      readonly construct: "bare_call" | "bare_expression";
+      readonly detail: string;
+    }
   | { readonly type: "Unsupported"; readonly reason: string };
 
 // ---------------------------------------------------------------------------
@@ -170,8 +202,17 @@ export function renderExpr(expr: WireExpr): string {
   }
 }
 
-/** Render a single statement to TS source text (with trailing semicolon). */
-export function renderStmt(stmt: WireStmt, indent = "  "): string {
+/**
+ * Render a single statement to TS source text (with trailing semicolon).
+ *
+ * @param stmt   — the wire statement to render
+ * @param indent — indentation prefix (default "  ")
+ * @param fnName — optional function name for ImpureFunctionError messages.
+ *   When omitted, ImpureStatement throws with functionName="<unknown>".
+ *   Pass the enclosing function's name to produce actionable error messages.
+ *   (DEC-WI888-007: optional to preserve backward compatibility.)
+ */
+export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): string {
   switch (stmt.type) {
     case "Return": {
       if (stmt.value === null) {
@@ -188,12 +229,32 @@ export function renderStmt(stmt: WireStmt, indent = "  "): string {
       const msgArg = stmt.message !== null ? renderExpr(stmt.message) : "";
       return `${indent}throw new ${stmt.excClass}(${msgArg});`;
     }
+    case "Docstring":
+      // WI-888 DEC-WI888-001: silently drop. The wire envelope retains the value
+      // for downstream tooling; the TS-subset IR has no equivalent and we don't
+      // fabricate one. renderFunctionDeclaration filters Docstrings before the
+      // void-0 fallback check (DEC-WI888-008).
+      return "";
+    case "ImpureStatement": {
+      // WI-888 DEC-WI888-005: throw at render time, not from the purity walker.
+      // The wire node classification was already made by the Python layer.
+      const verb = stmt.construct === "bare_call" ? "calls" : "evaluates";
+      const detail = `${verb} bare expression-statement: ${stmt.detail}`;
+      throw new ImpureFunctionError(fnName ?? "<unknown>", "forbidden_construct", detail);
+    }
     case "Unsupported":
       throw new UnsupportedAstError(stmt.reason);
   }
 }
 
-/** Render a list of statements joined by newlines. */
-export function renderBody(stmts: readonly WireStmt[], indent = "  "): string {
-  return stmts.map((s) => renderStmt(s, indent)).join("\n");
+/**
+ * Render a list of statements joined by newlines.
+ *
+ * @param stmts  — wire statements to render
+ * @param indent — indentation prefix (default "  ")
+ * @param fnName — optional function name forwarded to renderStmt for
+ *   ImpureFunctionError messages. (DEC-WI888-007)
+ */
+export function renderBody(stmts: readonly WireStmt[], indent = "  ", fnName?: string): string {
+  return stmts.map((s) => renderStmt(s, indent, fnName)).join("\n");
 }

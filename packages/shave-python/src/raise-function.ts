@@ -43,12 +43,45 @@ export { ImpureFunctionError } from "./purity-check.js";
  * Exports the function unconditionally so the emitted text is a valid
  * single-file module that downstream tooling can compile in isolation.
  */
+/**
+ * Render the full TS-subset IR text for one Python function.
+ *
+ * Accepts a pre-normalized signature (names already in camelCase) and a
+ * pre-normalized body (Name references already rewritten).  The render step
+ * itself is pure string concatenation — it does not apply normalization.
+ *
+ * Produces:
+ *   export function <name>(p1: T1, p2: T2): R {
+ *     <body>
+ *   }
+ *
+ * Exports the function unconditionally so the emitted text is a valid
+ * single-file module that downstream tooling can compile in isolation.
+ *
+ * @decision DEC-WI888-008 — Docstring-only body emits void 0;
+ * @title Docstring nodes are filtered before the empty-body fallback check
+ * @status accepted
+ * @rationale A function whose only body statement is a docstring
+ *   (def foo(): """doc""") is a legal no-op. After renderStmt silently drops
+ *   Docstring nodes, the body text would be empty — syntactically valid but
+ *   visually confusing. Filtering Docstrings before the void-0 check preserves
+ *   the existing convention for no-op functions.
+ *   Cross-reference: PLAN.md §4 / #888
+ */
 export function renderFunctionDeclaration(
   signature: FunctionSignature,
   body: readonly WireStmt[],
 ): string {
   const paramList = signature.params.map((p) => `${p.name}: ${p.tsType}`).join(", ");
-  const bodyText = body.length === 0 ? "  void 0;" : renderBody(body, "  ");
+  // DEC-WI888-008: filter Docstring nodes before deciding the void-0 fallback and rendering.
+  // A docstring-only body (visibleStmts.length === 0) produces void 0; just as an empty
+  // body does. visibleStmts is passed to renderBody (not the full body) to avoid a leading
+  // blank line from the empty string that renderStmt(Docstring) returns.
+  // ImpureStatement nodes are NOT filtered by this step (only Docstrings are) — they remain
+  // in visibleStmts and will throw at render time per DEC-WI888-005.
+  const visibleStmts = body.filter((s) => s.type !== "Docstring");
+  const bodyText =
+    visibleStmts.length === 0 ? "  void 0;" : renderBody(visibleStmts, "  ", signature.name);
   return `export function ${signature.name}(${paramList}): ${signature.returnType} {\n${bodyText}\n}`;
 }
 

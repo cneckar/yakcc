@@ -216,3 +216,134 @@ describe("raiseFunctionWithPurityAndNormalization — snake_case in → camelCas
     ).toThrow(ImpureFunctionError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-888: Docstring skip + ImpureStatement throw via renderFunctionDeclaration
+// ---------------------------------------------------------------------------
+
+describe("WI-888: renderFunctionDeclaration — Docstring + ImpureStatement handling", () => {
+  it("skips a leading Docstring and renders the rest of the body (DEC-WI888-001/008)", () => {
+    // A function with a docstring + return: the docstring must be dropped silently.
+    // def add(x, y): """Add x and y."""; return x + y
+    const s = sig({
+      name: "add",
+      params: [
+        { name: "x", tsType: "number", pythonAnnotation: "int" },
+        { name: "y", tsType: "number", pythonAnnotation: "int" },
+      ],
+      returnType: "number",
+    });
+    const body: WireStmt[] = [
+      { type: "Docstring", value: "Add x and y." },
+      {
+        type: "Return",
+        value: { type: "BinaryOp", op: "+", left: { type: "Name", name: "x" }, right: { type: "Name", name: "y" } },
+      },
+    ];
+    const out = renderFunctionDeclaration(s, body);
+    // Docstring is dropped; body contains only the Return statement
+    expect(out).toBe("export function add(x: number, y: number): number {\n  return (x + y);\n}");
+    expect(out).not.toContain("Add x and y.");
+  });
+
+  it("renders void 0; for a docstring-only body (DEC-WI888-008)", () => {
+    // def doc_only(): """Just docs, nothing else."""
+    const s = sig({ name: "doc_only", returnType: "void" });
+    const body: WireStmt[] = [{ type: "Docstring", value: "Just docs, nothing else." }];
+    const out = renderFunctionDeclaration(s, body);
+    expect(out).toBe("export function doc_only(): void {\n  void 0;\n}");
+  });
+
+  it("throws ImpureFunctionError for a body containing ImpureStatement(bare_call) (DEC-WI888-005)", () => {
+    // def log_x(x): print(x) — bare print call is impure
+    const s = sig({ name: "log_x", returnType: "void" });
+    const body: WireStmt[] = [
+      { type: "ImpureStatement", construct: "bare_call", detail: "print(...)" },
+    ];
+    try {
+      renderFunctionDeclaration(s, body);
+      expect.unreachable("should throw ImpureFunctionError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+      expect((err as ImpureFunctionError).functionName).toBe("log_x");
+      expect((err as ImpureFunctionError).detail).toContain("print(...)");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-888: e2e compound-interaction test — docstring then return, bare print throws
+// ---------------------------------------------------------------------------
+
+describe("WI-888: raiseFunctionWithPurityAndNormalization — e2e compound interaction", () => {
+  it("docstring-only body raises OK (no ImpureFunctionError, emits void 0;)", () => {
+    // Production sequence: checkModuleImports → checkFunctionPurity → normalize → renderFunctionDeclaration
+    // def greet(): """Greeting function."""
+    const envelope = makeEnvelope({
+      functions: [
+        {
+          name: "greet",
+          params: [],
+          return_annotation: "None",
+          body_source: '    """Greeting function."""',
+          body: [{ type: "Docstring", value: "Greeting function." }],
+        },
+      ],
+    });
+    const signature: FunctionSignature = {
+      name: "greet",
+      params: [],
+      returnType: "null",
+      pythonReturnAnnotation: "None",
+      bodyPythonSource: '    """Greeting function."""',
+    };
+    const body: WireStmt[] = [{ type: "Docstring", value: "Greeting function." }];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // Docstring-only body → void 0;
+    expect(out).toBe("export function greet(): null {\n  void 0;\n}");
+  });
+
+  it("bare print(x) in body throws ImpureFunctionError(forbidden_construct) via render path", () => {
+    // Production sequence: purity check passes (print is detected by checkFunctionPurity
+    // via forbidden_call body walk)... but here we test the render path: even if purity
+    // check misses it (no envelope impurities, checking wire-AST), ImpureStatement at
+    // render time throws forbidden_construct.
+    //
+    // This exercises the real sequence: checkModuleImports → normalize → renderFunctionDeclaration
+    // with an ImpureStatement wire node in the body.
+    const envelope = makeEnvelope({
+      functions: [
+        {
+          name: "print_x",
+          params: [{ name: "x", annotation: "int" }],
+          return_annotation: "None",
+          body_source: "    print(x)",
+          body: [{ type: "ImpureStatement", construct: "bare_call", detail: "print(...)" }],
+        },
+      ],
+    });
+    const signature: FunctionSignature = {
+      name: "print_x",
+      params: [{ name: "x", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "null",
+      pythonReturnAnnotation: "None",
+      bodyPythonSource: "    print(x)",
+    };
+    // Build wire body with ImpureStatement so render throws
+    const body: WireStmt[] = [
+      { type: "ImpureStatement", construct: "bare_call", detail: "print(...)" },
+    ];
+    try {
+      raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+      expect.unreachable("should throw ImpureFunctionError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+      // The fnName is the NORMALIZED (camelCase) name "printX" because raiseFunctionWithPurityAndNormalization
+      // normalizes the signature before calling renderFunctionDeclaration. The normalized name is what
+      // gets threaded through renderFunctionDeclaration → renderBody → renderStmt → ImpureFunctionError.
+      expect((err as ImpureFunctionError).functionName).toBe("printX");
+    }
+  });
+});
