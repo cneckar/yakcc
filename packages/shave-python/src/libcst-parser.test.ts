@@ -642,3 +642,129 @@ describe("WI-909: Comprehension tuple-target emission (real Python subprocess)",
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// WI-890: Class method extraction (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-890: class method extraction (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    // Production sequence: python subprocess → wire envelope → module.functions[]
+    // Class body methods emitted with dotted names and methodKind field.
+
+    it("emits @staticmethod with methodKind='static' and dotted name", async () => {
+      const source = [
+        "class Calc:",
+        "    @staticmethod",
+        "    def add(a: int, b: int) -> int:",
+        "        return a + b",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(1);
+      const fn = fns[0] as PythonAstNode;
+      expect((fn as { name?: string }).name).toBe("Calc.add");
+      expect((fn as { methodKind?: string }).methodKind).toBe("static");
+    });
+
+    it("emits @classmethod with methodKind='class' and dotted name", async () => {
+      const source = [
+        "class Factory:",
+        "    @classmethod",
+        "    def create(cls, value: int) -> int:",
+        "        return value",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(1);
+      const fn = fns[0] as PythonAstNode;
+      expect((fn as { name?: string }).name).toBe("Factory.create");
+      expect((fn as { methodKind?: string }).methodKind).toBe("class");
+    });
+
+    it("emits regular def(self,...) with methodKind='instance' and dotted name", async () => {
+      const source = [
+        "class Counter:",
+        "    def increment(self, n: int) -> int:",
+        "        return n + 1",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(1);
+      const fn = fns[0] as PythonAstNode;
+      expect((fn as { name?: string }).name).toBe("Counter.increment");
+      expect((fn as { methodKind?: string }).methodKind).toBe("instance");
+    });
+
+    it("module-level functions have NO methodKind field (byte-equivalence preserved)", async () => {
+      const source = "def plain(x: int) -> int:\n    return x\n";
+      const result = await parsePythonSource(source);
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(1);
+      const fn = fns[0] as PythonAstNode;
+      expect((fn as { name?: string }).name).toBe("plain");
+      // methodKind must be absent (undefined) for module-level fns
+      expect((fn as { methodKind?: unknown }).methodKind).toBeUndefined();
+    });
+
+    it("class with all three method kinds emits three envelope entries in body order", async () => {
+      // Compound production sequence: one class with @staticmethod, @classmethod, regular def.
+      // Verifies all three are emitted with correct names and kinds in a single call.
+      const source = [
+        "class Trio:",
+        "    @staticmethod",
+        "    def s_method(x: int) -> int:",
+        "        return x",
+        "    @classmethod",
+        "    def c_method(cls, x: int) -> int:",
+        "        return x",
+        "    def i_method(self, x: int) -> int:",
+        "        return x",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(3);
+      const names = fns.map((f) => (f as { name?: string }).name);
+      const kinds = fns.map((f) => (f as { methodKind?: string }).methodKind);
+      expect(names).toEqual(["Trio.s_method", "Trio.c_method", "Trio.i_method"]);
+      expect(kinds).toEqual(["static", "class", "instance"]);
+    });
+
+    it("module-level fns and class methods coexist in module.functions[]", async () => {
+      // Verifies that module-level functions appear before class methods in the
+      // functions array (module-level first, then class bodies in order).
+      const source = [
+        "def top_level(x: int) -> int:",
+        "    return x",
+        "",
+        "class MyClass:",
+        "    @staticmethod",
+        "    def my_method(y: int) -> int:",
+        "        return y",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(2);
+      expect((fns[0] as { name?: string }).name).toBe("top_level");
+      expect((fns[0] as { methodKind?: unknown }).methodKind).toBeUndefined();
+      expect((fns[1] as { name?: string }).name).toBe("MyClass.my_method");
+      expect((fns[1] as { methodKind?: string }).methodKind).toBe("static");
+    });
+  }
+});

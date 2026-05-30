@@ -18,6 +18,7 @@ export {
   extractFunctionSignatures,
   MissingTypeAnnotationError,
   type FunctionSignature,
+  type MethodKind,
   type RaisedParam,
 } from "./parse-fn-signature.js";
 export {
