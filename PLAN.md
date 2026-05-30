@@ -1,63 +1,49 @@
-# PLAN — WI-933/934 shave-python: ADR Q11 + class/method uncurry raise
+# PLAN — WI-954 LLM atom-triplet emission format + CLI parser
 
-> Planner output for paired issues [`#933`](https://github.com/cneckar/yakcc/issues/933)
-> (ADR Q11 — decomposition lives at substrate) and
-> [`#934`](https://github.com/cneckar/yakcc/issues/934) (Python class/method
-> raise via uncurry-to-free-function).
-> Workflow `wi-933-934-class-raise`, work item `wi-933-934-plan`, goal `g-933-934`.
-> Branch `feature/933-934-class-raise` in worktree
-> `/Users/cris/src/yakcc/.worktrees/feature-933-934-class-raise`.
+> Planner output for [`#954`](https://github.com/cneckar/yakcc/issues/954)
+> (Sub-WI of [`#950`](https://github.com/cneckar/yakcc/issues/950) — proactive
+> hook flow realignment). Workflow `wi-954-triplet-emission`, work item
+> `wi-954-plan`, goal `g-954`.
+> Branch `feature/954-llm-triplet` in worktree
+> `/Users/cris/src/yakcc/.worktrees/feature-954-llm-triplet`.
 >
-> Supersedes the prior WI-890 plan content at this path. WI-890 (class-body
-> method extraction → flat `module.functions[]` with dotted names) landed in
-> commit `a91c87b`; this plan addresses the architectural follow-up.
->
-> Operator dispatch (2026-05-30): bs4 4.14.3 e2e exploration after WI-890
-> (class-method extraction wired) still showed bs4 mostly empty because the
-> bulk of bs4 code is **instance methods** that WI-890 rejects with
-> `ImpureFunctionError(kind:"instance_method")`. The architectural fix —
-> agreed in #933 and operationally implemented in #934 — is **uncurry**:
-> instance methods on classes with pure-derivable `__init__` raise to free
-> functions `ClassName_methodName(self: ClassNameState, ...)`. The substrate's
-> existing `recurse()` / `decomposableChildrenOf()` decomposition pipeline
-> then mines atoms from those raised method bodies the same way it already
-> mines atoms from TypeScript class methods. The adapter raises; the
-> substrate decomposes; no adapter-side decomposition.
+> Supersedes the prior WI-933/934 plan content at this path. WI-933/934 landed
+> upstream of this branch; this plan addresses the next sub-WI of #950's
+> Gap C (LLM-emits-atom-triplet pattern).
 
 ---
 
 ## 0 — Headline
 
-Two paired deliverables, one branch, one PR. **#933 is doc-only and lands
-first inside the same PR** so the principle is written down before #934's
-implementation lands beneath it. #934 is the implementation that the new
-principle authorizes.
+When the canonical MCP discovery (`yakcc_resolve`) returns no fit, the
+operator's directive (#950) says the LLM must emit a **fully-formed yakcc
+atom** — a triplet of `spec.yak` + `impl.{ts,py,go}` +
+`proof/tests.fast-check.{ts,py}` — rather than raw code that gets post-hoc
+atomized by `@yakcc/variance`'s synthetic test generator. This WI defines that
+emission shape, documents it in the LLM-facing system prompt, and adds the
+CLI subcommand that consumes it: parse → validate strict-subset → run
+LLM-authored property tests → persist via `storeBlock` only if green.
+Variance generation becomes the **fallback** for emissions that aren't
+triplet-formatted; the triplet path becomes the default.
 
-1. **#933 — ADR addendum Q11 + decision-log entry.**
-   `docs/archive/developer/adr/polyglot-architecture.md` gains a new `## Q11`
-   section verbatim from the issue body. A new entry
-   `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` captures the
-   single-page decision record: principle, originating concern, lowering
-   rules per language, failure mode (`DidNotReachAtomError`), and what the
-   rule means for MVP adapter slices.
-2. **#934 — Python class/method raise.** New
-   `packages/shave-python/src/raise-class.ts` implementing state-type
-   derivation from `__init__`, factory function for the constructor,
-   free-function uncurry for each method, `self.field` and
-   `self.method(...)` rewriting in method bodies, and
-   `CannotRaiseToIRError` rejection for unsupported class shapes.
-   `libcst-parse.py` envelope extends with a structural `module.classes[]`
-   array. `parse-fn-signature.ts` and `purity-check.ts` thread through so
-   that instance methods on raisable classes fork to `raise-class`
-   **before** the WI-890 short-circuit fires. Two test files cover the unit
-   behavior and the substrate integration.
+**Critical reuse observation:** the substrate already has everything the
+emission path needs except the LLM-test execution step.
+- `parseBlockTriplet` (`@yakcc/ir/block-parser.ts`) reads a directory triplet,
+  validates `spec.yak` via `validateSpecYak`, runs the strict-subset validator
+  on `impl.ts`, validates `proof/manifest.json`, and derives the
+  `BlockMerkleRoot`.
+- `@yakcc/seeds/seed.ts` already wires `parseBlockTriplet` →
+  `registry.storeBlock` for the static-validation path (no test execution).
+- `@yakcc/contracts/triplet.test.ts` provides the canonical fixture vocabulary.
 
-The integration acceptance criterion (#934 #d) is exactly the bridge between
-the two issues: feed a raised Python class through the substrate's existing
-shave pipeline; verify ≥2 atoms emerge from a method body with ≥3
-statements. If only one atom per method emerges, the raise produced
-malformed IR — diagnose by inspecting the IR, not by adding adapter-side
-decomposition.
+What's missing is exactly one thing: **a CLI subcommand that runs the LLM's
+`proof/tests.fast-check.ts` against `impl.ts` in-band, exits non-zero if the
+tests fail, and calls `storeBlock` only on green.** That's the load-bearing
+new code. Everything else is composition.
+
+The variance fallback discipline is the second deliverable: callers must use
+the triplet path when a `proof/tests.fast-check.*` file is present in the
+emission; variance synthesis only fires for bare-code emissions.
 
 ---
 
@@ -65,169 +51,187 @@ decomposition.
 
 ### 1.1 What problem are we actually solving?
 
-**Surface problem:** bs4 4.14.3 e2e exploration emits 0 functions from 9 of
-15 production files. bs4 is mostly instance methods; WI-890 rejects every
-instance method with `ImpureFunctionError`.
+**Surface problem:** today, when an LLM emits code that doesn't match an
+atom, `@yakcc/variance` synthesizes property tests from the spec. Those
+synthetic tests are heuristically derived from spec shape — they cover the
+type contract but not the operational intent. Quality of commons growth is
+bounded by the synthesis.
 
-**Root problem:** the MVP adapter framing "instance methods are impure → not
-shavable" is too coarse. An instance method that only reads `self.field`
-and calls other instance methods on the same class is structurally
-equivalent to a free function over `(self, ...args)`. The Python adapter
-should raise it that way and let the substrate's general-purpose
-decomposition do its job inside the body.
+**Root problem:** the LLM has *more* context than a post-hoc synthesizer.
+It knows what the code is supposed to do, what edge cases matter, what
+invariants are load-bearing, because it just wrote both the spec and the
+impl. If the LLM authors the property tests at emission time, the commons
+grow with high-quality, behavior-driven contracts. If the LLM emits raw
+code, variance is the last-resort safety net.
 
-**Principle being violated (now made explicit by #933):** decomposition
-lives at the substrate, not in adapters. WI-890 was reaching the right
-adapter answer ("don't decompose method bodies in the adapter") via the
-wrong adapter mechanism ("therefore reject the whole method"). The right
-mechanism is "raise the method body verbatim and hand it to the
-substrate". The Python adapter has no business deciding whether a method
-body is shavable — it should produce well-formed IR and let `recurse()`
-decide.
+**Principle being made explicit:** the LLM is the highest-context proof
+author for code it just wrote. Substrate-side synthesis is a fallback for
+the bare-emission case, not the default. This WI codifies the format the LLM
+must emit and the CLI surface that consumes it.
 
 ### 1.2 Goals (measurable)
 
-- G1. `docs/archive/developer/adr/polyglot-architecture.md` gains `## Q11`
-  section verbatim from #933 issue body, anchored to
-  `DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001`.
-- G2. A canonical decision record exists at
-  `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` — single page,
-  cross-references the ADR, names the substrate authority surface
-  (`packages/shave/src/universalize/recursion.ts`), names the originating
-  concern, names the failure mode (`DidNotReachAtomError`).
-- G3. `packages/shave-python/scripts/libcst-parse.py` emits a new
-  `module.classes[]` structural array alongside the existing flat
-  `module.functions[]`. Module-level fn envelopes are byte-equivalent to
-  pre-WI-934 output (regression test).
-- G4. `packages/shave-python/src/raise-class.ts` (new) raises a single
-  Python class to a TS-subset emit: a `State` interface declaration, a
-  `Class_create` factory function, one free function per instance method,
-  with `self.field` and `self.method(args)` rewritten into the uncurried
-  form.
-- G5. Instance methods on classes with a pure-derivable `__init__` flow
-  through `raise-class` and are no longer rejected with
-  `ImpureFunctionError(kind:"instance_method")`. Methods on classes with
-  non-pure-derivable `__init__` (or unsupported shape) are rejected with
-  `CannotRaiseToIRError` carrying the construct name and source location.
-- G6. `raise-class.integration.test.ts`: take a Python class with at least
-  one method whose body has ≥3 statements, raise it, feed the IR to the
-  substrate's standard shave pipeline (`@yakcc/shave` consumed as a dev
-  dependency from this test), and assert that **≥2 atoms** are emitted from
-  that one method's body. This is the bridge that proves the raise
-  succeeded.
-- G7. bs4 e2e re-exploration after this PR lands shows a measurable lift in
-  raised+decomposed atoms across the bs4 corpus. Not a hard numeric gate;
-  recorded as evidence in PR description.
-- G8. `pnpm --filter @yakcc/shave-python test`, `typecheck`, `lint` all
-  green. No regressions in existing test files.
+- G1. `docs/system-prompts/yakcc-discovery.md` documents the canonical
+  triplet format (filenames, file roles, language coverage matrix) with at
+  least one worked example end-to-end (small atom, three files,
+  CLI command, expected output).
+- G2. New CLI subcommand `yakcc emit-atom <dir>` exists, registered in
+  `packages/cli/src/index.ts` and shown in `printUsage`.
+- G3. The subcommand reads a directory containing `spec.yak`, `impl.ts`,
+  `proof/manifest.json`, and `proof/tests.fast-check.ts` (TypeScript
+  triplet, MVP language), parses it via `parseBlockTriplet`, runs
+  `proof/tests.fast-check.ts` against `impl.ts` in-band, and either:
+  - On green: calls `registry.storeBlock` with the parsed
+    `BlockTripletRow`; prints the resulting `BlockMerkleRoot` and exits 0.
+  - On red (test failure): prints which property failed (counterexample
+    included where available) and exits non-zero with a clear gate name.
+  - On parse failure (spec invalid / strict-subset violation / manifest
+    invalid): exits non-zero naming the failed gate.
+- G4. The subcommand is unit-tested in `packages/cli/src/commands/emit-atom.test.ts`
+  with at least these cases:
+  - happy path (small atom, real `parseBlockTriplet`, real test execution,
+    real `storeBlock` against an in-memory or temp-file registry)
+  - missing spec.yak / missing impl.ts / missing proof/manifest.json /
+    missing proof/tests.fast-check.ts → distinct error messages, non-zero
+  - strict-subset violation in impl.ts → non-zero with the strict-subset
+    error surfaced
+  - property test failure (a deliberately wrong impl that the LLM-authored
+    tests catch) → non-zero, storeBlock NOT called
+  - integration end-to-end: emit-atom on a real triplet, then `yakcc
+    propose` against the resulting spec to confirm round-trip persistence
+    (or equivalent query roundtrip)
+- G5. Variance fallback discipline: documentation in
+  `yakcc-discovery.md` clearly states that variance synthesis only fires
+  when an emission lacks `proof/tests.fast-check.*`. No code edit to
+  `packages/variance/**` is required because variance is invoked by other
+  paths (post-hoc atomize at `storeBlock` seam); this WI's CLI does not
+  invoke variance at all — it operates strictly on triplet-formatted
+  emissions. The fallback discipline is therefore enforced by *which CLI
+  surface the caller uses*, documented for the LLM.
+- G6. `pnpm --filter @yakcc/cli test`, `typecheck`, `lint` all green. No
+  regressions.
 
 ### 1.3 Non-goals (explicit exclusions)
 
-- N1. **Editing `packages/shave/src/**` substrate.** Forbidden by scope
-  manifest. The whole point of #933 is "don't touch the substrate from
-  here". Note this **departs from #933 issue body item (3)** which asks for
-  a header comment on `recursion.ts` — that comment is deferred to a
-  follow-up slice (DEC-WI933-005 below). The principle still lands via the
-  ADR + decision log.
-- N2. **Editing `packages/contracts/**`.** Forbidden by scope manifest.
-  `CannotRaiseToIRError` already exists in
-  `@yakcc/contracts/polyglot-errors.ts` with the right shape; we consume
-  it (DEC-WI934-007).
-- N3. **`@property` / `@classmethod` / `@staticmethod` decorators on
-  class methods.** Classmethod/staticmethod are already handled by WI-890
-  via the flat `module.functions[]` list. Properties are deferred — the
-  raise rejects them with `CannotRaiseToIRError`.
-- N4. **Multiple inheritance, mixins, metaclasses, abstract base classes,
-  generic class parameters, `__slots__` / `__getattr__` / `__getattribute__`
-  machinery, `dataclass`, `pydantic`.** All rejected with
-  `CannotRaiseToIRError` (DEC-WI934-007).
-- N5. **Mutation of `self.field` outside `__init__`.** Rejected — the class
-  is non-pure-derivable. Any `Assign(target=Attribute(value=Name("self")))`
-  inside a non-`__init__` method body fails the raise.
-- N6. **Async methods.** Already out of envelope per WI-782; no change here.
-- N7. **Chained method calls (`self.foo().bar()`).** The inner
-  `self.foo()` rewrites; the outer `.bar()` is just regular `Attribute`
-  access on the result. If the result type doesn't have `.bar()` in the
-  TS-subset IR (e.g. it's another method-as-uncurried-free-function which
-  cannot be dot-called), this fails downstream — that failure is acceptable
-  and surfaces during raise-body or substrate stages. Document as MVP edge.
-- N8. **Bootstrap manifest writes (`bootstrap/expected-roots.json`).**
-  Forbidden by scope manifest. CI-only writer per
-  `DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001`.
+- N1. **Multi-language triplet ingestion.** The MVP triplet ingest path
+  handles TypeScript (`impl.ts` + `proof/tests.fast-check.ts`) only. The
+  format DOC enumerates the canonical language vocabulary
+  (`impl.{ts,py,go}`, `proof/tests.fast-check.{ts,py}`) but the CLI
+  initially accepts only `impl.ts`+`proof/tests.fast-check.ts`. Python and
+  Go triplet ingest are deferred. Documented in DEC-WI954-001.
+- N2. **Modifying `@yakcc/variance` internals.** Variance behavior is
+  unchanged. The fallback discipline is enforced by the LLM's choice of
+  surface (triplet path = `yakcc emit-atom`; bare-code path =
+  storeBlock-time atomize). Forbidden by scope manifest in any case.
+- N3. **Modifying `@yakcc/ir`, `@yakcc/contracts`, `@yakcc/registry`,
+  `@yakcc/hooks-base`, `@yakcc/mcp-registry`.** All forbidden by scope
+  manifest. The CLI subcommand consumes them as workspace dependencies.
+- N4. **MCP description payload, `yakcc_resolve` cascade, confidence
+  bands.** All belong to companion WI `#953` (Gap A: `yakcc_resolve`
+  wiring). Out of scope for #954.
+- N5. **Wiring the LLM to actually call `yakcc emit-atom` at emission
+  time.** That wiring is the LLM's system prompt + the MCP description
+  payload (#953). This WI only delivers the format definition + CLI
+  consumer; the LLM-facing instructions land in `yakcc-discovery.md` but
+  the runtime delivery of that prompt to the LLM is #953's job.
+- N6. **Bundle/envelope alternative.** The triplet is emitted as a
+  directory of three files (matching the existing `packages/seeds/<name>/`
+  layout that `parseBlockTriplet` already understands). A
+  Markdown/YAML/JSON envelope is **rejected** by DEC-WI954-002.
+- N7. **Removing variance synthesis entirely.** Per #954 issue body and
+  #950 Gap C: variance stays as the fallback for emissions that aren't
+  triplet-formatted (no `proof/tests.fast-check.*` present).
+- N8. **Changes to `propose`, `seed`, `compile`.** No existing CLI surface
+  needs to change. `emit-atom` is a new sibling subcommand.
 
 ### 1.4 Unknowns and ambiguities (resolved here)
 
-- U1. **Where should `DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001` actually
-  live?** Issue body says "append to
-  `docs/archive/developer/MASTER_PLAN.md` Decision Log". The scope manifest
-  does **not** include that file in allowed_paths; it includes
-  `docs/decisions/**`. Resolved: land the decision record under
-  `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md`. The
-  MASTER_PLAN.md Decision Log row append is deferred to a follow-up doc
-  slice (DEC-WI933-004 below).
-- U2. **Should `CannotRaiseToIRError` be the rejection class, or do we
-  reuse `ImpureFunctionError` with a new kind?** Resolved: use
-  `CannotRaiseToIRError` from `@yakcc/contracts`. The class already exists
-  with the right shape (construct + SourceLocation) — verified at
-  `packages/contracts/src/polyglot-errors.ts:34-46`. The operator-dispatch
-  suggestion to reuse `ImpureFunctionError` was based on the incorrect
-  assumption that the contracts class didn't exist. **`ImpureFunctionError`
-  is reserved for genuine purity violations** (I/O, mutable globals,
-  mutation of `self.field` outside `__init__`). `CannotRaiseToIRError` is
-  for structural / envelope-out-of-range rejections (metaclasses, multiple
-  inheritance, properties, etc.).
-- U3. **Does `shave-python` already depend on `@yakcc/shave` for the
-  integration test?** Verified `packages/shave-python/package.json`:
-  `dependencies = @yakcc/contracts` only; `devDependencies = @yakcc/ir`
-  + biome + types + typescript + vitest. **`@yakcc/shave` is not on the
-  list.** Resolved: the implementer adds
-  `"@yakcc/shave": "workspace:*"` to `devDependencies`. Verify scope
-  manifest covers `packages/shave-python/package.json` — if not, request a
-  one-line scope widening before the implementer starts (see §6.5).
-- U4. **Naming for `_PrivateClass`:** preserve leading underscore.
-  `_PrivateClass.do_thing` → `_PrivateClass_doThing`. Consistent with
-  existing normalize-names rule 2 ("leading underscore preserved").
-- U5. **What does the substrate's shave entry point look like from a unit
-  test perspective?** The integration test imports the entry point and
-  feeds in TS source as a string. The implementer must read
-  `packages/shave/src/index.ts` (read-only) before drafting the integration
-  test to determine the exact entry symbol. If no public entry accepts a
-  source-string input directly, the implementer escalates rather than
-  reaching into substrate internals.
+- U1. **Subcommand naming.** Three candidates: `yakcc emit-atom <dir>`,
+  `yakcc accept-atom <dir>`, `yakcc compile --emit <dir>`. Resolved:
+  `yakcc emit-atom <dir>` (DEC-WI954-003). The verb `emit` matches the
+  LLM-side semantics ("the LLM emits an atom triplet, the CLI receives
+  it"). Avoids overloading `compile` (which lowers a spec to source code,
+  conceptually inverse). Avoids "accept" (which implies a moderation
+  decision the CLI isn't making — the gate is property-test green, not a
+  policy judgment).
+- U2. **Test-execution mechanism.** Options:
+  (a) **Spawn `node --import tsx` on the `proof/tests.fast-check.ts` file**
+      and let the test file call `fc.assert(...)` directly, with the
+      process exit code as the green/red signal. Tests look like the
+      `packages/seeds/src/blocks/digit/proof/tests.fast-check.ts` files
+      already in the corpus — no test framework runner, just plain
+      `fc.assert` calls under `if (require.main === module)`.
+  (b) Spawn `pnpm --filter <ephemeral package> test` for vitest-shaped
+      tests. Too heavy for a single-atom emission gate.
+  (c) Dynamic `import()` inside the CLI process. Risky — node ESM cycles
+      with the LLM-supplied code; harder to sandbox; the failure surface
+      is muddier.
+  Resolved: option (a), `node --import tsx <proof/tests.fast-check.ts>`.
+  Document the test-file convention in `yakcc-discovery.md`: tests must
+  be runnable standalone — top-level `fc.assert(...)` calls, no test
+  framework required, exit code is the gate. DEC-WI954-004.
+- U3. **Registry path for `emit-atom`.** Mirror `propose`'s convention:
+  `--registry <path>` flag defaulting to
+  `DEFAULT_REGISTRY_PATH` (`.yakcc/registry.sqlite`). Use the existing
+  `openRegistry` + `makeCommonsBinding` pattern from `propose.ts` so the
+  commons-push at `storeBlock` seam fires identically (per
+  DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001). DEC-WI954-005.
+- U4. **What does the directory look like for the LLM?** The seed corpus
+  layout `<root>/{spec.yak, impl.ts, proof/{manifest.json,
+  tests.fast-check.ts}}` is the canonical shape `parseBlockTriplet` already
+  consumes. Document this exact layout in `yakcc-discovery.md` with a
+  small worked example (a `clamp` atom: spec defines clamp(value, min,
+  max), impl is a five-line TS function, tests assert idempotence,
+  bounds-check, and order-invariance). DEC-WI954-006.
+- U5. **`impl.ts` strict-subset coupling.** `parseBlockTriplet` already
+  invokes the strict-subset validator (`validateStrictSubset` from
+  `@yakcc/ir`). The CLI surfaces the result.validation.ok bit and the
+  ValidationError list verbatim — no new validation logic. DEC-WI954-007.
+- U6. **Where do property-test temp files live?** Spawning `node --import
+  tsx` needs the LLM's emitted directory to be reachable. Resolved: spawn
+  with `cwd = <emitDir>` and pass `proof/tests.fast-check.ts` as the
+  positional. The test file imports `../impl.js` (TS-compiled by tsx).
+  Document the relative-import convention. The CLI does NOT copy files
+  into `tmp/`. DEC-WI954-008.
+- U7. **What about a foreign triplet?** `@yakcc/contracts` already has
+  `ForeignTripletFields` (`{kind:"foreign", pkg, export, dtsHash?}`) for
+  node-builtin / npm-package shims. Foreign atoms have no `impl.ts` /
+  `proof/tests.fast-check.ts` — they reference a package symbol. Out of
+  scope for `emit-atom` in this WI; the subcommand only handles local
+  triplets. Document this carve-out in `yakcc-discovery.md`. DEC-WI954-009.
 
 ### 1.5 Dominant constraints
 
-- C1. **Scope manifest is law.** `packages/shave/src/**`,
-  `packages/contracts/**`, `packages/cli/**`, `packages/compile-python/**`,
-  `bootstrap/**`, `.github/**`, `.claude/**`, and several specific
-  `packages/shave-python/src/*` files are forbidden. The implementer
-  must not touch any of them.
-- C2. **`packages/shave-python/src/raise-body.ts`, `libcst-parser.ts`,
-  `type-map.ts`, `normalize-names.ts` are forbidden by scope manifest.**
-  This is the most surprising constraint — these are the files WI-890
-  threaded `methodKind` through. We cannot extend them in this WI.
-  Resolved: `raise-class.ts` reuses these modules' exports without
-  modifying their source. Naming normalization for `ClassName_methodName`
-  composes existing `normalizeIdentifier` calls (one for the class name,
-  one for the method name) and joins with `_` — no edit to the underlying
-  module. If during implementation a real type-map gap is found (e.g.
-  `ClassNameState` type-mapping needs new logic), the implementer
-  escalates for scope widening rather than working around it.
-- C3. **Allowed source files in scope:** `raise-class.ts`,
-  `raise-class.test.ts`, `raise-class.integration.test.ts`,
-  `raise-function.ts`, `raise-function.test.ts`, `parse-fn-signature.ts`,
-  `parse-fn-signature.test.ts`, `purity-check.ts`, `purity-check.test.ts`,
-  `libcst-parser.test.ts`, `index.ts`. The implementer can edit
-  `parse-fn-signature.ts` (and its tests) to thread classes through, and
-  `purity-check.ts` (and its tests) to integrate the class-method routing.
-  Plus `index.ts` for barrel exports of `raise-class` symbols.
-- C4. **The integration test must consume `@yakcc/shave` as a workspace
-  dev dependency.** Substrate source is forbidden for edits, but consuming
-  the package's exported entry point in a downstream test is consumption,
-  not modification.
-- C5. **No source-code edits in #933 deliverable.** ADR + decision log
-  only. The dispatched scope already explicitly carves the
-  `recursion.ts` header comment out of this WI.
+- C1. **Scope manifest is law.** Allowed:
+  `packages/cli/src/commands/**`, `packages/cli/src/lib/**`,
+  `packages/cli/src/index.ts`, `packages/cli/src/index.test.ts`,
+  `docs/system-prompts/yakcc-discovery.md`, `docs/decisions/*.md`,
+  `tmp/**`, `PLAN.md`.
+  Forbidden:
+  `packages/shave-python/**`, `packages/compile-python/**`,
+  `packages/shave/**`, `packages/compile/**`, `packages/contracts/**`,
+  `packages/registry/**`, `packages/federation/**`,
+  `packages/hooks-base/**`, `packages/ir/**`, `packages/variance/**`,
+  `packages/mcp-registry/**`, `bootstrap/**`, `.github/**`, `.claude/**`.
+- C2. **`packages/cli/package.json` is in `packages/cli/` but NOT in
+  allowed_paths.** Verify before the implementer needs a new dep. If
+  `tsx` and `fast-check` are not already in the CLI package's runtime
+  dependencies (they ship in @yakcc/seeds and @yakcc/ir respectively),
+  request a scope widening **before** the implementer starts. See §6.5
+  for the scope-sync action.
+- C3. **No edits to `@yakcc/variance`, `@yakcc/registry`, `@yakcc/ir`,
+  `@yakcc/contracts`.** The CLI consumes them as workspace deps —
+  imports only, no source modification.
+- C4. **Test-execution is in-band but sandboxed enough.** Spawning
+  `node --import tsx <test-file>` runs in a child process — failures
+  don't crash the CLI; stderr/stdout is captured and surfaced. The CLI's
+  own test suite uses real LLM-shaped triplet fixtures under `tmp/` or
+  `packages/cli/src/commands/__fixtures__/` (the latter is in scope under
+  `packages/cli/src/commands/**`).
+- C5. **No state-authority changes.** The CLI consumes existing
+  authorities (`@yakcc/contracts` for SpecYak, `@yakcc/ir` for
+  block-parser/strict-subset, `@yakcc/registry` for storeBlock). No new
+  state lives in this WI.
 
 ---
 
@@ -237,399 +241,323 @@ decide.
 
 | Operational fact | Authority | This WI touches? |
 |---|---|---|
-| Decomposition algorithm | `packages/shave/src/universalize/recursion.ts` (`recurse()` + `decomposableChildrenOf()`) | **read-only consume** via dev dep in integration test |
-| TS-subset IR envelope | `@yakcc/ir` | no |
-| Polyglot raise-failure error taxonomy | `@yakcc/contracts/polyglot-errors.ts` (`CannotRaiseToIRError`, `AmbiguousPurityError`) | **read-only consume** — use `CannotRaiseToIRError` from existing export |
-| Python AST → wire envelope | `packages/shave-python/scripts/libcst-parse.py` | **extend** — add `_class_envelope` walker, emit `module.classes[]` |
-| Wire envelope → typed `FunctionSignature` | `packages/shave-python/src/parse-fn-signature.ts` | **extend** — add `extractClassEnvelopes` export; preserve existing `extractOne` short-circuit unchanged |
-| Static purity inference | `packages/shave-python/src/purity-check.ts` | **read-only consume**; new `instance_method` kind value reused unchanged |
-| Python class → TS uncurried emit | (new) `packages/shave-python/src/raise-class.ts` | **create** |
-| snake_case → camelCase naming | `packages/shave-python/src/normalize-names.ts` | **read-only consume** (forbidden for edits) |
-| Type mapping (Python → TS subset) | `packages/shave-python/src/type-map.ts` | **read-only consume** (forbidden for edits) |
-| Free-function raise pipeline | `packages/shave-python/src/raise-function.ts` | **optional touch-ups only** (orchestration glue if needed) |
-| Package public surface | `packages/shave-python/src/index.ts` | **extend** — barrel-export `raise-class` symbols |
-| ADR | `docs/archive/developer/adr/polyglot-architecture.md` | **extend** — append `## Q11` section |
-| Decision log (canonical individual decision records) | `docs/decisions/` (new directory in this repo) | **create** — first entry in this dir |
-| Project decision log (table) | `docs/archive/developer/MASTER_PLAN.md` | **forbidden** in this WI's scope manifest — deferred to follow-up |
+| Triplet directory shape (`{spec.yak, impl.ts, proof/{manifest.json,tests.fast-check.ts}}`) | `packages/ir/src/block-parser.ts` (`parseBlockTriplet`) | **read-only consume** via workspace dep |
+| SpecYak schema + `validateSpecYak` | `packages/contracts/src/spec-yak.ts` | **read-only consume** |
+| Strict-subset validation of `impl.ts` | `packages/ir/src/strict-subset.ts` (`validateStrictSubset`) | **read-only consume** (invoked transitively via `parseBlockTriplet`) |
+| L0 proof manifest validation | `packages/contracts/src/proof-manifest.ts` (`validateProofManifestL0`) | **read-only consume** |
+| BlockMerkleRoot derivation | `packages/contracts/src/merkle.ts` (`blockMerkleRoot`) | **read-only consume** |
+| Registry persistence (`storeBlock`) | `packages/registry/src/storage.ts` (`Storage.storeBlock`) via `openRegistry` | **read-only consume** |
+| Commons-push binding at storeBlock seam | `packages/cli/src/lib/commons-submit.ts` (`makeCommonsBinding`) | **read-only consume** (already in CLI scope; do not re-implement) |
+| LLM-facing system prompt | `docs/system-prompts/yakcc-discovery.md` | **extend** — append "Emission shape" section |
+| CLI subcommand routing | `packages/cli/src/index.ts` (`runCli`) | **extend** — new `case "emit-atom":` branch + usage text line |
+| Property-test execution (NEW) | `packages/cli/src/commands/emit-atom.ts` (new) | **create** — spawn `node --import tsx <proof/tests.fast-check.ts>`, capture exit code, stdout, stderr |
+| Variance fallback path | `packages/variance/src/index.ts` (invoked by storeBlock-time atomize for bare-code emissions) | **read-only acknowledge** — this WI does NOT invoke variance; documented in yakcc-discovery.md |
 
-### 2.2 ADR Q11 placement
+### 2.2 Subcommand surface
 
-The ADR currently ends at `## Q8 — Identity / Merkle-root semantics` (line 277,
-file ends at line 382). There is no `## Q9` or `## Q10`. The Q11 section
-appends at the end of the file (after the existing closing matter).
-
-**Style normalization required:** the issue body section header is
-"`## Q11. Where does decomposition live?`" but the existing ADR uses
-`## Q1 — TS-subset IR expressive envelope` (em-dash style). The implementer
-normalizes the new heading to match existing ADR style:
-`## Q11 — Where does decomposition live?` Document this normalization at
-the top of the ADR commit.
-
-### 2.3 Decision-record format
-
-`docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` follows the same
-top-matter shape as the ADR's own DEC entries:
-
-```markdown
-# DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001 — Decomposition lives at substrate, adapters only raise
-
-**Status:** Accepted
-**Date:** 2026-05-30
-**Issue:** https://github.com/cneckar/yakcc/issues/933
-**Related:** #934 (Python class/method raise — first consumer of this rule)
-**ADR section:** docs/archive/developer/adr/polyglot-architecture.md §Q11
-
-## Decision
-<single paragraph>
-
-## Originating concern
-<operator quote 2026-05-28>
-
-## Authority surfaces
-- packages/shave/src/universalize/recursion.ts (`recurse()`, `decomposableChildrenOf()`)
-- packages/shave/src/universalize/recursion.ts:222 (`DidNotReachAtomError` tripwire)
-
-## Lowering rules per adapter
-<Python / Go / Rust paragraphs from issue body>
-
-## Failure mode
-<DidNotReachAtomError explanation>
-
-## What this means for adapter MVPs
-<MVP-defers-method-support paragraph from issue body>
-
-## Cornerstones preserved
-- DEC-POLYGLOT-IR-CANONICAL-001 (TS-subset IR is canonical)
-- DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001 (real source only)
-- Reproducibility by construction
+```
+yakcc emit-atom <directory>
+  [--registry <path>]      # default: .yakcc/registry.sqlite (DEC-WI954-005)
+  [--skip-tests]           # DANGEROUS — bypasses property-test gate; for CI-only triplet seeding
+  [--json]                 # machine-readable output (BlockMerkleRoot, validation errors as JSON)
 ```
 
-### 2.4 libcst-parse.py wire-shape extension
+Exit codes:
+- 0 — triplet validated, tests green, stored.
+- 1 — usage / IO error.
+- 2 — spec.yak invalid (validateSpecYak threw).
+- 3 — impl.ts strict-subset violation.
+- 4 — proof/manifest.json invalid.
+- 5 — proof/tests.fast-check.ts failed (property test counterexample found).
+- 6 — storeBlock failed (registry write error).
 
-New `module.classes[]` array, additive only — `module.functions[]` continues
-to be populated identically to post-WI-890 behavior (so module-level fns
-and class methods extracted via WI-890's dotted-name path remain visible).
+Each distinct exit code corresponds to a documented gate. The implementer
+encodes these as named constants (`EMIT_ATOM_EXIT_OK`,
+`EMIT_ATOM_EXIT_SPEC_INVALID`, etc.) in `emit-atom.ts` and asserts on them
+in tests.
 
+### 2.3 emit-atom.ts module shape
+
+```ts
+export interface EmitAtomOptions {
+  embeddings?: RegistryOptions["embeddings"];
+}
+
+/**
+ * `yakcc emit-atom <dir> [--registry <p>] [--skip-tests] [--json]`
+ *
+ * Reads an LLM-emitted triplet directory, validates it, runs the
+ * LLM-authored property tests against the impl, and persists via
+ * storeBlock only if all gates are green.
+ */
+export async function emitAtom(
+  argv: readonly string[],
+  logger: Logger,
+  opts?: EmitAtomOptions,
+): Promise<number>;
+```
+
+Internal flow:
+
+1. **Parse argv** via `parseArgs` (DEC-V0-CLI-004 pattern from other
+   commands).
+2. **Resolve dir path** and verify it exists; require `spec.yak`,
+   `impl.ts`, `proof/manifest.json`, `proof/tests.fast-check.ts`. Missing
+   any → exit 1 with a clear error naming the missing file.
+3. **Call `parseBlockTriplet`** from `@yakcc/ir`. On throw → exit 2/3/4
+   depending on which gate threw (catch + classify by error message OR by
+   inspecting the validation result if `parseBlockTriplet` returns
+   structured errors — the implementer reads `block-parser.ts` to decide).
+4. **Run property tests** (unless `--skip-tests`):
+   ```
+   spawn("node", ["--import", "tsx", "proof/tests.fast-check.ts"], {
+     cwd: emitDir,
+     stdio: ["ignore", "pipe", "pipe"],
+   })
+   ```
+   On non-zero exit → exit 5; print captured stderr; do NOT call
+   storeBlock.
+5. **Build `BlockTripletRow`** from the `BlockTripletParseResult` (same
+   pattern as `packages/seeds/src/seed.ts:83-117`).
+6. **Open registry** with `makeCommonsBinding` wiring; call
+   `registry.storeBlock(row)`. On throw → exit 6.
+7. **Print result**: human form is `stored: <BlockMerkleRoot>` plus a
+   one-line summary; `--json` form is `{ "merkleRoot": "...", "specHash":
+   "...", "stored": true }`.
+
+The implementer copies the storeBlock-row construction pattern from
+`packages/seeds/src/seed.ts` (which is read-only-consume — that file is
+forbidden, but its 30-line pattern can be re-implemented in
+`packages/cli/src/commands/emit-atom.ts` without modifying the seeds
+package).
+
+### 2.4 Property-test execution (DEC-WI954-004 detail)
+
+The LLM-authored test file `proof/tests.fast-check.ts` must:
+
+- Import the impl: `import { theFunction } from "../impl.js"` (tsx
+  resolves `.js` → `.ts`).
+- Call `fc.assert(fc.property(...))` at the top level (not wrapped in
+  `describe`/`it`).
+- Exit non-zero on assertion failure (fast-check throws; node propagates
+  the unhandled exception to exit code 1).
+
+Example (from the worked `clamp` example in §2.5):
+```ts
+import * as fc from "fast-check";
+import { clamp } from "../impl.js";
+
+fc.assert(
+  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
+    const [min, max] = a <= b ? [a, b] : [b, a];
+    const r = clamp(v, min, max);
+    return r >= min && r <= max;
+  }),
+);
+
+console.log("clamp property tests: ok");
+```
+
+This shape mirrors what's already in
+`packages/seeds/src/blocks/digit/proof/tests.fast-check.ts` — the LLM is
+asked to author files matching the existing seed-corpus convention.
+That's load-bearing: the corpus already trains downstream tools (shave,
+compile-self) on this shape, so emission-time triplets are
+indistinguishable from seed triplets once stored.
+
+### 2.5 Worked example: `clamp` (documented in yakcc-discovery.md)
+
+```
+<temp-dir>/
+├── spec.yak                       # SpecYak JSON
+├── impl.ts                        # export function clamp(...)
+└── proof/
+    ├── manifest.json              # { "artifacts": [{ "kind": "property_tests", "path": "tests.fast-check.ts" }] }
+    └── tests.fast-check.ts        # fc.assert at top level
+```
+
+`spec.yak`:
 ```json
 {
-  "classes": [
-    {
-      "name": "EmailValidator",
-      "bases": ["object"],
-      "decorators": ["dataclass"],   // present if any class decorators; raise-class rejects all
-      "metaclass": null,             // string if class Foo(metaclass=Meta) detected, else null
-      "init_assignments": [
-        {"target": "max_length", "value": {"type": "Name", "name": "max_length"}}
-      ],
-      "init_params": [
-        {"name": "max_length", "annotation": "int"}
-      ],
-      "methods": [
-        {
-          "name": "check_length",
-          "params": [{"name": "self", "annotation": null}, ...],
-          "return_annotation": "bool",
-          "body_source": "...",
-          "body": [<Stmt>...],
-          "methodKind": "instance"
-        }
-      ],
-      "class_vars": [
-        {"name": "AMPERSAND_OR_BRACKET", "value": {"type": "String", "value": "&"}}
-      ],
-      "raise_blockers": []
-    }
+  "name": "clamp",
+  "inputs": [
+    {"name": "value", "type": "number"},
+    {"name": "min", "type": "number"},
+    {"name": "max", "type": "number"}
+  ],
+  "outputs": [{"name": "result", "type": "number"}],
+  "preconditions": ["min <= max"],
+  "postconditions": ["min <= result <= max"],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Clamp value to [min, max].",
+  "guarantees": [
+    {"id": "bounded", "description": "Result is in [min, max]."},
+    {"id": "idempotent", "description": "clamp(clamp(v,a,b),a,b) === clamp(v,a,b)."}
+  ],
+  "errorConditions": [],
+  "nonFunctional": {"purity": "pure", "threadSafety": "safe"},
+  "propertyTests": [
+    {"id": "bounded", "description": "Result is within bounds."},
+    {"id": "idempotent", "description": "Applying clamp twice equals once."}
   ]
 }
 ```
 
-`raise_blockers[]` is the libcst-side first-pass detection — if libcst sees
-a metaclass, non-trivial base, `__slots__`, etc., it adds a blocker string
-so the TS side can `CannotRaiseToIRError` without re-doing the structural
-check. This keeps the Python-side walker authoritative for structural
-detection (one authority per fact, per CLAUDE.md).
-
-Existing `_class_method_envelopes` (WI-890) keeps emitting into
-`module.functions[]` with dotted names so the WI-890 flat-list consumers
-remain byte-equivalent. The new `module.classes[]` is purely additive.
-
-### 2.5 raise-class.ts module shape
-
+`impl.ts`:
 ```ts
-export interface RaisedClass {
-  /** Class name as written in Python. */
-  readonly name: string;
-  /** Derived state interface declaration as TS source. */
-  readonly stateInterfaceTs: string;
-  /** Factory function (ClassName_create) as TS source. */
-  readonly factoryTs: string;
-  /** Each method raised as a free function — TS source. */
-  readonly methodsTs: readonly string[];
-  /** Warnings from type-mapping and body-rendering, aggregated. */
-  readonly warnings: readonly LowerWarning[];
+export function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
 }
-
-export function raiseClass(envelope: EnvelopeClass): RaisedClass;
 ```
 
-Internal flow inside `raiseClass`:
+`proof/manifest.json`:
+```json
+{"artifacts": [{"kind": "property_tests", "path": "tests.fast-check.ts"}]}
+```
 
-1. **Validate envelope:** check `bases`, `metaclass`, `decorators`,
-   `raise_blockers`. Reject with `CannotRaiseToIRError(construct, location)`
-   for any unsupported shape (DEC-WI934-007).
-2. **Derive state shape from `__init__`:** for each `init_assignments[i]`,
-   if `value` is a `Name` and matches an `init_params[j]`, infer the field
-   type from `init_params[j].annotation` via `mapPythonType`. If `value` is
-   any non-Name expression, reject the class with
-   `CannotRaiseToIRError("non-trivial __init__")`.
-3. **Emit `ClassNameState` interface:** all fields `readonly`, types from
-   step 2.
-4. **Emit `ClassName_create`:** factory function taking the same params as
-   `__init__` (minus `self`), returning a frozen object literal.
-5. **Emit each method as a free function:** for each
-   `methods[i]` with `methodKind:"instance"`:
-   - Build a synthetic `FunctionSignature` with name
-     `ClassName_methodNameNormalized`, params `[{name:"self", tsType:"ClassNameState"}, ...rest]`,
-     return type from `return_annotation`.
-   - Pre-walk the method body wire AST and rewrite:
-     - `Name("self")` → `Name("self")` (unchanged — `self` is a regular
-       param at the IR level)
-     - `Attribute(value=Name("self"), attr=X)` (read) →
-       `Attribute(value=Name("self"), attr=normalizeIdentifier(X))`
-       (camelCased field read)
-     - `Assign(target=Attribute(value=Name("self"), ...))` → **reject**:
-       throw `ImpureFunctionError("self_mutation_outside_init")` (purity
-       violation, not envelope mismatch) — DEC-WI934-006
-     - `Call(func=Attribute(value=Name("self"), attr=X), args=[...])` →
-       `Call(func=Name("ClassName_normalizedX"), args=[Name("self"), ...args])`
-       — DEC-WI934-005
-   - Pass the rewritten body to existing `renderBody` to get TS source.
-   - For methods with `methodKind:"static" | "class"`, skip — those flow
-     through `module.functions[]` and the existing WI-890 path. Document
-     this short-circuit in `raise-class.ts` header.
-6. **Aggregate warnings** from `mapPythonType` calls and `renderBody`
-   returns; return a `RaisedClass`.
-
-The wire-AST rewriting is the load-bearing part. The rewriter must be a
-pure traversal over the `WireStmt` / `WireExpr` shapes — no I/O, no state
-beyond the class name and the method dispatch context. Recursive descent.
-
-**Note on the `Assign` wire shape:** the existing `_stmt_inner` in
-`libcst-parse.py` already rejects `attribute Assign` with an `Unsupported`
-wire node (line 689). That means `self.field = value` arrives in
-`method.body` as `{"type":"Unsupported","reason":"attribute Assign"}`. The
-raise-class body rewriter detects this pattern and converts it to the
-purity rejection (DEC-WI934-006). Alternative path: extend libcst-parse to
-emit a distinct `SelfAssign` wire shape — but that touches a non-required
-authority surface; recommend the detect-on-rewrite path.
-
-### 2.6 parse-fn-signature.ts integration
-
-Current state (WI-890): `extractOne` short-circuits `methodKind === "instance"`
-with `ImpureFunctionError`. We **keep that short-circuit** as the default
-behavior for instance methods that arrive via the flat `module.functions[]`
-list with dotted names.
-
-What changes: a new export `extractClassEnvelopes(envelope) → EnvelopeClass[]`
-walks `module.classes[]` and returns the typed shape that `raise-class.ts`
-consumes. This is a pure type-narrowing pass — no rejection logic, no
-purity logic, just wire → typed shape.
-
-Acceptance: `parse-fn-signature.test.ts` regression — existing test that
-asserts instance methods (without raise-class) reject with
-`ImpureFunctionError` still passes. NEW test: classes with raisable shape
-return a typed `EnvelopeClass[]` from the new export.
-
-### 2.7 purity-check.ts integration
-
-No behavioral change to existing exports. When `raise-class.ts` rewrites a
-method body and detects `self.field = value`, it throws
-`ImpureFunctionError(kind:"instance_method", detail:"self mutation outside __init__")`
-— reusing the existing `instance_method` kind. The error class and kind
-value already exist in `purity-check.ts`; no edits required in the file
-itself. The file remains in scope's allowed-paths so the implementer has
-room to add a regression test or detail tweak if absolutely needed.
-
-Open question for implementer: do we instead introduce a new
-`ImpurityKind` value `self_mutation_outside_init` for precision? Recommend
-yes if it costs ≤10 lines; recommend no if it cascades type changes
-through more than three files. Default: reuse `instance_method`.
-
-### 2.8 raise-function.ts integration
-
-No behavioral change to existing exports. The class raise path is invoked
-**before** the flat `module.functions[]` raise path; the orchestration lives
-in whatever caller composes the full module raise (today: the integration
-test composes it manually; tomorrow: a top-level `raiseModule` would
-compose both). The MVP integration test composes it manually:
-
+`proof/tests.fast-check.ts`:
 ```ts
-const envelope = await parsePythonSource(source);
-const classes = extractClassEnvelopes(envelope);
-const fnSigs = extractFunctionSignatures(envelope); // existing
-const classTsEmits = classes.map(raiseClass);
-const fnTsEmits = fnSigs.map(sig => renderFunctionDeclaration(sig, ...));
-const allTs = [
-  ...classTsEmits.flatMap(c => [c.stateInterfaceTs, c.factoryTs, ...c.methodsTs]),
-  ...fnTsEmits,
-];
+import * as fc from "fast-check";
+import { clamp } from "../impl.js";
+
+// Bounded
+fc.assert(
+  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
+    const [min, max] = a <= b ? [a, b] : [b, a];
+    const r = clamp(v, min, max);
+    return r >= min && r <= max;
+  }),
+);
+
+// Idempotent
+fc.assert(
+  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
+    const [min, max] = a <= b ? [a, b] : [b, a];
+    return clamp(clamp(v, min, max), min, max) === clamp(v, min, max);
+  }),
+);
+
+console.log("clamp property tests: ok");
 ```
 
-A future `raiseModule` orchestrator is out of scope for this WI; if the
-implementer finds it natural to introduce one, that's an optional addition
-inside scope.
-
-### 2.9 index.ts barrel
-
-New exports:
-```ts
-export {
-  raiseClass,
-  extractClassEnvelopes,
-  type EnvelopeClass,
-  type RaisedClass,
-} from "./raise-class.js";
+CLI invocation:
+```bash
+$ yakcc emit-atom ./clamp-emit
+stored: a7f3b2c8e9d1e4f5b6c7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9
 ```
 
-Note: `extractClassEnvelopes` lives in `parse-fn-signature.ts` per §2.6 but
-re-exports through `raise-class.js` is also acceptable. Whichever the
-implementer chooses, the barrel `index.ts` must surface both symbols.
+### 2.6 Variance fallback discipline (documented, not coded here)
 
-### 2.10 Substrate integration test (the bridge)
+The `yakcc-discovery.md` section will explicitly say:
 
-```ts
-// raise-class.integration.test.ts
-import { shaveSource } from "@yakcc/shave"; // exact entry point TBD by impl
-import { parsePythonSource } from "./libcst-parser.js";
-import { extractClassEnvelopes } from "./parse-fn-signature.js";
-import { raiseClass } from "./raise-class.js";
+> When `yakcc_resolve` returns no match:
+> 1. **Preferred path:** emit a triplet directory and run `yakcc
+>    emit-atom <dir>`. The CLI runs your property tests, persists if
+>    green. This is the canonical path; commons growth quality depends
+>    on you taking it.
+> 2. **Fallback path:** if you cannot author property tests (rare; only
+>    if the spec is too vague for fc.property), emit bare code. The
+>    substrate's PreToolUse hook will atomize it post-hoc and
+>    `@yakcc/variance` will synthesize property tests from the spec
+>    shape. Quality is bounded by synthesis; prefer path 1.
 
-test("class method body decomposes into ≥2 atoms via substrate", async () => {
-  const py = `
-class EmailValidator:
-    def __init__(self, max_length: int):
-        self.max_length = max_length
+No code in `packages/variance/**` changes. No code in this WI invokes
+variance. The discipline is enforced by *the LLM's choice of CLI surface*,
+mediated by the system prompt's preference ordering.
 
-    def validate(self, email: str) -> bool:
-        if len(email) > self.max_length:
-            return False
-        if '@' not in email:
-            return False
-        return True
-  `;
-  const envelope = await parsePythonSource(py);
-  const [cls] = extractClassEnvelopes(envelope);
-  const raised = raiseClass(cls);
-  const tsSource = [raised.stateInterfaceTs, raised.factoryTs, ...raised.methodsTs].join("\n\n");
+### 2.7 Alternatives considered & rejected
 
-  // Hand to the substrate
-  const result = await shaveSource(tsSource);
+**Alt A — Single JSON envelope (`emission.json` with embedded spec, impl,
+tests).** Rejected. `parseBlockTriplet` already accepts a directory; an
+envelope adds a parse step and breaks symmetry with the existing seed-corpus
+layout that the substrate (shave, compile-self, federation) already
+understands. DEC-WI954-002.
 
-  // Find atoms emitted from inside EmailValidator_validate
-  const validateAtoms = result.atoms.filter(a => a.origin === "EmailValidator_validate");
-  expect(validateAtoms.length).toBeGreaterThanOrEqual(2);
-});
-```
+**Alt B — `yakcc compile --emit <dir>`.** Rejected. `compile` lowers a
+spec to source code (the opposite direction). Overloading it would conflate
+two flows. DEC-WI954-003.
 
-The exact substrate entry point (`shaveSource`, `shaveModule`, etc.) is
-unknown until the implementer reads `packages/shave/src/index.ts`. The
-plan-level commitment: the test imports the standard public entry the
-substrate exposes; it does not reach into internals.
+**Alt C — Spawn `pnpm test` or `vitest` to run property tests.** Rejected
+in DEC-WI954-004. Too heavy (test framework startup ~3s vs ~200ms for
+`node --import tsx`); requires the emit-dir to be a workspace; adds
+indirect deps.
 
-### 2.11 Alternatives considered & rejected
+**Alt D — Dynamic `import()` inside the CLI process.** Rejected in
+DEC-WI954-004. ESM cycles with LLM-supplied code are unpredictable; child
+process gives a clean fail-shut boundary.
 
-**Alt A — Widen the IR envelope to include `class` syntax.** Rejected by
-`DEC-POLYGLOT-IR-CANONICAL-001` (ADR Q1). Atoms must remain in TS-subset
-IR. Adding `class` would break the bootstrap corpus Merkle roots.
+**Alt E — Re-implement `parseBlockTriplet` in CLI to avoid the
+`@yakcc/ir` dep boundary.** Rejected — `@yakcc/ir` is already a CLI
+dependency (it's how `shave` and `compile` work). Reuse, don't fork.
 
-**Alt B — Raise classes to TS `class` syntax and trust substrate to
-decompose method bodies.** Rejected — the TS-subset IR explicitly bans
-"class inheritance beyond plain data" (ADR Q1 envelope table). Raising to
-TS classes would produce invalid IR. Uncurry to free functions stays
-inside the envelope.
+**Alt F — Persist on red, mark the atom as `provisional`.** Rejected.
+Issue body says "persists via `storeBlock` only if green." Red emissions
+exit non-zero; the LLM is expected to fix the impl and re-emit.
 
-**Alt C — Keep WI-890's "instance method → impure" rejection and
-gate-list raisable classes via opt-in pragma comments.** Rejected — the
-goal is for the bs4 e2e exploration to "just work" against ordinary
-Python source, not source decorated with adapter-specific opt-ins.
+### 2.8 Research gate
 
-**Alt D — Reuse `ImpureFunctionError` with a new kind value for all
-class-shape rejections (as the operator dispatch suggested).** Rejected —
-`CannotRaiseToIRError` already exists in `@yakcc/contracts` with the right
-construct/location shape and is the documented taxonomy for
-envelope-out-of-range rejections per ADR Q2. Reusing the purity error
-would conflate structural rejections (multiple inheritance) with semantic
-rejections (mutable state). DEC-WI934-007.
-
-**Alt E — Split #933 and #934 into two separate PRs.** Rejected — the
-acceptance criterion of #934 (substrate decomposes the raised IR) is also
-the empirical proof of #933's principle. Landing them together gives the
-ADR a worked example in the same commit boundary.
-
-### 2.12 Research gate
-
-Domain is well-understood — the operator dispatch is unusually detailed,
-the issue bodies are precise, and the codebase has 6 months of `@decision`
-history covering the relevant authorities. No external research needed.
+The domain is well-understood: the codebase has six months of triplet
+shape documentation (`@yakcc/contracts/triplet.test.ts` with 20-seed-spec
+fixtures), the parser exists, the registry-write seam exists, the
+commons-submit hook is documented (`DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001`).
+The only novel mechanism is spawning `node --import tsx` for property
+tests, which is a 30-line shell-out using `child_process.spawn`. No
+external research needed.
 
 ---
 
 ## 3 — Wave decomposition
 
-One PR, two issues closed. The internal slices are coherent enough to ship
-together; splitting them yields fragmentary commits that can't prove the
-end-to-end claim.
+One PR, one work item closed. The slices are small enough to ship together;
+shipping them separately would land non-functional intermediate states
+(docs without consumer, or consumer without docs).
 
 | W-ID | Title | Weight | Gate | Deps | Issues closed | Integration |
 |---|---|---|---|---|---|---|
-| W-A | ADR Q11 + decision record | S | none | — | #933 (partial) | `docs/archive/developer/adr/polyglot-architecture.md`, `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` (new) |
-| W-B | libcst-parse.py `classes[]` emission | M | none | — | #934 (partial) | `packages/shave-python/scripts/libcst-parse.py` (extend) |
-| W-C | `extractClassEnvelopes` + types | S | none | W-B | #934 (partial) | `packages/shave-python/src/parse-fn-signature.ts` (extend), `parse-fn-signature.test.ts` (extend) |
-| W-D | `raise-class.ts` core + state derivation + factory | M | none | W-C | #934 (partial) | `packages/shave-python/src/raise-class.ts` (new), `raise-class.test.ts` (new) |
-| W-E | Method body rewriting (self.field, self.method(...)) | M | none | W-D | #934 (partial) | `raise-class.ts` (extend), `raise-class.test.ts` (extend) |
-| W-F | Failure-mode coverage (CannotRaiseToIRError taxonomy) | S | none | W-D | #934 (partial) | `raise-class.ts` (extend), `raise-class.test.ts` (extend) |
-| W-G | Integration test (substrate decomposes raised IR) | M | review | W-E, W-F | #934 (closes), #933 (closes) | `raise-class.integration.test.ts` (new), `package.json` (devDep `@yakcc/shave`) |
-| W-H | Barrel exports + final lint/typecheck | S | none | W-G | — | `packages/shave-python/src/index.ts` |
+| W-A | yakcc-discovery.md — emission section | S | none | — | #954 (partial) | `docs/system-prompts/yakcc-discovery.md` |
+| W-B | emit-atom.ts subcommand scaffold + argv parsing | S | none | — | #954 (partial) | `packages/cli/src/commands/emit-atom.ts` (new), `packages/cli/src/index.ts` (extend `runCli` + `printUsage`) |
+| W-C | Wire `parseBlockTriplet` → storeBlock-row construction | M | none | W-B | #954 (partial) | `emit-atom.ts` (extend) |
+| W-D | Property-test execution via `node --import tsx` | M | none | W-C | #954 (partial) | `emit-atom.ts` (extend) |
+| W-E | Registry open + commons-binding + storeBlock | S | none | W-D | #954 (partial) | `emit-atom.ts` (extend) |
+| W-F | Test fixtures + unit tests (happy + failure paths) | M | none | W-E | #954 (partial) | `packages/cli/src/commands/emit-atom.test.ts` (new), `packages/cli/src/commands/__fixtures__/emit-atom/**` (new) |
+| W-G | End-to-end integration test (real triplet → real registry → query roundtrip) | M | review | W-F | #954 (closes) | `emit-atom.test.ts` (extend) |
+| W-H | Final lint/typecheck + barrel hygiene | S | none | W-G | — | `packages/cli/src/index.ts` (final touches) |
 
-**Critical path:** W-B → W-C → W-D → W-E → W-G. Max width: W-A is doc-only
-and can land anywhere on the timeline (recommend first commit so the
-principle is visible in the PR history before the implementation). W-F can
-parallelize with W-E.
+**Critical path:** W-B → W-C → W-D → W-E → W-F → W-G. W-A is doc-only and
+can land first (recommend first commit so the LLM-facing principle is
+visible in the PR diff before the consumer).
 
-**Single PR recommendation:** the slices are mutually load-bearing for
-acceptance. A PR that only ships W-A through W-D is non-functional
-(emit-only, can't prove anything). A PR that ships W-A through W-H is the
-minimum viable proof.
+**Single PR:** the slices are mutually load-bearing. A PR that ships W-A
+through W-D is non-functional (no registry persistence). A PR through W-H
+is the minimum viable proof.
 
 ---
 
 ## 4 — Decision Log
 
-Pre-assigned decisions for this WI. The implementer adds `@decision`
-annotations at the point of implementation per issue #446 Gap 9.
-
 | DEC-ID | Title | Rationale |
 |---|---|---|
-| **DEC-WI933-001** | ADR Q11 verbatim placement | Append `## Q11 — Where does decomposition live?` after Q8 in `polyglot-architecture.md`. Use existing em-dash header style (normalize from issue body's period style). Anchor explicitly to `DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001`. |
-| **DEC-WI933-002** | Decision-record format & location | `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` is the canonical record. New directory `docs/decisions/` introduced by this WI (allowed in scope). Use the seven-section format from §2.3 above. |
-| **DEC-WI933-003** | Use existing `CannotRaiseToIRError`, not new class | `@yakcc/contracts/polyglot-errors.ts:34-46` already exports `CannotRaiseToIRError(construct, location, message?)`. Reuse — no contracts edit. Supersedes the operator-dispatch suggestion to introduce a new kind on `ImpureFunctionError`. |
-| **DEC-WI933-004** | MASTER_PLAN.md decision-log row deferred | `docs/archive/developer/MASTER_PLAN.md` is not in scope manifest's allowed_paths. The row append is filed as a follow-up doc slice (post-merge cleanup), not in this WI. |
-| **DEC-WI933-005** | `recursion.ts` header comment deferred | Issue #933 item (3) asks for a cross-link comment in `packages/shave/src/universalize/recursion.ts`. That file is in scope manifest's forbidden_paths. Defer to a follow-up substrate-side slice; the principle still lands canonically via the ADR + decision record. |
-| **DEC-WI934-001** | libcst envelope additive — `module.classes[]` alongside flat `module.functions[]` | Keeps WI-890 callers byte-equivalent. WI-890's dotted-name flat-list entries continue to exist and are still consumed by `parse-fn-signature.ts:extractOne`. The new structural `classes[]` is for `raise-class.ts` only. |
-| **DEC-WI934-002** | State-type derivation from simple `__init__` `self.foo = foo` patterns only | Walk `__init__.body` for `Assign(target=Attribute(value=Name("self"), attr=X), value=Name(Y))` where Y matches an `init_param`. Infer X's TS type from Y's annotation via `mapPythonType`. Anything else (`self.x = call()`, `self.x = a + b`, conditional self-assignment) → reject with `CannotRaiseToIRError("non-trivial __init__")`. |
-| **DEC-WI934-003** | Method uncurry naming: `ClassName_methodName` | ClassName preserved verbatim from Python (including leading underscore — DEC-WI934-008). methodName goes through existing `normalizeIdentifier`. State interface: `ClassNameState`. Factory: `ClassName_create`. |
-| **DEC-WI934-004** | Constructor lowers to `ClassName_create(...) → ClassNameState` returning frozen object literal | No mutation; pure factory. State interface is sibling-declared with all fields `readonly`. `Object.freeze(...)` is NOT emitted (raises an envelope question and the substrate handles immutability via the `readonly` discipline). |
-| **DEC-WI934-005** | Method-to-method calls rewrite via wire-AST traversal | Inside method body, `Call(func=Attribute(value=Name("self"), attr=X), args=[...args])` rewrites to `Call(func=Name("ClassName_normalizedX"), args=[Name("self"), ...args])`. Recursive descent — handles nested calls and arbitrary expression positions. Chained `self.foo().bar()` rewrites the inner Call; the outer `.bar()` is regular Attribute access on the result (DEC-WI934-009). |
-| **DEC-WI934-006** | `self.field` read OK; `self.field = value` write rejects with `ImpureFunctionError("instance_method", "self mutation outside __init__")` | Reads rewrite to `self.<normalized>`; writes outside `__init__` violate the purity assumption that uncurry-to-free-function depends on. Reuse existing `instance_method` kind (do NOT add a new ImpurityKind value unless trivially scoped). |
-| **DEC-WI934-007** | Failure-mode error class: `CannotRaiseToIRError` from `@yakcc/contracts`, NOT `ImpureFunctionError` | Per DEC-WI933-003: the class already exists and is the documented envelope-out-of-range taxonomy. Rejected constructs: non-trivial bases, metaclasses, `@property` decorators, `__slots__`, `__getattr__`, `__getattribute__`, multiple inheritance, generic params, abstract base classes, dataclass/pydantic decorators. `@classmethod` and `@staticmethod` are not rejected here — they live in the flat `module.functions[]` per WI-890. |
-| **DEC-WI934-008** | Leading-underscore class names preserved | `_PrivateClass.do_thing` → `_PrivateClass_doThing`. Consistent with existing `normalize-names.ts` Rule 2 (leading underscore preserved). State interface: `_PrivateClassState`. |
-| **DEC-WI934-009** | Chained `self.foo().bar()` is MVP-allowed if `bar` is a TS-subset method on the result type (e.g. `Array.map`); otherwise downstream `raise-body` will fail | Don't pre-reject in raise-class — let the substrate or raise-body catch it. Document as known MVP edge in `raise-class.ts` header. |
-| **DEC-WI934-010** | Integration test consumes `@yakcc/shave` as workspace dev dep | Add to `packages/shave-python/package.json` `devDependencies`: `"@yakcc/shave": "workspace:*"`. Read-only consumption — substrate source is not edited. |
-| **DEC-WI934-011** | Backward compatibility: WI-890 short-circuit path retained | Methods in `module.functions[]` flat list (dotted names from WI-890) continue to flow through `extractOne` and continue to reject instance methods with `ImpureFunctionError`. Classes in the new `module.classes[]` flow through `raise-class`. A class that successfully raises via `raise-class` shadows its `module.functions[]` dotted-name entries (the implementer chooses whether to filter out shadowed entries upstream or downstream — recommend downstream in `extractFunctionSignatures` so the existing function-only consumers continue to see the dotted entries if they want them). |
-| **DEC-WI934-012** | Test fixture canonical example: `EmailValidator` from #934 issue body | The raise-class.test.ts uses `EmailValidator` as the canonical worked example so the test source mirrors the issue body's example. Cross-reference in the test file comment. |
+| **DEC-WI954-001** | MVP triplet ingest is TypeScript-only; format DOC enumerates ts/py/go vocabulary | The CLI initially accepts `impl.ts` + `proof/tests.fast-check.ts`. The discovery doc explicitly lists `impl.{ts,py,go}` and `proof/tests.fast-check.{ts,py}` as the canonical vocabulary the LLM may emit, with a note that Python and Go ingest are deferred. This keeps the LLM-facing prompt aligned with the long-term shape while bounding implementation. |
+| **DEC-WI954-002** | Directory triplet, not envelope | `parseBlockTriplet` (`@yakcc/ir/block-parser.ts`) already consumes directory triplets matching the seed-corpus layout. Symmetry with seeds means a stored atom from `emit-atom` is byte-indistinguishable from a seeded atom; downstream tools (shave, compile-self, federation) work unchanged. Markdown/YAML/JSON envelope adds parse complexity for no benefit. |
+| **DEC-WI954-003** | Subcommand name: `yakcc emit-atom <dir>` | "Emit" matches the LLM-side semantics ("I emit an atom triplet, the CLI receives it"). Avoids overloading `compile` (which lowers spec → source; conceptually inverse). Avoids "accept" (implies a moderation decision the CLI isn't making). |
+| **DEC-WI954-004** | Property-test execution via child process: `node --import tsx <test-file>` | Fastest fail-shut boundary. ~200ms startup vs ~3s for vitest. Tests are plain top-level `fc.assert` calls — no test framework runner needed. Matches the existing seed-corpus test file convention (`packages/seeds/src/blocks/digit/proof/tests.fast-check.ts`). Stderr/stdout captured; non-zero exit → property failed. |
+| **DEC-WI954-005** | Registry path + commons-binding: reuse `propose.ts` pattern | `openRegistry(registryPath, { commonsSubmit })` via `makeCommonsBinding({ registryPath, airgapped })` — identical to `propose.ts:92-104`. Default `registryPath` is `DEFAULT_REGISTRY_PATH` (`.yakcc/registry.sqlite`). Commons-push fires at storeBlock seam per `DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001`. |
+| **DEC-WI954-006** | Worked example in yakcc-discovery.md: `clamp(value, min, max)` | Small, complete, language-agnostic in intent, with two clear property-test cases (bounded + idempotent). The full directory listing is reproduced in the doc so the LLM sees the canonical layout. |
+| **DEC-WI954-007** | Strict-subset validation is consumed via `parseBlockTriplet`, not re-implemented | `parseBlockTriplet` already invokes `validateStrictSubset` from `@yakcc/ir`. The CLI surfaces `result.validation.ok` + the `ValidationError[]` list verbatim. Exit code 3 on strict-subset failure. |
+| **DEC-WI954-008** | Test-file cwd convention: spawn with `cwd = <emitDir>`, import `../impl.js` | Test file lives in `<emitDir>/proof/tests.fast-check.ts` and imports the impl as `../impl.js` (tsx resolves `.js` → `.ts`). The CLI does NOT copy files into `tmp/`. This convention matches the existing seed-corpus layout. |
+| **DEC-WI954-009** | Foreign triplets out of scope for `emit-atom` MVP | `@yakcc/contracts` has `ForeignTripletFields` for npm-package / node-builtin shims. Foreign atoms have no `impl.ts` / `proof/tests.fast-check.ts` — they reference a package symbol. `emit-atom` handles local triplets only in this WI; foreign emission deferred. Documented in yakcc-discovery.md. |
+| **DEC-WI954-010** | Variance fallback discipline enforced by surface choice, not by code change | This WI does NOT modify `@yakcc/variance`. The discipline is documented in `yakcc-discovery.md`: triplet emission → `yakcc emit-atom` (canonical); bare-code emission → existing PreToolUse path → storeBlock-time atomize → variance synthesis (fallback). The LLM's choice of surface enforces the ordering. |
+| **DEC-WI954-011** | Distinct exit codes per gate (0..6) | 0=ok, 1=usage, 2=spec invalid, 3=strict-subset, 4=manifest invalid, 5=property test failed, 6=storeBlock failed. Encoded as named constants in `emit-atom.ts`. Asserted in tests. Lets downstream automation (LLM session telemetry, CI) distinguish "the LLM emitted a bad spec" from "the LLM's impl violates strict-subset" from "the LLM's tests caught a real bug in the LLM's impl" — these are different LLM-quality signals. |
+| **DEC-WI954-012** | Fixture layout: `packages/cli/src/commands/__fixtures__/emit-atom/` | New fixtures directory under the CLI commands tree, in scope. Contains at minimum: `clamp-green/` (happy path), `clamp-strict-violation/` (impl uses banned construct), `clamp-bad-spec/` (missing required SpecYak field), `clamp-failing-tests/` (impl deliberately wrong; LLM-authored tests catch it). |
+| **DEC-WI954-013** | `--skip-tests` flag for CI seeding bypass | Allows CI scripts to ingest pre-vetted triplets without re-running tests (e.g. bulk seed from a known-good registry export). Documented as DANGEROUS in usage text — for human-LLM emission this should never be used. The flag exists so the same CLI surface covers both "LLM emission gate" and "bulk admin seeding" without needing two commands. |
+| **DEC-WI954-014** | Test execution timeout: 30s per file | Spawned `node --import tsx` runs property tests; reasonable upper bound. Exceeding the timeout → kill the child, exit 5 with "property tests exceeded 30s timeout". The implementer encodes this as a configurable constant `EMIT_ATOM_TEST_TIMEOUT_MS` so future tuning is one-line. |
 
-Each row above maps 1:1 to an `@decision` annotation the implementer must
-emit at the point of implementation.
+Each row maps 1:1 to an `@decision` annotation the implementer emits at the
+point of implementation.
 
 ---
 
@@ -639,92 +567,123 @@ emit at the point of implementation.
 
 | Test | Location | Asserts |
 |---|---|---|
-| Class envelope shape | `libcst-parser.test.ts` (extend) | A class fixture produces `module.classes[]` with `name`, `bases`, `methods`, `init_assignments`, etc. |
-| Module backward-compat | `libcst-parser.test.ts` (extend) | A module-only fixture (no classes) produces `module.classes: []` and identical `module.functions[]` to pre-WI-934. |
-| `extractClassEnvelopes` typing | `parse-fn-signature.test.ts` (extend) | Walks envelope; returns typed `EnvelopeClass[]`. |
-| WI-890 instance-method short-circuit regression | `parse-fn-signature.test.ts` (existing) | Continues to throw `ImpureFunctionError` for instance methods in `module.functions[]` flat list. |
-| State-type derivation — simple | `raise-class.test.ts` | `__init__(self, x: int): self.x = x` derives `interface ClassState { readonly x: number }` and `Class_create(x: number): ClassState { return { x }; }`. |
-| State-type derivation — multi-field | `raise-class.test.ts` | Multiple `self.field = param` assignments derive a multi-field interface. |
-| State-type derivation — rejects computed | `raise-class.test.ts` | `self.x = some_call()` → `CannotRaiseToIRError("non-trivial __init__")`. |
-| Method body rewrite — self.field read | `raise-class.test.ts` | `self.max_length` reference → `self.maxLength` in raised TS. |
-| Method body rewrite — self.method call | `raise-class.test.ts` | `self.check_length(email)` → `EmailValidator_checkLength(self, email)`. |
-| Method body rewrite — self.field write rejects | `raise-class.test.ts` | `self.count = 1` outside `__init__` → `ImpureFunctionError("instance_method", "self mutation outside __init__")`. |
-| Failure mode — non-trivial base | `raise-class.test.ts` | `class Foo(Bar):` (Bar != object) → `CannotRaiseToIRError("non_trivial_base")`. |
-| Failure mode — metaclass | `raise-class.test.ts` | `class Foo(metaclass=Meta):` → `CannotRaiseToIRError("metaclass")`. |
-| Failure mode — property decorator | `raise-class.test.ts` | `@property def foo` → `CannotRaiseToIRError("property_decorator")`. |
-| Naming — leading underscore preserved | `raise-class.test.ts` | `_Private.do_thing` → `_Private_doThing`. |
-| Canonical worked example — EmailValidator | `raise-class.test.ts` | The full EmailValidator class from #934 issue body raises to source matching the documented TS output. |
-| **Substrate integration** | `raise-class.integration.test.ts` | EmailValidator raised → fed through `@yakcc/shave` standard entry → **≥2 atoms** emitted from `EmailValidator_validate` (which has ≥3 statements). |
+| Argv parsing | `emit-atom.test.ts` | Missing positional → exit 1. Unknown flag → exit 1. `--help`-like → usage. |
+| Missing files in dir | `emit-atom.test.ts` | Missing `spec.yak` / `impl.ts` / `proof/manifest.json` / `proof/tests.fast-check.ts` → exit 1 with named-file error. |
+| Spec invalid | `emit-atom.test.ts` | `clamp-bad-spec` fixture (missing `level` field) → exit 2; storeBlock NOT called. |
+| Strict-subset violation | `emit-atom.test.ts` | `clamp-strict-violation` fixture (impl uses banned construct like dynamic import) → exit 3; storeBlock NOT called. |
+| Manifest invalid | `emit-atom.test.ts` | A fixture with `proof/manifest.json` containing `kind: "smt_cert"` (L2-only) → exit 4; storeBlock NOT called. |
+| Property test failure | `emit-atom.test.ts` | `clamp-failing-tests` fixture (impl returns value unclamped; LLM-authored test catches it) → exit 5; stderr surfaces the counterexample; storeBlock NOT called. |
+| Happy path: storeBlock fires | `emit-atom.test.ts` | `clamp-green` fixture → exit 0; `stored: <root>` printed; `--json` form returns a valid `{merkleRoot, specHash, stored:true}` object. |
+| Round-trip persistence | `emit-atom.test.ts` (integration) | After a green `emit-atom`, the stored block is queryable via `selectBlocks(specHash)` and `selectByMerkleRoot(root)` returns matching impl + manifest + artifact bytes. |
+| `--skip-tests` bypasses gate | `emit-atom.test.ts` | A fixture whose property tests would fail still stores when `--skip-tests` is set (proving the flag is a real bypass; the implementer prints a warning to stderr). |
+| Custom `--registry` honored | `emit-atom.test.ts` | The CLI opens the registry at the path specified by `--registry`, not the default. |
+| Exit code enumeration | `emit-atom.test.ts` | All six exit codes (0..6) covered by at least one test case. |
+| Subcommand registration | `packages/cli/src/index.test.ts` (extend) | `runCli(["emit-atom"])` exits 1 with usage error; `runCli(["--help"])` prints `emit-atom` in the usage text. |
 
-Minimum 8 test cases in raise-class.test.ts per #934 acceptance bullet 3.
-Listed above: 11 distinct unit cases + 1 integration case — comfortably
-clears the bar.
+Minimum coverage clears WI-954's acceptance bullets:
+- "LLM session emits a triplet for a novel atom; the CLI parses it, runs
+  the property tests, persists if green" — covered by happy-path +
+  round-trip tests.
+- "Resulting atom carries the LLM-authored property tests (verifiable via
+  `yakcc get-atom <root>` showing the proof origin)" — round-trip test
+  asserts artifact bytes match what was emitted.
+- "`@yakcc/variance` still runs for non-triplet emissions (the fallback
+  works)" — out-of-scope test (variance package is forbidden); covered by
+  documentation in yakcc-discovery.md + reference to existing variance
+  tests untouched.
+- "New triplet format documented in `docs/system-prompts/yakcc-discovery.md`
+  with at least one worked example" — covered by W-A and verified by the
+  reviewer reading the doc.
 
 ### 5.2 Required evidence (paste to PR description)
 
-- Raw output of `pnpm --filter @yakcc/shave-python test` (all green).
-- Raw output of `pnpm --filter @yakcc/shave-python typecheck`.
-- Raw output of `pnpm --filter @yakcc/shave-python lint`.
-- The integration test's atom-count assertion logged (so the proof is
-  visible without rerunning).
-- bs4 e2e re-exploration delta — count of methods now extracting vs.
-  pre-WI-934 baseline. Even one new file with non-zero functions is a win;
-  the goal is directional evidence, not a hard number.
+- Raw output of `pnpm --filter @yakcc/cli test` (all green; emit-atom
+  suite visible).
+- Raw output of `pnpm --filter @yakcc/cli typecheck`.
+- Raw output of `pnpm --filter @yakcc/cli lint`.
+- Live invocation of `yakcc emit-atom <fixture-dir>` against the real
+  `clamp-green` fixture, showing the printed `stored: <root>` and the
+  round-trip query confirming persistence.
+- The four-fixture test directory listing under
+  `packages/cli/src/commands/__fixtures__/emit-atom/` so the reviewer can
+  see what the LLM-authored shape looks like in practice.
 
 ### 5.3 Required real-path checks
 
-- bs4 4.14.3 e2e exploration after this PR lands shows at least one
-  previously-empty production file now yielding functions via the
-  raise-class fork. The implementer captures the file path and the count
-  delta in the PR description.
-- The substrate-integration test's atom count is observed live (not
-  faked / mocked) — the test imports and invokes the real
-  `@yakcc/shave` entry point.
+- End-to-end: build a `clamp` triplet directory under `tmp/`, invoke
+  `yakcc emit-atom tmp/clamp-emit --registry tmp/test-registry.sqlite`,
+  observe a 64-char BlockMerkleRoot, then `yakcc propose
+  tmp/clamp-emit/spec.yak --registry tmp/test-registry.sqlite` confirms
+  the atom is now matchable by spec.
+- Verify the LLM-authored property-test execution actually catches a
+  wrong impl: edit `tmp/clamp-emit/impl.ts` to return `value` unclamped,
+  re-invoke `emit-atom`, observe exit 5 with a fast-check counterexample.
 
 ### 5.4 Required authority invariants
 
-- **Decomposition lives at substrate.** No code in `raise-class.ts` (or
-  anywhere in `@yakcc/shave-python`) calls `decomposableChildrenOf`,
-  `recurse`, or any substrate-private internals. Grep proof in PR
-  description: `rg 'decomposableChildrenOf|recurse\\b' packages/shave-python/src/`
-  returns zero hits.
-- **Existing free-function path unchanged.** `raise-function.ts` and
-  `raise-body.ts` are read-only consumed; their exported behavior is
-  identical to post-WI-890. Verified by existing tests still passing.
-- **TS-subset IR conformance.** Raised TS source from `raise-class` passes
-  the `@yakcc/ir` strict-subset validator (the integration test exercises
-  this indirectly by feeding the source to `@yakcc/shave`).
+- **No edits to forbidden packages.** Grep proof in PR description:
+  ```bash
+  git diff main...HEAD -- packages/ir packages/contracts packages/registry packages/variance packages/hooks-base packages/mcp-registry packages/shave packages/compile packages/shave-python packages/compile-python packages/federation bootstrap .github .claude
+  ```
+  Must return empty.
+- **`parseBlockTriplet` is called, not re-implemented.** Grep proof:
+  ```bash
+  rg "parseBlockTriplet" packages/cli/src/commands/emit-atom.ts
+  ```
+  Must show ≥1 hit (import + call).
+- **`storeBlock` is called via `openRegistry`, not via direct sqlite.**
+  Grep proof:
+  ```bash
+  rg "better-sqlite3|new Database" packages/cli/src/commands/emit-atom.ts
+  ```
+  Must return empty.
+- **`fast-check`/`tsx` are only invoked via child process, not imported
+  in the CLI src.** Grep proof:
+  ```bash
+  rg "from ['\"]fast-check['\"]|from ['\"]tsx['\"]" packages/cli/src/commands/emit-atom.ts
+  ```
+  Must return empty (the CLI spawns tsx as a tool; it doesn't import
+  fast-check in the CLI process).
 
 ### 5.5 Required integration points
 
-- `@yakcc/shave` consumed as workspace dev dep — exact entry point named
-  in `raise-class.integration.test.ts`.
-- `@yakcc/contracts/polyglot-errors.ts` — `CannotRaiseToIRError` imported
-  by `raise-class.ts`.
-- `packages/shave-python/src/index.ts` — `raise-class` symbols
-  barrel-exported.
+- `@yakcc/ir` — `parseBlockTriplet` imported.
+- `@yakcc/registry` — `openRegistry`, `BlockTripletRow` type imported.
+- `@yakcc/contracts` — `canonicalize`, `validateSpecYak` types
+  transitively used; no direct import needed if `parseBlockTriplet`
+  already exposes everything.
+- `packages/cli/src/lib/commons-submit.ts` — `makeCommonsBinding`
+  imported.
+- `packages/cli/src/lib/yakccrc.ts` — `readRc` for airgapped detection
+  (mirror `propose.ts`).
+- `packages/cli/src/commands/registry-init.ts` — `DEFAULT_REGISTRY_PATH`
+  imported.
+- `packages/cli/src/index.ts` — new `case "emit-atom":` branch in
+  `runCli`; usage text line added to `printUsage`; `emitAtom` import.
 
 ### 5.6 Forbidden shortcuts
 
-- **Do NOT modify `packages/shave/src/**`.** The integration test must
-  consume the existing public entry; if no suitable entry exists, the
-  implementer escalates rather than reaching for substrate internals.
-- **Do NOT add adapter-side decomposition logic.** No methods on
-  `raise-class.ts` named `findAtoms`, `decomposeMethodBody`, or any
-  equivalent. The only walker in `raise-class.ts` is the body rewriter
-  (self.field / self.method substitution) — that's not decomposition,
-  that's emit-time transformation of the source-to-IR boundary.
-- **Do NOT modify `packages/contracts/**`.** `CannotRaiseToIRError` is
-  consumed as-is from existing exports.
-- **Do NOT modify `packages/shave-python/src/raise-body.ts`,
-  `libcst-parser.ts`, `type-map.ts`, `normalize-names.ts`.** Forbidden by
-  scope manifest. Compose, don't extend.
-- **Do NOT modify `bootstrap/expected-roots.json`.** CI-only writer.
-- **Do NOT add `recursion.ts` header comment.** Deferred to follow-up per
-  DEC-WI933-005.
-- **Do NOT silently elide rejected classes.** Every rejected class must
-  throw `CannotRaiseToIRError` with a meaningful `construct` string and a
-  `SourceLocation` (file/line/col).
+- **Do NOT modify `packages/variance/**`.** Variance behavior is
+  unchanged by this WI. Forbidden by scope manifest.
+- **Do NOT modify `packages/ir/**`, `packages/contracts/**`,
+  `packages/registry/**`.** Forbidden by scope manifest.
+- **Do NOT re-implement `parseBlockTriplet`.** Import and call it from
+  `@yakcc/ir`.
+- **Do NOT bypass property-test execution silently.** If the LLM didn't
+  provide `proof/tests.fast-check.ts`, exit 1 with a clear error.
+  `--skip-tests` is the only legitimate bypass and it logs a stderr
+  warning.
+- **Do NOT call variance synthesis as a fallback inside `emit-atom`.**
+  The variance fallback fires elsewhere (PreToolUse + storeBlock-time
+  atomize); `emit-atom` operates strictly on triplet-formatted
+  emissions.
+- **Do NOT add a new fast-check dependency to the CLI package.**
+  fast-check runs in the spawned child process (which has tsx +
+  fast-check available via the LLM-emitted test file's own resolution;
+  in the test fixtures, the fixture-local resolution picks up the
+  workspace fast-check). If a CLI-test-runtime dep is needed, request
+  scope widening for `packages/cli/package.json` before starting.
+- **Do NOT persist on red.** Exit codes 2..5 must skip `storeBlock`.
 
 ### 5.7 Ready-for-guardian definition
 
@@ -732,28 +691,35 @@ The reviewer may issue `REVIEW_VERDICT: ready_for_guardian` when:
 
 1. All required tests (§5.1) exist and pass on current HEAD.
 2. All required evidence (§5.2) is recorded in the PR description.
-3. `pnpm --filter @yakcc/shave-python test typecheck lint` all green —
-   raw output captured.
-4. The grep invariant (§5.4 bullet 1) returns zero hits.
-5. The substrate integration test's atom count ≥2 is observed in the test
-   output (not asserted only — the count is logged).
-6. ADR Q11 section is verbatim from issue body (with em-dash header
-   normalization) and the decision record file exists at the canonical
-   path.
+3. `pnpm --filter @yakcc/cli test typecheck lint` all green — raw
+   output captured.
+4. All four required grep invariants (§5.4) return the expected
+   results.
+5. The live round-trip real-path check (§5.3) is reproduced in the PR
+   description (or a developer note shows the exact commands + output).
+6. `docs/system-prompts/yakcc-discovery.md` contains the emission
+   section with the `clamp` worked example, the canonical directory
+   shape, the language matrix (ts/py/go), and the variance-fallback
+   discipline statement.
 7. No edits exist outside scope manifest's allowed_paths.
-8. All `@decision` annotations corresponding to DEC-WI933-001..005 and
-   DEC-WI934-001..012 are present at their respective implementation
-   points.
-9. No regressions: WI-890 short-circuit test, all WI-782 slice tests,
-   all WI-888..#913 tests, all WI-890 + WI-921 + WI-923 tests still pass.
+8. All `@decision` annotations corresponding to DEC-WI954-001..014 are
+   present at their respective implementation points.
+9. No regressions: existing CLI tests, `index.test.ts`, and the rest
+   of `pnpm test` at workspace level still pass.
 
 ### 5.8 Rollback boundary
 
-Single PR. If the substrate-integration assertion fails (atom count <2 or
-substrate throws), the PR is held — no partial merge. Either the raise
-produces malformed IR (fix in `raise-class.ts`) or the substrate has a gap
-on this exact IR shape (file a separate substrate WI; do **not** patch
-`raise-class.ts` to compensate per DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001).
+Single PR. If the round-trip test fails (storeBlock rejects, or the
+re-queried atom doesn't match the emission bytes), the PR is held — no
+partial merge. The likely cause is either a mismatch in how the CLI
+constructs `BlockTripletRow` vs. how `seed.ts` does it (compare against
+`packages/seeds/src/seed.ts:83-117`) or a strict-subset gap surfaced by
+the LLM-shaped fixture.
+
+If the property-test execution path is flaky in CI (timing, tsx
+availability), the implementer escalates rather than masking with
+retries; the fail-shut child-process boundary is load-bearing for the
+gate's credibility.
 
 ---
 
@@ -761,92 +727,99 @@ on this exact IR shape (file a separate substrate WI; do **not** patch
 
 ### 6.1 Allowed paths (writes)
 
-- `packages/shave-python/scripts/libcst-parse.py` — extend with class envelope walker
-- `packages/shave-python/src/raise-class.ts` — new module
-- `packages/shave-python/src/raise-class.test.ts` — new unit tests
-- `packages/shave-python/src/raise-class.integration.test.ts` — new substrate-integration test
-- `packages/shave-python/src/raise-function.ts` — minor orchestration touch-ups (optional, only if needed)
-- `packages/shave-python/src/raise-function.test.ts` — regression-fixture additions (optional)
-- `packages/shave-python/src/parse-fn-signature.ts` — add `extractClassEnvelopes` + `EnvelopeClass` type; preserve `extractOne` short-circuit unchanged
-- `packages/shave-python/src/parse-fn-signature.test.ts` — new cases for class envelope extraction; existing WI-890 cases untouched
-- `packages/shave-python/src/purity-check.ts` — read-only consumed but kept in allowed list so the implementer can add a small detail tweak if needed
-- `packages/shave-python/src/purity-check.test.ts` — coverage if the above changes
-- `packages/shave-python/src/libcst-parser.test.ts` — extend with class envelope shape assertions via real libcst subprocess
-- `packages/shave-python/src/index.ts` — add barrel exports for `raise-class` symbols
-- `packages/shave-python/package.json` — add `@yakcc/shave: workspace:*` to devDependencies (DEC-WI934-010)
-- `docs/archive/developer/adr/polyglot-architecture.md` — append `## Q11` section
-- `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` — new file
-- `docs/decisions/**` — implementer may add cross-link index or README if natural
-- `tmp/**` — any working notes, fixtures, evidence captures
+- `packages/cli/src/commands/emit-atom.ts` — new subcommand handler
+- `packages/cli/src/commands/emit-atom.test.ts` — unit + integration tests
+- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-green/**` — happy-path fixture
+- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-strict-violation/**` — strict-subset failure fixture
+- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-bad-spec/**` — spec validation failure fixture
+- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-failing-tests/**` — property test failure fixture
+- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-bad-manifest/**` — manifest validation failure fixture
+- `packages/cli/src/index.ts` — register subcommand in `runCli` + update `printUsage`
+- `packages/cli/src/index.test.ts` — assert `emit-atom` is wired and surfaced
+- `docs/system-prompts/yakcc-discovery.md` — append "Emission shape" section
+- `docs/decisions/DEC-WI954-EMIT-ATOM-001.md` — optional canonical decision record (mirrors DEC-WI954-001..014 in concise form)
+- `tmp/**` — working notes, ad-hoc test triplets, evidence captures
 - `PLAN.md` — this file (planner-owned)
 
 ### 6.2 Required paths (must be modified)
 
-- `packages/shave-python/scripts/libcst-parse.py` — class envelope walker is load-bearing
-- `packages/shave-python/src/raise-class.ts` — the WI doesn't exist without this file
-- `docs/archive/developer/adr/polyglot-architecture.md` — Q11 section is the #933 deliverable
+- `docs/system-prompts/yakcc-discovery.md` — emission section is the W-A deliverable
+- `packages/cli/src/commands/emit-atom.ts` — the WI doesn't exist without this file
+- `packages/cli/src/index.ts` — subcommand must be wired into `runCli`
 
 ### 6.3 Forbidden paths (must not touch)
 
-- `packages/shave-python/src/raise-body.ts` — compose, don't extend
-- `packages/shave-python/src/libcst-parser.ts` — compose, don't extend
-- `packages/shave-python/src/type-map.ts` — compose, don't extend
-- `packages/shave-python/src/normalize-names.ts` — compose, don't extend
-- `packages/compile-python/**` — out of scope
-- `packages/cli/**` — out of scope
-- `packages/shave/src/**` — substrate is canonical
-- `packages/compile/**` — out of scope
-- `packages/contracts/**` — `CannotRaiseToIRError` already exports
-- `packages/ir/**` — IR is canonical
-- `bootstrap/**` — CI-only writer
-- `.github/**` — CI surface out of scope
-- `.claude/**` — runtime out of scope
+- `packages/shave-python/**`
+- `packages/compile-python/**`
+- `packages/shave/**`
+- `packages/compile/**`
+- `packages/contracts/**`
+- `packages/registry/**`
+- `packages/federation/**`
+- `packages/hooks-base/**`
+- `packages/ir/**`
+- `packages/variance/**`
+- `packages/mcp-registry/**`
+- `bootstrap/**`
+- `.github/**`
+- `.claude/**`
 
 ### 6.4 Expected state authorities touched
 
-- Python wire envelope (libcst-parse.py output shape) — additive extension
-- Per-package public TypeScript surface (`packages/shave-python/src/index.ts`)
-- Per-package `package.json` `devDependencies` (`@yakcc/shave` added)
-- ADR + decision-log doc tree (additive: new section, new file, new directory)
+- LLM-facing system prompt content (`docs/system-prompts/yakcc-discovery.md`) — additive extension
+- CLI top-level command vocabulary (`packages/cli/src/index.ts`) — new subcommand registered
+- CLI commands directory — new module + new test + new fixtures
+- No data-plane authority touched. No registry schema change. No new
+  state domain.
 
 ### 6.5 Scope manifest sync (orchestrator action before dispatching implementer)
 
-The dispatched scope summary does **not** explicitly enumerate
-`packages/shave-python/package.json`, and the runtime fnmatch glob
-behavior noted in operator memory `feedback_scope_manifest_fnmatch_globs.md`
-requires both `**` and `*` shapes to defeat the zero-segment quirk. Before
-the implementer dispatches, the orchestrator runs:
+The dispatched scope summary enumerates `packages/cli/src/commands/*.ts`
+and `packages/cli/src/commands/**/*.ts`, which covers the new
+`emit-atom.ts` and the `__fixtures__/` subtree. However, per operator
+memory `feedback_scope_manifest_fnmatch_globs.md`, both `*` and `**` shapes
+are required to defeat the fnmatch zero-segment quirk for top-level files.
+The provided scope already lists both — good.
 
-```bash
-cc-policy workflow scope-sync wi-933-934-class-raise \
-  --work-item-id wi-933-934-impl \
-  --scope-file tmp/wi-933-934-scope.json
-```
+**Critical scope-widening checks before dispatching the implementer:**
 
-Where `tmp/wi-933-934-scope.json` mirrors §6.1–§6.3 with both
-`packages/shave-python/src/*.ts` and `packages/shave-python/src/**/*.ts`
-glob shapes and explicitly lists:
+1. **Is `packages/cli/package.json` in scope?** It is NOT enumerated in
+   the dispatched scope. If the implementer needs to add `tsx` as a CLI
+   `dependency` (not a devDependency — `tsx` is invoked from the CLI
+   process), the scope must widen to include `packages/cli/package.json`.
+   **Action:** verify whether `tsx` is already in
+   `packages/cli/package.json` `dependencies` (it probably is, since
+   `compile-python.ts` or similar may shell out). If yes, no widening
+   needed. If no, widen scope before dispatch:
+   ```bash
+   cc-policy workflow scope-sync wi-954-triplet-emission \
+     --work-item-id wi-954-impl \
+     --scope-file tmp/wi-954-scope.json
+   ```
+   where `tmp/wi-954-scope.json` adds `packages/cli/package.json` to
+   allowed_paths.
 
-- `packages/shave-python/package.json`
-- `packages/shave-python/scripts/libcst-parse.py`
-- `packages/shave-python/src/raise-class.ts`
-- `packages/shave-python/src/raise-class.test.ts`
-- `packages/shave-python/src/raise-class.integration.test.ts`
-- `packages/shave-python/src/parse-fn-signature.ts`
-- `packages/shave-python/src/parse-fn-signature.test.ts`
-- `packages/shave-python/src/purity-check.ts`
-- `packages/shave-python/src/purity-check.test.ts`
-- `packages/shave-python/src/raise-function.ts`
-- `packages/shave-python/src/raise-function.test.ts`
-- `packages/shave-python/src/libcst-parser.test.ts`
-- `packages/shave-python/src/index.ts`
-- `docs/archive/developer/adr/polyglot-architecture.md`
-- `docs/decisions/**`
-- `docs/decisions/*.md`
-- `tmp/**`
-- `PLAN.md`
+2. **Is `docs/decisions/*.md` reachable?** The dispatched scope lists
+   `docs/decisions/*.md`. The implementer may optionally write
+   `docs/decisions/DEC-WI954-EMIT-ATOM-001.md` to mirror the decision
+   log in canonical form. No additional widening needed.
 
-Forbidden: as enumerated in §6.3.
+3. **Are `packages/cli/src/commands/__fixtures__/**` reachable?**
+   The dispatched scope's `packages/cli/src/commands/**/*.ts` glob covers
+   `__fixtures__/**/*.ts` (TS files inside the fixture). However the
+   fixtures also contain `.json` (spec.yak, proof/manifest.json) — does
+   the scope glob cover them? The dispatched scope lists
+   `packages/cli/src/commands/**/*.ts` only. **Action:** widen scope to
+   include `packages/cli/src/commands/**/*.json` and
+   `packages/cli/src/commands/**/*.yak` (yes, `spec.yak` is the filename
+   but contents are JSON — pick whichever extension is canonical;
+   `parseBlockTriplet` expects `spec.yak` as the filename). Add to
+   `tmp/wi-954-scope.json` before dispatch.
+
+The orchestrator must run `scope-sync` before dispatching the implementer.
+Without scope-sync, hook enforcement will deny writes to
+`packages/cli/src/commands/__fixtures__/emit-atom/clamp-green/spec.yak`
+when the implementer creates the fixture.
 
 ---
 
@@ -854,9 +827,9 @@ Forbidden: as enumerated in §6.3.
 
 None block the implementer. The planner-resolved open questions in §1.4
 cover everything that needs an answer before the implementer starts. If
-the implementer hits a real new ambiguity (e.g. the substrate's public
-entry point doesn't expose what the integration test needs), they escalate
-via SendMessage rather than guessing.
+the implementer hits a real new ambiguity (e.g. `parseBlockTriplet`
+exposes errors in a shape that doesn't cleanly map to the six exit
+codes), they escalate via SendMessage rather than guessing.
 
 ---
 
@@ -864,20 +837,27 @@ via SendMessage rather than guessing.
 
 After this WI lands (Guardian merges to main):
 
-- **DEC-WI933-004 follow-up:** file a tiny doc slice to append the
-  `DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001` row to
-  `docs/archive/developer/MASTER_PLAN.md` Decision Log table. Issue-only
-  for now.
-- **DEC-WI933-005 follow-up:** file a tiny substrate-side slice to add
-  the `recursion.ts` header comment per #933 item (3).
-- **Post-WI-934 follow-up:** re-run bs4 e2e exploration and snapshot the
-  count delta. If results show a meaningful lift but specific known
-  Python idioms are still blocked, file the next slice (e.g.
-  `@property` support, multiple inheritance, mutable instance state with
-  explicit opt-in).
-- **Polyglot expansion:** once #934 proves the uncurry pattern works for
-  Python, the Go and Rust adapters (when filed) can follow the exact
-  same pattern documented in the new ADR §Q11.
+- **Companion WI #953 (Gap A: `yakcc_resolve` MCP wiring)** becomes the
+  next planner work item. #953 delivers the LLM's discovery surface and
+  the system-prompt delivery mechanism (`yakcc-discovery.md` injection
+  into the MCP tool description or settings). With #953 + #954 landed,
+  the operator's directive (#950) is functionally complete for
+  TypeScript.
+- **Python triplet ingest** is the next follow-up after #953. The
+  emission DOC enumerates `impl.py` + `proof/tests.fast-check.py`; the
+  CLI extension adds language detection and a Python-side property-test
+  runner (likely `python -m pytest` or a fast-check-py equivalent).
+- **Go triplet ingest** follows the Python pattern.
+- **Foreign atom emission** (`@yakcc/contracts` `ForeignTripletFields`)
+  may also surface as a separate CLI flag (`yakcc emit-atom --foreign
+  <pkg> --export <symbol>`) if commons growth observation shows enough
+  foreign emissions to justify a dedicated path.
+- **Variance synthesis comparison telemetry:** once `emit-atom` is in
+  use, compare commons quality (e.g. property-test counterexample-find
+  rate via mutation testing) between LLM-authored triplets and
+  variance-synthesized triplets. The hypothesis: LLM-authored tests
+  catch more mutants. This is a measurement WI, not an implementation
+  one.
 
 ---
 
@@ -888,13 +868,14 @@ After this WI lands (Guardian merges to main):
 - Every guardian-bound work item has a Scope Manifest (§6)
 - No work item relies on narrative completion — every claim has a
   measurable check (§5.1–§5.4 are all observable)
-- Alternatives gate cleared (§2.11)
+- Alternatives gate cleared (§2.7)
 - Decisions logged (§4)
 - Forbidden shortcuts named (§5.6)
 - Ready-for-guardian definition is executable (§5.7)
 - Rollback boundary defined (§5.8)
+- Scope-sync action enumerated before implementer dispatch (§6.5)
 
 Plan is ready for the implementer.
 
 PLAN_VERDICT: next_work_item
-PLAN_SUMMARY: WI-933/934 plan complete — ADR Q11 + decision record at docs/decisions/, plus raise-class.ts uncurry implementation with state-type derivation, method body rewriting, and substrate-integration test asserting ≥2 atoms per method body. Next: guardian:provision (worktree already exists at .worktrees/feature-933-934-class-raise; implementer can be dispatched directly with the §6 scope manifest synced to runtime per §6.5).
+PLAN_SUMMARY: WI-954 plan complete — new `yakcc emit-atom <dir>` CLI subcommand consuming the existing `parseBlockTriplet` + `storeBlock` substrate, plus LLM-authored property-test execution via spawned `node --import tsx`, plus emission-format documentation in `yakcc-discovery.md`. Next: guardian:provision to verify scope-sync (need to widen for `packages/cli/package.json` if `tsx` dep is missing, and for `__fixtures__/**/*.{json,yak}`) before dispatching the implementer to the existing worktree at `.worktrees/feature-954-llm-triplet`.
