@@ -2,7 +2,7 @@
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/registry";
 import { describe, expect, it } from "vitest";
-import { compileToPython, toSnakeCase } from "./index.js";
+import { classMethToSnake, compileToPython, toSnakeCase } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Minimal BlockTripletRow stub for tests
@@ -591,5 +591,71 @@ export function invertMap(d: Record<string, unknown>): Record<string, unknown> {
   it("emits dict[str, Any] for Record<string, unknown> (#915)", () => {
     const { source } = compileToPython(makeRow(src));
     expect(source).toContain("dict[str, Any]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #941: classMethToSnake — compile-python reverse mapping for class/method identifiers
+// ---------------------------------------------------------------------------
+// classMethToSnake splits "ClassName_methodName" (the shave-python encoding) back
+// to "ClassName.method_name" on the compile (Python output) side.
+//
+// Detection rule: identifier matches ^([A-Z][A-Za-z0-9]*)_([a-z][A-Za-z0-9]*)$
+// — UpperCamelCase LHS, single underscore separator, lowerCamelCase RHS.
+// Plain snake / leading-underscore identifiers pass through toSnakeCase unchanged.
+// ---------------------------------------------------------------------------
+
+describe("#941: classMethToSnake — class/method boundary splitting", () => {
+  it("splits UpperCamelCase_lowerCamelCase at class/method boundary", () => {
+    // "EntitySubstitution_substituteXml" → "EntitySubstitution.substitute_xml"
+    expect(classMethToSnake("EntitySubstitution_substituteXml")).toBe(
+      "EntitySubstitution.substitute_xml",
+    );
+  });
+
+  it("splits Tag_fromMarkup → Tag.from_markup", () => {
+    expect(classMethToSnake("Tag_fromMarkup")).toBe("Tag.from_markup");
+  });
+
+  it("leaves plain camelCase (no underscore) as snake_case", () => {
+    // "substituteXml" → "substitute_xml" — no class boundary
+    expect(classMethToSnake("substituteXml")).toBe("substitute_xml");
+  });
+
+  it("leaves already-snake module-level names unchanged", () => {
+    expect(classMethToSnake("normalize_tag")).toBe("normalize_tag");
+    expect(classMethToSnake("get_attr")).toBe("get_attr");
+  });
+
+  it("passes leading-underscore names through toSnakeCase (private fn, not class)", () => {
+    // "_invert" → "_invert" (already snake, leading underscore → plain)
+    expect(classMethToSnake("_invert")).toBe("_invert");
+    // "_chardetDammit" → "_chardet_dammit" (leading underscore → toSnakeCase, not class boundary)
+    expect(classMethToSnake("_chardetDammit")).toBe("_chardet_dammit");
+  });
+
+  it("round-trips the shave-python encoding end-to-end", () => {
+    // shave encodes "EntitySubstitution.substitute_xml" as "EntitySubstitution_substituteXml";
+    // compile decodes back with classMethToSnake.
+    expect(classMethToSnake("EntitySubstitution_substituteXml")).toBe(
+      "EntitySubstitution.substitute_xml",
+    );
+    // Another real bs4 classmethod
+    expect(classMethToSnake("Tag_fromMarkup")).toBe("Tag.from_markup");
+  });
+
+  it("compound interaction: lowerFunctionDecl uses classMethToSnake for class method def-lines", () => {
+    // A TS-subset IR function named "EntitySubstitution_substituteXml" must lower to
+    // a Python def whose name is "EntitySubstitution.substitute_xml".
+    // This crosses compileToPython → lowerFunctionDecl → classMethToSnake.
+    const src = `
+export function EntitySubstitution_substituteXml(cls: typeof EntitySubstitution, value: string): string {
+  return value;
+}`;
+    const { source } = compileToPython(makeRow(src));
+    // Function def-line must use the dotted class.method form
+    expect(source).toContain("def EntitySubstitution.substitute_xml(");
+    // Must NOT have the underscore-joined IR form in the def-line
+    expect(source).not.toContain("def EntitySubstitution_substituteXml(");
   });
 });

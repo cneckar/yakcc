@@ -6,5 +6,5 @@ export type { CanLowerResult, TargetLanguage } from "./can-lower-to.js";
 export { canLowerTo } from "./can-lower-to.js";
 export type { CompilePythonOptions } from "./compile-python.js";
 export { compileToPython } from "./compile-python.js";
-export { toSnakeCase } from "./names.js";
+export { classMethToSnake, toSnakeCase } from "./names.js";
 export type { LowerWarning, PythonCompileResult } from "./types.js";

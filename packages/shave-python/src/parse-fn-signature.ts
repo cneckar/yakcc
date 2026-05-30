@@ -224,25 +224,45 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     );
   }
 
-  // #923: for @classmethod, drop the first parameter named "cls" before any
-  // annotation checks.  cls is Python call-convention metadata — it holds a
-  // reference to the class itself and has no equivalent in the TS-subset IR.
-  // libcst typically emits cls without a type annotation, so without this
-  // exemption every classmethod extraction fails with MissingTypeAnnotationError.
+  // #939 (reverts #923 cls-drop): for @classmethod, keep the first parameter
+  // named "cls" but auto-inject `tsType: "unknown"` when it lacks an annotation.
+  // This restores body integrity so that `cls.X` references in the body resolve
+  // via the parameter.  The body can reference `cls.CONSTANT`, `cls.METHOD(...)`,
+  // etc. which are valid attribute accesses on the auto-typed `unknown` parameter.
   //
-  // @decision DEC-923-001 — cls drop for classmethods
-  // @title First param "cls" is silently dropped from FunctionSignature.params when methodKind=="class"
-  // @status accepted (#923)
-  // @rationale Option (b) from the dispatch: dropping cls is cleaner than auto-annotating
-  //   it, because cls does not appear in the TS arrow at all.  The exemption is
-  //   keyed on BOTH methodKind==="class" AND p.name==="cls" AND position===0 so
-  //   that (a) module-level fns named cls are still rejected, (b) non-first params
-  //   named cls are still rejected, (c) annotated cls on classmethods is also
-  //   dropped (annotation is Python metadata, irrelevant to the TS surface).
-  const rawParams =
-    fn.methodKind === "class" && fn.params[0]?.name === "cls" ? fn.params.slice(1) : fn.params;
+  // @decision DEC-939-001 — cls kept with auto-injected unknown annotation
+  // @title First param "cls" of a classmethod is kept in FunctionSignature.params
+  //   with tsType:"unknown" when no annotation is present (reverts DEC-923-001 drop).
+  // @status accepted (#939)
+  // @rationale Body references to cls.X were silently broken after #923 dropped cls:
+  //   the TS arrow had no cls parameter, but the body emitted `cls.CONSTANT` etc.
+  //   Keeping cls with `unknown` restores body integrity at the cost of a slightly
+  //   less informative type.  When the original annotation is present it is mapped
+  //   normally; when absent an auto-typed `typeof ClassName` / `unknown` is injected.
+  //   Class name piping: the function name has shape "ClassName.method_name" when
+  //   methodKind==="class"; we extract the class name to produce the more informative
+  //   annotation `typeof ClassName` instead of the bare `unknown`.
+  const rawParams = fn.params;
 
-  const params: RaisedParam[] = rawParams.map((p) => {
+  const params: RaisedParam[] = rawParams.map((p, idx) => {
+    // Special handling: for classmethods, the first param named "cls" with no annotation
+    // gets auto-injected type information instead of throwing MissingTypeAnnotationError.
+    if (fn.methodKind === "class" && idx === 0 && p.name === "cls" && p.annotation === null) {
+      // Derive the class name from fn.name ("ClassName.method_name" → "ClassName").
+      // Fall back to "unknown" if the name is not dotted.
+      const dotIdx = fn.name.indexOf(".");
+      const className = dotIdx > 0 ? fn.name.slice(0, dotIdx) : null;
+      const tsType = className !== null ? `typeof ${className}` : "unknown";
+      return {
+        name: "cls",
+        pythonAnnotation: "(auto-injected classmethod receiver)",
+        tsType,
+        // No LowerWarning emitted: adding a new warning code would require editing
+        // type-map.ts (out of scope).  The auto-injection is visible to callers
+        // via the synthetic pythonAnnotation text and tsType value.
+        warnings: [],
+      };
+    }
     if (p.annotation === null) {
       throw new MissingTypeAnnotationError(fn.name, p.name);
     }

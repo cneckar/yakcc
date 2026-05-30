@@ -460,14 +460,35 @@ export function renderExpr(expr: WireExpr): string {
 /**
  * Render a single statement to TS source text (with trailing semicolon).
  *
- * @param stmt   — the wire statement to render
- * @param indent — indentation prefix (default "  ")
- * @param fnName — optional function name for ImpureFunctionError messages.
+ * @param stmt      — the wire statement to render
+ * @param indent    — indentation prefix (default "  ")
+ * @param fnName    — optional function name for ImpureFunctionError messages.
  *   When omitted, ImpureStatement throws with functionName="<unknown>".
  *   Pass the enclosing function's name to produce actionable error messages.
  *   (DEC-WI888-007: optional to preserve backward compatibility.)
+ * @param seenNames — mutable set of variable names already declared in this
+ *   renderBody scope.  Used by the Assign handler (#940) to emit `let` on the
+ *   first declaration and a bare re-assignment on subsequent writes to the
+ *   same name.  Callers that don't track re-assignment may omit this parameter;
+ *   renderBody always provides it.  NOT exposed externally — callers use
+ *   renderBody which owns the set lifecycle.
+ *
+ * @decision DEC-940-001 — Assign emits let/bare based on seenNames Set
+ * @title First Assign → `let name = expr;`; subsequent → bare `name = expr;`
+ * @status accepted (#940)
+ * @rationale Python allows re-assignment to the same name in the same scope;
+ *   TS `const` prevents that.  Tracking seen names in a Set and emitting `let`
+ *   vs bare assignment produces valid, idiomatic TS for re-assigned variables
+ *   without requiring a pre-scan.  Block scoping (if branches): the same Set
+ *   is threaded into If body/orelse so an outer-scope `let` is not re-declared
+ *   inside branches — semantically correct Python-like behaviour.
  */
-export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): string {
+export function renderStmt(
+  stmt: WireStmt,
+  indent = "  ",
+  fnName?: string,
+  seenNames?: Set<string>,
+): string {
   switch (stmt.type) {
     case "Return": {
       if (stmt.value === null) {
@@ -504,10 +525,12 @@ export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): stri
       // list containing a nested If. We detect that shape and emit `else if` rather
       // than a nested `else { if (...) { } }` block, matching Python's flat style.
       //
+      // #940: seenNames is threaded into body and orelse so that Assign nodes inside
+      // branches can see names already declared at the outer scope (no re-declaration).
       // indent for the inner body uses two extra spaces relative to the current level.
       const innerIndent = `${indent}  `;
       const bodyLines = stmt.body
-        .map((s) => renderStmt(s, innerIndent, fnName))
+        .map((s) => renderStmt(s, innerIndent, fnName, seenNames))
         .filter((l) => l !== "")
         .join("\n");
       const bodyBlock = bodyLines || `${innerIndent}void 0;`;
@@ -517,13 +540,13 @@ export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): stri
         const firstOrelse = stmt.orelse[0];
         if (stmt.orelse.length === 1 && firstOrelse?.type === "If") {
           // Recurse: renderStmt will produce `<indent>if (...) { ... }` — splice after `else `.
-          const elseIfText = renderStmt(firstOrelse, indent, fnName);
+          const elseIfText = renderStmt(firstOrelse, indent, fnName, seenNames);
           // elseIfText starts with `${indent}if` — trim the leading indent for the else clause.
           result += ` else ${elseIfText.trimStart()}`;
         } else {
           // Plain else block
           const elseLines = stmt.orelse
-            .map((s) => renderStmt(s, innerIndent, fnName))
+            .map((s) => renderStmt(s, innerIndent, fnName, seenNames))
             .filter((l) => l !== "")
             .join("\n");
           const elseBlock = elseLines || `${innerIndent}void 0;`;
@@ -532,11 +555,20 @@ export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): stri
       }
       return result;
     }
-    case "Assign":
-      // WI-907: `x = expr` → `const x = <expr>;`
-      // MVP: always emits `const`. Python source with re-assignment produces non-compiling TS,
-      // which is the intended loud failure for this subset. Cross-reference: #907.
-      return `${indent}const ${stmt.target} = ${renderExpr(stmt.value)};`;
+    case "Assign": {
+      // #940 (DEC-940-001): emit `let` on first assignment, bare on re-assignment.
+      // seenNames is always provided when called from renderBody; when called
+      // standalone (no seenNames), fall back to `let` for all assignments.
+      const isFirstAssign = seenNames === undefined || !seenNames.has(stmt.target);
+      if (seenNames !== undefined) {
+        seenNames.add(stmt.target);
+      }
+      if (isFirstAssign) {
+        return `${indent}let ${stmt.target} = ${renderExpr(stmt.value)};`;
+      }
+      // Subsequent assignment: bare re-assignment (no keyword).
+      return `${indent}${stmt.target} = ${renderExpr(stmt.value)};`;
+    }
     case "Unsupported":
       throw new UnsupportedAstError(stmt.reason);
   }
@@ -549,7 +581,15 @@ export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): stri
  * @param indent — indentation prefix (default "  ")
  * @param fnName — optional function name forwarded to renderStmt for
  *   ImpureFunctionError messages. (DEC-WI888-007)
+ *
+ * Internally allocates a fresh `seenNames` Set per call so that re-assigned
+ * variables within a single function body emit `let` + bare assignment rather
+ * than `const` + `const` (which would be a TS compile error for re-assignment).
+ * (#940 / DEC-940-001)
  */
 export function renderBody(stmts: readonly WireStmt[], indent = "  ", fnName?: string): string {
-  return stmts.map((s) => renderStmt(s, indent, fnName)).join("\n");
+  // #940: fresh seenNames per body — tracks which variables have been let-declared
+  // so subsequent assignments to the same name emit bare `name = expr;`.
+  const seenNames = new Set<string>();
+  return stmts.map((s) => renderStmt(s, indent, fnName, seenNames)).join("\n");
 }
