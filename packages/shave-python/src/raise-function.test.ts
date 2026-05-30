@@ -478,6 +478,361 @@ describe("WI-903: raiseFunctionWithPurityAndNormalization — If statement compo
 });
 
 // ---------------------------------------------------------------------------
+// WI-907: Assign — compound-interaction tests through the full pipeline
+// ---------------------------------------------------------------------------
+
+describe("WI-907: raiseFunctionWithPurityAndNormalization — Assign compound interaction", () => {
+  // Production sequence: checkModuleImports → checkFunctionPurity → normalize names →
+  // renderFunctionDeclaration → renderBody → renderStmt(Assign) → TS output.
+
+  it("lowers Assign + Return to TS const + return in a function body", () => {
+    // def add_one(x: int) -> int:
+    //     y = x + 1
+    //     return y
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "add_one",
+      params: [{ name: "x", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource: "    y = x + 1\n    return y",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "y",
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "x" },
+          right: { type: "Integer", value: "1" },
+        },
+      },
+      { type: "Return", value: { type: "Name", name: "y" } },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toBe(
+      "export function addOne(x: number): number {\n  const y = (x + 1);\n  return y;\n}",
+    );
+  });
+
+  it("lowers Assign with string call value (bs4 __getattr__ shape)", () => {
+    // def get_attr(name: str) -> str:
+    //     rewritten = name.replace("Name", "OtherName")
+    //     return rewritten
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "get_attr",
+      params: [{ name: "name", tsType: "string", pythonAnnotation: "str" }],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      bodyPythonSource: '    rewritten = name.replace("Name", "OtherName")\n    return rewritten',
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "rewritten",
+        value: {
+          type: "Call",
+          func: "name.replace",
+          args: [
+            { type: "String", value: "Name" },
+            { type: "String", value: "OtherName" },
+          ],
+        },
+      },
+      { type: "Return", value: { type: "Name", name: "rewritten" } },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain('const rewritten = name.replace("Name", "OtherName");');
+    expect(out).toContain("return rewritten;");
+    // snake_case name is normalized
+    expect(out).toContain("function getAttr(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-908: BoolOp — compound-interaction tests through the full pipeline
+// ---------------------------------------------------------------------------
+
+describe("WI-908: raiseFunctionWithPurityAndNormalization — BoolOp compound interaction", () => {
+  // Production sequence: checkModuleImports → checkFunctionPurity → normalize names →
+  // renderFunctionDeclaration → renderBody → renderStmt(If) → renderExpr(BoolOp) → TS output.
+
+  it("lowers BoolOp(and) in an if-test to TS &&", () => {
+    // def check_bytes(s: bytes, override: list) -> str:
+    //     if isinstance(s, bytes) and override is not None:
+    //         return s.decode(override[0])
+    //     return s.decode("utf-8")
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "check_bytes",
+      params: [
+        { name: "s", tsType: "Uint8Array", pythonAnnotation: "bytes" },
+        { name: "override", tsType: "string[] | null", pythonAnnotation: "list" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      bodyPythonSource:
+        '    if isinstance(s, bytes) and override is not None:\n        return s.decode(override[0])\n    return s.decode("utf-8")',
+    };
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BoolOp",
+          op: "and",
+          left: {
+            type: "Call",
+            func: "isinstance",
+            args: [
+              { type: "Name", name: "s" },
+              { type: "Name", name: "bytes" },
+            ],
+          },
+          right: {
+            type: "BinaryOp",
+            op: "!=",
+            left: { type: "Name", name: "override" },
+            right: { type: "None" },
+          },
+        },
+        body: [
+          {
+            type: "Return",
+            value: { type: "Call", func: "s.decode", args: [{ type: "Name", name: "override" }] },
+          },
+        ],
+        orelse: [],
+      },
+      {
+        type: "Return",
+        value: { type: "Call", func: "s.decode", args: [{ type: "String", value: "utf-8" }] },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("(isinstance(s, bytes) && (override != null))");
+    expect(out).toContain("return s.decode(override)");
+    expect(out).toContain('return s.decode("utf-8")');
+    // Function name normalized
+    expect(out).toContain("function checkBytes(");
+  });
+
+  it("lowers BoolOp(or) in a return statement to TS ||", () => {
+    // def fallback(a: str, b: str) -> str:
+    //     return a or b
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "fallback",
+      params: [
+        { name: "a", tsType: "string", pythonAnnotation: "str" },
+        { name: "b", tsType: "string", pythonAnnotation: "str" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      bodyPythonSource: "    return a or b",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "BoolOp",
+          op: "or",
+          left: { type: "Name", name: "a" },
+          right: { type: "Name", name: "b" },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toBe(
+      "export function fallback(a: string, b: string): string {\n  return (a || b);\n}",
+    );
+  });
+
+  it("lowers Assign + BoolOp + If together (compound bs4 _chardet_dammit shape)", () => {
+    // def chardet_dammit(s: bytes) -> str:
+    //     result = True and s != b""
+    //     if result:
+    //         return s.decode("utf-8")
+    //     return s.decode("latin-1")
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "chardet_dammit",
+      params: [{ name: "s", tsType: "Uint8Array", pythonAnnotation: "bytes" }],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      bodyPythonSource:
+        '    result = True and s != b""\n    if result:\n        return s.decode("utf-8")\n    return s.decode("latin-1")',
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "result",
+        value: {
+          type: "BoolOp",
+          op: "and",
+          left: { type: "Bool", value: true },
+          right: {
+            type: "BinaryOp",
+            op: "!=",
+            left: { type: "Name", name: "s" },
+            right: { type: "String", value: "" },
+          },
+        },
+      },
+      {
+        type: "If",
+        test: { type: "Name", name: "result" },
+        body: [
+          {
+            type: "Return",
+            value: { type: "Call", func: "s.decode", args: [{ type: "String", value: "utf-8" }] },
+          },
+        ],
+        orelse: [],
+      },
+      {
+        type: "Return",
+        value: { type: "Call", func: "s.decode", args: [{ type: "String", value: "latin-1" }] },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain('const result = (true && (s != ""))');
+    expect(out).toContain("if (result)");
+    expect(out).toContain('return s.decode("utf-8")');
+    expect(out).toContain('return s.decode("latin-1")');
+    expect(out).toContain("function chardetDammit(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-909: Comprehension tuple target — compound-interaction tests through the full pipeline
+// ---------------------------------------------------------------------------
+
+describe("WI-909: raiseFunctionWithPurityAndNormalization — tuple-target comprehension compound interaction", () => {
+  // Production sequence: checkModuleImports → checkFunctionPurity → normalize names →
+  // renderFunctionDeclaration → renderBody → renderStmt(Return) → renderExpr(GeneratorExp/DictComp) → TS output.
+
+  it("lowers GeneratorExp tuple target (_invert bs4 shape): dict((v,k) for k,v in items)", () => {
+    // def _invert(d: dict) -> dict:
+    //     return dict((v, k) for k, v in list(d.items()))
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "_invert",
+      params: [{ name: "d", tsType: "Record<string, string>", pythonAnnotation: "dict" }],
+      returnType: "Record<string, string>",
+      pythonReturnAnnotation: "dict",
+      bodyPythonSource: "    return dict((v, k) for k, v in list(d.items()))",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "Call",
+          func: "dict",
+          args: [
+            {
+              type: "GeneratorExp",
+              kind: "map",
+              iter: {
+                type: "Call",
+                func: "list",
+                args: [{ type: "Call", func: "d.items", args: [] }],
+              },
+              param: "k, v",
+              target_kind: "tuple",
+              target_names: ["k", "v"],
+              elt: {
+                type: "Call",
+                func: "pair",
+                args: [
+                  { type: "Name", name: "v" },
+                  { type: "Name", name: "k" },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // Tuple destructuring shows up as ([k, v]) arrow param
+    expect(out).toContain("([k, v])");
+    expect(out).toContain("list(d.items())");
+    expect(out).toContain(".map(([k, v]) => pair(v, k))");
+    // Function name unchanged (underscore-leading)
+    expect(out).toContain("function _invert(");
+  });
+
+  it("lowers DictComp tuple target: {v: k for k, v in items}", () => {
+    // def swap_keys(items: list) -> dict:
+    //     return {v: k for k, v in items}
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "swap_keys",
+      params: [{ name: "items", tsType: "[string, string][]", pythonAnnotation: "list" }],
+      returnType: "Record<string, string>",
+      pythonReturnAnnotation: "dict",
+      bodyPythonSource: "    return {v: k for k, v in items}",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "DictComp",
+          iter: { type: "Name", name: "items" },
+          param: "k, v",
+          target_kind: "tuple",
+          target_names: ["k", "v"],
+          keyElt: { type: "Name", name: "v" },
+          valElt: { type: "Name", name: "k" },
+          cond: null,
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("Object.fromEntries(");
+    expect(out).toContain("([k, v])");
+    expect(out).toContain(".map(([k, v]) => [v, k])");
+    // snake_case normalized
+    expect(out).toContain("function swapKeys(");
+  });
+
+  it("lowers ListComp tuple target: [k for k, v in items if v]", () => {
+    // def truthy_keys(items: list) -> list:
+    //     return [k for k, v in items if v]
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "truthy_keys",
+      params: [{ name: "items", tsType: "[string, string][]", pythonAnnotation: "list" }],
+      returnType: "string[]",
+      pythonReturnAnnotation: "list",
+      bodyPythonSource: "    return [k for k, v in items if v]",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "ListComp",
+          kind: "filter_map",
+          iter: { type: "Name", name: "items" },
+          param: "k, v",
+          target_kind: "tuple",
+          target_names: ["k", "v"],
+          cond: { type: "Name", name: "v" },
+          elt: { type: "Name", name: "k" },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("([k, v])");
+    expect(out).toContain(".filter(([k, v]) => v)");
+    expect(out).toContain(".map(([k, v]) => k)");
+    expect(out).toContain("function truthyKeys(");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WI-904: Comprehension — compound-interaction tests through the full pipeline
 // ---------------------------------------------------------------------------
 
