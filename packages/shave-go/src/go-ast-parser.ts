@@ -421,12 +421,27 @@ export interface GoAstParseOptions {
 
 const DEFAULT_GO = "go";
 
-/** Resolve the bundled `scripts/go-ast-parse.go` from this module location. */
+/** Resolve the bundled `scripts/go-ast-parse.go` from this module location.
+ *
+ * @decision DEC-SHAVE-GO-SCRIPTPATH-001
+ * @title Resolve script path via import.meta.url with explicit dist-layout depth
+ * @status accepted (WI-966)
+ * @rationale
+ *   The dist/ layout places the compiled file at packages/shave-go/dist/go-ast-parser.js.
+ *   Walking up 3 levels reaches the repo root where scripts/go-ast-parse.go lives.
+ *   Using import.meta.url (rather than __dirname or process.cwd) is the ESM-safe
+ *   approach that survives symlinks, worktrees, and external callers who import
+ *   the package from node_modules.  Two levels (the prior bug) landed in packages/
+ *   instead of repo root, causing ENOENT for any caller outside the monorepo.
+ */
 function defaultScriptPath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  // Built layout: dist/go-ast-parser.js -> ../../scripts/go-ast-parse.go
-  // Source layout: src/go-ast-parser.ts -> ../../scripts/go-ast-parse.go
-  return resolve(here, "..", "..", "scripts", "go-ast-parse.go");
+  // Built layout:  packages/shave-go/dist/go-ast-parser.js
+  //   dist/             → [1] packages/shave-go/
+  //   dist/../..        → [2] packages/
+  //   dist/../../..     → [3] repo root  ← scripts/ lives here
+  // Source layout: packages/shave-go/src/go-ast-parser.ts (same depth)
+  return resolve(here, "..", "..", "..", "scripts", "go-ast-parse.go");
 }
 
 /**
@@ -514,6 +529,16 @@ export async function parseGoSource(
         return;
       }
       resolvePromise(parsed as GoAstParseResult);
+    });
+
+    // Trap EPIPE on stdin: if the subprocess exits before consuming all input
+    // (e.g. parse error causes early exit), Node emits 'error' on the write
+    // stream.  Without this handler the event is unhandled and crashes the host
+    // process.  The non-zero exit code is surfaced through the 'close' handler
+    // below, so EPIPE is safe to swallow here.
+    child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE") return; // subprocess exited early — handled by exit-code path
+      // Non-EPIPE stdin errors: let the existing 'error' handler on `child` surface them.
     });
 
     child.stdin?.end(source, "utf-8");

@@ -11,6 +11,7 @@
 // updated accordingly and tests below reflect the new version.
 
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AdapterSubprocessError,
@@ -288,5 +289,73 @@ describe("parseGoSource (#870 slice 1+2)", () => {
     };
     await parseGoSource("package main", makeOpts(spawnFn));
     expect(capturedArgs).toEqual(["run", "/fake/scripts/go-ast-parse.go"]);
+  });
+
+  // --- #966: default scriptPath resolves to the real file on disk ---------------
+  //
+  // This test validates that defaultScriptPath() (invoked when no scriptPath
+  // option is supplied) walks up to repo root correctly from dist/.  We use a
+  // mock spawn so Go toolchain presence is not required; the test only cares
+  // that the resolved path points at an existing file.
+  it("#966 default scriptPath resolves to an existing file without explicit option", async () => {
+    let capturedScript = "";
+    const spawnFn: SpawnImpl = (_command, args) => {
+      // args[1] is the script path supplied to `go run`
+      capturedScript = args[1] ?? "";
+      return mockSpawn({ stdout: EMPTY_ENVELOPE, exitCode: 0 })(_command, args);
+    };
+    // No scriptPath option — exercises defaultScriptPath()
+    await parseGoSource("package main", { goExecutable: "go-fake", spawnImpl: spawnFn });
+    // The path must point to the real go-ast-parse.go that ships in this repo
+    expect(capturedScript).toMatch(/scripts[\\/]go-ast-parse\.go$/);
+    expect(existsSync(capturedScript)).toBe(true);
+  });
+
+  // --- #967: stdin EPIPE does not crash the host process ------------------------
+  //
+  // Simulates the subprocess emitting EPIPE on its stdin stream (which happens
+  // when the Go process exits before consuming all input).  The mock emits
+  // 'error' with code=EPIPE on the stdin stream, then closes with exit code 1.
+  // The expected outcome: parseGoSource rejects with AdapterSubprocessError
+  // (surfaced via the 'close' handler), and the host process is NOT crashed
+  // by an unhandled 'error' event.
+  it("#967 stdin EPIPE rejects with AdapterSubprocessError and does not crash host", async () => {
+    const spawnFn: SpawnImpl = (_command, _args, _options) => {
+      const stdin: MockStream = new EventEmitter();
+      let stdinErrorHandler: ((err: Error) => void) | undefined;
+      stdin.on = function (event: string, listener: (...args: unknown[]) => void) {
+        if (event === "error") {
+          stdinErrorHandler = listener as (err: Error) => void;
+        }
+        return EventEmitter.prototype.on.call(this, event, listener);
+      };
+      stdin.end = (_chunk?: string, _encoding?: BufferEncoding) => {
+        // After end() is called, simulate EPIPE: subprocess exited early
+        queueMicrotask(() => {
+          const epipeErr = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+          if (stdinErrorHandler) {
+            stdinErrorHandler(epipeErr);
+          } else {
+            // If no handler registered, emit on the stream — this would crash
+            // without the fix.  With the fix the handler is always registered.
+            stdin.emit("error", epipeErr);
+          }
+        });
+      };
+      const stdout: MockStream = new EventEmitter();
+      const stderr: MockStream = new EventEmitter();
+      const child: MockProcess = Object.assign(new EventEmitter(), { stdin, stdout, stderr });
+
+      queueMicrotask(() => {
+        stderr.emit("data", Buffer.from("syntax error near token '='", "utf-8"));
+        child.emit("close", 1);
+      });
+
+      return child as unknown as ReturnType<typeof import("node:child_process").spawn>;
+    };
+
+    await expect(
+      parseGoSource("func =( {INVALID GO}", { goExecutable: "go-fake", spawnImpl: spawnFn }),
+    ).rejects.toMatchObject({ name: "AdapterSubprocessError", exitCode: 1 });
   });
 });
