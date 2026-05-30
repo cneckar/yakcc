@@ -57,6 +57,13 @@ export function renderFunctionDeclaration(
     returnAnnotation = `[${signature.returnTypes.join(", ")}]`;
   }
 
+  // WI-963: emit TS generic type parameters when the Go function declares them.
+  // e.g. typeParams=[{name:"T"},{name:"R"}] -> "<T, R>" inserted after the function name.
+  const typeParamSuffix =
+    signature.typeParams.length > 0
+      ? `<${signature.typeParams.map((tp) => tp.name).join(", ")}>`
+      : "";
+
   const bodyText = renderBody(body, "  ", file);
-  return `export function ${signature.name}(${paramList}): ${returnAnnotation} {\n${bodyText}\n}`;
+  return `export function ${signature.name}${typeParamSuffix}(${paramList}): ${returnAnnotation} {\n${bodyText}\n}`;
 }
