@@ -14,6 +14,7 @@
  *   blocks at shave-time.
  */
 
+import { CannotLowerToPythonError } from "@yakcc/contracts";
 import { type FunctionDeclaration, Node, Project, SyntaxKind, type TypeNode } from "ts-morph";
 import { classMethToSnake, toSnakeCase } from "./names.js";
 import type { LowerWarning } from "./types.js";
@@ -27,6 +28,18 @@ interface Ctx {
   needsFunctools: boolean;
   needsOptional: boolean;
   needsCallable: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Location helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract {line, column} from a ts-morph Node using the source file's
+ * getLineAndColumnAtPos API. Line and column are 1-based.
+ */
+function nodeLocation(node: Node): { line: number; column: number } {
+  return node.getSourceFile().getLineAndColumnAtPos(node.getStart());
 }
 
 // ---------------------------------------------------------------------------
@@ -215,9 +228,12 @@ function lowerStatement(node: Node, ctx: Ctx, depth: number): string[] {
     return [];
   }
 
-  // fallback
+  // No silent fallback — throw a loud, actionable error (WI-943).
+  // Any statement kind that reaches here has no Python equivalent yet;
+  // the error names the node kind, location, and enclosing function so the
+  // next implementer knows exactly what coverage is missing.
   const snippet = node.getText().slice(0, 60).replace(/\n/g, " ");
-  return [`${ind}# WARN: unhandled ${SyntaxKind[k]}: ${snippet}`];
+  throw new CannotLowerToPythonError(SyntaxKind[k], nodeLocation(node), snippet, undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -458,8 +474,12 @@ function lowerExpr(node: Node, ctx: Ctx): string {
     return `type(${lowerExpr(te.getExpression(), ctx)}).__name__`;
   }
 
-  // Fallback
-  return node.getText().replace(/\n/g, " ");
+  // No silent fallback — throw a loud, actionable error (WI-943).
+  // This was previously `return node.getText().replace(/\n/g, " ")`, which
+  // silently leaked raw TS syntax into Python output. Any expression kind
+  // not handled above produces an unmistakable error instead.
+  const exprSnippet = node.getText().slice(0, 60).replace(/\n/g, " ");
+  throw new CannotLowerToPythonError(SyntaxKind[k], nodeLocation(node), exprSnippet, undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -664,14 +684,22 @@ function extractArrowBody(node: Node, ctx: Ctx): ArrowBody {
     }
     return { params, body: lowerExpr(body, ctx) };
   }
-  // FunctionExpression fallback
+  // FunctionExpression: extract params and body the same way as ArrowFunction.
+  // If no Block body is found, there is nothing valid to lower — throw a loud
+  // error instead of leaking raw TS getText() into Python (WI-943, Site 3).
   const params = node.getChildrenOfKind(SyntaxKind.Parameter).map((p) => extractParamName(p));
   const bodyNode = node.getChildrenOfKind(SyntaxKind.Block)[0];
   if (bodyNode) {
     const lines = lowerBlock(bodyNode.getStatements(), ctx, 0);
     return { params, body: lines.map((l) => l.trim()).join("; ") };
   }
-  return { params, body: node.getText() };
+  const fnSnippet = node.getText().slice(0, 60).replace(/\n/g, " ");
+  throw new CannotLowerToPythonError(
+    SyntaxKind[node.getKind()],
+    nodeLocation(node),
+    fnSnippet,
+    undefined,
+  );
 }
 
 function lowerArrow(node: Node, ctx: Ctx): string {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AmbiguousPurityError,
+  CannotLowerToPythonError,
   CannotRaiseToIRError,
   type SourceLocation,
 } from "./polyglot-errors.js";
@@ -58,5 +59,58 @@ describe("AmbiguousPurityError", () => {
   it("distinct from CannotRaiseToIRError via instanceof", () => {
     const err = new AmbiguousPurityError("opaque import", LOC);
     expect(err).not.toBeInstanceOf(CannotRaiseToIRError);
+  });
+});
+
+describe("CannotLowerToPythonError", () => {
+  const loc = { line: 7, column: 2 };
+
+  it("message includes nodeKind, fnName, location, and snippet", () => {
+    const err = new CannotLowerToPythonError(
+      "FunctionExpression",
+      loc,
+      "function(x) { return x + 1; }",
+      "myHelper",
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(CannotLowerToPythonError);
+    expect(err.name).toBe("CannotLowerToPythonError");
+    expect(err.message).toBe(
+      "Cannot lower TS-subset IR to Python: FunctionExpression at myHelper:7:2 — function(x) { return x + 1; }",
+    );
+    expect(err.nodeKind).toBe("FunctionExpression");
+    expect(err.location).toEqual(loc);
+    expect(err.snippet).toBe("function(x) { return x + 1; }");
+    expect(err.fnName).toBe("myHelper");
+  });
+
+  it("uses <top-level> when fnName is undefined", () => {
+    const err = new CannotLowerToPythonError(
+      "SwitchStatement",
+      { line: 1, column: 0 },
+      "switch (x) {",
+      undefined,
+    );
+    expect(err.message).toContain("<top-level>");
+    expect(err.fnName).toBeUndefined();
+  });
+
+  it("is throw/catch usable via instanceof", () => {
+    let caught: unknown = null;
+    try {
+      throw new CannotLowerToPythonError("ForInStatement", loc, "for (k in obj)", undefined);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CannotLowerToPythonError);
+    if (caught instanceof CannotLowerToPythonError) {
+      expect(caught.nodeKind).toBe("ForInStatement");
+    }
+  });
+
+  it("is distinct from CannotRaiseToIRError via instanceof", () => {
+    const err = new CannotLowerToPythonError("SwitchStatement", loc, "switch", undefined);
+    expect(err).not.toBeInstanceOf(CannotRaiseToIRError);
+    expect(err).not.toBeInstanceOf(AmbiguousPurityError);
   });
 });
