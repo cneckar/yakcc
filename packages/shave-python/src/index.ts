@@ -20,7 +20,12 @@ export {
   type FunctionSignature,
   type RaisedParam,
 } from "./parse-fn-signature.js";
-export { mapPythonType, UnsupportedTypeError } from "./type-map.js";
+export {
+  mapPythonType,
+  UnsupportedTypeError,
+  type LowerWarning,
+  type MapPythonTypeResult,
+} from "./type-map.js";
 export {
   renderBody,
   renderExpr,

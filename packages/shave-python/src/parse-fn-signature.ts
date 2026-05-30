@@ -10,9 +10,21 @@
 //
 // Out of scope for slice 2: body translation (slice 2b), purity inference
 // (slice 3), snake_case → camelCase normalization (slice 3).
+//
+// WI-889: threads LowerWarning from mapPythonType onto RaisedParam.warnings
+// and FunctionSignature.returnWarnings.
+//
+// @decision DEC-WI889-009
+// @title RaisedParam.warnings + FunctionSignature.returnWarnings (per-param + per-return)
+// @status accepted
+// @rationale
+//   Locality — each warning ties to the annotation that produced it.
+//   Consumers can union warnings when needed.  Additive fields: downstream
+//   consumers (raise-function.ts, purity-check.ts) continue to typecheck
+//   against the new fields without behavioral change.
 
 import type { LibcstParseResult } from "./libcst-parser.js";
-import { UnsupportedTypeError, mapPythonType } from "./type-map.js";
+import { type LowerWarning, UnsupportedTypeError, mapPythonType } from "./type-map.js";
 
 export interface RaisedParam {
   /** Parameter name as written in Python (no normalization yet — slice 3). */
@@ -21,6 +33,14 @@ export interface RaisedParam {
   readonly tsType: string;
   /** The raw Python annotation text (for diagnostics). */
   readonly pythonAnnotation: string;
+  /**
+   * Warnings emitted during type mapping for this parameter's annotation.
+   * Empty (or absent) for lossless mappings; non-empty when the annotation
+   * required widening (e.g. Any -> unknown).  WI-889 / DEC-WI889-009.
+   * Optional to preserve backwards compatibility with existing construction
+   * sites in normalize-names.ts and test helpers (DEC-WI889-010 additive-only).
+   */
+  readonly warnings?: readonly LowerWarning[];
 }
 
 export interface FunctionSignature {
@@ -34,6 +54,13 @@ export interface FunctionSignature {
   readonly pythonReturnAnnotation: string | null;
   /** Verbatim Python body text (for slice 2b's body raise). */
   readonly bodyPythonSource: string;
+  /**
+   * Warnings emitted during return-type mapping.
+   * Empty (or absent) for lossless return types.  WI-889 / DEC-WI889-009.
+   * Optional to preserve backwards compatibility with existing construction
+   * sites in raise-function.test.ts and normalize-names.test.ts.
+   */
+  readonly returnWarnings?: readonly LowerWarning[];
 }
 
 /**
@@ -89,10 +116,12 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
       throw new MissingTypeAnnotationError(fn.name, p.name);
     }
     try {
+      const { tsType, warnings } = mapPythonType(p.annotation);
       return {
         name: p.name,
         pythonAnnotation: p.annotation,
-        tsType: mapPythonType(p.annotation),
+        tsType,
+        warnings,
       };
     } catch (err) {
       if (err instanceof UnsupportedTypeError) {
@@ -107,11 +136,14 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
   });
 
   let returnType: string;
+  let returnWarnings: readonly LowerWarning[];
   if (fn.return_annotation === null) {
     throw new MissingTypeAnnotationError(fn.name, null);
   }
   try {
-    returnType = mapPythonType(fn.return_annotation);
+    const result = mapPythonType(fn.return_annotation);
+    returnType = result.tsType;
+    returnWarnings = result.warnings;
   } catch (err) {
     if (err instanceof UnsupportedTypeError) {
       throw new UnsupportedTypeError(
@@ -128,5 +160,6 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     returnType,
     pythonReturnAnnotation: fn.return_annotation,
     bodyPythonSource: fn.body_source,
+    returnWarnings,
   };
 }
