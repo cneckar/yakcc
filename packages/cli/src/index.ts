@@ -39,6 +39,7 @@ import { benchB3 } from "./commands/bench-b3.js";
 import { bootstrap } from "./commands/bootstrap.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
+import { emitAtom } from "./commands/emit-atom.js";
 import { runFederation } from "./commands/federation.js";
 import { hookIntercept } from "./commands/hook-intercept.js";
 import { hooksAiderInstall } from "./commands/hooks-aider-install.js";
@@ -185,6 +186,10 @@ COMMANDS
             [--target <ts|python|     Language target (auto-detected from extension)
                       rust|go>]       Python-only MVP; TS branch exits 1 with #877 follow-up note
             [--out <dir>]             Persist per-function artifacts (.ir.ts, .module.py, .diff.txt)
+  emit-atom <directory>               Validate + store an LLM-emitted atom triplet (spec.yak, impl.ts, proof/)
+            [--registry <p>]            Registry path (default: .yakcc/registry.sqlite)
+            [--skip-tests]              DANGEROUS: bypass property-test gate (CI seeding only)
+            [--json]                    Machine-readable output ({merkleRoot, specHash, stored})
   propose <contract-file>             Check registry for a matching contract
           [--registry <p>]
   query <text> [--registry <p>]       Vector-search registry by semantic intent
@@ -315,6 +320,15 @@ export async function runCli(
     case "propose": {
       const proposeArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return propose(proposeArgv, logger, { embeddings: opts?.embeddings });
+    }
+
+    case "emit-atom": {
+      // `yakcc emit-atom <dir> [--registry <p>] [--skip-tests] [--json]`
+      // Validates an LLM-emitted atom triplet (spec.yak, impl.ts, proof/) via
+      // parseBlockTriplet + property-test execution, then persists via storeBlock
+      // if all gates are green. (DEC-WI954-003, DEC-WI954-011)
+      const emitAtomArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return emitAtom(emitAtomArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "query": {
