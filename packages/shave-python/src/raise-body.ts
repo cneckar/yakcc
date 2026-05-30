@@ -15,6 +15,14 @@
 //   Stmt: Docstring    — silently skipped by renderStmt (returns "")
 //   Stmt: ImpureStatement — throws ImpureFunctionError(kind:"forbidden_construct")
 //
+// WI-903 additions to the wire AST:
+//   Stmt: If — Python if/elif/else → TS if/else if/else blocks
+//
+// WI-904 additions to the wire AST:
+//   Expr: GeneratorExp — Python generator expression → TS .map()/.filter()
+//   Expr: DictComp     — Python dict comprehension → TS Object.fromEntries()
+//   Expr: SetComp      — Python set comprehension → TS new Set(.map())
+//
 // @decision DEC-POLYGLOT-SHAVE-PY-BODY-RAISE-001 (WI-782 slice 2b)
 // @title Body translation pass operates on a structured wire AST, not raw text
 // @status accepted
@@ -42,6 +50,21 @@
 // @rationale Avoids a catch+rewrap layer in raise-function.ts. Existing callers
 //   that don't pass fnName get "<unknown>" as fallback — backward-compatible.
 //   Cross-reference: PLAN.md §4 / #888
+//
+// @decision DEC-WI903-001 — If statement lowering to TS if/else if/else
+// @title Python if/elif/else lowers to nested TS if/else blocks
+// @status accepted
+// @rationale Standard Python → TS structural equivalence. The elif chain is
+//   represented as a nested If in orelse (Python AST convention), which maps
+//   naturally to TS `else if`. Single-pass recursive renderStmt handles arbitrary
+//   depth. Cross-reference: #903
+//
+// @decision DEC-WI904-001 — Comprehension lowering MVP: single-source single-clause
+// @title ListComp/DictComp/SetComp/GeneratorExp lower to .map/.filter/Object.fromEntries
+// @status accepted
+// @rationale MVP scope: single generator, no nested comprehension. Multi-source
+//   comprehensions are rare in the bs4 target set and raise UnsupportedAstError
+//   so they fail loudly rather than silently. Cross-reference: #904
 
 import { CannotRaiseToIRError, type SourceLocation } from "@yakcc/contracts";
 import { ImpureFunctionError } from "./purity-check.js";
@@ -106,6 +129,47 @@ export type WireExpr =
       readonly param: string;
       readonly cond: WireExpr;
     }
+  // WI-904: GeneratorExp — `(f(x) for x in xs [if cond])` → same lowering as ListComp
+  | {
+      readonly type: "GeneratorExp";
+      readonly kind: "map";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly elt: WireExpr;
+    }
+  | {
+      readonly type: "GeneratorExp";
+      readonly kind: "filter_map";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly cond: WireExpr;
+      readonly elt: WireExpr;
+    }
+  // WI-904: DictComp — `{k: v for target in iter [if cond]}` → Object.fromEntries(iter.map(...))
+  | {
+      readonly type: "DictComp";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly keyElt: WireExpr;
+      readonly valElt: WireExpr;
+      readonly cond: WireExpr | null;
+    }
+  // WI-904: SetComp — `{f(x) for x in xs [if cond]}` → new Set(iter.map(...))
+  | {
+      readonly type: "SetComp";
+      readonly kind: "map";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly elt: WireExpr;
+    }
+  | {
+      readonly type: "SetComp";
+      readonly kind: "filter_map";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly cond: WireExpr;
+      readonly elt: WireExpr;
+    }
   | { readonly type: "Unsupported"; readonly reason: string };
 
 export type WireStmt =
@@ -122,6 +186,14 @@ export type WireStmt =
       readonly type: "ImpureStatement";
       readonly construct: "bare_call" | "bare_expression";
       readonly detail: string;
+    }
+  // WI-903: If statement — Python if/elif/else → TS if/else if/else (DEC-WI903-001)
+  // orelse: [] = no else; [WireStmt...] = else block; [{type:"If",...}] = elif chain.
+  | {
+      readonly type: "If";
+      readonly test: WireExpr;
+      readonly body: readonly WireStmt[];
+      readonly orelse: readonly WireStmt[];
     }
   | { readonly type: "Unsupported"; readonly reason: string };
 
@@ -197,6 +269,36 @@ export function renderExpr(expr: WireExpr): string {
       }
       // `[x for x in xs if p(x)]` → `(xs).filter((x) => p(x))`
       return `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`;
+    case "GeneratorExp":
+      // WI-904: generator expressions lower identically to ListComp — the consumer
+      // receives an Array (TS doesn't have lazy generators in this subset).
+      if (expr.kind === "map") {
+        // `(f(x) for x in xs)` → `(xs).map((x) => f(x))`
+        return `(${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)})`;
+      }
+      // `(f(x) for x in xs if cond)` → `(xs).filter((x) => cond).map((x) => f(x))`
+      return (
+        `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})` +
+        `.map((${expr.param}) => ${renderExpr(expr.elt)})`
+      );
+    case "DictComp": {
+      // WI-904: `{k: v for target in iter [if cond]}`
+      // → `Object.fromEntries(<iter>[.filter(...)].map((target) => [k, v]))`
+      const iterPart =
+        expr.cond !== null
+          ? `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`
+          : `(${renderExpr(expr.iter)})`;
+      return `Object.fromEntries(${iterPart}.map((${expr.param}) => [${renderExpr(expr.keyElt)}, ${renderExpr(expr.valElt)}]))`;
+    }
+    case "SetComp":
+      // WI-904: `{f(x) for x in xs [if cond]}` → `new Set(<iter>[.filter(...)].map(...))`
+      if (expr.kind === "map") {
+        return `new Set((${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)}))`;
+      }
+      return (
+        `new Set((${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})` +
+        `.map((${expr.param}) => ${renderExpr(expr.elt)}))`
+      );
     case "Unsupported":
       throw new UnsupportedAstError(expr.reason);
   }
@@ -241,6 +343,41 @@ export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): stri
       const verb = stmt.construct === "bare_call" ? "calls" : "evaluates";
       const detail = `${verb} bare expression-statement: ${stmt.detail}`;
       throw new ImpureFunctionError(fnName ?? "<unknown>", "forbidden_construct", detail);
+    }
+    case "If": {
+      // WI-903 DEC-WI903-001: Python if/elif/else → TS if/else if/else.
+      //
+      // Python's elif is represented as orelse=[{type:"If",...}] — a single-element
+      // list containing a nested If. We detect that shape and emit `else if` rather
+      // than a nested `else { if (...) { } }` block, matching Python's flat style.
+      //
+      // indent for the inner body uses two extra spaces relative to the current level.
+      const innerIndent = `${indent}  `;
+      const bodyLines = stmt.body
+        .map((s) => renderStmt(s, innerIndent, fnName))
+        .filter((l) => l !== "")
+        .join("\n");
+      const bodyBlock = bodyLines || `${innerIndent}void 0;`;
+      let result = `${indent}if (${renderExpr(stmt.test)}) {\n${bodyBlock}\n${indent}}`;
+      if (stmt.orelse.length > 0) {
+        // elif chain: orelse is a single If node — emit `else if`
+        const firstOrelse = stmt.orelse[0];
+        if (stmt.orelse.length === 1 && firstOrelse?.type === "If") {
+          // Recurse: renderStmt will produce `<indent>if (...) { ... }` — splice after `else `.
+          const elseIfText = renderStmt(firstOrelse, indent, fnName);
+          // elseIfText starts with `${indent}if` — trim the leading indent for the else clause.
+          result += ` else ${elseIfText.trimStart()}`;
+        } else {
+          // Plain else block
+          const elseLines = stmt.orelse
+            .map((s) => renderStmt(s, innerIndent, fnName))
+            .filter((l) => l !== "")
+            .join("\n");
+          const elseBlock = elseLines || `${innerIndent}void 0;`;
+          result += ` else {\n${elseBlock}\n${indent}}`;
+        }
+      }
+      return result;
     }
     case "Unsupported":
       throw new UnsupportedAstError(stmt.reason);
