@@ -558,6 +558,15 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@4.4.3)
+      '@yakcc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@yakcc/hooks-base':
+        specifier: workspace:*
+        version: link:../hooks-base
+      '@yakcc/registry':
+        specifier: workspace:*
+        version: link:../registry
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
