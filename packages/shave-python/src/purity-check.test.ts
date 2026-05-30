@@ -503,3 +503,47 @@ describe("checkFunctionPurity", () => {
     expect(() => checkFunctionPurity(fn, module, "bad")).toThrow(ImpureFunctionError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-888: ImpurityKind "forbidden_construct" — type-union smoke test
+// ---------------------------------------------------------------------------
+
+describe("WI-888 — ImpurityKind forbidden_construct smoke test", () => {
+  it("constructs ImpureFunctionError with kind='forbidden_construct' (type-union + runtime)", () => {
+    // Verifies that "forbidden_construct" is a valid ImpurityKind at both
+    // compile time (TypeScript) and runtime (the constructor accepts it).
+    const err = new ImpureFunctionError(
+      "my_fn",
+      "forbidden_construct",
+      "calls bare expression-statement: print(...)",
+    );
+    expect(err).toBeInstanceOf(ImpureFunctionError);
+    expect(err.kind).toBe("forbidden_construct");
+    expect(err.functionName).toBe("my_fn");
+    expect(err.detail).toContain("print(...)");
+  });
+
+  it("normalizeImpurityKind round-trips 'forbidden_construct' via envelope injection", () => {
+    // Exercise the normalizeImpurityKind path (via collectEnvelopeImpurities)
+    // to ensure the new kind survives the envelope → ImpureFunctionError path.
+    const env = makeEnvelope(
+      {},
+      {
+        ...pureFn("bare_call_fn"),
+        impurities: [
+          {
+            kind: "forbidden_construct",
+            detail: "calls bare expression-statement: print(...)",
+          },
+        ],
+      },
+    );
+    try {
+      checkPurity(env);
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+    }
+  });
+});

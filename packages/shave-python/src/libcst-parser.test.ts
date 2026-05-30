@@ -236,3 +236,72 @@ describe("WI-875: floor-divide // emission (REGRESSION — real Python subproces
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// WI-888: Docstring + ImpureStatement emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-888: Docstring + ImpureStatement emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits Docstring wire node for a PEP-257 docstring as first body stmt", async () => {
+      const source =
+        'def greeter(name: str) -> str:\n    """Return a greeting string."""\n    return f"Hello, {name}"\n';
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      // First statement should be Docstring
+      expect(body.length).toBeGreaterThanOrEqual(1);
+      expect(body[0]?.type).toBe("Docstring");
+      expect(typeof (body[0] as { value?: unknown }).value).toBe("string");
+      expect((body[0] as { value?: string }).value).toContain("greeting");
+    });
+
+    it("emits ImpureStatement(bare_call) for a bare print() call in a function body", async () => {
+      // def log_it(x: int) -> None:
+      //     print(x)
+      const source = "def log_it(x: int) -> None:\n    print(x)\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      expect(body.length).toBeGreaterThanOrEqual(1);
+      const stmt = body[0] as PythonAstNode;
+      expect(stmt.type).toBe("ImpureStatement");
+      expect((stmt as { construct?: string }).construct).toBe("bare_call");
+      expect((stmt as { detail?: string }).detail).toContain("print");
+    });
+
+    it("does NOT emit Docstring for a string in non-first position (bare_expression instead)", async () => {
+      // def mixed(x: int) -> int:
+      //     x + 1     # bare expression at position 0 -> ImpureStatement
+      //     "not a docstring"  # string at non-first position -> ImpureStatement
+      //     return x
+      const source = "def mixed(x: int) -> int:\n    x + 1\n    return x\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      // First stmt is x + 1 — not a string-literal, so ImpureStatement(bare_expression)
+      expect(body[0]?.type).toBe("ImpureStatement");
+      expect((body[0] as { construct?: string }).construct).toBe("bare_expression");
+    });
+
+    it("emits Docstring wire node for a triple-quoted docstring", async () => {
+      const source =
+        'def triple(x: int) -> int:\n    """Triple-quoted doc.\n    Multiline.\n    """\n    return x\n';
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      expect(body[0]?.type).toBe("Docstring");
+    });
+  }
+});

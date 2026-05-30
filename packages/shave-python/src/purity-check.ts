@@ -114,8 +114,24 @@ export class ImpureFunctionError extends Error {
   }
 }
 
-/** Classifier for purity violation kinds. */
-export type ImpurityKind = "forbidden_import" | "forbidden_call" | "forbidden_attr" | "global_decl";
+/**
+ * Classifier for purity violation kinds.
+ *
+ * @decision DEC-WI888-004 — Extend ImpurityKind with "forbidden_construct"
+ * @title ImpurityKind gains "forbidden_construct" for bare expression-statement violations
+ * @status accepted
+ * @rationale "forbidden_construct" is the operator-decided label per #888 acceptance criteria.
+ *   Generic enough to absorb other future "this construct isn't allowed in pure functions" cases.
+ *   Rejected "bare_expression" (too specific) and re-using "forbidden_call" (different detection
+ *   path — FORBIDDEN_BUILTINS walk vs wire-node render-time throw).
+ *   Cross-reference: PLAN.md §4 / #888
+ */
+export type ImpurityKind =
+  | "forbidden_import"
+  | "forbidden_call"
+  | "forbidden_attr"
+  | "global_decl"
+  | "forbidden_construct"; // WI-888: bare expression-statement (Docstring→skip, Call/Expr→throw)
 
 // ---------------------------------------------------------------------------
 // Internal wire-AST walker types
@@ -320,6 +336,7 @@ function normalizeImpurityKind(kind: string): ImpurityKind {
     case "forbidden_call":
     case "forbidden_attr":
     case "global_decl":
+    case "forbidden_construct": // WI-888: bare expression-statement violations
       return kind;
     default:
       return "forbidden_call";

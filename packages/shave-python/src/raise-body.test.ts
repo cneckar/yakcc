@@ -4,6 +4,7 @@
 // Tests build wire envelopes directly; no subprocess.
 
 import { describe, expect, it } from "vitest";
+import { ImpureFunctionError } from "./purity-check.js";
 import {
   UnsupportedAstError,
   type WireExpr,
@@ -317,6 +318,102 @@ describe("UnsupportedAstError extends CannotRaiseToIRError (slice 4)", () => {
     expect(err).toBeInstanceOf(CannotRaiseToIRError);
     expect(err.reason).toBe("async def");
     expect(err.construct).toBe("async def");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-888: Docstring wire stmt — silently skipped by renderStmt
+// ---------------------------------------------------------------------------
+
+describe("WI-888: renderStmt — Docstring node returns empty string", () => {
+  it("returns empty string for a single-line docstring", () => {
+    const stmt: WireStmt = { type: "Docstring", value: "This is a docstring." };
+    expect(renderStmt(stmt)).toBe("");
+  });
+
+  it("returns empty string for a multi-line docstring value", () => {
+    const stmt: WireStmt = { type: "Docstring", value: "Line 1.\nLine 2." };
+    expect(renderStmt(stmt)).toBe("");
+  });
+
+  it("renderBody silently drops a Docstring node from joined output", () => {
+    const stmts: WireStmt[] = [
+      { type: "Docstring", value: "Compute the sum." },
+      {
+        type: "Return",
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "x" },
+          right: { type: "Name", name: "y" },
+        },
+      },
+    ];
+    // Docstring produces "" which joins with newline + Return result
+    expect(renderBody(stmts)).toBe("\n  return (x + y);");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-888: ImpureStatement wire stmt — throws ImpureFunctionError
+// ---------------------------------------------------------------------------
+
+describe("WI-888: renderStmt — ImpureStatement throws ImpureFunctionError", () => {
+  it("throws ImpureFunctionError for bare_call construct", () => {
+    const stmt: WireStmt = {
+      type: "ImpureStatement",
+      construct: "bare_call",
+      detail: "print(...)",
+    };
+    try {
+      renderStmt(stmt);
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+      expect((err as ImpureFunctionError).detail).toContain("print(...)");
+      expect((err as ImpureFunctionError).functionName).toBe("<unknown>");
+    }
+  });
+
+  it("throws ImpureFunctionError for bare_expression construct", () => {
+    const stmt: WireStmt = {
+      type: "ImpureStatement",
+      construct: "bare_expression",
+      detail: "BinaryOperation",
+    };
+    try {
+      renderStmt(stmt);
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+      expect((err as ImpureFunctionError).detail).toContain("BinaryOperation");
+    }
+  });
+
+  it("threads fnName through to ImpureFunctionError when provided", () => {
+    const stmt: WireStmt = {
+      type: "ImpureStatement",
+      construct: "bare_call",
+      detail: "log_event(...)",
+    };
+    try {
+      renderStmt(stmt, "  ", "my_function");
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).functionName).toBe("my_function");
+    }
+  });
+
+  it("renderBody throws on ImpureStatement before the body completes", () => {
+    const stmts: WireStmt[] = [
+      { type: "Pass" },
+      { type: "ImpureStatement", construct: "bare_call", detail: "side_effect(...)" },
+      { type: "Return", value: null },
+    ];
+    expect(() => renderBody(stmts, "  ", "my_fn")).toThrow(ImpureFunctionError);
   });
 });
 
