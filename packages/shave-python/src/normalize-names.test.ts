@@ -379,4 +379,219 @@ describe("normalizeBodyNames", () => {
     // Original WireStmt should not be mutated
     expect(original).toEqual({ type: "Return", value: { type: "Name", name: "x" } });
   });
+
+  // ---------------------------------------------------------------------------
+  // #958 regression: param rename must reach all statement / expression types
+  // ---------------------------------------------------------------------------
+
+  it("#958 param-in-if-test: renames Name in If.test (#958 substitute_xml pattern)", () => {
+    // def f(make_quoted_attribute: bool): if make_quoted_attribute: return True
+    // Bug: normalizeStmtNames didn't handle If — test remained snake_case.
+    const map = new Map([["make_quoted_attribute", "makeQuotedAttribute"]]);
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: { type: "Name", name: "make_quoted_attribute" },
+        body: [{ type: "Return", value: { type: "Bool", value: true } }],
+        orelse: [],
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const ifStmt = result[0];
+    expect(ifStmt?.type).toBe("If");
+    if (ifStmt?.type === "If") {
+      expect(ifStmt.test).toEqual({ type: "Name", name: "makeQuotedAttribute" });
+    }
+  });
+
+  it("#958 param-in-if-body: renames Name in nested If body statements", () => {
+    // def f(n: int): if n > 0: return n
+    const map = new Map([["n", "nRenamed"]]);
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: ">",
+          left: { type: "Name", name: "n" },
+          right: { type: "Integer", value: "0" },
+        },
+        body: [{ type: "Return", value: { type: "Name", name: "n" } }],
+        orelse: [{ type: "Return", value: { type: "Integer", value: "0" } }],
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const ifStmt = result[0];
+    expect(ifStmt?.type).toBe("If");
+    if (ifStmt?.type === "If") {
+      // test expr
+      const test = ifStmt.test;
+      expect(test.type).toBe("BinaryOp");
+      if (test.type === "BinaryOp") {
+        expect(test.left).toEqual({ type: "Name", name: "nRenamed" });
+      }
+      // return in body
+      const bodyRet = ifStmt.body[0];
+      expect(bodyRet?.type).toBe("Return");
+      if (bodyRet?.type === "Return") {
+        expect(bodyRet.value).toEqual({ type: "Name", name: "nRenamed" });
+      }
+    }
+  });
+
+  it("#958 param-in-assign: renames Name in Assign.value", () => {
+    // def f(x: int): y = x + 1
+    const map = new Map([["x", "xRenamed"]]);
+    const body: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "y",
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "x" },
+          right: { type: "Integer", value: "1" },
+        },
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const assign = result[0];
+    expect(assign?.type).toBe("Assign");
+    if (assign?.type === "Assign") {
+      expect(assign.target).toBe("y"); // target (local var) not renamed
+      const val = assign.value;
+      expect(val.type).toBe("BinaryOp");
+      if (val.type === "BinaryOp") {
+        expect(val.left).toEqual({ type: "Name", name: "xRenamed" });
+      }
+    }
+  });
+
+  it("#958 param-in-subscript: renames Name in Subscript value and slice", () => {
+    // def f(d: dict, k: str): return d[k]
+    const map = new Map([
+      ["d", "dRenamed"],
+      ["k", "kRenamed"],
+    ]);
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "Subscript",
+          value: { type: "Name", name: "d" },
+          slice: { type: "Name", name: "k" },
+        },
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const ret = result[0];
+    expect(ret?.type).toBe("Return");
+    if (ret?.type === "Return") {
+      const sub = ret.value;
+      expect(sub?.type).toBe("Subscript");
+      if (sub?.type === "Subscript") {
+        expect(sub.value).toEqual({ type: "Name", name: "dRenamed" });
+        expect(sub.slice).toEqual({ type: "Name", name: "kRenamed" });
+      }
+    }
+  });
+
+  it("#958 param-in-comparison: renames Name in BinaryOp comparison (x == y)", () => {
+    // def f(x: int, y: int) -> bool: return x == y
+    const map = new Map([
+      ["x", "xRenamed"],
+      ["y", "yRenamed"],
+    ]);
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "BinaryOp",
+          op: "==",
+          left: { type: "Name", name: "x" },
+          right: { type: "Name", name: "y" },
+        },
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const ret = result[0];
+    expect(ret?.type).toBe("Return");
+    if (ret?.type === "Return") {
+      const binop = ret.value;
+      expect(binop?.type).toBe("BinaryOp");
+      if (binop?.type === "BinaryOp") {
+        expect(binop.left).toEqual({ type: "Name", name: "xRenamed" });
+        expect(binop.right).toEqual({ type: "Name", name: "yRenamed" });
+      }
+    }
+  });
+
+  it("#958 param-in-boolop: renames Name in BoolOp operands", () => {
+    // def f(a: bool, b: bool): return a and b
+    const map = new Map([
+      ["a", "aRenamed"],
+      ["b", "bRenamed"],
+    ]);
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "BoolOp",
+          op: "and",
+          left: { type: "Name", name: "a" },
+          right: { type: "Name", name: "b" },
+        },
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const ret = result[0];
+    expect(ret?.type).toBe("Return");
+    if (ret?.type === "Return") {
+      const boolop = ret.value;
+      expect(boolop?.type).toBe("BoolOp");
+      if (boolop?.type === "BoolOp") {
+        expect(boolop.left).toEqual({ type: "Name", name: "aRenamed" });
+        expect(boolop.right).toEqual({ type: "Name", name: "bRenamed" });
+      }
+    }
+  });
+
+  it("#958 param-in-unaryop: renames Name in UnaryOp operand", () => {
+    // def f(x: int): return -x
+    const map = new Map([["x", "xRenamed"]]);
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: { type: "UnaryOp", op: "-", operand: { type: "Name", name: "x" } },
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const ret = result[0];
+    expect(ret?.type).toBe("Return");
+    if (ret?.type === "Return") {
+      const unary = ret.value;
+      expect(unary?.type).toBe("UnaryOp");
+      if (unary?.type === "UnaryOp") {
+        expect(unary.operand).toEqual({ type: "Name", name: "xRenamed" });
+      }
+    }
+  });
+
+  it("#958 param-in-raise: renames Name in Raise message", () => {
+    // def f(msg: str): raise ValueError(msg)
+    const map = new Map([["msg", "msgRenamed"]]);
+    const body: WireStmt[] = [
+      {
+        type: "Raise",
+        excClass: "ValueError",
+        message: { type: "Name", name: "msg" },
+      },
+    ];
+    const result = normalizeBodyNames(body, map);
+    const raise = result[0];
+    expect(raise?.type).toBe("Raise");
+    if (raise?.type === "Raise") {
+      expect(raise.message).toEqual({ type: "Name", name: "msgRenamed" });
+    }
+  });
 });

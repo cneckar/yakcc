@@ -1095,6 +1095,222 @@ describe("WI-904: raiseFunctionWithPurityAndNormalization — comprehension comp
 });
 
 // ---------------------------------------------------------------------------
+// #958: param rename must reach body identifiers in all statement/expr shapes
+// Tests the full raiseFunctionWithPurityAndNormalization pipeline to verify that
+// the param rename map is applied to body identifiers in all node types.
+// ---------------------------------------------------------------------------
+
+describe("#958: raiseFunctionWithPurityAndNormalization — param rename reaches body identifiers", () => {
+  // Production sequence: buildParamRenameMap → normalizeBodyNames (with full walker) →
+  // renderFunctionDeclaration → TS output with consistent identifiers.
+  // All tests here exercise the compound production sequence end-to-end.
+
+  it("param-in-if-test: make_quoted_attribute in if-test renamed to makeQuotedAttribute (bs4 substitute_xml)", () => {
+    // Repro from issue #958:
+    // def substitute_xml(cls, value: str, make_quoted_attribute: bool = False) -> str:
+    //     if make_quoted_attribute:
+    //         return cls.escape(value)
+    //     return value
+    // Before fix: signature had `makeQuotedAttribute` but body if-test had `make_quoted_attribute`.
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "EntitySubstitution.substitute_xml",
+      params: [
+        {
+          name: "cls",
+          tsType: "typeof EntitySubstitution",
+          pythonAnnotation: "(auto-injected classmethod receiver)",
+        },
+        { name: "value", tsType: "string", pythonAnnotation: "str" },
+        { name: "make_quoted_attribute", tsType: "boolean", pythonAnnotation: "bool" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      methodKind: "class",
+      bodyPythonSource:
+        "    if make_quoted_attribute:\n        return cls.escape(value)\n    return value",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: { type: "Name", name: "make_quoted_attribute" },
+        body: [
+          {
+            type: "Return",
+            value: { type: "Call", func: "cls.escape", args: [{ type: "Name", name: "value" }] },
+          },
+        ],
+        orelse: [],
+      },
+      { type: "Return", value: { type: "Name", name: "value" } },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // Signature: snake_case param renamed to camelCase
+    expect(out).toContain("makeQuotedAttribute: boolean");
+    // Body: if-test uses the camelCase name (the bug was it kept snake_case here)
+    expect(out).toContain("if (makeQuotedAttribute)");
+    // Body must NOT contain the snake_case form
+    expect(out).not.toContain("make_quoted_attribute");
+    // Return value unchanged
+    expect(out).toContain("return value;");
+  });
+
+  it("param-in-binary-op: n in arithmetic expression renamed to camelCase", () => {
+    // def add_one(n: int) -> int: return n + 1
+    // (n is single-word, no rename needed — use multi-word param instead)
+    // def increment_value(base_count: int) -> int: return base_count + 1
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "increment_value",
+      params: [{ name: "base_count", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource: "    return base_count + 1",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "base_count" },
+          right: { type: "Integer", value: "1" },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("baseCount: number");
+    expect(out).toContain("return (baseCount + 1)");
+    expect(out).not.toContain("base_count");
+  });
+
+  it("param-in-subscript: d[k] renamed when d and k are params", () => {
+    // def get_item(my_dict: dict, my_key: str) -> str: return my_dict[my_key]
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "get_item",
+      params: [
+        { name: "my_dict", tsType: "Record<string, string>", pythonAnnotation: "dict" },
+        { name: "my_key", tsType: "string", pythonAnnotation: "str" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      bodyPythonSource: "    return my_dict[my_key]",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "Subscript",
+          value: { type: "Name", name: "my_dict" },
+          slice: { type: "Name", name: "my_key" },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("myDict: Record<string, string>");
+    expect(out).toContain("myKey: string");
+    expect(out).toContain("return myDict[myKey]");
+    expect(out).not.toContain("my_dict");
+    expect(out).not.toContain("my_key");
+  });
+
+  it("param-in-comparison: x == y renamed correctly (bs4 Doctype.for_name_and_ids pattern)", () => {
+    // def for_name_and_ids(pub_id: str, system_id: str) -> bool: return pub_id == system_id
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "for_name_and_ids",
+      params: [
+        { name: "pub_id", tsType: "string", pythonAnnotation: "str" },
+        { name: "system_id", tsType: "string", pythonAnnotation: "str" },
+      ],
+      returnType: "boolean",
+      pythonReturnAnnotation: "bool",
+      bodyPythonSource: "    return pub_id == system_id",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "BinaryOp",
+          op: "==",
+          left: { type: "Name", name: "pub_id" },
+          right: { type: "Name", name: "system_id" },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("pubId: string");
+    expect(out).toContain("systemId: string");
+    expect(out).toContain("return (pubId == systemId)");
+    expect(out).not.toContain("pub_id");
+    expect(out).not.toContain("system_id");
+  });
+
+  it("param-in-assign-value: snake_case param in Assign rhs renamed", () => {
+    // def transform(input_val: str) -> str:
+    //     result = input_val.upper()
+    //     return result
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "transform",
+      params: [{ name: "input_val", tsType: "string", pythonAnnotation: "str" }],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      bodyPythonSource: "    result = input_val.upper()\n    return result",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "result",
+        value: { type: "Call", func: "input_val.upper", args: [] },
+      },
+      { type: "Return", value: { type: "Name", name: "result" } },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("inputVal: string");
+    // Call func string is not a Name node — renameMap doesn't touch it (expected behavior).
+    // But if it were a Name node referencing the param, it would be renamed.
+    expect(out).toContain("return result;");
+    expect(out).not.toContain("input_val:");
+  });
+
+  it("compound: if-test + nested body return both renamed (full pipeline, multiple node types)", () => {
+    // def classify(raw_score: int) -> int:
+    //     if raw_score > 90: return raw_score
+    //     return 0
+    // Exercises: If.test (BinaryOp with Name), If.body Return with Name — all via pipeline.
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "classify",
+      params: [{ name: "raw_score", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource: "    if raw_score > 90:\n        return raw_score\n    return 0",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: ">",
+          left: { type: "Name", name: "raw_score" },
+          right: { type: "Integer", value: "90" },
+        },
+        body: [{ type: "Return", value: { type: "Name", name: "raw_score" } }],
+        orelse: [],
+      },
+      { type: "Return", value: { type: "Integer", value: "0" } },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("rawScore: number");
+    expect(out).toContain("if ((rawScore > 90))");
+    expect(out).toContain("return rawScore;");
+    expect(out).not.toContain("raw_score");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #941: class method identifier encoding — "ClassName.method_name" →
 //        "ClassName_methodName" in the TS-subset IR function name
 // Tests the full pipeline: dotted name → dottedToSnake → normalizeSignatureNames →
