@@ -836,3 +836,103 @@ describe("WI-890: class method extraction (real Python subprocess)", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// WI-934: module.classes[] structural envelope (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-934: module.classes[] structural envelope (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits module.classes[] with name, init_params, init_assignments, methods for a class fixture", async () => {
+      // Canonical EmailValidator class from the WI-934 issue body.
+      // Verifies that libcst-parse.py emits the module.classes[] structural array.
+      const source = [
+        "class EmailValidator:",
+        "    def __init__(self, max_length: int):",
+        "        self.max_length = max_length",
+        "",
+        "    def validate(self, email: str) -> bool:",
+        "        if len(email) > self.max_length:",
+        "            return False",
+        "        return True",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const classes = (result.module as unknown as { classes?: PythonAstNode[] }).classes ?? [];
+      expect(classes).toHaveLength(1);
+      const cls = classes[0] as PythonAstNode;
+      expect((cls as { name?: string }).name).toBe("EmailValidator");
+      // init_params: max_length: int
+      const initParams = (cls as { init_params?: PythonAstNode[] }).init_params ?? [];
+      expect(initParams).toHaveLength(1);
+      expect((initParams[0] as { name?: string }).name).toBe("max_length");
+      expect((initParams[0] as { annotation?: string }).annotation).toBe("int");
+      // init_assignments: self.max_length = max_length
+      const initAssignments =
+        (cls as { init_assignments?: PythonAstNode[] }).init_assignments ?? [];
+      expect(initAssignments).toHaveLength(1);
+      expect((initAssignments[0] as { target?: string }).target).toBe("max_length");
+      // methods: validate
+      const methods = (cls as { methods?: PythonAstNode[] }).methods ?? [];
+      expect(methods).toHaveLength(1);
+      expect((methods[0] as { name?: string }).name).toBe("validate");
+      expect((methods[0] as { methodKind?: string }).methodKind).toBe("instance");
+      expect((methods[0] as { return_annotation?: string }).return_annotation).toBe("bool");
+      // raise_blockers: none for this simple class
+      const raiseblockers = (cls as { raise_blockers?: unknown[] }).raise_blockers ?? [];
+      expect(raiseblockers).toHaveLength(0);
+    });
+
+    it("emits module.classes:[] (empty) for a module-only fixture — module.functions[] unchanged", async () => {
+      // Verifies WI-934 additive contract: module.functions[] is byte-equivalent for
+      // existing callers when no classes are present.
+      const source = "def plain(x: int) -> int:\n    return x\n";
+      const result = await parsePythonSource(source);
+      // module.classes[] must be present and empty
+      const classes = (result.module as unknown as { classes?: unknown[] }).classes;
+      expect(Array.isArray(classes)).toBe(true);
+      expect(classes).toHaveLength(0);
+      // module.functions[] must still contain the function (unchanged)
+      const fns = result.module.functions as PythonAstNode[];
+      expect(fns).toHaveLength(1);
+      expect((fns[0] as { name?: string }).name).toBe("plain");
+      expect((fns[0] as { methodKind?: unknown }).methodKind).toBeUndefined();
+    });
+
+    it("compound: class with raise_blockers emits them in module.classes[]", async () => {
+      // A class with a metaclass — Python-side detection emits raise_blockers.
+      const source = [
+        "class Meta(type):",
+        "    pass",
+        "",
+        "class MyModel(metaclass=Meta):",
+        "    def __init__(self, x: int):",
+        "        self.x = x",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const classes = (result.module as unknown as { classes?: PythonAstNode[] }).classes ?? [];
+      // Two classes emitted: Meta and MyModel
+      expect(classes.length).toBeGreaterThanOrEqual(1);
+      // Find MyModel
+      const myModel = classes.find((c) => (c as { name?: string }).name === "MyModel");
+      expect(myModel).toBeDefined();
+      // raise_blockers is string[] (e.g. "metaclass", "non_trivial_base")
+      const blockers = (myModel as { raise_blockers?: string[] }).raise_blockers ?? [];
+      expect(blockers.length).toBeGreaterThanOrEqual(1);
+      // At least one blocker should be "metaclass"
+      expect(blockers).toContain("metaclass");
+    });
+  }
+});

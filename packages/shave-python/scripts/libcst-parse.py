@@ -612,6 +612,23 @@ def _expr(node):  # type: ignore[no-untyped-def]
             elements.append(_expr(elt.value))
         return {"type": "Tuple", "elements": elements}
 
+    # WI-934: Attribute access (obj.attr) — emit AttributeRef so raise-class.ts
+    # can rewrite self.field reads into self.camelField Name nodes before renderBody.
+    # Non-self attribute accesses are also emitted (e.g. module.CONSTANT) so the
+    # rewriter can pass them through as-is.
+    #
+    # Note: libcst.Attribute.attr is always a libcst.Name (the attribute name).
+    # libcst.Attribute.value is the object expression (recursively handled).
+    if isinstance(node, libcst.Attribute):
+        attr_name = node.attr.value if isinstance(node.attr, libcst.Name) else None
+        if attr_name is None:
+            return {"type": "Unsupported", "reason": "Attribute with complex attr"}
+        return {
+            "type": "AttributeRef",
+            "obj": _expr(node.value),
+            "attr": attr_name,
+        }
+
     return {"type": "Unsupported", "reason": type(node).__name__}
 
 
@@ -1022,6 +1039,311 @@ def _class_method_envelopes(cls_node, module=None):  # type: ignore[no-untyped-d
     return envelopes
 
 
+# ---------------------------------------------------------------------------
+# WI-934: Structural class envelope for raise-class.ts
+# ---------------------------------------------------------------------------
+#
+# @decision DEC-WI934-001 — libcst envelope additive — module.classes[] alongside flat functions[]
+# @title module.classes[] is purely additive; module.functions[] unchanged for byte-equivalence
+# @status accepted
+# @rationale WI-890 consumers rely on flat module.functions[] with dotted names.
+#   The new module.classes[] is for raise-class.ts only; existing callers see no change.
+#   raise_blockers[] is the Python-side first-pass detection authority — one source of truth
+#   for structural rejection signals (metaclass, non-trivial base, __slots__, etc.) so
+#   the TS side can CannotRaiseToIRError without re-implementing libcst structural checks.
+
+
+def _class_init_info(cls_node, module=None):  # type: ignore[no-untyped-def]
+    """Extract __init__ params and self.x = y assignments from a ClassDef.
+
+    Returns (init_params, init_assignments) where:
+      init_params: list of {"name": str, "annotation": str|null}
+      init_assignments: list of {"target": str, "value": <Expr>}
+        where target is the attribute name (string after self.)
+        and value is the wire-Expr for the RHS.
+
+    Returns ([], []) when no __init__ is found.
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    try:
+        body_stmts = cls_node.body.body
+    except AttributeError:
+        return [], []
+
+    for stmt in body_stmts:
+        if not isinstance(stmt, libcst.FunctionDef):
+            continue
+        if stmt.name.value != "__init__":
+            continue
+        # Found __init__ — extract params (skip self)
+        params = []
+        for p in stmt.params.params:
+            if p.name.value == "self":
+                continue
+            params.append(
+                {
+                    "name": p.name.value,
+                    "annotation": (
+                        _annotation_text(p.annotation.annotation, module)
+                        if p.annotation is not None
+                        else None
+                    ),
+                }
+            )
+        # Extract self.x = y assignments from the __init__ body
+        assignments = []
+        try:
+            for body_stmt in stmt.body.body:
+                if not isinstance(body_stmt, libcst.SimpleStatementLine):
+                    continue
+                for small in body_stmt.body:
+                    if not isinstance(small, libcst.Assign):
+                        continue
+                    if len(small.targets) != 1:
+                        continue
+                    tgt = small.targets[0].target
+                    # We want Attribute(value=Name("self"), attr=Name(X))
+                    if not isinstance(tgt, libcst.Attribute):
+                        continue
+                    if not isinstance(tgt.value, libcst.Name):
+                        continue
+                    if tgt.value.value != "self":
+                        continue
+                    attr_name = tgt.attr.value if isinstance(tgt.attr, libcst.Name) else None
+                    if attr_name is None:
+                        continue
+                    assignments.append(
+                        {
+                            "target": attr_name,
+                            "value": _expr(small.value),
+                        }
+                    )
+        except AttributeError:
+            pass
+        return params, assignments
+    return [], []
+
+
+def _class_vars(cls_node, module=None):  # type: ignore[no-untyped-def]
+    """Extract class-level variable assignments (non-method, non-nested) from a ClassDef.
+
+    Returns a list of {"name": str, "value": <Expr>} for simple Name-target assignments
+    at the class body level.  These correspond to class variables like
+      LIMIT = 100
+      DEFAULT_NAME = "foo"
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    class_vars = []
+    try:
+        body_stmts = cls_node.body.body
+    except AttributeError:
+        return class_vars
+
+    for stmt in body_stmts:
+        if not isinstance(stmt, libcst.SimpleStatementLine):
+            continue
+        for small in stmt.body:
+            if not isinstance(small, libcst.Assign):
+                continue
+            if len(small.targets) != 1:
+                continue
+            tgt = small.targets[0].target
+            if not isinstance(tgt, libcst.Name):
+                continue
+            class_vars.append({"name": tgt.value, "value": _expr(small.value)})
+    return class_vars
+
+
+def _class_raise_blockers(cls_node):  # type: ignore[no-untyped-def]
+    """First-pass detection of raise blockers for a ClassDef.
+
+    Returns a list of blocker strings; empty list means no blockers detected at
+    the Python-layer scan.  The TS raise-class.ts layer uses these strings to
+    emit CannotRaiseToIRError without re-doing libcst structural checks.
+
+    Detected blockers:
+      "metaclass"           — class Foo(metaclass=Meta)
+      "non_trivial_base"    — class Foo(Bar) where Bar != "object"
+      "slots"               — __slots__ class variable
+      "getattr"             — __getattr__ method
+      "getattribute"        — __getattribute__ method
+      "property_decorator"  — @property on any method
+      "dataclass"           — @dataclass on the class itself
+      "pydantic"            — inherits from BaseModel or similar
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    blockers = []
+
+    # Check metaclass keyword
+    for keyword in cls_node.keywords:
+        kw_name = keyword.keyword.value if isinstance(keyword.keyword, libcst.Name) else None
+        if kw_name == "metaclass":
+            blockers.append("metaclass")
+            break
+
+    # Check bases for non-trivial inheritance
+    for arg in cls_node.bases:
+        base_expr = arg.value
+        if isinstance(base_expr, libcst.Name):
+            base_name = base_expr.value
+            if base_name not in ("object",):
+                blockers.append("non_trivial_base")
+                break
+        else:
+            # Attribute access (e.g. abc.ABC) or other complex expression
+            blockers.append("non_trivial_base")
+            break
+
+    # Check class decorators
+    for decorator in cls_node.decorators:
+        dec_node = decorator.decorator
+        dec_name = None
+        if isinstance(dec_node, libcst.Name):
+            dec_name = dec_node.value
+        elif isinstance(dec_node, libcst.Call):
+            if isinstance(dec_node.func, libcst.Name):
+                dec_name = dec_node.func.value
+        if dec_name == "dataclass":
+            blockers.append("dataclass")
+        elif dec_name is not None:
+            blockers.append(f"class_decorator:{dec_name}")
+
+    # Scan body for __slots__, __getattr__, __getattribute__, @property methods
+    try:
+        body_stmts = cls_node.body.body
+    except AttributeError:
+        return blockers
+
+    for stmt in body_stmts:
+        if isinstance(stmt, libcst.SimpleStatementLine):
+            for small in stmt.body:
+                if isinstance(small, libcst.Assign) and len(small.targets) == 1:
+                    tgt = small.targets[0].target
+                    if isinstance(tgt, libcst.Name) and tgt.value == "__slots__":
+                        blockers.append("slots")
+        elif isinstance(stmt, libcst.FunctionDef):
+            fn_name = stmt.name.value
+            if fn_name == "__getattr__":
+                blockers.append("getattr")
+            elif fn_name == "__getattribute__":
+                blockers.append("getattribute")
+            # Check for @property decorator on this method
+            for decorator in stmt.decorators:
+                dec_node = decorator.decorator
+                dec_name = None
+                if isinstance(dec_node, libcst.Name):
+                    dec_name = dec_node.value
+                elif isinstance(dec_node, libcst.Attribute):
+                    dec_name = (
+                        dec_node.attr.value if isinstance(dec_node.attr, libcst.Name) else None
+                    )
+                if dec_name == "property":
+                    blockers.append("property_decorator")
+                    break
+
+    return blockers
+
+
+def _class_envelope(cls_node, module=None):  # type: ignore[no-untyped-def]
+    """Build the structural class envelope for one ClassDef.
+
+    WI-934: Emits module.classes[] entries consumed by raise-class.ts.
+    Unlike _class_method_envelopes (WI-890 flat-list path), this function
+    emits the full structured class shape so raise-class.ts can:
+      1. Validate the class shape (via raise_blockers)
+      2. Derive the state interface from __init__ assignments
+      3. Uncurry instance methods into free functions
+
+    The flat module.functions[] list (WI-890) continues to be populated
+    in parallel for backward-compatibility with existing consumers.
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    class_name = cls_node.name.value
+
+    # Base classes (as annotation-text strings for the TS layer to inspect)
+    bases = []
+    for arg in cls_node.bases:
+        try:
+            base_text = _annotation_text(arg.value, module)
+            if base_text:
+                bases.append(base_text)
+        except Exception:  # noqa: BLE001
+            bases.append("?")
+
+    # Decorators (as name strings)
+    decorators = []
+    for decorator in cls_node.decorators:
+        dec_node = decorator.decorator
+        if isinstance(dec_node, libcst.Name):
+            decorators.append(dec_node.value)
+        elif isinstance(dec_node, libcst.Call) and isinstance(dec_node.func, libcst.Name):
+            decorators.append(dec_node.func.value)
+        else:
+            decorators.append("?")
+
+    # Metaclass
+    metaclass = None
+    for keyword in cls_node.keywords:
+        kw_name = keyword.keyword.value if isinstance(keyword.keyword, libcst.Name) else None
+        if kw_name == "metaclass":
+            metaclass = _annotation_text(keyword.value, module)
+            break
+
+    # __init__ params and assignments
+    init_params, init_assignments = _class_init_info(cls_node, module)
+
+    # Instance methods (methodKind == "instance") and their full wire envelope
+    methods = []
+    try:
+        body_stmts = cls_node.body.body
+    except AttributeError:
+        body_stmts = []
+
+    for stmt in body_stmts:
+        if not isinstance(stmt, libcst.FunctionDef):
+            continue
+        fn_name = stmt.name.value
+        # Skip __init__ — it is represented by init_params + init_assignments
+        if fn_name == "__init__":
+            continue
+        kind = _method_kind(stmt)
+        # Build the full function envelope for this method
+        env = _function_envelope(stmt, module=module, method_kind=kind)
+        # Add method-specific fields
+        methods.append(
+            {
+                "name": fn_name,
+                "params": env["params"],
+                "return_annotation": env["return_annotation"],
+                "body_source": env["body_source"],
+                "body": env["body"],
+                "methodKind": kind,
+            }
+        )
+
+    # Class variables
+    class_var_list = _class_vars(cls_node, module)
+
+    # Raise blockers (Python-side first-pass detection)
+    raise_blockers = _class_raise_blockers(cls_node)
+
+    return {
+        "name": class_name,
+        "bases": bases,
+        "decorators": decorators,
+        "metaclass": metaclass,
+        "init_params": init_params,
+        "init_assignments": init_assignments,
+        "methods": methods,
+        "class_vars": class_var_list,
+        "raise_blockers": raise_blockers,
+    }
+
+
 def main() -> int:
     try:
         import libcst  # type: ignore[import-untyped]
@@ -1049,6 +1371,11 @@ def main() -> int:
         if isinstance(s, libcst.ClassDef):
             functions.extend(_class_method_envelopes(s, module))
     imports = _collect_imports(module)
+
+    # WI-934: structural class envelopes for raise-class.ts.
+    # Additive — module.functions[] unchanged (DEC-WI934-001).
+    classes = [_class_envelope(s, module) for s in module.body if isinstance(s, libcst.ClassDef)]
+
     json.dump(
         {
             "version": 1,
@@ -1057,6 +1384,7 @@ def main() -> int:
                 "stmt_count": len(module.body),
                 "functions": functions,
                 "imports": imports,
+                "classes": classes,
             },
         },
         sys.stdout,

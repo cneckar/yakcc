@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// Tests for extractFunctionSignatures (WI-782 slice 2).
+// Tests for extractFunctionSignatures (WI-782 slice 2) and
+// extractClassEnvelopes (WI-934).
 //
 // Tests build the libcst envelope directly (no subprocess) — the envelope
 // shape is the wire contract that the Python script also produces.
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { LibcstParseResult } from "./libcst-parser.js";
 import {
   MissingTypeAnnotationError,
+  extractClassEnvelopes,
   extractFunctionSignatures,
   extractFunctionSignaturesAll,
 } from "./parse-fn-signature.js";
@@ -636,5 +638,232 @@ describe("#923 — cls exemption for @classmethod", () => {
     const helperSig = result.ok.find((s) => s.name === "normalize_tag");
     expect(helperSig?.params.map((p) => p.name)).toEqual(["s"]);
     expect(helperSig?.methodKind).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-934: extractClassEnvelopes — module.classes[] path
+// ---------------------------------------------------------------------------
+//
+// extractClassEnvelopes reads the module.classes[] array emitted by WI-934's
+// libcst-parse.py extension and returns a typed EnvelopeClass[].  These tests
+// cover:
+//   1. Happy path: envelope with one class returns typed EnvelopeClass[]
+//   2. Module with no classes returns []
+//   3. WI-890 regression: module.functions[] instance-method path unaffected
+//   4. Compound: module with both classes and functions — each path independent
+//
+// Tests build the LibcstParseResult directly (no subprocess).
+// ---------------------------------------------------------------------------
+
+describe("WI-934: extractClassEnvelopes — module.classes[] path", () => {
+  it("returns typed EnvelopeClass[] for a module with one class", () => {
+    // Envelope mirrors what libcst-parse.py emits for a simple class.
+    const env: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 1,
+        functions: [],
+        classes: [
+          {
+            name: "Counter",
+            bases: [],
+            decorators: [],
+            metaclass: null,
+            init_params: [{ name: "start", annotation: "int" }],
+            init_assignments: [{ target: "start", value: { type: "Name", name: "start" } }],
+            methods: [
+              {
+                name: "increment",
+                params: [
+                  { name: "self", annotation: null },
+                  { name: "n", annotation: "int" },
+                ],
+                return_annotation: "int",
+                body_source: "        return self.start + n",
+                body: [
+                  {
+                    type: "Return",
+                    value: {
+                      type: "BinaryOp",
+                      op: "+",
+                      left: {
+                        type: "AttributeRef",
+                        obj: { type: "Name", name: "self" },
+                        attr: "start",
+                      },
+                      right: { type: "Name", name: "n" },
+                    },
+                  },
+                ],
+                methodKind: "instance",
+              },
+            ],
+            class_vars: [],
+            raise_blockers: [],
+          },
+        ],
+      } as unknown as LibcstParseResult["module"],
+    };
+
+    const classes = extractClassEnvelopes(env);
+    expect(classes).toHaveLength(1);
+    const cls = classes[0];
+    expect(cls).toBeDefined();
+    if (!cls) throw new Error("cls undefined");
+    expect(cls.name).toBe("Counter");
+    expect(cls.bases).toEqual([]);
+    expect(cls.metaclass).toBeNull();
+    expect(cls.raise_blockers).toHaveLength(0);
+    expect(cls.init_params).toHaveLength(1);
+    expect(cls.init_params[0]?.name).toBe("start");
+    expect(cls.init_assignments).toHaveLength(1);
+    expect(cls.init_assignments[0]?.target).toBe("start");
+    expect(cls.methods).toHaveLength(1);
+    expect(cls.methods[0]?.name).toBe("increment");
+    expect(cls.methods[0]?.methodKind).toBe("instance");
+  });
+
+  it("returns [] when module has no classes (module.classes absent)", () => {
+    // Module with only functions — no classes key at all.
+    const env: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 1,
+        functions: [
+          { name: "standalone", params: [], return_annotation: "None", body_source: "    pass" },
+        ],
+      } as unknown as LibcstParseResult["module"],
+    };
+    expect(extractClassEnvelopes(env)).toEqual([]);
+  });
+
+  it("returns [] when module.classes is an empty array", () => {
+    const env: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 0,
+        functions: [],
+        classes: [],
+      } as unknown as LibcstParseResult["module"],
+    };
+    expect(extractClassEnvelopes(env)).toEqual([]);
+  });
+
+  it("WI-890 regression: module.functions[] extractFunctionSignatures still works when classes are present", () => {
+    // Verifies that the new module.classes[] path does NOT affect the WI-890
+    // module.functions[] short-circuit (instance-method rejection path).
+    // Both extractFunctionSignatures and extractClassEnvelopes operate independently.
+    const env: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 2,
+        functions: [
+          {
+            name: "plain_fn",
+            params: [{ name: "x", annotation: "int" }],
+            return_annotation: "int",
+            body_source: "    return x",
+          },
+          {
+            name: "MyClass.instance_method",
+            params: [
+              { name: "self", annotation: null },
+              { name: "y", annotation: "int" },
+            ],
+            return_annotation: "int",
+            body_source: "    return y",
+            methodKind: "instance",
+          },
+        ],
+        classes: [
+          {
+            name: "MyClass",
+            bases: [],
+            decorators: [],
+            metaclass: null,
+            init_params: [],
+            init_assignments: [],
+            methods: [],
+            class_vars: [],
+            raise_blockers: [],
+          },
+        ],
+      } as unknown as LibcstParseResult["module"],
+    };
+
+    // functions[] path: plain_fn succeeds; instance method rejects
+    const fnResult = extractFunctionSignaturesAll(env);
+    expect(fnResult.ok.map((s) => s.name)).toEqual(["plain_fn"]);
+    expect(fnResult.failed).toHaveLength(1);
+    expect(fnResult.failed[0]?.error).toBeInstanceOf(ImpureFunctionError);
+
+    // classes[] path: MyClass extracted independently
+    const classes = extractClassEnvelopes(env);
+    expect(classes).toHaveLength(1);
+    expect(classes[0]?.name).toBe("MyClass");
+  });
+
+  it("compound: module with two classes returns both in order", () => {
+    // Production sequence: module with EmailValidator and UrlValidator.
+    // Both classes present → extractClassEnvelopes returns both in declaration order.
+    const env: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 2,
+        functions: [],
+        classes: [
+          {
+            name: "EmailValidator",
+            bases: [],
+            decorators: [],
+            metaclass: null,
+            init_params: [{ name: "max_length", annotation: "int" }],
+            init_assignments: [
+              { target: "max_length", value: { type: "Name", name: "max_length" } },
+            ],
+            methods: [
+              {
+                name: "validate",
+                params: [
+                  { name: "self", annotation: null },
+                  { name: "email", annotation: "str" },
+                ],
+                return_annotation: "bool",
+                body_source: "        return True",
+                body: [{ type: "Return", value: { type: "Bool", value: true } }],
+                methodKind: "instance",
+              },
+            ],
+            class_vars: [],
+            raise_blockers: [],
+          },
+          {
+            name: "UrlValidator",
+            bases: [],
+            decorators: [],
+            metaclass: null,
+            init_params: [],
+            init_assignments: [],
+            methods: [],
+            class_vars: [],
+            raise_blockers: ["non_trivial_base"],
+          },
+        ],
+      } as unknown as LibcstParseResult["module"],
+    };
+
+    const classes = extractClassEnvelopes(env);
+    expect(classes).toHaveLength(2);
+    expect(classes[0]?.name).toBe("EmailValidator");
+    expect(classes[0]?.raise_blockers).toHaveLength(0);
+    expect(classes[1]?.name).toBe("UrlValidator");
+    expect(classes[1]?.raise_blockers).toHaveLength(1);
+    expect(classes[1]?.raise_blockers[0]).toBe("non_trivial_base");
   });
 });

@@ -16,10 +16,16 @@ export {
 } from "./libcst-parser.js";
 export {
   extractFunctionSignatures,
+  extractClassEnvelopes,
   MissingTypeAnnotationError,
   type FunctionSignature,
   type MethodKind,
   type RaisedParam,
+  type EnvelopeClass,
+  type EnvelopeMethod,
+  type EnvelopeInitParam,
+  type EnvelopeInitAssignment,
+  type EnvelopeClassVar,
 } from "./parse-fn-signature.js";
 export {
   mapPythonType,
@@ -56,3 +62,4 @@ export {
   buildParamRenameMap,
   normalizeExprNames,
 } from "./normalize-names.js";
+export { raiseClass, type RaisedClass } from "./raise-class.js";

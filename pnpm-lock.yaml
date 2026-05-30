@@ -671,6 +671,9 @@ importers:
       '@yakcc/ir':
         specifier: workspace:*
         version: link:../ir
+      '@yakcc/shave':
+        specifier: workspace:*
+        version: link:../shave
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
