@@ -26,6 +26,7 @@ interface Ctx {
   warnings: LowerWarning[];
   needsFunctools: boolean;
   needsOptional: boolean;
+  needsCallable: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,7 @@ export interface LowerResult {
   pyLines: string[];
   needsFunctools: boolean;
   needsOptional: boolean;
+  needsCallable: boolean;
   warnings: LowerWarning[];
 }
 
@@ -61,6 +63,7 @@ export function lowerSource(implSource: string): LowerResult {
     warnings: [],
     needsFunctools: false,
     needsOptional: false,
+    needsCallable: false,
   };
 
   const pyLines: string[] = [];
@@ -78,6 +81,7 @@ export function lowerSource(implSource: string): LowerResult {
     pyLines,
     needsFunctools: ctx.needsFunctools,
     needsOptional: ctx.needsOptional,
+    needsCallable: ctx.needsCallable,
     warnings: ctx.warnings,
   };
 }
@@ -258,11 +262,33 @@ function lowerIf(node: Node, ctx: Ctx, depth: number): string[] {
 function lowerForOf(node: Node, ctx: Ctx, depth: number): string[] {
   const fo = node.asKindOrThrow(SyntaxKind.ForOfStatement);
   const initDecl = fo.getInitializer();
+  // #916 — when the loop variable is a destructured array pattern [k, v],
+  // emit bare tuple target "for k, v in" (no brackets — list patterns are a
+  // syntax error in classic Python for-loops).
   let varName = "item";
   if (Node.isVariableDeclarationList(initDecl)) {
     const decls = initDecl.getDeclarations();
     const first = decls[0];
-    if (first) varName = toSnakeCase(first.getName());
+    if (first) {
+      const nameNode = first.getNameNode();
+      if (Node.isArrayBindingPattern(nameNode)) {
+        // Extract each binding element name and join without brackets.
+        // BindingElement.getName() returns the identifier text for simple
+        // patterns like [k, v]; omitted elements become "_".
+        const elemNames: string[] = [];
+        for (const e of nameNode.getElements()) {
+          if (Node.isBindingElement(e)) {
+            elemNames.push(toSnakeCase(e.getName()));
+          } else {
+            // OmittedExpression (e.g. [, v]) — use underscore placeholder
+            elemNames.push("_");
+          }
+        }
+        varName = elemNames.length > 0 ? elemNames.join(", ") : "item";
+      } else {
+        varName = toSnakeCase(first.getName());
+      }
+    }
   }
   const iterable = lowerExpr(fo.getExpression(), ctx);
   const ind = indent(depth);
@@ -601,10 +627,32 @@ interface ArrowBody {
   body: string;
 }
 
+/**
+ * Extract the parameter name(s) from a single arrow/function parameter.
+ * When the parameter is a destructured array binding [k, v], return the
+ * individual element names joined without brackets (Python tuple target).
+ * #916 — fixes "for [k, v] in" syntax error in comprehension targets.
+ */
+function extractParamName(p: { getName(): string; getNameNode(): Node }): string {
+  const nameNode = p.getNameNode();
+  if (Node.isArrayBindingPattern(nameNode)) {
+    const elemNames: string[] = [];
+    for (const e of nameNode.getElements()) {
+      if (Node.isBindingElement(e)) {
+        elemNames.push(toSnakeCase(e.getName()));
+      } else {
+        elemNames.push("_");
+      }
+    }
+    return elemNames.join(", ");
+  }
+  return toSnakeCase(p.getName());
+}
+
 function extractArrowBody(node: Node, ctx: Ctx): ArrowBody {
   if (node.getKind() === SyntaxKind.ArrowFunction) {
     const af = node.asKindOrThrow(SyntaxKind.ArrowFunction);
-    const params = af.getParameters().map((p) => toSnakeCase(p.getName()));
+    const params = af.getParameters().map((p) => extractParamName(p));
     const body = af.getBody();
     if (Node.isBlock(body)) {
       const lines = lowerBlock(body.getStatements(), ctx, 0);
@@ -613,7 +661,7 @@ function extractArrowBody(node: Node, ctx: Ctx): ArrowBody {
     return { params, body: lowerExpr(body, ctx) };
   }
   // FunctionExpression fallback
-  const params = node.getChildrenOfKind(SyntaxKind.Parameter).map((p) => toSnakeCase(p.getName()));
+  const params = node.getChildrenOfKind(SyntaxKind.Parameter).map((p) => extractParamName(p));
   const bodyNode = node.getChildrenOfKind(SyntaxKind.Block)[0];
   if (bodyNode) {
     const lines = lowerBlock(bodyNode.getStatements(), ctx, 0);
@@ -675,9 +723,33 @@ const TS_TO_PY_OP: Readonly<Record<string, string>> = {
 
 function lowerBinary(node: Node, ctx: Ctx): string {
   const be = node.asKindOrThrow(SyntaxKind.BinaryExpression);
-  const left = lowerExpr(be.getLeft(), ctx);
-  const right = lowerExpr(be.getRight(), ctx);
+  const leftNode = be.getLeft();
+  const rightNode = be.getRight();
   const op = be.getOperatorToken().getText();
+
+  // #917 — === null / !== null → is None / is not None (PEP 8 identity checks)
+  const rightIsNull =
+    rightNode.getKind() === SyntaxKind.NullKeyword ||
+    rightNode.getKind() === SyntaxKind.UndefinedKeyword;
+  const leftIsNull =
+    leftNode.getKind() === SyntaxKind.NullKeyword ||
+    leftNode.getKind() === SyntaxKind.UndefinedKeyword;
+
+  if ((op === "===" || op === "==") && rightIsNull) {
+    return `${lowerExpr(leftNode, ctx)} is None`;
+  }
+  if ((op === "!==" || op === "!=") && rightIsNull) {
+    return `${lowerExpr(leftNode, ctx)} is not None`;
+  }
+  if ((op === "===" || op === "==") && leftIsNull) {
+    return `${lowerExpr(rightNode, ctx)} is None`;
+  }
+  if ((op === "!==" || op === "!=") && leftIsNull) {
+    return `${lowerExpr(rightNode, ctx)} is not None`;
+  }
+
+  const left = lowerExpr(leftNode, ctx);
+  const right = lowerExpr(rightNode, ctx);
   const pyOp = TS_TO_PY_OP[op] ?? op;
   return `${left} ${pyOp} ${right}`;
 }
@@ -794,6 +866,19 @@ export function lowerTypeNode(typeNode: TypeNode, ctx: Ctx): string {
 
   if (k === SyntaxKind.TypeReference) return lowerTypeRef(typeNode, ctx);
 
+  // #915 — (a: A, b: B) => R function type → Callable[[A, B], R]
+  if (k === SyntaxKind.FunctionType) {
+    const ft = typeNode.asKindOrThrow(SyntaxKind.FunctionType);
+    const paramTypes = ft.getParameters().map((p) => {
+      const pType = p.getTypeNode();
+      return pType ? lowerTypeNode(pType, ctx) : "Any";
+    });
+    const retType = ft.getReturnTypeNode();
+    const pyRet = retType ? lowerTypeNode(retType, ctx) : "None";
+    ctx.needsCallable = true;
+    return `Callable[[${paramTypes.join(", ")}], ${pyRet}]`;
+  }
+
   if (k === SyntaxKind.UnionType) return lowerUnion(typeNode, ctx);
 
   if (k === SyntaxKind.TupleType) {
@@ -854,6 +939,11 @@ function lowerTypeRef(typeNode: TypeNode, ctx: Ctx): string {
   const tr = typeNode.asKindOrThrow(SyntaxKind.TypeReference);
   const name = tr.getTypeName().getText();
   const typeArgs = tr.getTypeArguments();
+
+  // #915 — TS built-in buffer type → Python bytes
+  if (name === "Uint8Array" || name === "Buffer") {
+    return "bytes";
+  }
 
   if (name === "Record") {
     const k2 = typeArgs[0] ? lowerTypeNode(typeArgs[0], ctx) : "str";
