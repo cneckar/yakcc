@@ -888,6 +888,28 @@ The implementation split follows the WI assignments established by D1, D2, and D
 
 ---
 
+## Two-path model — canonical MCP intent-time vs PreToolUse fallback (added 2026-05-30 per #950)
+
+This ADR was originally written under the assumption that the LLM would consult `yakcc_resolve` during plan formulation — proactive, intent-time. Production realignment per **DEC-HOOK-PROACTIVE-PRIMARY-001** (MASTER_PLAN.md Decision Log) names that path *canonical* and codifies the current `PreToolUse` substitution path as a *fallback*:
+
+**Canonical (MCP, intent-time):** LLM in an MCP-aware IDE builds an IntentCard from its plan → calls `yakcc_resolve` MCP tool → tool queries local registry then global via `@yakcc/mcp-registry` (cneckar/yakcc#944 / yakcc#951) → returns candidates with the Q5 confidence bands as **structured MCP content** (`{ confidence_tier, candidates: [...] }`) → LLM picks the band and emits `yakcc compile <atom-id>` for an accept, or a *fully-formed atom triplet* (`spec.yak` + impl + LLM-authored property tests) for a no-fit (cneckar/yakcc#954).
+
+**Fallback (PreToolUse, post-emission):** LLM emits code without consulting yakcc (no system prompt delivered, MCP not configured, or short-context session forgot the tool) → `PreToolUse` fires on `Edit`/`Write`/`MultiEdit` → the current `hook-intercept` substitution decision catches what it can; `@yakcc/variance` machine-generates synthetic property tests post-hoc.
+
+Both paths preserve the cornerstones:
+- **Air-gap (B6):** canonical path queries local first; global query is gated by network availability and disabled by `--airgapped`. Fallback path is local-only by design.
+- **No identity (DEC-COMMONS-NO-AUTH-001):** the MCP query payload carries only the IntentCard (content-derived, not user-derived).
+
+This ADR's Q1–Q8 substantive decisions (band semantics, evidence template, ranking inputs, system-prompt content) remain authoritative for *both* paths. What this section adds is the deployment posture: which path is the canonical first attempt and which is the safety net. Implementation lives in:
+
+- **Gap A** — `WI-HOOK-PROACTIVE-A-YAKCC-RESOLVE-WIRING` (cneckar/yakcc#953) — delivering the system prompt into LLM context and wiring `yakcc_resolve` to fall through local → global. This is what makes the canonical path actually reachable end-to-end.
+- **Gap C** — `WI-HOOK-PROACTIVE-C-ATOM-TRIPLET-EMISSION` (cneckar/yakcc#954) — defining and parsing the LLM-emits-fully-formed-atom-triplet format so a no-fit produces LLM-authored property tests rather than the variance-synthesized fallback.
+- **Gap B** is covered by cneckar/yakcc#944 / cneckar/yakcc#951 (`@yakcc/mcp-registry`) — the global query surface needed by the canonical path's local→global cascade.
+
+The fallback path is intentionally NOT retired. Agents in the wild that don't know about yakcc still grow the commons via the post-hoc `storeBlock` → `commonsSubmit` chain. The canonical path delivers *higher-quality* growth (LLM-authored contracts and property tests vs synthetic ones); both shapes of growth coexist.
+
+---
+
 ## References
 
 - Issue #578 (WI-578 — Descent-and-Compose prompt rewrite; D4 ADR revision in Q8)
