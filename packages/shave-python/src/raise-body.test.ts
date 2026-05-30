@@ -1055,3 +1055,308 @@ describe("WI-907+908+909: compound interaction — bs4 production sequence", () 
     expect(out).toContain(".map(([k, v]) => f(v, k))");
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-911: Subscript expression → TS obj[key]
+// ---------------------------------------------------------------------------
+
+describe("WI-911: renderExpr — Subscript", () => {
+  it("renders name[integer] → name[0]", () => {
+    const expr: WireExpr = {
+      type: "Subscript",
+      value: { type: "Name", name: "arr" },
+      slice: { type: "Integer", value: "0" },
+    };
+    expect(renderExpr(expr)).toBe("arr[0]");
+  });
+
+  it('renders name[string_key] → name["key"]', () => {
+    const expr: WireExpr = {
+      type: "Subscript",
+      value: { type: "Name", name: "obj" },
+      slice: { type: "String", value: "key" },
+    };
+    expect(renderExpr(expr)).toBe('obj["key"]');
+  });
+
+  it("renders name[name_key] → obj[k]", () => {
+    const expr: WireExpr = {
+      type: "Subscript",
+      value: { type: "Name", name: "obj" },
+      slice: { type: "Name", name: "k" },
+    };
+    expect(renderExpr(expr)).toBe("obj[k]");
+  });
+
+  it("renders nested subscript obj[a][b]", () => {
+    const inner: WireExpr = {
+      type: "Subscript",
+      value: { type: "Name", name: "obj" },
+      slice: { type: "Name", name: "a" },
+    };
+    const outer: WireExpr = {
+      type: "Subscript",
+      value: inner,
+      slice: { type: "Name", name: "b" },
+    };
+    expect(renderExpr(outer)).toBe("obj[a][b]");
+  });
+
+  it("renders subscript of a Call result — f(x)[0]", () => {
+    const expr: WireExpr = {
+      type: "Subscript",
+      value: { type: "Call", func: "f", args: [{ type: "Name", name: "x" }] },
+      slice: { type: "Integer", value: "0" },
+    };
+    expect(renderExpr(expr)).toBe("f(x)[0]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-912: Comparison Is / IsNot → TS === / !==
+// ---------------------------------------------------------------------------
+
+describe("WI-912: renderExpr — BinaryOp is / is_not", () => {
+  it("renders x is None → (x === null)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "is",
+      left: { type: "Name", name: "x" },
+      right: { type: "None" },
+    };
+    expect(renderExpr(expr)).toBe("(x === null)");
+  });
+
+  it("renders x is not None → (x !== null)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "is_not",
+      left: { type: "Name", name: "x" },
+      right: { type: "None" },
+    };
+    expect(renderExpr(expr)).toBe("(x !== null)");
+  });
+
+  it("renders override is not None (bs4 _chardet_dammit pattern)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "is_not",
+      left: { type: "Name", name: "override" },
+      right: { type: "None" },
+    };
+    expect(renderExpr(expr)).toBe("(override !== null)");
+  });
+
+  it("renders x is y (non-None right) as strict equality", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "is",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    expect(renderExpr(expr)).toBe("(a === b)");
+  });
+
+  it("renders x is not y (non-None right) as strict inequality", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "is_not",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    expect(renderExpr(expr)).toBe("(a !== b)");
+  });
+
+  it("is / is_not do not throw UnsupportedAstError (in ALLOWED_BINARY_OPS)", () => {
+    expect(() =>
+      renderExpr({
+        type: "BinaryOp",
+        op: "is",
+        left: { type: "Name", name: "x" },
+        right: { type: "None" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      renderExpr({
+        type: "BinaryOp",
+        op: "is_not",
+        left: { type: "Name", name: "x" },
+        right: { type: "None" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("renders BoolOp with is_not None — bs4 compound guard", () => {
+    // isinstance(s, bytes) and override is not None
+    const expr: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: {
+        type: "Call",
+        func: "isinstance",
+        args: [
+          { type: "Name", name: "s" },
+          { type: "Name", name: "bytes" },
+        ],
+      },
+      right: {
+        type: "BinaryOp",
+        op: "is_not",
+        left: { type: "Name", name: "override" },
+        right: { type: "None" },
+      },
+    };
+    expect(renderExpr(expr)).toBe("(isinstance(s, bytes) && (override !== null))");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-913: Tuple value → TS array literal
+// ---------------------------------------------------------------------------
+
+describe("WI-913: renderExpr — Tuple", () => {
+  it("renders empty tuple () → []", () => {
+    const expr: WireExpr = { type: "Tuple", elements: [] };
+    expect(renderExpr(expr)).toBe("[]");
+  });
+
+  it("renders single-element tuple (a,) → [a]", () => {
+    const expr: WireExpr = {
+      type: "Tuple",
+      elements: [{ type: "Name", name: "a" }],
+    };
+    expect(renderExpr(expr)).toBe("[a]");
+  });
+
+  it("renders two-element tuple (a, b) → [a, b]", () => {
+    const expr: WireExpr = {
+      type: "Tuple",
+      elements: [
+        { type: "Name", name: "a" },
+        { type: "Name", name: "b" },
+      ],
+    };
+    expect(renderExpr(expr)).toBe("[a, b]");
+  });
+
+  it("renders tuple with integer elements (0, 1, 2) → [0, 1, 2]", () => {
+    const expr: WireExpr = {
+      type: "Tuple",
+      elements: [
+        { type: "Integer", value: "0" },
+        { type: "Integer", value: "1" },
+        { type: "Integer", value: "2" },
+      ],
+    };
+    expect(renderExpr(expr)).toBe("[0, 1, 2]");
+  });
+
+  it("renders nested tuple ((a, b), c) → [[a, b], c]", () => {
+    const inner: WireExpr = {
+      type: "Tuple",
+      elements: [
+        { type: "Name", name: "a" },
+        { type: "Name", name: "b" },
+      ],
+    };
+    const outer: WireExpr = {
+      type: "Tuple",
+      elements: [inner, { type: "Name", name: "c" }],
+    };
+    expect(renderExpr(outer)).toBe("[[a, b], c]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-911+912+913: compound production sequence — bs4 raise functions
+// Exercises the real production sequence crossing all three new boundaries:
+// Subscript for obj[key] access, is/is_not for identity checks, Tuple for
+// multi-value returns. This is the compound-interaction test required by
+// the implementer contract.
+// ---------------------------------------------------------------------------
+
+describe("WI-911+912+913: compound interaction — bs4 production sequence", () => {
+  it("renders _chardet_dammit-style body with is_not None guard + subscript arg", () => {
+    // Python:
+    //   if override is not None:
+    //     return s.decode(override[0])
+    //   return s.decode("utf-8")
+    const stmts: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: "is_not",
+          left: { type: "Name", name: "override" },
+          right: { type: "None" },
+        },
+        body: [
+          {
+            type: "Return",
+            value: {
+              type: "Call",
+              func: "s.decode",
+              args: [
+                {
+                  type: "Subscript",
+                  value: { type: "Name", name: "override" },
+                  slice: { type: "Integer", value: "0" },
+                },
+              ],
+            },
+          },
+        ],
+        orelse: [],
+      },
+      {
+        type: "Return",
+        value: {
+          type: "Call",
+          func: "s.decode",
+          args: [{ type: "String", value: "utf-8" }],
+        },
+      },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toContain("(override !== null)");
+    expect(out).toContain("s.decode(override[0])");
+    expect(out).toContain('s.decode("utf-8")');
+  });
+
+  it("renders _invert-style body: Return(Tuple) — tuple swap", () => {
+    // Python: return (v, k)
+    const stmts: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "Tuple",
+          elements: [
+            { type: "Name", name: "v" },
+            { type: "Name", name: "k" },
+          ],
+        },
+      },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toBe("  return [v, k];");
+  });
+
+  it('renders subscript keys packed into a Tuple — (obj["name"], obj["val"])', () => {
+    const expr: WireExpr = {
+      type: "Tuple",
+      elements: [
+        {
+          type: "Subscript",
+          value: { type: "Name", name: "obj" },
+          slice: { type: "String", value: "name" },
+        },
+        {
+          type: "Subscript",
+          value: { type: "Name", name: "obj" },
+          slice: { type: "String", value: "val" },
+        },
+      ],
+    };
+    expect(renderExpr(expr)).toBe('[obj["name"], obj["val"]]');
+  });
+});

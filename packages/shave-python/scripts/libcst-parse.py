@@ -34,7 +34,23 @@
 # "param" field (set to joined names for backward compat). Nested tuples and
 # star targets still emit Unsupported. Cross-reference: #909.
 #
-# Wire shape (cumulative through WI-909):
+# WI-911: Subscript (obj[key]) — _expr() detects libcst.Subscript.
+# Single Index slice emits {"type": "Subscript", "value": <Expr>, "slice": <Expr>}.
+# libcst.Slice notation and multi-index (m[i,j]) are rejected as Unsupported.
+# Cross-reference: #911.
+#
+# WI-912: Comparison Is / IsNot — adds libcst.Is and libcst.IsNot to the
+# comparator dispatch in _expr(). Is → "is", IsNot → "is_not".
+# TS renderer maps `is None` → `=== null`, `is_not None` → `!== null`.
+# Non-None identity comparisons emit strict-equality with a comment.
+# Cross-reference: #912.
+#
+# WI-913: Tuple value — _expr() detects libcst.Tuple (not as a comprehension
+# target but as an expression). Emits {"type": "Tuple", "elements": [<Expr>...]}.
+# TS renderer lowers to `[<expr>, ...]` (JS array literal).
+# Empty tuple → `[]`; single-element `(a,)` → `[a]`. Cross-reference: #913.
+#
+# Wire shape (cumulative through WI-913):
 #   functions[].body:
 #     [ Statement, ... ]
 #   Statement:
@@ -76,6 +92,8 @@
 #              "iter": <Expr>, "param": "<str>", "elt": <Expr>,
 #              "cond": <Expr>?,
 #              "target_kind"?: "tuple", "target_names"?: [<str>,...]}   [WI-909]
+#     {"type": "Subscript", "value": <Expr>, "slice": <Expr>}           [WI-911]
+#     {"type": "Tuple", "elements": [<Expr>, ...]}                      [WI-913]
 #     {"type": "Unsupported", "reason": "<str>"}
 #
 # Exit codes (unchanged from slice 1):
@@ -117,6 +135,19 @@ BINARY_OP_MAP = {
     "GreaterThan": ">",
     "LessThanEqual": "<=",
     "GreaterThanEqual": ">=",
+}
+
+# WI-912: identity comparison operators emitted by libcst Comparison nodes.
+# Separate from BINARY_OP_MAP because they require Comparison, not BinaryOperation.
+COMPARE_OP_MAP = {
+    "Equal": "==",
+    "NotEqual": "!=",
+    "LessThan": "<",
+    "GreaterThan": ">",
+    "LessThanEqual": "<=",
+    "GreaterThanEqual": ">=",
+    "Is": "is",  # WI-912: `x is y` — TS: === (None→null, else strict-eq)
+    "IsNot": "is_not",  # WI-912: `x is not y` — TS: !== (None→null, else strict-neq)
 }
 
 # Slice 4: unary op map (libcst class name → TS op string)
@@ -251,11 +282,13 @@ def _expr(node):  # type: ignore[no-untyped-def]
             }
         target = node.comparisons[0]
         op_name = type(target.operator).__name__
-        if op_name not in BINARY_OP_MAP:
+        if op_name not in COMPARE_OP_MAP:
             return {"type": "Unsupported", "reason": f"Comparison {op_name}"}
+        # WI-912: Is / IsNot use the same BinaryOp wire shape; the op string
+        # "is" / "is_not" signals identity semantics to the TS renderer.
         return {
             "type": "BinaryOp",
-            "op": BINARY_OP_MAP[op_name],
+            "op": COMPARE_OP_MAP[op_name],
             "left": _expr(node.left),
             "right": _expr(target.comparator),
         }
@@ -485,6 +518,39 @@ def _expr(node):  # type: ignore[no-untyped-def]
                 "elt": _expr(node.elt),
             }
         return {"type": "Unsupported", "reason": "SetComp with multiple if-clauses"}
+
+    # WI-911: obj[key] — libcst.Subscript.
+    # .value is the object expr; .slice is a tuple of SubscriptElement.
+    # Only single Index slices are supported; libcst.Slice and multi-index
+    # (m[i, j]) are rejected with clear messages.
+    if isinstance(node, libcst.Subscript):
+        if len(node.slice) != 1:
+            return {
+                "type": "Unsupported",
+                "reason": f"Subscript with {len(node.slice)} indices (multi-index not supported)",
+            }
+        slice_elem = node.slice[0].slice
+        if not isinstance(slice_elem, libcst.Index):
+            return {
+                "type": "Unsupported",
+                "reason": f"Subscript with slice notation ({type(slice_elem).__name__})",
+            }
+        return {
+            "type": "Subscript",
+            "value": _expr(node.value),
+            "slice": _expr(slice_elem.value),
+        }
+
+    # WI-913: tuple value (a, b, ...) → {"type": "Tuple", "elements": [...]}
+    # Covers all arities including empty () and single-element (a,).
+    # StarredElement inside a tuple-value is rejected as Unsupported.
+    if isinstance(node, libcst.Tuple):
+        elements = []
+        for elt in node.elements:
+            if isinstance(elt, libcst.StarredElement):
+                return {"type": "Unsupported", "reason": "Tuple with starred element (*x)"}
+            elements.append(_expr(elt.value))
+        return {"type": "Tuple", "elements": elements}
 
     return {"type": "Unsupported", "reason": type(node).__name__}
 

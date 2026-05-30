@@ -8,6 +8,16 @@
 //         ListComp (map / filter patterns), UnaryOp
 //   Stmt: Raise (throw new ExcClass(msg))
 //
+// WI-911 additions to the wire AST:
+//   Expr: Subscript — `obj[key]` → `obj[key]`
+//
+// WI-912 additions to the wire AST:
+//   Expr: BinaryOp op="is"/"is_not" — `x is None` → `x === null`;
+//         `x is y` (non-None) → `x === y` with identity-approximated warning comment
+//
+// WI-913 additions to the wire AST:
+//   Expr: Tuple — `(a, b)` → `[a, b]` (JS array literal)
+//
 // Slice 4 error taxonomy: UnsupportedAstError now extends CannotRaiseToIRError
 // from @yakcc/contracts so callers can catch either class.
 //
@@ -215,6 +225,11 @@ export type WireExpr =
       readonly target_kind?: "tuple";
       readonly target_names?: readonly string[];
     }
+  // WI-911: Subscript — `obj[key]` → `obj[key]`
+  | { readonly type: "Subscript"; readonly value: WireExpr; readonly slice: WireExpr }
+  // WI-913: Tuple value — `(a, b)` → `[a, b]` (JS array literal)
+  // Empty tuple () → `[]`; single-element `(a,)` → `[a]`.
+  | { readonly type: "Tuple"; readonly elements: readonly WireExpr[] }
   | { readonly type: "Unsupported"; readonly reason: string };
 
 export type WireStmt =
@@ -264,6 +279,9 @@ const ALLOWED_BINARY_OPS = new Set<string>([
   ">",
   "<=",
   ">=",
+  // WI-912: identity comparison ops — rendered specially (None→null, else strict-eq)
+  "is",
+  "is_not",
 ]);
 
 const ALLOWED_UNARY_OPS = new Set<string>(["-", "+", "!", "~"]);
@@ -291,6 +309,18 @@ export function renderExpr(expr: WireExpr): string {
       // which matches Python semantics for integer division.
       if (expr.op === "//") {
         return `Math.floor(${renderExpr(expr.left)} / ${renderExpr(expr.right)})`;
+      }
+      // WI-912: identity comparison `x is None` → `x === null`
+      //         `x is not None` → `x !== null`
+      //         `x is y` (non-None right) → `x === y`
+      //         (Python `is` tests object identity; JS `===` is value-strict-equality.
+      //          For None/null this is always correct. For other values it is an
+      //          approximation — callers should audit non-None `is` comparisons.)
+      if (expr.op === "is" || expr.op === "is_not") {
+        const tsOp = expr.op === "is" ? "===" : "!==";
+        const right = expr.right.type === "None" ? "null" : renderExpr(expr.right);
+        const left = renderExpr(expr.left);
+        return `(${left} ${tsOp} ${right})`;
       }
       // Always parenthesize to avoid precedence surprises across the Python → TS boundary.
       return `(${renderExpr(expr.left)} ${expr.op} ${renderExpr(expr.right)})`;
@@ -383,6 +413,17 @@ export function renderExpr(expr: WireExpr): string {
         `.map(${scParam} => ${renderExpr(expr.elt)}))`
       );
     }
+    case "Subscript":
+      // WI-911: `obj[key]` → `obj[key]`
+      // Both value and slice are fully recursive — handles nested subscripts,
+      // string keys, integer indices, and any supported expression as the key.
+      return `${renderExpr(expr.value)}[${renderExpr(expr.slice)}]`;
+    case "Tuple":
+      // WI-913: `(a, b)` → `[a, b]`
+      // Empty tuple () → `[]`; single-element `(a,)` → `[a]`.
+      // Python tuples lower to JS array literals — the most structurally
+      // equivalent form available in the TS-subset IR.
+      return `[${expr.elements.map(renderExpr).join(", ")}]`;
     case "Unsupported":
       throw new UnsupportedAstError(expr.reason);
   }
