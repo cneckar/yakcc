@@ -255,7 +255,8 @@ describe("WI-888: Docstring + ImpureStatement emission (real Python subprocess)"
     it.skip("requires python3 with libcst installed (skipped)", () => {});
   } else {
     it("emits Docstring wire node for a PEP-257 docstring as first body stmt", async () => {
-      const source = 'def greeter(name: str) -> str:\n    """Return a greeting string."""\n    return f"Hello, {name}"\n';
+      const source =
+        'def greeter(name: str) -> str:\n    """Return a greeting string."""\n    return f"Hello, {name}"\n';
       const result = await parsePythonSource(source);
       const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
       const body = fn.body as PythonAstNode[];
@@ -295,7 +296,8 @@ describe("WI-888: Docstring + ImpureStatement emission (real Python subprocess)"
     });
 
     it("emits Docstring wire node for a triple-quoted docstring", async () => {
-      const source = 'def triple(x: int) -> int:\n    """Triple-quoted doc.\n    Multiline.\n    """\n    return x\n';
+      const source =
+        'def triple(x: int) -> int:\n    """Triple-quoted doc.\n    Multiline.\n    """\n    return x\n';
       const result = await parsePythonSource(source);
       const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
       const body = fn.body as PythonAstNode[];

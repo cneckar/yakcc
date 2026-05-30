@@ -341,7 +341,12 @@ describe("WI-888: renderStmt — Docstring node returns empty string", () => {
       { type: "Docstring", value: "Compute the sum." },
       {
         type: "Return",
-        value: { type: "BinaryOp", op: "+", left: { type: "Name", name: "x" }, right: { type: "Name", name: "y" } },
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "x" },
+          right: { type: "Name", name: "y" },
+        },
       },
     ];
     // Docstring produces "" which joins with newline + Return result

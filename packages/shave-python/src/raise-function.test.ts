@@ -237,7 +237,12 @@ describe("WI-888: renderFunctionDeclaration — Docstring + ImpureStatement hand
       { type: "Docstring", value: "Add x and y." },
       {
         type: "Return",
-        value: { type: "BinaryOp", op: "+", left: { type: "Name", name: "x" }, right: { type: "Name", name: "y" } },
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "x" },
+          right: { type: "Name", name: "y" },
+        },
       },
     ];
     const out = renderFunctionDeclaration(s, body);
