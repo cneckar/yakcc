@@ -644,18 +644,18 @@ describe("#941: classMethToSnake — class/method boundary splitting", () => {
     expect(classMethToSnake("Tag_fromMarkup")).toBe("Tag.from_markup");
   });
 
-  it("compound interaction: lowerFunctionDecl uses classMethToSnake for class method def-lines", () => {
-    // A TS-subset IR function named "EntitySubstitution_substituteXml" must lower to
-    // a Python def whose name is "EntitySubstitution.substitute_xml".
-    // This crosses compileToPython → lowerFunctionDecl → classMethToSnake.
+  it("compound interaction: lowerFunctionDecl keeps underscore form on def line (#946)", () => {
+    // #946: Python `def` declarations reject dotted names — `def A.b(…)` is a SyntaxError.
+    // The def line must use the snake_case underscore form; only call sites split to dotted.
+    // This crosses compileToPython → lowerFunctionDecl → toSnakeCase (def) / classMethToSnake (calls).
     const src = `
 export function EntitySubstitution_substituteXml(cls: typeof EntitySubstitution, value: string): string {
   return value;
 }`;
     const { source } = compileToPython(makeRow(src));
-    // Function def-line must use the dotted class.method form
-    expect(source).toContain("def EntitySubstitution.substitute_xml(");
-    // Must NOT have the underscore-joined IR form in the def-line
-    expect(source).not.toContain("def EntitySubstitution_substituteXml(");
+    // def line: must use underscore form (valid Python, avoids SyntaxError)
+    expect(source).toContain("def entity_substitution_substitute_xml(");
+    // Must NOT contain the dotted form on the def line (that would be a SyntaxError)
+    expect(source).not.toContain("def EntitySubstitution.substitute_xml(");
   });
 });

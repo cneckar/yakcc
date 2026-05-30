@@ -577,19 +577,43 @@ export function renderStmt(
 /**
  * Render a list of statements joined by newlines.
  *
- * @param stmts  — wire statements to render
- * @param indent — indentation prefix (default "  ")
- * @param fnName — optional function name forwarded to renderStmt for
+ * @param stmts     — wire statements to render
+ * @param indent    — indentation prefix (default "  ")
+ * @param fnName    — optional function name forwarded to renderStmt for
  *   ImpureFunctionError messages. (DEC-WI888-007)
+ * @param seedNames — optional set of names to pre-populate seenNames before
+ *   walking the body.  Callers pass function parameter names here so that a
+ *   body-level reassignment to a param (`param = expr`) emits bare assignment
+ *   rather than `let param = expr` (which would shadow the parameter and cause
+ *   a TS compile error).
  *
- * Internally allocates a fresh `seenNames` Set per call so that re-assigned
- * variables within a single function body emit `let` + bare assignment rather
- * than `const` + `const` (which would be a TS compile error for re-assignment).
- * (#940 / DEC-940-001)
+ * Internally allocates a `seenNames` Set per call (optionally seeded) so that
+ * re-assigned variables within a single function body emit `let` + bare
+ * assignment rather than `const` + `const` (which would be a TS compile error
+ * for re-assignment). (#940 / DEC-940-001)
+ *
+ * @decision DEC-948-001 — renderBody accepts seedNames to pre-populate seenNames
+ * @title Seed seenNames with function param names to prevent let-shadowing
+ * @status accepted (#948)
+ * @rationale Python allows re-assignment to a parameter in the same scope
+ *   (`value = value.upper()`).  The #940 seenNames Set starts empty, so the
+ *   first body-level assignment to a param emits `let param = expr` which
+ *   re-declares the parameter and causes a TS compile error (Cannot redeclare
+ *   block-scoped variable).  Seeding seenNames with all param names before
+ *   walking the body treats the first such assignment as a re-assignment
+ *   (bare `param = expr;`) — correct, idiomatic TS.  The seed does NOT affect
+ *   assignments to new local names (those still get `let`).
+ *   Cross-reference: #940, #948.
  */
-export function renderBody(stmts: readonly WireStmt[], indent = "  ", fnName?: string): string {
-  // #940: fresh seenNames per body — tracks which variables have been let-declared
-  // so subsequent assignments to the same name emit bare `name = expr;`.
-  const seenNames = new Set<string>();
+export function renderBody(
+  stmts: readonly WireStmt[],
+  indent = "  ",
+  fnName?: string,
+  seedNames?: ReadonlySet<string>,
+): string {
+  // #940: seenNames tracks which variables have been let-declared.
+  // #948: optionally pre-populate with param names so param re-assignment
+  //   emits bare `param = expr;` instead of `let param = expr;`.
+  const seenNames = seedNames ? new Set<string>(seedNames) : new Set<string>();
   return stmts.map((s) => renderStmt(s, indent, fnName, seenNames)).join("\n");
 }
