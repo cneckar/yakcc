@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Tests for the Go -> TS type mapper (WI-870 slice 1).
+// Tests for the Go -> TS type mapper (WI-870 slice 1 + WI-963 generics).
 
 import { describe, expect, it } from "vitest";
 import { UnsupportedTypeError, mapGoType } from "./type-map.js";
@@ -111,11 +111,78 @@ describe("mapGoType -- rejection cases", () => {
     expect(() => mapGoType("struct{ X int }")).toThrow(UnsupportedTypeError);
   });
 
-  it("throws for func literal type", () => {
-    expect(() => mapGoType("func(int) int")).toThrow(UnsupportedTypeError);
+  it("maps func literal types to TS arrow types (WI-963 added support)", () => {
+    // func(int) int is now supported: maps to (a0: number) => number.
+    // Previously this threw UnsupportedTypeError (slice-1 limitation).
+    // WI-963 adds func literal parsing for higher-order generic functions.
+    expect(mapGoType("func(int) int")).toBe("(a0: number) => number");
   });
 
   it("throws for named user type (MyStruct)", () => {
     expect(() => mapGoType("MyStruct")).toThrow(UnsupportedTypeError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-963: generic type parameter passthrough
+// ---------------------------------------------------------------------------
+
+describe("mapGoType -- generic type parameter passthrough (WI-963)", () => {
+  it("returns bare T when T is in the typeParams set", () => {
+    const typeParams = new Set(["T"]);
+    expect(mapGoType("T", { typeParams })).toEqual({ tsType: "T", warnings: [] });
+  });
+
+  it("returns bare R when R is in the typeParams set", () => {
+    const typeParams = new Set(["T", "R"]);
+    expect(mapGoType("R", { typeParams })).toEqual({ tsType: "R", warnings: [] });
+  });
+
+  it("handles multi-char generic param names like In, Out, Elem", () => {
+    const typeParams = new Set(["In", "Out", "Elem"]);
+    expect(mapGoType("Elem", { typeParams })).toEqual({ tsType: "Elem", warnings: [] });
+    expect(mapGoType("In", { typeParams })).toEqual({ tsType: "In", warnings: [] });
+    expect(mapGoType("Out", { typeParams })).toEqual({ tsType: "Out", warnings: [] });
+  });
+
+  it("maps []T -> T[] when T is a type param", () => {
+    const typeParams = new Set(["T"]);
+    expect(mapGoType("[]T", { typeParams })).toEqual({ tsType: "T[]", warnings: [] });
+  });
+
+  it("maps []R -> R[] when R is a type param", () => {
+    const typeParams = new Set(["T", "R"]);
+    expect(mapGoType("[]R", { typeParams })).toEqual({ tsType: "R[]", warnings: [] });
+  });
+
+  it("maps func(T) R -> (a0: T) => R when both are type params", () => {
+    const typeParams = new Set(["T", "R"]);
+    const result = mapGoType("func(T) R", { typeParams });
+    expect(result.tsType).toBe("(a0: T) => R");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps func(T, T) R -> (a0: T, a1: T) => R", () => {
+    const typeParams = new Set(["T", "R"]);
+    const result = mapGoType("func(T, T) R", { typeParams });
+    expect(result.tsType).toBe("(a0: T, a1: T) => R");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("throws UnsupportedTypeError without a typeParams set for unknown T", () => {
+    expect(() => mapGoType("T")).toThrow(UnsupportedTypeError);
+  });
+
+  it("throws UnsupportedTypeError when T is NOT in the typeParams set", () => {
+    const typeParams = new Set(["R"]);
+    // T not in set
+    expect(() => mapGoType("T", { typeParams })).toThrow(UnsupportedTypeError);
+  });
+
+  it("backward compat: returns string (not object) when called without opts", () => {
+    // Old callers (non-generic code paths) pass no opts — still get a string.
+    expect(mapGoType("int")).toBe("number");
+    expect(mapGoType("string")).toBe("string");
+    expect(mapGoType("[]bool")).toBe("boolean[]");
   });
 });

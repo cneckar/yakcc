@@ -8,7 +8,8 @@
 
 import { describe, expect, it } from "vitest";
 import { GoDeferError, GoGoroutineError } from "./errors.js";
-import type { GoAstBodyNode } from "./go-ast-parser.js";
+import type { GoAstBodyNode, GoAstParseResult } from "./go-ast-parser.js";
+import { extractFunctionSignatures } from "./parse-fn-signature.js";
 import type { FunctionSignature } from "./parse-fn-signature.js";
 import { renderFunctionDeclaration } from "./raise-function.js";
 
@@ -229,5 +230,109 @@ describe("renderFunctionDeclaration", () => {
     };
     const out = renderFunctionDeclaration(signature, body);
     expect(out).toBe("export function Const(): number {\n  return 42;\n}");
+  });
+
+  // ---------------------------------------------------------------------------
+  // WI-963: generic type parameters emitted in TS signature
+  // ---------------------------------------------------------------------------
+
+  it("WI-963: Identity[T any] -> export function identity<T>(x: T): T", () => {
+    // func Identity[T any](x T) T { return x }
+    const signature = sig({
+      name: "identity",
+      typeParams: [{ name: "T", constraint: "any" }],
+      params: [{ name: "x", tsType: "T", goType: "T" }],
+      returnTypes: ["T"],
+    });
+    const body: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "ReturnStmt",
+          line: 1,
+          col: 2,
+          results: [{ type: "Ident", line: 1, col: 9, name: "x" }],
+        },
+      ],
+    };
+    const out = renderFunctionDeclaration(signature, body);
+    expect(out).toBe("export function identity<T>(x: T): T {\n  return x;\n}");
+  });
+
+  it("WI-963: Map[T, R any] -> export function map<T, R>(s: T[], f: (a0: T) => R): R[]", () => {
+    // func Map[T, R any](s []T, f func(T) R) []R
+    const signature = sig({
+      name: "map",
+      typeParams: [
+        { name: "T", constraint: "any" },
+        { name: "R", constraint: "any" },
+      ],
+      params: [
+        { name: "s", tsType: "T[]", goType: "[]T" },
+        { name: "f", tsType: "(a0: T) => R", goType: "func(T) R" },
+      ],
+      returnTypes: ["R[]"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    expect(out).toBe("export function map<T, R>(s: T[], f: (a0: T) => R): R[] {\n  void 0;\n}");
+  });
+
+  it("WI-963: non-generic function still emits no type params", () => {
+    const signature = sig({
+      name: "Add",
+      typeParams: [],
+      params: [
+        { name: "a", tsType: "number", goType: "int" },
+        { name: "b", tsType: "number", goType: "int" },
+      ],
+      returnTypes: ["number"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    // Must NOT contain <>
+    expect(out).not.toContain("<");
+    expect(out).toContain("export function Add(");
+  });
+
+  it("WI-963: compound end-to-end — func Map[T, R any](s []T, f func(T) R) []R raised from envelope", () => {
+    // This test exercises the real production sequence:
+    //   envelope (wire shape from go-ast-parse.go)
+    //   -> extractFunctionSignatures (parse-fn-signature.ts)
+    //   -> renderFunctionDeclaration (raise-function.ts)
+    // crossing all component boundaries to verify they compose correctly.
+    const envelope: GoAstParseResult = {
+      version: 2,
+      packageName: "lo",
+      functions: [
+        {
+          name: "Map",
+          receiver: null,
+          typeParams: [
+            { name: "T", constraint: "any" },
+            { name: "R", constraint: "any" },
+          ],
+          params: [
+            { name: "s", goType: "[]T" },
+            { name: "f", goType: "func(T) R" },
+          ],
+          results: [{ name: "", goType: "[]R" }],
+          bodySource: "// body",
+          body: null,
+        },
+      ],
+    };
+
+    const sigs = extractFunctionSignatures(envelope);
+    expect(sigs).toHaveLength(1);
+    // biome: avoid non-null assertion — narrow via expect+assert pattern
+    const mapSig = sigs[0];
+    expect(mapSig).toBeDefined();
+    if (!mapSig) return; // type narrowing for TS
+    expect(mapSig.typeParams.map((tp) => tp.name)).toEqual(["T", "R"]);
+    expect(mapSig.params[0]?.tsType).toBe("T[]");
+    expect(mapSig.params[1]?.tsType).toBe("(a0: T) => R");
+    expect(mapSig.returnTypes).toEqual(["R[]"]);
+
+    // Now render — body is null so use emptyBody
+    const out = renderFunctionDeclaration(mapSig, { stmts: [] });
+    expect(out).toBe("export function Map<T, R>(s: T[], f: (a0: T) => R): R[] {\n  void 0;\n}");
   });
 });

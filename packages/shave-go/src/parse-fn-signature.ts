@@ -96,12 +96,20 @@ export function extractFunctionSignatures(envelope: GoAstParseResult): FunctionS
       constraint: tp.constraint,
     }));
 
+    // Build the set of generic type parameter names in scope for this function
+    // (WI-963).  mapGoType uses this set to emit type-param identifiers verbatim
+    // rather than looking them up in the primitive table.
+    const typeParamNames: ReadonlySet<string> =
+      typeParams.length > 0 ? new Set(typeParams.map((tp) => tp.name)) : new Set();
+    const typeMapOpts = typeParams.length > 0 ? { typeParams: typeParamNames } : undefined;
+
     const params: RaisedParam[] = fn.params.map((p) => {
       try {
+        const tsType = typeMapOpts ? mapGoType(p.goType, typeMapOpts).tsType : mapGoType(p.goType);
         return {
           name: p.name,
           goType: p.goType,
-          tsType: mapGoType(p.goType),
+          tsType,
         };
       } catch (err) {
         if (err instanceof UnsupportedTypeError) {
@@ -119,7 +127,8 @@ export function extractFunctionSignatures(envelope: GoAstParseResult): FunctionS
     const goReturnTypes: string[] = [];
     for (const r of fn.results) {
       try {
-        returnTypes.push(mapGoType(r.goType));
+        const tsType = typeMapOpts ? mapGoType(r.goType, typeMapOpts).tsType : mapGoType(r.goType);
+        returnTypes.push(tsType);
         goReturnTypes.push(r.goType);
       } catch (err) {
         if (err instanceof UnsupportedTypeError) {
