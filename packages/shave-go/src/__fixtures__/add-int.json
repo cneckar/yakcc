@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "packageName": "math",
+  "functions": [
+    {
+      "name": "Add",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "a", "goType": "int" }, { "name": "b", "goType": "int" }],
+      "results": [{ "name": "", "goType": "int" }],
+      "bodySource": "return a + b",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 9,
+                "op": "+",
+                "x": { "type": "Ident", "line": 1, "col": 9, "name": "a" },
+                "y": { "type": "Ident", "line": 1, "col": 11, "name": "b" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

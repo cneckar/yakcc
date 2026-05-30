@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "packageName": "internal",
+  "functions": [
+    {
+      "name": "computeScore",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "base", "goType": "int" }, { "name": "bonus", "goType": "int" }],
+      "results": [{ "name": "", "goType": "int" }],
+      "bodySource": "return base + bonus",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 9,
+                "op": "+",
+                "x": { "type": "Ident", "line": 1, "col": 9, "name": "base" },
+                "y": { "type": "Ident", "line": 1, "col": 16, "name": "bonus" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "packageName": "util",
+  "functions": [
+    {
+      "name": "Double",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "n", "goType": "int" }],
+      "results": [{ "name": "", "goType": "int" }],
+      "bodySource": "result := n * 2\nreturn result",
+      "body": {
+        "stmts": [
+          {
+            "type": "AssignStmt",
+            "line": 1,
+            "col": 2,
+            "lhs": [{ "type": "Ident", "line": 1, "col": 2, "name": "result" }],
+            "rhs": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 12,
+                "op": "*",
+                "x": { "type": "Ident", "line": 1, "col": 12, "name": "n" },
+                "y": { "type": "BasicLit", "line": 1, "col": 16, "kind": "INT", "value": "2" }
+              }
+            ],
+            "tok": ":="
+          },
+          {
+            "type": "ReturnStmt",
+            "line": 2,
+            "col": 2,
+            "results": [{ "type": "Ident", "line": 2, "col": 9, "name": "result" }]
+          }
+        ]
+      }
+    }
+  ]
+}

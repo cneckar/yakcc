@@ -14,7 +14,7 @@ function envelopeWith(
   functions: GoAstParseResult["functions"],
   packageName = "main",
 ): GoAstParseResult {
-  return { version: 1, packageName, functions };
+  return { version: 2, packageName, functions };
 }
 
 describe("extractFunctionSignatures -- happy paths", () => {
@@ -30,6 +30,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         ],
         results: [{ name: "", goType: "int" }],
         bodySource: "return a + b",
+        body: null,
       },
     ]);
     const sigs = extractFunctionSignatures(env);
@@ -60,6 +61,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         ],
         results: [{ name: "", goType: "bool" }],
         bodySource: "return ok",
+        body: null,
       },
     ]);
     const sig = extractFunctionSignatures(env)[0];
@@ -88,6 +90,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
           { name: "remainder", goType: "int" },
         ],
         bodySource: "return a/b, a%b",
+        body: null,
       },
     ]);
     const sig = extractFunctionSignatures(env)[0];
@@ -108,6 +111,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         params: [],
         results: [],
         bodySource: "",
+        body: null,
       },
       {
         name: "Second",
@@ -116,6 +120,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         params: [],
         results: [],
         bodySource: "",
+        body: null,
       },
     ]);
     const sigs = extractFunctionSignatures(env);
@@ -131,6 +136,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         params: [{ name: "xs", goType: "[]int" }],
         results: [{ name: "", goType: "[]int" }],
         bodySource: "return xs",
+        body: null,
       },
     ]);
     const sig = extractFunctionSignatures(env)[0];
@@ -146,6 +152,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         params: [{ name: "s", goType: "*string" }],
         results: [{ name: "", goType: "string" }],
         bodySource: "return *s",
+        body: null,
       },
     ]);
     const sig = extractFunctionSignatures(env)[0];
@@ -161,6 +168,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         params: [],
         results: [{ name: "", goType: "int" }],
         bodySource: "return len(s.data)",
+        body: null,
       },
     ]);
     const sig = extractFunctionSignatures(env)[0];
@@ -177,6 +185,7 @@ describe("extractFunctionSignatures -- happy paths", () => {
         params: [{ name: "n", goType: "int" }],
         results: [{ name: "", goType: "int" }],
         bodySource: null,
+        body: null,
       },
     ]);
     const sig = extractFunctionSignatures(env)[0];
@@ -194,6 +203,7 @@ describe("extractFunctionSignatures -- rejection cases", () => {
         params: [{ name: "c", goType: "chan int" }],
         results: [{ name: "", goType: "int" }],
         bodySource: "",
+        body: null,
       },
     ]);
     try {
@@ -217,6 +227,7 @@ describe("extractFunctionSignatures -- rejection cases", () => {
         params: [],
         results: [{ name: "", goType: "chan int" }],
         bodySource: "",
+        body: null,
       },
     ]);
     try {
@@ -249,6 +260,7 @@ describe("extractFunctionSignatures -- compound production sequence", () => {
             { name: "", goType: "error" },
           ],
           bodySource: "// body elided",
+          body: null,
         },
         {
           name: "countWords",
@@ -257,6 +269,7 @@ describe("extractFunctionSignatures -- compound production sequence", () => {
           params: [{ name: "s", goType: "string" }],
           results: [{ name: "", goType: "int" }],
           bodySource: "// body elided",
+          body: null,
         },
       ],
       "strutil",

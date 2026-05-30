@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "packageName": "math",
+  "functions": [
+    {
+      "name": "Multiply",
+      "receiver": null,
+      "typeParams": [],
+      "params": [{ "name": "x", "goType": "float64" }, { "name": "y", "goType": "float64" }],
+      "results": [{ "name": "", "goType": "float64" }],
+      "bodySource": "return x * y",
+      "body": {
+        "stmts": [
+          {
+            "type": "ReturnStmt",
+            "line": 1,
+            "col": 2,
+            "results": [
+              {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 9,
+                "op": "*",
+                "x": { "type": "Ident", "line": 1, "col": 9, "name": "x" },
+                "y": { "type": "Ident", "line": 1, "col": 11, "name": "y" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
