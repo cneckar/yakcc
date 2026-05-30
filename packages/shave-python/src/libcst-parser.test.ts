@@ -644,6 +644,74 @@ describe("WI-909: Comprehension tuple-target emission (real Python subprocess)",
 });
 
 // ---------------------------------------------------------------------------
+// WI-905: Nested FunctionDef → ImpureStatement(nested_function) emission
+// (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-905: nested FunctionDef emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits ImpureStatement(nested_function) for a nested def inside a function body", async () => {
+      // def outer(x: int) -> int:
+      //     def inner(y: int) -> int:
+      //         return y + 1
+      //     return inner(x)
+      const source = [
+        "def outer(x: int) -> int:",
+        "    def inner(y: int) -> int:",
+        "        return y + 1",
+        "    return inner(x)",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      // First statement is ImpureStatement(nested_function), not Unsupported
+      expect(body.length).toBeGreaterThanOrEqual(1);
+      const stmt = body[0] as PythonAstNode;
+      expect(stmt.type).toBe("ImpureStatement");
+      expect((stmt as { construct?: string }).construct).toBe("nested_function");
+      // detail mentions the inner function name and the clear closure message
+      const detail = (stmt as { detail?: string }).detail ?? "";
+      expect(detail).toContain("inner");
+      expect(detail).toContain("nested function definition (closure)");
+      expect(detail).toContain("refactor to module-level");
+    });
+
+    it("emits ImpureStatement(nested_function) — NOT Unsupported — for nested def", async () => {
+      // Regression: before WI-905 this emitted {"type":"Unsupported","reason":"FunctionDef"}.
+      // After WI-905 it must be ImpureStatement so raise-body throws ImpureFunctionError,
+      // not the opaque UnsupportedAstError.
+      const source = [
+        "def wrapper(n: int) -> int:",
+        "    def helper(x: int) -> int:",
+        "        return x * 2",
+        "    return helper(n)",
+        "",
+      ].join("\n");
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      const stmt = body[0] as PythonAstNode;
+      // Must not be Unsupported
+      expect(stmt.type).not.toBe("Unsupported");
+      expect(stmt.type).toBe("ImpureStatement");
+      expect((stmt as { construct?: string }).construct).toBe("nested_function");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // WI-890: Class method extraction (real Python subprocess)
 // ---------------------------------------------------------------------------
 

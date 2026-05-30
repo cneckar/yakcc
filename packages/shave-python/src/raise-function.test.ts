@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import type { LibcstParseResult, PythonAstNode } from "./libcst-parser.js";
 import type { FunctionSignature } from "./parse-fn-signature.js";
-import type { WireStmt } from "./raise-body.js";
+import { UnsupportedAstError, type WireStmt } from "./raise-body.js";
 import {
   ImpureFunctionError,
   raiseFunctionWithPurityAndNormalization,
@@ -829,6 +829,89 @@ describe("WI-909: raiseFunctionWithPurityAndNormalization — tuple-target compr
     expect(out).toContain(".filter(([k, v]) => v)");
     expect(out).toContain(".map(([k, v]) => k)");
     expect(out).toContain("function truthyKeys(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-905: Nested FunctionDef — compound-interaction tests through the full pipeline
+// ---------------------------------------------------------------------------
+
+describe("WI-905: raiseFunctionWithPurityAndNormalization — nested_function throws ImpureFunctionError", () => {
+  // Production sequence: checkModuleImports → checkFunctionPurity → normalize names →
+  // renderFunctionDeclaration → renderBody → renderStmt(ImpureStatement) → ImpureFunctionError.
+  // Verifies that a nested FunctionDef wire node results in a typed, actionable error
+  // rather than the opaque UnsupportedAstError("FunctionDef") that fired before WI-905.
+
+  it("throws ImpureFunctionError(forbidden_construct) for ImpureStatement(nested_function) in body", () => {
+    // def outer(x: int) -> int:
+    //     def inner(y): return y + 1
+    //     return inner(x)
+    //
+    // Wire body: [ImpureStatement(nested_function), Return]
+    // Expected: ImpureFunctionError thrown at render time with kind='forbidden_construct'
+    // and detail mentioning closure/nested function.
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "outer",
+      params: [{ name: "x", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource: "    def inner(y): return y + 1\n    return inner(x)",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "ImpureStatement",
+        construct: "nested_function",
+        detail:
+          "nested function 'inner' — nested function definition (closure) — not supported in MVP, refactor to module-level",
+      },
+      {
+        type: "Return",
+        value: { type: "Call", func: "inner", args: [{ type: "Name", name: "x" }] },
+      },
+    ];
+    try {
+      raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+      expect.unreachable("should throw ImpureFunctionError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+      // detail must contain the closure message, not a generic UnsupportedAstError reason
+      expect((err as ImpureFunctionError).detail).toContain("nested function");
+      expect((err as ImpureFunctionError).detail).toContain("closure");
+      // functionName is the normalized outer function name
+      expect((err as ImpureFunctionError).functionName).toBe("outer");
+    }
+  });
+
+  it("throws ImpureFunctionError — not UnsupportedAstError — for nested_function (regression guard)", () => {
+    // Before WI-905 the Python layer emitted Unsupported("FunctionDef"), which caused
+    // UnsupportedAstError at render time. After WI-905 we must get ImpureFunctionError.
+    // UnsupportedAstError is imported statically at the top of this file.
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "wrapper",
+      params: [],
+      returnType: "null",
+      pythonReturnAnnotation: "None",
+      bodyPythonSource: "    def helper(): pass",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "ImpureStatement",
+        construct: "nested_function",
+        detail:
+          "nested function 'helper' — nested function definition (closure) — not supported in MVP, refactor to module-level",
+      },
+    ];
+    try {
+      raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+      expect.unreachable("should throw");
+    } catch (err) {
+      // Must be ImpureFunctionError, not UnsupportedAstError
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect(err).not.toBeInstanceOf(UnsupportedAstError);
+    }
   });
 });
 

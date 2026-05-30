@@ -418,6 +418,48 @@ describe("WI-888: renderStmt — ImpureStatement throws ImpureFunctionError", ()
 });
 
 // ---------------------------------------------------------------------------
+// WI-905: ImpureStatement(nested_function) — nested FunctionDef in body
+// ---------------------------------------------------------------------------
+
+describe("WI-905: renderStmt — ImpureStatement(nested_function) throws ImpureFunctionError", () => {
+  it("throws ImpureFunctionError for nested_function construct", () => {
+    const stmt: WireStmt = {
+      type: "ImpureStatement",
+      construct: "nested_function",
+      detail:
+        "nested function 'inner' — nested function definition (closure) — not supported in MVP, refactor to module-level",
+    };
+    try {
+      renderStmt(stmt);
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).kind).toBe("forbidden_construct");
+      expect((err as ImpureFunctionError).detail).toContain("nested function");
+      expect((err as ImpureFunctionError).detail).toContain("closure");
+      expect((err as ImpureFunctionError).functionName).toBe("<unknown>");
+    }
+  });
+
+  it("threads fnName through to ImpureFunctionError for nested_function", () => {
+    const stmt: WireStmt = {
+      type: "ImpureStatement",
+      construct: "nested_function",
+      detail:
+        "nested function 'helper' — nested function definition (closure) — not supported in MVP, refactor to module-level",
+    };
+    try {
+      renderStmt(stmt, "  ", "outer_fn");
+      expect.unreachable("should throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImpureFunctionError);
+      expect((err as ImpureFunctionError).functionName).toBe("outer_fn");
+      expect((err as ImpureFunctionError).detail).toContain("nested function");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WI-875: floor-divide // operator
 // ---------------------------------------------------------------------------
 

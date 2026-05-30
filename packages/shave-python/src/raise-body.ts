@@ -242,9 +242,10 @@ export type WireStmt =
   // WI-888: ImpureStatement — bare expression statement (call or other expr).
   // renderStmt throws ImpureFunctionError(kind:"forbidden_construct").
   // DEC-WI888-002/003: bare_call = Expr(Call); bare_expression = everything else.
+  // WI-905: nested_function = FunctionDef compound statement inside a body.
   | {
       readonly type: "ImpureStatement";
-      readonly construct: "bare_call" | "bare_expression";
+      readonly construct: "bare_call" | "bare_expression" | "nested_function";
       readonly detail: string;
     }
   // WI-903: If statement — Python if/elif/else → TS if/else if/else (DEC-WI903-001)
