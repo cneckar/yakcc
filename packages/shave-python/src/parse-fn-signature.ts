@@ -25,6 +25,7 @@
 
 import type { LibcstParseResult } from "./libcst-parser.js";
 import { ImpureFunctionError } from "./purity-check.js";
+import type { WireStmt } from "./raise-body.js";
 import { type LowerWarning, UnsupportedTypeError, mapPythonType } from "./type-map.js";
 
 export interface RaisedParam {
@@ -297,4 +298,99 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     return { ...sig, methodKind: fn.methodKind };
   }
   return sig;
+}
+
+// ---------------------------------------------------------------------------
+// WI-934: Class envelope types and extractor
+// ---------------------------------------------------------------------------
+//
+// @decision DEC-WI934-001 — extractClassEnvelopes is a pure type-narrowing pass
+// @title Walk module.classes[] and return typed EnvelopeClass[]; no rejection logic here
+// @status accepted
+// @rationale The WI-890 extractOne short-circuit for instance methods stays
+//   unchanged — it fires for methods arriving via module.functions[] flat list.
+//   Classes arriving via module.classes[] are a separate path; raise-class.ts
+//   owns all structural validation and rejection for this path.
+
+/**
+ * Wire-shape for a single init assignment from libcst-parse.py.
+ * target = attribute name (string); value = wire expression.
+ */
+export interface EnvelopeInitAssignment {
+  readonly target: string;
+  /** Wire expression from libcst-parse.py — untyped JSON shape. */
+  readonly value: unknown;
+}
+
+/**
+ * Wire-shape for a single init param from libcst-parse.py.
+ */
+export interface EnvelopeInitParam {
+  readonly name: string;
+  readonly annotation: string | null;
+}
+
+/**
+ * Wire-shape for a class variable from libcst-parse.py.
+ */
+export interface EnvelopeClassVar {
+  readonly name: string;
+  /** Wire expression from libcst-parse.py. */
+  readonly value: unknown;
+}
+
+/**
+ * Wire-shape for a single method inside a class envelope from libcst-parse.py.
+ */
+export interface EnvelopeMethod {
+  readonly name: string;
+  readonly params: readonly EnvelopeInitParam[];
+  readonly return_annotation: string | null;
+  readonly body_source: string;
+  readonly body: readonly WireStmt[];
+  readonly methodKind: MethodKind;
+}
+
+/**
+ * Structural class envelope as emitted by libcst-parse.py module.classes[].
+ *
+ * Used exclusively by raise-class.ts. The existing flat module.functions[]
+ * list (WI-890) continues to be populated in parallel.
+ *
+ * @decision DEC-WI934-001 — additive classes[] alongside flat functions[]
+ */
+export interface EnvelopeClass {
+  readonly name: string;
+  readonly bases: readonly string[];
+  readonly decorators: readonly string[];
+  readonly metaclass: string | null;
+  readonly init_params: readonly EnvelopeInitParam[];
+  readonly init_assignments: readonly EnvelopeInitAssignment[];
+  readonly methods: readonly EnvelopeMethod[];
+  readonly class_vars: readonly EnvelopeClassVar[];
+  /** Python-side first-pass raise blockers. Empty = no blockers detected. */
+  readonly raise_blockers: readonly string[];
+}
+
+/**
+ * Walk `module.classes[]` in the libcst envelope and return a typed
+ * `EnvelopeClass[]` — one entry per class in the Python source.
+ *
+ * This is a pure type-narrowing pass: no rejection logic, no purity checks,
+ * no annotation mapping. The result feeds directly into `raiseClass()`.
+ *
+ * The WI-890 `extractOne` instance-method short-circuit is NOT affected:
+ * methods arriving via `module.functions[]` flat list continue to reject with
+ * `ImpureFunctionError`. Classes arriving via `module.classes[]` flow through
+ * `raise-class.ts` only.
+ *
+ * @decision DEC-WI934-011 — backward compatibility: WI-890 short-circuit retained
+ * @title module.functions[] instance-method path unchanged; module.classes[] is a new fork
+ * @status accepted
+ */
+export function extractClassEnvelopes(envelope: LibcstParseResult): EnvelopeClass[] {
+  const moduleRecord = envelope.module as unknown as { classes?: unknown[] };
+  const classes = moduleRecord.classes ?? [];
+  // Narrow each entry to EnvelopeClass — trust the libcst-parse.py wire contract.
+  return classes as EnvelopeClass[];
 }

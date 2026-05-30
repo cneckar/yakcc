@@ -369,6 +369,89 @@ lower adapter skeleton, and proof-IR emitter framework; only the AST tool and ma
 
 ---
 
+## Q11 — Where does decomposition live?
+
+<!-- @decision DEC-WI933-001 — ADR Q11 verbatim placement -->
+<!-- @title Append ## Q11 — Where does decomposition live? after Q8 -->
+<!-- @status accepted -->
+<!-- @rationale DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001: principle written before -->
+<!--   #934 implementation so the ADR is the authority before any code exists. -->
+<!--   Em-dash heading style normalized from issue body period style to match -->
+<!--   existing ADR heading convention. Cross-reference: docs/decisions/ -->
+
+**Principle: decomposition belongs exclusively at the substrate layer
+(`packages/shave/src/universalize/recursion.ts`). Per-language raise adapters
+must never decompose function bodies themselves.**
+
+When a per-language adapter (Python, Go, Rust) encounters a construct that
+contains a body — a class method, a closure, a struct impl — the right adapter
+behaviour is to **raise the body verbatim** into well-formed TS-subset IR and
+hand it to the substrate's existing `recurse()` / `decomposableChildrenOf()`
+pipeline. The substrate already knows how to walk TS-subset IR and find atomic
+sub-fragments.
+
+### Originating concern
+
+> "bs4 4.14.3 e2e exploration after WI-890 (class-method extraction wired)
+> still showed bs4 mostly empty because the bulk of bs4 code is **instance
+> methods** that WI-890 rejects with `ImpureFunctionError(kind:'instance_method')`.
+> The right mechanism is **uncurry**: instance methods on classes with
+> pure-derivable `__init__` raise to free functions
+> `ClassName_methodName(self: ClassNameState, ...)`. The substrate's existing
+> `recurse()` / `decomposableChildrenOf()` pipeline then mines atoms from those
+> raised method bodies the same way it already mines atoms from TypeScript class
+> methods. The adapter raises; the substrate decomposes; no adapter-side
+> decomposition."  — Operator dispatch 2026-05-28 (#933, #934)
+
+### Lowering rules per adapter
+
+**Python adapter (`@yakcc/shave-python`):**
+- Module-level `def` → free function (existing WI-782 path).
+- Class `@staticmethod` / `@classmethod` → free function via WI-890 flat list.
+- Class instance method (`def self(self, ...)`) → uncurry to free function
+  `ClassName_methodName(self: ClassNameState, ...)` via WI-934 `raise-class`.
+  Self-field reads rewrite to `self.camelCasedField`. Self-method calls rewrite
+  to `ClassName_normalizedMethod(self, ...)`. The raised function body is
+  verbatim IR — substrate decomposes it.
+- Classes with non-pure-derivable `__init__` (computed assignments, metaclasses,
+  multiple inheritance, `__slots__`, `@property`) → `CannotRaiseToIRError`.
+
+**Go adapter (future):** struct method receivers lower analogously — uncurry to
+free function `TypeName_methodName(recv: TypeNameState, ...)`. Go's value
+receiver model makes the immutability invariant cleaner than Python.
+
+**Rust adapter (future):** `impl` methods with `&self` receivers lower to free
+functions over a borrowed state type; `&mut self` methods are structurally
+impure and raise `CannotRaiseToIRError` unless the mutation is limited to the
+constructor path.
+
+### Failure mode
+
+When a raised body cannot be decomposed by the substrate
+(`DidNotReachAtomError` from `recursion.ts:222` tripwire), the root cause is
+in the **raise layer** — the adapter produced malformed or unconventional IR.
+Fix the adapter; do not add adapter-side decomposition to compensate.
+`DidNotReachAtomError` is the load-bearing reviewer gate that enforces this
+boundary.
+
+### What this means for adapter MVPs
+
+An adapter MVP is permitted to reject constructs it cannot raise cleanly
+(via `CannotRaiseToIRError`) rather than being required to raise every construct
+on day one. The boundary is: **when the adapter chooses to raise a construct, the
+raise must produce substrate-decomposable IR.** Raising is optional; raising badly
+is not.
+
+The `raise-class.integration.test.ts` in `@yakcc/shave-python` is the first
+empirical proof of this principle: a Python class method raised via
+`raiseClass()` feeds into `@yakcc/shave`'s standard pipeline and yields ≥2 atoms.
+
+**Canonical authority surfaces:**
+- `packages/shave/src/universalize/recursion.ts` — `recurse()` + `decomposableChildrenOf()` + `DidNotReachAtomError` tripwire.
+- `docs/decisions/DEC-POLYGLOT-DECOMPOSE-AT-SUBSTRATE-001.md` — canonical single-page decision record.
+
+---
+
 ## References
 
 - Operator constraint: 2026-05-19 directive in #775 filing thread
