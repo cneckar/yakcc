@@ -89,7 +89,9 @@ beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "compile-python-test-"));
   vi.clearAllMocks();
   // Default: openRegistry succeeds
-  mockOpenRegistry.mockResolvedValue(makeMockRegistry(stubRow()) as unknown as Awaited<ReturnType<typeof registryMod.openRegistry>>);
+  mockOpenRegistry.mockResolvedValue(
+    makeMockRegistry(stubRow()) as unknown as Awaited<ReturnType<typeof registryMod.openRegistry>>,
+  );
 });
 
 afterEach(() => {
@@ -238,9 +240,7 @@ describe("runCompilePython — warnings surfaced to stderr", () => {
     mockCompileToPython.mockReturnValue({
       source: "pass\n",
       testSource: "",
-      warnings: [
-        { kind: "unsupported-construct", message: "Array.reduce is not yet supported" },
-      ],
+      warnings: [{ kind: "unsupported-construct", message: "Array.reduce is not yet supported" }],
     });
 
     const logger = new CollectingLogger();

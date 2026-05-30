@@ -5,12 +5,7 @@
 // @decision DEC-WI877-005 (cross-reference: PLAN.md §4 / #877)
 
 import { describe, expect, it } from "vitest";
-import {
-  TARGETS_TRACKED,
-  inferTarget,
-  isSupportedTarget,
-  type TargetLang,
-} from "./lang-target.js";
+import { TARGETS_TRACKED, type TargetLang, inferTarget, isSupportedTarget } from "./lang-target.js";
 
 describe("lang-target — inferTarget", () => {
   // Extension-based inference (no override)

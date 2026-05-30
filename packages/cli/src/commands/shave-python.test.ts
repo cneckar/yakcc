@@ -17,7 +17,7 @@
 //   before module evaluation.  The mock is reset between tests via vi.clearAllMocks().
 //   Cross-reference: PLAN.md §3.4 / #877
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -189,7 +189,7 @@ describe("runShavePython — --out <dir> writes one file per function", () => {
   it("creates <fn>.ir.ts for each function in the directory, returns 0", async () => {
     const file = fixture("multi.py");
     // Trailing slash → directory target
-    const outDir = join(tempDir, "out") + "/";
+    const outDir = `${join(tempDir, "out")}/`;
 
     mockParsePythonSource.mockResolvedValue(makeEnvelope(["alpha", "beta"]));
     mockExtractFunctionSignatures.mockReturnValue([makeSig("alpha"), makeSig("beta")]);
@@ -248,7 +248,7 @@ describe("runShavePython — per-function failure: one impure, one pure", () => 
     mockExtractFunctionSignatures.mockReturnValue([makeSig("impure_fn"), makeSig("pure_fn")]);
     mockRaiseFunctionWithPurityAndNormalization
       .mockImplementationOnce(() => {
-        throw new ImpureFunctionError("reads global state");
+        throw new ImpureFunctionError("impure_fn", "forbidden_call", "reads global state");
       })
       .mockReturnValueOnce("export function pureFn(): number {\n  return 1;\n}");
 
@@ -269,7 +269,7 @@ describe("runShavePython — all functions failed → exit 1", () => {
     mockParsePythonSource.mockResolvedValue(makeEnvelope(["a", "b"]));
     mockExtractFunctionSignatures.mockReturnValue([makeSig("a"), makeSig("b")]);
     mockRaiseFunctionWithPurityAndNormalization.mockImplementation(() => {
-      throw new ImpureFunctionError("impure");
+      throw new ImpureFunctionError("impure_fn", "forbidden_call", "impure");
     });
 
     const logger = new CollectingLogger();
