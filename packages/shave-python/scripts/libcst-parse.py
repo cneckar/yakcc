@@ -62,6 +62,14 @@
 #   no decorator  → "instance" (self param; tagged impure downstream)
 # Cross-reference: PLAN.md §WI-890 / DEC-WI890-001..010
 #
+# WI-905: Nested FunctionDef rejection — _stmt_v2() detects libcst.FunctionDef
+# as a compound statement inside a function body and emits ImpureStatement with
+# construct "nested_function" instead of the generic Unsupported wire node.
+# This reuses the existing WI-888 ImpureStatement wire shape; no new wire type.
+# TS raise-body.ts throws ImpureFunctionError(kind:'forbidden_construct') with
+# a message mentioning "nested function definition (closure) — not supported in
+# MVP, refactor to module-level". Cross-reference: #905.
+#
 # Wire shape (cumulative through WI-913):
 #   functions[].body:
 #     [ Statement, ... ]
@@ -72,6 +80,8 @@
 #     {"type": "Docstring", "value": "<str>"}                           [WI-888]
 #     {"type": "ImpureStatement", "construct": "bare_call"|            [WI-888]
 #              "bare_expression", "detail": "<str>"}
+#     {"type": "ImpureStatement", "construct": "nested_function",      [WI-905]
+#              "detail": "<str>"}
 #     {"type": "If", "test": <Expr>, "body": [<Stmt>...],              [WI-903]
 #              "orelse": [<Stmt>...]}
 #     {"type": "Assign", "target": "<name>", "value": <Expr>}          [WI-907]
@@ -780,6 +790,34 @@ def _stmt_v2(node, is_first=False):  # type: ignore[no-untyped-def]
             "test": _expr(node.test),
             "body": _if_stmts(node.body),
             "orelse": orelse,
+        }
+
+    # WI-905: nested FunctionDef inside a function body.
+    #
+    # libcst represents a `def inner(): ...` inside an outer function body as a
+    # libcst.FunctionDef compound statement (not a SimpleStatementLine).
+    # We catch it here — before the generic fallback — and emit an ImpureStatement
+    # so that raise-body.ts throws ImpureFunctionError(kind:"forbidden_construct")
+    # with a clear message instead of a generic UnsupportedAstError("FunctionDef").
+    #
+    # @decision DEC-WI905-001 — Nested FunctionDef → ImpureStatement(nested_function)
+    # @title Detect nested def in body; emit ImpureStatement not Unsupported
+    # @status accepted
+    # @rationale Closures are not supported in the MVP shave corpus. Raising as
+    #   ImpureFunctionError (kind:forbidden_construct) gives callers a typed,
+    #   actionable error with a clear "refactor to module-level" message, rather
+    #   than the opaque UnsupportedAstError("FunctionDef") that previously fired.
+    #   Reuses the existing WI-888 ImpureStatement wire shape — no new wire type.
+    #   Cross-reference: PLAN.md §WI-905 / #905.
+    if isinstance(node, libcst.FunctionDef):
+        return {
+            "type": "ImpureStatement",
+            "construct": "nested_function",
+            "detail": (
+                f"nested function '{node.name.value}' — "
+                "nested function definition (closure) — not supported in MVP, "
+                "refactor to module-level"
+            ),
         }
 
     return {"type": "Unsupported", "reason": type(node).__name__}
