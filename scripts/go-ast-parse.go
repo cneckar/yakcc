@@ -270,36 +270,20 @@ func marshalStmt(fset *token.FileSet, stmt ast.Stmt) json.RawMessage {
 		})
 
 	case *ast.IfStmt:
-		return marshal(map[string]interface{}{
-			"type":   "UnsupportedStmt",
-			"line":   line,
-			"col":    col,
-			"reason": "IfStmt",
-		})
+		// WI-964: emit structured IfStmt node instead of UnsupportedStmt.
+		return marshalIfStmt(fset, s, line, col)
 
 	case *ast.ForStmt:
-		return marshal(map[string]interface{}{
-			"type":   "UnsupportedStmt",
-			"line":   line,
-			"col":    col,
-			"reason": "ForStmt",
-		})
+		// WI-964: emit structured ForStmt node.
+		return marshalForStmt(fset, s, line, col)
 
 	case *ast.RangeStmt:
-		return marshal(map[string]interface{}{
-			"type":   "UnsupportedStmt",
-			"line":   line,
-			"col":    col,
-			"reason": "RangeStmt",
-		})
+		// WI-964: emit structured RangeStmt node.
+		return marshalRangeStmt(fset, s, line, col)
 
 	case *ast.SwitchStmt:
-		return marshal(map[string]interface{}{
-			"type":   "UnsupportedStmt",
-			"line":   line,
-			"col":    col,
-			"reason": "SwitchStmt",
-		})
+		// WI-964: emit structured SwitchStmt node.
+		return marshalSwitchStmt(fset, s, line, col)
 
 	default:
 		return marshal(map[string]interface{}{
@@ -450,4 +434,168 @@ func typeExprToString(fset *token.FileSet, expr ast.Expr) string {
 		return fmt.Sprintf("%v", expr)
 	}
 	return buf.String()
+}
+
+// ---------------------------------------------------------------------------
+// WI-964: control-flow statement marshalers
+// ---------------------------------------------------------------------------
+
+// marshalIfStmt emits an IfStmt wire node.
+// The orelse field is:
+//   - null           — no else branch
+//   - IfStmt object  — else-if chain (the else body is itself an *ast.IfStmt)
+//   - BlockNode      — plain else body ({type:"BlockNode", body:GoBodyNode})
+func marshalIfStmt(fset *token.FileSet, s *ast.IfStmt, line, col int) json.RawMessage {
+	var initRaw json.RawMessage
+	if s.Init != nil {
+		initRaw = marshalStmt(fset, s.Init)
+	} else {
+		initRaw = marshal(nil)
+	}
+
+	bodyNode := buildBodyNode(fset, s.Body)
+
+	var orelseRaw json.RawMessage
+	if s.Else == nil {
+		orelseRaw = marshal(nil)
+	} else {
+		switch el := s.Else.(type) {
+		case *ast.IfStmt:
+			elLine, elCol := position(fset, el.Pos())
+			orelseRaw = marshalIfStmt(fset, el, elLine, elCol)
+		case *ast.BlockStmt:
+			elseBody := buildBodyNode(fset, el)
+			orelseRaw = marshal(map[string]interface{}{
+				"type": "BlockNode",
+				"body": elseBody,
+			})
+		default:
+			orelseRaw = marshal(nil)
+		}
+	}
+
+	return marshal(map[string]interface{}{
+		"type":   "IfStmt",
+		"line":   line,
+		"col":    col,
+		"init":   initRaw,
+		"cond":   marshalExpr(fset, s.Cond),
+		"body":   bodyNode,
+		"orelse": orelseRaw,
+	})
+}
+
+// marshalForStmt emits a ForStmt wire node (classic C-style for loop).
+func marshalForStmt(fset *token.FileSet, s *ast.ForStmt, line, col int) json.RawMessage {
+	var initRaw json.RawMessage
+	if s.Init != nil {
+		initRaw = marshalStmt(fset, s.Init)
+	} else {
+		initRaw = marshal(nil)
+	}
+
+	var condRaw json.RawMessage
+	if s.Cond != nil {
+		condRaw = marshalExpr(fset, s.Cond)
+	} else {
+		condRaw = marshal(nil)
+	}
+
+	var postRaw json.RawMessage
+	if s.Post != nil {
+		postRaw = marshalStmt(fset, s.Post)
+	} else {
+		postRaw = marshal(nil)
+	}
+
+	bodyNode := buildBodyNode(fset, s.Body)
+
+	return marshal(map[string]interface{}{
+		"type": "ForStmt",
+		"line": line,
+		"col":  col,
+		"init": initRaw,
+		"cond": condRaw,
+		"post": postRaw,
+		"body": bodyNode,
+	})
+}
+
+// marshalRangeStmt emits a RangeStmt wire node.
+// key/value are the loop variable names; null is emitted for blank identifiers (_).
+func marshalRangeStmt(fset *token.FileSet, s *ast.RangeStmt, line, col int) json.RawMessage {
+	var keyName interface{}
+	if s.Key != nil {
+		if id, ok := s.Key.(*ast.Ident); ok && id.Name != "_" {
+			keyName = id.Name
+		}
+	}
+
+	var valueName interface{}
+	if s.Value != nil {
+		if id, ok := s.Value.(*ast.Ident); ok && id.Name != "_" {
+			valueName = id.Name
+		}
+	}
+
+	bodyNode := buildBodyNode(fset, s.Body)
+
+	return marshal(map[string]interface{}{
+		"type":  "RangeStmt",
+		"line":  line,
+		"col":   col,
+		"key":   keyName,
+		"value": valueName,
+		"tok":   s.Tok.String(),
+		"x":     marshalExpr(fset, s.X),
+		"body":  bodyNode,
+	})
+}
+
+// marshalSwitchStmt emits a SwitchStmt wire node.
+func marshalSwitchStmt(fset *token.FileSet, s *ast.SwitchStmt, line, col int) json.RawMessage {
+	var initRaw json.RawMessage
+	if s.Init != nil {
+		initRaw = marshalStmt(fset, s.Init)
+	} else {
+		initRaw = marshal(nil)
+	}
+
+	var tagRaw json.RawMessage
+	if s.Tag != nil {
+		tagRaw = marshalExpr(fset, s.Tag)
+	} else {
+		tagRaw = marshal(nil)
+	}
+
+	cases := []json.RawMessage{}
+	for _, stmt := range s.Body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		caseList := make([]json.RawMessage, len(cc.List))
+		for i, e := range cc.List {
+			caseList[i] = marshalExpr(fset, e)
+		}
+		// Build the case body: wrap the list of statements in a GoBodyNode.
+		caseBody := GoBodyNode{Stmts: []json.RawMessage{}}
+		for _, bodyStmt := range cc.Body {
+			caseBody.Stmts = append(caseBody.Stmts, marshalStmt(fset, bodyStmt))
+		}
+		cases = append(cases, marshal(map[string]interface{}{
+			"type": "CaseClause",
+			"list": caseList,
+			"body": caseBody,
+		}))
+	}
+
+	return marshal(map[string]interface{}{
+		"type":  "SwitchStmt",
+		"line":  line,
+		"col":   col,
+		"init":  initRaw,
+		"tag":   tagRaw,
+		"cases": cases,
+	})
 }

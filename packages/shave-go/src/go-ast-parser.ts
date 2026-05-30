@@ -231,6 +231,79 @@ export interface GoAstUnsupportedStmt extends GoAstLocation {
   readonly reason: string;
 }
 
+// ---------------------------------------------------------------------------
+// WI-964: control-flow statement wire types
+// ---------------------------------------------------------------------------
+
+/**
+ * If statement: `if cond { body } else { orelse }`.
+ * `init` captures the optional init statement (e.g. `if x := f(); x > 0 { ... }`).
+ * `orelse` is either null (no else), another IfStmt (else-if chain), or a
+ * BlockStmt-equivalent represented as a GoAstBodyNode (plain else branch).
+ */
+export interface GoAstIfStmt extends GoAstLocation {
+  readonly type: "IfStmt";
+  readonly init: GoAstStmt | null;
+  readonly cond: GoAstExpr;
+  readonly body: GoAstBodyNode;
+  /** null = no else; IfStmt = else-if chain; BlockNode = plain else body */
+  readonly orelse: GoAstIfStmt | GoAstElseBody | null;
+}
+
+/** A plain else block (not an else-if chain). */
+export interface GoAstElseBody {
+  readonly type: "BlockNode";
+  readonly body: GoAstBodyNode;
+}
+
+/**
+ * Classic C-style for loop: `for init; cond; post { body }`.
+ * Any of init/cond/post may be null (e.g. `for ; x > 0; { ... }`).
+ */
+export interface GoAstForStmt extends GoAstLocation {
+  readonly type: "ForStmt";
+  readonly init: GoAstStmt | null;
+  readonly cond: GoAstExpr | null;
+  readonly post: GoAstStmt | null;
+  readonly body: GoAstBodyNode;
+}
+
+/**
+ * Range loop: `for k, v := range items { body }`.
+ * `key` and `value` are the loop variable names (or null if blank `_`).
+ * `tok` is ":=" or "=" (the assignment token used in the range clause).
+ */
+export interface GoAstRangeStmt extends GoAstLocation {
+  readonly type: "RangeStmt";
+  readonly key: string | null;
+  readonly value: string | null;
+  readonly tok: string;
+  readonly x: GoAstExpr;
+  readonly body: GoAstBodyNode;
+}
+
+/**
+ * One case clause in a switch: `case expr1, expr2: body`.
+ * `list` is empty for the `default:` clause.
+ */
+export interface GoAstCaseClause {
+  readonly type: "CaseClause";
+  readonly list: readonly GoAstExpr[];
+  readonly body: GoAstBodyNode;
+}
+
+/**
+ * Switch statement: `switch tag { case ...: ... default: ... }`.
+ * `tag` is null for a tagless switch (`switch { case x > 0: ... }`).
+ * `init` is null when no init statement precedes the tag.
+ */
+export interface GoAstSwitchStmt extends GoAstLocation {
+  readonly type: "SwitchStmt";
+  readonly init: GoAstStmt | null;
+  readonly tag: GoAstExpr | null;
+  readonly cases: readonly GoAstCaseClause[];
+}
+
 /** Discriminated union of all statement node types in the wire AST. */
 export type GoAstStmt =
   | GoAstReturnStmt
@@ -241,6 +314,10 @@ export type GoAstStmt =
   | GoAstSelectStmt
   | GoAstDeferStmt
   | GoAstSendStmt
+  | GoAstIfStmt
+  | GoAstForStmt
+  | GoAstRangeStmt
+  | GoAstSwitchStmt
   | GoAstUnsupportedStmt;
 
 /** Variable spec declaration (from a DeclStmt). */

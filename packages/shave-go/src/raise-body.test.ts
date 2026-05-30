@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// raise-body.test.ts — unit tests for raise-body.ts (WI-870 slice 2).
+// raise-body.test.ts — unit tests for raise-body.ts (WI-870 slice 2, WI-964).
 //
 // Tests build wire body AST nodes directly (no subprocess).  They verify:
 // - Expression rendering for each supported node type.
@@ -8,6 +8,15 @@
 // - Purity inference rejects goroutines, channel sends/recvs, select, defer.
 // - UnsupportedStmt/Expr throws GoUnsupportedConstructError.
 // - renderBody integrates purity check + rendering.
+//
+// WI-964 additions:
+// - BinaryExpr >> and << render correctly (now in ALLOWED_BINARY_OPS).
+// - IfStmt: simple, if-init, else, else-if chain.
+// - ForStmt: classic C-style for with init/cond/post.
+// - RangeStmt: key+value, key-only, value-only.
+// - SwitchStmt: with tag, tagless, multi-value case, default clause.
+// - DeclStmt multi-name: var a, b = x, y splits into two consts.
+// - Purity walk descends into control-flow bodies to detect banned constructs.
 
 import { CannotRaiseToIRError } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
@@ -19,7 +28,16 @@ import {
   GoSelectError,
   GoUnsupportedConstructError,
 } from "./errors.js";
-import type { GoAstBodyNode, GoAstExpr, GoAstStmt } from "./go-ast-parser.js";
+import type {
+  GoAstBodyNode,
+  GoAstCaseClause,
+  GoAstExpr,
+  GoAstForStmt,
+  GoAstIfStmt,
+  GoAstRangeStmt,
+  GoAstStmt,
+  GoAstSwitchStmt,
+} from "./go-ast-parser.js";
 import { checkBodyPurity, renderBody, renderExpr, renderStmt } from "./raise-body.js";
 
 // ---------------------------------------------------------------------------
@@ -98,6 +116,9 @@ describe("renderExpr — BinaryExpr", () => {
     [">=", "a", "b", "(a >= b)"],
     ["&&", "a", "b", "(a && b)"],
     ["||", "a", "b", "(a || b)"],
+    // WI-964: bitshift operators now supported
+    [">>", "x", "1", "(x >> 1)"],
+    ["<<", "x", "2", "(x << 2)"],
   ])("renders BinaryExpr %s", (op, lName, rName, expected) => {
     expect(renderExpr(binExpr(op, ident(lName), ident(rName)))).toBe(expected);
   });
@@ -107,8 +128,10 @@ describe("renderExpr — BinaryExpr", () => {
     expect(renderExpr(expr)).toBe("(a + (b * 2))");
   });
 
-  it("throws for unsupported operator", () => {
-    expect(() => renderExpr(binExpr("<<", ident("a"), intLit("1")))).toThrow(
+  it("throws for unsupported operator (e.g. Go & bitwise-AND)", () => {
+    // & (bitwise-AND) is not in ALLOWED_BINARY_OPS — differs between Go (int)
+    // and TS (coerced) in a way that could silently change semantics.
+    expect(() => renderExpr(binExpr("&", ident("a"), intLit("1")))).toThrow(
       GoUnsupportedConstructError,
     );
   });
@@ -410,5 +433,512 @@ describe("renderBody", () => {
       ],
     };
     expect(renderBody(b)).toBe("  return (a + b);");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: IfStmt rendering
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — IfStmt (WI-964)", () => {
+  function makeIfStmt(over: Partial<GoAstIfStmt>): GoAstStmt {
+    const base: GoAstIfStmt = {
+      type: "IfStmt",
+      line: 1,
+      col: 1,
+      init: null,
+      cond: binExpr(">", ident("x"), intLit("0")),
+      body: { stmts: [returnStmt([ident("x")])] },
+      orelse: null,
+      ...over,
+    };
+    return base;
+  }
+
+  it("renders simple if with no else", () => {
+    const result = renderStmt(makeIfStmt({}));
+    expect(result).toBe("  if ((x > 0)) {\n    return x;\n  }");
+  });
+
+  it("renders if-else with a plain else block", () => {
+    const stmt = makeIfStmt({
+      orelse: {
+        type: "BlockNode",
+        body: { stmts: [returnStmt([intLit("0")])] },
+      },
+    });
+    const result = renderStmt(stmt);
+    expect(result).toBe("  if ((x > 0)) {\n    return x;\n  } else {\n    return 0;\n  }");
+  });
+
+  it("renders if-else-if chain (recursive orelse=IfStmt)", () => {
+    const innerIf: GoAstIfStmt = {
+      type: "IfStmt",
+      line: 2,
+      col: 1,
+      init: null,
+      cond: binExpr("<", ident("x"), intLit("0")),
+      body: { stmts: [returnStmt([intLit("-1")])] },
+      orelse: null,
+    };
+    const stmt = makeIfStmt({ orelse: innerIf });
+    const result = renderStmt(stmt);
+    expect(result).toBe(
+      "  if ((x > 0)) {\n    return x;\n  } else if ((x < 0)) {\n    return -1;\n  }",
+    );
+  });
+
+  it("renders if with init statement (if x := f(); x > 0)", () => {
+    const initStmt: GoAstStmt = {
+      type: "AssignStmt",
+      line: 1,
+      col: 5,
+      lhs: [ident("v")],
+      rhs: [{ type: "CallExpr", line: 1, col: 9, fun: ident("compute"), args: [] }],
+      tok: ":=",
+    };
+    const stmt = makeIfStmt({ init: initStmt });
+    const result = renderStmt(stmt);
+    expect(result).toContain("const v = compute();");
+    expect(result).toContain("if ((x > 0))");
+  });
+
+  it("renders empty if body as void 0;", () => {
+    const stmt = makeIfStmt({ body: { stmts: [] } });
+    const result = renderStmt(stmt);
+    expect(result).toContain("void 0;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: ForStmt rendering
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — ForStmt (WI-964)", () => {
+  function makeForStmt(over: Partial<GoAstForStmt>): GoAstStmt {
+    const base: GoAstForStmt = {
+      type: "ForStmt",
+      line: 1,
+      col: 1,
+      init: {
+        type: "AssignStmt",
+        line: 1,
+        col: 5,
+        lhs: [ident("i")],
+        rhs: [intLit("0")],
+        tok: ":=",
+      },
+      cond: binExpr("<", ident("i"), ident("n")),
+      post: {
+        type: "ExprStmt",
+        line: 1,
+        col: 20,
+        x: { type: "CallExpr", line: 1, col: 20, fun: ident("inc"), args: [ident("i")] },
+      },
+      body: { stmts: [returnStmt([ident("i")])] },
+      ...over,
+    };
+    return base;
+  }
+
+  it("renders classic for loop with init/cond/post", () => {
+    const result = renderStmt(makeForStmt({}));
+    expect(result).toBe("  for (let i = 0; (i < n); inc(i)) {\n    return i;\n  }");
+  });
+
+  it("renders infinite for loop (no init/cond/post)", () => {
+    const result = renderStmt(makeForStmt({ init: null, cond: null, post: null }));
+    expect(result).toBe("  for (; ; ) {\n    return i;\n  }");
+  });
+
+  it("renders for with cond only (while-style)", () => {
+    const result = renderStmt(makeForStmt({ init: null, post: null }));
+    expect(result).toBe("  for (; (i < n); ) {\n    return i;\n  }");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: RangeStmt rendering
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — RangeStmt (WI-964)", () => {
+  function makeRangeStmt(over: Partial<GoAstRangeStmt>): GoAstStmt {
+    const base: GoAstRangeStmt = {
+      type: "RangeStmt",
+      line: 1,
+      col: 1,
+      key: "k",
+      value: "v",
+      tok: ":=",
+      x: ident("items"),
+      body: { stmts: [returnStmt([ident("v")])] },
+      ...over,
+    };
+    return base;
+  }
+
+  it("renders key+value range as for..of Object.entries()", () => {
+    const result = renderStmt(makeRangeStmt({}));
+    expect(result).toBe("  for (const [k, v] of Object.entries(items)) {\n    return v;\n  }");
+  });
+
+  it("renders key-only range as for..of Object.keys()", () => {
+    const result = renderStmt(makeRangeStmt({ value: null }));
+    expect(result).toBe("  for (const k of Object.keys(items)) {\n    return v;\n  }");
+  });
+
+  it("renders value-only range (blank key) as for..of Object.values()", () => {
+    const result = renderStmt(makeRangeStmt({ key: null }));
+    expect(result).toBe("  for (const v of Object.values(items)) {\n    return v;\n  }");
+  });
+
+  it("renders blank-blank range as for..of Object.values() with _entry", () => {
+    const result = renderStmt(makeRangeStmt({ key: null, value: null }));
+    expect(result).toBe("  for (const _entry of Object.values(items)) {\n    return v;\n  }");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: SwitchStmt rendering
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — SwitchStmt (WI-964)", () => {
+  function makeCase(exprs: GoAstExpr[], bodyStmts: GoAstStmt[]): GoAstCaseClause {
+    return { type: "CaseClause", list: exprs, body: { stmts: bodyStmts } };
+  }
+
+  function makeSwitchStmt(over: Partial<GoAstSwitchStmt>): GoAstStmt {
+    const base: GoAstSwitchStmt = {
+      type: "SwitchStmt",
+      line: 1,
+      col: 1,
+      init: null,
+      tag: ident("x"),
+      cases: [
+        makeCase([intLit("1")], [returnStmt([ident("one")])]),
+        makeCase([intLit("2")], [returnStmt([ident("two")])]),
+        makeCase([], [returnStmt([ident("other")])]), // default
+      ],
+      ...over,
+    };
+    return base;
+  }
+
+  it("renders switch with tag and multiple cases + default", () => {
+    const result = renderStmt(makeSwitchStmt({}));
+    expect(result).toContain("switch (x) {");
+    expect(result).toContain("case 1:");
+    expect(result).toContain("case 2:");
+    expect(result).toContain("default:");
+    expect(result).toContain("break;");
+  });
+
+  it("renders tagless switch as switch (true)", () => {
+    const result = renderStmt(makeSwitchStmt({ tag: null }));
+    expect(result).toContain("switch (true) {");
+  });
+
+  it("renders multi-value case as sequential case labels", () => {
+    const stmt = makeSwitchStmt({
+      cases: [makeCase([intLit("1"), intLit("2")], [returnStmt([ident("low")])])],
+    });
+    const result = renderStmt(stmt);
+    expect(result).toContain("case 1:");
+    expect(result).toContain("case 2:");
+    expect(result).toContain("return low;");
+    expect(result).toContain("break;");
+  });
+
+  it("renders empty switch body", () => {
+    const result = renderStmt(makeSwitchStmt({ cases: [] }));
+    expect(result).toBe("  switch (x) {\n  }");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: multi-name ValueSpec rendering
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — DeclStmt multi-name ValueSpec (WI-964)", () => {
+  it("renders var a, b = 1, 2 as two sequential const declarations", () => {
+    const stmt: GoAstStmt = {
+      type: "DeclStmt",
+      line: 1,
+      col: 1,
+      decl: {
+        type: "ValueSpec",
+        names: ["a", "b"],
+        values: [intLit("1"), intLit("2")],
+      },
+    };
+    const result = renderStmt(stmt);
+    expect(result).toBe("  const a = 1;\n  const b = 2;");
+  });
+
+  it("throws when names.length !== values.length", () => {
+    const stmt: GoAstStmt = {
+      type: "DeclStmt",
+      line: 1,
+      col: 1,
+      decl: {
+        type: "ValueSpec",
+        names: ["a", "b"],
+        values: [intLit("1")],
+      },
+    };
+    expect(() => renderStmt(stmt)).toThrow(GoUnsupportedConstructError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: Purity walk descends into control-flow nodes
+// ---------------------------------------------------------------------------
+
+describe("checkBodyPurity — purity walk inside control-flow bodies (WI-964)", () => {
+  it("rejects GoStmt inside an IfStmt body", () => {
+    const b = body([
+      {
+        type: "IfStmt",
+        line: 1,
+        col: 1,
+        init: null,
+        cond: binExpr(">", ident("x"), intLit("0")),
+        body: { stmts: [{ type: "GoStmt", line: 2, col: 5 }] },
+        orelse: null,
+      } satisfies GoAstIfStmt,
+    ]);
+    expect(() => checkBodyPurity(b)).toThrow(GoGoroutineError);
+  });
+
+  it("rejects DeferStmt inside a ForStmt body", () => {
+    const forStmt: GoAstForStmt = {
+      type: "ForStmt",
+      line: 1,
+      col: 1,
+      init: null,
+      cond: null,
+      post: null,
+      body: { stmts: [{ type: "DeferStmt", line: 2, col: 5 }] },
+    };
+    expect(() => checkBodyPurity(body([forStmt]))).toThrow(GoDeferError);
+  });
+
+  it("rejects ChanRecv inside a RangeStmt body", () => {
+    const rangeStmt: GoAstRangeStmt = {
+      type: "RangeStmt",
+      line: 1,
+      col: 1,
+      key: "k",
+      value: "v",
+      tok: ":=",
+      x: ident("ch"),
+      body: {
+        stmts: [returnStmt([{ type: "ChanRecv", line: 2, col: 5 }])],
+      },
+    };
+    expect(() => checkBodyPurity(body([rangeStmt]))).toThrow(GoChanRecvError);
+  });
+
+  it("rejects SendStmt inside a SwitchStmt case body", () => {
+    const switchStmt: GoAstSwitchStmt = {
+      type: "SwitchStmt",
+      line: 1,
+      col: 1,
+      init: null,
+      tag: ident("x"),
+      cases: [
+        {
+          type: "CaseClause",
+          list: [intLit("1")],
+          body: { stmts: [{ type: "SendStmt", line: 2, col: 5 }] },
+        },
+      ],
+    };
+    expect(() => checkBodyPurity(body([switchStmt]))).toThrow(GoChanSendError);
+  });
+
+  it("accepts a pure IfStmt body (no banned constructs)", () => {
+    const b = body([
+      {
+        type: "IfStmt",
+        line: 1,
+        col: 1,
+        init: null,
+        cond: binExpr(">", ident("n"), intLit("0")),
+        body: { stmts: [returnStmt([ident("n")])] },
+        orelse: {
+          type: "BlockNode",
+          body: { stmts: [returnStmt([intLit("0")])] },
+        },
+      } satisfies GoAstIfStmt,
+    ]);
+    expect(() => checkBodyPurity(b)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-964: compound end-to-end — renderBody with control-flow
+// ---------------------------------------------------------------------------
+
+describe("renderBody — compound round-trips (WI-964)", () => {
+  it("if-else inside a function body renders correctly", () => {
+    // Simulates: func Sign(n int) int { if n > 0 { return 1 } else { return -1 } }
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "IfStmt",
+          line: 1,
+          col: 2,
+          init: null,
+          cond: binExpr(">", ident("n"), intLit("0")),
+          body: {
+            stmts: [
+              {
+                type: "ReturnStmt",
+                line: 1,
+                col: 14,
+                results: [intLit("1")],
+              },
+            ],
+          },
+          orelse: {
+            type: "BlockNode",
+            body: {
+              stmts: [
+                {
+                  type: "ReturnStmt",
+                  line: 1,
+                  col: 28,
+                  results: [{ type: "UnaryExpr", line: 1, col: 28, op: "-", x: intLit("1") }],
+                },
+              ],
+            },
+          },
+        } satisfies GoAstIfStmt,
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  if ((n > 0)) {\n    return 1;\n  } else {\n    return -1;\n  }");
+  });
+
+  it("range loop inside a function body renders correctly", () => {
+    // Simulates: func Sum(items []int) int { for _, v := range items { acc += v } return acc }
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "AssignStmt",
+          line: 1,
+          col: 2,
+          lhs: [ident("acc")],
+          rhs: [intLit("0")],
+          tok: ":=",
+        },
+        {
+          type: "RangeStmt",
+          line: 2,
+          col: 2,
+          key: null,
+          value: "v",
+          tok: ":=",
+          x: ident("items"),
+          body: {
+            stmts: [
+              {
+                type: "AssignStmt",
+                line: 2,
+                col: 30,
+                lhs: [ident("acc")],
+                rhs: [binExpr("+", ident("acc"), ident("v"))],
+                tok: "=",
+              },
+            ],
+          },
+        } satisfies GoAstRangeStmt,
+        {
+          type: "ReturnStmt",
+          line: 3,
+          col: 2,
+          results: [ident("acc")],
+        },
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe(
+      "  const acc = 0;\n" +
+        "  for (const v of Object.values(items)) {\n" +
+        "    acc = (acc + v);\n" +
+        "  }\n" +
+        "  return acc;",
+    );
+  });
+
+  it("switch inside a function body emits explicit breaks (no fallthrough)", () => {
+    // Simulates: func Classify(x int) string { switch x { case 0: return "zero" default: return "other" } }
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "SwitchStmt",
+          line: 1,
+          col: 2,
+          init: null,
+          tag: ident("x"),
+          cases: [
+            {
+              type: "CaseClause",
+              list: [intLit("0")],
+              body: {
+                stmts: [
+                  {
+                    type: "ReturnStmt",
+                    line: 1,
+                    col: 15,
+                    results: [
+                      { type: "BasicLit", line: 1, col: 22, kind: "STRING", value: '"zero"' },
+                    ],
+                  },
+                ],
+              },
+            },
+            {
+              type: "CaseClause",
+              list: [],
+              body: {
+                stmts: [
+                  {
+                    type: "ReturnStmt",
+                    line: 2,
+                    col: 15,
+                    results: [
+                      { type: "BasicLit", line: 2, col: 22, kind: "STRING", value: '"other"' },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        } satisfies GoAstSwitchStmt,
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toContain("switch (x) {");
+    expect(result).toContain("case 0:");
+    expect(result).toContain('return "zero";');
+    expect(result).toContain("break;");
+    expect(result).toContain("default:");
+    expect(result).toContain('return "other";');
+  });
+
+  it("bitshift in return: Go n >> 2 -> TS (n >> 2)", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "ReturnStmt",
+          line: 1,
+          col: 2,
+          results: [binExpr(">>", ident("n"), intLit("2"))],
+        },
+      ],
+    };
+    expect(renderBody(b)).toBe("  return (n >> 2);");
   });
 });
