@@ -12,6 +12,7 @@ import {
   extractFunctionSignatures,
   extractFunctionSignaturesAll,
 } from "./parse-fn-signature.js";
+import { ImpureFunctionError } from "./purity-check.js";
 import { UnsupportedTypeError } from "./type-map.js";
 
 interface EnvelopeFunction {
@@ -19,6 +20,7 @@ interface EnvelopeFunction {
   params: Array<{ name: string; annotation: string | null }>;
   return_annotation: string | null;
   body_source: string;
+  methodKind?: "static" | "class" | "instance";
 }
 
 function envelopeWith(functions: EnvelopeFunction[]): LibcstParseResult {
@@ -454,5 +456,185 @@ describe("#899 — per-function extraction continuation", () => {
     // stringify's Any param should carry the any-widened warning end-to-end
     const stringifySig = result.ok.find((s) => s.name === "stringify");
     expect(stringifySig?.params[0]?.warnings?.[0]?.code).toBe("any-widened");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #923 — cls exemption for classmethods
+// ---------------------------------------------------------------------------
+// When methodKind === "class", the first parameter named "cls" is Python
+// call-convention metadata only.  It does not translate to TS; it should be
+// silently dropped from FunctionSignature.params so the shaved TS arrow has
+// no cls argument and the missing-annotation check does not fire on it.
+//
+// Production scenario: bs4 classmethods that read class-level constants
+// (e.g. `@classmethod def from_defaults(cls, ...) -> "Tag"`) were previously
+// unextractable because libcst emits cls without an annotation.
+//
+// These tests cover the five cases specified in the dispatch:
+//   1. Classmethod with un-annotated cls — succeeds, cls absent from params
+//   2. Classmethod with annotated cls — succeeds, cls dropped (annotation ignored)
+//   3. Classmethod with un-annotated regular param — still raises MissingTypeAnnotationError
+//   4. Instance method (methodKind="instance") — still rejects via ImpureFunctionError
+//   5. Module-level fn with first param named "cls" — NOT exempt; annotation required
+// ---------------------------------------------------------------------------
+
+describe("#923 — cls exemption for @classmethod", () => {
+  it("classmethod with un-annotated cls extracts successfully; cls absent from params", () => {
+    // Production sequence: @classmethod where libcst emits cls without annotation.
+    // Before #923 this raised MissingTypeAnnotationError("from_defaults", "cls").
+    const env = envelopeWith([
+      {
+        name: "MyTag.from_defaults",
+        params: [
+          { name: "cls", annotation: null },
+          { name: "tag", annotation: "str" },
+          { name: "count", annotation: "int" },
+        ],
+        return_annotation: "str",
+        body_source: "    return cls.PREFIX + tag",
+        methodKind: "class",
+      },
+    ]);
+    const result = extractFunctionSignaturesAll(env);
+    expect(result.failed).toHaveLength(0);
+    expect(result.ok).toHaveLength(1);
+    const sig = result.ok[0];
+    expect(sig?.methodKind).toBe("class");
+    // cls must not appear in params
+    expect(sig?.params.map((p) => p.name)).not.toContain("cls");
+    // remaining params are present
+    expect(sig?.params.map((p) => p.name)).toEqual(["tag", "count"]);
+  });
+
+  it("classmethod with annotated cls extracts successfully; cls still dropped", () => {
+    // Some codebases annotate cls explicitly (e.g. cls: type["MyTag"]).
+    // The annotation is valid but cls is still Python call-convention metadata
+    // and must be dropped from the TS-facing params.
+    const env = envelopeWith([
+      {
+        name: "MyTag.create",
+        params: [
+          { name: "cls", annotation: 'type["MyTag"]' },
+          { name: "name", annotation: "str" },
+        ],
+        return_annotation: "str",
+        body_source: "    return name",
+        methodKind: "class",
+      },
+    ]);
+    const result = extractFunctionSignaturesAll(env);
+    expect(result.failed).toHaveLength(0);
+    expect(result.ok).toHaveLength(1);
+    const sig = result.ok[0];
+    expect(sig?.params.map((p) => p.name)).not.toContain("cls");
+    expect(sig?.params.map((p) => p.name)).toEqual(["name"]);
+  });
+
+  it("classmethod with un-annotated regular param still raises MissingTypeAnnotationError", () => {
+    // cls is exempt; other un-annotated params are NOT exempt.
+    const env = envelopeWith([
+      {
+        name: "MyTag.build",
+        params: [
+          { name: "cls", annotation: null },
+          { name: "raw", annotation: null }, // missing — should still fail
+        ],
+        return_annotation: "str",
+        body_source: "    return raw",
+        methodKind: "class",
+      },
+    ]);
+    const result = extractFunctionSignaturesAll(env);
+    expect(result.ok).toHaveLength(0);
+    expect(result.failed).toHaveLength(1);
+    const failure = result.failed[0];
+    expect(failure?.error).toBeInstanceOf(MissingTypeAnnotationError);
+    expect((failure?.error as MissingTypeAnnotationError).paramName).toBe("raw");
+  });
+
+  it("instance method (methodKind=instance) still rejects via ImpureFunctionError (unchanged)", () => {
+    // #923 must not regress #890: instance methods are rejected before annotation
+    // checks fire.  self has no annotation in practice — the rejection must come
+    // from ImpureFunctionError("instance_method"), not MissingTypeAnnotationError.
+    const env = envelopeWith([
+      {
+        name: "MyTag.render",
+        params: [
+          { name: "self", annotation: null },
+          { name: "indent", annotation: "int" },
+        ],
+        return_annotation: "str",
+        body_source: '    return ""',
+        methodKind: "instance",
+      },
+    ]);
+    const result = extractFunctionSignaturesAll(env);
+    expect(result.ok).toHaveLength(0);
+    expect(result.failed).toHaveLength(1);
+    const failure = result.failed[0];
+    expect(failure?.error).toBeInstanceOf(ImpureFunctionError);
+    // Must NOT be a MissingTypeAnnotationError about self
+    expect(failure?.error).not.toBeInstanceOf(MissingTypeAnnotationError);
+  });
+
+  it("module-level fn with first param named cls is NOT exempt — annotation required", () => {
+    // cls is just a name at module level; no special treatment applies.
+    // The exemption is keyed on methodKind === "class", not on param name alone.
+    const env = envelopeWith([
+      {
+        name: "standalone_fn",
+        params: [
+          { name: "cls", annotation: null }, // no methodKind — not a classmethod
+          { name: "x", annotation: "int" },
+        ],
+        return_annotation: "int",
+        body_source: "    return x",
+        // no methodKind field — undefined → module-level function
+      },
+    ]);
+    const result = extractFunctionSignaturesAll(env);
+    expect(result.ok).toHaveLength(0);
+    expect(result.failed).toHaveLength(1);
+    const failure = result.failed[0];
+    expect(failure?.error).toBeInstanceOf(MissingTypeAnnotationError);
+    // The failure must be about 'cls' itself — it is not exempt
+    expect((failure?.error as MissingTypeAnnotationError).paramName).toBe("cls");
+  });
+
+  it("compound production sequence: mixed module with classmethod + module-level fn (end-to-end)", () => {
+    // Real-world bs4 scenario: a module that has both a classmethod (cls un-annotated)
+    // and a normal helper function.  Both should succeed after #923.
+    // This crosses extractFunctionSignaturesAll + extractOne + cls-drop path.
+    const env = envelopeWith([
+      {
+        name: "Tag.from_markup",
+        params: [
+          { name: "cls", annotation: null },
+          { name: "markup", annotation: "str" },
+        ],
+        return_annotation: "str",
+        body_source: "    return markup",
+        methodKind: "class",
+      },
+      {
+        name: "normalize_tag",
+        params: [{ name: "s", annotation: "str" }],
+        return_annotation: "str",
+        body_source: "    return s.lower()",
+        // no methodKind
+      },
+    ]);
+    const result = extractFunctionSignaturesAll(env);
+    expect(result.failed).toHaveLength(0);
+    expect(result.ok).toHaveLength(2);
+    // Classmethod: cls dropped
+    const classSig = result.ok.find((s) => s.name === "Tag.from_markup");
+    expect(classSig?.params.map((p) => p.name)).toEqual(["markup"]);
+    expect(classSig?.methodKind).toBe("class");
+    // Module-level fn: unchanged
+    const helperSig = result.ok.find((s) => s.name === "normalize_tag");
+    expect(helperSig?.params.map((p) => p.name)).toEqual(["s"]);
+    expect(helperSig?.methodKind).toBeUndefined();
   });
 });
