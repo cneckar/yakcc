@@ -421,7 +421,12 @@ export function checkFunctionPurity(
  * Returns void if no forbidden imports are present.
  */
 export function checkModuleImports(envelope: LibcstParseResult, fnName: string): void {
-  const moduleNode = envelope.module as PythonAstNode;
+  // #900: envelope.module can be undefined when the envelope is constructed for a
+  // module with no top-level statements (or a synthetic envelope in tests).
+  // collectImportImpurities already guards against undefined .imports, but it does
+  // NOT guard against moduleNode itself being undefined — pass an empty sentinel
+  // instead so the function returns cleanly rather than crashing.
+  const moduleNode = (envelope.module ?? { type: "Module" }) as PythonAstNode;
   const importViolations = collectImportImpurities(moduleNode);
   const firstImport = importViolations[0];
   if (firstImport !== undefined) {

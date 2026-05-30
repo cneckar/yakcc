@@ -16,7 +16,12 @@
 
 import { describe, expect, it } from "vitest";
 import type { LibcstParseResult, PythonAstNode } from "./libcst-parser.js";
-import { ImpureFunctionError, checkFunctionPurity, checkPurity } from "./purity-check.js";
+import {
+  ImpureFunctionError,
+  checkFunctionPurity,
+  checkModuleImports,
+  checkPurity,
+} from "./purity-check.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -501,6 +506,63 @@ describe("checkFunctionPurity", () => {
     } as unknown as PythonAstNode;
     const module = { type: "Module" } as unknown as PythonAstNode;
     expect(() => checkFunctionPurity(fn, module, "bad")).toThrow(ImpureFunctionError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #900: checkModuleImports defensive null checks
+// ---------------------------------------------------------------------------
+
+describe("#900 — checkModuleImports defensive null checks", () => {
+  it("does not crash when envelope.module has no imports field (undefined imports)", () => {
+    // bs4 _invert: a module with no import statements at all (or only 'from typing import Any'
+    // which libcst may not populate into imports[] on some envelope shapes).
+    const envelope: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 1,
+        functions: [{ name: "_invert", params: [], return_annotation: "dict", body_source: "" }],
+        // No 'imports' field at all
+      } as unknown as PythonAstNode,
+    };
+    // Must not throw TypeError; the function should return cleanly (no forbidden imports).
+    expect(() => checkModuleImports(envelope, "_invert")).not.toThrow();
+  });
+
+  it("does not crash when envelope.module.imports is an empty array", () => {
+    const envelope: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 1,
+        functions: [],
+        imports: [],
+      } as unknown as PythonAstNode,
+    };
+    expect(() => checkModuleImports(envelope, "some_fn")).not.toThrow();
+  });
+
+  it("does not crash when envelope.module is undefined (extreme defensive case)", () => {
+    // Synthetic worst-case: envelope produced without a module node.
+    const envelope = {
+      version: 1 as const,
+      module: undefined as unknown as PythonAstNode,
+    };
+    expect(() => checkModuleImports(envelope, "some_fn")).not.toThrow();
+  });
+
+  it("still rejects forbidden import when imports field IS present", () => {
+    const envelope: LibcstParseResult = {
+      version: 1,
+      module: {
+        type: "Module",
+        stmt_count: 1,
+        functions: [],
+        imports: [{ kind: "import", module: "os", name: "os" }],
+      } as unknown as PythonAstNode,
+    };
+    expect(() => checkModuleImports(envelope, "_invert")).toThrow(ImpureFunctionError);
   });
 });
 
