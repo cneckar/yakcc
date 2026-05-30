@@ -157,8 +157,14 @@ export function renderFunctionDeclaration(
   // ImpureStatement nodes are NOT filtered by this step (only Docstrings are) — they remain
   // in visibleStmts and will throw at render time per DEC-WI888-005.
   const visibleStmts = body.filter((s) => s.type !== "Docstring");
+  // #948 (DEC-948-001): seed seenNames with param names so that a body-level
+  // re-assignment to a parameter emits bare `param = expr;` rather than
+  // `let param = expr;` (which would shadow the param and cause a TS compile error).
+  const paramNames = new Set(signature.params.map((p) => p.name));
   const bodyText =
-    visibleStmts.length === 0 ? "  void 0;" : renderBody(visibleStmts, "  ", renderName);
+    visibleStmts.length === 0
+      ? "  void 0;"
+      : renderBody(visibleStmts, "  ", renderName, paramNames);
   return `export function ${renderName}(${paramList}): ${signature.returnType} {\n${bodyText}\n}`;
 }
 

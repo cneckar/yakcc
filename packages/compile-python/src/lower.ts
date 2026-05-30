@@ -16,7 +16,7 @@
 
 import { CannotLowerToPythonError } from "@yakcc/contracts";
 import { type FunctionDeclaration, Node, Project, SyntaxKind, type TypeNode } from "ts-morph";
-import { classMethToSnake, toSnakeCase } from "./names.js";
+import { toSnakeCase } from "./names.js";
 import type { LowerWarning } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -105,11 +105,24 @@ export function lowerSource(implSource: string): LowerResult {
 
 function lowerFunctionDecl(fn: FunctionDeclaration, ctx: Ctx): string[] {
   const name = fn.getName() ?? "unknown";
-  // #941: use classMethToSnake instead of toSnakeCase so that identifiers of
-  // the form "ClassName_methodName" (produced by the shave-python #941 fix)
-  // are emitted as "ClassName.method_name" in the Python output rather than
-  // the incorrect all-lowercase "classname_method_name".
-  const pyName = classMethToSnake(name);
+  // #941: use classMethToSnake for call sites to split "ClassName_methodName"
+  // back to "ClassName.method_name".  But on the def line Python rejects dotted
+  // names ("def ClassName.method_name(…)" is a SyntaxError) so we must keep
+  // the underscore form for the definition itself.
+  //
+  // @decision DEC-946-001 — def line keeps underscore form; call sites use dotted form
+  // @title lowerFunctionDecl uses underscore identifier on def line, not dotted
+  // @status accepted (#946)
+  // @rationale Python's grammar forbids dotted names in `def` declarations:
+  //   `def EntitySubstitution.substitute_xml(…)` is a SyntaxError.  The dotted
+  //   form produced by classMethToSnake is valid only at CALL sites.  For the
+  //   def line we preserve the underscore-joined form (e.g.
+  //   "EntitySubstitution_substitute_xml") which is syntactically valid Python,
+  //   losing dot-qualification but producing compilable code.  Dot-qualified
+  //   class-method grouping is tracked as a follow-up in #946.
+  //   Cross-reference: #941, #946.
+  // def line: keep underscore form (valid Python — dotted names are a SyntaxError in def)
+  const pyDefName = toSnakeCase(name);
 
   const params = fn.getParameters().map((p) => {
     const paramName = toSnakeCase(p.getName());
@@ -122,7 +135,7 @@ function lowerFunctionDecl(fn: FunctionDeclaration, ctx: Ctx): string[] {
   const pyReturn = returnTypeNode ? lowerTypeNode(returnTypeNode, ctx) : "None";
 
   const lines: string[] = [];
-  lines.push(`def ${pyName}(${params.join(", ")}) -> ${pyReturn}:`);
+  lines.push(`def ${pyDefName}(${params.join(", ")}) -> ${pyReturn}:`);
 
   const body = fn.getBody();
   if (!body || !Node.isBlock(body)) {

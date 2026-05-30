@@ -6,8 +6,24 @@
  * "digitOrThrow" → "digit_or_throw"
  * "eofCheck" → "eof_check"
  * Already-snake or single-word identifiers are returned unchanged.
+ *
+ * @decision DEC-947-001 — toSnakeCase preserves ALL_CAPS identifiers verbatim
+ * @title ALL_CAPS identifiers (Python class constant convention) are never lowercased
+ * @status accepted (#947)
+ * @rationale Python uses ALL_CAPS by convention for class constants (e.g.
+ *   `AMPERSAND_OR_BRACKET`, `MAX_LENGTH`).  Applying the CamelCase→snake_case
+ *   transform would produce `ampersand_or_bracket` which does not match the
+ *   original constant and causes AttributeError at runtime.  The guard regex
+ *   `/^[A-Z][A-Z0-9_]*$/` matches identifiers that consist only of uppercase
+ *   letters, digits, and underscores starting with an uppercase letter —
+ *   exactly the ALL_CAPS convention.  Mixed-case identifiers (e.g. `MixedCASE`)
+ *   are NOT matched and continue through the standard CamelCase→snake_case path.
+ *   Cross-reference: #947
  */
 export function toSnakeCase(name: string): string {
+  // #947: preserve ALL_CAPS identifiers verbatim (Python class constant convention).
+  // Regex: starts with uppercase letter, followed only by uppercase letters / digits / underscores.
+  if (/^[A-Z][A-Z0-9_]*$/.test(name)) return name;
   return name
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")

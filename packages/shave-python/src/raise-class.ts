@@ -617,8 +617,13 @@ function emitMethod(
 
   // Filter docstrings for void-0 fallback check (mirrors raise-function.ts DEC-WI888-008)
   const visibleStmts = rewrittenBody.filter((s) => s.type !== "Docstring");
+  // #948 (DEC-948-001): seed seenNames with param names (including "self") so that
+  // body-level re-assignment to a parameter emits bare `param = expr;` not `let param = ...`.
+  const paramNames = new Set(["self", ...method.params.map((p) => p.name)]);
   const bodyText =
-    visibleStmts.length === 0 ? "  void 0;" : renderBody(visibleStmts, "  ", freeFnName);
+    visibleStmts.length === 0
+      ? "  void 0;"
+      : renderBody(visibleStmts, "  ", freeFnName, paramNames);
 
   return `export function ${freeFnName}(${paramList}): ${returnType} {\n${bodyText}\n}`;
 }
