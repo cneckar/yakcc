@@ -462,29 +462,27 @@ describe("#899 — per-function extraction continuation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// #923 — cls exemption for classmethods
+// #939 — cls kept with auto-injected type for classmethods (reverts #923 drop)
 // ---------------------------------------------------------------------------
-// When methodKind === "class", the first parameter named "cls" is Python
-// call-convention metadata only.  It does not translate to TS; it should be
-// silently dropped from FunctionSignature.params so the shaved TS arrow has
-// no cls argument and the missing-annotation check does not fire on it.
+// When methodKind === "class", the first parameter named "cls" is kept in
+// FunctionSignature.params with an auto-injected tsType so that body references
+// to cls.X resolve correctly via the parameter.
 //
-// Production scenario: bs4 classmethods that read class-level constants
-// (e.g. `@classmethod def from_defaults(cls, ...) -> "Tag"`) were previously
-// unextractable because libcst emits cls without an annotation.
+// - Un-annotated cls: gets tsType "typeof ClassName" (when name is dotted) or
+//   "unknown" (when class name is not available), with empty warnings.
+// - Annotated cls: mapped normally via mapPythonType (annotation used as-is).
+// - Un-annotated regular param (not cls): still raises MissingTypeAnnotationError.
+// - Instance method: still rejects via ImpureFunctionError (unchanged).
+// - Module-level fn named cls: NOT exempt; annotation required.
 //
-// These tests cover the five cases specified in the dispatch:
-//   1. Classmethod with un-annotated cls — succeeds, cls absent from params
-//   2. Classmethod with annotated cls — succeeds, cls dropped (annotation ignored)
-//   3. Classmethod with un-annotated regular param — still raises MissingTypeAnnotationError
-//   4. Instance method (methodKind="instance") — still rejects via ImpureFunctionError
-//   5. Module-level fn with first param named "cls" — NOT exempt; annotation required
+// This test suite updates the pre-#939 assertions to reflect the new behavior.
 // ---------------------------------------------------------------------------
 
-describe("#923 — cls exemption for @classmethod", () => {
-  it("classmethod with un-annotated cls extracts successfully; cls absent from params", () => {
+describe("#939 — cls kept with auto-injected type for @classmethod (reverts #923 drop)", () => {
+  it("classmethod with un-annotated cls extracts successfully; cls IS present in params with auto-type", () => {
     // Production sequence: @classmethod where libcst emits cls without annotation.
-    // Before #923 this raised MissingTypeAnnotationError("from_defaults", "cls").
+    // #939 reverts #923: cls is kept, not dropped.  Auto-injected tsType is
+    // "typeof MyTag" derived from fn.name "MyTag.from_defaults".
     const env = envelopeWith([
       {
         name: "MyTag.from_defaults",
@@ -503,21 +501,25 @@ describe("#923 — cls exemption for @classmethod", () => {
     expect(result.ok).toHaveLength(1);
     const sig = result.ok[0];
     expect(sig?.methodKind).toBe("class");
-    // cls must not appear in params
-    expect(sig?.params.map((p) => p.name)).not.toContain("cls");
-    // remaining params are present
-    expect(sig?.params.map((p) => p.name)).toEqual(["tag", "count"]);
+    // cls MUST now appear in params (reverts #923)
+    expect(sig?.params.map((p) => p.name)).toContain("cls");
+    // all three params present, in order
+    expect(sig?.params.map((p) => p.name)).toEqual(["cls", "tag", "count"]);
+    // auto-injected type is "typeof MyTag" (class name from dotted fn.name)
+    expect(sig?.params[0]?.tsType).toBe("typeof MyTag");
+    expect(sig?.params[0]?.pythonAnnotation).toBe("(auto-injected classmethod receiver)");
+    expect(sig?.params[0]?.warnings).toHaveLength(0);
   });
 
-  it("classmethod with annotated cls extracts successfully; cls still dropped", () => {
-    // Some codebases annotate cls explicitly (e.g. cls: type["MyTag"]).
-    // The annotation is valid but cls is still Python call-convention metadata
-    // and must be dropped from the TS-facing params.
+  it("classmethod with annotated cls extracts successfully; cls kept with mapped annotation", () => {
+    // Some codebases annotate cls explicitly (e.g. cls: MyTag or cls: str).
+    // #939: cls is kept and its annotation is mapped normally via mapPythonType.
+    // Using a plain identifier annotation ("MyTag") which is a valid user-defined-type passthrough.
     const env = envelopeWith([
       {
         name: "MyTag.create",
         params: [
-          { name: "cls", annotation: 'type["MyTag"]' },
+          { name: "cls", annotation: "MyTag" }, // plain identifier → user-defined-type passthrough
           { name: "name", annotation: "str" },
         ],
         return_annotation: "str",
@@ -529,8 +531,13 @@ describe("#923 — cls exemption for @classmethod", () => {
     expect(result.failed).toHaveLength(0);
     expect(result.ok).toHaveLength(1);
     const sig = result.ok[0];
-    expect(sig?.params.map((p) => p.name)).not.toContain("cls");
-    expect(sig?.params.map((p) => p.name)).toEqual(["name"]);
+    // cls present with mapped annotation (not auto-injected)
+    expect(sig?.params.map((p) => p.name)).toContain("cls");
+    expect(sig?.params.map((p) => p.name)).toEqual(["cls", "name"]);
+    // annotation goes through mapPythonType normally — pythonAnnotation is the original value
+    expect(sig?.params[0]?.pythonAnnotation).toBe("MyTag");
+    // tsType is the verbatim passthrough from mapPythonType for a user-defined identifier
+    expect(sig?.params[0]?.tsType).toBe("MyTag");
   });
 
   it("classmethod with un-annotated regular param still raises MissingTypeAnnotationError", () => {
@@ -606,8 +613,8 @@ describe("#923 — cls exemption for @classmethod", () => {
 
   it("compound production sequence: mixed module with classmethod + module-level fn (end-to-end)", () => {
     // Real-world bs4 scenario: a module that has both a classmethod (cls un-annotated)
-    // and a normal helper function.  Both should succeed after #923.
-    // This crosses extractFunctionSignaturesAll + extractOne + cls-drop path.
+    // and a normal helper function.  Both should succeed after #939.
+    // This crosses extractFunctionSignaturesAll + extractOne + cls-kept path.
     const env = envelopeWith([
       {
         name: "Tag.from_markup",
@@ -630,9 +637,10 @@ describe("#923 — cls exemption for @classmethod", () => {
     const result = extractFunctionSignaturesAll(env);
     expect(result.failed).toHaveLength(0);
     expect(result.ok).toHaveLength(2);
-    // Classmethod: cls dropped
+    // #939: cls is KEPT in params with auto-injected type "typeof Tag"
     const classSig = result.ok.find((s) => s.name === "Tag.from_markup");
-    expect(classSig?.params.map((p) => p.name)).toEqual(["markup"]);
+    expect(classSig?.params.map((p) => p.name)).toEqual(["cls", "markup"]);
+    expect(classSig?.params[0]?.tsType).toBe("typeof Tag");
     expect(classSig?.methodKind).toBe("class");
     // Module-level fn: unchanged
     const helperSig = result.ok.find((s) => s.name === "normalize_tag");

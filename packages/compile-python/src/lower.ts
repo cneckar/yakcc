@@ -15,7 +15,7 @@
  */
 
 import { type FunctionDeclaration, Node, Project, SyntaxKind, type TypeNode } from "ts-morph";
-import { toSnakeCase } from "./names.js";
+import { classMethToSnake, toSnakeCase } from "./names.js";
 import type { LowerWarning } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,11 @@ export function lowerSource(implSource: string): LowerResult {
 
 function lowerFunctionDecl(fn: FunctionDeclaration, ctx: Ctx): string[] {
   const name = fn.getName() ?? "unknown";
-  const pyName = toSnakeCase(name);
+  // #941: use classMethToSnake instead of toSnakeCase so that identifiers of
+  // the form "ClassName_methodName" (produced by the shave-python #941 fix)
+  // are emitted as "ClassName.method_name" in the Python output rather than
+  // the incorrect all-lowercase "classname_method_name".
+  const pyName = classMethToSnake(name);
 
   const params = fn.getParameters().map((p) => {
     const paramName = toSnakeCase(p.getName());

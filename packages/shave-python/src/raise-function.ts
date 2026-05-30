@@ -20,6 +20,7 @@ import type { LibcstParseResult, PythonAstNode } from "./libcst-parser.js";
 import {
   buildParamRenameMap,
   normalizeBodyNames,
+  normalizeIdentifier,
   normalizeSignatureNames,
 } from "./normalize-names.js";
 import type { FunctionSignature } from "./parse-fn-signature.js";
@@ -69,45 +70,77 @@ export { ImpureFunctionError } from "./purity-check.js";
  *   Cross-reference: PLAN.md §4 / #888
  */
 /**
- * Rewrite a dotted Python name to a valid TS identifier.
+ * Rewrite a dotted Python name to a valid TS identifier preserving the class
+ * name's CamelCase.
  *
  * WI-890: class method names arrive as "ClassName.methodName" (dotted) from
- * the libcst envelope.  A dot is not valid in a TS identifier, so we replace
- * every dot with an underscore: "Foo.bar" → "Foo_bar".
+ * the libcst envelope.  A dot is not valid in a TS identifier.
+ *
+ * #941 (DEC-941-001): the original dot-to-underscore rewrite lost the class name
+ * boundary when followed by `normalizeIdentifier`, causing it to treat
+ * "EntitySubstitution_substitute_xml" as a single snake_case name →
+ * "entitysubstitutionSubstituteXml".
+ *
+ * New: for dotted names, the function name is pre-processed by `dottedToSnake`
+ * so that by the time it reaches `normalizeSignatureNames` it already has the
+ * class name preserved: "ClassName.substituteXml" (dot still present but method
+ * already camelCased).  Then `tsIdentifier` does a simple dot→underscore:
+ * "ClassName.substituteXml" → "ClassName_substituteXml".
+ *
+ * For non-dotted names, `tsIdentifier` returns the name unchanged.
  *
  * The original dotted name is the canonical identity used for lookup in the
- * envelope (e.g. `raiseFunctionWithPurityAndNormalization` searches by
- * `signature.name`), so this rewrite happens only at render time — after all
- * envelope lookups have completed.
+ * envelope (envelope lookups happen before this rewrite), so this is safe.
  *
- * @decision DEC-WI890-006 — dot-to-underscore rewrite at render time
- * @title Dotted method names rewritten to underscore form for TS identifier validity
- * @status accepted
- * @rationale Full round-trip metadata (original dotted name in a separate field)
- *   is deferred as out of scope for WI-890 MVP.  The underscore form is unique
- *   as long as no two methods share the same ClassName_methodName after rewrite —
- *   acceptable for the shave corpus.
+ * @decision DEC-941-001 — tsIdentifier does simple dot-to-underscore on pre-normalized name
+ * @title After dottedToSnake pre-normalizes the method part, tsIdentifier does dot→underscore
+ * @status accepted (#941)
  */
 function tsIdentifier(name: string): string {
+  // Simple dot-to-underscore: "ClassName.substituteXml" → "ClassName_substituteXml".
+  // For non-dotted names this is identity.
   return name.replace(/\./g, "_");
 }
 
 /**
- * Produce a snake_case-safe form of a dotted method name for `normalizeIdentifier`.
+ * Pre-normalize a dotted method name so that `normalizeSignatureNames` receives
+ * a name with the class boundary already encoded as a dot (not underscore).
  *
- * WI-890: `normalizeIdentifier` in normalize-names.ts is not aware of dots and
- * would corrupt "MyClass.static_method" by splitting on `_` across the dot boundary.
- * This helper replaces dots with `_` BEFORE normalization so the dotted name
- * normalizes correctly:
- *   "MyClass.static_method" → "MyClass_static_method" → normalizeIdentifier
- *                           → "myClass_staticMethod" (camelCase per Rule 5)
+ * WI-890/#941: for dotted names ("ClassName.method_name"), normalizeIdentifier
+ * cannot handle dots — it would split "EntitySubstitution.substitute_xml" on
+ * `_` across the dot, corrupting the class name casing.
  *
- * The actual TS identifier used in `renderFunctionDeclaration` comes from
- * `tsIdentifier(normalizedSig.name)`, which is equivalent to `normalizeIdentifier`
- * applied to the dot-replaced form.
+ * Strategy: normalize only the method part (after the dot), keep the class name
+ * verbatim, and return "ClassName.camelMethodName".  normalizeSignatureNames then
+ * calls normalizeIdentifier on this result; since "ClassName.camelMethodName"
+ * has no underscores visible (the only `_` was inside the method part, now
+ * camelCased away), normalizeIdentifier leaves it unchanged.  tsIdentifier at
+ * render time does the final dot→underscore:
+ *   "EntitySubstitution.substitute_xml"
+ *   → dottedToSnake → "EntitySubstitution.substituteXml"
+ *   → normalizeSignatureNames → "EntitySubstitution.substituteXml" (no change, no `_`)
+ *   → tsIdentifier → "EntitySubstitution_substituteXml"
+ *
+ * For non-dotted names, this is identity (same as the original dottedToSnake).
+ *
+ * @decision DEC-941-002 — dottedToSnake normalizes only the method part of a dotted name
+ * @title "ClassName.method_name" → "ClassName.methodName" (class name verbatim, method camelCased)
+ * @status accepted (#941)
+ * @rationale Feeds into normalizeSignatureNames which calls normalizeIdentifier;
+ *   normalizeIdentifier must receive a name with no mixed-case-and-underscore
+ *   boundary crossing the class name.  Normalizing only the method part and
+ *   retaining the dot is the minimal-change fix that preserves class casing.
  */
 function dottedToSnake(name: string): string {
-  return name.replace(/\./g, "_");
+  const dotIdx = name.indexOf(".");
+  if (dotIdx < 0) {
+    // Not dotted (module-level function) — original behaviour: no-op.
+    return name;
+  }
+  // Dotted ("ClassName.method_name"): keep class name verbatim, normalize method part.
+  const className = name.slice(0, dotIdx);
+  const methodPart = name.slice(dotIdx + 1);
+  return `${className}.${normalizeIdentifier(methodPart)}`;
 }
 
 export function renderFunctionDeclaration(
@@ -174,11 +207,15 @@ export function raiseFunctionWithPurityAndNormalization(
   //         Build rename map from ORIGINAL param names before normalizing,
   //         so the body walk has the correct old→new mapping.
   const renameMap = buildParamRenameMap(signature.params);
-  // WI-890: if the function name is dotted ("ClassName.methodName"), replace
-  // dots with underscores before normalizeSignatureNames so normalizeIdentifier
-  // doesn't corrupt it by splitting across the dot boundary.
-  // "Foo.static_bar" → "Foo_static_bar" → normalizeIdentifier → "foo_StaticBar"
-  // tsIdentifier("foo_StaticBar") == "foo_StaticBar" (no dots remain).
+  // #941 (DEC-941-002): for dotted names ("ClassName.method_name"), dottedToSnake
+  // normalizes only the method part and keeps the class name verbatim with the dot:
+  //   "EntitySubstitution.substitute_xml" → "EntitySubstitution.substituteXml"
+  // normalizeSignatureNames then calls normalizeIdentifier on this result; since
+  // "EntitySubstitution.substituteXml" contains no remaining underscores, it is
+  // returned unchanged.  tsIdentifier() at render time does the final dot→underscore:
+  //   "EntitySubstitution.substituteXml" → "EntitySubstitution_substituteXml"
+  //
+  // For non-dotted names, dottedToSnake is identity and the path is unchanged.
   const sigForNormalize: typeof signature = signature.name.includes(".")
     ? { ...signature, name: dottedToSnake(signature.name) }
     : signature;

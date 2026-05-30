@@ -511,8 +511,9 @@ describe("WI-907: raiseFunctionWithPurityAndNormalization — Assign compound in
       { type: "Return", value: { type: "Name", name: "y" } },
     ];
     const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // #940: Assign emits `let` (not `const`)
     expect(out).toBe(
-      "export function addOne(x: number): number {\n  const y = (x + 1);\n  return y;\n}",
+      "export function addOne(x: number): number {\n  let y = (x + 1);\n  return y;\n}",
     );
   });
 
@@ -544,7 +545,8 @@ describe("WI-907: raiseFunctionWithPurityAndNormalization — Assign compound in
       { type: "Return", value: { type: "Name", name: "rewritten" } },
     ];
     const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
-    expect(out).toContain('const rewritten = name.replace("Name", "OtherName");');
+    // #940: first Assign emits `let` (not `const`)
+    expect(out).toContain('let rewritten = name.replace("Name", "OtherName");');
     expect(out).toContain("return rewritten;");
     // snake_case name is normalized
     expect(out).toContain("function getAttr(");
@@ -697,7 +699,8 @@ describe("WI-908: raiseFunctionWithPurityAndNormalization — BoolOp compound in
       },
     ];
     const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
-    expect(out).toContain('const result = (true && (s != ""))');
+    // #940: first Assign emits `let` (not `const`)
+    expect(out).toContain('let result = (true && (s != ""))');
     expect(out).toContain("if (result)");
     expect(out).toContain('return s.decode("utf-8")');
     expect(out).toContain('return s.decode("latin-1")');
@@ -1088,5 +1091,100 @@ describe("WI-904: raiseFunctionWithPurityAndNormalization — comprehension comp
     ];
     const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
     expect(out).toContain("(xs).filter((x) => (x > 0)).map((x) => x)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #941: class method identifier encoding — "ClassName.method_name" →
+//        "ClassName_methodName" in the TS-subset IR function name
+// Tests the full pipeline: dotted name → dottedToSnake → normalizeSignatureNames →
+// tsIdentifier → "ClassName_methodName" in the emitted function declaration.
+// ---------------------------------------------------------------------------
+
+describe("#941: raiseFunctionWithPurityAndNormalization — class method identifier encoding", () => {
+  it("encodes EntitySubstitution.substitute_xml → EntitySubstitution_substituteXml", () => {
+    // Production sequence for a bs4 classmethod:
+    //   fn.name = "EntitySubstitution.substitute_xml" (dotted, from libcst envelope)
+    //   dottedToSnake → "EntitySubstitution.substituteXml" (method part normalized)
+    //   normalizeSignatureNames → "EntitySubstitution.substituteXml" (no underscores left, identity)
+    //   tsIdentifier → "EntitySubstitution_substituteXml" (dot → underscore at render time)
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "EntitySubstitution.substitute_xml",
+      params: [
+        {
+          name: "cls",
+          tsType: "typeof EntitySubstitution",
+          pythonAnnotation: "(auto-injected classmethod receiver)",
+        },
+        { name: "value", tsType: "string", pythonAnnotation: "str" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      methodKind: "class",
+      bodyPythonSource: "    return value",
+    };
+    const body: WireStmt[] = [{ type: "Return", value: { type: "Name", name: "value" } }];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // Class name CamelCase must be preserved verbatim; method part must be camelCased
+    expect(out).toContain("function EntitySubstitution_substituteXml(");
+    // Must NOT corrupt the class name casing
+    expect(out).not.toContain("entitysubstitution");
+    expect(out).not.toContain("EntitySubstitution_substitute_xml");
+  });
+
+  it("encodes Tag.from_markup → Tag_fromMarkup", () => {
+    // Another real bs4 classmethod: "Tag.from_markup" → "Tag_fromMarkup"
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "Tag.from_markup",
+      params: [
+        {
+          name: "cls",
+          tsType: "typeof Tag",
+          pythonAnnotation: "(auto-injected classmethod receiver)",
+        },
+        { name: "markup", tsType: "string", pythonAnnotation: "str" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      methodKind: "class",
+      bodyPythonSource: "    return markup",
+    };
+    const body: WireStmt[] = [{ type: "Return", value: { type: "Name", name: "markup" } }];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("function Tag_fromMarkup(");
+    expect(out).not.toContain("Tag_from_markup");
+  });
+
+  it("compound end-to-end: #939 cls kept + #941 class name preserved", () => {
+    // Exercises both #939 (cls in params with auto-type) and #941 (class name preserved).
+    // Production sequence: dotted name → dottedToSnake → tsIdentifier at render.
+    // cls param with typeof EntitySubstitution is emitted correctly.
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "EntitySubstitution.substitute_xml",
+      params: [
+        {
+          name: "cls",
+          tsType: "typeof EntitySubstitution",
+          pythonAnnotation: "(auto-injected classmethod receiver)",
+        },
+        { name: "value", tsType: "string", pythonAnnotation: "str" },
+      ],
+      returnType: "string",
+      pythonReturnAnnotation: "str",
+      methodKind: "class",
+      bodyPythonSource: "    return value",
+    };
+    const body: WireStmt[] = [{ type: "Return", value: { type: "Name", name: "value" } }];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // #941: class name preserved in function name
+    expect(out).toContain("function EntitySubstitution_substituteXml(");
+    // #939: cls is present in the parameter list with its type
+    expect(out).toContain("cls: typeof EntitySubstitution");
+    // Return type and body intact
+    expect(out).toContain("): string {");
+    expect(out).toContain("return value;");
   });
 });

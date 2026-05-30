@@ -707,11 +707,17 @@ describe("WI-904: renderExpr — SetComp", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WI-907: Assign statement → TS const
+// WI-907+#940: Assign statement → TS let (first) / bare re-assignment (subsequent)
+//
+// #940 changed the behaviour: Assign emits `let` on first declaration and
+// bare `name = expr;` on re-assignment.  renderStmt called standalone (without
+// a seenNames Set, i.e. outside renderBody) always emits `let` as the
+// safe fallback.  renderBody tracks the Set across statements so that
+// re-assigned names in the same scope emit bare assignment.
 // ---------------------------------------------------------------------------
 
-describe("WI-907: renderStmt — Assign", () => {
-  it("renders simple name assign as const declaration", () => {
+describe("WI-907+#940: renderStmt — Assign", () => {
+  it("renders simple name assign as let declaration (standalone call — no seenNames)", () => {
     const stmt: WireStmt = {
       type: "Assign",
       target: "rewritten",
@@ -724,19 +730,19 @@ describe("WI-907: renderStmt — Assign", () => {
         ],
       },
     };
-    expect(renderStmt(stmt)).toBe('  const rewritten = name.replace("Name", "OtherName");');
+    expect(renderStmt(stmt)).toBe('  let rewritten = name.replace("Name", "OtherName");');
   });
 
-  it("renders assign with integer value", () => {
+  it("renders assign with integer value as let", () => {
     const stmt: WireStmt = {
       type: "Assign",
       target: "x",
       value: { type: "Integer", value: "42" },
     };
-    expect(renderStmt(stmt)).toBe("  const x = 42;");
+    expect(renderStmt(stmt)).toBe("  let x = 42;");
   });
 
-  it("renders assign with binary op value", () => {
+  it("renders assign with binary op value as let", () => {
     const stmt: WireStmt = {
       type: "Assign",
       target: "total",
@@ -747,7 +753,7 @@ describe("WI-907: renderStmt — Assign", () => {
         right: { type: "Name", name: "b" },
       },
     };
-    expect(renderStmt(stmt)).toBe("  const total = (a + b);");
+    expect(renderStmt(stmt)).toBe("  let total = (a + b);");
   });
 
   it("honors custom indent", () => {
@@ -756,10 +762,37 @@ describe("WI-907: renderStmt — Assign", () => {
       target: "val",
       value: { type: "Bool", value: true },
     };
-    expect(renderStmt(stmt, "    ")).toBe("    const val = true;");
+    expect(renderStmt(stmt, "    ")).toBe("    let val = true;");
   });
 
-  it("renderBody includes Assign correctly before a Return", () => {
+  it("renderBody — first Assign emits let, subsequent re-assign emits bare name = expr", () => {
+    // #940: Python `x = 1; x = 2` must produce `let x = 1; x = 2;` (not `const x = 1; const x = 2;`)
+    const stmts: WireStmt[] = [
+      { type: "Assign", target: "x", value: { type: "Integer", value: "1" } },
+      { type: "Assign", target: "x", value: { type: "Integer", value: "2" } },
+      { type: "Return", value: { type: "Name", name: "x" } },
+    ];
+    expect(renderBody(stmts)).toBe("  let x = 1;\n  x = 2;\n  return x;");
+  });
+
+  it("renderBody — two distinct names each get their own let", () => {
+    const stmts: WireStmt[] = [
+      { type: "Assign", target: "a", value: { type: "Integer", value: "1" } },
+      { type: "Assign", target: "b", value: { type: "Integer", value: "2" } },
+      {
+        type: "Return",
+        value: {
+          type: "BinaryOp",
+          op: "+",
+          left: { type: "Name", name: "a" },
+          right: { type: "Name", name: "b" },
+        },
+      },
+    ];
+    expect(renderBody(stmts)).toBe("  let a = 1;\n  let b = 2;\n  return (a + b);");
+  });
+
+  it("renderBody includes Assign correctly before a Return (single assign = let)", () => {
     const stmts: WireStmt[] = [
       {
         type: "Assign",
@@ -776,7 +809,7 @@ describe("WI-907: renderStmt — Assign", () => {
       { type: "Return", value: { type: "Name", name: "rewritten" } },
     ];
     expect(renderBody(stmts)).toBe(
-      '  const rewritten = name.replace("Name", "OtherName");\n  return rewritten;',
+      '  let rewritten = name.replace("Name", "OtherName");\n  return rewritten;',
     );
   });
 });
@@ -984,6 +1017,7 @@ describe("WI-907+908+909: compound interaction — bs4 production sequence", () 
     // Python equivalent:
     //   rewritten = name.replace("Name", "OtherName")
     //   return rewritten
+    // #940: first Assign emits `let` (not `const`)
     const stmts: WireStmt[] = [
       {
         type: "Assign",
@@ -1000,7 +1034,7 @@ describe("WI-907+908+909: compound interaction — bs4 production sequence", () 
       { type: "Return", value: { type: "Name", name: "rewritten" } },
     ];
     const out = renderBody(stmts);
-    expect(out).toBe('  const rewritten = name.replace("Name", "OtherName");\n  return rewritten;');
+    expect(out).toBe('  let rewritten = name.replace("Name", "OtherName");\n  return rewritten;');
   });
 
   it("renders _chardet_dammit-style body: BoolOp in If test", () => {
