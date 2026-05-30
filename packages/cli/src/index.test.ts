@@ -247,10 +247,7 @@ describe("WI-877: shave polyglot dispatch (DEC-WI877-001)", () => {
   it("shave --target python with nonexistent file exits non-zero", async () => {
     // Routes to Python path; file read fails → exit 1 (DEC-WI877-001).
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["shave", "--target", "python", "/nonexistent/file.py"],
-      logger,
-    );
+    const code = await runCli(["shave", "--target", "python", "/nonexistent/file.py"], logger);
     expect(code).not.toBe(0);
     expect(logger.errLines.join("\n")).toContain("error:");
   });
@@ -279,30 +276,21 @@ describe("WI-877: compile polyglot dispatch (DEC-WI877-002)", () => {
 
   it("compile --target rust exits 1 with #868 tracking pointer", async () => {
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["compile", "a".repeat(64), "--target", "rust"],
-      logger,
-    );
+    const code = await runCli(["compile", "a".repeat(64), "--target", "rust"], logger);
     expect(code).toBe(1);
     expect(logger.errLines.join("\n")).toContain("868");
   });
 
   it("compile --target go exits 1 with #870 tracking pointer", async () => {
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["compile", "a".repeat(64), "--target", "go"],
-      logger,
-    );
+    const code = await runCli(["compile", "a".repeat(64), "--target", "go"], logger);
     expect(code).toBe(1);
     expect(logger.errLines.join("\n")).toContain("870");
   });
 
   it("compile --target unknown exits 1 with structured error", async () => {
     const logger = new CollectingLogger();
-    const code = await runCli(
-      ["compile", "a".repeat(64), "--target", "cobol"],
-      logger,
-    );
+    const code = await runCli(["compile", "a".repeat(64), "--target", "cobol"], logger);
     expect(code).toBe(1);
     expect(logger.errLines.join("\n")).toContain("unknown --target");
   });
