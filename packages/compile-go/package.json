@@ -1,0 +1,31 @@
+{
+  "name": "@yakcc/compile-go",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "lint": "biome check src/"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  },
+  "peerDependencies": {
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/registry": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/registry": "workspace:*",
+    "vitest": "^4.1.5"
+  }
+}
