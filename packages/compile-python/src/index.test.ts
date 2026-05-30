@@ -659,3 +659,71 @@ export function EntitySubstitution_substituteXml(cls: typeof EntitySubstitution,
     expect(source).not.toContain("def EntitySubstitution.substitute_xml(");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #960: typeof X type annotation → type[X] (Python class-type annotation)
+// ---------------------------------------------------------------------------
+// TS `typeof EntitySubstitution` in type position means "the class itself".
+// Python's idiomatic annotation is `type[EntitySubstitution]`.
+// The old code fell through to the string-literal fallback, emitting
+// `"typeof EntitySubstitution"` (a forward-reference string) which is not
+// valid Python type syntax.
+// ---------------------------------------------------------------------------
+
+describe("#960: typeof X type annotation → type[X]", () => {
+  it("lowers typeof SimpleClass → type[SimpleClass] as parameter annotation", () => {
+    const src = `
+export function factory(cls: typeof Foo): Foo {
+  return new Foo();
+}`;
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("cls: type[Foo]");
+    // Must NOT emit the raw string fallback (the bug)
+    expect(source).not.toContain('"typeof Foo"');
+    expect(source).not.toContain("typeof Foo");
+  });
+
+  it("lowers typeof with combined params — bs4 EntitySubstitution case (#960)", () => {
+    // Production sequence: shave-python emits cls: typeof EntitySubstitution;
+    // compile-python must lower it to type[EntitySubstitution].
+    const src = `
+export function EntitySubstitution_substituteXml(cls: typeof EntitySubstitution, value: string, makeUniversalSubstitutions: boolean): string {
+  return value;
+}`;
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("cls: type[EntitySubstitution]");
+    expect(source).toContain("value: str");
+    expect(source).toContain("make_universal_substitutions: bool");
+    // No string-literal leak
+    expect(source).not.toContain('"typeof');
+  });
+
+  it("lowers typeof with dotted qualifier — typeof Module.Foo → type[Module.Foo]", () => {
+    // typeof on a qualified name: translate the full dotted path verbatim.
+    const src = `
+export function make(cls: typeof bs4.Tag): bs4.Tag {
+  return new bs4.Tag();
+}`;
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("cls: type[bs4.Tag]");
+    expect(source).not.toContain('"typeof');
+  });
+
+  it("compound interaction: typeof cls annotation + correct def name (end-to-end #960 + #946)", () => {
+    // Production sequence: shave emits ClassName_methodName with typeof param →
+    // compile emits def with underscore name AND type[X] annotation.
+    // This is the exact bs4 EntitySubstitution.substitute_xml round-trip.
+    const src = `
+export function EntitySubstitution_substituteXml(cls: typeof EntitySubstitution, value: string): string {
+  return value;
+}`;
+    const { source } = compileToPython(makeRow(src));
+    // def name uses underscore form (not dotted — SyntaxError guard from #946)
+    expect(source).toContain("def entity_substitution_substitute_xml(");
+    // cls annotation must be type[...] not "typeof ..."
+    expect(source).toContain("cls: type[EntitySubstitution]");
+    expect(source).not.toContain('"typeof');
+    // return annotation: string lowers to str
+    expect(source).toContain("-> str:");
+  });
+});

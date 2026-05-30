@@ -977,6 +977,27 @@ export function lowerTypeNode(typeNode: TypeNode, ctx: Ctx): string {
     return first ? lowerTypeNode(first, ctx) : "Any";
   }
 
+  // #960 — typeof X (TypeQuery) → type[X]
+  //
+  // @decision DEC-960-001
+  // @title TypeQuery (typeof X) in type position lowers to Python type[X]
+  // @status accepted (#960)
+  // @rationale In TS, `typeof ClassName` used as a type annotation means "the
+  //   class object itself, not an instance." Python's idiomatic equivalent is
+  //   `type[ClassName]` (PEP 585 / typing.Type). Emitting the raw TS text as a
+  //   forward-reference string literal ("typeof EntitySubstitution") is not
+  //   valid Python — typing.get_type_hints() would fail to resolve it.
+  //   We extract the exprText from the TypeQuery node and wrap it in type[...],
+  //   preserving dotted qualifiers (e.g. typeof bs4.Tag → type[bs4.Tag]) verbatim
+  //   since qualified names are valid in Python type annotations.
+  //   NOTE: this handles TypeQuery only in type-annotation position (TypeNode).
+  //   The expression-position typeof (runtime typeof operator) is handled
+  //   separately in lowerExpr under SyntaxKind.TypeOfExpression.
+  if (k === SyntaxKind.TypeQuery) {
+    const exprText = typeNode.asKindOrThrow(SyntaxKind.TypeQuery).getExprName().getText();
+    return `type[${exprText}]`;
+  }
+
   return `"${typeNode.getText()}"`;
 }
 
