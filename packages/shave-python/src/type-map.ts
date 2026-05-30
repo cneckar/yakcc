@@ -83,7 +83,8 @@ export interface LowerWarning {
     | "any-widened" // typing.Any → unknown
     | "callable-widened" // bare Callable or Callable[..., R]
     | "module-type-widened" // types.ModuleType → unknown
-    | "dict-any-key-widened"; // dict[Any, V] → Record<string, V>
+    | "dict-any-key-widened" // dict[Any, V] → Record<string, V>
+    | "user-defined-type-identifier"; // plain identifier not in mapping table → pass through verbatim (#901)
   /** Human-readable message for diagnostics. */
   readonly message: string;
   /** The original Python annotation fragment that triggered the warning. */
@@ -330,6 +331,43 @@ export function mapPythonType(annotation: string): MapPythonTypeResult {
         return mapCallableSubscript(inner, trimmed);
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // #901: Plain user-defined type identifier pass-through.
+  // A bare Python identifier (no brackets, no operators, no dots) that is not
+  // in the mapping table is likely a user-defined type (TypeAlias, NewType,
+  // class).  Pass it through verbatim as the TS type name + LowerWarning.
+  //
+  // Acceptance rule:
+  //   - PLAIN identifier: [A-Za-z_][A-Za-z0-9_]*  (no brackets or operators)
+  //   - Known-unsupported generics like Set[X], Iterable[X] still throw
+  //     (parseSubscript handled them above; they never reach here)
+  //   - Dotted names like types.MyType also still throw (contain a dot)
+  //
+  // @decision DEC-SHAVE-PY-TYPE-MAP-901
+  // @title Plain identifier fall-through → verbatim TS type + user-defined-type-identifier warning
+  // @status accepted (#901)
+  // @rationale
+  //   Real Python codebases pervasively annotate with user-defined types.
+  //   Throwing on every one makes extraction fail for nearly all annotated
+  //   functions.  Option A from #901 (pass-through with warning) is the MVP:
+  //   least friction, fewest test changes, lets exploration proceed.
+  //   Dotted names (module.Type) and subscript forms still throw — only bare
+  //   identifiers are eligible because only those have an obvious verbatim TS
+  //   representation.
+  // ---------------------------------------------------------------------------
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    return {
+      tsType: trimmed,
+      warnings: [
+        {
+          code: "user-defined-type-identifier",
+          message: `Python identifier '${trimmed}' is not in the type-map table; passed through verbatim as TS type. Ensure the TypeScript environment defines this type.`,
+          pythonFragment: trimmed,
+        },
+      ],
+    };
   }
 
   throw new UnsupportedTypeError(

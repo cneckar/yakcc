@@ -64,6 +64,40 @@ export interface FunctionSignature {
 }
 
 /**
+ * A failed per-function extraction record — returned by `extractFunctionSignaturesAll`
+ * for functions that could not be fully raised.
+ *
+ * @decision DEC-SHAVE-PY-PARSE-SIG-899
+ * @title Per-function extraction failure record
+ * @status accepted (#899)
+ * @rationale
+ *   extractFunctionSignatures used .map() which threw on the first failure,
+ *   aborting extraction of all remaining functions (#899).  The fix wraps each
+ *   extractOne() call in try/catch.  Failed entries are exposed via
+ *   extractFunctionSignaturesAll so callers that want the full picture (e.g.
+ *   exploration scripts, batch tools) can inspect per-function errors.
+ *   extractFunctionSignatures preserves its existing return type (FunctionSignature[])
+ *   for backward compatibility with integration.test.ts and other callers not in scope.
+ */
+export interface ExtractionFailure {
+  /** Python function name from the envelope. */
+  readonly name: string;
+  /** The error that caused extraction to fail for this function. */
+  readonly error: Error;
+}
+
+/**
+ * Return shape of `extractFunctionSignaturesAll` — separates successes from
+ * per-function failures.
+ */
+export interface ExtractionResult {
+  /** Successfully extracted function signatures. */
+  readonly ok: readonly FunctionSignature[];
+  /** Functions that failed extraction, with their errors. */
+  readonly failed: readonly ExtractionFailure[];
+}
+
+/**
  * Thrown when a function in the envelope cannot be raised — missing required
  * annotation, unsupported type, etc.  Slice 4 will rewrap these as
  * `CannotRaiseToIRError` from `@yakcc/contracts`.
@@ -98,16 +132,50 @@ interface EnvelopeFunction {
 
 /**
  * Walk the libcst envelope and return a typed `FunctionSignature[]` — one
- * entry per top-level `def`.  Each function's annotations are validated and
- * mapped to TS-subset IR types via `mapPythonType`.
+ * entry per successfully extracted top-level `def`.
  *
- * Throws on the first error encountered (missing annotation or unsupported
- * type).  Callers that want all errors should walk the envelope themselves.
+ * Unlike the pre-#899 implementation, this function does NOT throw on the
+ * first per-function failure.  Each function is extracted independently; if
+ * one fails (e.g. unsupported type annotation), it is silently skipped and
+ * extraction continues for the remaining functions.
+ *
+ * Callers that need the full picture (successes AND per-function failures)
+ * should use `extractFunctionSignaturesAll` instead.
+ *
+ * Return type is preserved as `FunctionSignature[]` for backward compatibility
+ * with existing callers.
  */
 export function extractFunctionSignatures(envelope: LibcstParseResult): FunctionSignature[] {
+  return extractFunctionSignaturesAll(envelope).ok as FunctionSignature[];
+}
+
+/**
+ * Walk the libcst envelope and return an `ExtractionResult` with both
+ * successfully extracted signatures and per-function failures.
+ *
+ * Each function is extracted independently via try/catch so a single
+ * failure (unsupported annotation, missing annotation, etc.) does not
+ * abort extraction of the remaining functions in the module (#899).
+ */
+export function extractFunctionSignaturesAll(envelope: LibcstParseResult): ExtractionResult {
   const moduleRecord = envelope.module as unknown as { functions?: EnvelopeFunction[] };
   const fns = moduleRecord.functions ?? [];
-  return fns.map((fn) => extractOne(fn));
+
+  const ok: FunctionSignature[] = [];
+  const failed: ExtractionFailure[] = [];
+
+  for (const fn of fns) {
+    try {
+      ok.push(extractOne(fn));
+    } catch (err) {
+      failed.push({
+        name: fn.name,
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
+  }
+
+  return { ok, failed };
 }
 
 function extractOne(fn: EnvelopeFunction): FunctionSignature {

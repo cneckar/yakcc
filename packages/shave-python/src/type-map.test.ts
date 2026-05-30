@@ -108,25 +108,23 @@ describe("mapPythonType — Optional / Union / PEP 604", () => {
 // ---------------------------------------------------------------------------
 
 describe("mapPythonType — unsupported", () => {
-  it("rejects unknown primitive", () => {
-    try {
-      mapPythonType("Decimal");
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnsupportedTypeError);
-      expect((err as Error).message).toContain("Decimal");
-      expect((err as Error).message).toContain("slice-2 mapping table");
-    }
+  it("plain identifier not in table passes through with user-defined-type-identifier warning (#901)", () => {
+    // Decimal is a plain identifier — no longer throws; passes through verbatim.
+    const result = mapPythonType("Decimal");
+    expect(result.tsType).toBe("Decimal");
+    expectOneWarning(result, "user-defined-type-identifier");
+    expect(result.warnings[0]?.pythonFragment).toBe("Decimal");
   });
-  it("rejects unknown container", () => {
+  it("rejects unknown container (subscript form still throws)", () => {
+    // MyContainer[int] has brackets — not a plain identifier, still throws.
     expect(() => mapPythonType("MyContainer[int]")).toThrow(UnsupportedTypeError);
   });
-  it("carries the offending type on the thrown error", () => {
-    try {
-      mapPythonType("bigint");
-    } catch (err) {
-      expect((err as UnsupportedTypeError).pythonType).toBe("bigint");
-    }
+  it("plain identifier bigint passes through (was throwing — now user-defined-type-identifier)", () => {
+    // bigint is a plain identifier that matches /^[A-Za-z_][A-Za-z0-9_]*$/.
+    // Prior to #901 this threw; now it passes through with a warning.
+    const result = mapPythonType("bigint");
+    expect(result.tsType).toBe("bigint");
+    expectOneWarning(result, "user-defined-type-identifier");
   });
 });
 
@@ -190,26 +188,19 @@ describe("mapPythonType — quoted forward references", () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it('double-quoted unsupported type throws with inner name in error: "_IncomingMarkup"', () => {
-    try {
-      mapPythonType('"_IncomingMarkup"');
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnsupportedTypeError);
-      // Error message must reference the inner (unquoted) name, not the quoted form.
-      expect((err as Error).message).toContain("_IncomingMarkup");
-      expect((err as Error).message).not.toContain('"_IncomingMarkup"');
-    }
+  it('double-quoted plain identifier "_IncomingMarkup" strips quotes and passes through (#901)', () => {
+    // Prior to #901 this threw UnsupportedTypeError.  Now: quotes strip → _IncomingMarkup
+    // is a plain identifier → passes through verbatim with user-defined-type-identifier warning.
+    const result = mapPythonType('"_IncomingMarkup"');
+    expect(result.tsType).toBe("_IncomingMarkup");
+    expectOneWarning(result, "user-defined-type-identifier");
+    expect(result.warnings[0]?.pythonFragment).toBe("_IncomingMarkup");
   });
 
-  it("single-quoted unsupported type throws with inner name: '_IncomingMarkup'", () => {
-    try {
-      mapPythonType("'_IncomingMarkup'");
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnsupportedTypeError);
-      expect((err as Error).message).toContain("_IncomingMarkup");
-    }
+  it("single-quoted plain identifier '_IncomingMarkup' strips quotes and passes through (#901)", () => {
+    const result = mapPythonType("'_IncomingMarkup'");
+    expect(result.tsType).toBe("_IncomingMarkup");
+    expectOneWarning(result, "user-defined-type-identifier");
   });
 
   it('double-quoted Any strips and maps to unknown: "Any"', () => {
@@ -390,30 +381,21 @@ describe("mapPythonType — real bs4 regressions from #889", () => {
     expectOneWarning(result, "callable-widened");
   });
 
-  // bs4 case 3: "_IncomingMarkup" double-quoted forward ref
-  // Quote handling is fixed (no longer throws on the quote form).
-  // The inner symbol _IncomingMarkup is genuinely unsupported — the UnsupportedTypeError
-  // must reference the inner name, not the outer quoted form.
-  it('bs4 #3: "_IncomingMarkup" strips quotes and throws on inner _IncomingMarkup', () => {
-    try {
-      mapPythonType('"_IncomingMarkup"');
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnsupportedTypeError);
-      expect((err as Error).message).toContain("_IncomingMarkup");
-      expect((err as Error).message).not.toContain('"_IncomingMarkup"');
-    }
+  // bs4 case 3: "_IncomingMarkup" double-quoted forward ref — #901 fix
+  // Quotes strip → _IncomingMarkup is a plain identifier → passes through verbatim
+  // with user-defined-type-identifier warning (was UnsupportedTypeError before #901).
+  it('bs4 #3: "_IncomingMarkup" strips quotes and passes through verbatim with warning (#901)', () => {
+    const result = mapPythonType('"_IncomingMarkup"');
+    expect(result.tsType).toBe("_IncomingMarkup");
+    expectOneWarning(result, "user-defined-type-identifier");
+    expect(result.warnings[0]?.pythonFragment).toBe("_IncomingMarkup");
   });
 
-  // bs4 case 4: "_IncomingMarkup" again (lxml_trace path) — same as case 3
-  it('bs4 #4 (lxml_trace): "_IncomingMarkup" same as case 3 — error references inner name', () => {
-    try {
-      mapPythonType('"_IncomingMarkup"');
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnsupportedTypeError);
-      expect((err as UnsupportedTypeError).pythonType).toBe("_IncomingMarkup");
-    }
+  // bs4 case 4: "_IncomingMarkup" again (lxml_trace path) — same pass-through behavior
+  it('bs4 #4 (lxml_trace): "_IncomingMarkup" same — passes through verbatim with warning (#901)', () => {
+    const result = mapPythonType('"_IncomingMarkup"');
+    expect(result.tsType).toBe("_IncomingMarkup");
+    expectOneWarning(result, "user-defined-type-identifier");
   });
 
   // bs4 case 5: dict[Any, str] — was throwing "dict key must be 'str'"
@@ -435,5 +417,55 @@ describe("mapPythonType — real bs4 regressions from #889", () => {
     const result = mapPythonType("Any");
     expect(result.tsType).toBe("unknown");
     expectOneWarning(result, "any-widened");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #901: User-defined type identifier pass-through
+// ---------------------------------------------------------------------------
+
+describe("mapPythonType — #901 user-defined type identifier pass-through", () => {
+  it("plain identifier _IncomingMarkup passes through verbatim with user-defined-type-identifier warning", () => {
+    const result = mapPythonType("_IncomingMarkup");
+    expect(result.tsType).toBe("_IncomingMarkup");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
+    expect(result.warnings[0]?.pythonFragment).toBe("_IncomingMarkup");
+    expect(result.warnings[0]?.message).toBeTruthy();
+  });
+
+  it("underscore-prefixed plain identifier MyType passes through verbatim", () => {
+    const result = mapPythonType("MyType");
+    expect(result.tsType).toBe("MyType");
+    expectOneWarning(result, "user-defined-type-identifier");
+  });
+
+  it("Set[int] (generic subscript) still throws UnsupportedTypeError — not a plain identifier", () => {
+    // Generic subscript forms are not plain identifiers; they fall into parseSubscript
+    // and must still throw unless they are known containers.
+    expect(() => mapPythonType("Set[int]")).toThrow(UnsupportedTypeError);
+  });
+
+  it("Iterable[str] still throws UnsupportedTypeError — not a plain identifier", () => {
+    expect(() => mapPythonType("Iterable[str]")).toThrow(UnsupportedTypeError);
+  });
+
+  it("dotted name types.Foo still throws UnsupportedTypeError — not a plain identifier", () => {
+    // Dotted names contain '.' which fails /^[A-Za-z_][A-Za-z0-9_]*$/.
+    // Exception: types.ModuleType is caught in the switch above this rule.
+    expect(() => mapPythonType("types.Foo")).toThrow(UnsupportedTypeError);
+  });
+
+  it("user-defined-type-identifier propagates through Optional[_IncomingMarkup]", () => {
+    // Compound types containing user-defined identifiers should propagate warnings.
+    const result = mapPythonType("Optional[_IncomingMarkup]");
+    expect(result.tsType).toBe("_IncomingMarkup | null");
+    expectOneWarning(result, "user-defined-type-identifier");
+  });
+
+  it("user-defined-type-identifier propagates through list[_IncomingMarkup]", () => {
+    const result = mapPythonType("list[_IncomingMarkup]");
+    expect(result.tsType).toBe("_IncomingMarkup[]");
+    expectOneWarning(result, "user-defined-type-identifier");
   });
 });
