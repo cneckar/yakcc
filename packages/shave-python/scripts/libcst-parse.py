@@ -9,7 +9,16 @@
 # wire nodes emitted by _stmt_inner() when it encounters libcst.Expr nodes.
 # See PLAN.md §3 and DEC-WI888-001..003.
 #
-# Wire shape (cumulative through WI-888):
+# WI-903: If statement support — _stmt_v2() now handles libcst.If compound
+# statements, emitting {"type":"If","test":<Expr>,"body":[...],"orelse":[...]}
+# where orelse is [] (no else), a flat list (else block), or [{type:"If",...}]
+# (elif chain, matching Python AST convention). Cross-reference: #903.
+#
+# WI-904: Comprehension support — _expr() handles GeneratorExp, DictComp,
+# SetComp with single-source single-clause MVP. Multi-clause raises Unsupported.
+# Cross-reference: #904.
+#
+# Wire shape (cumulative through WI-904):
 #   functions[].body:
 #     [ Statement, ... ]
 #   Statement:
@@ -19,6 +28,8 @@
 #     {"type": "Docstring", "value": "<str>"}                           [WI-888]
 #     {"type": "ImpureStatement", "construct": "bare_call"|            [WI-888]
 #              "bare_expression", "detail": "<str>"}
+#     {"type": "If", "test": <Expr>, "body": [<Stmt>...],              [WI-903]
+#              "orelse": [<Stmt>...]}
 #     {"type": "Unsupported", "reason": "<str>"}
 #   Expr:
 #     {"type": "Name",    "name": "<str>"}
@@ -36,6 +47,14 @@
 #              "param": "<str>", "elt": <Expr>}
 #     {"type": "ListComp", "kind": "filter", "iter": <Expr>,            [slice 4]
 #              "param": "<str>", "cond": <Expr>}
+#     {"type": "GeneratorExp", "kind": "map"|"filter_map",              [WI-904]
+#              "iter": <Expr>, "param": "<str>", "elt": <Expr>,
+#              "cond": <Expr>?}
+#     {"type": "DictComp", "iter": <Expr>, "param": "<str>",            [WI-904]
+#              "keyElt": <Expr>, "valElt": <Expr>, "cond": <Expr>|null}
+#     {"type": "SetComp", "kind": "map"|"filter_map",                   [WI-904]
+#              "iter": <Expr>, "param": "<str>", "elt": <Expr>,
+#              "cond": <Expr>?}
 #     {"type": "Unsupported", "reason": "<str>"}
 #
 # Exit codes (unchanged from slice 1):
@@ -226,6 +245,84 @@ def _expr(node):  # type: ignore[no-untyped-def]
             "reason": ("ListComp: complex pattern (multiple ifs or non-identity elt with filter)"),
         }
 
+    # WI-904: generator expression (x for target in iter [if cond])
+    # Lowers identically to ListComp — TS consumer receives an Array.
+    if isinstance(node, libcst.GeneratorExp):
+        gen = node.for_in
+        if gen.inner_for_in is not None:
+            return {"type": "Unsupported", "reason": "GeneratorExp with multiple generators"}
+        if not isinstance(gen.target, libcst.Name):
+            return {"type": "Unsupported", "reason": "GeneratorExp with tuple/complex target"}
+        param = gen.target.value
+        iter_expr = _expr(gen.iter)
+        if len(gen.ifs) == 0:
+            return {
+                "type": "GeneratorExp",
+                "kind": "map",
+                "iter": iter_expr,
+                "param": param,
+                "elt": _expr(node.elt),
+            }
+        if len(gen.ifs) == 1:
+            return {
+                "type": "GeneratorExp",
+                "kind": "filter_map",
+                "iter": iter_expr,
+                "param": param,
+                "cond": _expr(gen.ifs[0].test),
+                "elt": _expr(node.elt),
+            }
+        return {"type": "Unsupported", "reason": "GeneratorExp with multiple if-clauses"}
+
+    # WI-904: dict comprehension {key: val for target in iter [if cond]}
+    if isinstance(node, libcst.DictComp):
+        gen = node.for_in
+        if gen.inner_for_in is not None:
+            return {"type": "Unsupported", "reason": "DictComp with multiple generators"}
+        if not isinstance(gen.target, libcst.Name):
+            return {"type": "Unsupported", "reason": "DictComp with tuple/complex target"}
+        param = gen.target.value
+        iter_expr = _expr(gen.iter)
+        cond_expr = _expr(gen.ifs[0].test) if len(gen.ifs) == 1 else None
+        if len(gen.ifs) > 1:
+            return {"type": "Unsupported", "reason": "DictComp with multiple if-clauses"}
+        return {
+            "type": "DictComp",
+            "iter": iter_expr,
+            "param": param,
+            "keyElt": _expr(node.key),
+            "valElt": _expr(node.value),
+            "cond": cond_expr,
+        }
+
+    # WI-904: set comprehension {elt for target in iter [if cond]}
+    if isinstance(node, libcst.SetComp):
+        gen = node.for_in
+        if gen.inner_for_in is not None:
+            return {"type": "Unsupported", "reason": "SetComp with multiple generators"}
+        if not isinstance(gen.target, libcst.Name):
+            return {"type": "Unsupported", "reason": "SetComp with tuple/complex target"}
+        param = gen.target.value
+        iter_expr = _expr(gen.iter)
+        if len(gen.ifs) == 0:
+            return {
+                "type": "SetComp",
+                "kind": "map",
+                "iter": iter_expr,
+                "param": param,
+                "elt": _expr(node.elt),
+            }
+        if len(gen.ifs) == 1:
+            return {
+                "type": "SetComp",
+                "kind": "filter_map",
+                "iter": iter_expr,
+                "param": param,
+                "cond": _expr(gen.ifs[0].test),
+                "elt": _expr(node.elt),
+            }
+        return {"type": "Unsupported", "reason": "SetComp with multiple if-clauses"}
+
     return {"type": "Unsupported", "reason": type(node).__name__}
 
 
@@ -360,6 +457,21 @@ def _stmt_inner(inner, is_first=False):  # type: ignore[no-untyped-def]
     return {"type": "Unsupported", "reason": f"SmallStatement {type(inner).__name__}"}
 
 
+def _if_stmts(body):  # type: ignore[no-untyped-def]
+    """Translate an IndentedBlock body into a list of wire Statement dicts.
+
+    Used by _stmt_v2 for if/elif/else branches. is_first is always False for
+    nested bodies (docstring detection only applies to top-level function body).
+    """
+    stmts = []
+    try:
+        for stmt in body.body:
+            stmts.append(_stmt_v2(stmt, is_first=False))
+    except AttributeError:
+        pass
+    return stmts
+
+
 def _stmt_v2(node, is_first=False):  # type: ignore[no-untyped-def]
     """Translate a libcst statement node into a wire Statement dict (slice 4).
 
@@ -372,6 +484,34 @@ def _stmt_v2(node, is_first=False):  # type: ignore[no-untyped-def]
         if len(node.body) != 1:
             return {"type": "Unsupported", "reason": "Multi-statement simple line"}
         return _stmt_inner(node.body[0], is_first=is_first)
+
+    # WI-903: if/elif/else compound statement.
+    #
+    # libcst represents:
+    #   if cond: body
+    #   elif cond2: body2  → stored as node.orelse = libcst.If(...)
+    #   else: body3        → stored as node.orelse = libcst.Else(...)
+    #
+    # Wire convention (matches Python AST): orelse is either:
+    #   []                            — no else/elif
+    #   [{type:"If",...}]             — elif chain (single nested If)
+    #   [<stmt>, ...]                 — else block (flat list of stmts)
+    if isinstance(node, libcst.If):
+        orelse: list = []  # type: ignore[type-arg]
+        if node.orelse is not None:
+            if isinstance(node.orelse, libcst.If):
+                # elif: recurse — produces a single If wire node
+                orelse = [_stmt_v2(node.orelse, is_first=False)]
+            elif isinstance(node.orelse, libcst.Else):
+                # else: flat list of stmts in the else body
+                orelse = _if_stmts(node.orelse.body)
+        return {
+            "type": "If",
+            "test": _expr(node.test),
+            "body": _if_stmts(node.body),
+            "orelse": orelse,
+        }
+
     return {"type": "Unsupported", "reason": type(node).__name__}
 
 

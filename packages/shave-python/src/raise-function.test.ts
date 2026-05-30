@@ -352,3 +352,303 @@ describe("WI-888: raiseFunctionWithPurityAndNormalization — e2e compound inter
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-903: If statement — compound-interaction tests through the full pipeline
+// ---------------------------------------------------------------------------
+
+describe("WI-903: raiseFunctionWithPurityAndNormalization — If statement compound interaction", () => {
+  // Production sequence: checkModuleImports → checkFunctionPurity → normalize names →
+  // renderFunctionDeclaration → renderBody → renderStmt(If) → TS output.
+
+  it("lowers if/else to TS if/else in a function body (compound production sequence)", () => {
+    // def clamp(x: int) -> int:
+    //     if x > 100: return 100
+    //     else: return x
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "clamp",
+      params: [{ name: "x", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource: "    if x > 100:\n        return 100\n    else:\n        return x",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: ">",
+          left: { type: "Name", name: "x" },
+          right: { type: "Integer", value: "100" },
+        },
+        body: [{ type: "Return", value: { type: "Integer", value: "100" } }],
+        orelse: [{ type: "Return", value: { type: "Name", name: "x" } }],
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toBe(
+      "export function clamp(x: number): number {\n  if ((x > 100)) {\n    return 100;\n  } else {\n    return x;\n  }\n}",
+    );
+  });
+
+  it("lowers if/elif/else chain (3-way) in the pipeline with snake_case normalization", () => {
+    // def classify_score(raw_score: int) -> int:
+    //     if raw_score > 90: return 3
+    //     elif raw_score > 50: return 2
+    //     else: return 1
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "classify_score",
+      params: [{ name: "raw_score", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource:
+        "    if raw_score > 90:\n        return 3\n    elif raw_score > 50:\n        return 2\n    else:\n        return 1",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: ">",
+          left: { type: "Name", name: "raw_score" },
+          right: { type: "Integer", value: "90" },
+        },
+        body: [{ type: "Return", value: { type: "Integer", value: "3" } }],
+        orelse: [
+          {
+            type: "If",
+            test: {
+              type: "BinaryOp",
+              op: ">",
+              left: { type: "Name", name: "raw_score" },
+              right: { type: "Integer", value: "50" },
+            },
+            body: [{ type: "Return", value: { type: "Integer", value: "2" } }],
+            orelse: [{ type: "Return", value: { type: "Integer", value: "1" } }],
+          },
+        ],
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    // Function name normalized: classify_score → classifyScore
+    // Param name normalized: raw_score → rawScore
+    expect(out).toContain("function classifyScore(rawScore: number)");
+    // elif chain collapses to `else if`
+    expect(out).toContain("} else if (");
+    // All three return paths present
+    expect(out).toContain("return 3;");
+    expect(out).toContain("return 2;");
+    expect(out).toContain("return 1;");
+  });
+
+  it("lowers if-only (no else) to TS if block followed by a bare return", () => {
+    // def early_exit(n: int) -> int:
+    //     if n < 0: return 0
+    //     return n
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "early_exit",
+      params: [{ name: "n", tsType: "number", pythonAnnotation: "int" }],
+      returnType: "number",
+      pythonReturnAnnotation: "int",
+      bodyPythonSource: "    if n < 0:\n        return 0\n    return n",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: "<",
+          left: { type: "Name", name: "n" },
+          right: { type: "Integer", value: "0" },
+        },
+        body: [{ type: "Return", value: { type: "Integer", value: "0" } }],
+        orelse: [],
+      },
+      { type: "Return", value: { type: "Name", name: "n" } },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("if ((n < 0))");
+    expect(out).not.toContain("else");
+    expect(out).toContain("return 0;");
+    expect(out).toContain("return n;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-904: Comprehension — compound-interaction tests through the full pipeline
+// ---------------------------------------------------------------------------
+
+describe("WI-904: raiseFunctionWithPurityAndNormalization — comprehension compound interaction", () => {
+  // Production sequence: checkModuleImports → checkFunctionPurity → normalize names →
+  // renderFunctionDeclaration → renderBody → renderStmt / renderExpr → TS output.
+
+  it("lowers ListComp map pattern in a function body (compound production sequence)", () => {
+    // def double_all(items: list) -> list:
+    //     return [x * 2 for x in items]
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "double_all",
+      params: [{ name: "items", tsType: "number[]", pythonAnnotation: "list" }],
+      returnType: "number[]",
+      pythonReturnAnnotation: "list",
+      bodyPythonSource: "    return [x * 2 for x in items]",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "ListComp",
+          kind: "map",
+          iter: { type: "Name", name: "items" },
+          param: "x",
+          elt: {
+            type: "BinaryOp",
+            op: "*",
+            left: { type: "Name", name: "x" },
+            right: { type: "Integer", value: "2" },
+          },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toBe(
+      "export function doubleAll(items: number[]): number[] {\n  return (items).map((x) => (x * 2));\n}",
+    );
+  });
+
+  it("lowers ListComp filter pattern to .filter() call in the pipeline", () => {
+    // def keep_positive(xs: list) -> list:
+    //     return [x for x in xs if x > 0]
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "keep_positive",
+      params: [{ name: "xs", tsType: "number[]", pythonAnnotation: "list" }],
+      returnType: "number[]",
+      pythonReturnAnnotation: "list",
+      bodyPythonSource: "    return [x for x in xs if x > 0]",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "ListComp",
+          kind: "filter",
+          iter: { type: "Name", name: "xs" },
+          param: "x",
+          cond: {
+            type: "BinaryOp",
+            op: ">",
+            left: { type: "Name", name: "x" },
+            right: { type: "Integer", value: "0" },
+          },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("(xs).filter((x) => (x > 0))");
+  });
+
+  it("lowers DictComp to Object.fromEntries() in a function body with normalization", () => {
+    // def build_map(keys: list) -> dict:
+    //     return {k: 1 for k in keys}
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "build_map",
+      params: [{ name: "keys", tsType: "string[]", pythonAnnotation: "list" }],
+      returnType: "Record<string, number>",
+      pythonReturnAnnotation: "dict",
+      bodyPythonSource: "    return {k: 1 for k in keys}",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "DictComp",
+          iter: { type: "Name", name: "keys" },
+          param: "k",
+          keyElt: { type: "Name", name: "k" },
+          valElt: { type: "Integer", value: "1" },
+          cond: null,
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("Object.fromEntries(");
+    expect(out).toContain("(keys).map((k) => [k, 1])");
+  });
+
+  it("lowers SetComp map pattern to new Set(.map()) in the pipeline", () => {
+    // def unique_vals(xs: list) -> set:
+    //     return {x * 2 for x in xs}
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "unique_vals",
+      params: [{ name: "xs", tsType: "number[]", pythonAnnotation: "list" }],
+      returnType: "Set<number>",
+      pythonReturnAnnotation: "set",
+      bodyPythonSource: "    return {x * 2 for x in xs}",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "SetComp",
+          kind: "map",
+          iter: { type: "Name", name: "xs" },
+          param: "x",
+          elt: {
+            type: "BinaryOp",
+            op: "*",
+            left: { type: "Name", name: "x" },
+            right: { type: "Integer", value: "2" },
+          },
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("new Set((xs).map((x) => (x * 2)))");
+  });
+
+  it("lowers GeneratorExp filter_map pattern in the pipeline", () => {
+    // def gen_positives(xs: list) -> list:
+    //     return list(x for x in xs if x > 0)
+    // Wrapped in a list() call that contains the GeneratorExp
+    const envelope = makeEnvelope();
+    const signature: FunctionSignature = {
+      name: "gen_positives",
+      params: [{ name: "xs", tsType: "number[]", pythonAnnotation: "list" }],
+      returnType: "number[]",
+      pythonReturnAnnotation: "list",
+      bodyPythonSource: "    return list(x for x in xs if x > 0)",
+    };
+    const body: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "Call",
+          func: "list",
+          args: [
+            {
+              type: "GeneratorExp",
+              kind: "filter_map",
+              iter: { type: "Name", name: "xs" },
+              param: "x",
+              cond: {
+                type: "BinaryOp",
+                op: ">",
+                left: { type: "Name", name: "x" },
+                right: { type: "Integer", value: "0" },
+              },
+              elt: { type: "Name", name: "x" },
+            },
+          ],
+        },
+      },
+    ];
+    const out = raiseFunctionWithPurityAndNormalization(envelope, signature, body);
+    expect(out).toContain("(xs).filter((x) => (x > 0)).map((x) => x)");
+  });
+});

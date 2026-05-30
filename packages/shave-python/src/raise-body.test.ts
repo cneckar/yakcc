@@ -442,3 +442,224 @@ describe("WI-875: floor-divide // renders as Math.floor(a / b)", () => {
     expect(() => renderExpr(expr)).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-903: If statement → TS if/else if/else
+// ---------------------------------------------------------------------------
+
+describe("WI-903: renderStmt — If statement", () => {
+  const trueCond: WireExpr = { type: "Name", name: "x" };
+  const retOne: WireStmt = { type: "Return", value: { type: "Integer", value: "1" } };
+  const retTwo: WireStmt = { type: "Return", value: { type: "Integer", value: "2" } };
+  const retThree: WireStmt = { type: "Return", value: { type: "Integer", value: "3" } };
+
+  it("renders if-only (no else)", () => {
+    const stmt: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [retOne],
+      orelse: [],
+    };
+    expect(renderStmt(stmt)).toBe("  if (x) {\n    return 1;\n  }");
+  });
+
+  it("renders if/else", () => {
+    const stmt: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [retOne],
+      orelse: [retTwo],
+    };
+    expect(renderStmt(stmt)).toBe("  if (x) {\n    return 1;\n  } else {\n    return 2;\n  }");
+  });
+
+  it("renders if/elif/else (chained via nested If in orelse)", () => {
+    const elifCond: WireExpr = { type: "Name", name: "y" };
+    const stmt: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [retOne],
+      orelse: [
+        {
+          type: "If",
+          test: elifCond,
+          body: [retTwo],
+          orelse: [retThree],
+        },
+      ],
+    };
+    expect(renderStmt(stmt)).toBe(
+      "  if (x) {\n    return 1;\n  } else if (y) {\n    return 2;\n  } else {\n    return 3;\n  }",
+    );
+  });
+
+  it("renders nested if inside body", () => {
+    // if (x) { if (y) { return 1; } }
+    const inner: WireStmt = {
+      type: "If",
+      test: { type: "Name", name: "y" },
+      body: [retOne],
+      orelse: [],
+    };
+    const outer: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [inner],
+      orelse: [],
+    };
+    expect(renderStmt(outer)).toBe("  if (x) {\n    if (y) {\n      return 1;\n    }\n  }");
+  });
+
+  it("renders empty body with void 0 fallback", () => {
+    const stmt: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [],
+      orelse: [],
+    };
+    expect(renderStmt(stmt)).toBe("  if (x) {\n    void 0;\n  }");
+  });
+
+  it("honors custom indent at the outer level", () => {
+    const stmt: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [retOne],
+      orelse: [],
+    };
+    expect(renderStmt(stmt, "")).toBe("if (x) {\n  return 1;\n}");
+  });
+
+  it("skips Docstring nodes inside if-body (renders empty string, filtered out)", () => {
+    const stmt: WireStmt = {
+      type: "If",
+      test: trueCond,
+      body: [{ type: "Docstring", value: "ignored" }, retOne],
+      orelse: [],
+    };
+    // Docstring renders "" and is filtered, only the Return remains
+    expect(renderStmt(stmt)).toBe("  if (x) {\n    return 1;\n  }");
+  });
+
+  it("renderBody includes If statement correctly in multi-statement body", () => {
+    const stmts: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: ">",
+          left: { type: "Name", name: "n" },
+          right: { type: "Integer", value: "0" },
+        },
+        body: [{ type: "Return", value: { type: "Name", name: "n" } }],
+        orelse: [],
+      },
+      { type: "Return", value: { type: "Integer", value: "0" } },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toBe("  if ((n > 0)) {\n    return n;\n  }\n  return 0;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-904: GeneratorExp, DictComp, SetComp expression renderers
+// ---------------------------------------------------------------------------
+
+describe("WI-904: renderExpr — GeneratorExp", () => {
+  it("renders map-kind (f(x) for x in xs) → (xs).map((x) => f(x))", () => {
+    const expr: WireExpr = {
+      type: "GeneratorExp",
+      kind: "map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      elt: { type: "Call", func: "f", args: [{ type: "Name", name: "x" }] },
+    };
+    expect(renderExpr(expr)).toBe("(xs).map((x) => f(x))");
+  });
+
+  it("renders filter_map-kind (f(x) for x in xs if p(x)) → filter then map", () => {
+    const expr: WireExpr = {
+      type: "GeneratorExp",
+      kind: "filter_map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      cond: { type: "Call", func: "p", args: [{ type: "Name", name: "x" }] },
+      elt: { type: "Call", func: "f", args: [{ type: "Name", name: "x" }] },
+    };
+    expect(renderExpr(expr)).toBe("(xs).filter((x) => p(x)).map((x) => f(x))");
+  });
+
+  it("renders identity map-kind (x for x in xs) → (xs).map((x) => x)", () => {
+    const expr: WireExpr = {
+      type: "GeneratorExp",
+      kind: "map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      elt: { type: "Name", name: "x" },
+    };
+    expect(renderExpr(expr)).toBe("(xs).map((x) => x)");
+  });
+});
+
+describe("WI-904: renderExpr — DictComp", () => {
+  it("renders {k: v for item in pairs} without condition", () => {
+    const expr: WireExpr = {
+      type: "DictComp",
+      iter: { type: "Name", name: "pairs" },
+      param: "item",
+      keyElt: { type: "Name", name: "item" },
+      valElt: { type: "Integer", value: "1" },
+      cond: null,
+    };
+    expect(renderExpr(expr)).toBe("Object.fromEntries((pairs).map((item) => [item, 1]))");
+  });
+
+  it("renders {k: v for item in pairs if cond} with condition filter", () => {
+    const expr: WireExpr = {
+      type: "DictComp",
+      iter: { type: "Name", name: "d" },
+      param: "k",
+      keyElt: { type: "Name", name: "k" },
+      valElt: { type: "Call", func: "f", args: [{ type: "Name", name: "k" }] },
+      cond: {
+        type: "BinaryOp",
+        op: "!=",
+        left: { type: "Name", name: "k" },
+        right: { type: "String", value: "x" },
+      },
+    };
+    expect(renderExpr(expr)).toBe(
+      'Object.fromEntries((d).filter((k) => (k != "x")).map((k) => [k, f(k)]))',
+    );
+  });
+});
+
+describe("WI-904: renderExpr — SetComp", () => {
+  it("renders {f(x) for x in xs} map-kind → new Set((xs).map(...))", () => {
+    const expr: WireExpr = {
+      type: "SetComp",
+      kind: "map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      elt: { type: "Call", func: "f", args: [{ type: "Name", name: "x" }] },
+    };
+    expect(renderExpr(expr)).toBe("new Set((xs).map((x) => f(x)))");
+  });
+
+  it("renders {f(x) for x in xs if cond} filter_map-kind", () => {
+    const expr: WireExpr = {
+      type: "SetComp",
+      kind: "filter_map",
+      iter: { type: "Name", name: "xs" },
+      param: "x",
+      cond: {
+        type: "BinaryOp",
+        op: ">",
+        left: { type: "Name", name: "x" },
+        right: { type: "Integer", value: "0" },
+      },
+      elt: { type: "Name", name: "x" },
+    };
+    expect(renderExpr(expr)).toBe("new Set((xs).filter((x) => (x > 0)).map((x) => x))");
+  });
+});
