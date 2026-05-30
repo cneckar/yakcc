@@ -23,6 +23,16 @@
 //   Expr: DictComp     — Python dict comprehension → TS Object.fromEntries()
 //   Expr: SetComp      — Python set comprehension → TS new Set(.map())
 //
+// WI-907 additions to the wire AST:
+//   Stmt: Assign — Python `x = expr` → TS `const x = <expr>;`
+//
+// WI-908 additions to the wire AST:
+//   Expr: BoolOp — Python `a and b` / `a or b` → TS `(a && b)` / `(a || b)`
+//
+// WI-909 additions to the wire AST:
+//   Comprehension tuple target_kind:"tuple" — `for k, v in items` →
+//   destructured arrow param `([k, v]) => ...`
+//
 // @decision DEC-POLYGLOT-SHAVE-PY-BODY-RAISE-001 (WI-782 slice 2b)
 // @title Body translation pass operates on a structured wire AST, not raw text
 // @status accepted
@@ -107,6 +117,13 @@ export type WireExpr =
       readonly right: WireExpr;
     }
   | { readonly type: "UnaryOp"; readonly op: string; readonly operand: WireExpr }
+  // WI-908: BoolOp — Python `a and b` / `a or b`; op is "and" or "or"
+  | {
+      readonly type: "BoolOp";
+      readonly op: "and" | "or";
+      readonly left: WireExpr;
+      readonly right: WireExpr;
+    }
   | {
       readonly type: "IfExp";
       readonly test: WireExpr;
@@ -121,6 +138,8 @@ export type WireExpr =
       readonly iter: WireExpr;
       readonly param: string;
       readonly elt: WireExpr;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
     }
   | {
       readonly type: "ListComp";
@@ -128,14 +147,30 @@ export type WireExpr =
       readonly iter: WireExpr;
       readonly param: string;
       readonly cond: WireExpr;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
+    }
+  // WI-909: ListComp with tuple target and filter condition
+  | {
+      readonly type: "ListComp";
+      readonly kind: "filter_map";
+      readonly iter: WireExpr;
+      readonly param: string;
+      readonly cond: WireExpr;
+      readonly elt: WireExpr;
+      readonly target_kind: "tuple";
+      readonly target_names: readonly string[];
     }
   // WI-904: GeneratorExp — `(f(x) for x in xs [if cond])` → same lowering as ListComp
+  // WI-909: optional target_kind/target_names for tuple destructuring
   | {
       readonly type: "GeneratorExp";
       readonly kind: "map";
       readonly iter: WireExpr;
       readonly param: string;
       readonly elt: WireExpr;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
     }
   | {
       readonly type: "GeneratorExp";
@@ -144,8 +179,11 @@ export type WireExpr =
       readonly param: string;
       readonly cond: WireExpr;
       readonly elt: WireExpr;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
     }
   // WI-904: DictComp — `{k: v for target in iter [if cond]}` → Object.fromEntries(iter.map(...))
+  // WI-909: optional target_kind/target_names for tuple destructuring
   | {
       readonly type: "DictComp";
       readonly iter: WireExpr;
@@ -153,14 +191,19 @@ export type WireExpr =
       readonly keyElt: WireExpr;
       readonly valElt: WireExpr;
       readonly cond: WireExpr | null;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
     }
   // WI-904: SetComp — `{f(x) for x in xs [if cond]}` → new Set(iter.map(...))
+  // WI-909: optional target_kind/target_names for tuple destructuring
   | {
       readonly type: "SetComp";
       readonly kind: "map";
       readonly iter: WireExpr;
       readonly param: string;
       readonly elt: WireExpr;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
     }
   | {
       readonly type: "SetComp";
@@ -169,6 +212,8 @@ export type WireExpr =
       readonly param: string;
       readonly cond: WireExpr;
       readonly elt: WireExpr;
+      readonly target_kind?: "tuple";
+      readonly target_names?: readonly string[];
     }
   | { readonly type: "Unsupported"; readonly reason: string };
 
@@ -195,6 +240,10 @@ export type WireStmt =
       readonly body: readonly WireStmt[];
       readonly orelse: readonly WireStmt[];
     }
+  // WI-907: Assign — Python `x = expr` → TS `const x = <expr>;`
+  // MVP: single-target name binding only. Multi-target / tuple / attribute / subscript /
+  // augmented assign are emitted as Unsupported by libcst-parse.py.
+  | { readonly type: "Assign"; readonly target: string; readonly value: WireExpr }
   | { readonly type: "Unsupported"; readonly reason: string };
 
 // ---------------------------------------------------------------------------
@@ -252,6 +301,11 @@ export function renderExpr(expr: WireExpr): string {
       }
       return `${expr.op}${renderExpr(expr.operand)}`;
     }
+    case "BoolOp":
+      // WI-908: `a and b` → `(a && b)`, `a or b` → `(a || b)`
+      // Python and/or return the operand value (not strictly boolean);
+      // TS && / || share the same short-circuit value semantics — no transform needed.
+      return `(${renderExpr(expr.left)} ${expr.op === "and" ? "&&" : "||"} ${renderExpr(expr.right)})`;
     case "IfExp":
       // `x if c else y` → `(c ? x : y)` — always parenthesized for safety.
       return `(${renderExpr(expr.test)} ? ${renderExpr(expr.body)} : ${renderExpr(expr.orelse)})`;
@@ -262,43 +316,73 @@ export function renderExpr(expr: WireExpr): string {
       const args = expr.args.map(renderExpr).join(", ");
       return `${expr.func}(${args})`;
     }
-    case "ListComp":
+    case "ListComp": {
+      // WI-909: when target_kind is "tuple", destructure the arrow param as ([k, v]) => ...
+      const lcParam =
+        expr.target_kind === "tuple" && expr.target_names
+          ? `([${expr.target_names.join(", ")}])`
+          : `(${expr.param})`;
       if (expr.kind === "map") {
         // `[f(x) for x in xs]` → `(xs).map((x) => f(x))`
-        return `(${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)})`;
+        return `(${renderExpr(expr.iter)}).map(${lcParam} => ${renderExpr(expr.elt)})`;
+      }
+      if (expr.kind === "filter_map") {
+        // WI-909: `[f(k, v) for k, v in xs if cond]` → filter then map
+        return (
+          `(${renderExpr(expr.iter)}).filter(${lcParam} => ${renderExpr(expr.cond)})` +
+          `.map(${lcParam} => ${renderExpr(expr.elt)})`
+        );
       }
       // `[x for x in xs if p(x)]` → `(xs).filter((x) => p(x))`
-      return `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`;
-    case "GeneratorExp":
+      return `(${renderExpr(expr.iter)}).filter(${lcParam} => ${renderExpr(expr.cond)})`;
+    }
+    case "GeneratorExp": {
       // WI-904: generator expressions lower identically to ListComp — the consumer
       // receives an Array (TS doesn't have lazy generators in this subset).
+      // WI-909: tuple target → destructured arrow param
+      const geParam =
+        expr.target_kind === "tuple" && expr.target_names
+          ? `([${expr.target_names.join(", ")}])`
+          : `(${expr.param})`;
       if (expr.kind === "map") {
         // `(f(x) for x in xs)` → `(xs).map((x) => f(x))`
-        return `(${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)})`;
+        return `(${renderExpr(expr.iter)}).map(${geParam} => ${renderExpr(expr.elt)})`;
       }
       // `(f(x) for x in xs if cond)` → `(xs).filter((x) => cond).map((x) => f(x))`
       return (
-        `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})` +
-        `.map((${expr.param}) => ${renderExpr(expr.elt)})`
+        `(${renderExpr(expr.iter)}).filter(${geParam} => ${renderExpr(expr.cond)})` +
+        `.map(${geParam} => ${renderExpr(expr.elt)})`
       );
+    }
     case "DictComp": {
       // WI-904: `{k: v for target in iter [if cond]}`
       // → `Object.fromEntries(<iter>[.filter(...)].map((target) => [k, v]))`
+      // WI-909: tuple target → destructured arrow param
+      const dcParam =
+        expr.target_kind === "tuple" && expr.target_names
+          ? `([${expr.target_names.join(", ")}])`
+          : `(${expr.param})`;
       const iterPart =
         expr.cond !== null
-          ? `(${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})`
+          ? `(${renderExpr(expr.iter)}).filter(${dcParam} => ${renderExpr(expr.cond)})`
           : `(${renderExpr(expr.iter)})`;
-      return `Object.fromEntries(${iterPart}.map((${expr.param}) => [${renderExpr(expr.keyElt)}, ${renderExpr(expr.valElt)}]))`;
+      return `Object.fromEntries(${iterPart}.map(${dcParam} => [${renderExpr(expr.keyElt)}, ${renderExpr(expr.valElt)}]))`;
     }
-    case "SetComp":
+    case "SetComp": {
       // WI-904: `{f(x) for x in xs [if cond]}` → `new Set(<iter>[.filter(...)].map(...))`
+      // WI-909: tuple target → destructured arrow param
+      const scParam =
+        expr.target_kind === "tuple" && expr.target_names
+          ? `([${expr.target_names.join(", ")}])`
+          : `(${expr.param})`;
       if (expr.kind === "map") {
-        return `new Set((${renderExpr(expr.iter)}).map((${expr.param}) => ${renderExpr(expr.elt)}))`;
+        return `new Set((${renderExpr(expr.iter)}).map(${scParam} => ${renderExpr(expr.elt)}))`;
       }
       return (
-        `new Set((${renderExpr(expr.iter)}).filter((${expr.param}) => ${renderExpr(expr.cond)})` +
-        `.map((${expr.param}) => ${renderExpr(expr.elt)}))`
+        `new Set((${renderExpr(expr.iter)}).filter(${scParam} => ${renderExpr(expr.cond)})` +
+        `.map(${scParam} => ${renderExpr(expr.elt)}))`
       );
+    }
     case "Unsupported":
       throw new UnsupportedAstError(expr.reason);
   }
@@ -379,6 +463,11 @@ export function renderStmt(stmt: WireStmt, indent = "  ", fnName?: string): stri
       }
       return result;
     }
+    case "Assign":
+      // WI-907: `x = expr` → `const x = <expr>;`
+      // MVP: always emits `const`. Python source with re-assignment produces non-compiling TS,
+      // which is the intended loud failure for this subset. Cross-reference: #907.
+      return `${indent}const ${stmt.target} = ${renderExpr(stmt.value)};`;
     case "Unsupported":
       throw new UnsupportedAstError(stmt.reason);
   }

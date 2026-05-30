@@ -18,7 +18,23 @@
 # SetComp with single-source single-clause MVP. Multi-clause raises Unsupported.
 # Cross-reference: #904.
 #
-# Wire shape (cumulative through WI-904):
+# WI-907: Assign (single-target name) — _stmt_inner() detects libcst.Assign
+# with a single AssignTarget whose target is a libcst.Name and emits:
+# {"type": "Assign", "target": "<name>", "value": <Expr>}
+# Multi-target, tuple-unpack, attribute-assign, subscript-assign, augmented
+# assign all emit Unsupported with specific messages. Cross-reference: #907.
+#
+# WI-908: BooleanOperation — _expr() detects libcst.BooleanOperation and emits:
+# {"type": "BoolOp", "op": "and"|"or", "left": <Expr>, "right": <Expr>}
+# Cross-reference: #908.
+#
+# WI-909: Comprehension tuple target — comprehension renderers (ListComp,
+# GeneratorExp, DictComp, SetComp) now handle libcst.Tuple targets, emitting:
+# {"target_kind": "tuple", "target_names": ["k", "v"]} alongside existing
+# "param" field (set to joined names for backward compat). Nested tuples and
+# star targets still emit Unsupported. Cross-reference: #909.
+#
+# Wire shape (cumulative through WI-909):
 #   functions[].body:
 #     [ Statement, ... ]
 #   Statement:
@@ -30,6 +46,7 @@
 #              "bare_expression", "detail": "<str>"}
 #     {"type": "If", "test": <Expr>, "body": [<Stmt>...],              [WI-903]
 #              "orelse": [<Stmt>...]}
+#     {"type": "Assign", "target": "<name>", "value": <Expr>}          [WI-907]
 #     {"type": "Unsupported", "reason": "<str>"}
 #   Expr:
 #     {"type": "Name",    "name": "<str>"}
@@ -39,6 +56,7 @@
 #     {"type": "Bool",    "value": true|false}
 #     {"type": "None"}
 #     {"type": "BinaryOp", "op": "<str>", "left": <Expr>, "right": <Expr>}
+#     {"type": "BoolOp", "op": "and"|"or", "left": <Expr>, "right": <Expr>} [WI-908]
 #     {"type": "UnaryOp",  "op": "<str>", "operand": <Expr>}            [slice 4]
 #     {"type": "IfExp",  "test": <Expr>, "body": <Expr>, "orelse": <Expr>} [s4]
 #     {"type": "LenCall", "arg": <Expr>}                                [slice 4]
@@ -49,12 +67,15 @@
 #              "param": "<str>", "cond": <Expr>}
 #     {"type": "GeneratorExp", "kind": "map"|"filter_map",              [WI-904]
 #              "iter": <Expr>, "param": "<str>", "elt": <Expr>,
-#              "cond": <Expr>?}
+#              "cond": <Expr>?,
+#              "target_kind"?: "tuple", "target_names"?: [<str>,...]}   [WI-909]
 #     {"type": "DictComp", "iter": <Expr>, "param": "<str>",            [WI-904]
-#              "keyElt": <Expr>, "valElt": <Expr>, "cond": <Expr>|null}
+#              "keyElt": <Expr>, "valElt": <Expr>, "cond": <Expr>|null,
+#              "target_kind"?: "tuple", "target_names"?: [<str>,...]}   [WI-909]
 #     {"type": "SetComp", "kind": "map"|"filter_map",                   [WI-904]
 #              "iter": <Expr>, "param": "<str>", "elt": <Expr>,
-#              "cond": <Expr>?}
+#              "cond": <Expr>?,
+#              "target_kind"?: "tuple", "target_names"?: [<str>,...]}   [WI-909]
 #     {"type": "Unsupported", "reason": "<str>"}
 #
 # Exit codes (unchanged from slice 1):
@@ -121,6 +142,41 @@ def _callee_name(node):  # type: ignore[no-untyped-def]
     return None
 
 
+def _name_of(node):  # type: ignore[no-untyped-def]
+    """Extract a plain identifier string from a libcst Name node, or None."""
+    import libcst  # type: ignore[import-untyped]
+
+    if isinstance(node, libcst.Name):
+        return node.value
+    return None
+
+
+def _tuple_target_names(tup):  # type: ignore[no-untyped-def]
+    """Extract flat name list from a libcst.Tuple target.
+
+    WI-909: comprehension tuple-target support.
+
+    Returns a list of str on success, or None when the tuple contains a
+    non-Name element (nested tuple, star, etc.) so the caller can emit
+    an Unsupported node instead.
+
+    Only one level of destructuring is supported (no nested tuples).
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    names = []
+    for elt in tup.elements:
+        # StarredElement is never allowed
+        if isinstance(elt, libcst.StarredElement):
+            return None
+        name = _name_of(elt.value)
+        if name is None:
+            # Nested tuple or any non-Name element — reject
+            return None
+        names.append(name)
+    return names if names else None
+
+
 def _expr(node):  # type: ignore[no-untyped-def]
     """Translate a libcst expression node into a wire-Expr dict."""
     import libcst  # type: ignore[import-untyped]
@@ -155,6 +211,24 @@ def _expr(node):  # type: ignore[no-untyped-def]
         return {
             "type": "BinaryOp",
             "op": BINARY_OP_MAP[op_name],
+            "left": _expr(node.left),
+            "right": _expr(node.right),
+        }
+
+    # WI-908: boolean and/or — libcst.BooleanOperation has .left, .operator, .right.
+    # Operator is libcst.And or libcst.Or. Python and/or return the operand value
+    # (not strictly bool); TS && / || have the same short-circuit semantics.
+    if isinstance(node, libcst.BooleanOperation):
+        op_cls = type(node.operator).__name__
+        if op_cls == "And":
+            op_str = "and"
+        elif op_cls == "Or":
+            op_str = "or"
+        else:
+            return {"type": "Unsupported", "reason": f"BooleanOperation {op_cls}"}
+        return {
+            "type": "BoolOp",
+            "op": op_str,
             "left": _expr(node.left),
             "right": _expr(node.right),
         }
@@ -217,6 +291,28 @@ def _expr(node):  # type: ignore[no-untyped-def]
         # Reject multiple generators (chained for_in via inner_for_in)
         if gen.inner_for_in is not None:
             return {"type": "Unsupported", "reason": "ListComp with multiple generators"}
+        # WI-909: handle tuple target `for k, v in items`
+        if isinstance(gen.target, libcst.Tuple):
+            tnames = _tuple_target_names(gen.target)
+            if tnames is None:
+                return {"type": "Unsupported", "reason": "ListComp with nested/star tuple target"}
+            param = ", ".join(tnames)
+            iter_expr = _expr(gen.iter)
+            base: dict = {  # type: ignore[type-arg]
+                "type": "ListComp",
+                "kind": "map",
+                "iter": iter_expr,
+                "param": param,
+                "target_kind": "tuple",
+                "target_names": tnames,
+                "elt": _expr(node.elt),
+            }
+            if len(gen.ifs) == 1:
+                base["kind"] = "filter_map"
+                base["cond"] = _expr(gen.ifs[0].test)
+            elif len(gen.ifs) > 1:
+                return {"type": "Unsupported", "reason": "ListComp with multiple if-clauses"}
+            return base
         # The loop variable must be a simple Name
         if not isinstance(gen.target, libcst.Name):
             return {"type": "Unsupported", "reason": "ListComp with tuple/complex target"}
@@ -251,6 +347,31 @@ def _expr(node):  # type: ignore[no-untyped-def]
         gen = node.for_in
         if gen.inner_for_in is not None:
             return {"type": "Unsupported", "reason": "GeneratorExp with multiple generators"}
+        # WI-909: handle tuple target `for k, v in items`
+        if isinstance(gen.target, libcst.Tuple):
+            tnames = _tuple_target_names(gen.target)
+            if tnames is None:
+                return {
+                    "type": "Unsupported",
+                    "reason": "GeneratorExp with nested/star tuple target",
+                }
+            param = ", ".join(tnames)
+            iter_expr = _expr(gen.iter)
+            gbase: dict = {  # type: ignore[type-arg]
+                "type": "GeneratorExp",
+                "kind": "map",
+                "iter": iter_expr,
+                "param": param,
+                "target_kind": "tuple",
+                "target_names": tnames,
+                "elt": _expr(node.elt),
+            }
+            if len(gen.ifs) == 1:
+                gbase["kind"] = "filter_map"
+                gbase["cond"] = _expr(gen.ifs[0].test)
+            elif len(gen.ifs) > 1:
+                return {"type": "Unsupported", "reason": "GeneratorExp with multiple if-clauses"}
+            return gbase
         if not isinstance(gen.target, libcst.Name):
             return {"type": "Unsupported", "reason": "GeneratorExp with tuple/complex target"}
         param = gen.target.value
@@ -279,6 +400,26 @@ def _expr(node):  # type: ignore[no-untyped-def]
         gen = node.for_in
         if gen.inner_for_in is not None:
             return {"type": "Unsupported", "reason": "DictComp with multiple generators"}
+        # WI-909: handle tuple target `for k, v in items`
+        if isinstance(gen.target, libcst.Tuple):
+            tnames = _tuple_target_names(gen.target)
+            if tnames is None:
+                return {"type": "Unsupported", "reason": "DictComp with nested/star tuple target"}
+            param = ", ".join(tnames)
+            iter_expr = _expr(gen.iter)
+            if len(gen.ifs) > 1:
+                return {"type": "Unsupported", "reason": "DictComp with multiple if-clauses"}
+            cond_expr = _expr(gen.ifs[0].test) if len(gen.ifs) == 1 else None
+            return {
+                "type": "DictComp",
+                "iter": iter_expr,
+                "param": param,
+                "target_kind": "tuple",
+                "target_names": tnames,
+                "keyElt": _expr(node.key),
+                "valElt": _expr(node.value),
+                "cond": cond_expr,
+            }
         if not isinstance(gen.target, libcst.Name):
             return {"type": "Unsupported", "reason": "DictComp with tuple/complex target"}
         param = gen.target.value
@@ -300,6 +441,28 @@ def _expr(node):  # type: ignore[no-untyped-def]
         gen = node.for_in
         if gen.inner_for_in is not None:
             return {"type": "Unsupported", "reason": "SetComp with multiple generators"}
+        # WI-909: handle tuple target `for k, v in items`
+        if isinstance(gen.target, libcst.Tuple):
+            tnames = _tuple_target_names(gen.target)
+            if tnames is None:
+                return {"type": "Unsupported", "reason": "SetComp with nested/star tuple target"}
+            param = ", ".join(tnames)
+            iter_expr = _expr(gen.iter)
+            sbase: dict = {  # type: ignore[type-arg]
+                "type": "SetComp",
+                "kind": "map",
+                "iter": iter_expr,
+                "param": param,
+                "target_kind": "tuple",
+                "target_names": tnames,
+                "elt": _expr(node.elt),
+            }
+            if len(gen.ifs) == 1:
+                sbase["kind"] = "filter_map"
+                sbase["cond"] = _expr(gen.ifs[0].test)
+            elif len(gen.ifs) > 1:
+                return {"type": "Unsupported", "reason": "SetComp with multiple if-clauses"}
+            return sbase
         if not isinstance(gen.target, libcst.Name):
             return {"type": "Unsupported", "reason": "SetComp with tuple/complex target"}
         param = gen.target.value
@@ -419,6 +582,35 @@ def _stmt_inner(inner, is_first=False):  # type: ignore[no-untyped-def]
             "type": "Unsupported",
             "reason": f"raise with non-call exc: {type(exc).__name__}",
         }
+
+    # WI-907: Assign — single-target name binding: `x = expr`
+    # Multi-target (`a = b = expr`), tuple-unpack (`a, b = pair`),
+    # attribute-assign (`obj.x = expr`), subscript-assign (`d[k] = v`),
+    # and augmented assign (`x += 1`) are all rejected with specific messages.
+    if isinstance(inner, libcst.Assign):
+        # Multi-target: `a = b = expr` has len(targets) > 1
+        if len(inner.targets) != 1:
+            return {
+                "type": "Unsupported",
+                "reason": f"multi-target Assign ({len(inner.targets)} targets)",
+            }
+        tgt = inner.targets[0].target
+        if isinstance(tgt, libcst.Tuple):
+            return {"type": "Unsupported", "reason": "tuple-unpack Assign"}
+        if isinstance(tgt, libcst.Attribute):
+            return {"type": "Unsupported", "reason": "attribute Assign"}
+        if isinstance(tgt, libcst.Subscript):
+            return {"type": "Unsupported", "reason": "subscript Assign"}
+        if not isinstance(tgt, libcst.Name):
+            return {"type": "Unsupported", "reason": f"Assign with {type(tgt).__name__} target"}
+        return {
+            "type": "Assign",
+            "target": tgt.value,
+            "value": _expr(inner.value),
+        }
+
+    if isinstance(inner, libcst.AugAssign):
+        return {"type": "Unsupported", "reason": "augmented Assign (+=, -=, ...)"}
 
     # WI-888: SmallStatement Expr — three shapes:
     #   1. Docstring  — first stmt + string-literal value   → Docstring node

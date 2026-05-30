@@ -663,3 +663,395 @@ describe("WI-904: renderExpr — SetComp", () => {
     expect(renderExpr(expr)).toBe("new Set((xs).filter((x) => (x > 0)).map((x) => x))");
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-907: Assign statement → TS const
+// ---------------------------------------------------------------------------
+
+describe("WI-907: renderStmt — Assign", () => {
+  it("renders simple name assign as const declaration", () => {
+    const stmt: WireStmt = {
+      type: "Assign",
+      target: "rewritten",
+      value: {
+        type: "Call",
+        func: "name.replace",
+        args: [
+          { type: "String", value: "Name" },
+          { type: "String", value: "OtherName" },
+        ],
+      },
+    };
+    expect(renderStmt(stmt)).toBe('  const rewritten = name.replace("Name", "OtherName");');
+  });
+
+  it("renders assign with integer value", () => {
+    const stmt: WireStmt = {
+      type: "Assign",
+      target: "x",
+      value: { type: "Integer", value: "42" },
+    };
+    expect(renderStmt(stmt)).toBe("  const x = 42;");
+  });
+
+  it("renders assign with binary op value", () => {
+    const stmt: WireStmt = {
+      type: "Assign",
+      target: "total",
+      value: {
+        type: "BinaryOp",
+        op: "+",
+        left: { type: "Name", name: "a" },
+        right: { type: "Name", name: "b" },
+      },
+    };
+    expect(renderStmt(stmt)).toBe("  const total = (a + b);");
+  });
+
+  it("honors custom indent", () => {
+    const stmt: WireStmt = {
+      type: "Assign",
+      target: "val",
+      value: { type: "Bool", value: true },
+    };
+    expect(renderStmt(stmt, "    ")).toBe("    const val = true;");
+  });
+
+  it("renderBody includes Assign correctly before a Return", () => {
+    const stmts: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "rewritten",
+        value: {
+          type: "Call",
+          func: "name.replace",
+          args: [
+            { type: "String", value: "Name" },
+            { type: "String", value: "OtherName" },
+          ],
+        },
+      },
+      { type: "Return", value: { type: "Name", name: "rewritten" } },
+    ];
+    expect(renderBody(stmts)).toBe(
+      '  const rewritten = name.replace("Name", "OtherName");\n  return rewritten;',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-908: BoolOp expression → TS && / ||
+// ---------------------------------------------------------------------------
+
+describe("WI-908: renderExpr — BoolOp", () => {
+  it("renders 'and' as &&", () => {
+    const expr: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    expect(renderExpr(expr)).toBe("(a && b)");
+  });
+
+  it("renders 'or' as ||", () => {
+    const expr: WireExpr = {
+      type: "BoolOp",
+      op: "or",
+      left: { type: "Name", name: "x" },
+      right: { type: "None" },
+    };
+    expect(renderExpr(expr)).toBe("(x || null)");
+  });
+
+  it("renders chained and (nested BoolOp) — `a and b and c`", () => {
+    // libcst represents `a and b and c` as BoolOp(BoolOp(a, and, b), and, c)
+    const inner: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    const outer: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: inner,
+      right: { type: "Name", name: "c" },
+    };
+    expect(renderExpr(outer)).toBe("((a && b) && c)");
+  });
+
+  it("renders mixed and/or nesting", () => {
+    // `(a or b) and c`
+    const orPart: WireExpr = {
+      type: "BoolOp",
+      op: "or",
+      left: { type: "Name", name: "a" },
+      right: { type: "Name", name: "b" },
+    };
+    const expr: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: orPart,
+      right: { type: "Name", name: "c" },
+    };
+    expect(renderExpr(expr)).toBe("((a || b) && c)");
+  });
+
+  it("renders BoolOp with comparison operands — isinstance(s, bytes) and override is not None", () => {
+    // isinstance(s, bytes) — rendered as a Call
+    // override is not None — rendered as BinaryOp(!=)
+    const expr: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: {
+        type: "Call",
+        func: "isinstance",
+        args: [
+          { type: "Name", name: "s" },
+          { type: "Name", name: "bytes" },
+        ],
+      },
+      right: {
+        type: "BinaryOp",
+        op: "!=",
+        left: { type: "Name", name: "override" },
+        right: { type: "None" },
+      },
+    };
+    expect(renderExpr(expr)).toBe("(isinstance(s, bytes) && (override != null))");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-909: Comprehension tuple target → destructured arrow param
+// ---------------------------------------------------------------------------
+
+describe("WI-909: renderExpr — GeneratorExp tuple target", () => {
+  it("renders (f(k,v) for k,v in items) as items.map(([k, v]) => f(k, v))", () => {
+    const expr: WireExpr = {
+      type: "GeneratorExp",
+      kind: "map",
+      iter: { type: "Name", name: "items" },
+      param: "k, v",
+      target_kind: "tuple",
+      target_names: ["k", "v"],
+      elt: {
+        type: "Call",
+        func: "f",
+        args: [
+          { type: "Name", name: "k" },
+          { type: "Name", name: "v" },
+        ],
+      },
+    };
+    expect(renderExpr(expr)).toBe("(items).map(([k, v]) => f(k, v))");
+  });
+
+  it("renders filter_map tuple target", () => {
+    const expr: WireExpr = {
+      type: "GeneratorExp",
+      kind: "filter_map",
+      iter: { type: "Name", name: "pairs" },
+      param: "k, v",
+      target_kind: "tuple",
+      target_names: ["k", "v"],
+      cond: { type: "Name", name: "v" },
+      elt: { type: "Call", func: "g", args: [{ type: "Name", name: "k" }] },
+    };
+    expect(renderExpr(expr)).toBe("(pairs).filter(([k, v]) => v).map(([k, v]) => g(k))");
+  });
+});
+
+describe("WI-909: renderExpr — DictComp tuple target", () => {
+  it("renders {v: k for k, v in items} → Object.fromEntries(items.map(([k, v]) => [v, k]))", () => {
+    const expr: WireExpr = {
+      type: "DictComp",
+      iter: { type: "Name", name: "items" },
+      param: "k, v",
+      target_kind: "tuple",
+      target_names: ["k", "v"],
+      keyElt: { type: "Name", name: "v" },
+      valElt: { type: "Name", name: "k" },
+      cond: null,
+    };
+    expect(renderExpr(expr)).toBe("Object.fromEntries((items).map(([k, v]) => [v, k]))");
+  });
+
+  it("renders DictComp tuple target with condition", () => {
+    const expr: WireExpr = {
+      type: "DictComp",
+      iter: { type: "Call", func: "d.items", args: [] },
+      param: "k, v",
+      target_kind: "tuple",
+      target_names: ["k", "v"],
+      keyElt: { type: "Name", name: "k" },
+      valElt: { type: "Name", name: "v" },
+      cond: { type: "Name", name: "v" },
+    };
+    expect(renderExpr(expr)).toBe(
+      "Object.fromEntries((d.items()).filter(([k, v]) => v).map(([k, v]) => [k, v]))",
+    );
+  });
+});
+
+describe("WI-909: renderExpr — ListComp tuple target", () => {
+  it("renders [f(k,v) for k,v in items] map-kind", () => {
+    const expr: WireExpr = {
+      type: "ListComp",
+      kind: "map",
+      iter: { type: "Name", name: "items" },
+      param: "k, v",
+      target_kind: "tuple",
+      target_names: ["k", "v"],
+      elt: {
+        type: "Call",
+        func: "f",
+        args: [
+          { type: "Name", name: "k" },
+          { type: "Name", name: "v" },
+        ],
+      },
+    };
+    expect(renderExpr(expr)).toBe("(items).map(([k, v]) => f(k, v))");
+  });
+
+  it("renders [k for k,v in items if v] filter_map-kind", () => {
+    const expr: WireExpr = {
+      type: "ListComp",
+      kind: "filter_map",
+      iter: { type: "Name", name: "items" },
+      param: "k, v",
+      target_kind: "tuple",
+      target_names: ["k", "v"],
+      cond: { type: "Name", name: "v" },
+      elt: { type: "Name", name: "k" },
+    };
+    expect(renderExpr(expr)).toBe("(items).filter(([k, v]) => v).map(([k, v]) => k)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-907+908+909: compound production sequence — bs4-style end-to-end
+// Tests the real production sequence: Assign + BoolOp + GeneratorExp(tuple)
+// combined in a single renderBody call, crossing all new statement + expr boundaries.
+// ---------------------------------------------------------------------------
+
+describe("WI-907+908+909: compound interaction — bs4 production sequence", () => {
+  it("renders __getattr__-style body: Assign then conditional Return", () => {
+    // Python equivalent:
+    //   rewritten = name.replace("Name", "OtherName")
+    //   return rewritten
+    const stmts: WireStmt[] = [
+      {
+        type: "Assign",
+        target: "rewritten",
+        value: {
+          type: "Call",
+          func: "name.replace",
+          args: [
+            { type: "String", value: "Name" },
+            { type: "String", value: "OtherName" },
+          ],
+        },
+      },
+      { type: "Return", value: { type: "Name", name: "rewritten" } },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toBe('  const rewritten = name.replace("Name", "OtherName");\n  return rewritten;');
+  });
+
+  it("renders _chardet_dammit-style body: BoolOp in If test", () => {
+    // Python equivalent:
+    //   if isinstance(s, bytes) and override is not None:
+    //     return s.decode(override[0])
+    //   return s.decode("utf-8")
+    const stmts: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BoolOp",
+          op: "and",
+          left: {
+            type: "Call",
+            func: "isinstance",
+            args: [
+              { type: "Name", name: "s" },
+              { type: "Name", name: "bytes" },
+            ],
+          },
+          right: {
+            type: "BinaryOp",
+            op: "!=",
+            left: { type: "Name", name: "override" },
+            right: { type: "None" },
+          },
+        },
+        body: [
+          {
+            type: "Return",
+            value: {
+              type: "Call",
+              func: "s.decode",
+              args: [{ type: "Name", name: "override" }],
+            },
+          },
+        ],
+        orelse: [],
+      },
+      {
+        type: "Return",
+        value: {
+          type: "Call",
+          func: "s.decode",
+          args: [{ type: "String", value: "utf-8" }],
+        },
+      },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toContain("(isinstance(s, bytes) && (override != null))");
+    expect(out).toContain("return s.decode(override)");
+    expect(out).toContain('return s.decode("utf-8")');
+  });
+
+  it("renders _invert-style body: GeneratorExp with tuple target inside dict() call", () => {
+    // Python equivalent:
+    //   return dict((v, k) for k, v in list(d.items()))
+    // The wire representation: Return(Call("dict", [GeneratorExp(tuple target)]))
+    const stmts: WireStmt[] = [
+      {
+        type: "Return",
+        value: {
+          type: "Call",
+          func: "dict",
+          args: [
+            {
+              type: "GeneratorExp",
+              kind: "map",
+              iter: {
+                type: "Call",
+                func: "list",
+                args: [{ type: "Call", func: "d.items", args: [] }],
+              },
+              param: "k, v",
+              target_kind: "tuple",
+              target_names: ["k", "v"],
+              elt: {
+                type: "Call",
+                func: "f",
+                args: [
+                  { type: "Name", name: "v" },
+                  { type: "Name", name: "k" },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toContain("([k, v])");
+    expect(out).toContain("list(d.items())");
+    expect(out).toContain(".map(([k, v]) => f(v, k))");
+  });
+});
