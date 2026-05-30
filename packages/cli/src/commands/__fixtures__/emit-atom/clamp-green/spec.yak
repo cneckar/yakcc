@@ -1,0 +1,25 @@
+{
+  "name": "clamp",
+  "inputs": [
+    {"name": "value", "type": "number"},
+    {"name": "min", "type": "number"},
+    {"name": "max", "type": "number"}
+  ],
+  "outputs": [{"name": "result", "type": "number"}],
+  "preconditions": ["min <= max"],
+  "postconditions": ["min <= result", "result <= max"],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Clamp value to [min, max]. Returns min if value < min, max if value > max, otherwise value.",
+  "guarantees": [
+    {"id": "bounded", "description": "Result is in [min, max]."},
+    {"id": "idempotent", "description": "clamp(clamp(v,a,b),a,b) === clamp(v,a,b)."}
+  ],
+  "errorConditions": [],
+  "nonFunctional": {"purity": "pure", "threadSafety": "safe"},
+  "propertyTests": [
+    {"id": "bounded", "description": "Result is within bounds."},
+    {"id": "idempotent", "description": "Applying clamp twice equals once."}
+  ]
+}

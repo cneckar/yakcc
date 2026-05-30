@@ -63,7 +63,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build dependency chain
-        run: pnpm --filter @yakcc/contracts build && pnpm --filter @yakcc/ir build
+        run: pnpm -r --filter @yakcc/shave-python... --filter @yakcc/compile-python... --filter @yakcc/shave... build
 
       - name: typecheck @yakcc/shave-python
         run: pnpm --filter @yakcc/shave-python typecheck

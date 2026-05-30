@@ -1,0 +1,23 @@
+{
+  "name": "clamp",
+  "inputs": [
+    {"name": "value", "type": "number"},
+    {"name": "min", "type": "number"},
+    {"name": "max", "type": "number"}
+  ],
+  "outputs": [{"name": "result", "type": "number"}],
+  "preconditions": ["min <= max"],
+  "postconditions": ["min <= result", "result <= max"],
+  "invariants": [],
+  "effects": [],
+  "level": "L0",
+  "behavior": "Clamp value to [min, max].",
+  "guarantees": [
+    {"id": "bounded", "description": "Result is in [min, max]."}
+  ],
+  "errorConditions": [],
+  "nonFunctional": {"purity": "pure", "threadSafety": "safe"},
+  "propertyTests": [
+    {"id": "bounded", "description": "Result is within bounds."}
+  ]
+}

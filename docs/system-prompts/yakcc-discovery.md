@@ -115,3 +115,185 @@ Auto-accept rule: if `combinedScore` > 0.85 AND the gap to the second-best candi
 If `yakcc_resolve` is unreachable (registry offline, transport error), fall back to writing
 the code directly and emit a `REGISTRY_UNREACHABLE` note in your output so the user can
 audit later. This is the ONLY permissible reason to write code without first querying.
+
+---
+
+## LLM atom-triplet emission format
+
+<!-- @decision DEC-WI954-005
+     @title Canonical triplet format documented in yakcc-discovery.md
+     @status accepted
+     @rationale LLM-facing doc is the authoritative surface for format vocabulary.
+       impl.{ts,py,go} and proof/tests.fast-check.{ts,py} enumerate the full
+       vocabulary the LLM may emit; MVP accepts TypeScript only; Python/Go deferred. -->
+
+When you have confirmed via `yakcc_resolve` that a desired operation does NOT exist in
+the registry, you MUST emit a **triplet** — a self-contained directory that
+`yakcc emit-atom` can validate and store.
+
+### Canonical triplet directory layout
+
+```
+<atom-name>/
+  spec.yak                   # JSON spec (see schema below)
+  impl.ts                    # Implementation (TypeScript — MVP)
+  proof/
+    manifest.json            # Proof-artifact manifest
+    tests.fast-check.ts      # LLM-authored property tests
+```
+
+**Vocabulary for future language targets (deferred, not yet accepted):**
+`impl.py`, `impl.go`, `proof/tests.fast-check.py` — use TypeScript until
+support is shipped.
+
+### spec.yak schema (required fields)
+
+```json
+{
+  "name": "<function-name>",
+  "inputs":  [{ "name": "<param>", "type": "<ts-type>" }],
+  "outputs": [{ "name": "<result>", "type": "<ts-type>" }],
+  "preconditions":  ["<condition-string>"],
+  "postconditions": ["<condition-string>"],
+  "invariants":     [],
+  "effects":        [],
+  "level": "L0",
+  "behavior": "<one-line description of the operation>",
+  "guarantees": [
+    { "id": "<id>", "description": "<guarantee text>" }
+  ],
+  "errorConditions": [],
+  "nonFunctional": { "purity": "pure", "threadSafety": "safe" },
+  "propertyTests": [
+    { "id": "<id>", "description": "<property text>" }
+  ]
+}
+```
+
+Required: `name`, `inputs`, `outputs`, `preconditions`, `postconditions`,
+`invariants`, `effects`, `level`, `behavior`, `guarantees`, `errorConditions`,
+`nonFunctional`, `propertyTests`. Level must be `"L0"` for user-emitted atoms.
+
+### impl.ts strict-subset rules
+
+The implementation MUST comply with the yakcc strict-subset:
+
+- No `eval`, `Function()`, `new Function(...)`, or dynamic `require()`
+- No `process.exit`, `process.env`, or direct process/OS interaction
+- No network I/O (`fetch`, `http`, `net`, etc.)
+- No filesystem access (`fs`, `path`, etc.) unless the spec explicitly models it
+- No non-deterministic behavior (random, Date, timers) unless the spec models it
+- Exports exactly one named function matching `spec.yak`'s `name` field
+
+### proof/manifest.json schema
+
+```json
+{ "artifacts": [{ "kind": "property_tests", "path": "tests.fast-check.ts" }] }
+```
+
+For L0 atoms, `kind` MUST be `"property_tests"`. Other kinds (`smt_cert`, etc.)
+are reserved for L2+ proofs and will cause `emit-atom` to exit with code 4.
+
+### proof/tests.fast-check.ts conventions
+
+- Import the implementation as `../impl.js` (tsx resolves `.js` → `.ts`)
+- Use `fast-check` (`fc.assert` + `fc.property`) at the top level — no test framework
+- The file runs as a standalone script: `node --import tsx proof/tests.fast-check.ts`
+- Exit 0 on all properties passing; any unhandled exception exits non-zero
+- Every guarantee in `spec.yak` MUST have a corresponding `fc.assert` call
+
+### Worked example: `clamp(value, min, max)`
+
+**spec.yak**
+```json
+{
+  "name": "clamp",
+  "inputs": [
+    {"name": "value", "type": "number"},
+    {"name": "min",   "type": "number"},
+    {"name": "max",   "type": "number"}
+  ],
+  "outputs": [{"name": "result", "type": "number"}],
+  "preconditions": ["min <= max"],
+  "postconditions": ["min <= result", "result <= max"],
+  "invariants": [], "effects": [], "level": "L0",
+  "behavior": "Clamp value to [min, max]. Returns min if value < min, max if value > max, otherwise value.",
+  "guarantees": [
+    {"id": "bounded",    "description": "Result is in [min, max]."},
+    {"id": "idempotent", "description": "clamp(clamp(v,a,b),a,b) === clamp(v,a,b)."}
+  ],
+  "errorConditions": [],
+  "nonFunctional": {"purity": "pure", "threadSafety": "safe"},
+  "propertyTests": [
+    {"id": "bounded",    "description": "Result is within bounds."},
+    {"id": "idempotent", "description": "Applying clamp twice equals once."}
+  ]
+}
+```
+
+**impl.ts**
+```typescript
+export function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+```
+
+**proof/manifest.json**
+```json
+{"artifacts": [{"kind": "property_tests", "path": "tests.fast-check.ts"}]}
+```
+
+**proof/tests.fast-check.ts**
+```typescript
+import * as fc from "fast-check";
+import { clamp } from "../impl.js";
+
+// bounded: result is always in [min, max]
+fc.assert(
+  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
+    const [min, max] = a <= b ? [a, b] : [b, a];
+    const r = clamp(v, min, max);
+    return r >= min && r <= max;
+  }),
+);
+
+// idempotent: clamp(clamp(v,a,b),a,b) === clamp(v,a,b)
+fc.assert(
+  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
+    const [min, max] = a <= b ? [a, b] : [b, a];
+    return clamp(clamp(v, min, max), min, max) === clamp(v, min, max);
+  }),
+);
+
+console.log("clamp property tests: ok");
+```
+
+### Submission flow
+
+After writing the triplet, run:
+
+```bash
+yakcc emit-atom <atom-name>/
+```
+
+Exit codes and their meaning:
+- `0` — validated, tests green, stored in registry
+- `1` — usage or IO error (missing argument, file not found)
+- `2` — `spec.yak` is invalid (missing or wrong fields)
+- `3` — `impl.ts` violates strict-subset rules
+- `4` — `proof/manifest.json` is invalid for L0
+- `5` — property tests failed (fast-check found a counterexample)
+- `6` — registry write error
+
+### Variance fallback discipline (DEC-WI954-010)
+
+- **Triplet emission path (canonical):** LLM emits a full triplet → `yakcc emit-atom`
+  validates, runs property tests, stores. This is the path for ALL operations that
+  do not exist in the registry.
+- **Variance synthesis (fallback):** The PreToolUse hook may synthesize variance atoms
+  from bare code that passes through the hook without a matching triplet. This is a
+  fallback for pre-existing code — it does NOT replace the triplet emission path.
+- A bare code block that is NOT a triplet-formatted directory is routed to variance
+  synthesis automatically. You MUST prefer triplet emission for new operations.

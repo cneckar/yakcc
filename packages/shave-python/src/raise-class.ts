@@ -77,7 +77,7 @@
 //   not in conflict — each method appears exactly once in the appropriate path.
 
 import { CannotRaiseToIRError, type SourceLocation } from "@yakcc/contracts";
-import { normalizeIdentifier } from "./normalize-names.js";
+import { buildParamRenameMap, normalizeBodyNames, normalizeIdentifier } from "./normalize-names.js";
 import type { EnvelopeClass, EnvelopeInitParam, EnvelopeMethod } from "./parse-fn-signature.js";
 import { ImpureFunctionError } from "./purity-check.js";
 import type { WireExpr, WireStmt } from "./raise-body.js";
@@ -615,11 +615,33 @@ function emitMethod(
   // Rewrite the body: self.field reads and self.method calls
   const rewrittenBody = method.body.map((s) => rewriteStmt(s, className, method.name));
 
+  // #958: apply param rename map so body Name nodes match camelCased signature params.
+  // Build the map from original (snake_case) param names — skip "self" which is
+  // already handled by rewriteStmt and doesn't go through normalizeIdentifier.
+  // @decision DEC-958-003 — raise-class emitMethod applies normalizeBodyNames after rewriteStmt
+  // @title Param rename (snake→camel) applied to instance method body identifiers
+  // @status accepted (#958)
+  // @rationale rewriteStmt handles self.field/self.method rewrites; it does NOT rename
+  //   regular method params. Without this step, a method param `make_quoted_attribute`
+  //   would be `makeQuotedAttribute` in the TS signature but still `make_quoted_attribute`
+  //   in body Name references — producing an undefined-identifier IR bug identical to
+  //   the module-function path fixed in raise-function.ts/#958.
+  const methodParamObjects = method.params
+    .filter((p) => p.name !== "self")
+    .map((p) => ({ name: p.name, tsType: "", pythonAnnotation: p.annotation ?? "" }));
+  const methodRenameMap = buildParamRenameMap(methodParamObjects);
+  const renamedBody =
+    methodRenameMap.size > 0 ? normalizeBodyNames(rewrittenBody, methodRenameMap) : rewrittenBody;
+
   // Filter docstrings for void-0 fallback check (mirrors raise-function.ts DEC-WI888-008)
-  const visibleStmts = rewrittenBody.filter((s) => s.type !== "Docstring");
+  const visibleStmts = renamedBody.filter((s) => s.type !== "Docstring");
   // #948 (DEC-948-001): seed seenNames with param names (including "self") so that
   // body-level re-assignment to a parameter emits bare `param = expr;` not `let param = ...`.
-  const paramNames = new Set(["self", ...method.params.map((p) => p.name)]);
+  // Use the NORMALIZED param names here so the seenNames set matches the renamed body.
+  const paramNames = new Set([
+    "self",
+    ...method.params.filter((p) => p.name !== "self").map((p) => normalizeIdentifier(p.name)),
+  ]);
   const bodyText =
     visibleStmts.length === 0
       ? "  void 0;"
