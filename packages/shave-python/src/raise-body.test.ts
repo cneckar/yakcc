@@ -1402,3 +1402,214 @@ describe("WI-911+912+913: compound interaction — bs4 production sequence", () 
     expect(renderExpr(expr)).toBe('[obj["name"], obj["val"]]');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-931: Attribute wire node → TS obj.attr
+// ---------------------------------------------------------------------------
+
+describe("WI-931: renderExpr — Attribute", () => {
+  it("renders simple obj.attr", () => {
+    const expr: WireExpr = {
+      type: "Attribute",
+      value: { type: "Name", name: "obj" },
+      attr: "attr",
+    };
+    expect(renderExpr(expr)).toBe("obj.attr");
+  });
+
+  it("renders chained a.b.c (nested Attribute)", () => {
+    const expr: WireExpr = {
+      type: "Attribute",
+      value: {
+        type: "Attribute",
+        value: { type: "Name", name: "a" },
+        attr: "b",
+      },
+      attr: "c",
+    };
+    expect(renderExpr(expr)).toBe("a.b.c");
+  });
+
+  it("renders Attribute used as call argument — f(obj.attr)", () => {
+    const expr: WireExpr = {
+      type: "Call",
+      func: "f",
+      args: [
+        {
+          type: "Attribute",
+          value: { type: "Name", name: "obj" },
+          attr: "method",
+        },
+      ],
+    };
+    expect(renderExpr(expr)).toBe("f(obj.method)");
+  });
+
+  it("renders Attribute as return value (Return stmt)", () => {
+    const stmt: WireStmt = {
+      type: "Return",
+      value: {
+        type: "Attribute",
+        value: { type: "Name", name: "cls" },
+        attr: "CONSTANT",
+      },
+    };
+    expect(renderStmt(stmt)).toBe("  return cls.CONSTANT;");
+  });
+
+  it("renders Attribute on the right of a Call — cls.PATTERN.sub(...)", () => {
+    // cls.AMPERSAND_OR_BRACKET.sub(cls._sub_character_safe, value)
+    // → Call("cls.AMPERSAND_OR_BRACKET.sub", [Attribute(cls, _sub_character_safe), Name(value)])
+    // But the real wire shape from #931 is:
+    //   Call func="cls.AMPERSAND_OR_BRACKET.sub", args=[Attribute(cls,_sub_character_safe), Name(value)]
+    // Here we test that an Attribute appears correctly as a call arg.
+    const expr: WireExpr = {
+      type: "Call",
+      func: "cls.AMPERSAND_OR_BRACKET.sub",
+      args: [
+        {
+          type: "Attribute",
+          value: { type: "Name", name: "cls" },
+          attr: "_sub_character_safe",
+        },
+        { type: "Name", name: "value" },
+      ],
+    };
+    expect(renderExpr(expr)).toBe("cls.AMPERSAND_OR_BRACKET.sub(cls._sub_character_safe, value)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-931+932: compound interaction — Attribute in membership check
+// Production sequence: Attribute as left operand of "in" comparison.
+// ---------------------------------------------------------------------------
+
+describe("WI-931+932: compound interaction — Attribute + In/NotIn", () => {
+  it("renders cls.ATTR in collection → collection.includes(cls.ATTR)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "in",
+      left: {
+        type: "Attribute",
+        value: { type: "Name", name: "cls" },
+        attr: "QUOTE_CHAR",
+      },
+      right: { type: "Name", name: "value" },
+    };
+    expect(renderExpr(expr)).toBe("value.includes(cls.QUOTE_CHAR)");
+  });
+
+  it('renders quoted_attribute_value pattern: if \'"\' in value → value.includes("\\"")', () => {
+    // Python: if '"' in value: return f"'{value}'"
+    // Wire: BinaryOp(in, String('"'), Name(value))
+    const stmts: WireStmt[] = [
+      {
+        type: "If",
+        test: {
+          type: "BinaryOp",
+          op: "in",
+          left: { type: "String", value: '"' },
+          right: { type: "Name", name: "value" },
+        },
+        body: [{ type: "Return", value: { type: "String", value: "'" } }],
+        orelse: [{ type: "Return", value: { type: "String", value: '"' } }],
+      },
+    ];
+    const out = renderBody(stmts);
+    expect(out).toContain('value.includes("\\""');
+    expect(out).toContain('return "\'";');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-932: Comparison In / NotIn → .includes()
+// ---------------------------------------------------------------------------
+
+describe("WI-932: renderExpr — BinaryOp in / not_in", () => {
+  it("renders x in y → y.includes(x)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "in",
+      left: { type: "Name", name: "x" },
+      right: { type: "Name", name: "y" },
+    };
+    expect(renderExpr(expr)).toBe("y.includes(x)");
+  });
+
+  it("renders x not in y → !y.includes(x)", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "not_in",
+      left: { type: "Name", name: "x" },
+      right: { type: "Name", name: "y" },
+    };
+    expect(renderExpr(expr)).toBe("!y.includes(x)");
+  });
+
+  it('renders string in string literal — \'"\' in value → value.includes("\\"")', () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "in",
+      left: { type: "String", value: '"' },
+      right: { type: "Name", name: "value" },
+    };
+    expect(renderExpr(expr)).toBe('value.includes("\\"")');
+  });
+
+  it("renders element not in list literal — x not in [1,2,3]", () => {
+    const expr: WireExpr = {
+      type: "BinaryOp",
+      op: "not_in",
+      left: { type: "Name", name: "x" },
+      right: {
+        type: "ListComp",
+        kind: "map",
+        iter: { type: "Name", name: "ys" },
+        param: "y",
+        elt: { type: "Name", name: "y" },
+      },
+    };
+    // right.includes(left) where right is a comprehension expression
+    expect(renderExpr(expr)).toContain(".includes(x)");
+    expect(renderExpr(expr)).toMatch(/^!/);
+  });
+
+  it("in / not_in do not throw UnsupportedAstError (in ALLOWED_BINARY_OPS)", () => {
+    expect(() =>
+      renderExpr({
+        type: "BinaryOp",
+        op: "in",
+        left: { type: "Name", name: "x" },
+        right: { type: "Name", name: "y" },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      renderExpr({
+        type: "BinaryOp",
+        op: "not_in",
+        left: { type: "Name", name: "x" },
+        right: { type: "Name", name: "y" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("renders BoolOp containing an 'in' check — x in arr and y > 0", () => {
+    const expr: WireExpr = {
+      type: "BoolOp",
+      op: "and",
+      left: {
+        type: "BinaryOp",
+        op: "in",
+        left: { type: "Name", name: "x" },
+        right: { type: "Name", name: "arr" },
+      },
+      right: {
+        type: "BinaryOp",
+        op: ">",
+        left: { type: "Name", name: "y" },
+        right: { type: "Integer", value: "0" },
+      },
+    };
+    expect(renderExpr(expr)).toBe("(arr.includes(x) && (y > 0))");
+  });
+});
