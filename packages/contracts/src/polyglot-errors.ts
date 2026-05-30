@@ -1,6 +1,7 @@
 /**
  * Typed errors emitted by per-language raise adapters when a source construct
- * cannot be expressed in the TS-subset IR envelope.
+ * cannot be expressed in the TS-subset IR envelope, and by the IR→Python lower
+ * adapter when an IR node has no Python equivalent.
  *
  * @decision DEC-POLYGLOT-IR-ENVELOPE-001 (held-the-line — option c)
  * @title IR envelope is held at strict-subset TS; out-of-envelope constructs throw
@@ -12,8 +13,9 @@
  *   so the developer either simplifies their function or leaves it unshaved.
  *   AmbiguousPurityError is thrown when static purity analysis cannot decide
  *   (dynamic dispatch, opaque imports); same hold-the-line stance.
- * @scope @yakcc/contracts barrel re-exports both classes for use by future
- *   adapters: @yakcc/shave-py (#782), @yakcc/shave-go, @yakcc/shave-rs.
+ * @scope @yakcc/contracts barrel re-exports all classes for use by future
+ *   adapters: @yakcc/shave-py (#782), @yakcc/shave-go, @yakcc/shave-rs,
+ *   and @yakcc/compile-python (WI-943).
  */
 
 export interface SourceLocation {
@@ -61,5 +63,40 @@ export class AmbiguousPurityError extends Error {
   ) {
     super(`Ambiguous purity at ${location.file}:${location.line}:${location.col}: ${reason}`);
     this.name = "AmbiguousPurityError";
+  }
+}
+
+/**
+ * Thrown by the IR→Python lower adapter (@yakcc/compile-python) when a
+ * TS-subset IR node has no Python equivalent and cannot be silently emitted.
+ *
+ * Replaces the former silent fallbacks (statement `# WARN: unhandled ...`
+ * comment, expression raw getText() leak, and FunctionExpression getText()
+ * body) introduced in WI-943. Loud failures surface coverage gaps immediately
+ * instead of letting TS syntax leak into Python output.
+ *
+ * @decision DEC-COMPILE-PYTHON-LOUD-001
+ * @title IR→Python lowering throws on unhandled nodes; no silent fallbacks
+ * @status decided (WI-943)
+ * @rationale
+ *   Silent getText() fallbacks allowed valid-looking Python output that
+ *   contained raw TS syntax (e.g. arrow functions, unhandled statements).
+ *   Replacing them with a loud error forces the adapter to either handle
+ *   the node kind or surface a clear actionable message naming the missing
+ *   coverage. Any future gap is immediately visible in CI rather than
+ *   producing subtly broken Python. This follows the Ethos principle:
+ *   "loud failure over silent fallback".
+ */
+export class CannotLowerToPythonError extends Error {
+  constructor(
+    public readonly nodeKind: string,
+    public readonly location: { line: number; column: number },
+    public readonly snippet: string,
+    public readonly fnName: string | undefined,
+  ) {
+    super(
+      `Cannot lower TS-subset IR to Python: ${nodeKind} at ${fnName ?? "<top-level>"}:${location.line}:${location.column} — ${snippet}`,
+    );
+    this.name = "CannotLowerToPythonError";
   }
 }
