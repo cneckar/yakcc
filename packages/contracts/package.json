@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/contracts",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.6.0-alpha.0",
+  "description": "Shared vocabulary and canonical types for the Yakcc monorepo — contract shapes, embeddings, merkle proofs, and granularity primitives.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,6 +11,27 @@
     "./source-extract": "./dist/source-extract.js",
     "./source-pick": "./dist/source-pick.js"
   },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/contracts"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/contracts#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "contracts",
+    "typescript",
+    "types"
+  ],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",

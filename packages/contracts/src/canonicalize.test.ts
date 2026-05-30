@@ -421,3 +421,49 @@ describe("canonicalizeQueryText", () => {
     expect(keys).toEqual([...keys].sort());
   });
 });
+
+// ---------------------------------------------------------------------------
+// QueryIntentCard.language field (DEC-DISCOVERY-D2-LANGUAGE-001 / WI-784)
+// ---------------------------------------------------------------------------
+
+describe("QueryIntentCard.language field (D2 amendment)", () => {
+  it("accepts language='py' without TypeScript error", () => {
+    const card: QueryIntentCard = {
+      behavior: "parse integers",
+      language: "py",
+    };
+    // canonicalizeQueryText must not throw and must omit the language field
+    // (language is a retrieval control, not a semantic dimension — not projected)
+    expect(() => canonicalizeQueryText(card)).not.toThrow();
+  });
+
+  it("accepts language='go' without TypeScript error", () => {
+    const card: QueryIntentCard = { language: "go" };
+    expect(() => canonicalizeQueryText(card)).not.toThrow();
+  });
+
+  it("accepts language='rs'", () => {
+    const card: QueryIntentCard = { language: "rs" };
+    expect(() => canonicalizeQueryText(card)).not.toThrow();
+  });
+
+  it("accepts language='ts'", () => {
+    const card: QueryIntentCard = { language: "ts" };
+    expect(() => canonicalizeQueryText(card)).not.toThrow();
+  });
+
+  it("language=undefined is the same as omitting the field", () => {
+    const withUndef: QueryIntentCard = { behavior: "test", language: undefined };
+    const withoutLang: QueryIntentCard = { behavior: "test" };
+    // Both produce identical query text -- language is not projected
+    expect(canonicalizeQueryText(withUndef)).toBe(canonicalizeQueryText(withoutLang));
+  });
+
+  it("adding language='py' does not change the canonicalized query text (not a dimension)", () => {
+    // language is a filter control, not a semantic embedding dimension.
+    // The query text must be identical with and without it.
+    const withoutLang: QueryIntentCard = { behavior: "parse comma-separated integers" };
+    const withLang: QueryIntentCard = { behavior: "parse comma-separated integers", language: "py" };
+    expect(canonicalizeQueryText(withoutLang)).toBe(canonicalizeQueryText(withLang));
+  });
+});

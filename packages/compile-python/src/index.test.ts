@@ -418,3 +418,178 @@ export function alwaysTrue(): boolean {
     expect(source).toContain("return True");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #915 — Inverse type map: TS type names → Python types
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — #915 Uint8Array → bytes", () => {
+  const src = `
+export function toBytes(s: Uint8Array): Uint8Array {
+  return s;
+}`;
+
+  it("lowers Uint8Array parameter type to bytes", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("s: bytes");
+  });
+
+  it("lowers Uint8Array return type to bytes", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("-> bytes");
+  });
+});
+
+describe("compileToPython — #915 Callable type", () => {
+  const src = `
+export function applyFn(fn: (a: string, b: number) => boolean): boolean {
+  return fn("x", 1);
+}`;
+
+  it("lowers function type to Callable[[...], R]", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("Callable[[str, float], bool]");
+  });
+
+  it("adds Callable import to preamble when Callable is used", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("from typing import Callable");
+  });
+});
+
+describe("compileToPython — #915 Uint8Array in union (Optional[bytes])", () => {
+  const src = `
+export function maybeBytes(s: Uint8Array | null): Uint8Array | null {
+  return s;
+}`;
+
+  it("lowers Uint8Array | null to Optional[bytes]", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("Optional[bytes]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #916 — Destructured for-of: [k, v] → bare tuple target
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — #916 destructured for-of no brackets", () => {
+  const src = `
+export function invertKeys(d: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(d)) {
+    result[v] = k;
+  }
+  return result;
+}`;
+
+  it("emits 'for k, v in' without brackets around target", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("for k, v in");
+    expect(source).not.toContain("for [k, v] in");
+  });
+});
+
+describe("compileToPython — #916 map with destructured arrow → dict comprehension", () => {
+  const src = `
+export function invert(d: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(d.entries().map(([k, v]) => [v, k]));
+}`;
+
+  it("map with destructured [k,v] arrow emits for k, v in (no brackets)", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).not.toContain("for [k, v] in");
+    expect(source).not.toContain("for [k, v]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #917 — === null / !== null → is None / is not None
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — #917 === null → is None", () => {
+  const src = `
+export function isNull(x: string | null): boolean {
+  return x === null;
+}`;
+
+  it("lowers '=== null' to 'is None'", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("is None");
+    expect(source).not.toContain("== None");
+  });
+});
+
+describe("compileToPython — #917 !== null → is not None", () => {
+  const src = `
+export function notNull(x: string | null): boolean {
+  return x !== null;
+}`;
+
+  it("lowers '!== null' to 'is not None'", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("is not None");
+    expect(source).not.toContain("!= None");
+  });
+});
+
+describe("compileToPython — #917 === non-null is unchanged", () => {
+  const src = `
+export function sameStr(a: string, b: string): boolean {
+  return a === b;
+}`;
+
+  it("lowers '=== non-null' to '==' (not 'is')", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("a == b");
+    expect(source).not.toContain("a is b");
+  });
+});
+
+describe("compileToPython — #917 null on left side → is None", () => {
+  const src = `
+export function nullLeft(x: string | null): boolean {
+  return null === x;
+}`;
+
+  it("lowers 'null ===' to 'is None' (null on left)", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("is None");
+    expect(source).not.toContain("== None");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compound interaction: #915 + #916 + #917 bs4 _invert round-trip pattern
+// ---------------------------------------------------------------------------
+
+describe("compileToPython — compound bs4 _invert round-trip pattern", () => {
+  // Mirrors the _invert function from beautifulsoup4 as raised to TS-subset IR
+  const src = `
+export function invertMap(d: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (v !== null) {
+      result[v as string] = k;
+    }
+  }
+  return result;
+}`;
+
+  it("emits 'for k, v in' without brackets (cross-boundary: #916 + #915)", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("for k, v in");
+    expect(source).not.toContain("for [k, v] in");
+  });
+
+  it("emits 'is not None' for !== null check (#917)", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("is not None");
+    expect(source).not.toContain("!= None");
+  });
+
+  it("emits dict[str, Any] for Record<string, unknown> (#915)", () => {
+    const { source } = compileToPython(makeRow(src));
+    expect(source).toContain("dict[str, Any]");
+  });
+});

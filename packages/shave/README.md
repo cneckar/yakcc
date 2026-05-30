@@ -3,6 +3,16 @@
 The universalizer pipeline: decompose a TypeScript/JavaScript source file into
 content-addressed registry atoms.
 
+## Install
+
+```bash
+pnpm add @yakcc/shave
+```
+
+## Status
+
+Public alpha (`0.5.0-alpha.0`). Universalizer pipeline and atomization API are stable.
+
 ## What this package provides
 
 The pipeline runs in four stages for each candidate block:
@@ -163,4 +173,4 @@ await registry.close();
 
 ## License
 
-This package is dedicated to the public domain under [The Unlicense](../../LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE).

@@ -21,12 +21,12 @@ tmp/
 DECISIONS.md
 DECISIONS.md.tmp.*
 
-# Bootstrap outputs — registry and report are ephemeral; expected-roots.json is committed.
-# (WI-V2-BOOTSTRAP-02: registry + report gitignored; expected-roots.json committed in WI-V2-BOOTSTRAP-03)
-bootstrap/yakcc.registry.sqlite
+# Bootstrap outputs — registry sqlite is now committed (WI-850); WAL/SHM are transient SQLite journals.
+# expected-roots.json is committed separately (WI-V2-BOOTSTRAP-03).
 bootstrap/yakcc.registry.sqlite-wal
 bootstrap/yakcc.registry.sqlite-shm
 bootstrap/report.json
+bootstrap/.write.lock
 
 # B1-latency corpus — 100MB binary, content-addressed; regenerated on demand.
 # corpus-spec.json (the hash) IS committed; the binary is NOT.

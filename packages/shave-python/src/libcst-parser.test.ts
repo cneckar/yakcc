@@ -10,11 +10,13 @@
 // A future slice (likely slice 4) will add an opt-in integration test gated
 // on `process.env.YAKCC_PY` that exercises the real Python interpreter.
 
+import { execSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AdapterSubprocessError,
   type LibcstParseOptions,
+  type PythonAstNode,
   type SpawnImpl,
   parsePythonSource,
 } from "./libcst-parser.js";
@@ -204,4 +206,439 @@ describe("parsePythonSource (#782 slice 1)", () => {
     await parsePythonSource("pass", { spawnImpl: spawnFn, scriptPath: "/fake/x.py" });
     expect(capturedCmd).toBe("/custom/python");
   });
+});
+
+// ---------------------------------------------------------------------------
+// WI-875: floor-divide // emission (REGRESSION — real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-875: floor-divide // emission (REGRESSION — real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits FloorDivide as a // BinaryOp wire node", async () => {
+      const source = "def divmod_int(a: int, b: int) -> int:\n    return a // b\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      expect((ret.value as PythonAstNode).type).toBe("BinaryOp");
+      expect((ret.value as PythonAstNode).op).toBe("//");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// WI-888: Docstring + ImpureStatement emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-888: Docstring + ImpureStatement emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits Docstring wire node for a PEP-257 docstring as first body stmt", async () => {
+      const source =
+        'def greeter(name: str) -> str:\n    """Return a greeting string."""\n    return f"Hello, {name}"\n';
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      // First statement should be Docstring
+      expect(body.length).toBeGreaterThanOrEqual(1);
+      expect(body[0]?.type).toBe("Docstring");
+      expect(typeof (body[0] as { value?: unknown }).value).toBe("string");
+      expect((body[0] as { value?: string }).value).toContain("greeting");
+    });
+
+    it("emits ImpureStatement(bare_call) for a bare print() call in a function body", async () => {
+      // def log_it(x: int) -> None:
+      //     print(x)
+      const source = "def log_it(x: int) -> None:\n    print(x)\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      expect(body.length).toBeGreaterThanOrEqual(1);
+      const stmt = body[0] as PythonAstNode;
+      expect(stmt.type).toBe("ImpureStatement");
+      expect((stmt as { construct?: string }).construct).toBe("bare_call");
+      expect((stmt as { detail?: string }).detail).toContain("print");
+    });
+
+    it("does NOT emit Docstring for a string in non-first position (bare_expression instead)", async () => {
+      // def mixed(x: int) -> int:
+      //     x + 1     # bare expression at position 0 -> ImpureStatement
+      //     "not a docstring"  # string at non-first position -> ImpureStatement
+      //     return x
+      const source = "def mixed(x: int) -> int:\n    x + 1\n    return x\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      // First stmt is x + 1 — not a string-literal, so ImpureStatement(bare_expression)
+      expect(body[0]?.type).toBe("ImpureStatement");
+      expect((body[0] as { construct?: string }).construct).toBe("bare_expression");
+    });
+
+    it("emits Docstring wire node for a triple-quoted docstring", async () => {
+      const source =
+        'def triple(x: int) -> int:\n    """Triple-quoted doc.\n    Multiline.\n    """\n    return x\n';
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      expect(body[0]?.type).toBe("Docstring");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// WI-903: If statement emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-903: If statement emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits If wire node for a simple if-only statement", async () => {
+      const source = "def check(x: int) -> int:\n    if x > 0:\n        return x\n    return 0\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      // First statement is the if
+      expect(body[0]?.type).toBe("If");
+      const ifStmt = body[0] as PythonAstNode;
+      // test is a BinaryOp (x > 0)
+      expect((ifStmt.test as PythonAstNode).type).toBe("BinaryOp");
+      expect((ifStmt.test as PythonAstNode).op).toBe(">");
+      // body contains a Return
+      expect(Array.isArray(ifStmt.body)).toBe(true);
+      expect((ifStmt.body as PythonAstNode[])[0]?.type).toBe("Return");
+      // orelse is empty
+      expect(Array.isArray(ifStmt.orelse)).toBe(true);
+      expect((ifStmt.orelse as PythonAstNode[]).length).toBe(0);
+    });
+
+    it("emits If with orelse for if/else", async () => {
+      const source =
+        "def sign(x: int) -> int:\n    if x >= 0:\n        return 1\n    else:\n        return -1\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      expect(body[0]?.type).toBe("If");
+      const ifStmt = body[0] as PythonAstNode;
+      // orelse is a flat list with a Return
+      expect(Array.isArray(ifStmt.orelse)).toBe(true);
+      expect((ifStmt.orelse as PythonAstNode[]).length).toBe(1);
+      expect((ifStmt.orelse as PythonAstNode[])[0]?.type).toBe("Return");
+    });
+
+    it("emits nested If in orelse for if/elif/else (Python AST convention)", async () => {
+      const source =
+        "def classify(x: int) -> int:\n    if x > 0:\n        return 1\n    elif x < 0:\n        return -1\n    else:\n        return 0\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      const ifStmt = body[0] as PythonAstNode;
+      expect(ifStmt.type).toBe("If");
+      // elif: orelse is a single-element list containing an If node
+      expect((ifStmt.orelse as PythonAstNode[]).length).toBe(1);
+      const elifNode = (ifStmt.orelse as PythonAstNode[])[0] as PythonAstNode;
+      expect(elifNode.type).toBe("If");
+      // The elif's orelse is a flat list (the else block)
+      expect((elifNode.orelse as PythonAstNode[]).length).toBe(1);
+      expect((elifNode.orelse as PythonAstNode[])[0]?.type).toBe("Return");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// WI-904: Comprehension emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-904: Comprehension emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits ListComp map node for [f(x) for x in xs]", async () => {
+      const source = "def double_all(xs: list) -> list:\n    return [x * 2 for x in xs]\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      const comp = ret.value as PythonAstNode;
+      expect(comp.type).toBe("ListComp");
+      expect(comp.kind).toBe("map");
+      expect(comp.param).toBe("x");
+    });
+
+    it("emits ListComp filter node for [x for x in xs if cond]", async () => {
+      const source = "def keep_positive(xs: list) -> list:\n    return [x for x in xs if x > 0]\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      const comp = ret.value as PythonAstNode;
+      expect(comp.type).toBe("ListComp");
+      expect(comp.kind).toBe("filter");
+      expect(comp.param).toBe("x");
+      // cond is a BinaryOp (x > 0)
+      expect((comp.cond as PythonAstNode).type).toBe("BinaryOp");
+    });
+
+    it("emits GeneratorExp map node for (f(x) for x in xs)", async () => {
+      const source = "def gen_doubled(xs: list) -> list:\n    return list(x * 2 for x in xs)\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      // Return value is a Call (list(...))
+      expect(ret.type).toBe("Return");
+      const callNode = ret.value as PythonAstNode;
+      expect(callNode.type).toBe("Call");
+      // The single arg is the GeneratorExp
+      const genArg = (callNode.args as PythonAstNode[])[0] as PythonAstNode;
+      expect(genArg.type).toBe("GeneratorExp");
+      expect(genArg.kind).toBe("map");
+    });
+
+    it("emits DictComp wire node for {k: v for k in keys}", async () => {
+      const source = "def invert(keys: list) -> dict:\n    return {k: 1 for k in keys}\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      const comp = ret.value as PythonAstNode;
+      expect(comp.type).toBe("DictComp");
+      expect(comp.param).toBe("k");
+      expect(comp.cond).toBeNull();
+    });
+
+    it("emits SetComp map node for {f(x) for x in xs}", async () => {
+      const source = "def unique_doubled(xs: list) -> set:\n    return {x * 2 for x in xs}\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      const comp = ret.value as PythonAstNode;
+      expect(comp.type).toBe("SetComp");
+      expect(comp.kind).toBe("map");
+      expect(comp.param).toBe("x");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// WI-907: Assign statement emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-907: Assign emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits Assign wire node for `y = x + 1` in function body", async () => {
+      // def add_one(x: int) -> int:
+      //     y = x + 1
+      //     return y
+      const source = "def add_one(x: int) -> int:\n    y = x + 1\n    return y\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      expect(body.length).toBeGreaterThanOrEqual(2);
+      // First stmt is Assign
+      const assignStmt = body[0] as PythonAstNode;
+      expect(assignStmt.type).toBe("Assign");
+      expect((assignStmt as { target?: string }).target).toBe("y");
+      // value is a BinaryOp (x + 1)
+      const val = (assignStmt as { value?: PythonAstNode }).value as PythonAstNode;
+      expect(val.type).toBe("BinaryOp");
+      expect((val as { op?: string }).op).toBe("+");
+      // Second stmt is Return
+      expect(body[1]?.type).toBe("Return");
+    });
+
+    it("emits Assign wire node for string assignment `rewritten = name.replace(...)`", async () => {
+      // def get_attr(name: str) -> str:
+      //     rewritten = name.replace("Name", "OtherName")
+      //     return rewritten
+      const source =
+        'def get_attr(name: str) -> str:\n    rewritten = name.replace("Name", "OtherName")\n    return rewritten\n';
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const body = fn.body as PythonAstNode[];
+      const assignStmt = body[0] as PythonAstNode;
+      expect(assignStmt.type).toBe("Assign");
+      expect((assignStmt as { target?: string }).target).toBe("rewritten");
+      // value is a Call node
+      const val = (assignStmt as { value?: PythonAstNode }).value as PythonAstNode;
+      expect(val.type).toBe("Call");
+      // Second stmt is Return
+      expect(body[1]?.type).toBe("Return");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// WI-908: BoolOp emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-908: BoolOp emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits BoolOp(and) for `x and y` in a return statement", async () => {
+      const source = "def both(x: bool, y: bool) -> bool:\n    return x and y\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      const val = ret.value as PythonAstNode;
+      expect(val.type).toBe("BoolOp");
+      expect((val as { op?: string }).op).toBe("and");
+      expect(((val as { left?: PythonAstNode }).left as PythonAstNode).type).toBe("Name");
+      expect(((val as { right?: PythonAstNode }).right as PythonAstNode).type).toBe("Name");
+    });
+
+    it("emits BoolOp(or) for `a or b` in a return statement", async () => {
+      const source = "def either(a: bool, b: bool) -> bool:\n    return a or b\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      const val = ret.value as PythonAstNode;
+      expect(val.type).toBe("BoolOp");
+      expect((val as { op?: string }).op).toBe("or");
+    });
+
+    it("emits nested BoolOp for chained `a and b and c`", async () => {
+      // Python AST / libcst represents `a and b and c` as BoolOp(BoolOp(a, and, b), and, c)
+      const source =
+        "def all_three(a: bool, b: bool, c: bool) -> bool:\n    return a and b and c\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      const outer = ret.value as PythonAstNode;
+      expect(outer.type).toBe("BoolOp");
+      expect((outer as { op?: string }).op).toBe("and");
+      // The left operand is itself a BoolOp (a and b)
+      const inner = (outer as { left?: PythonAstNode }).left as PythonAstNode;
+      expect(inner.type).toBe("BoolOp");
+      expect((inner as { op?: string }).op).toBe("and");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// WI-909: Comprehension tuple-target emission (real Python subprocess)
+// ---------------------------------------------------------------------------
+
+describe("WI-909: Comprehension tuple-target emission (real Python subprocess)", () => {
+  const pythonAvailable = (() => {
+    try {
+      execSync("python3 -c 'import libcst'", { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!pythonAvailable) {
+    it.skip("requires python3 with libcst installed (skipped)", () => {});
+  } else {
+    it("emits ListComp with target_kind:tuple and target_names for `[k for k, v in items]`", async () => {
+      const source = "def get_keys(items: list) -> list:\n    return [k for k, v in items]\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      const comp = ret.value as PythonAstNode;
+      expect(comp.type).toBe("ListComp");
+      expect((comp as { target_kind?: string }).target_kind).toBe("tuple");
+      expect((comp as { target_names?: string[] }).target_names).toEqual(["k", "v"]);
+      // param is set to joined names for backward compat
+      expect((comp as { param?: string }).param).toBe("k, v");
+    });
+
+    it("emits DictComp with target_kind:tuple for `{v: k for k, v in items}`", async () => {
+      const source = "def invert_dict(items: list) -> dict:\n    return {v: k for k, v in items}\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      const comp = ret.value as PythonAstNode;
+      expect(comp.type).toBe("DictComp");
+      expect((comp as { target_kind?: string }).target_kind).toBe("tuple");
+      expect((comp as { target_names?: string[] }).target_names).toEqual(["k", "v"]);
+      expect((comp as { param?: string }).param).toBe("k, v");
+      // cond is null — no if-clause
+      expect((comp as { cond?: unknown }).cond).toBeNull();
+    });
+
+    it("emits GeneratorExp with target_kind:tuple for `(v, k) for k, v in items`", async () => {
+      // dict((v, k) for k, v in items) — the _invert pattern from bs4
+      const source =
+        "def invert(d: dict) -> dict:\n    return dict((v, k) for k, v in list(d.items()))\n";
+      const result = await parsePythonSource(source);
+      const fn = (result.module.functions as PythonAstNode[])[0] as PythonAstNode;
+      const ret = (fn.body as PythonAstNode[])[0] as PythonAstNode;
+      expect(ret.type).toBe("Return");
+      // Return value is Call(dict, [GeneratorExp])
+      const callNode = ret.value as PythonAstNode;
+      expect(callNode.type).toBe("Call");
+      const genArg = (
+        (callNode as { args?: PythonAstNode[] }).args as PythonAstNode[]
+      )[0] as PythonAstNode;
+      expect(genArg.type).toBe("GeneratorExp");
+      expect((genArg as { target_kind?: string }).target_kind).toBe("tuple");
+      expect((genArg as { target_names?: string[] }).target_names).toEqual(["k", "v"]);
+      expect((genArg as { kind?: string }).kind).toBe("map");
+    });
+  }
 });

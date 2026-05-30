@@ -1257,3 +1257,27 @@ describe("init — polyglot adapter detection (#785)", () => {
     expect(existsSync(join(tmpDir, "node_modules"))).toBe(false);
   });
 });
+
+// Suite 25 extension: #870 slice 3 — explicit shave-go routing assertion.
+//
+// The existing Suite 25 tests (above) cover go.mod detection at the integration
+// level. This dedicated test makes the routing target explicit: a go.mod project
+// MUST route .go files through @yakcc/shave-go specifically, not any other adapter.
+// Verification-only: init routing was added by #785; slice 3 only strengthens the
+// assertion to name the package explicitly.
+describe("init — go.mod routes .go files through @yakcc/shave-go (#870 slice 3)", () => {
+  it("go.mod in target dir routes to @yakcc/shave-go (not shave-python, not shave-rust)", async () => {
+    writeFileSyncForPolyglot(join(tmpDir, "go.mod"), "module example.com/mymod\n\ngo 1.21\n");
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    // Primary: explicitly confirms @yakcc/shave-go is the routing target for Go
+    expect(out).toContain("@yakcc/shave-go");
+    // Secondary: the detection message names shave-go as the adapter
+    expect(out).toContain("Go project detected (go.mod)");
+    // Negative: a Go project must not route to the Python or Rust adapters
+    expect(out).not.toContain("@yakcc/shave-python");
+    expect(out).not.toContain("@yakcc/shave-rust");
+  });
+});

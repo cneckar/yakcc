@@ -1,6 +1,6 @@
 {
   "name": "@yakcc/cli",
-  "version": "0.5.0-alpha.2",
+  "version": "0.7.0-alpha.0",
   "description": "Yakcc — content-addressed block registry for assembling programs from verified, reusable building blocks.",
   "license": "Apache-2.0",
   "repository": {
@@ -38,7 +38,8 @@
     "LICENSE-ATOMS"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "latest"
   },
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
@@ -60,7 +61,9 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
+    "@yakcc/compile-python": "workspace:*",
     "@yakcc/compile": "workspace:*",
+    "@yakcc/shave-python": "workspace:*",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/federation": "workspace:*",
     "@yakcc/hooks-base": "workspace:*",

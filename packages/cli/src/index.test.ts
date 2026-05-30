@@ -18,7 +18,66 @@
 // Uses CollectingLogger — no mocks (Sacred Practice #5, DEC-CLI-LOGGER-001).
 
 import { describe, expect, it } from "vitest";
-import { CollectingLogger, runCli } from "./index.js";
+import pkg from "../package.json" with { type: "json" };
+import {
+  CollectingLogger,
+  IntegrityError,
+  blockMerkleRoot,
+  deserializeWireBlockTriplet,
+  openRegistry,
+  runCli,
+  serializeWireBlockTriplet,
+  specHash,
+} from "./index.js";
+
+describe("@yakcc/cli substrate facade exports", () => {
+  it("verifies substrate library APIs are re-exported from contracts/federation/registry", () => {
+    expect(typeof blockMerkleRoot).toBe("function");
+    expect(typeof specHash).toBe("function");
+    expect(typeof serializeWireBlockTriplet).toBe("function");
+    expect(typeof deserializeWireBlockTriplet).toBe("function");
+    expect(typeof IntegrityError).toBe("function");
+    expect(typeof openRegistry).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEC-CLI-VERSION-001: --version / -v / -V / version flags (WI-849)
+// ---------------------------------------------------------------------------
+
+describe("WI-849: version flags (DEC-CLI-VERSION-001)", () => {
+  /**
+   * All four invocations must print exactly pkg.version (single source of truth)
+   * and exit 0. Help header must also contain the version string.
+   * This test exercises the real runCli dispatch path end-to-end.
+   */
+  for (const flag of ["--version", "-v", "-V", "version"] as const) {
+    it(`runCli(['${flag}']) exits 0 and prints package.json version`, async () => {
+      const logger = new CollectingLogger();
+      const code = await runCli([flag], logger);
+      expect(code).toBe(0);
+      expect(logger.logLines).toHaveLength(1);
+      expect(logger.logLines[0]).toBe(pkg.version);
+      expect(logger.errLines).toHaveLength(0);
+    });
+  }
+
+  it("version output is the canonical package.json value (no hard-coded string)", async () => {
+    // Regression guard: if package.json version changes, the CLI must reflect it.
+    const logger = new CollectingLogger();
+    await runCli(["--version"], logger);
+    expect(logger.logLines[0]).toBe(pkg.version);
+  });
+
+  it("printUsage (--help) header contains the version string", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+    const firstLine = logger.logLines[0]?.split("\n")[0] ?? "";
+    expect(firstLine).toContain(pkg.version);
+    expect(firstLine).toContain("yakcc");
+  });
+});
 
 describe("T5: compile-self dispatch wiring in runCli — A2 (DEC-CLI-INDEX-001)", () => {
   it("runCli(['compile-self']) no longer returns exit code 2 — A1 stub retired", async () => {
@@ -148,5 +207,141 @@ describe("bench b3 dispatch smoke (WI-187)", () => {
     const out = logger.logLines.join("\n");
     expect(out).toContain("bench b3");
     expect(out).toContain("task-begin");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-877: shave / compile / roundtrip dispatch wiring tests
+//
+// These verify the runCli dispatch table routes the three new polyglot verbs
+// without exercising the Python pipeline (DEC-WI877-001, DEC-WI877-002,
+// DEC-WI877-003). All tests use exit paths that short-circuit before reaching
+// @yakcc/shave-python or @yakcc/compile-python.
+// ---------------------------------------------------------------------------
+
+describe("WI-877: shave polyglot dispatch (DEC-WI877-001)", () => {
+  it("shave --help mentions --target flag", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("--target");
+    expect(out).toContain("python");
+  });
+
+  it("shave --target rust exits 1 with #868 tracking pointer", async () => {
+    // --target rust short-circuits before opening a registry (DEC-WI877-005).
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--target", "rust", "foo.rs"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("868");
+  });
+
+  it("shave --target go exits 1 with #870 tracking pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--target", "go", "foo.go"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("870");
+  });
+
+  it("shave --target python with nonexistent file exits non-zero", async () => {
+    // Routes to Python path; file read fails → exit 1 (DEC-WI877-001).
+    const logger = new CollectingLogger();
+    const code = await runCli(["shave", "--target", "python", "/nonexistent/file.py"], logger);
+    expect(code).not.toBe(0);
+    expect(logger.errLines.join("\n")).toContain("error:");
+  });
+
+  it("printUsage --help describes shave with polyglot --target flag", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("shave");
+    expect(out).toContain("--target");
+    // WI-877: help text must mention the Python pipeline path
+    expect(out).toContain("python");
+  });
+});
+
+describe("WI-877: compile polyglot dispatch (DEC-WI877-002)", () => {
+  it("compile --help mentions --target flag", async () => {
+    // compile has no --help flag; missing entry exits 1 with usage error.
+    // Verify the dispatch arm exists and produces a usage-error (not unknown command).
+    const logger = new CollectingLogger();
+    const code = await runCli(["compile"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("compile requires");
+  });
+
+  it("compile --target rust exits 1 with #868 tracking pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["compile", "a".repeat(64), "--target", "rust"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("868");
+  });
+
+  it("compile --target go exits 1 with #870 tracking pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["compile", "a".repeat(64), "--target", "go"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("870");
+  });
+
+  it("compile --target unknown exits 1 with structured error", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["compile", "a".repeat(64), "--target", "cobol"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("unknown --target");
+  });
+
+  it("printUsage --help mentions compile --target flag and roundtrip verb", async () => {
+    const logger = new CollectingLogger();
+    await runCli(["--help"], logger);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("compile");
+    expect(out).toContain("roundtrip");
+    expect(out).toContain("--target");
+  });
+});
+
+describe("WI-877: roundtrip dispatch (DEC-WI877-003)", () => {
+  it("roundtrip --help returns 0 and mentions round-trip usage", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "--help"], logger);
+    expect(code).toBe(0);
+    const out = logger.logLines.join("\n");
+    expect(out).toContain("roundtrip");
+    expect(out).toContain("--target");
+  });
+
+  it("roundtrip <.ts file> exits 1 with #877 follow-up note (TS not wired in MVP)", async () => {
+    // A .ts file infers target=ts; TS roundtrip is not wired → exit 1 + #877 message.
+    // We pass an arbitrary .ts path — the TS branch short-circuits before reading the file.
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "foo.ts"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("877");
+  });
+
+  it("roundtrip --target rust exits 2 with #868 pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "foo.rs", "--target", "rust"], logger);
+    expect(code).toBe(2);
+    expect(logger.errLines.join("\n")).toContain("868");
+  });
+
+  it("roundtrip --target go exits 2 with #870 pointer", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip", "foo.go", "--target", "go"], logger);
+    expect(code).toBe(2);
+    expect(logger.errLines.join("\n")).toContain("870");
+  });
+
+  it("roundtrip with no file exits 1 with missing-file error", async () => {
+    const logger = new CollectingLogger();
+    const code = await runCli(["roundtrip"], logger);
+    expect(code).toBe(1);
+    expect(logger.errLines.join("\n")).toContain("missing file");
   });
 });

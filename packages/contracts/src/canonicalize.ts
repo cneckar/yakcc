@@ -94,6 +94,25 @@ export interface QueryIntentCard {
   readonly topK?: number | undefined;
   /** Minimum combinedScore threshold; candidates below this are excluded. */
   readonly minScore?: number | undefined;
+
+  /**
+   * Output-target language for atom lowerability filter (D2 amendment).
+   * NOT the atom's source language -- atoms have no source language in the
+   * registry. Omitted means "ts" (no filter applied). When set and not "ts",
+   * the discovery query path post-filters candidates via the corresponding
+   * @yakcc/compile-<lang> adapter's canLowerTo primitive.
+   *
+   * @decision DEC-DISCOVERY-D2-LANGUAGE-001
+   * @title QueryIntentCard.language is output-target, not atom source language
+   * @status accepted (WI-784)
+   * @rationale Atoms in the registry have no source language annotation -- they
+   *   are stored as TS-subset IR regardless of the language they were raised from.
+   *   The language field therefore filters by what can be lowered TO, not what
+   *   was compiled FROM. Default (undefined/"ts") preserves byte-identical
+   *   backward-compatible behavior for all existing callers.
+   *   References: docs/archive/developer/adr/discovery-query-language.md S2 Amendment.
+   */
+  readonly language?: "ts" | "py" | "go" | "rs" | undefined;
 }
 
 // ---------------------------------------------------------------------------

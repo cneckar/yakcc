@@ -34,6 +34,7 @@
 // RegistryOptions["embeddings"] keeps @yakcc/registry as the one type-level authority.
 
 import type { RegistryOptions } from "@yakcc/registry";
+import pkg from "../package.json" with { type: "json" };
 import { benchB3 } from "./commands/bench-b3.js";
 import { bootstrap } from "./commands/bootstrap.js";
 import { compileSelf } from "./commands/compile-self.js";
@@ -52,6 +53,7 @@ import { query } from "./commands/query.js";
 import { registryExport } from "./commands/registry-export.js";
 import { registryInit } from "./commands/registry-init.js";
 import { registryRebuild } from "./commands/registry-rebuild.js";
+import { roundtrip } from "./commands/roundtrip.js";
 import { search } from "./commands/search.js";
 import { seed } from "./commands/seed.js";
 import { shave } from "./commands/shave.js";
@@ -59,8 +61,25 @@ import { stats } from "./commands/stats.js";
 import { telemetry } from "./commands/telemetry.js";
 import { uninstall } from "./commands/uninstall.js";
 
-// Re-export ContractId for callers who import from @yakcc/cli.
-export type { ContractId } from "@yakcc/contracts";
+export * from "@yakcc/contracts";
+export * from "@yakcc/federation";
+export * from "@yakcc/registry";
+
+// ---------------------------------------------------------------------------
+// CLI version — single source of truth: packages/cli/package.json
+// ---------------------------------------------------------------------------
+
+/**
+ * @decision DEC-CLI-VERSION-001
+ * @title CLI_VERSION is read from package.json via JSON import (single source of truth)
+ * @status accepted
+ * @rationale Closes #849. Rather than duplicating the version string, we import it
+ *   directly from the canonical location (packages/cli/package.json). TypeScript
+ *   5.7+ + resolveJsonModule:true + with { type: "json" } is the supported form
+ *   under NodeNext/verbatimModuleSyntax. This means version flags (--version, -v,
+ *   -V, version) and the help header both reference the same constant — no drift.
+ */
+const CLI_VERSION: string = pkg.version;
 
 // ---------------------------------------------------------------------------
 // CliOptions interface
@@ -129,7 +148,7 @@ export class CollectingLogger implements Logger {
 // ---------------------------------------------------------------------------
 
 function printUsage(logger: Logger): void {
-  logger.log(`yakcc — content-addressed basic-block registry
+  logger.log(`yakcc ${CLI_VERSION} — content-addressed basic-block registry
 
 USAGE
   yakcc <command> [options]
@@ -149,8 +168,23 @@ COMMANDS
   registry init [--path <p>]          Initialize a registry (default: .yakcc/registry.sqlite)
   registry rebuild [--path <p>]       Re-embed all blocks after an embedding model swap
   registry export --to <p>            Export registry as canonical SQLite (VACUUM INTO)
-  compile <entry> [--registry <p>]    Assemble a module from a contract id, spec file, or directory
+  shave <path> [--registry <p>]       Shave a source file into atoms (TS pipeline, default)
+        [--offline]                   .py extension or --target python → Python pipeline (WI-877)
+        [--target <ts|python|         Override language inference from file extension
+                  rust|go>]          rust/go: exits 1 with tracking-issue pointer (#868/#870)
+        [--out <path>]                Python target: stdout when omitted, file/dir with --out
+        [--function <name>]           Python target: process only one named function
+        [--foreign-policy             TS target only: how to handle foreign-block deps
+              <allow|reject|tag>]     (ignored with warning for --target python)
+  compile <entry> [--registry <p>]   Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
+               [--target <ts|python|  Language target (default: ts); python writes module.py
+                         rust|go>]    rust/go: exits 1 with tracking-issue pointer (#868/#870)
+               [--function <name>]    Python target: compile one named function
+  roundtrip <file>                   Chain shave → compile → diff; emit per-function status table
+            [--target <ts|python|     Language target (auto-detected from extension)
+                      rust|go>]       Python-only MVP; TS branch exits 1 with #877 follow-up note
+            [--out <dir>]             Persist per-function artifacts (.ir.ts, .module.py, .diff.txt)
   propose <contract-file>             Check registry for a matching contract
           [--registry <p>]
   query <text> [--registry <p>]       Vector-search registry by semantic intent
@@ -164,8 +198,6 @@ COMMANDS
   bootstrap [--registry <p>]          Shave all source files, write manifest + report
             [--manifest <p>]          Manifest path (default: bootstrap/expected-roots.json)
             [--report <p>]            Per-file report (default: bootstrap/report.json)
-  shave <path> [--registry <p>]       Shave a TS source file into atoms via universalize
-        [--offline]
   hooks claude-code install           Wire yakcc tool-call interception for Claude Code
                 [--target <dir>]      Target project directory (default: .)
                 [--uninstall]         Remove the yakcc hook entry
@@ -312,6 +344,14 @@ export async function runCli(
       return shave(shaveArgv, logger);
     }
 
+    case "roundtrip": {
+      // `yakcc roundtrip <file> [--target <lang>] [--out <dir>]` (WI-877)
+      // Chains shave-python → compileToPython → per-function diff.
+      // Python-only MVP; TS branch exits 1 with follow-up note.
+      const roundtripArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return roundtrip(roundtripArgv, logger);
+    }
+
     case "federation": {
       // Reassemble remaining args: subcommand (the federation verb) + rest.
       const fedArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
@@ -426,6 +466,14 @@ export async function runCli(
       // `yakcc telemetry [--path] [--tail <n>]` -- inspect local telemetry (WI-760).
       const telemetryArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return telemetry(telemetryArgv, logger);
+    }
+
+    case "--version":
+    case "-v":
+    case "-V":
+    case "version": {
+      logger.log(CLI_VERSION);
+      return 0;
     }
 
     case undefined:

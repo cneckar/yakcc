@@ -3,7 +3,7 @@
 // Opens the registry via @yakcc/registry.openRegistry(), delegates all pipeline logic
 // to shaveImpl(), and prints a human-readable summary. Error paths follow the
 // established pattern from seed.ts and compile.ts: catch, log to logger.error(), return 1.
-// Status: updated (WI-V2-04 L5: foreign-policy gate output added)
+// Status: updated (WI-V2-04 L5: foreign-policy gate output added; WI-877: polyglot sniff)
 // Rationale: Keeps the CLI layer thin — argument parsing, registry open/close, and
 // output formatting live here; pipeline logic stays in @yakcc/shave. Matches the
 // `(argv, logger) → Promise<number>` contract shared by all yakcc commands.
@@ -15,6 +15,28 @@
 //   - 'tag' policy: shaveImpl() returns ShaveResultWithForeign.foreignDeps;
 //     when non-empty, emit "foreign deps: pkg#export[, ...]" to stdout. (L5-I4)
 //   - 'allow' policy: no change — shaveImpl() returns no foreignDeps. (L5-I5)
+//
+// WI-877 polyglot sniff:
+//   A small dispatch block at the top of shave() detects --target python (or .py
+//   extension) and delegates to runShavePython.  The entire existing TS pipeline
+//   is preserved verbatim below the sniff.
+//
+// @decision DEC-WI877-001
+// @title yakcc shave arg shape + extension-driven Python dispatch + TS-path preserved verbatim
+// @status accepted (WI-877)
+// @rationale
+//   Option C: the polyglot dispatch is a sniff at the top of the existing entry
+//   function.  The TS path falls through unchanged.  .py extension → python target;
+//   --target overrides extension; --target rust/go exit 1 with issue pointers.
+//   --foreign-policy is ignored for non-TS targets (warning emitted).
+//   Cross-reference: PLAN.md §3.1 §4 / #877
+//
+// @decision DEC-WI877-008 §A
+// @title Polyglot dispatch is added as a sniff at the top; existing TS code untouched below
+// @status accepted (WI-877)
+// @rationale
+//   The diff for this WI shows the existing TS code untouched below the sniff line.
+//   Cross-reference: PLAN.md §4 / #877
 
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -29,6 +51,8 @@ import {
 import type { Logger } from "../index.js";
 import { makeCommonsBinding } from "../lib/commons-submit.js";
 import { readRc } from "../lib/yakccrc.js";
+import { TARGETS_TRACKED, inferTarget } from "./lang-target.js";
+import { runShavePython } from "./shave-python.js";
 
 /** Valid values for --foreign-policy. */
 const VALID_FOREIGN_POLICIES: readonly ForeignPolicy[] = ["allow", "reject", "tag"];
@@ -39,6 +63,10 @@ const SHAVE_PARSE_OPTIONS = {
   offline: { type: "boolean", default: false },
   help: { type: "boolean", short: "h", default: false },
   "foreign-policy": { type: "string" },
+  // WI-877 polyglot additions (parsed here so parseArgs does not throw on unknown flags)
+  target: { type: "string" },
+  out: { type: "string", short: "o" },
+  function: { type: "string" },
 } as const;
 
 /**
@@ -71,10 +99,53 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
 
   if (parsed.values.help) {
     logger.log(
-      `Usage: yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <allow|reject|tag>]\n  Shave a source file into universalize result (atoms + intent + license).\n  --foreign-policy: how to handle foreign-block deps (default: ${FOREIGN_POLICY_DEFAULT})`,
+      `Usage: yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <allow|reject|tag>]\n       [--target <ts|python|rust|go>] [--out <path>] [--function <name>]\n  Shave a source file into universalized result (atoms + intent + license).\n  .ts/.tsx files use the TS pipeline (default). .py files use the Python pipeline.\n  --target: override extension inference (default: inferred from file extension).\n  --out: output path for Python target (stdout when omitted).\n  --function: process only one named function (Python target only).\n  --foreign-policy: how to handle foreign-block deps (TS target only, default: ${FOREIGN_POLICY_DEFAULT})`,
     );
     return 0;
   }
+
+  // ---------------------------------------------------------------------------
+  // WI-877: Polyglot sniff — must run before TS-specific validation.
+  // Infer target from positional file extension or explicit --target flag.
+  // The TS path falls through unchanged below this block (DEC-WI877-008 §A).
+  // ---------------------------------------------------------------------------
+  {
+    const positional = parsed.positionals[0];
+    const explicitTarget = parsed.values.target as string | undefined;
+    const target = inferTarget(positional, explicitTarget);
+
+    if (target === "python") {
+      return runShavePython(
+        {
+          filePath: positional ?? "",
+          functionFilter: parsed.values.function as string | undefined,
+          out: parsed.values.out as string | undefined,
+          ignoredForeignPolicy: parsed.values["foreign-policy"] !== undefined,
+        },
+        logger,
+      );
+    }
+
+    if (target === "rust" || target === "go") {
+      const issue = TARGETS_TRACKED[target];
+      logger.error(`error: --target ${target} is not yet wired; tracked at #${issue}`);
+      return 1;
+    }
+
+    if (target === "unknown") {
+      // An explicit --target was given but it's not a known language.
+      if (explicitTarget !== undefined) {
+        logger.error(
+          `error: unknown --target value: ${explicitTarget}. Must be one of: ts, python, rust, go`,
+        );
+        return 1;
+      }
+      // Extension is unrecognized and no --target override — fall through to TS path.
+      // The TS pipeline will fail gracefully if the file is not TS.
+    }
+    // target === "ts" | "unknown-without-override" → fall through to existing TS path.
+  }
+  // END WI-877 polyglot sniff — existing TS code below this line is UNCHANGED.
 
   // Validate --foreign-policy value when provided.
   const rawForeignPolicy = parsed.values["foreign-policy"];

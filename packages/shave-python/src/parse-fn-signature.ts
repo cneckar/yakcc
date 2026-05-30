@@ -10,9 +10,21 @@
 //
 // Out of scope for slice 2: body translation (slice 2b), purity inference
 // (slice 3), snake_case → camelCase normalization (slice 3).
+//
+// WI-889: threads LowerWarning from mapPythonType onto RaisedParam.warnings
+// and FunctionSignature.returnWarnings.
+//
+// @decision DEC-WI889-009
+// @title RaisedParam.warnings + FunctionSignature.returnWarnings (per-param + per-return)
+// @status accepted
+// @rationale
+//   Locality — each warning ties to the annotation that produced it.
+//   Consumers can union warnings when needed.  Additive fields: downstream
+//   consumers (raise-function.ts, purity-check.ts) continue to typecheck
+//   against the new fields without behavioral change.
 
 import type { LibcstParseResult } from "./libcst-parser.js";
-import { UnsupportedTypeError, mapPythonType } from "./type-map.js";
+import { type LowerWarning, UnsupportedTypeError, mapPythonType } from "./type-map.js";
 
 export interface RaisedParam {
   /** Parameter name as written in Python (no normalization yet — slice 3). */
@@ -21,6 +33,14 @@ export interface RaisedParam {
   readonly tsType: string;
   /** The raw Python annotation text (for diagnostics). */
   readonly pythonAnnotation: string;
+  /**
+   * Warnings emitted during type mapping for this parameter's annotation.
+   * Empty (or absent) for lossless mappings; non-empty when the annotation
+   * required widening (e.g. Any -> unknown).  WI-889 / DEC-WI889-009.
+   * Optional to preserve backwards compatibility with existing construction
+   * sites in normalize-names.ts and test helpers (DEC-WI889-010 additive-only).
+   */
+  readonly warnings?: readonly LowerWarning[];
 }
 
 export interface FunctionSignature {
@@ -34,6 +54,47 @@ export interface FunctionSignature {
   readonly pythonReturnAnnotation: string | null;
   /** Verbatim Python body text (for slice 2b's body raise). */
   readonly bodyPythonSource: string;
+  /**
+   * Warnings emitted during return-type mapping.
+   * Empty (or absent) for lossless return types.  WI-889 / DEC-WI889-009.
+   * Optional to preserve backwards compatibility with existing construction
+   * sites in raise-function.test.ts and normalize-names.test.ts.
+   */
+  readonly returnWarnings?: readonly LowerWarning[];
+}
+
+/**
+ * A failed per-function extraction record — returned by `extractFunctionSignaturesAll`
+ * for functions that could not be fully raised.
+ *
+ * @decision DEC-SHAVE-PY-PARSE-SIG-899
+ * @title Per-function extraction failure record
+ * @status accepted (#899)
+ * @rationale
+ *   extractFunctionSignatures used .map() which threw on the first failure,
+ *   aborting extraction of all remaining functions (#899).  The fix wraps each
+ *   extractOne() call in try/catch.  Failed entries are exposed via
+ *   extractFunctionSignaturesAll so callers that want the full picture (e.g.
+ *   exploration scripts, batch tools) can inspect per-function errors.
+ *   extractFunctionSignatures preserves its existing return type (FunctionSignature[])
+ *   for backward compatibility with integration.test.ts and other callers not in scope.
+ */
+export interface ExtractionFailure {
+  /** Python function name from the envelope. */
+  readonly name: string;
+  /** The error that caused extraction to fail for this function. */
+  readonly error: Error;
+}
+
+/**
+ * Return shape of `extractFunctionSignaturesAll` — separates successes from
+ * per-function failures.
+ */
+export interface ExtractionResult {
+  /** Successfully extracted function signatures. */
+  readonly ok: readonly FunctionSignature[];
+  /** Functions that failed extraction, with their errors. */
+  readonly failed: readonly ExtractionFailure[];
 }
 
 /**
@@ -71,16 +132,50 @@ interface EnvelopeFunction {
 
 /**
  * Walk the libcst envelope and return a typed `FunctionSignature[]` — one
- * entry per top-level `def`.  Each function's annotations are validated and
- * mapped to TS-subset IR types via `mapPythonType`.
+ * entry per successfully extracted top-level `def`.
  *
- * Throws on the first error encountered (missing annotation or unsupported
- * type).  Callers that want all errors should walk the envelope themselves.
+ * Unlike the pre-#899 implementation, this function does NOT throw on the
+ * first per-function failure.  Each function is extracted independently; if
+ * one fails (e.g. unsupported type annotation), it is silently skipped and
+ * extraction continues for the remaining functions.
+ *
+ * Callers that need the full picture (successes AND per-function failures)
+ * should use `extractFunctionSignaturesAll` instead.
+ *
+ * Return type is preserved as `FunctionSignature[]` for backward compatibility
+ * with existing callers.
  */
 export function extractFunctionSignatures(envelope: LibcstParseResult): FunctionSignature[] {
+  return extractFunctionSignaturesAll(envelope).ok as FunctionSignature[];
+}
+
+/**
+ * Walk the libcst envelope and return an `ExtractionResult` with both
+ * successfully extracted signatures and per-function failures.
+ *
+ * Each function is extracted independently via try/catch so a single
+ * failure (unsupported annotation, missing annotation, etc.) does not
+ * abort extraction of the remaining functions in the module (#899).
+ */
+export function extractFunctionSignaturesAll(envelope: LibcstParseResult): ExtractionResult {
   const moduleRecord = envelope.module as unknown as { functions?: EnvelopeFunction[] };
   const fns = moduleRecord.functions ?? [];
-  return fns.map((fn) => extractOne(fn));
+
+  const ok: FunctionSignature[] = [];
+  const failed: ExtractionFailure[] = [];
+
+  for (const fn of fns) {
+    try {
+      ok.push(extractOne(fn));
+    } catch (err) {
+      failed.push({
+        name: fn.name,
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
+  }
+
+  return { ok, failed };
 }
 
 function extractOne(fn: EnvelopeFunction): FunctionSignature {
@@ -89,10 +184,12 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
       throw new MissingTypeAnnotationError(fn.name, p.name);
     }
     try {
+      const { tsType, warnings } = mapPythonType(p.annotation);
       return {
         name: p.name,
         pythonAnnotation: p.annotation,
-        tsType: mapPythonType(p.annotation),
+        tsType,
+        warnings,
       };
     } catch (err) {
       if (err instanceof UnsupportedTypeError) {
@@ -107,11 +204,14 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
   });
 
   let returnType: string;
+  let returnWarnings: readonly LowerWarning[];
   if (fn.return_annotation === null) {
     throw new MissingTypeAnnotationError(fn.name, null);
   }
   try {
-    returnType = mapPythonType(fn.return_annotation);
+    const result = mapPythonType(fn.return_annotation);
+    returnType = result.tsType;
+    returnWarnings = result.warnings;
   } catch (err) {
     if (err instanceof UnsupportedTypeError) {
       throw new UnsupportedTypeError(
@@ -128,5 +228,6 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     returnType,
     pythonReturnAnnotation: fn.return_annotation,
     bodyPythonSource: fn.body_source,
+    returnWarnings,
   };
 }

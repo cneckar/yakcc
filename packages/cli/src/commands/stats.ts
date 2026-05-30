@@ -4,37 +4,50 @@
 //
 // @decision DEC-CLI-STATS-SCOPE-001
 // @title `yakcc stats` (WI-764) ships Tier 1 only — telemetry-only metrics
-// @status accepted (WI-764)
+// @status superseded for Tier-2/3 by DEC-CLI-STATS-TIER-2-001 (WI-768, 2026-05-29)
 // @rationale
 //   Tier-2 headline metrics ("most-reused atoms", "LoC matched-to-atom") need
-//   registry-hit telemetry events with atom hashes. The production hook
-//   (hook-intercept.ts) hard-codes every event as outcome: "passthrough" with
-//   null atom hash — Phase-2 substitution is not yet wired. Additionally, the
-//   registry package exposes no public "list all blocks with createdAt" API.
-//   Tier 1 alone answers the operator's central question ("is the hook finding
+//   registry-hit telemetry events with atom hashes. At WI-764 time the production hook
+//   (hook-intercept.ts) hard-coded every event as outcome: "passthrough" with
+//   null atom hash — Phase-2 substitution was not yet wired. Additionally, the
+//   registry package exposed no public "list all blocks with createdAt" API.
+//   Tier 1 alone answered the operator's central question ("is the hook finding
 //   hits / no-oping?") at lowest cost, zero new registry coupling, and zero
-//   telemetry-schema change. Tier 2/3/4 are tracked as separate follow-up issues.
-//   See plans/wi-764-yakcc-stats.md §2.4 for full code-cited rationale.
+//   telemetry-schema change. Tier 2/3/4 were tracked as separate follow-up issues.
+//   WI-831 (PR 2026-05-28) unblocked Tier-2 by wiring Phase-2 substitution telemetry.
+//   WI-792 Slice F shipped Registry.getBlock(). Tier-2+3 now ship here (WI-768).
+//   Tier-4 (registry coverage via listCatalogPage) remains deferred.
+//   See DEC-CLI-STATS-TIER-2-001 in MASTER_PLAN.md for the full Tier-2/3 record.
 //
 // @decision DEC-CLI-STATS-COMMAND-001
 // @title `yakcc stats` command shape: --since + --json, parseArgs, injected Logger
-// @status accepted (WI-764)
+// @status accepted (WI-764); additive-forward contract exercised by Tier-2 (WI-768)
 // @rationale
 //   Mirrors the established telemetry.ts command pattern (DEC-CLI-TELEMETRY-COMMAND-001)
 //   for consistency and testability via CollectingLogger. Additive-forward --json schema:
-//   top-level keys are designed so Tier-2 fields ("atoms": {...}) can be appended in a
-//   future WI without breaking existing consumers. --since uses Date.parse() with the
-//   inclusive t >= sinceMs semantics documented below. Non-interactive: never reads stdin.
+//   top-level keys are designed so Tier-2 fields ("atoms": {...}) can be appended without
+//   breaking existing consumers. --since uses Date.parse() with the inclusive t >= sinceMs
+//   semantics documented below. Non-interactive: never reads stdin.
 //
 // @decision DEC-CLI-STATS-READER-SEAM-001 (see @yakcc/hooks-base/telemetry.ts)
 //   All telemetry reads go through readTelemetrySessions() from @yakcc/hooks-base.
 //   stats.ts contains NO second JSONL reader, no JSON.parse over telemetry lines,
 //   no readFileSync line-splitting — only aggregation and formatting.
+//   Tier-2 aggregation (collectAtomReuse in stats-atoms.ts) is a SECOND pure reducer
+//   over TelemetryEvent[] produced by that seam — no new JSONL reader introduced.
 //
-// --json schema forward-compatibility note:
-//   The top-level JSON object currently contains: version, generatedAt, window,
-//   summary, outcomeBreakdown, perToolBreakdown, matchQuality, sessions.
-//   Future Tier-2 fields (e.g. "atoms": {...}) will be added as new top-level keys.
+// @decision DEC-CLI-STATS-TIER-2-001
+// @title Tier-2 atom-reuse + Tier-3 LoC-saved fold-in wired here (WI-768)
+// @status accepted (2026-05-29)
+// @rationale
+//   collectAtomReuse() is called after aggregate() with the same totalEvents slice.
+//   Registry path defaults to DEFAULT_REGISTRY_PATH; injectable via YAKCC_REGISTRY_PATH
+//   for test isolation. Registry is opened at most once per invocation (I-C invariant)
+//   inside collectAtomReuse. See stats-atoms.ts for the full decision record.
+//
+// --json schema (v1, additive-forward):
+//   Top-level keys: version, generatedAt, window, summary, outcomeBreakdown,
+//   perToolBreakdown, matchQuality, sessions, atoms (new in WI-768).
 //   Consumers must tolerate unknown top-level keys (additive-forward contract).
 
 import { parseArgs } from "node:util";
@@ -44,6 +57,8 @@ import {
   resolveTelemetryDir,
 } from "@yakcc/hooks-base/telemetry.js";
 import type { Logger } from "../index.js";
+import { DEFAULT_REGISTRY_PATH } from "./registry-init.js";
+import { type AtomStats, collectAtomReuse } from "./stats-atoms.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -245,8 +260,8 @@ function aggregate(
 // Output formatters
 // ---------------------------------------------------------------------------
 
-/** Print the human-readable Tier-1 overview table. */
-function printHumanOutput(stats: AggregatedStats, logger: Logger): void {
+/** Print the human-readable Tier-1 + Tier-2 overview table. */
+function printHumanOutput(stats: AggregatedStats, atomStats: AtomStats, logger: Logger): void {
   const {
     totalEvents,
     outcomeCounts,
@@ -332,6 +347,34 @@ function printHumanOutput(stats: AggregatedStats, logger: Logger): void {
     logger.log("");
   }
 
+  // --- Atom reuse (Tier-2 + Tier-3) ---
+  logger.log("ATOM REUSE");
+  if (atomStats.degraded) {
+    logger.log(`  (registry unavailable: ${atomStats.degradedReason ?? "unknown"})`);
+    logger.log("  Run `yakcc init` to set up the local registry.");
+  } else if (atomStats.top.length === 0) {
+    logger.log("  (no atom-reuse data yet)");
+    logger.log("  Atom-reuse metrics appear once Phase-2 registry-hit events are recorded.");
+  } else {
+    const locTotal = atomStats.locSaved?.total ?? 0;
+    logger.log(`  LoC saved (total):     ${locTotal.toString().padStart(6)}`);
+    if (atomStats.hitRateP50 !== null) {
+      logger.log(`  Hit-rate P50:          ${atomStats.hitRateP50.toString().padStart(6)}`);
+    }
+    if (atomStats.hitRateP90 !== null) {
+      logger.log(`  Hit-rate P90:          ${atomStats.hitRateP90.toString().padStart(6)}`);
+    }
+    logger.log("  Top atoms by reuse:");
+    for (const entry of atomStats.top.slice(0, 5)) {
+      const grain = entry.level ?? "?";
+      const lines = entry.lines !== null ? `${entry.lines} lines` : "?";
+      logger.log(
+        `    ${entry.atomHash.slice(0, 12)}…  hits: ${entry.hits.toString().padStart(4)}  grain: ${grain}  impl: ${lines}`,
+      );
+    }
+  }
+  logger.log("");
+
   // --- Footer ---
   logger.log("For raw telemetry: yakcc telemetry --tail 100");
 }
@@ -339,6 +382,7 @@ function printHumanOutput(stats: AggregatedStats, logger: Logger): void {
 /** Emit the machine-readable --json one-liner. Schema is additive-forward (DEC-CLI-STATS-COMMAND-001). */
 function printJsonOutput(
   stats: AggregatedStats,
+  atomStats: AtomStats,
   windowSinceMs: number | null,
   logger: Logger,
 ): void {
@@ -390,8 +434,10 @@ function printJsonOutput(
       medianTopScore: med,
     },
     sessions: Array.from(daysActive).sort(),
-    // Tier-2 fields (atoms, registry join) will be added here in a future WI.
-    // Consumers must tolerate unknown top-level keys (additive-forward contract).
+    // Tier-2 + Tier-3: atom-reuse block (additive — DEC-CLI-STATS-TIER-2-001).
+    // Consumers must tolerate unknown top-level keys (additive-forward contract,
+    // DEC-CLI-STATS-COMMAND-001).
+    atoms: atomStats,
   };
 
   logger.log(JSON.stringify(output));
@@ -488,15 +534,23 @@ export async function stats(argv: readonly string[], logger: Logger): Promise<nu
   // --- Empty-state detection (T-1 / T-2 / T-3 / AC-5) ---
   const noData = totalEvents.length === 0;
 
+  // --- Tier-2 + Tier-3 atom-reuse aggregation (DEC-CLI-STATS-TIER-2-001) ---
+  // Runs unconditionally so the atoms block is always present in --json output
+  // (including the zero-shaped empty-state, per the additive-forward invariant).
+  // Registry path: YAKCC_REGISTRY_PATH env var overrides DEFAULT_REGISTRY_PATH
+  // for test isolation; production uses DEFAULT_REGISTRY_PATH relative to cwd.
+  const registryPath = process.env.YAKCC_REGISTRY_PATH ?? DEFAULT_REGISTRY_PATH;
+  const atomStats = await collectAtomReuse(totalEvents, { registryPath });
+
   if (useJson) {
     if (noData) {
       // Zero-state --json: well-formed object with all-zero counts.
       const zeroStats = aggregate([], sessions.length, totalSkippedLines);
-      printJsonOutput(zeroStats, sinceMs, logger);
+      printJsonOutput(zeroStats, atomStats, sinceMs, logger);
       return 0;
     }
     const aggStats = aggregate(totalEvents, sessions.length, totalSkippedLines);
-    printJsonOutput(aggStats, sinceMs, logger);
+    printJsonOutput(aggStats, atomStats, sinceMs, logger);
     return 0;
   }
 
@@ -527,6 +581,6 @@ export async function stats(argv: readonly string[], logger: Logger): Promise<nu
   }
 
   const aggStats = aggregate(totalEvents, sessions.length, totalSkippedLines);
-  printHumanOutput(aggStats, logger);
+  printHumanOutput(aggStats, atomStats, logger);
   return 0;
 }
