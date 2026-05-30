@@ -11,6 +11,13 @@
 // WI-911 additions to the wire AST:
 //   Expr: Subscript — `obj[key]` → `obj[key]`
 //
+// WI-931 additions to the wire AST:
+//   Expr: Attribute — `obj.attr` → `obj.attr` (bare attribute access as expression value)
+//
+// WI-932 additions to the wire AST:
+//   Expr: BinaryOp op="in"/"not_in" — `x in y` → `y.includes(x)`;
+//         `x not in y` → `!y.includes(x)`
+//
 // WI-912 additions to the wire AST:
 //   Expr: BinaryOp op="is"/"is_not" — `x is None` → `x === null`;
 //         `x is y` (non-None) → `x === y` with identity-approximated warning comment
@@ -225,6 +232,9 @@ export type WireExpr =
       readonly target_kind?: "tuple";
       readonly target_names?: readonly string[];
     }
+  // WI-931: Attribute — `obj.attr` as a bare expression value → `obj.attr`
+  // Chained access (a.b.c) is represented as nested Attribute nodes and renders naturally.
+  | { readonly type: "Attribute"; readonly value: WireExpr; readonly attr: string }
   // WI-911: Subscript — `obj[key]` → `obj[key]`
   | { readonly type: "Subscript"; readonly value: WireExpr; readonly slice: WireExpr }
   // WI-913: Tuple value — `(a, b)` → `[a, b]` (JS array literal)
@@ -283,6 +293,9 @@ const ALLOWED_BINARY_OPS = new Set<string>([
   // WI-912: identity comparison ops — rendered specially (None→null, else strict-eq)
   "is",
   "is_not",
+  // WI-932: membership ops — rendered as .includes() / !.includes()
+  "in",
+  "not_in",
 ]);
 
 const ALLOWED_UNARY_OPS = new Set<string>(["-", "+", "!", "~"]);
@@ -322,6 +335,15 @@ export function renderExpr(expr: WireExpr): string {
         const right = expr.right.type === "None" ? "null" : renderExpr(expr.right);
         const left = renderExpr(expr.left);
         return `(${left} ${tsOp} ${right})`;
+      }
+      // WI-932: membership operators `x in y` → `y.includes(x)`, `x not in y` → `!y.includes(x)`
+      // MVP: .includes() covers string and array membership which are the common cases.
+      // Dict-key membership is rare; callers should audit non-array/string `in` if needed.
+      if (expr.op === "in") {
+        return `${renderExpr(expr.right)}.includes(${renderExpr(expr.left)})`;
+      }
+      if (expr.op === "not_in") {
+        return `!${renderExpr(expr.right)}.includes(${renderExpr(expr.left)})`;
       }
       // Always parenthesize to avoid precedence surprises across the Python → TS boundary.
       return `(${renderExpr(expr.left)} ${expr.op} ${renderExpr(expr.right)})`;
@@ -414,6 +436,11 @@ export function renderExpr(expr: WireExpr): string {
         `.map(${scParam} => ${renderExpr(expr.elt)}))`
       );
     }
+    case "Attribute":
+      // WI-931: `obj.attr` → `obj.attr` — bare attribute access as an expression value.
+      // value is fully recursive so chained access a.b.c renders naturally:
+      // Attribute(Attribute(a, b), c) → renderExpr(Attribute(a,b)) + ".c" → "a.b.c".
+      return `${renderExpr(expr.value)}.${expr.attr}`;
     case "Subscript":
       // WI-911: `obj[key]` → `obj[key]`
       // Both value and slice are fully recursive — handles nested subscripts,

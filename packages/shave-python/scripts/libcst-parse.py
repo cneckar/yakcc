@@ -70,8 +70,19 @@
 # a message mentioning "nested function definition (closure) — not supported in
 # MVP, refactor to module-level". Cross-reference: #905.
 #
-# Wire shape (cumulative through WI-913):
-#   functions[].body:
+# WI-931: bare Attribute access (obj.attr as expression value) — _expr() now emits
+# {"type":"Attribute","value":<Expr>,"attr":"<str>"} for libcst.Attribute nodes that
+# appear outside of a Call callee.  Previously, Attribute was silently swallowed by
+# _callee_name and only worked inside Call.  Adding a first-class Attribute wire node
+# makes bare access (`cls.CONSTANT`, `obj.attr` as return value, argument, etc.) render
+# correctly in raise-body.ts.  Cross-reference: #931.
+#
+# WI-932: Comparison In / NotIn membership operators — COMPARE_OP_MAP now includes
+# libcst.In → "in" and libcst.NotIn → "not_in".  The TS renderer maps these to
+# right.includes(left) and !right.includes(left) respectively, covering the common
+# string/array membership case.  Cross-reference: #932.
+#
+# Wire shape (cumulative through WI-932):
 #     [ Statement, ... ]
 #   Statement:
 #     {"type": "Return", "value": <Expr> | null}
@@ -114,6 +125,7 @@
 #              "iter": <Expr>, "param": "<str>", "elt": <Expr>,
 #              "cond": <Expr>?,
 #              "target_kind"?: "tuple", "target_names"?: [<str>,...]}   [WI-909]
+#     {"type": "Attribute", "value": <Expr>, "attr": "<str>"}           [WI-931]
 #     {"type": "Subscript", "value": <Expr>, "slice": <Expr>}           [WI-911]
 #     {"type": "Tuple", "elements": [<Expr>, ...]}                      [WI-913]
 #     {"type": "Unsupported", "reason": "<str>"}
@@ -170,6 +182,8 @@ COMPARE_OP_MAP = {
     "GreaterThanEqual": ">=",
     "Is": "is",  # WI-912: `x is y` — TS: === (None→null, else strict-eq)
     "IsNot": "is_not",  # WI-912: `x is not y` — TS: !== (None→null, else strict-neq)
+    "In": "in",  # WI-932: `x in y` — TS: y.includes(x)
+    "NotIn": "not_in",  # WI-932: `x not in y` — TS: !y.includes(x)
 }
 
 # Slice 4: unary op map (libcst class name → TS op string)
@@ -540,6 +554,30 @@ def _expr(node):  # type: ignore[no-untyped-def]
                 "elt": _expr(node.elt),
             }
         return {"type": "Unsupported", "reason": "SetComp with multiple if-clauses"}
+
+    # WI-931: bare Attribute access — obj.attr as an expression value.
+    # Attribute IS already handled implicitly inside _callee_name() (for Call
+    # callees such as `module.fn(...)`), but that path only extracts a dotted
+    # string and never returns a wire node.  When Attribute appears as a
+    # *value* — return value, argument, RHS of an assignment, etc. — we must
+    # emit a proper Attribute wire node so raise-body.ts can render it.
+    #
+    # Wire shape: {"type": "Attribute", "value": <Expr>, "attr": "<str>"}
+    # where "value" is the object expression and "attr" is the identifier name.
+    # Chained access (a.b.c) is handled naturally via recursion: the inner
+    # a.b is itself an Attribute node emitted by the recursive _expr(node.value)
+    # call, producing nested Attribute wire nodes that render as a.b.c.
+    #
+    # Note: libcst.Attribute.attr is a libcst.Name; we read .value for the str.
+    if isinstance(node, libcst.Attribute):
+        attr_name = node.attr.value if isinstance(node.attr, libcst.Name) else None
+        if attr_name is None:
+            return {"type": "Unsupported", "reason": "Attribute with non-Name attr"}
+        return {
+            "type": "Attribute",
+            "value": _expr(node.value),
+            "attr": attr_name,
+        }
 
     # WI-911: obj[key] — libcst.Subscript.
     # .value is the object expr; .slice is a tuple of SubscriptElement.
