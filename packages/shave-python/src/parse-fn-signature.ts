@@ -24,6 +24,7 @@
 //   against the new fields without behavioral change.
 
 import type { LibcstParseResult } from "./libcst-parser.js";
+import { ImpureFunctionError } from "./purity-check.js";
 import { type LowerWarning, UnsupportedTypeError, mapPythonType } from "./type-map.js";
 
 export interface RaisedParam {
@@ -43,6 +44,17 @@ export interface RaisedParam {
   readonly warnings?: readonly LowerWarning[];
 }
 
+/**
+ * WI-890: kind of method extracted from a class body.
+ * Absent on module-level functions (preserves byte-equivalence for all
+ * pre-WI-890 callers).
+ *
+ * - "static"   — decorated with @staticmethod; treated as a pure module-level fn
+ * - "class"    — decorated with @classmethod; cls param; purity check allows it
+ * - "instance" — no decorator; self param; always rejected as impure
+ */
+export type MethodKind = "static" | "class" | "instance";
+
 export interface FunctionSignature {
   /** Function name as written in Python (no normalization yet — slice 3). */
   readonly name: string;
@@ -61,6 +73,18 @@ export interface FunctionSignature {
    * sites in raise-function.test.ts and normalize-names.test.ts.
    */
   readonly returnWarnings?: readonly LowerWarning[];
+  /**
+   * WI-890: present only for methods extracted from a class body.
+   * Absent for module-level functions (undefined).
+   *
+   * @decision DEC-WI890-002 — methodKind optional on FunctionSignature
+   * @title methodKind absent for module-level fns, present for class methods
+   * @status accepted
+   * @rationale Absent (undefined) is the natural representation for "not a
+   *   class method" — avoids a sentinel value and preserves backward compat
+   *   with all pre-WI-890 callers that construct FunctionSignature directly.
+   */
+  readonly methodKind?: MethodKind;
 }
 
 /**
@@ -128,6 +152,8 @@ interface EnvelopeFunction {
   params: EnvelopeParam[];
   return_annotation: string | null;
   body_source: string;
+  /** WI-890: present only for class-body methods. */
+  methodKind?: MethodKind;
 }
 
 /**
@@ -179,6 +205,24 @@ export function extractFunctionSignaturesAll(envelope: LibcstParseResult): Extra
 }
 
 function extractOne(fn: EnvelopeFunction): FunctionSignature {
+  // WI-890: short-circuit instance methods BEFORE annotation checks so that
+  // "self has no type annotation" doesn't mask the real rejection reason.
+  //
+  // @decision DEC-WI890-003 — instance method short-circuit before annotation checks
+  // @title ImpureFunctionError("instance_method") fires before MissingTypeAnnotationError
+  // @status accepted
+  // @rationale The plan requires rejection to fire in extract + purity, not in
+  //   raise-body.  Instance methods always have an implicit self param without
+  //   annotation; without this gate the error message would be
+  //   "parameter 'self' lacks type annotation" which is confusing.
+  if (fn.methodKind === "instance") {
+    throw new ImpureFunctionError(
+      fn.name,
+      "instance_method",
+      "instance method 'self' implies mutable state",
+    );
+  }
+
   const params: RaisedParam[] = fn.params.map((p) => {
     if (p.annotation === null) {
       throw new MissingTypeAnnotationError(fn.name, p.name);
@@ -222,7 +266,7 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     throw err;
   }
 
-  return {
+  const sig: FunctionSignature = {
     name: fn.name,
     params,
     returnType,
@@ -230,4 +274,9 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     bodyPythonSource: fn.body_source,
     returnWarnings,
   };
+  // WI-890: only set methodKind when present (absent for module-level fns)
+  if (fn.methodKind !== undefined) {
+    return { ...sig, methodKind: fn.methodKind };
+  }
+  return sig;
 }

@@ -125,13 +125,23 @@ export class ImpureFunctionError extends Error {
  *   Rejected "bare_expression" (too specific) and re-using "forbidden_call" (different detection
  *   path — FORBIDDEN_BUILTINS walk vs wire-node render-time throw).
  *   Cross-reference: PLAN.md §4 / #888
+ *
+ * @decision DEC-WI890-004 — Extend ImpurityKind with "instance_method"
+ * @title ImpurityKind gains "instance_method" for regular def(self,...) methods
+ * @status accepted
+ * @rationale Instance methods carry implicit mutable state via `self`; they are
+ *   rejected at extract time (parse-fn-signature.ts extractOne) and again at
+ *   purity-check time (checkFunctionPurity dual-layer gate).  A dedicated kind
+ *   makes the rejection reason unambiguous in error messages and test assertions.
+ *   Cross-reference: PLAN.md §WI-890 / DEC-WI890-004
  */
 export type ImpurityKind =
   | "forbidden_import"
   | "forbidden_call"
   | "forbidden_attr"
   | "global_decl"
-  | "forbidden_construct"; // WI-888: bare expression-statement (Docstring→skip, Call/Expr→throw)
+  | "forbidden_construct" // WI-888: bare expression-statement (Docstring→skip, Call/Expr→throw)
+  | "instance_method"; // WI-890: regular def(self,...) — mutable state via self
 
 // ---------------------------------------------------------------------------
 // Internal wire-AST walker types
@@ -337,6 +347,7 @@ function normalizeImpurityKind(kind: string): ImpurityKind {
     case "forbidden_attr":
     case "global_decl":
     case "forbidden_construct": // WI-888: bare expression-statement violations
+    case "instance_method": // WI-890: regular def(self,...) methods
       return kind;
     default:
       return "forbidden_call";
@@ -365,6 +376,26 @@ export function checkFunctionPurity(
   moduleNode: PythonAstNode,
   fnName: string,
 ): void {
+  // WI-890 dual-layer gate: instance methods are always impure — self implies
+  // mutable state.  This fires before the import/body walk so the rejection
+  // reason is "instance_method" even when the body also has other violations.
+  //
+  // @decision DEC-WI890-005 — dual-layer instance_method gate in checkFunctionPurity
+  // @title checkFunctionPurity rejects instance methods unconditionally before body walk
+  // @status accepted
+  // @rationale The first layer is in extractOne (parse-fn-signature.ts), which fires
+  //   during extraction so the function never reaches the pipeline.  This second layer
+  //   guards the direct checkFunctionPurity / checkPurity paths (used by integration
+  //   scripts and tests that call these APIs independently of extractOne).
+  const methodKind = (fnRecord as { methodKind?: string }).methodKind;
+  if (methodKind === "instance") {
+    throw new ImpureFunctionError(
+      fnName,
+      "instance_method",
+      "instance method 'self' implies mutable state",
+    );
+  }
+
   // 1. Module-level import analysis (slice 3 envelope extension)
   const importViolations = collectImportImpurities(moduleNode);
   const firstImport = importViolations[0];

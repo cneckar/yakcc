@@ -50,6 +50,18 @@
 # TS renderer lowers to `[<expr>, ...]` (JS array literal).
 # Empty tuple → `[]`; single-element `(a,)` → `[a]`. Cross-reference: #913.
 #
+# WI-890: Class method extraction — _function_envelope walks one level of
+# ClassDef inside the module body.  Each FunctionDef found in a class body is
+# emitted into module.functions[] with:
+#   "name":       "ClassName.methodName"  (dotted — avoids name collisions)
+#   "methodKind": "static" | "class" | "instance"
+# The "methodKind" field is absent on module-level functions to preserve
+# byte-equivalence of all existing callers.  Detection rules:
+#   @staticmethod → "static"   (treated as a pure module-level fn downstream)
+#   @classmethod  → "class"    (cls param; purity check allows it)
+#   no decorator  → "instance" (self param; tagged impure downstream)
+# Cross-reference: PLAN.md §WI-890 / DEC-WI890-001..010
+#
 # Wire shape (cumulative through WI-913):
 #   functions[].body:
 #     [ Statement, ... ]
@@ -822,7 +834,14 @@ def _collect_imports(module):  # type: ignore[no-untyped-def]
     return imports
 
 
-def _function_envelope(fn, module=None):  # type: ignore[no-untyped-def]
+def _function_envelope(fn, module=None, method_kind=None):  # type: ignore[no-untyped-def]
+    """Build a wire envelope dict for a single FunctionDef node.
+
+    WI-890: method_kind is "static" | "class" | "instance" when fn lives
+    inside a ClassDef body.  It is None (and therefore absent from the
+    output dict) for module-level functions, preserving byte-equivalence
+    with all pre-WI-890 callers.
+    """
     params = [
         {
             "name": p.name.value,
@@ -851,13 +870,80 @@ def _function_envelope(fn, module=None):  # type: ignore[no-untyped-def]
     except AttributeError:
         pass
 
-    return {
+    envelope: dict = {  # type: ignore[type-arg]
         "name": fn.name.value,
         "params": params,
         "return_annotation": return_annot,
         "body_source": body_source,
         "body": body,
     }
+    # WI-890: only emit methodKind for class methods (absent for module-level fns)
+    if method_kind is not None:
+        envelope["methodKind"] = method_kind
+    return envelope
+
+
+def _method_kind(fn):  # type: ignore[no-untyped-def]
+    """Detect the method kind of a FunctionDef inside a class body.
+
+    WI-890: Inspects the decorators list for @staticmethod / @classmethod.
+    Falls back to "instance" when neither decorator is present.
+
+    Returns "static" | "class" | "instance".
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    for decorator in fn.decorators:
+        # decorator.decorator is the expression: Name, Attribute, or Call
+        dec_node = decorator.decorator
+        dec_name = None
+        if isinstance(dec_node, libcst.Name):
+            dec_name = dec_node.value
+        elif isinstance(dec_node, libcst.Attribute):
+            # e.g. builtins.staticmethod (unusual but possible)
+            dec_name = dec_node.attr.value if isinstance(dec_node.attr, libcst.Name) else None
+        if dec_name == "staticmethod":
+            return "static"
+        if dec_name == "classmethod":
+            return "class"
+    return "instance"
+
+
+def _class_method_envelopes(cls_node, module=None):  # type: ignore[no-untyped-def]
+    """Walk one level of a ClassDef body and return a list of function envelopes.
+
+    WI-890: Only direct FunctionDef children are extracted (one level deep).
+    Nested classes and other statement types are silently skipped.  Each
+    envelope has a dotted "name" ("ClassName.methodName") and a "methodKind"
+    field.
+
+    @decision DEC-WI890-001 — One-level ClassDef walk, dotted names
+    @title Extract class methods into module.functions[] with dotted names
+    @status accepted
+    @rationale Dotted names avoid collision between same-named methods in
+      different classes and between method names and module-level function
+      names.  One level deep keeps the implementation simple — nested classes
+      are not a priority for the MVP shave corpus.
+    """
+    import libcst  # type: ignore[import-untyped]
+
+    class_name = cls_node.name.value
+    envelopes = []
+    try:
+        body_stmts = cls_node.body.body
+    except AttributeError:
+        return envelopes
+    for stmt in body_stmts:
+        # Unwrap SimpleStatementLine (rare in class bodies but legal for pass, etc.)
+        if isinstance(stmt, libcst.SimpleStatementLine):
+            continue
+        if isinstance(stmt, libcst.FunctionDef):
+            kind = _method_kind(stmt)
+            env = _function_envelope(stmt, module=module, method_kind=kind)
+            # Rewrite name to dotted form: "ClassName.methodName"
+            env["name"] = f"{class_name}.{stmt.name.value}"
+            envelopes.append(env)
+    return envelopes
 
 
 def main() -> int:
@@ -877,9 +963,15 @@ def main() -> int:
         print(f"libcst unexpected error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
+    # WI-890: collect module-level functions first, then one level of class methods.
+    # Module-level functions have no "methodKind" field (byte-equivalence with pre-WI-890).
+    # Class methods have "methodKind": "static"|"class"|"instance" and dotted names.
     functions = [
         _function_envelope(s, module) for s in module.body if isinstance(s, libcst.FunctionDef)
     ]
+    for s in module.body:
+        if isinstance(s, libcst.ClassDef):
+            functions.extend(_class_method_envelopes(s, module))
     imports = _collect_imports(module)
     json.dump(
         {

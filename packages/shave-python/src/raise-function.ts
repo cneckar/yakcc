@@ -68,11 +68,55 @@ export { ImpureFunctionError } from "./purity-check.js";
  *   the existing convention for no-op functions.
  *   Cross-reference: PLAN.md §4 / #888
  */
+/**
+ * Rewrite a dotted Python name to a valid TS identifier.
+ *
+ * WI-890: class method names arrive as "ClassName.methodName" (dotted) from
+ * the libcst envelope.  A dot is not valid in a TS identifier, so we replace
+ * every dot with an underscore: "Foo.bar" → "Foo_bar".
+ *
+ * The original dotted name is the canonical identity used for lookup in the
+ * envelope (e.g. `raiseFunctionWithPurityAndNormalization` searches by
+ * `signature.name`), so this rewrite happens only at render time — after all
+ * envelope lookups have completed.
+ *
+ * @decision DEC-WI890-006 — dot-to-underscore rewrite at render time
+ * @title Dotted method names rewritten to underscore form for TS identifier validity
+ * @status accepted
+ * @rationale Full round-trip metadata (original dotted name in a separate field)
+ *   is deferred as out of scope for WI-890 MVP.  The underscore form is unique
+ *   as long as no two methods share the same ClassName_methodName after rewrite —
+ *   acceptable for the shave corpus.
+ */
+function tsIdentifier(name: string): string {
+  return name.replace(/\./g, "_");
+}
+
+/**
+ * Produce a snake_case-safe form of a dotted method name for `normalizeIdentifier`.
+ *
+ * WI-890: `normalizeIdentifier` in normalize-names.ts is not aware of dots and
+ * would corrupt "MyClass.static_method" by splitting on `_` across the dot boundary.
+ * This helper replaces dots with `_` BEFORE normalization so the dotted name
+ * normalizes correctly:
+ *   "MyClass.static_method" → "MyClass_static_method" → normalizeIdentifier
+ *                           → "myClass_staticMethod" (camelCase per Rule 5)
+ *
+ * The actual TS identifier used in `renderFunctionDeclaration` comes from
+ * `tsIdentifier(normalizedSig.name)`, which is equivalent to `normalizeIdentifier`
+ * applied to the dot-replaced form.
+ */
+function dottedToSnake(name: string): string {
+  return name.replace(/\./g, "_");
+}
+
 export function renderFunctionDeclaration(
   signature: FunctionSignature,
   body: readonly WireStmt[],
 ): string {
   const paramList = signature.params.map((p) => `${p.name}: ${p.tsType}`).join(", ");
+  // WI-890: rewrite dotted names to valid TS identifiers at render time.
+  const renderName = tsIdentifier(signature.name);
   // DEC-WI888-008: filter Docstring nodes before deciding the void-0 fallback and rendering.
   // A docstring-only body (visibleStmts.length === 0) produces void 0; just as an empty
   // body does. visibleStmts is passed to renderBody (not the full body) to avoid a leading
@@ -81,8 +125,8 @@ export function renderFunctionDeclaration(
   // in visibleStmts and will throw at render time per DEC-WI888-005.
   const visibleStmts = body.filter((s) => s.type !== "Docstring");
   const bodyText =
-    visibleStmts.length === 0 ? "  void 0;" : renderBody(visibleStmts, "  ", signature.name);
-  return `export function ${signature.name}(${paramList}): ${signature.returnType} {\n${bodyText}\n}`;
+    visibleStmts.length === 0 ? "  void 0;" : renderBody(visibleStmts, "  ", renderName);
+  return `export function ${renderName}(${paramList}): ${signature.returnType} {\n${bodyText}\n}`;
 }
 
 /**
@@ -130,7 +174,15 @@ export function raiseFunctionWithPurityAndNormalization(
   //         Build rename map from ORIGINAL param names before normalizing,
   //         so the body walk has the correct old→new mapping.
   const renameMap = buildParamRenameMap(signature.params);
-  const normalizedSig = normalizeSignatureNames(signature);
+  // WI-890: if the function name is dotted ("ClassName.methodName"), replace
+  // dots with underscores before normalizeSignatureNames so normalizeIdentifier
+  // doesn't corrupt it by splitting across the dot boundary.
+  // "Foo.static_bar" → "Foo_static_bar" → normalizeIdentifier → "foo_StaticBar"
+  // tsIdentifier("foo_StaticBar") == "foo_StaticBar" (no dots remain).
+  const sigForNormalize: typeof signature = signature.name.includes(".")
+    ? { ...signature, name: dottedToSnake(signature.name) }
+    : signature;
+  const normalizedSig = normalizeSignatureNames(sigForNormalize);
 
   // Step 3: normalize body Name references
   const normalizedBody = normalizeBodyNames(body, renameMap);

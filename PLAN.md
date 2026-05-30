@@ -1,46 +1,62 @@
-# PLAN — WI-888 shave-python: SmallStatement Expr handling for docstrings + bare calls
+# PLAN — WI-890 shave-python: extract methods from class bodies
 
-> Planner output for [`#888`](https://github.com/cneckar/yakcc/issues/888)
-> (`shave-python: SmallStatement Expr blocks docstrings and side-effectful calls (real-Python killer)`).
-> Workflow `wi-888-expr-stmts`, work item `wi-888-plan`, goal `g-888`.
-> Branch `feature/888-expr-stmts` in worktree
-> `/Users/cris/src/yakcc/.worktrees/feature-888-expr-stmts`.
+> Planner output for [`#890`](https://github.com/cneckar/yakcc/issues/890)
+> (`shave-python: extract methods from class bodies (currently only module-level def visited)`).
+> Workflow `wi-890-classmethods`, work item `wi-890-plan`, goal `g-890`.
+> Branch `feature/890-class-methods` in worktree
+> `/Users/cris/src/yakcc/.worktrees/feature-890-class-methods`.
 >
-> Operator dispatch (2026-05-29): bs4 4.14.3 e2e exploration produced
-> 0/15 functions raised. 7 of the 15 hit a single error bucket —
-> `Unsupported Python construct for raise to TS-subset IR: SmallStatement Expr`.
-> That bucket conflates two distinct constructs: **docstrings** (universal,
-> harmless, must be skipped) and **bare expression calls / statements**
-> (side-effectful, must be rejected as impure, not as "unsupported").
-> The current `_stmt_inner()` in `libcst-parse.py` returns
-> `{"type": "Unsupported", "reason": "SmallStatement Expr"}` for every
-> `libcst.Expr` SmallStatement.
+> Operator dispatch (2026-05-29 / continued 2026-05-30): bs4 4.14.3 e2e
+> exploration showed **9 of 15 production files yielded 0 functions** because
+> all code lives in class methods, not module-level `def`. This WI teaches the
+> libcst-parse wire emitter to walk `libcst.ClassDef` bodies and emit method
+> entries into `module.functions[]` with a new `methodKind` discriminator, then
+> threads that field through `parse-fn-signature.ts` and `purity-check.ts` so
+> the existing `raise-function.ts` pipeline naturally raises pure
+> static/classmethods and rejects instance methods with a clean
+> `ImpureFunctionError`.
 
 ---
 
 ## 0 — Headline
 
-Teach `_stmt_inner()` in `packages/shave-python/scripts/libcst-parse.py` to
-recognize three SmallStatement-Expr shapes and emit two new wire-node types:
+Teach `libcst-parse.py` to extract methods from class bodies and tag them with
+their decorator class. Specifically:
 
-1. **`{"type": "Docstring", "value": "<str>"}`** — when the Expr wraps a
-   string-literal expression (`SimpleString`, `ConcatenatedString`, or
-   `FormattedString`) **and** this is the first statement of the function
-   body. The TS `renderStmt` silently skips this node.
-2. **`{"type": "ImpureStatement", "construct": "bare_call" | "bare_expression", "detail": "<str>"}`** —
-   when the Expr wraps a `Call` (bare-call shape: `print(...)`, method calls)
-   or any other expression-statement that isn't a docstring. The TS
-   `renderStmt` throws `ImpureFunctionError` with `kind: "forbidden_construct"`.
-3. Extend `ImpurityKind` in `purity-check.ts` from
-   `"forbidden_import" | "forbidden_call" | "forbidden_attr" | "global_decl"`
-   to include `"forbidden_construct"`.
+1. **`_function_envelope` invocation** — `main()` in `libcst-parse.py`
+   currently iterates `module.body` filtering `libcst.FunctionDef`. Extend the
+   walk so `libcst.ClassDef` bodies are also visited; each `FunctionDef` inside
+   a class body is emitted into `module.functions[]` with:
+   - `name = "<ClassName>.<methodName>"` (dot-qualified — keep parseable; the
+     dot survives only in the envelope, never in TS identifiers — see
+     DEC-WI890-007)
+   - `methodKind: "static" | "class" | "instance"` (new field; absent for
+     module-level functions — equivalent to `null`)
+2. **`FunctionSignature.methodKind`** — `parse-fn-signature.ts` threads the
+   `methodKind` field from the envelope onto the typed `FunctionSignature`.
+   Existing module-level callers see `methodKind === undefined`.
+3. **`ImpurityKind` gains `"instance_method"`** — `purity-check.ts` adds a new
+   union member and a `checkFunctionPurity` branch that throws
+   `ImpureFunctionError(kind: "instance_method")` whenever `fnRecord.methodKind
+   === "instance"`. Static- and class-methods are not auto-rejected; they flow
+   through the existing purity walker.
+4. **`raise-function.ts`** — forwards `methodKind` through the pipeline; the
+   raised TS identifier rewrites `ClassName.methodName` → `ClassName_methodName`
+   (DEC-WI890-007) so the emitted TS is a valid identifier.
 
-This is a wire-additive change. Existing wire-node types (`Return`, `Pass`,
-`Raise`, `Unsupported`) are unchanged. `raise-body.ts` gains two new switch
-arms in `renderStmt`. `purity-check.ts` gains one `ImpurityKind` member.
-The libcst-parse.py change is localized to `_stmt_inner()` (and an
-optional first-stmt flag piped through `_function_envelope` so the docstring
-detection can fire only on the first body element).
+This is a wire-additive change. Module-level functions emit identically to
+pre-WI HEAD (`methodKind` absent). The `raise-body.ts` renderer is
+**not touched** (forbidden by scope manifest); rejection of instance methods
+fires in `purity-check.ts` *before* `renderBody` is invoked.
+
+Expected post-merge bs4 exploration impact: per #890 "Discovered" section, 9
+of 15 files yielded 0 functions. After this WI those files will yield the sum
+of their `@staticmethod` + `@classmethod` declarations as raised candidates,
+plus their instance methods as explicit `ImpureFunctionError(instance_method)`
+records in `extractFunctionSignaturesAll().failed`. The exact +N fnCount
+target ("6 → 15" per the operator dispatch headline; ">100" per the operator
+narrative) is observational, not a wire-shape constraint — the contract is
+behavioral (kind labels) not numeric.
 
 ---
 
@@ -48,129 +64,219 @@ detection can fire only on the first body element).
 
 ### Restated in my own words
 
-In production Python, every PEP-257-compliant function starts with a triple-
-quoted docstring. Today the libcst parser sees that string expression-
-statement, can't classify it, and emits a generic `Unsupported SmallStatement
-Expr` wire node. The TS-side `renderStmt` then throws
-`UnsupportedAstError("SmallStatement Expr")`. End result: 100% of PEP-257
-functions fail to raise, masking the real downstream failures.
+Today `_function_envelope` only sees `module.body[]` `FunctionDef` entries.
+Almost all production Python lives inside `class` declarations
+(`exceptions.py`, `formatter.py`, `css.py`, `_html5lib.py`, etc.), so the
+shaver currently sees nothing in those files. The fix is to walk one level of
+`ClassDef` and emit each contained `FunctionDef` into the flat
+`module.functions[]` array, classified by decorator into one of three buckets:
 
-The same generic error also fires for bare expression-statements with side
-effects: `print(x)`, `parser.feed(data)`, `sys.stdout.write(...)`. Those
-should also fail, but they should fail as **impurity violations**, not as
-"unsupported syntax." The error taxonomy is the load-bearing claim — users
-seeing `UnsupportedAstError` will file bugs asking for support; users seeing
-`ImpureFunctionError` understand they're using a feature outside the pure
-shave context.
+- **`@staticmethod`** — semantically identical to a module-level function;
+  raise normally.
+- **`@classmethod`** — first parameter is `cls`; otherwise treat as pure unless
+  the body says otherwise. Keep `cls` as a real parameter in the raised TS
+  signature (it becomes another `unknown`/typed parameter — no special
+  handling).
+- **Regular `def foo(self, ...)`** — first parameter is `self`. Without full
+  call-graph analysis we cannot prove these are pure, so we default-reject.
+  This is the correct trade-off per #890: rejecting with a clear error label
+  (`instance_method`) is strictly better than silently skipping (the current
+  behavior), because operators can read the error and know exactly what was
+  rejected and why.
+
+The headline win is observability: instead of a class file showing "0
+functions", it now shows N candidates with explicit pass/fail kind labels.
+This unblocks downstream diagnostics regardless of how many methods actually
+shave through.
 
 ### Goals (measurable)
 
-1. **G1** — A function whose first body statement is a docstring raises
-   successfully (no error from raise-body), with the docstring value silently
-   dropped from emitted TS-subset IR. Verified by a new e2e test in
-   `raise-function.test.ts`.
-2. **G2** — A function whose body contains a bare expression-statement
-   (e.g. `print(x)`) throws `ImpureFunctionError` with `kind:
-   "forbidden_construct"`, NOT `UnsupportedAstError`. Verified by a new test
-   in `raise-body.test.ts` and an e2e test in `raise-function.test.ts`.
-3. **G3** — All other existing wire shapes (`Return`, `Pass`, `Raise`,
-   `Unsupported`, expressions) behave byte-identically to pre-WI HEAD.
-   Verified by existing `raise-body.test.ts` + `libcst-parser.test.ts` +
-   `purity-check.test.ts` suites staying green.
-4. **G4** — Post-merge, re-running the bs4 exploration (out of scope here,
-   but documented as a follow-up validation step in #888) shows the 7
-   SmallStatement-Expr blockers drop from the failure tally. This is the
-   real-world success metric for the issue.
+1. **G1** — A `@staticmethod` method in a class body is emitted into
+   `module.functions[]` with `name: "ClassName.methodName"` and
+   `methodKind: "static"`. The raise pipeline raises it identically to a
+   module-level function (purity check decides pass/fail based on body
+   content). Verified by a new `libcst-parser.test.ts` subprocess case and an
+   `raise-function.test.ts` e2e case.
+2. **G2** — A `@classmethod` method emits with `methodKind: "class"` and
+   `cls` as the first param. Purity check runs normally — `cls`-only attribute
+   reads are not auto-rejected (no new `cls.*` rule); body content drives
+   purity. Verified by subprocess test + e2e test that raises a
+   `@classmethod` body containing only `cls.CONSTANT` reads.
+3. **G3** — A regular `def foo(self, ...)` method emits with
+   `methodKind: "instance"`. `checkFunctionPurity` throws
+   `ImpureFunctionError(kind: "instance_method")` BEFORE the body walk
+   inspects any specific construct, with the function name set to
+   `"ClassName.methodName"`. Verified by `purity-check.test.ts` unit test and
+   `raise-function.test.ts` e2e test.
+4. **G4** — Module-level functions emit identically to pre-WI HEAD.
+   `methodKind` is absent from their envelope record (NOT present as `null`,
+   to preserve byte-equivalent JSON for existing fixture/tests).
+   `FunctionSignature.methodKind` is `undefined` for them. Verified by every
+   existing `libcst-parser.test.ts` / `parse-fn-signature.test.ts` /
+   `raise-function.test.ts` case staying green without modification.
+5. **G5** — `extractFunctionSignaturesAll` (the #899 fail-soft variant) places
+   instance-method rejections into `.failed[]` with an `ImpureFunctionError`
+   carrying `kind: "instance_method"`. The successful raises in `.ok[]`
+   include both module-level functions and pure static/classmethods. Verified
+   by a `parse-fn-signature.test.ts` case using a small class fixture.
 
 ### Non-goals (explicit exclusions)
 
-- **Class-level docstrings.** PEP-257 also defines class-body docstrings;
-  this WI handles function-body docstrings only. Class docstrings are
-  tracked in follow-up #890 (class-method extraction) and re-raised there.
-- **Module-level docstrings.** Same reasoning — out of scope; deferred.
-- **`Expr(Yield)` / `Expr(Await)`.** These are statement-level await/yield
-  expressions used as side-effecting calls. They are also impure. The plan
-  classifies them under the catch-all `bare_expression` branch with detail
-  carrying the expression type name. A future WI can split them into their
-  own taxonomy if needed.
-- **Touching `type-map.ts`, `parse-fn-signature.ts`, `normalize-names.ts`.**
-  Forbidden by scope manifest. These cover different concerns (#889
-  type-map, etc).
-- **Adapter consumer packages.** `packages/compile-python/**`, `packages/cli/**`,
-  `packages/shave/**`, `packages/compile/**`, `packages/contracts/**`,
-  `bootstrap/**`, `.github/**`, `.claude/**` — all forbidden. WI is
-  shave-python-internal.
-- **Pyright escalation / deeper static purity.** Out of scope. The new
-  `forbidden_construct` impurity kind is detected purely from the wire AST
-  shape, no new analysis layer.
-- **MASTER_PLAN.md churn.** Decision log additions are in-file
-  `@decision` annotations; a post-landing planner pass can graduate them to
-  MASTER_PLAN if the operator wants.
+- **Class scaffolding in compile-python.** The inverse transform — composing
+  raised `ClassName_methodName` back into TS `class { ... }` declarations —
+  is a separate WI (filed as follow-up; see §10). For this WI, class context
+  is lost downstream: `Foo.bar` becomes a top-level TS function
+  `Foo_bar(...)` and the compile-python output sees it as such. Documented
+  in the emitted name itself (the `ClassName_` prefix is the breadcrumb).
+- **Nested classes.** Recursing into a `ClassDef` inside another `ClassDef`
+  is out of scope per #890. The walker handles only direct
+  `module.body[ClassDef].body[FunctionDef]` — one level deep.
+- **Nested functions.** A `def` inside a `def` (closure) is similarly out of
+  scope per #890 and the existing libcst-parse.py.
+- **Inheritance modeling.** No special handling of `super()`, MRO, method
+  override detection. A method that calls `super()` will likely raise
+  `Unsupported` from the existing `Call`-with-complex-callee path
+  (`super().__init__` is `Call(Attribute(Call(Name('super'))))`) which is
+  the existing semantics; this WI does not extend that path.
+- **Whitelisting pure instance methods.** Even an instance method whose body
+  is `return self.x + 1` is rejected as `instance_method`. A future WI could
+  add a narrow whitelist (read-only `self.attr` access + no mutation + no
+  calls to other instance methods) but call-graph analysis is required and
+  out of scope here.
+- **Class-level docstrings.** A class body's first statement may be a
+  docstring (PEP-257). The walker MUST skip non-`FunctionDef` statements in
+  the class body — including the docstring SimpleStatementLine. No new wire
+  node for class docstrings (deferred follow-up; not blocking).
+- **Module-level `__getattr__` (PEP 562).** Already extracted today as a
+  module-level function. Untouched.
+- **Class-level dunders (`__init__`, `__repr__`, `__getattr__`, `__str__`).**
+  These are all regular `def foo(self, ...)` methods. They get
+  `methodKind: "instance"` and are rejected as `instance_method`, same as any
+  other instance method. No special-casing in this WI.
+- **`@property`, `@staticmethod`-via-functools-wrapper, `@cached_property`,
+  bare-name `@my_custom_decorator`.** The detection check fires only on
+  unqualified `@staticmethod` / `@classmethod` decorator names. Any other
+  decorator (functools.cache, abc.abstractmethod, etc.) is treated as
+  passthrough — it does not change the `self`/`cls` contract and does not
+  change the `methodKind`. A method decorated `@cached_property` with a
+  `self` first param is still `methodKind: "instance"` and is rejected.
+  Trade-off: this rejects some methods that are semantically pure (a
+  `@functools.cache`'d staticmethod). For the MVP that's acceptable — the
+  raise pipeline already rejects on the broader rule, so the new rejection
+  is the same shape. A future widening can examine decorator semantics.
+- **Touching `raise-body.ts`, `type-map.ts`, `normalize-names.ts`,
+  `libcst-parser.ts`** (the latter only allowed if a re-export is needed —
+  see allowed scope manifest; we do not modify implementation in
+  `libcst-parser.ts`). Forbidden by scope manifest. The render-time error
+  taxonomy is unchanged; rejection fires at the purity-check layer.
+- **Adapter consumer packages.** `packages/compile-python/**`,
+  `packages/cli/**`, `packages/shave/**`, `packages/compile/**`,
+  `packages/contracts/**`, `packages/ir/**`, `bootstrap/**`, `.github/**`,
+  `.claude/**` — all forbidden. WI is shave-python-internal.
+- **MASTER_PLAN.md churn.** Decision log additions are in-file `@decision`
+  blocks; a post-landing planner pass can graduate them to MASTER_PLAN if
+  the operator wants.
 
 ### Unknowns and ambiguities — resolved at planning time
 
-1. **Should docstring detection use Option A (emit `Docstring` wire node,
-   TS skips) or Option B (skip emission in Python)?**
-   Resolved: **Option A**. Rationale: the wire envelope is the canonical
-   record; having `Docstring` visible there is useful for downstream tooling
-   (`compile-python` could re-emit it, future linting could read it) and
-   matches the existing pattern where the Python layer emits structure and
-   the TS layer decides rendering. Recorded as DEC-WI888-001.
+1. **Wire shape: flatten vs nest?** Resolved as **flatten** (DEC-WI890-001).
+   See §4.
 
-2. **What does "first statement" mean for docstring detection?** PEP-257
-   defines it as "the first statement of a function or class body that is a
-   string literal." For functions specifically, this is the first element of
-   `fn.body.body` after libcst's IndentedBlock unwrapping. Resolved by
-   passing an `is_first` flag from `_function_envelope` into `_stmt_inner`.
+2. **Decorator detection nuance.** `libcst.FunctionDef.decorators` is a
+   sequence of `Decorator` nodes; each has `.decorator` which is a
+   `BaseExpression`. For unqualified `@staticmethod` / `@classmethod` the
+   `decorator` is a `libcst.Name`. For `@functools.cache` it's a
+   `libcst.Attribute`. For `@functools.lru_cache(maxsize=128)` it's a
+   `libcst.Call`. We match only `libcst.Name` with `.value in
+   {"staticmethod", "classmethod"}`. Anything else is ignored (does not
+   change `methodKind`). Recorded as DEC-WI890-002.
 
-3. **What ImpurityKind label fits a bare expression statement best?**
-   Choices considered: `"bare_expression"`, `"forbidden_construct"`,
-   `"side_effect"`. Resolved: **`"forbidden_construct"`** (matches the issue
-   #888 acceptance criteria, is generic enough to absorb other future
-   "this construct isn't allowed in pure functions" cases, and reads
-   naturally in error messages). Recorded as DEC-WI888-004.
+3. **First-param keep/drop for `@classmethod`?** Keep `cls`. Treating
+   classmethods as pure module-level functions with an extra `cls` parameter
+   is the minimum-change path. The TS shave consumer sees `cls: unknown`
+   (the annotation will typically be absent, which today triggers
+   `MissingTypeAnnotationError` from `extractOne` — see DEC-WI890-004 for
+   how we handle that). Recorded as DEC-WI890-003.
 
-4. **Does purity-check.ts already catch `print(x)` via FORBIDDEN_BUILTINS?**
-   Resolved by reading purity-check.ts:
-   `collectBodyImpurities` only recurses into `value` of `Return`, `Expr`,
-   `Assign` nodes. Today there is no `Expr` wire-stmt node (libcst-parse.py
-   emits `Unsupported` instead), so the walker never sees the Call. Even
-   after this WI lands, the walker won't see the new `ImpureStatement` wire
-   node because that node has no `value` field shaped like the existing
-   walker expects. **Decision (DEC-WI888-005):** the `ImpureStatement` wire
-   node is consumed by `raise-body.ts:renderStmt` which throws
-   `ImpureFunctionError` directly. The throw fires from the rendering pass,
-   not from the pre-mapping `checkPurity` pass. This is consistent with
-   how `Unsupported` is handled today — the wire node's class (impure vs
-   unsupported) determines which error class fires.
+4. **What if `cls` lacks an annotation?** Python convention is to leave
+   `cls`/`self` unannotated. Today `extractOne` throws
+   `MissingTypeAnnotationError(fnName, "cls")`. That throw happens in
+   `parse-fn-signature.ts` and surfaces as a `.failed[]` entry from
+   `extractFunctionSignaturesAll` — exactly the existing behavior for any
+   under-annotated function. We do NOT special-case `cls`/`self` to skip
+   the annotation requirement. Trade-off: this rejects most real classmethods
+   without an explicit `cls: type[ClassName]` annotation — acceptable for
+   MVP, can be relaxed later by auto-synthesizing `cls: unknown` /
+   `self: unknown` for first-position `cls`/`self` if the operator wants
+   broader coverage. Recorded as DEC-WI890-004. (For instance methods this
+   is moot: they're rejected before annotation processing.)
 
-5. **Should `raise-function.ts` reorder anything?** Resolved: **no**.
-   `checkFunctionPurity` runs pre-mapping and inspects `fnRecord.body`.
-   After this WI, that body array can contain `Docstring` and
-   `ImpureStatement` nodes; the existing walker visits each stmt via
-   `visitStmt` and only branches on type strings it knows. The new nodes
-   are not recognized, so they don't generate violations during
-   `collectBodyImpurities` — that's fine because the throw fires at render
-   time via `renderStmt`. The render pass runs **after** `checkFunctionPurity`
-   in the pipeline. End behavior: pure function with `print(x)` →
-   `checkFunctionPurity` returns clean (no `forbidden_call` recorded because
-   the wire-AST walker doesn't recurse into `ImpureStatement.detail`) →
-   `renderBody` throws `ImpureFunctionError(forbidden_construct, "print(...)")`.
-   Recorded as DEC-WI888-006.
+5. **Ordering of the rejection vs annotation check for instance methods.**
+   `extractOne` runs first (it produces the signature) — it would fail with
+   `MissingTypeAnnotationError("self")` before `checkFunctionPurity` ever
+   sees the function. We want the `instance_method` rejection to be the
+   visible failure (better error class for diagnostics), not
+   `MissingTypeAnnotationError`. **Resolution (DEC-WI890-005):** in
+   `parse-fn-signature.ts:extractOne`, if `fn.methodKind === "instance"`,
+   short-circuit and throw `ImpureFunctionError(name, "instance_method",
+   "instance method ...")` *before* annotation checks. This couples
+   `parse-fn-signature.ts` to `ImpureFunctionError` (already exported from
+   `purity-check.ts`), preserving the single error-class for purity
+   rejections. Verify no import cycle: `purity-check.ts` does not import
+   from `parse-fn-signature.ts`. Safe.
+
+6. **TS identifier from `ClassName.methodName`.** Dot is not a legal TS
+   identifier character. Resolved (DEC-WI890-007): emit the envelope name
+   as `ClassName.methodName` (dot preserved — round-trippable, parseable),
+   but `renderFunctionDeclaration` rewrites it to `ClassName_methodName`
+   when constructing the `export function …` text. The replacement happens
+   in `raise-function.ts` (scope-allowed), not in `raise-body.ts`
+   (scope-forbidden) and not in `parse-fn-signature.ts` (we keep the dotted
+   form on `FunctionSignature.name` for diagnostics). The rewrite is a
+   single `name.replace(".", "_")` — collision detection deferred (see
+   DEC-WI890-008).
+
+7. **Name-collision risk.** If module-level function `Foo_bar` exists AND
+   class `Foo` has method `bar`, both raise to TS identifier `Foo_bar`.
+   YAGNI for MVP: emit both; downstream TS compilation flags the duplicate.
+   A future hardening can rename one or add a suffix counter. Recorded as
+   DEC-WI890-008.
+
+8. **Should `purity-check.ts` reject `instance_method` independently in
+   `checkFunctionPurity`?** Two valid placements:
+   - (a) `parse-fn-signature.ts:extractOne` rejects pre-signature (per
+     DEC-WI890-005 above).
+   - (b) `purity-check.ts:checkFunctionPurity` rejects when
+     `fnRecord.methodKind === "instance"`.
+
+   **Decision: BOTH** (DEC-WI890-006). The `extractOne` path covers the
+   normal pipeline (envelope → extract → purity → render). The
+   `checkFunctionPurity` path covers test injection and any caller that
+   constructs an `fnRecord` directly. Both throw the same
+   `ImpureFunctionError(kind: "instance_method")`. The extra check in
+   `checkFunctionPurity` is `O(1)` (a single field read) and runs before
+   any other purity walk; it makes the rejection a true authority over
+   instance-method rejection.
 
 ### Dominant constraints
 
-- Sacred Practice #12: single source of truth — the new wire-node types are
-  defined in `libcst-parse.py` (Python side, canonical wire shape), mirrored
-  in `raise-body.ts` (`WireStmt` union), and have **no other definitions**.
-- Sacred Practice #5: real unit tests, fail loudly. The error taxonomy
-  change is testable at three layers: wire (libcst-parser.test.ts), render
-  (raise-body.test.ts), and e2e (raise-function.test.ts).
+- Sacred Practice #12: single source of truth — `methodKind` is defined in
+  `libcst-parse.py` (Python wire), mirrored in `parse-fn-signature.ts`
+  (TS-side typed surface), and consumed by `purity-check.ts`. No other
+  definitions.
+- Sacred Practice #5: real unit tests, fail loudly. Three test layers:
+  subprocess wire (libcst-parser.test.ts), extraction
+  (parse-fn-signature.test.ts), purity (purity-check.test.ts), e2e
+  (raise-function.test.ts).
+- Scope manifest forbids `raise-body.ts` edits — the instance-method
+  rejection must therefore fire *before* `renderBody` is invoked (i.e. in
+  `extractOne` and `checkFunctionPurity`, both scope-allowed).
 - Memory `feedback_pre_push_hygiene`: rebase + lint + typecheck before push.
-- Memory `feedback_branch_must_track_origin_main`:
-  `git fetch && git diff --stat origin/main..HEAD` before push.
-- Memory `feedback_serenity_claim_label`: `gh issue edit 888 --add-label serenity`
-  before any PR push to prevent sister-agent double-pick.
+- Memory `feedback_branch_must_track_origin_main`: `git fetch && git diff
+  --stat origin/main..HEAD` before push.
+- Memory `feedback_serenity_claim_label`: `gh issue edit 890 --add-label
+  serenity` before any PR push (already labeled `serenity` per `gh issue
+  view 890` at planning time — verify before push).
 - Memory `feedback_agent_tool_completion_projection_gap`: reviewer must
   explicitly run `cc-policy evaluation set ready_for_guardian` once verdict
   is `ready_for_guardian`.
@@ -181,40 +287,50 @@ shave context.
 
 ## 2 — State authorities & integration surfaces
 
-| Domain                                                       | Authority (canonical)                                            | This WI relationship                                                                                                  |
-|--------------------------------------------------------------|------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| Python wire-AST envelope shape                               | `packages/shave-python/scripts/libcst-parse.py`                  | **Extends** — adds `Docstring` and `ImpureStatement` wire nodes in `_stmt_inner` / first-stmt detection in `_function_envelope` |
-| TS wire-AST type union (`WireStmt`)                          | `packages/shave-python/src/raise-body.ts`                        | **Extends** — adds two new variants to `WireStmt`                                                                     |
-| Statement renderer (TS-subset IR text emission)              | `packages/shave-python/src/raise-body.ts` (`renderStmt`)         | **Extends** — adds two new switch arms                                                                                |
-| `ImpurityKind` enum                                          | `packages/shave-python/src/purity-check.ts`                      | **Extends** — adds `"forbidden_construct"` member to the union                                                        |
-| `ImpureFunctionError` constructor + shape                    | `packages/shave-python/src/purity-check.ts`                      | **Reused unchanged** — constructor signature stays `(functionName, kind, detail, line?, col?)`                        |
-| `checkFunctionPurity` body walker                            | `packages/shave-python/src/purity-check.ts`                      | **Read-only** — the new wire nodes are ignored by `collectBodyImpurities` by design (the throw fires at render time)  |
-| Raise pipeline composition order                             | `packages/shave-python/src/raise-function.ts`                    | **Unchanged** — order stays purity-check → normalize → render; render now also throws `ImpureFunctionError` from `bare_expression` wire nodes |
-| Subprocess wire format / version field                       | `packages/shave-python/scripts/libcst-parse.py` (`"version": 1`) | **Unchanged** — additive node types, no schema bump needed                                                            |
-| Existing `Unsupported` wire-node path for unknown SmallStmts | `packages/shave-python/scripts/libcst-parse.py` (`_stmt_inner`)  | **Narrowed** — `libcst.Expr` no longer falls through to `Unsupported`; other SmallStatement classes still do          |
+| Domain                                                          | Authority (canonical)                                            | This WI relationship                                                                                                  |
+|-----------------------------------------------------------------|------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| Python wire-AST envelope shape (functions[] entries)            | `packages/shave-python/scripts/libcst-parse.py`                  | **Extends** — emits class-method entries with new `methodKind` field; adds class-body walker in `main()`              |
+| `EnvelopeFunction` interface                                    | `packages/shave-python/src/parse-fn-signature.ts`                | **Extends** — adds optional `methodKind?: "static" | "class" | "instance"`                                            |
+| `FunctionSignature` typed surface                               | `packages/shave-python/src/parse-fn-signature.ts`                | **Extends** — adds optional `methodKind?: MethodKind`                                                                 |
+| `ImpurityKind` union                                            | `packages/shave-python/src/purity-check.ts`                      | **Extends** — adds `"instance_method"` member                                                                         |
+| Instance-method rejection authority                             | `packages/shave-python/src/purity-check.ts` (`checkFunctionPurity`) + `parse-fn-signature.ts` (`extractOne`) | **New** — both paths throw `ImpureFunctionError(kind: "instance_method")`. Dual placement is intentional (DEC-WI890-006) |
+| `ImpureFunctionError` constructor + shape                       | `packages/shave-python/src/purity-check.ts`                      | **Reused unchanged** — constructor signature stays `(functionName, kind, detail, line?, col?)`                        |
+| `renderFunctionDeclaration` (identifier emission)               | `packages/shave-python/src/raise-function.ts`                    | **Extends** — rewrites dot in `signature.name` to underscore when emitting the `export function …` text (DEC-WI890-007) |
+| `raise-body.ts` (`WireStmt`, `renderStmt`, `renderBody`)        | `packages/shave-python/src/raise-body.ts`                        | **Untouched** (forbidden by scope manifest). The rejection fires before `renderBody` is called.                       |
+| `libcst-parser.ts` (subprocess driver + `LibcstParseResult`)    | `packages/shave-python/src/libcst-parser.ts`                     | **Effectively untouched** — only allowed to re-export new types if helpful (see §3.4); no impl change to `parsePythonSource` |
+| Subprocess wire format / version field                          | `packages/shave-python/scripts/libcst-parse.py` (`"version": 1`) | **Unchanged** — additive field, no schema bump                                                                        |
+| `index.ts` (public surface of `@yakcc/shave-python`)            | `packages/shave-python/src/index.ts`                             | **Extends** — re-export `MethodKind` type if defined; otherwise unchanged. Optional.                                  |
+| Per-function extraction fail-soft (`.failed[]`)                 | `packages/shave-python/src/parse-fn-signature.ts` (`extractFunctionSignaturesAll`) | **Reused** — instance-method rejections appear in `.failed[]` with `ImpureFunctionError`, exactly per #899 semantics |
 
 ### Existing-mechanism survey (Sacred Practice #12)
 
-Before adding any new wire-node type, I verified that today's behavior for
-`libcst.Expr` SmallStatements is the catch-all `{"type": "Unsupported",
-"reason": "SmallStatement Expr"}` in `_stmt_inner()` (`libcst-parse.py:270`).
-There is no separate Python-side path for string-literal expression
-statements. The TS-side `renderStmt` has no `Expr` arm — it relies entirely
-on the wire shape from Python.
-
-`ImpurityKind` is defined exactly once, in `purity-check.ts:118`. No other
-file uses `forbidden_call | forbidden_import | ...` as a string-literal
-union; all consumers import the type.
-
-`ImpureFunctionError` constructor is invoked from `purity-check.ts` only
-today; after this WI it will also be invoked from `raise-body.ts`. This
-expands the throw surface but does not create a parallel error class.
-
-There is no existing helper for "is this stmt the first stmt of a body?" in
-the Python script — the `_function_envelope` function iterates `fn.body.body`
-without tracking position. The change adds an `enumerate(...)`-style index
-through and an `is_first=...` parameter to `_stmt_v2 / _stmt_inner`. This
-is the minimum change; no helper is being replaced.
+- **Today** `main()` in `libcst-parse.py` (line 880) iterates only
+  `libcst.FunctionDef` from `module.body`. There is no helper for walking
+  class bodies. This WI adds the walk inline in `main()` (no new helper —
+  the iteration is two-deep and trivial).
+- **`_function_envelope`** (line 825) takes a single `fn` and a `module`
+  reference; it does not currently take or emit any class context. The
+  minimum change: add an optional `methodKind=None` parameter and an
+  optional `class_name=None` parameter. When `class_name` is set, the
+  emitted `name` field is `f"{class_name}.{fn.name.value}"` instead of
+  `fn.name.value`. When `methodKind` is non-None, it's added to the
+  returned dict as `"methodKind": methodKind`.
+- **`ImpurityKind`** is defined exactly once, in `purity-check.ts:129`.
+  Confirmed no other file uses `"forbidden_call" | ...` as a string-literal
+  union; all consumers import the type. Adding `"instance_method"` is a
+  one-line edit + a one-arm addition to `normalizeImpurityKind`.
+- **Decorator inspection** is not currently present anywhere in
+  `libcst-parse.py`. New helper `_method_kind(fn)` returns `"static"`,
+  `"class"`, `"instance"`, or `None` (`None` for non-methods — caller
+  decides whether to use it). The helper is the entire surface area of
+  decorator analysis for this WI.
+- **`extractOne`** in `parse-fn-signature.ts:181` runs param annotation
+  checks first. Per DEC-WI890-005 we add a short-circuit at the very top:
+  if `fn.methodKind === "instance"`, throw `ImpureFunctionError`
+  immediately. The throw bypasses annotation checks; this is intentional
+  (we know the function won't be raised regardless).
+- **No existing helper "is this a method?"** in any TS file — the
+  envelope's `methodKind` is the single discriminator.
 
 ---
 
@@ -222,155 +338,167 @@ is the minimum change; no helper is being replaced.
 
 ### 3.1 Wire-shape changes (Python side — canonical authority)
 
-`_stmt_inner(inner, is_first=False)` in `libcst-parse.py`:
+`_method_kind(fn)` — new helper in `libcst-parse.py`:
 
 ```python
-def _stmt_inner(inner, is_first=False):
-    if isinstance(inner, libcst.Return): ...
-    if isinstance(inner, libcst.Pass): ...
-    if isinstance(inner, libcst.Raise): ...
+def _method_kind(fn):  # type: ignore[no-untyped-def]
+    """Classify a libcst.FunctionDef found inside a ClassDef body.
 
-    # NEW — SmallStatement Expr handling (WI-888)
-    if isinstance(inner, libcst.Expr):
-        value = inner.value
-        # Docstring: first stmt + string-literal expression
-        if is_first and isinstance(
-            value,
-            (libcst.SimpleString, libcst.ConcatenatedString, libcst.FormattedString),
-        ):
-            text = _docstring_text(value)
-            return {"type": "Docstring", "value": text}
-        # Bare call: print(x), parser.feed(data), sys.stdout.write(...)
-        if isinstance(value, libcst.Call):
-            detail = _bare_call_repr(value)
-            return {
-                "type": "ImpureStatement",
-                "construct": "bare_call",
-                "detail": detail,
-            }
-        # Other bare expression-statements: x + y, obj.attr, x and y, ...
-        # These are either dead code or side-effecting __getattr__ traps.
-        return {
-            "type": "ImpureStatement",
-            "construct": "bare_expression",
-            "detail": type(value).__name__,
-        }
+    Returns "static" | "class" | "instance".
 
-    return {"type": "Unsupported", "reason": f"SmallStatement {type(inner).__name__}"}
+    Detection: only unqualified Name decorators ("staticmethod",
+    "classmethod") flip the kind. Attribute / Call decorators
+    (@functools.cache, @lru_cache(...), ...) are passthrough.
+    Cross-reference: PLAN.md §4 DEC-WI890-002 / #890
+    """
+    import libcst  # type: ignore[import-untyped]
+    for dec in fn.decorators:
+        d = dec.decorator
+        if isinstance(d, libcst.Name):
+            if d.value == "staticmethod":
+                return "static"
+            if d.value == "classmethod":
+                return "class"
+    return "instance"
 ```
 
-`_function_envelope(fn, module=None)` adds index tracking when iterating
-body stmts:
+`_function_envelope(fn, module=None, class_name=None, method_kind=None)`:
 
 ```python
-for idx, stmt in enumerate(fn.body.body):
-    body.append(_stmt_v2(stmt, is_first=(idx == 0)))
-```
+def _function_envelope(fn, module=None, class_name=None, method_kind=None):
+    params = [...]  # existing
+    return_annot = ...  # existing
+    body_source = ...  # existing
+    body = [...]  # existing
 
-`_stmt_v2(node, is_first=False)` plumbs `is_first` to `_stmt_inner`.
-
-Helper `_docstring_text(value)`: extract the string content. For
-`SimpleString`, strip the surrounding quotes (the existing `_expr` arm
-already does this for `SimpleString`; reuse the same logic). For
-`ConcatenatedString`, concatenate parts. For `FormattedString` (f-string
-docstring — rare but legal PEP-257), fall back to the libcst `code` property
-trimmed. The exact string value is observability only — the TS renderer
-discards it.
-
-Helper `_bare_call_repr(call)`: produce a short human-readable string like
-`"print(...)"` or `"parser.feed(...)"`. Use `_callee_name(call.func)` if
-available; otherwise `"<complex-callee>(...)"`. The `(...)` suffix is fixed;
-we don't attempt to render arguments — the detail is for error messages,
-not for replay.
-
-### 3.2 Wire-shape changes (TS side — `WireStmt` union)
-
-`raise-body.ts`:
-
-```ts
-export type WireStmt =
-  | { readonly type: "Return"; readonly value: WireExpr | null }
-  | { readonly type: "Pass" }
-  | { readonly type: "Raise"; readonly excClass: string; readonly message: WireExpr | null }
-  | { readonly type: "Docstring"; readonly value: string }                                   // NEW
-  | {                                                                                         // NEW
-      readonly type: "ImpureStatement";
-      readonly construct: "bare_call" | "bare_expression";
-      readonly detail: string;
+    name = (
+        f"{class_name}.{fn.name.value}"
+        if class_name is not None
+        else fn.name.value
+    )
+    envelope = {
+        "name": name,
+        "params": params,
+        "return_annotation": return_annot,
+        "body_source": body_source,
+        "body": body,
     }
-  | { readonly type: "Unsupported"; readonly reason: string };
+    if method_kind is not None:
+        envelope["methodKind"] = method_kind
+    return envelope
 ```
 
-### 3.3 Renderer changes (`renderStmt` in `raise-body.ts`)
+Module-level walk in `main()` becomes:
 
-New error class to carry the construct/detail across the boundary without
-coupling raise-body.ts to purity-check.ts's `ImpureFunctionError` directly:
-**rejected**. Instead, `raise-body.ts` imports `ImpureFunctionError` from
-`purity-check.ts` and throws it. `purity-check.ts` already exports the
-class; `raise-body.ts` will gain a dependency edge to `purity-check.ts`.
+```python
+functions = []
+for stmt in module.body:
+    if isinstance(stmt, libcst.FunctionDef):
+        functions.append(_function_envelope(stmt, module))
+        continue
+    if isinstance(stmt, libcst.ClassDef):
+        class_name = stmt.name.value
+        # Walk only the direct body of the class; do not recurse into
+        # nested ClassDef (out of scope per #890).
+        for inner in stmt.body.body:
+            if isinstance(inner, libcst.FunctionDef):
+                kind = _method_kind(inner)
+                functions.append(
+                    _function_envelope(
+                        inner, module, class_name=class_name, method_kind=kind
+                    )
+                )
+            # All non-FunctionDef statements in the class body are skipped:
+            # docstrings, type-alias assignments, nested ClassDef, pass, etc.
+            # No wire emission for class-level state.
+        continue
+    # All other top-level statement types unchanged.
+```
 
-Verify no import cycle: `purity-check.ts` does NOT import from
-`raise-body.ts` today (only `libcst-parser.js` types). Safe.
+The class body iteration uses `stmt.body.body` because libcst wraps the
+class body in an `IndentedBlock` whose `.body` is the list of
+`SimpleStatementLine` / compound statements. `FunctionDef` is a compound
+statement (it lives directly in `IndentedBlock.body`, not wrapped in
+`SimpleStatementLine`).
 
-`renderStmt` switch arms:
+### 3.2 Wire shape (envelope additions, observed by TS)
+
+For class-method entries:
+
+```json
+{
+  "name": "Formatter.attribute_to_html",
+  "params": [...],
+  "return_annotation": "str | None",
+  "body_source": "...",
+  "body": [...],
+  "methodKind": "static"
+}
+```
+
+For module-level functions, the envelope is **byte-identical** to pre-WI
+(no `methodKind` field). This preserves the existing fixtures and tests
+without modification.
+
+### 3.3 TS-side: `parse-fn-signature.ts` extensions
 
 ```ts
-case "Docstring":
-  // Silently drop. The wire envelope retains the value for downstream
-  // tooling; the TS-subset IR has no equivalent and we don't fabricate one.
-  return "";
+export type MethodKind = "static" | "class" | "instance";
 
-case "ImpureStatement":
-  // The renderer doesn't know the function name. Throw with a placeholder
-  // and let the caller (raise-function.ts) wrap/re-throw with the real name,
-  // OR pass the function name as a render context. See DEC-WI888-007.
-  throw new ImpureFunctionError(
-    "<unknown>",
-    "forbidden_construct",
-    `${stmt.construct === "bare_call" ? "calls" : "evaluates"} bare expression-statement: ${stmt.detail}`,
-  );
+interface EnvelopeFunction {
+  name: string;
+  params: EnvelopeParam[];
+  return_annotation: string | null;
+  body_source: string;
+  methodKind?: MethodKind;  // NEW — undefined for module-level fns
+}
+
+export interface FunctionSignature {
+  readonly name: string;
+  readonly params: readonly RaisedParam[];
+  readonly returnType: string;
+  readonly pythonReturnAnnotation: string | null;
+  readonly bodyPythonSource: string;
+  readonly returnWarnings?: readonly LowerWarning[];
+  readonly methodKind?: MethodKind;  // NEW — undefined for module-level fns
+}
 ```
 
-**DEC-WI888-007: function-name plumbing for `ImpureFunctionError`.**
-
-`renderStmt` does not currently take a function name. Options:
-- (a) Thread a `fnName?: string` parameter through `renderStmt` / `renderBody`.
-- (b) Throw with `"<unknown>"` and let `raiseFunctionWithPurityAndNormalization`
-  catch + rewrap with the real name.
-- (c) Add an optional second arg to `renderBody(stmts, indent, fnName?)`.
-
-**Decision: (c)** — extend `renderBody(stmts, indent = "  ", fnName?: string)`
-with an optional fnName. When set, the function passes it to `renderStmt`
-which uses it in the thrown `ImpureFunctionError`. When unset (existing
-callers), the throw uses `"<unknown>"` as a sentinel. This preserves
-backward compatibility for any external callers of `renderBody`/`renderStmt`
-and avoids a catch+rewrap layer in `raiseFunctionWithPurityAndNormalization`.
-
-`renderFunctionDeclaration` (in `raise-function.ts`) already has the
-signature in hand — it passes `signature.name` as the third arg to
-`renderBody`.
-
-### 3.4 `renderBody` adjustment for empty-after-docstring
-
-Today: `renderFunctionDeclaration` checks `body.length === 0` and emits
-`"  void 0;"`. After this WI a body like `["Docstring"]` has length 1 but
-`renderBody` produces `""` — the function body would be empty, syntactically
-fine in TS but not what we want.
-
-**Decision (DEC-WI888-008):** treat a docstring-only body as "effectively
-empty" for the void-0 fallback. Change the check from
-`body.length === 0` to:
+`extractOne` extensions:
 
 ```ts
-const visibleStmts = body.filter((s) => s.type !== "Docstring");
-const bodyText = visibleStmts.length === 0 ? "  void 0;" : renderBody(body, "  ", signature.name);
+function extractOne(fn: EnvelopeFunction): FunctionSignature {
+  // DEC-WI890-005: short-circuit instance methods BEFORE annotation checks.
+  // We know the function will be rejected by purity; throwing now produces
+  // the correct error class (ImpureFunctionError, not MissingTypeAnnotationError).
+  if (fn.methodKind === "instance") {
+    throw new ImpureFunctionError(
+      fn.name,
+      "instance_method",
+      `instance method '${fn.name}' (def with 'self' first param) is not raiseable; only @staticmethod and @classmethod methods are extracted`,
+    );
+  }
+
+  // existing param + return-type extraction unchanged...
+
+  return {
+    name: fn.name,
+    params,
+    returnType,
+    pythonReturnAnnotation: fn.return_annotation,
+    bodyPythonSource: fn.body_source,
+    returnWarnings,
+    methodKind: fn.methodKind,  // pass through (undefined for module-level)
+  };
+}
 ```
 
-This keeps the void-0 escape hatch for `def foo(): """only a docstring"""`
-which is otherwise a no-op function. (Note: such a function is rare but
-legal Python — usually paired with `pass` or a `Return`.)
+Imports gain `import { ImpureFunctionError } from "./purity-check.js";`.
+Cycle check: `purity-check.ts` does NOT import from `parse-fn-signature.ts`
+today (it imports `LibcstParseResult` / `PythonAstNode` from
+`libcst-parser.ts`). Safe.
 
-### 3.5 `ImpurityKind` extension (`purity-check.ts`)
+### 3.4 TS-side: `purity-check.ts` extensions
 
 ```ts
 export type ImpurityKind =
@@ -378,335 +506,580 @@ export type ImpurityKind =
   | "forbidden_call"
   | "forbidden_attr"
   | "global_decl"
-  | "forbidden_construct";  // NEW — bare expression-statement (WI-888)
+  | "forbidden_construct"
+  | "instance_method";  // NEW (WI-890)
+
+function normalizeImpurityKind(kind: string): ImpurityKind {
+  switch (kind) {
+    case "forbidden_import":
+    case "forbidden_call":
+    case "forbidden_attr":
+    case "global_decl":
+    case "forbidden_construct":
+    case "instance_method":  // NEW
+      return kind;
+    default:
+      return "forbidden_call";
+  }
+}
 ```
 
-`normalizeImpurityKind` (existing helper for envelope-supplied kinds) adds
-the new case:
+`checkFunctionPurity` gains a top-of-function short-circuit:
 
 ```ts
-case "forbidden_construct":
-  return kind;
+export function checkFunctionPurity(
+  fnRecord: PythonAstNode,
+  moduleNode: PythonAstNode,
+  fnName: string,
+): void {
+  // DEC-WI890-006: instance methods are unconditionally impure.
+  // Fires before any other check so the rejection is authoritative.
+  if ((fnRecord as { methodKind?: string }).methodKind === "instance") {
+    throw new ImpureFunctionError(
+      fnName,
+      "instance_method",
+      `instance method '${fnName}' (def with 'self' first param) cannot be proved pure without call-graph analysis`,
+    );
+  }
+  // existing import + envelope + body walks unchanged...
+}
 ```
 
-This is the only `purity-check.ts` edit. The walker, the error class, the
-`checkFunctionPurity` / `checkModuleImports` / `checkPurity` public surface
-stay byte-identical.
+### 3.5 TS-side: `raise-function.ts` identifier rewrite (DEC-WI890-007)
 
-### 3.6 Test seam
+`renderFunctionDeclaration` changes its identifier emission:
 
-Three test layers, mirroring the three code layers:
+```ts
+export function renderFunctionDeclaration(
+  signature: FunctionSignature,
+  body: readonly WireStmt[],
+): string {
+  const paramList = signature.params.map((p) => `${p.name}: ${p.tsType}`).join(", ");
+  const visibleStmts = body.filter((s) => s.type !== "Docstring");
+  const bodyText =
+    visibleStmts.length === 0 ? "  void 0;" : renderBody(visibleStmts, "  ", signature.name);
+  // DEC-WI890-007: rewrite dot-qualified method names to TS-legal identifiers.
+  // signature.name keeps the dot for diagnostics (e.g. "Foo.bar"); the emitted
+  // TS identifier swaps the dot for an underscore ("Foo_bar"). This is a single
+  // call site so we do the replace inline rather than introducing a helper.
+  const tsIdent = signature.name.replace(/\./g, "_");
+  return `export function ${tsIdent}(${paramList}): ${signature.returnType} {\n${bodyText}\n}`;
+}
+```
 
-**Layer 1 — wire (`libcst-parser.test.ts`):** spawn the subprocess against
-small fixture Python source files. Assert the wire JSON shape:
-- Function with first-stmt docstring → first body element is
-  `{type: "Docstring", value: "..."}`
-- Function with `print(x)` body → body contains
-  `{type: "ImpureStatement", construct: "bare_call", detail: "print(...)"}`
-- Function with `obj.attr` as a statement → body contains
-  `{type: "ImpureStatement", construct: "bare_expression", detail: "Attribute"}`
-- Existing wire tests stay green.
+Trade-off: the thrown `ImpureFunctionError` from `renderBody` ->
+`renderStmt` will receive the DOTTED `signature.name` ("Foo.bar"), not
+the underscored form. This is intentional — the error message is for the
+human operator, and "Foo.bar" is more recognizable than "Foo_bar".
 
-These are subprocess tests; they require Python 3 + libcst. Follow the
-gate pattern already used by the suite (skip when unavailable).
+### 3.6 Pipeline flow for the three slices
 
-**Layer 2 — render (`raise-body.test.ts`):** envelope-injection unit tests
-(no subprocess). Build `WireStmt` arrays directly. Assert:
-- `renderStmt({type: "Docstring", value: "..."})` returns `""`
-- `renderStmt({type: "ImpureStatement", construct: "bare_call", detail: "print(...)"}, "  ", "foo")`
-  throws `ImpureFunctionError` with `kind === "forbidden_construct"` and
-  `functionName === "foo"`
-- Same for `bare_expression`
-- Without `fnName`, throws with `functionName === "<unknown>"`
-- Docstring-only body via `renderFunctionDeclaration` produces a
-  `void 0;` body (DEC-WI888-008)
+| Slice | Input wire | extractOne | checkModuleImports | checkFunctionPurity | renderFunctionDeclaration | Outcome |
+|-------|-----------|-----------|---------------------|---------------------|---------------------------|---------|
+| A — `@staticmethod` | `{name: "Foo.bar", methodKind: "static", ...}` | passes (no short-circuit; `methodKind !== "instance"`) | passes (if no forbidden imports) | passes (if body is clean; `methodKind !== "instance"`) | emits `export function Foo_bar(...)` | raised |
+| B — `@classmethod` | `{name: "Foo.bar", methodKind: "class", params: [{name:"cls", annotation: "type[Foo]"}, ...]}` | passes if `cls` has annotation (DEC-WI890-004); else fails with `MissingTypeAnnotationError` | passes | passes (body walk only) | emits `export function Foo_bar(cls: <ts-type-for-cls>, ...)` | raised (or fails on annotation) |
+| C — instance `def foo(self, ...)` | `{name: "Foo.bar", methodKind: "instance", ...}` | **throws ImpureFunctionError("Foo.bar", "instance_method", ...)** (DEC-WI890-005) | n/a — extraction already failed | n/a | n/a | rejected as `instance_method` |
 
-**Layer 3 — e2e (`raise-function.test.ts`):** envelope-injection through the
-full `raiseFunctionWithPurityAndNormalization` pipeline. Assert:
-- A function with `"""docstring"""` + `return 42` raises successfully and
-  produces the expected `export function …` text with no docstring artifact
-- A function with `print(x)` body throws `ImpureFunctionError`
-  (not `UnsupportedAstError`), with `kind === "forbidden_construct"` and
-  the function name populated
-- Purity check still runs first for pre-existing impurity (e.g. forbidden
-  import) — the new render-time throw doesn't shadow the pre-mapping
-  purity verdict
-- Function with `bare_expression` (e.g. `x and y` as a stmt) throws
-  `ImpureFunctionError`
+For slice C, the rejection path is: `extractFunctionSignaturesAll` catches
+the throw and records it in `.failed[]` with the
+`ImpureFunctionError`. Callers that walk `.failed[]` see the new error
+kind label.
 
-**Layer 4 — purity-check.test.ts:** one additional test asserting
-`ImpurityKind` covers `"forbidden_construct"`. No new walker behavior; this
-is a type-level smoke test that exercises the new union member through the
-public API.
+### 3.7 Test seam
+
+Four test layers, mirroring the four code layers:
+
+**Layer 1 — wire (`libcst-parser.test.ts`):** spawn the subprocess
+against small fixture Python sources. Assert wire JSON shape:
+- Class with `@staticmethod def foo(x: int) -> int: return x` →
+  `module.functions[0]` is `{name: "Foo.foo", methodKind: "static", ...}`.
+- Class with `@classmethod def foo(cls, x: int) -> int: return x` →
+  `module.functions[0]` is `{name: "Foo.foo", methodKind: "class", params:
+  [{name: "cls", ...}, {name: "x", ...}], ...}`.
+- Class with `def foo(self, x: int) -> int: return x` →
+  `module.functions[0]` is `{name: "Foo.foo", methodKind: "instance",
+  params: [{name: "self", ...}, {name: "x", ...}], ...}`.
+- Module-level `def foo()` alongside a class → both functions appear in
+  `module.functions[]`; module-level entry has NO `methodKind` field
+  (assert with `expect(fn.methodKind).toBeUndefined()`).
+- Class body with non-FunctionDef statements (docstring, type alias,
+  `pass`) → those statements produce no entries in `module.functions[]`.
+- Nested class (class inside class) → only outer class methods are
+  extracted; inner class methods are NOT extracted (per non-goal).
+- Mixed decorators: `@functools.cache @staticmethod def foo(...)` →
+  `methodKind: "static"` (the Name decorator still wins over the
+  Attribute/Call wrapper). Test asserts the Name-decorator detection is
+  insensitive to ordering of other passthrough decorators.
+
+Gate pattern: skip when Python 3 / libcst unavailable (existing pattern).
+
+**Layer 2 — extraction (`parse-fn-signature.test.ts`):**
+- An envelope with three functions — module-level, static-method,
+  instance-method — produces an `ExtractionResult` whose:
+  - `.ok` contains the module-level fn (no `methodKind`) and the
+    static-method fn (`methodKind: "static"`).
+  - `.failed` contains exactly one entry for the instance-method with
+    `error instanceof ImpureFunctionError`, `error.kind ===
+    "instance_method"`, `error.functionName === "Foo.bar"`.
+- An envelope with a classmethod that has an annotated `cls` param →
+  `.ok` includes it with `methodKind: "class"`.
+- An envelope with a classmethod that does NOT have an annotated `cls`
+  param → `.failed` includes it with
+  `error instanceof MissingTypeAnnotationError` (existing semantics —
+  DEC-WI890-004).
+- `extractFunctionSignatures` (the throwing variant) on the instance-method
+  envelope returns an empty array (because `.ok` is empty in the all-instance
+  case); for mixed, returns only the `.ok` subset.
+
+**Layer 3 — purity (`purity-check.test.ts`):**
+- `checkFunctionPurity({methodKind: "instance", body: []}, ..., "Foo.bar")`
+  throws `ImpureFunctionError` with `kind === "instance_method"`,
+  `functionName === "Foo.bar"`. Verifies the redundant DEC-WI890-006 check
+  fires even when `extractOne` is bypassed.
+- `checkFunctionPurity({methodKind: "static", body: []}, ..., "Foo.bar")`
+  passes (no throw) — static methods are not auto-rejected.
+- `checkFunctionPurity({methodKind: "class", body: []}, ..., "Foo.bar")`
+  passes — classmethods are not auto-rejected.
+- `checkFunctionPurity({body: []}, ..., "foo")` (no `methodKind`) passes —
+  module-level functions are not auto-rejected.
+- `normalizeImpurityKind("instance_method")` returns `"instance_method"`
+  (round-trip test for envelope-supplied violations).
+- `ImpurityKind` type-union smoke test: construct
+  `new ImpureFunctionError("f", "instance_method", "...")` and assert
+  `.kind === "instance_method"` at runtime.
+
+**Layer 4 — e2e (`raise-function.test.ts`):** envelope injection
+through the full pipeline:
+- `@staticmethod` envelope → `raiseFunctionWithPurityAndNormalization`
+  returns `export function Foo_bar(x: number): number {\n  return x;\n}`.
+  (The dot in `signature.name` is rewritten to `_` in the emitted text;
+  DEC-WI890-007.)
+- `@classmethod` envelope with annotated `cls` → returns
+  `export function Foo_bar(cls: <type>, x: number): number {...}`.
+- `@classmethod` envelope without annotated `cls` →
+  `extractFunctionSignatures` returns empty `.ok`; the test exercises
+  `extractFunctionSignaturesAll` and asserts the `.failed[]` entry is
+  `MissingTypeAnnotationError`.
+- Instance-method envelope → `extractFunctionSignaturesAll` puts the
+  function in `.failed[]` with `ImpureFunctionError` whose `.kind ===
+  "instance_method"` and `.functionName === "Foo.bar"`.
+- Instance-method envelope passed DIRECTLY to
+  `raiseFunctionWithPurityAndNormalization` (bypassing extraction — i.e.
+  the caller built a `FunctionSignature` manually with `methodKind:
+  "instance"`) → `checkFunctionPurity` short-circuit throws
+  `ImpureFunctionError(kind: "instance_method")`. Verifies the
+  DEC-WI890-006 second-layer rejection.
+- Mixed module: 1 module-level fn + 1 staticmethod + 1 instance method →
+  `extractFunctionSignaturesAll` returns `.ok.length === 2` (module +
+  static) and `.failed.length === 1` (instance, with
+  `kind: "instance_method"`).
 
 No new fixture files needed beyond inline Python snippets used by the
-existing subprocess tests.
+subprocess tests.
 
 ---
 
 ## 4 — Design decisions
 
-### DEC-WI888-001 — Emit `Docstring` wire node (Option A, not skip)
+### DEC-WI890-001 — Flat `module.functions[]` with dot-qualified names
 
-**Decision.** When the Python side detects a docstring (first stmt of fn
-body + string-literal expression), it emits
-`{"type": "Docstring", "value": "<unquoted text>"}` into the body array.
-The TS side ignores it during render.
+**Decision.** Class methods are emitted into the existing flat
+`module.functions[]` array. The `name` field is dot-qualified:
+`"ClassName.methodName"`. A sibling `methodKind` field discriminates
+`"static" | "class" | "instance"`. Module-level functions retain plain
+`name` and OMIT the `methodKind` field.
 
-**Rejected alternative.** Option B — skip emission entirely in
-`libcst-parse.py`. Rejected because the wire envelope is the canonical
-record; future tooling (compile-python re-emit, doc extraction, lint) may
-want access to the docstring. Emitting the node is additive and free.
+**Rejected alternative.** A nested `module.classes[]` array each carrying
+its own `methods[]`. Cleaner data model but requires:
+- new TS types (`Class`, `Method`)
+- new extractor variant (`extractClassMethods`)
+- new envelope walker in every TS consumer
+- a way to flatten back when downstream code wants a unified list (which
+  is the common case for the shave pipeline)
 
-### DEC-WI888-002 — Bare-call detection via `Expr(Call)`
+The flat representation matches the existing pipeline shape, requires no
+new walker, and uses the `methodKind` field as the only new discriminator.
+The name encodes class context (round-trippable: `name.split(".", 1)`
+recovers `[ClassName, methodName]` when `methodKind !== undefined`).
 
-**Decision.** `isinstance(inner, libcst.Expr) and isinstance(inner.value,
-libcst.Call)` → emit
-`{"type": "ImpureStatement", "construct": "bare_call", "detail": "<callee>(...)"}`.
+### DEC-WI890-002 — Decorator detection: unqualified Name only
 
-`detail` uses `_callee_name(call.func)` (existing helper) to produce a
-short string like `"print"` or `"parser.feed"` and appends `(...)`. No
-attempt to render arguments — the detail is for error messages, not
-replay.
+**Decision.** `_method_kind(fn)` returns `"static"` / `"class"` / `"instance"`
+based on whether any decorator's `.decorator` is a `libcst.Name` with
+`.value` in `{"staticmethod", "classmethod"}`. Attribute decorators
+(`@functools.cache`), Call decorators (`@lru_cache(maxsize=128)`), or any
+other expression class are passthrough — they don't change `methodKind`.
 
-### DEC-WI888-003 — Catch-all bare-expression detection via `Expr(*)`
+**Rationale.** Only the canonical `@staticmethod` / `@classmethod`
+declarations change the `self`/`cls` calling convention. Other decorators
+wrap behavior but don't change parameter semantics. A method decorated
+with both `@functools.cache` and `@staticmethod` still has `methodKind:
+"static"` because the Name decorator is detected regardless of order or
+co-presence.
 
-**Decision.** Any `libcst.Expr` SmallStatement that is neither a docstring
-(DEC-WI888-001) nor a bare call (DEC-WI888-002) is emitted as
-`{"type": "ImpureStatement", "construct": "bare_expression", "detail": "<expr-type-name>"}`.
+**Trade-off.** A method imported via
+`from staticmethod_helper import staticmethod` and then decorated
+`@staticmethod` would also be detected as static — but this is a contrived
+edge case (the import would shadow the builtin, which Python lets you do
+but no production code does). Accepted.
 
-This catches `Expr(BooleanOperation)`, `Expr(BinaryOperation)`,
-`Expr(Attribute)`, `Expr(Subscript)`, `Expr(Yield)`, `Expr(Await)`, etc.
-The semantic claim: if you wrote it as a statement and it's not a
-return/raise/pass/assignment, it's either dead code OR has side effects
-(via `__getattr__`, generator advance, etc.). Neither is acceptable in a
-pure-function shave context. The error taxonomy is correct.
+### DEC-WI890-003 — `@classmethod` keeps `cls` as an ordinary parameter
 
-### DEC-WI888-004 — `ImpurityKind` extension: `"forbidden_construct"`
+**Decision.** A classmethod's `cls` is emitted in `params[]` as an
+ordinary parameter; the TS signature includes it (e.g.
+`function Foo_bar(cls: type<Foo>, x: number): T`). No special-casing in
+the libcst-parse.py walker or the TS extractor.
 
-**Decision.** Extend `ImpurityKind` with `"forbidden_construct"`. Used for
-both `bare_call` and `bare_expression` wire-node throws.
+**Rejected alternative.** Drop `cls` from params and synthesize a
+`@classmethod`-aware emission. Rejected because:
+- it requires synthesizing a missing parameter name when the body
+  references `cls.X` (the body wire-AST already has `cls` references that
+  must resolve);
+- it diverges from the existing parameter handling for no semantic gain
+  (the shave-time emitter would still need to know to drop `cls`).
 
-Rejected: `"bare_expression"` (too specific — wouldn't fit `bare_call`).
-Rejected: re-using `"forbidden_call"` for `bare_call` (the existing
-`forbidden_call` is for FORBIDDEN_BUILTINS lookups in `collectBodyImpurities`,
-a different mechanism; mixing them would conflate two different detection
-paths). `forbidden_construct` is the operator-decided label per #888
-acceptance criteria.
+Keeping `cls` parses uniformly: the body's `cls.CONSTANT` reference
+resolves to the `cls` parameter, just like a module-level function with
+a parameter named `cls`.
 
-### DEC-WI888-005 — `ImpureStatement` wire nodes throw at render time
+### DEC-WI890-004 — `cls` / `self` annotation requirement preserved
 
-**Decision.** `ImpureStatement` wire nodes are consumed by
-`raise-body.ts:renderStmt`, which throws `ImpureFunctionError` directly.
-The `checkFunctionPurity` body walker (`collectBodyImpurities`) is **not**
-extended to recognize `ImpureStatement` nodes — the throw fires from the
-render pass, which runs after the purity-check pass in
-`raise-function.ts`.
+**Decision.** Methods whose `cls` / `self` parameter lacks an annotation
+fail through the existing `MissingTypeAnnotationError` path in
+`extractOne`. No special-case to auto-synthesize `cls: unknown` /
+`self: unknown`.
 
-**Rationale.** Cleaner separation: `checkFunctionPurity` inspects existing
-wire-AST shapes (`Call`, `Attribute`, `Global`, ...) and walks expression
-trees. The new wire-AST nodes are statement-level classifications that
-the Python side has already determined are impure — there is no walking
-needed. The TS layer recognizes them and throws. This avoids duplicating
-the impurity claim across two passes.
+**Rationale.** Auto-synthesizing the annotation would diverge from the
+existing parameter-handling rules (every other unannotated param raises
+the error). For classmethods, the operator can opt in by annotating
+`cls: type[Foo]` (PEP 526 syntax already supported by libcst). For
+instance methods, the rejection precedes annotation checks anyway
+(DEC-WI890-005), so the annotation question is moot.
 
-**Trade-off.** A future refactor could move all impurity detection into
-`checkFunctionPurity` (running it on the wire-AST it already walks). Today,
-keeping the throw at render time means a function with a mixed
-`(forbidden_call_via_FORBIDDEN_BUILTINS, bare_call)` body throws on the
-first impurity found, which is the existing semantics for
-`checkFunctionPurity`. Documented for future widening.
+**Trade-off.** Most real-world `@classmethod` declarations don't annotate
+`cls`, so this means most classmethods land in `.failed[]` with a
+`MissingTypeAnnotationError`. The operator can resolve case-by-case by
+adding annotations, or a future widening can synthesize the type. For
+this WI we keep the parameter-handling rules uniform.
 
-### DEC-WI888-006 — Pipeline order unchanged
+### DEC-WI890-005 — Instance-method rejection at `extractOne`
 
-**Decision.** `raiseFunctionWithPurityAndNormalization` continues to call
-`checkFunctionPurity` → `normalizeSignatureNames` → `normalizeBodyNames` →
-`renderFunctionDeclaration`. The new throw happens inside
-`renderFunctionDeclaration` (via `renderBody` → `renderStmt`). Per
-DEC-WI888-005 this is the correct place; no pipeline reordering.
+**Decision.** `extractOne` short-circuits at the very top: if
+`fn.methodKind === "instance"`, throw `ImpureFunctionError(fn.name,
+"instance_method", "...")` immediately. The throw bypasses annotation
+checks.
 
-### DEC-WI888-007 — `fnName` plumbing into `renderBody` / `renderStmt`
+**Rationale.** Without this short-circuit, an instance method without
+annotated `self` would fail with `MissingTypeAnnotationError("self")`,
+which is a misleading error class for an operator-visible diagnostic.
+The user would see "self lacks annotation" and might add an annotation,
+only to then hit the purity rejection on the next run. Short-circuiting
+produces the correct error class immediately.
 
-**Decision.** Extend `renderBody(stmts, indent, fnName?)` and
-`renderStmt(stmt, indent, fnName?)` with an optional third parameter.
-`renderFunctionDeclaration` passes `signature.name` through. External
-callers pre-WI continue to work; the throw falls back to `"<unknown>"` as
-function name when not supplied.
+**Trade-off.** Couples `parse-fn-signature.ts` to
+`ImpureFunctionError`. Verified: `purity-check.ts` does not import from
+`parse-fn-signature.ts`, so the import is unidirectional and cycle-free.
 
-Rejected alternative: catch+rewrap in `raise-function.ts`. Rejected because
-the catch would swallow stack context and the error class identity is
-already `ImpureFunctionError` — no need to wrap.
+### DEC-WI890-006 — Redundant rejection at `checkFunctionPurity`
 
-### DEC-WI888-008 — Docstring-only body emits `void 0;`
+**Decision.** `checkFunctionPurity` ALSO short-circuits when
+`fnRecord.methodKind === "instance"`, throwing the same
+`ImpureFunctionError`. This runs in addition to the `extractOne` check.
 
-**Decision.** In `renderFunctionDeclaration`, the empty-body check filters
-out `Docstring` nodes before deciding whether to emit the `void 0;`
-fallback:
+**Rationale.** The two checks cover different call paths:
+- The `extractOne` check covers the canonical pipeline (envelope →
+  extract → purity → render).
+- The `checkFunctionPurity` check covers callers that construct an
+  `fnRecord` directly (envelope-injection tests, future tools that
+  bypass extraction).
 
-```ts
-const visibleStmts = body.filter((s) => s.type !== "Docstring");
-const bodyText = visibleStmts.length === 0 ? "  void 0;" : renderBody(body, "  ", signature.name);
-```
+The check is `O(1)` (single field read) and produces the same error.
+Having both means the `instance_method` rejection is an authority over
+all paths into the raise pipeline, not just the canonical one.
 
-Rationale: a Python function with only a docstring (`def foo(): """doc"""`)
-is a legal no-op. Emitting just an empty body would produce
-`export function foo(): T {\n\n}` which is valid TS but visually empty.
-`void 0;` is the existing convention for "this function is intentionally a
-no-op."
+### DEC-WI890-007 — Dot-qualified envelope names → underscore TS identifiers
+
+**Decision.** The envelope `name` field is `"ClassName.methodName"`
+(dot preserved). The TS identifier emitted by `renderFunctionDeclaration`
+rewrites the dot to underscore: `"ClassName_methodName"`. The rewrite is a
+single `signature.name.replace(/\./g, "_")` inline in
+`renderFunctionDeclaration`.
+
+`signature.name` (the typed surface) keeps the dot for diagnostics and
+error messages. `ImpureFunctionError.functionName` therefore carries the
+dotted form ("Foo.bar"), which is more recognizable to the human reader.
+The underscore form appears only in the emitted TS text.
+
+**Rejected alternative.** Rewrite at parse time (in
+`parse-fn-signature.ts:extractOne`). Rejected because we want the
+diagnostic surface (`FunctionSignature.name`) to retain class context
+visibly.
+
+**Rejected alternative 2.** Rewrite at envelope time (in libcst-parse.py).
+Rejected because the envelope is a Python-wire artifact; keeping the dot
+makes it self-describing.
+
+### DEC-WI890-008 — No collision check for `Foo_bar`
+
+**Decision.** If a module-level function `Foo_bar` and a class method
+`Foo.bar` both exist, both will raise to TS identifier `Foo_bar`. No
+collision detection in this WI.
+
+**Rationale.** Downstream TS compilation will flag the duplicate. The
+incidence of this collision in real bs4 / similar codebases is
+near-zero. A future hardening can add a per-module name set + suffix
+counter when needed. YAGNI for MVP.
+
+### DEC-WI890-009 — Slice ordering: single PR for A + B + C
+
+**Decision.** All three slices land in a single PR. Internally the
+implementer slices it as commits (see §5) but there is no separate PR
+per slice.
+
+**Rationale.** The three slices share:
+- the same `_method_kind` helper and `_function_envelope` extension;
+- the same `methodKind` field in `EnvelopeFunction` and `FunctionSignature`;
+- the same `ImpurityKind` extension (instance_method);
+- the same identifier rewrite (DEC-WI890-007).
+
+Splitting them into separate PRs duplicates plumbing work and creates
+intermediate states (e.g. "envelope emits `methodKind: 'static'` but
+nothing downstream reads it") that are harder to test and review than
+the unified delivery.
+
+### DEC-WI890-010 — Class-body non-FunctionDef stmts: silent skip
+
+**Decision.** Class body statements that are not `libcst.FunctionDef`
+(docstrings, type aliases, `pass`, nested ClassDef, attribute
+assignments, ...) produce NO entries in `module.functions[]`. There is no
+diagnostic, no warning, no emission. The walker continues past them.
+
+**Rationale.** This WI is scoped to method extraction. Class-level state
+(constants, type aliases) is not raisable into the TS-subset pipeline as
+functions. Tooling that wants to know about class-level state can be
+added later as a separate envelope extension.
 
 ---
 
 ## 5 — Wave decomposition (implementer slicing guidance)
 
-Single PR. The implementer slices it locally as commits.
+Single PR. The implementer slices it as commits.
 
-| W-ID    | Item                                                                                                  | Wt | Deps | Gate           |
-|---------|-------------------------------------------------------------------------------------------------------|----|------|----------------|
-| W-888-A | `libcst-parse.py` — add docstring + bare-call + bare-expression detection in `_stmt_inner` + thread `is_first` through `_function_envelope` / `_stmt_v2`; add `_docstring_text` and `_bare_call_repr` helpers | S  | —    | tests          |
-| W-888-B | `raise-body.ts` — extend `WireStmt` union with `Docstring` and `ImpureStatement` variants; add two `renderStmt` switch arms; extend `renderBody`/`renderStmt` signatures with optional `fnName` | S  | A    | tests + typecheck |
-| W-888-C | `purity-check.ts` — extend `ImpurityKind` with `"forbidden_construct"`; add the case to `normalizeImpurityKind`; add `@decision DEC-WI888-004` annotation | S  | —    | tests + typecheck |
-| W-888-D | `raise-function.ts` — pass `signature.name` to `renderBody`; update empty-body check to filter `Docstring` per DEC-WI888-008                          | S  | B,C  | tests          |
-| W-888-E | Tests — `libcst-parser.test.ts` (wire), `raise-body.test.ts` (render), `purity-check.test.ts` (kind union smoke), `raise-function.test.ts` (e2e)        | M  | A-D  | tests          |
+| W-ID    | Item                                                                                                                          | Wt | Deps | Gate              |
+|---------|-------------------------------------------------------------------------------------------------------------------------------|----|------|-------------------|
+| W-890-A | `libcst-parse.py` — add `_method_kind(fn)` helper; extend `_function_envelope` with optional `class_name` / `method_kind`; extend `main()`'s module-body walk to recurse one level into `ClassDef.body.body` and emit each `FunctionDef` with the appropriate `methodKind` | M  | —    | wire tests        |
+| W-890-B | `parse-fn-signature.ts` — add `MethodKind` type; extend `EnvelopeFunction` and `FunctionSignature` with optional `methodKind`; add the DEC-WI890-005 short-circuit at top of `extractOne`; thread `methodKind` through onto `FunctionSignature` | S  | A    | tests + typecheck |
+| W-890-C | `purity-check.ts` — add `"instance_method"` to `ImpurityKind` union; add the case to `normalizeImpurityKind`; add the DEC-WI890-006 short-circuit at top of `checkFunctionPurity`; add `@decision` annotations | S  | —    | tests + typecheck |
+| W-890-D | `raise-function.ts` — rewrite `signature.name` dot to underscore when emitting the TS identifier (DEC-WI890-007); add `@decision` annotation                | S  | B    | tests             |
+| W-890-E | `index.ts` — re-export `MethodKind` if needed for public API consumers (optional; check downstream)                                                          | XS | B    | tests             |
+| W-890-F | Tests — `libcst-parser.test.ts` (wire — subprocess), `parse-fn-signature.test.ts` (extraction), `purity-check.test.ts` (purity short-circuit + ImpurityKind smoke), `raise-function.test.ts` (e2e) | M  | A-E  | tests             |
 
-Critical path: A,C parallel → B (depends on A) → D (depends on B,C) → E.
-Max parallel width: 2 (A and C may proceed in parallel).
+Critical path: A → B → D, F (where F also depends on A, C, D). C runs in
+parallel to A/B/D (touches only purity-check). E is trivial / optional.
 
-The implementer is free to land the slices as a single commit if review is
-quick; the table is guidance, not enforcement.
+Max parallel width: 2 (A+C, then B+C until C completes, then D+F).
+
+The implementer is free to land the slices as a single commit if review
+is quick.
 
 ---
 
-## 6 — Evaluation Contract (canonical — persisted via `tmp/888-evaluation.json`)
+## 6 — Evaluation Contract (canonical — persisted via `tmp/890-evaluation.json`)
 
 ### Required tests (vitest unit + subprocess)
 
-1. **`libcst-parser.test.ts`** — subprocess wire-shape tests:
-   - First-stmt docstring (`def foo(x: int) -> int: """doc"""\n  return x`) →
-     body is `[{type:"Docstring", value:"doc"}, {type:"Return", ...}]`
-   - Triple-quoted docstring with newlines → same shape, value preserves
-     content (whitespace handling per `_docstring_text` impl)
-   - Bare call (`def foo(x: int) -> None: print(x)`) → body is
-     `[{type:"ImpureStatement", construct:"bare_call", detail:"print(...)"}]`
-   - Method-call bare statement (`obj.method()`) → `detail:"obj.method(...)"`
-   - Bare attribute (`x.y` as stmt) → body contains `{type:"ImpureStatement",
-     construct:"bare_expression", detail:"Attribute"}`
-   - String-literal NOT in first-stmt position (e.g.
-     `def foo(): return 1; "trailing"` — synthesized via two-stmt body) →
-     emits `ImpureStatement(bare_expression, detail:"SimpleString")`, NOT
-     `Docstring`. Asserts the `is_first` flag works.
+1. **`libcst-parser.test.ts`** — subprocess wire-shape tests (gated on
+   Python 3 + libcst availability per existing suite pattern):
+   - `class Foo:\n    @staticmethod\n    def bar(x: int) -> int:\n        return x\n`
+     → `module.functions[0]` equals
+     `{name: "Foo.bar", methodKind: "static", params: [{name:"x", annotation:"int"}], return_annotation: "int", body_source: "...", body: [{type:"Return", value: {type:"Name", name:"x"}}]}`.
+   - `class Foo:\n    @classmethod\n    def bar(cls, x: int) -> int:\n        return x\n`
+     → `module.functions[0].methodKind === "class"`; first param is `cls`;
+     second param is `x`.
+   - `class Foo:\n    def bar(self, x: int) -> int:\n        return x\n`
+     → `module.functions[0].methodKind === "instance"`; first param is `self`.
+   - Mixed module: `def top_level(x: int) -> int: return x` + `class Foo: @staticmethod\n    def m(x: int) -> int: return x` → two entries; module-level has NO `methodKind` field (`expect(fn).not.toHaveProperty("methodKind")`); class entry has `methodKind: "static"`.
+   - Class body with docstring + type alias + method → only the method
+     appears in `module.functions[]`. (Verify with `class Foo:\n    """docstring"""\n    X: int = 0\n    @staticmethod\n    def m(x: int) -> int: return x`.)
+   - Nested class — outer-class methods extracted; inner-class methods
+     NOT extracted: `class Outer:\n    class Inner:\n        @staticmethod\n        def deep(x: int) -> int: return x\n    @staticmethod\n    def shallow(x: int) -> int: return x` → exactly one entry, name `"Outer.shallow"`.
+   - Decorator ordering: `class Foo:\n    @functools.cache\n    @staticmethod\n    def bar(x: int) -> int: return x` → `methodKind: "static"`
+     (assuming `import functools` at module top — the test source can elide
+     the import; libcst tolerates undefined names at parse time).
+   - Regression: existing fixtures and tests (all `libcst-parser.test.ts`
+     cases pre-WI) stay green without modification.
 
-2. **`raise-body.test.ts`** — render-layer unit tests (envelope injection):
-   - `renderStmt({type:"Docstring", value:"x"})` returns `""`
-   - `renderStmt({type:"ImpureStatement", construct:"bare_call", detail:"print(...)"}, "  ", "foo")`
-     throws `ImpureFunctionError` with `kind === "forbidden_construct"`,
-     `functionName === "foo"`, `detail` contains `"print(...)"`
-   - Same for `bare_expression` with `detail:"Attribute"`
-   - `renderStmt(..., "  ")` without fnName throws with
-     `functionName === "<unknown>"`
-   - `renderBody([{type:"Docstring", value:"x"}], "  ", "foo")` returns `""`
-   - Existing tests stay green (`Return`, `Pass`, `Raise`, `Unsupported`,
-     `BinaryOp`, etc.)
+2. **`parse-fn-signature.test.ts`** — extraction tests (no subprocess;
+   envelope injection):
+   - Envelope with `functions: [moduleLevel, staticMethod, instanceMethod]`:
+     - `extractFunctionSignaturesAll` returns `.ok.length === 2`
+       (module-level + static) and `.failed.length === 1`.
+     - `.ok[0].methodKind` is `undefined`; `.ok[1].methodKind === "static"`.
+     - `.failed[0].error instanceof ImpureFunctionError` and
+       `.failed[0].error.kind === "instance_method"` and
+       `.failed[0].error.functionName === "Foo.bar"`.
+   - Envelope with a classmethod whose `cls` HAS an annotation
+     (`{name:"cls", annotation:"type[Foo]"}`) → appears in `.ok` with
+     `methodKind: "class"`.
+   - Envelope with a classmethod whose `cls` lacks annotation → appears in
+     `.failed` with `error instanceof MissingTypeAnnotationError` and
+     `error.paramName === "cls"`.
+   - `extractFunctionSignatures` (the throwing variant) on the same mixed
+     envelope returns array of length 2 (module + static), in order.
+   - Regression: every existing `parse-fn-signature.test.ts` case stays
+     green without modification.
 
-3. **`purity-check.test.ts`** — type-union smoke:
-   - Construct `ImpureFunctionError("f", "forbidden_construct", "bare call: print(...)")`
-     and assert `kind === "forbidden_construct"` (compile-time + runtime
-     smoke that the union accepts the new member)
-   - Existing 200+ assertions in this file stay green
+3. **`purity-check.test.ts`** — purity short-circuit + ImpurityKind smoke:
+   - `checkFunctionPurity({methodKind: "instance", body: []}, {imports: []}, "Foo.bar")`
+     throws `ImpureFunctionError` with `kind === "instance_method"`,
+     `functionName === "Foo.bar"`.
+   - `checkFunctionPurity({methodKind: "static", body: []}, {imports: []}, "Foo.bar")`
+     does NOT throw.
+   - `checkFunctionPurity({methodKind: "class", body: []}, {imports: []}, "Foo.bar")`
+     does NOT throw.
+   - `checkFunctionPurity({body: []}, {imports: []}, "foo")` (no
+     methodKind) does NOT throw.
+   - `normalizeImpurityKind("instance_method")` returns
+     `"instance_method"`.
+   - Construct `new ImpureFunctionError("Foo.bar", "instance_method",
+     "detail")` and assert `.kind === "instance_method"` (type-union +
+     runtime smoke).
+   - Regression: every existing `purity-check.test.ts` case stays green
+     without modification.
 
 4. **`raise-function.test.ts`** — e2e via envelope injection:
-   - Function `def foo(x: int) -> int: """doc"""\n  return x` raises
-     successfully → output text equals
-     `export function foo(x: number): number {\n  return x;\n}` (no
-     docstring artifact)
-   - Function `def foo(x: int) -> None: print(x)` throws
-     `ImpureFunctionError` with `kind === "forbidden_construct"`,
-     `functionName === "foo"`, NOT `UnsupportedAstError`
-   - Function `def foo(): """only"""` (docstring-only body, after Pass-less
-     legal Python edge) raises successfully → output has `void 0;` body
-     (DEC-WI888-008)
-   - Function with a forbidden import + bare call → `checkFunctionPurity`
-     fires FIRST with `forbidden_import` kind (existing semantics preserved;
-     bare call is not seen because purity check rejects pre-mapping)
-   - Function with `obj.attr` bare stmt → throws `ImpureFunctionError(
-     forbidden_construct, "...Attribute...")`
+   - Static-method envelope through
+     `raiseFunctionWithPurityAndNormalization` → returns
+     `"export function Foo_bar(x: number): number {\n  return x;\n}"`.
+     Specifically: dotted `Foo.bar` becomes underscored `Foo_bar` in the
+     emitted text.
+   - Classmethod envelope with annotated `cls` →
+     `"export function Foo_bar(cls: <ts-type-for-type-of-Foo>, x: number): number {...}"`.
+     (The exact ts-type for `type[Foo]` depends on `type-map.ts`
+     behavior; the test asserts the function shape, the `cls` parameter
+     is present, and the identifier is underscored.)
+   - Instance-method envelope through
+     `raiseFunctionWithPurityAndNormalization` directly (bypassing
+     extractOne, by constructing a `FunctionSignature` with
+     `methodKind: "instance"` manually) → throws `ImpureFunctionError`
+     with `kind: "instance_method"`, `functionName: "Foo.bar"`. This
+     verifies the DEC-WI890-006 second-layer rejection.
+   - Mixed envelope (module + static + instance) through
+     `extractFunctionSignaturesAll` → `.ok.length === 2` and
+     `.failed.length === 1` with the expected error class/kind.
+   - `ImpureFunctionError.functionName` carries the DOTTED form
+     ("Foo.bar"), not the underscored form. Verify by asserting the
+     thrown error's `functionName` field.
 
 ### Required evidence (paste verbatim in PR description)
 
-- `pnpm --filter @yakcc/shave-python test` raw output (all green, including
-  the new subprocess tests for libcst-parser).
-- One subprocess transcript: pipe a sample Python function with docstring
-  into `python3 packages/shave-python/scripts/libcst-parse.py` and show
-  the resulting JSON contains the new `Docstring` and/or `ImpureStatement`
-  nodes.
-- Optional regression evidence: a one-paragraph note in the PR description
-  recording that the 7 bs4 SmallStatement-Expr failures are expected to
-  drop on the next exploration run (this WI does not include the
-  exploration itself — that's the issue's acceptance step, run by the
-  operator post-merge).
+- `pnpm --filter @yakcc/shave-python test` raw output, all green.
+- One subprocess transcript: pipe a sample Python class with one method
+  of each kind through `python3 packages/shave-python/scripts/libcst-parse.py`
+  and show the resulting JSON contains three `module.functions[]`
+  entries with `methodKind: "static" | "class" | "instance"`.
+- Optional (recommended): a short note in the PR description recording
+  that re-running the bs4 4.14.3 e2e exploration after merge is the
+  operator's acceptance step. The numeric "6 → 15" / ">100" deltas in
+  the operator dispatch are observational; the PR contract is behavioral
+  (kind labels and pipeline shape).
 
 ### Required real-path checks
 
-- `_stmt_inner` in `libcst-parse.py` has explicit branches for
-  `Docstring`, `bare_call`, `bare_expression` BEFORE the fall-through to
-  `{"type":"Unsupported"}`.
-- `WireStmt` union in `raise-body.ts` contains exactly these variants:
-  `Return | Pass | Raise | Docstring | ImpureStatement | Unsupported`.
-- `renderStmt` in `raise-body.ts` has a switch arm for each `WireStmt`
-  variant (TypeScript exhaustiveness check forces this).
-- `ImpurityKind` in `purity-check.ts` includes `"forbidden_construct"`.
-- `_function_envelope` passes `is_first=True` for index 0 and
-  `is_first=False` for all other indices to `_stmt_v2` / `_stmt_inner`.
-- `renderFunctionDeclaration` filters `Docstring` nodes before deciding
-  the void-0 fallback (DEC-WI888-008).
-- No throws of `UnsupportedAstError` for bare-call or docstring inputs in
-  any test (verified by negative assertions in `raise-body.test.ts` and
-  `raise-function.test.ts`).
+- `_method_kind(fn)` exists in `libcst-parse.py` and returns one of
+  `"static" | "class" | "instance"` (no other values).
+- `main()` in `libcst-parse.py` iterates `module.body` and recurses one
+  level into `libcst.ClassDef.body.body` to extract `libcst.FunctionDef`
+  entries. The recursion does NOT descend into nested `ClassDef`.
+- Class-body iteration uses `stmt.body.body` (the IndentedBlock body
+  list), not `stmt.body` directly.
+- `_function_envelope` accepts `class_name=None` and `method_kind=None`
+  parameters; when set, the emitted dict has `name = f"{class_name}.{fn.name.value}"` and includes `"methodKind": method_kind`.
+- For module-level functions, the emitted envelope dict does NOT contain
+  a `"methodKind"` key (key is absent, NOT `null`).
+- `EnvelopeFunction` and `FunctionSignature` in `parse-fn-signature.ts`
+  have optional `methodKind?: MethodKind`.
+- `extractOne` in `parse-fn-signature.ts` throws
+  `ImpureFunctionError(name, "instance_method", ...)` when
+  `fn.methodKind === "instance"`. The throw happens BEFORE any param /
+  return annotation check.
+- `ImpurityKind` in `purity-check.ts` includes `"instance_method"`.
+- `normalizeImpurityKind` has a case for `"instance_method"` returning
+  `"instance_method"`.
+- `checkFunctionPurity` throws `ImpureFunctionError(name,
+  "instance_method", ...)` when `fnRecord.methodKind === "instance"`. The
+  throw happens BEFORE any other check (imports, envelope impurities,
+  body walk).
+- `renderFunctionDeclaration` in `raise-function.ts` replaces all `.` in
+  `signature.name` with `_` when emitting the TS identifier. The
+  `signature.name` field itself is not mutated.
+- No throws of `MissingTypeAnnotationError` for instance methods (the
+  `extractOne` short-circuit beats it). Verified by negative assertion
+  in `parse-fn-signature.test.ts`.
+- `raise-body.ts` is unmodified. Verified by `git -C <worktree> diff
+  origin/main..HEAD -- packages/shave-python/src/raise-body.ts` showing
+  no changes.
 
 ### Required authority invariants
 
-- **Zero touched files outside the scope manifest.** Specifically: no edits
-  to `packages/shave-python/src/type-map.ts`,
-  `packages/shave-python/src/parse-fn-signature.ts`,
+- **Zero touched files outside the scope manifest.** Specifically: no
+  edits to `packages/shave-python/src/raise-body.ts`,
+  `packages/shave-python/src/libcst-parser.ts` (implementation; tests OK),
+  `packages/shave-python/src/type-map.ts`,
   `packages/shave-python/src/normalize-names.ts`,
   `packages/compile-python/**`, `packages/cli/**`, `packages/shave/**`,
-  `packages/compile/**`, `packages/contracts/**`, `bootstrap/**`,
-  `.github/**`, `.claude/**`.
-- **Wire-schema `version` field unchanged.** Additive node types only;
-  consumers that don't recognize them get `Unsupported`-like fallback via
-  TypeScript exhaustiveness (compile-time) — no runtime schema breakage.
+  `packages/compile/**`, `packages/contracts/**`, `packages/ir/**`,
+  `bootstrap/**`, `.github/**`, `.claude/**`.
+- **Wire-schema `version` field unchanged** (still `1`). Additive field
+  only.
 - **`ImpureFunctionError` constructor signature unchanged.** Same
-  `(functionName, kind, detail, line?, col?)` shape. Tests touching the
-  constructor stay byte-identical.
+  `(functionName, kind, detail, line?, col?)` shape.
+- **Module-level function envelopes are byte-identical to pre-WI HEAD.**
+  No `methodKind` field appears on a module-level entry. Tests verify
+  with `expect(fn).not.toHaveProperty("methodKind")`.
 - **No new state authority introduced.** This WI is a pure shape extension.
+- **`ImpureFunctionError` is the sole purity error class.** No new error
+  class for instance-method rejection.
 
 ### Required integration points
 
-- `libcst-parse.py` emits the new wire nodes; `raise-body.ts` is the sole
-  consumer of `WireStmt`; `purity-check.ts` is the sole owner of
-  `ImpurityKind`.
-- `raise-body.ts` imports `ImpureFunctionError` from
-  `./purity-check.js` (verified to not create a cycle: `purity-check.ts`
-  does not import from `./raise-body.js`).
-- `raise-function.ts` passes `signature.name` to `renderBody` so the
-  thrown error carries the function name.
+- `libcst-parse.py` emits the new `methodKind` field; `parse-fn-signature.ts`
+  is the sole TS consumer of the envelope `methodKind`;
+  `purity-check.ts` is the sole owner of the `ImpurityKind` union.
+- `parse-fn-signature.ts` imports `ImpureFunctionError` from
+  `./purity-check.js`. Verified to not create a cycle:
+  `purity-check.ts` does not import from `./parse-fn-signature.js`.
+- `raise-function.ts` reads `signature.name` and emits the underscored
+  identifier; the dotted form survives only on the typed
+  `FunctionSignature` and on thrown `ImpureFunctionError.functionName`.
+- `extractFunctionSignaturesAll` records the instance-method rejection in
+  `.failed[]` per the existing #899 fail-soft contract.
 
 ### Forbidden shortcuts
 
-- Do NOT change the existing wire-node types (`Return`, `Pass`, `Raise`,
-  `Unsupported`) — additive only.
-- Do NOT widen `checkFunctionPurity`'s walker to handle `ImpureStatement`
-  wire nodes; per DEC-WI888-005 the throw fires at render time. Adding a
-  parallel detection path duplicates the impurity claim.
-- Do NOT introduce a new error class. Reuse `ImpureFunctionError` from
-  `purity-check.ts`.
-- Do NOT thread `is_first` via a global or module-level variable —
-  parameter-passing only (preserves testability of `_stmt_v2`).
-- Do NOT touch `type-map.ts`, `parse-fn-signature.ts`,
-  `normalize-names.ts` (forbidden by scope manifest; separate WI
-  territory).
-- Do NOT skip the `forbidden_construct` case in `normalizeImpurityKind` —
-  the default-case fallback to `"forbidden_call"` would silently mis-label
-  envelope-supplied violations.
+- Do NOT touch `raise-body.ts` (scope manifest forbids it; the
+  instance-method rejection MUST fire pre-render, in `extractOne` and
+  `checkFunctionPurity`).
+- Do NOT auto-synthesize `cls: unknown` or `self: unknown` for unannotated
+  first parameters (DEC-WI890-004 — preserve the uniform annotation
+  rule).
+- Do NOT add a new error class for instance-method rejection; reuse
+  `ImpureFunctionError`.
+- Do NOT recurse into nested `ClassDef`. Walker is exactly one level
+  deep.
+- Do NOT extract class-level state (assignments, type aliases) into
+  `module.functions[]`. Only `FunctionDef` children of `ClassDef.body.body`
+  are extracted.
+- Do NOT special-case `@property`, `@cached_property`,
+  `@abstractmethod`, or any decorator other than the bare-name
+  `@staticmethod` / `@classmethod`. They are passthrough (DEC-WI890-002).
+- Do NOT add a collision-detection / suffix-rename mechanism for
+  `Foo_bar` clashes (DEC-WI890-008).
+- Do NOT emit `methodKind: null` for module-level functions. The key
+  must be ABSENT (preserving envelope byte-equivalence).
+- Do NOT change the `_stmt_v2` / `_stmt_inner` / `_function_envelope`
+  `is_first` semantics (WI-888 contract preserved; class-body docstrings
+  do NOT pass `is_first=True` because they're skipped, not extracted).
 - Do NOT commit on `main` (memory `feedback_no_main_branch_commits`).
 - Do NOT run `git commit` from the implementer role (memory
   `feedback_implementer_cannot_commit`) — guardian:land composes the
@@ -715,22 +1088,28 @@ quick; the table is guidance, not enforcement.
 ### Rollback boundary
 
 Single PR. Reverting the merge restores prior state cleanly because:
-(a) the libcst-parse.py changes are additive branches before the catch-all
-fallback — reverting deletes them and the catch-all resumes;
-(b) `WireStmt` union additions and `ImpurityKind` addition are type-only;
-reverting deletes them and TypeScript exhaustiveness re-tightens;
-(c) `renderBody` / `renderStmt` signature additions are backward-compatible
-(optional parameter); reverting deletes them and existing callers continue;
-(d) no state authority introduced.
+(a) the libcst-parse.py changes are additive — the class-body walker is
+new code path; deleting it restores the pre-WI walk;
+(b) `EnvelopeFunction.methodKind` and `FunctionSignature.methodKind` are
+optional; deleting them is type-only;
+(c) `ImpurityKind` addition is type-only; deleting it re-tightens the union;
+(d) the `extractOne` and `checkFunctionPurity` short-circuits are
+guarded on `methodKind === "instance"` — without that field set
+(post-revert), both branches are dead code;
+(e) the dot-to-underscore rewrite in `renderFunctionDeclaration` is a
+single `replace(/\./g, "_")`; deleting it is harmless for module-level
+names (no dot) and restores pre-WI byte equality;
+(f) no state authority introduced;
+(g) no migration of existing data required.
 
 ### Ready-for-guardian when
 
 - All required tests pass under `pnpm --filter @yakcc/shave-python test`.
-- Repo-root tests green (`pnpm test`) — or at minimum, no new failures
-  introduced (some pre-existing benches/bootstrap suites may already be
-  red; the implementer documents any prior-art noise in the PR).
 - `pnpm lint` and `pnpm typecheck` clean for the shave-python package
   (memory `feedback_pre_push_hygiene`).
+- Repo-root tests green (`pnpm test`) — or at minimum, no NEW failures
+  introduced (some pre-existing benches/bootstrap suites may already be
+  red; the implementer documents prior-art noise in the PR).
 - `git -C <worktree> fetch origin && git -C <worktree> diff --stat
   origin/main..HEAD` shows only files allowed by the scope manifest;
   rebase onto `origin/main` is clean (memory
@@ -740,8 +1119,11 @@ reverting deletes them and TypeScript exhaustiveness re-tightens;
   trailer) and the projection ran `cc-policy evaluation set
   ready_for_guardian` for the workflow (memory
   `feedback_agent_tool_completion_projection_gap`).
-- `gh issue edit 888 --add-label serenity` ran successfully (memory
-  `feedback_serenity_claim_label`).
+- `gh issue edit 890 --add-label serenity` ran successfully (memory
+  `feedback_serenity_claim_label`) — verify it is still present at
+  push time (it was present at planning time).
+- `raise-body.ts` shows zero touched lines in the diff (scope-manifest
+  invariant).
 
 ---
 
@@ -750,33 +1132,40 @@ reverting deletes them and TypeScript exhaustiveness re-tightens;
 ### Allowed paths (implementer may touch)
 
 - `packages/shave-python/scripts/libcst-parse.py`
-- `packages/shave-python/src/libcst-parser.ts` (only if `WireStmt`-related
-  types are re-exported or referenced here; otherwise unchanged)
-- `packages/shave-python/src/libcst-parser.test.ts`
-- `packages/shave-python/src/raise-body.ts`
-- `packages/shave-python/src/raise-body.test.ts`
+- `packages/shave-python/src/parse-fn-signature.ts`
+- `packages/shave-python/src/parse-fn-signature.test.ts`
 - `packages/shave-python/src/raise-function.ts`
 - `packages/shave-python/src/raise-function.test.ts`
 - `packages/shave-python/src/purity-check.ts`
 - `packages/shave-python/src/purity-check.test.ts`
-- `tmp/**` (scratch evidence, evaluation contract JSON)
+- `packages/shave-python/src/libcst-parser.test.ts`
+- `packages/shave-python/src/index.ts`
+- `tmp/**` (scratch evidence, evaluation contract JSON, scope manifest JSON)
 - `PLAN.md` (this document; planner-owned)
 
 ### Required paths (must be modified for the WI to be complete)
 
 - `packages/shave-python/scripts/libcst-parse.py`
-- `packages/shave-python/src/raise-body.ts`
+- `packages/shave-python/src/parse-fn-signature.ts`
+
+(Operationally the WI also requires edits to `purity-check.ts`,
+`raise-function.ts`, and the four test files; the runtime "required"
+list pins only the two files the runtime contract treats as
+load-bearing minima.)
 
 ### Forbidden paths
 
+- `packages/shave-python/src/raise-body.ts`
+- `packages/shave-python/src/libcst-parser.ts` (implementation; the
+  scope-manifest separately allows the `.test.ts` file)
 - `packages/shave-python/src/type-map.ts`
-- `packages/shave-python/src/parse-fn-signature.ts`
 - `packages/shave-python/src/normalize-names.ts`
 - `packages/compile-python/**`
 - `packages/cli/**`
 - `packages/shave/**`
 - `packages/compile/**`
 - `packages/contracts/**`
+- `packages/ir/**`
 - `bootstrap/**`
 - `.github/**`
 - `.claude/**`
@@ -785,7 +1174,8 @@ reverting deletes them and TypeScript exhaustiveness re-tightens;
 
 - **No new state authority introduced.** The wire schema is extended
   additively; the `version: 1` field in the envelope is preserved.
-- **Read-only:** no external state touched.
+- **Read-only:** no external state touched. No new SQLite tables, no
+  new flat files (the tmp/ artifacts are evidence-only).
 
 ---
 
@@ -793,95 +1183,129 @@ reverting deletes them and TypeScript exhaustiveness re-tightens;
 
 The implementer writes these in source as `@decision` blocks:
 
-- `DEC-WI888-001` — Emit `Docstring` wire node (Option A) rather than
-  skipping at the Python layer (§4).
-- `DEC-WI888-002` — Bare-call detection via `Expr(Call)` produces
-  `ImpureStatement(bare_call)` (§4).
-- `DEC-WI888-003` — Catch-all bare-expression detection via `Expr(*)`
-  produces `ImpureStatement(bare_expression)` (§4).
-- `DEC-WI888-004` — Extend `ImpurityKind` with `"forbidden_construct"` (§4).
-- `DEC-WI888-005` — `ImpureStatement` wire nodes throw at render time,
-  not via the `checkFunctionPurity` walker (§4).
-- `DEC-WI888-006` — Pipeline order in
-  `raiseFunctionWithPurityAndNormalization` unchanged; render-time throw
-  is consistent with the existing `Unsupported` path (§4).
-- `DEC-WI888-007` — Plumb `fnName?` through `renderBody` / `renderStmt`
-  for the thrown `ImpureFunctionError` (§4).
-- `DEC-WI888-008` — Docstring-only body emits `void 0;` via the same
-  empty-body fallback (§4).
+- `DEC-WI890-001` — Flat `module.functions[]` with dot-qualified names;
+  `methodKind` discriminator (§4) — annotate in `libcst-parse.py` at
+  `_function_envelope` and in `parse-fn-signature.ts` at the
+  `EnvelopeFunction` interface.
+- `DEC-WI890-002` — Decorator detection: unqualified Name only (§4) —
+  annotate at `_method_kind` in `libcst-parse.py`.
+- `DEC-WI890-003` — `@classmethod` keeps `cls` as ordinary parameter (§4)
+  — annotate in `libcst-parse.py` near the class-body walker.
+- `DEC-WI890-004` — `cls`/`self` annotation requirement preserved (§4) —
+  annotate in `parse-fn-signature.ts:extractOne`.
+- `DEC-WI890-005` — Instance-method rejection at `extractOne` (§4) —
+  annotate in `parse-fn-signature.ts:extractOne` at the short-circuit.
+- `DEC-WI890-006` — Redundant rejection at `checkFunctionPurity` (§4) —
+  annotate in `purity-check.ts:checkFunctionPurity` at the short-circuit.
+- `DEC-WI890-007` — Dot-qualified envelope names → underscore TS
+  identifiers (§4) — annotate in `raise-function.ts:renderFunctionDeclaration`.
+- `DEC-WI890-008` — No collision check for `Foo_bar` (§4) — brief
+  annotation in `raise-function.ts` near the rewrite.
+- `DEC-WI890-009` — Slice ordering: single PR for A + B + C (§4) —
+  documented in PLAN.md only.
+- `DEC-WI890-010` — Class-body non-FunctionDef stmts: silent skip (§4) —
+  annotate in `libcst-parse.py` at the class-body walker.
 
 Each `@decision` block in source must include rationale and a back-link
-to this PLAN.md (e.g. `Cross-reference: PLAN.md §4 / #888`).
+to this PLAN.md (e.g. `Cross-reference: PLAN.md §4 / #890`).
 
 ---
 
 ## 9 — Implementer marching orders
 
 1. Worktree is provisioned at
-   `/Users/cris/src/yakcc/.worktrees/feature-888-expr-stmts/`. Branch
-   `feature/888-expr-stmts` is descended from `origin/main`. **Do not
+   `/Users/cris/src/yakcc/.worktrees/feature-890-class-methods/`. Branch
+   `feature/890-class-methods` is descended from `origin/main`. **Do not
    commit on `main`** (Sacred Practice #2; memory
    `feedback_no_main_branch_commits`).
 2. Verify HEAD is tracking `origin/main`:
-   `git -C /Users/cris/src/yakcc/.worktrees/feature-888-expr-stmts fetch origin`
+   `git -C /Users/cris/src/yakcc/.worktrees/feature-890-class-methods fetch origin`
    then `git -C … diff --stat origin/main..HEAD` (memory
-   `feedback_branch_must_track_origin_main`).
-3. Implement in slice order §5 (A, C parallel → B → D → E). After each
-   slice, run `pnpm --filter @yakcc/shave-python test`. After Layer-1
-   wire tests pass, validate the Python script via the subprocess test
-   (or a direct stdin pipe) before moving to TS work.
-4. Stage all changes; do **not** run `git commit` — implementer role
+   `feedback_branch_must_track_origin_main`). The branch should currently
+   carry zero diff from origin/main; rebase to pick up any recent merges.
+3. Persist the scope manifest to runtime *before* starting edits so
+   hook enforcement matches the plan. Write the JSON to
+   `tmp/890-scope.json` (allowed/required/forbidden arrays per §7) and
+   run:
+   `cc-policy workflow scope-sync wi-890-classmethods --work-item-id wi-890-plan --scope-file tmp/890-scope.json`
+4. Persist the Evaluation Contract to runtime so reviewer/guardian see
+   the same acceptance target. Write to `tmp/890-evaluation.json` (use
+   `cc-policy evaluation set --help` for the schema) and post it.
+5. Implement in slice order §5 (A → B+C parallel → D → E → F). After
+   each slice, run `pnpm --filter @yakcc/shave-python test`. After
+   Layer-1 wire tests pass, validate the Python script via the
+   subprocess test (or a direct stdin pipe) before moving to TS work.
+6. Stage all changes; do **not** run `git commit` — implementer role
    cannot land per memory `feedback_implementer_cannot_commit`.
    `guardian:land` will compose the commit.
-5. Before guardian:land:
+7. Before guardian:land:
    - Rebase onto `origin/main` (memory `feedback_pre_push_hygiene`).
    - Run `pnpm --filter @yakcc/shave-python lint`,
      `pnpm --filter @yakcc/shave-python typecheck`,
-     `pnpm --filter @yakcc/shave-python test`. Capture outputs for the PR
-     description.
-   - `gh issue edit 888 --add-label serenity` (memory
-     `feedback_serenity_claim_label`).
-6. After reviewer verdict, ensure `cc-policy evaluation set
-   ready_for_guardian --workflow-id wi-888-expr-stmts --head-sha <HEAD>`
+     `pnpm --filter @yakcc/shave-python test`. Capture outputs for the
+     PR description.
+   - Verify `gh issue view 890 --json labels` still includes `serenity`
+     (memory `feedback_serenity_claim_label`); if missing, re-add via
+     `gh issue edit 890 --add-label serenity`.
+   - Confirm `git diff --stat origin/main..HEAD --
+     packages/shave-python/src/raise-body.ts` shows zero output (scope
+     manifest invariant).
+8. After reviewer verdict, ensure `cc-policy evaluation set
+   ready_for_guardian --workflow-id wi-890-classmethods --head-sha <HEAD>`
    ran (memory `feedback_agent_tool_completion_projection_gap`).
-7. PR title: `feat(shave-python): #888 — SmallStatement Expr handling for docstrings + bare calls`.
+9. PR title: `feat(shave-python): #890 — extract class methods (static/class/instance) from class bodies`.
    PR body: paste §6 evidence verbatim; reference the bs4 exploration
    that motivated the WI; note that re-running the exploration post-merge
    is the issue's acceptance step (not part of this PR).
-8. Closes #888.
+10. Closes #890.
 
 ---
 
 ## 10 — Post-landing follow-ups (backlog issues, not in this WI)
 
-- **bs4 exploration re-run** — Operator-driven validation that the 7
-  SmallStatement-Expr blockers drop from the failure tally. Not a code
-  change; runs against the merged HEAD.
-- **Class-level docstrings** — PEP-257 also covers class body docstrings.
-  Tracked at #890 (class-method extraction); folded in there.
-- **Module-level docstrings** — same as class-level but for module body;
-  not yet tracked, file a follow-up issue if e2e exploration shows them
-  as blockers.
-- **`Expr(Yield)` / `Expr(Await)` split** — these currently fall under
-  the catch-all `bare_expression` branch with detail like
-  `"Yield"` / `"Await"`. If we later want a dedicated taxonomy slot for
-  async/generator constructs, split them out then.
-- **Reconcile `checkFunctionPurity` with render-time throws** — DEC-WI888-005
-  documents the current split (purity walker handles `Call`/`Attribute`
-  inside expressions; render-time handles `ImpureStatement` wire nodes).
-  A future refactor could unify these by extending the walker. Tracked as
-  a future cleanup idea, not blocking.
+- **Class scaffolding in compile-python** — compose raised
+  `ClassName_methodName` functions back into TS `class { ... }`
+  declarations. Required if downstream consumers want true class
+  semantics in the compiled output. File as a new GH issue referencing
+  #890 + this PLAN's DEC-WI890-007.
+- **Nested class extraction** — recurse into `ClassDef.body[ClassDef]`
+  for arbitrarily deep nesting. Out of scope per #890; file a follow-up
+  if e2e exploration shows nested classes as common.
+- **Inheritance + `super()` modeling** — out of scope; file follow-up
+  if needed.
+- **Whitelist pure instance methods** — a narrow rule that admits
+  instance methods which (a) annotate `self: Self`, (b) only access
+  `self.attr` for reading (no `self.attr = ...`), and (c) only call
+  other pure methods on `self`. Requires call-graph analysis. File as
+  separate WI.
+- **Auto-synthesize `cls: unknown` / `self: unknown`** for unannotated
+  first parameters when `methodKind` is `class` or `instance`. Trade-off
+  documented in DEC-WI890-004. File as separate WI if coverage of
+  real-world classmethods needs widening.
+- **Class-level docstring extraction** — emit class docstrings into a
+  new `module.classes[]` array (separate envelope shape). Folds in
+  PEP-257 coverage at the class level (WI-888 covered function-level
+  only).
+- **bs4 exploration re-run** — operator-driven validation that the
+  6 → 15+ fnCount improvement materializes. Not a code change; runs
+  against merged HEAD.
 
 ---
 
-PLAN authored 2026-05-29 against worktree HEAD on branch
-`feature/888-expr-stmts`. Operator dispatch identified the SmallStatement-
-Expr error bucket as the dominant blocker in bs4 e2e exploration and
-specified the docstring/bare-call split + the
-`ImpurityKind.forbidden_construct` extension; this plan encodes the
-detection, render, and taxonomy work across `libcst-parse.py`,
-`raise-body.ts`, `purity-check.ts`, and `raise-function.ts`, with the
-Evaluation Contract and Scope Manifest pinned for guardian readiness.
+PLAN authored 2026-05-30 against worktree HEAD on branch
+`feature/890-class-methods`. Operator dispatch identified class-method
+extraction as the dominant bs4 e2e blocker (9 of 15 production files
+yielding 0 functions) and specified the three-decorator split
+(`@staticmethod` / `@classmethod` / regular) with `instance_method` as
+the new `ImpurityKind` rejection label; this plan encodes the
+class-body walker in `libcst-parse.py`, the `methodKind` discriminator
+through `parse-fn-signature.ts`, the dual rejection short-circuits in
+`extractOne` + `checkFunctionPurity`, the dot-to-underscore identifier
+rewrite in `raise-function.ts`, and the four-layer test contract,
+with the Evaluation Contract and Scope Manifest pinned for guardian
+readiness. The `raise-body.ts` renderer is intentionally untouched
+(scope-manifest invariant); rejection fires pre-render so the existing
+render path remains a pure consumer of already-validated signatures.
 
 PLAN_VERDICT: next_work_item
-PLAN_SUMMARY: Drafted WI-888 plan covering libcst-parse.py SmallStatement Expr detection (Docstring + ImpureStatement wire nodes), raise-body.ts render handling, ImpurityKind "forbidden_construct" extension, and raise-function.ts docstring-aware empty-body fallback; DEC-WI888-001..008 capture all design decisions; scope manifest pins shave-python adapter only; next dispatch is guardian:provision to seed the implementer slice.
+PLAN_SUMMARY: Drafted WI-890 plan covering class-method extraction across libcst-parse.py (ClassDef walker + _method_kind decorator detection emitting methodKind: static/class/instance), parse-fn-signature.ts (EnvelopeFunction + FunctionSignature methodKind + extractOne instance-method short-circuit throwing ImpureFunctionError), purity-check.ts (ImpurityKind "instance_method" + checkFunctionPurity dual-layer short-circuit), and raise-function.ts (dot-to-underscore TS identifier rewrite for Foo.bar → Foo_bar); DEC-WI890-001..010 capture all design decisions; scope manifest forbids raise-body.ts (rejection fires pre-render); next dispatch is guardian:provision to seed the implementer slice.
