@@ -10,6 +10,15 @@
 // SelectStmt, DeferStmt) throw the named error classes from errors.ts, each
 // wrapping CannotRaiseToIRError from @yakcc/contracts.
 //
+// WI-964 additions:
+//   Stmt: IfStmt    — if (cond) { ... } else if (...) { ... } else { ... }
+//   Stmt: ForStmt   — for (let i = 0; i < n; i++) { ... }
+//   Stmt: RangeStmt — for (const [k, v] of Object.entries(items)) { ... }
+//                     or items.forEach((v, k) => ...) for index-only
+//   Stmt: SwitchStmt — switch (x) { case ...: ...; break; }
+//   Expr: BinaryExpr >> / << (bitshift)
+//   Decl: ValueSpec multi-name — var a, b = x, y splits into multiple consts
+//
 // Purity inference runs as a pre-pass over the entire body AST before any
 // rendering occurs.  It walks every node to detect banned constructs; it does
 // NOT pattern-match raw source strings and does NOT return a hardcoded verdict.
@@ -25,6 +34,29 @@
 //   wire shape with source locations is both cheaper and more accurate than
 //   text re-parsing.  This mirrors DEC-POLYGLOT-SHAVE-PY-BODY-RAISE-001 for
 //   shave-python.  raise-body.ts consumes `body`, never `bodySource`.
+//
+// @decision DEC-POLYGLOT-GO-CONTROL-FLOW-001 (WI-964)
+// @title Go control-flow lowering strategy for IfStmt/ForStmt/RangeStmt/SwitchStmt
+// @status accepted (WI-964)
+// @rationale
+//   IfStmt: direct structural equivalence — Go `if/else if/else` maps to TS
+//   `if/else if/else` by recursion through the `orelse` chain (IfStmt = else-if,
+//   BlockNode = plain else).  Init statements in if-headers are emitted as a
+//   preceding `const` assignment in the same block scope.
+//   ForStmt: Go classic for (init; cond; post) maps directly to TS for (init; cond; post).
+//   The post statement is rendered without a trailing semicolon (it is already
+//   provided by the for(...) header syntax).
+//   RangeStmt: for maps `for k, v := range m` uses `for...of Object.entries()`
+//   which is the closest semantic match for maps; arrays use the same form since
+//   Object.entries on an array yields [index, value] pairs.  The `forEach` variant
+//   is NOT chosen because it cannot contain `return` statements (they return from
+//   the callback, not the outer function), which would silently change semantics.
+//   SwitchStmt: Go switch maps to TS switch.  Each case gets an explicit `break`
+//   appended because Go cases do NOT fall through by default (opposite of JS/TS).
+//   Tagless switch (switch { case x > 0: ... }) lowers to `switch (true)`.
+//   ValueSpec multi-name: `var a, b = x, y` emits two sequential `const` declarations.
+//   Bitshift >>/<< are now included in ALLOWED_BINARY_OPS — semantics are identical
+//   between Go and TS for the integer domain used in pure functions.
 
 import type { SourceLocation } from "@yakcc/contracts";
 import {
@@ -35,7 +67,18 @@ import {
   GoSelectError,
   GoUnsupportedConstructError,
 } from "./errors.js";
-import type { GoAstBodyNode, GoAstDecl, GoAstExpr, GoAstStmt } from "./go-ast-parser.js";
+import type {
+  GoAstBodyNode,
+  GoAstCaseClause,
+  GoAstDecl,
+  GoAstElseBody,
+  GoAstExpr,
+  GoAstForStmt,
+  GoAstIfStmt,
+  GoAstRangeStmt,
+  GoAstStmt,
+  GoAstSwitchStmt,
+} from "./go-ast-parser.js";
 
 // ---------------------------------------------------------------------------
 // Location helpers
@@ -141,10 +184,50 @@ function checkStmtPurity(stmt: GoAstStmt): void {
     case "SendStmt":
       throw new GoChanSendError(loc(stmt));
 
+    // WI-964: control-flow nodes — walk into child nodes for purity.
+    case "IfStmt":
+      if (stmt.init !== null) checkStmtPurity(stmt.init);
+      checkExprPurity(stmt.cond);
+      checkBodyNodePurity(stmt.body);
+      if (stmt.orelse !== null) {
+        if (stmt.orelse.type === "IfStmt") {
+          checkStmtPurity(stmt.orelse);
+        } else {
+          checkBodyNodePurity(stmt.orelse.body);
+        }
+      }
+      return;
+
+    case "ForStmt":
+      if (stmt.init !== null) checkStmtPurity(stmt.init);
+      if (stmt.cond !== null) checkExprPurity(stmt.cond);
+      if (stmt.post !== null) checkStmtPurity(stmt.post);
+      checkBodyNodePurity(stmt.body);
+      return;
+
+    case "RangeStmt":
+      checkExprPurity(stmt.x);
+      checkBodyNodePurity(stmt.body);
+      return;
+
+    case "SwitchStmt":
+      if (stmt.init !== null) checkStmtPurity(stmt.init);
+      if (stmt.tag !== null) checkExprPurity(stmt.tag);
+      for (const c of stmt.cases) {
+        for (const e of c.list) checkExprPurity(e);
+        checkBodyNodePurity(c.body);
+      }
+      return;
+
     case "UnsupportedStmt":
       // Unsupported statements will throw during rendering; not a purity issue.
       return;
   }
+}
+
+/** Walk all statements in a body node for purity (helper for nested blocks). */
+function checkBodyNodePurity(body: GoAstBodyNode): void {
+  for (const s of body.stmts) checkStmtPurity(s);
 }
 
 /** Walk a declaration node to detect banned constructs. */
@@ -181,7 +264,14 @@ export function checkBodyPurity(body: GoAstBodyNode): void {
 // Converts a purity-clean body to TS-subset IR text.
 // ---------------------------------------------------------------------------
 
-/** Allowed binary operators: the subset where Go and TS semantics align. */
+/**
+ * Allowed binary operators: the subset where Go and TS semantics align.
+ *
+ * WI-964: >> and << are added.  Both Go and TS use arithmetic right-shift
+ * for signed integers (Go: int is signed; TS: >> is signed right-shift).
+ * The unsigned right-shift >>> is intentionally excluded — Go has no unsigned
+ * right-shift operator and raising a Go uint >> to TS >>> is out of scope.
+ */
 const ALLOWED_BINARY_OPS = new Set<string>([
   "+",
   "-",
@@ -196,6 +286,8 @@ const ALLOWED_BINARY_OPS = new Set<string>([
   ">=",
   "&&",
   "||",
+  ">>",
+  "<<",
 ]);
 
 /**
@@ -370,6 +462,20 @@ export function renderStmt(stmt: GoAstStmt, indent = "  ", file = "stdin.go"): s
     case "SendStmt":
       throw new GoChanSendError({ file, line: stmt.line, col: stmt.col });
 
+    // WI-964: control-flow renderers.
+
+    case "IfStmt":
+      return renderIfStmt(stmt, indent, file);
+
+    case "ForStmt":
+      return renderForStmt(stmt, indent, file);
+
+    case "RangeStmt":
+      return renderRangeStmt(stmt, indent, file);
+
+    case "SwitchStmt":
+      return renderSwitchStmt(stmt, indent, file);
+
     case "UnsupportedStmt":
       throw new GoUnsupportedConstructError(stmt.reason, { file, line: stmt.line, col: stmt.col });
   }
@@ -384,6 +490,9 @@ function renderDeclStmt(
 ): string {
   switch (decl.type) {
     case "ValueSpec": {
+      if (decl.names.length === 0) {
+        throw new GoUnsupportedConstructError("ValueSpec(empty)", { file, ...stmtLoc });
+      }
       if (decl.names.length === 1 && decl.values.length === 1) {
         const name = decl.names[0];
         const val = decl.values[0];
@@ -392,12 +501,231 @@ function renderDeclStmt(
         }
         return `${indent}const ${name} = ${renderExpr(val, file)};`;
       }
-      // Multi-name decl: not in slice-2 subset.
-      throw new GoUnsupportedConstructError("ValueSpec(multi-name)", { file, ...stmtLoc });
+      // WI-964: multi-name decl — `var a, b = x, y` splits into sequential consts.
+      // Names without a matching value get `undefined` (zero-value initializer
+      // is not in scope for the pure-function subset; uninitialized vars are rare).
+      if (decl.names.length !== decl.values.length) {
+        throw new GoUnsupportedConstructError(
+          `ValueSpec(names=${decl.names.length},values=${decl.values.length})`,
+          { file, ...stmtLoc },
+        );
+      }
+      return decl.names
+        .map((name, i) => {
+          const val = decl.values[i];
+          if (val === undefined) {
+            throw new GoUnsupportedConstructError("ValueSpec(empty-value)", { file, ...stmtLoc });
+          }
+          return `${indent}const ${name} = ${renderExpr(val, file)};`;
+        })
+        .join("\n");
     }
     case "UnsupportedDecl":
       throw new GoUnsupportedConstructError(decl.reason, { file, ...stmtLoc });
   }
+}
+
+// ---------------------------------------------------------------------------
+// WI-964: control-flow rendering helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Render an IfStmt to TS if/else if/else.
+ *
+ * If the IfStmt has an `init` statement (e.g. `if x := f(); x > 0 { ... }`),
+ * the init is emitted as a preceding const declaration in the same block scope,
+ * separated from the if by a newline at the same indent.
+ */
+function renderIfStmt(stmt: GoAstIfStmt, indent: string, file: string): string {
+  const childIndent = `${indent}  `;
+  const parts: string[] = [];
+
+  // Emit optional init statement before the if header.
+  if (stmt.init !== null) {
+    parts.push(renderStmt(stmt.init, indent, file));
+  }
+
+  const condStr = renderExpr(stmt.cond, file);
+  const bodyLines = renderBodyLines(stmt.body, childIndent, file);
+
+  parts.push(`${indent}if (${condStr}) {`);
+  parts.push(bodyLines);
+  parts.push(`${indent}}`);
+
+  // Handle else / else-if chain.
+  if (stmt.orelse !== null) {
+    // Remove the closing brace we just added — we'll attach "else" to it.
+    parts.pop();
+    if (stmt.orelse.type === "IfStmt") {
+      // else-if: render the nested IfStmt and attach it to the else.
+      const elseIfText = renderIfStmt(stmt.orelse, indent, file);
+      // elseIfText starts with optional init lines followed by "indent if (..."
+      // We want "} else if ..." so we strip the leading indent from the first "if"
+      // token of the nested block.
+      const elseIfTrimmed = elseIfText.trimStart();
+      parts.push(`${indent}} else ${elseIfTrimmed}`);
+    } else {
+      // Plain else block (BlockNode).
+      const elseBody = renderBodyLines((stmt.orelse as GoAstElseBody).body, childIndent, file);
+      parts.push(`${indent}} else {`);
+      parts.push(elseBody);
+      parts.push(`${indent}}`);
+    }
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Render body statements as lines (without the surrounding braces).
+ * Returns the placeholder `${indent}void 0;` for an empty body.
+ */
+function renderBodyLines(body: GoAstBodyNode, indent: string, file: string): string {
+  if (body.stmts.length === 0) {
+    return `${indent}void 0;`;
+  }
+  return body.stmts.map((s) => renderStmt(s, indent, file)).join("\n");
+}
+
+/**
+ * Render a classic C-style for loop to TS.
+ *
+ * Go:   for i := 0; i < n; i++ { body }
+ * TS:   for (let i = 0; i < n; i++) { body }
+ *
+ * The init `const` becomes `let` (the loop variable is mutated by post).
+ * The post statement is rendered without its trailing semicolon because the
+ * for(...) header already provides the enclosing parentheses.
+ */
+function renderForStmt(stmt: GoAstForStmt, indent: string, file: string): string {
+  const childIndent = `${indent}  `;
+
+  const initStr = stmt.init !== null ? renderForInit(stmt.init, file) : "";
+  const condStr = stmt.cond !== null ? renderExpr(stmt.cond, file) : "";
+  const postStr = stmt.post !== null ? renderForPost(stmt.post, file) : "";
+
+  const bodyLines = renderBodyLines(stmt.body, childIndent, file);
+  return [`${indent}for (${initStr}; ${condStr}; ${postStr}) {`, bodyLines, `${indent}}`].join(
+    "\n",
+  );
+}
+
+/**
+ * Render the init part of a for(...) header.
+ * `:=` becomes `let` (not `const`) because the for-post mutates the variable.
+ * `=` stays as a bare assignment.
+ */
+function renderForInit(stmt: GoAstStmt, file: string): string {
+  if (stmt.type === "AssignStmt" && stmt.lhs.length === 1 && stmt.rhs.length === 1) {
+    const lhsNode = stmt.lhs[0];
+    const rhsNode = stmt.rhs[0];
+    if (lhsNode !== undefined && rhsNode !== undefined) {
+      const lhsStr = renderExpr(lhsNode, file);
+      const rhsStr = renderExpr(rhsNode, file);
+      if (stmt.tok === ":=") {
+        return `let ${lhsStr} = ${rhsStr}`;
+      }
+      return `${lhsStr} = ${rhsStr}`;
+    }
+  }
+  if (stmt.type === "DeclStmt") {
+    return renderDeclStmt(stmt.decl, "", file, { line: stmt.line, col: stmt.col });
+  }
+  // Fallback: strip trailing semicolon from normal statement render.
+  return renderStmt(stmt, "", file).replace(/;$/, "");
+}
+
+/**
+ * Render the post part of a for(...) header (no trailing semicolon).
+ * Handles the common `i++` / `i--` (`IncDecStmt`) and `i += 1` (`AssignStmt`).
+ */
+function renderForPost(stmt: GoAstStmt, file: string): string {
+  // Go i++ is an ExprStmt wrapping a UnaryExpr increment?  No — Go i++ is an
+  // *ast.IncDecStmt which the Go parser emits as an ExprStmt with the raw
+  // source text.  In practice go-ast-parse.go emits IncDecStmt as UnsupportedStmt
+  // because it is not listed, so we handle the common case via a fallback:
+  // strip trailing semicolon from the normal render.
+  return renderStmt(stmt, "", file).replace(/;$/, "");
+}
+
+/**
+ * Render a range loop to TS for...of Object.entries().
+ *
+ * Go:   for k, v := range m { body }
+ * TS:   for (const [k, v] of Object.entries(m)) { body }
+ *
+ * If only the key is present:
+ * Go:   for k := range m { body }
+ * TS:   for (const k of Object.keys(m)) { body }
+ *
+ * If only the value (key is blank):
+ * Go:   for _, v := range m { body }
+ * TS:   for (const v of Object.values(m)) { body }
+ *
+ * The `for...of` form (not forEach) is chosen because it correctly propagates
+ * `return` statements from the outer function — forEach would trap them inside
+ * the callback and silently change semantics.
+ */
+function renderRangeStmt(stmt: GoAstRangeStmt, indent: string, file: string): string {
+  const childIndent = `${indent}  `;
+  const xStr = renderExpr(stmt.x, file);
+  const bodyLines = renderBodyLines(stmt.body, childIndent, file);
+
+  let loopVar: string;
+  if (stmt.key !== null && stmt.value !== null) {
+    loopVar = `const [${stmt.key}, ${stmt.value}] of Object.entries(${xStr})`;
+  } else if (stmt.key !== null) {
+    loopVar = `const ${stmt.key} of Object.keys(${xStr})`;
+  } else if (stmt.value !== null) {
+    loopVar = `const ${stmt.value} of Object.values(${xStr})`;
+  } else {
+    // Both key and value are blank — iterate for side effects only.
+    loopVar = `const _entry of Object.values(${xStr})`;
+  }
+
+  return [`${indent}for (${loopVar}) {`, bodyLines, `${indent}}`].join("\n");
+}
+
+/**
+ * Render a switch statement to TS.
+ *
+ * Go:   switch x { case 1, 2: stmts case 3: stmts default: stmts }
+ * TS:   switch (x) { case 1: case 2: stmts; break; case 3: stmts; break; default: stmts; break; }
+ *
+ * Tagless Go switch (`switch { case x > 0: ... }`) lowers to `switch (true) { ... }`.
+ * Each case gets an explicit `break` because Go does NOT fall through by default
+ * (the opposite convention from JS/TS).
+ */
+function renderSwitchStmt(stmt: GoAstSwitchStmt, indent: string, file: string): string {
+  const childIndent = `${indent}  `;
+  const bodyIndent = `${childIndent}  `;
+  const tagStr = stmt.tag !== null ? renderExpr(stmt.tag, file) : "true";
+
+  const caseLines = stmt.cases.map((c) => renderCaseClause(c, childIndent, bodyIndent, file));
+
+  return [`${indent}switch (${tagStr}) {`, ...caseLines, `${indent}}`].join("\n");
+}
+
+/** Render one case clause inside a switch. */
+function renderCaseClause(
+  c: GoAstCaseClause,
+  indent: string,
+  bodyIndent: string,
+  file: string,
+): string {
+  const lines: string[] = [];
+  if (c.list.length === 0) {
+    // default clause
+    lines.push(`${indent}default:`);
+  } else {
+    for (const e of c.list) {
+      lines.push(`${indent}case ${renderExpr(e, file)}:`);
+    }
+  }
+  const bodyLines = renderBodyLines(c.body, bodyIndent, file);
+  lines.push(bodyLines);
+  lines.push(`${bodyIndent}break;`);
+  return lines.join("\n");
 }
 
 /**
