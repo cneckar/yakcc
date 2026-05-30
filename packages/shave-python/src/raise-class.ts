@@ -369,6 +369,14 @@ function rewriteExpr(expr: WireExprExt, className: string): WireExpr {
       };
     }
 
+    case "Attribute":
+      // WI-931: bare obj.attr expression (added to WireExpr after raise-class.ts started).
+      return {
+        type: "Attribute",
+        value: rewriteExpr(expr.value as WireExprExt, className),
+        attr: expr.attr,
+      };
+
     case "Unsupported":
       // Passthrough — renderBody will handle or throw
       return expr;
