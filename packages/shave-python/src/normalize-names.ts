@@ -148,22 +148,142 @@ export function buildParamRenameMap(originalParams: readonly RaisedParam[]): Map
  * Only `Name` nodes whose value appears as a key in `renameMap` are changed.
  * All other node types and all string/numeric literals are left untouched.
  * The function returns a NEW node tree — the input is not mutated.
+ *
+ * @decision DEC-958-001 — normalizeExprNames covers all WireExpr node types
+ * @title Exhaustive expr walker for param rename: Name, BinaryOp, UnaryOp, BoolOp,
+ *   IfExp, LenCall, Call, ListComp, GeneratorExp, DictComp, SetComp, Attribute,
+ *   Subscript, Tuple. Literals and Unsupported pass through unchanged.
+ * @status accepted (#958)
+ * @rationale The original implementation only handled Name and BinaryOp, leaving
+ *   params inside If.test, Subscript slice, Attribute value, etc. unrenamed.
+ *   The fix is a complete structural walk matching the full WireExpr union. Any
+ *   node type added to WireExpr in the future must be added here to remain correct.
  */
 export function normalizeExprNames(expr: WireExpr, renameMap: Map<string, string>): WireExpr {
-  if (expr.type === "Name") {
-    const renamed = renameMap.get(expr.name);
-    return renamed !== undefined ? { type: "Name", name: renamed } : expr;
+  switch (expr.type) {
+    case "Name": {
+      const renamed = renameMap.get(expr.name);
+      return renamed !== undefined ? { type: "Name", name: renamed } : expr;
+    }
+    case "BinaryOp":
+      return {
+        type: "BinaryOp",
+        op: expr.op,
+        left: normalizeExprNames(expr.left, renameMap),
+        right: normalizeExprNames(expr.right, renameMap),
+      };
+    case "UnaryOp":
+      return {
+        type: "UnaryOp",
+        op: expr.op,
+        operand: normalizeExprNames(expr.operand, renameMap),
+      };
+    case "BoolOp":
+      return {
+        type: "BoolOp",
+        op: expr.op,
+        left: normalizeExprNames(expr.left, renameMap),
+        right: normalizeExprNames(expr.right, renameMap),
+      };
+    case "IfExp":
+      return {
+        type: "IfExp",
+        test: normalizeExprNames(expr.test, renameMap),
+        body: normalizeExprNames(expr.body, renameMap),
+        orelse: normalizeExprNames(expr.orelse, renameMap),
+      };
+    case "LenCall":
+      return { type: "LenCall", arg: normalizeExprNames(expr.arg, renameMap) };
+    case "Call":
+      return {
+        type: "Call",
+        func: expr.func,
+        args: expr.args.map((a) => normalizeExprNames(a, renameMap)),
+      };
+    case "ListComp": {
+      if (expr.kind === "map") {
+        return {
+          ...expr,
+          iter: normalizeExprNames(expr.iter, renameMap),
+          elt: normalizeExprNames(expr.elt, renameMap),
+        };
+      }
+      if (expr.kind === "filter") {
+        return {
+          ...expr,
+          iter: normalizeExprNames(expr.iter, renameMap),
+          cond: normalizeExprNames(expr.cond, renameMap),
+        };
+      }
+      // filter_map
+      return {
+        ...expr,
+        iter: normalizeExprNames(expr.iter, renameMap),
+        cond: normalizeExprNames(expr.cond, renameMap),
+        elt: normalizeExprNames(expr.elt, renameMap),
+      };
+    }
+    case "GeneratorExp": {
+      if (expr.kind === "map") {
+        return {
+          ...expr,
+          iter: normalizeExprNames(expr.iter, renameMap),
+          elt: normalizeExprNames(expr.elt, renameMap),
+        };
+      }
+      // filter_map
+      return {
+        ...expr,
+        iter: normalizeExprNames(expr.iter, renameMap),
+        cond: normalizeExprNames(expr.cond, renameMap),
+        elt: normalizeExprNames(expr.elt, renameMap),
+      };
+    }
+    case "DictComp":
+      return {
+        ...expr,
+        iter: normalizeExprNames(expr.iter, renameMap),
+        keyElt: normalizeExprNames(expr.keyElt, renameMap),
+        valElt: normalizeExprNames(expr.valElt, renameMap),
+        cond: expr.cond !== null ? normalizeExprNames(expr.cond, renameMap) : null,
+      };
+    case "SetComp": {
+      if (expr.kind === "map") {
+        return {
+          ...expr,
+          iter: normalizeExprNames(expr.iter, renameMap),
+          elt: normalizeExprNames(expr.elt, renameMap),
+        };
+      }
+      // filter_map
+      return {
+        ...expr,
+        iter: normalizeExprNames(expr.iter, renameMap),
+        cond: normalizeExprNames(expr.cond, renameMap),
+        elt: normalizeExprNames(expr.elt, renameMap),
+      };
+    }
+    case "Attribute":
+      return {
+        type: "Attribute",
+        value: normalizeExprNames(expr.value, renameMap),
+        attr: expr.attr,
+      };
+    case "Subscript":
+      return {
+        type: "Subscript",
+        value: normalizeExprNames(expr.value, renameMap),
+        slice: normalizeExprNames(expr.slice, renameMap),
+      };
+    case "Tuple":
+      return {
+        type: "Tuple",
+        elements: expr.elements.map((e) => normalizeExprNames(e, renameMap)),
+      };
+    // Literals (Integer, Float, String, Bool, None) and Unsupported pass through unchanged.
+    default:
+      return expr;
   }
-  if (expr.type === "BinaryOp") {
-    return {
-      type: "BinaryOp",
-      op: expr.op,
-      left: normalizeExprNames(expr.left, renameMap),
-      right: normalizeExprNames(expr.right, renameMap),
-    };
-  }
-  // Literals (Integer, Float, String, Bool, None, Unsupported) pass through unchanged.
-  return expr;
 }
 
 /**
@@ -178,13 +298,45 @@ export function normalizeBodyNames(
   return body.map((stmt) => normalizeStmtNames(stmt, renameMap));
 }
 
+/**
+ * @decision DEC-958-002 — normalizeStmtNames covers If, Assign, Raise, Return
+ * @title Exhaustive stmt walker for param rename: recurse into If.test/body/orelse,
+ *   Assign.value, Raise.message, Return.value. Pass, Docstring, ImpureStatement,
+ *   Unsupported have no Name nodes to rewrite and pass through unchanged.
+ * @status accepted (#958)
+ * @rationale The original implementation only handled Return, leaving params inside
+ *   If conditions, Assign right-hand sides, and Raise messages unrenamed. This caused
+ *   the bs4 substitute_xml signature/body mismatch: the signature had camelCased param
+ *   makeQuotedAttribute but the if-test still referenced make_quoted_attribute.
+ */
 function normalizeStmtNames(stmt: WireStmt, renameMap: Map<string, string>): WireStmt {
-  if (stmt.type === "Return") {
-    return {
-      type: "Return",
-      value: stmt.value !== null ? normalizeExprNames(stmt.value, renameMap) : null,
-    };
+  switch (stmt.type) {
+    case "Return":
+      return {
+        type: "Return",
+        value: stmt.value !== null ? normalizeExprNames(stmt.value, renameMap) : null,
+      };
+    case "If":
+      return {
+        type: "If",
+        test: normalizeExprNames(stmt.test, renameMap),
+        body: stmt.body.map((s) => normalizeStmtNames(s, renameMap)),
+        orelse: stmt.orelse.map((s) => normalizeStmtNames(s, renameMap)),
+      };
+    case "Assign":
+      return {
+        type: "Assign",
+        target: stmt.target,
+        value: normalizeExprNames(stmt.value, renameMap),
+      };
+    case "Raise":
+      return {
+        type: "Raise",
+        excClass: stmt.excClass,
+        message: stmt.message !== null ? normalizeExprNames(stmt.message, renameMap) : null,
+      };
+    // Pass, Docstring, ImpureStatement, Unsupported have no Name nodes to rewrite.
+    default:
+      return stmt;
   }
-  // Pass and Unsupported have no Name nodes to rewrite.
-  return stmt;
 }
