@@ -21,7 +21,10 @@
     "lint": "echo \"no lint yet\""
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/hooks-base": "workspace:*",
+    "@yakcc/registry": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

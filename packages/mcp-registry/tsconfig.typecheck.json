@@ -5,5 +5,10 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src", "vitest.config.ts"]
+  "include": ["src", "vitest.config.ts"],
+  "references": [
+    { "path": "../contracts" },
+    { "path": "../hooks-base" },
+    { "path": "../registry" }
+  ]
 }

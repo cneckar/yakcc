@@ -20,6 +20,7 @@ import { getShaveStatus } from "./get-shave-status.js";
 import { getSpec } from "./get-spec.js";
 import { listSpecs } from "./list-specs.js";
 import { requestShave } from "./request-shave.js";
+import { resolveTool } from "./resolve.js";
 import { searchAtoms } from "./search-atoms.js";
 import { submitAtom } from "./submit-atom.js";
 import type { ToolModule } from "./types.js";
@@ -30,15 +31,18 @@ export { getShaveStatus } from "./get-shave-status.js";
 export { getSpec } from "./get-spec.js";
 export { listSpecs } from "./list-specs.js";
 export { requestShave } from "./request-shave.js";
+export { resolveTool } from "./resolve.js";
 export { searchAtoms } from "./search-atoms.js";
 export { submitAtom } from "./submit-atom.js";
 export type { ToolModule } from "./types.js";
 
 /**
- * Ordered registry of all 8 tool modules.
+ * Ordered registry of all 9 tool modules.
  * The bite-3 stdio server iterates this array to register with the MCP SDK.
+ * resolveTool added per wi-953 (DEC-HOOK-PROACTIVE-A-001).
  */
 export const TOOLS: ToolModule[] = [
+  resolveTool,
   searchAtoms,
   getAtom,
   listSpecs,
