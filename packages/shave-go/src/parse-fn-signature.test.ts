@@ -240,6 +240,87 @@ describe("extractFunctionSignatures -- rejection cases", () => {
   });
 });
 
+describe("extractFunctionSignatures -- WI-963 generic type parameter passthrough", () => {
+  it("maps T param to tsType 'T' when T is declared as a type param", () => {
+    const env = envelopeWith([
+      {
+        name: "Identity",
+        receiver: null,
+        typeParams: [{ name: "T", constraint: "any" }],
+        params: [{ name: "x", goType: "T" }],
+        results: [{ name: "", goType: "T" }],
+        bodySource: "return x",
+        body: null,
+      },
+    ]);
+    const sigs = extractFunctionSignatures(env);
+    const sig = sigs[0];
+    expect(sig?.typeParams).toEqual([{ name: "T", constraint: "any" }]);
+    expect(sig?.params[0]?.tsType).toBe("T");
+    expect(sig?.returnTypes).toEqual(["T"]);
+  });
+
+  it("maps Map[T, R any] -- both T and R params pass through verbatim", () => {
+    const env = envelopeWith([
+      {
+        name: "Map",
+        receiver: null,
+        typeParams: [
+          { name: "T", constraint: "any" },
+          { name: "R", constraint: "any" },
+        ],
+        params: [
+          { name: "s", goType: "[]T" },
+          { name: "f", goType: "func(T) R" },
+        ],
+        results: [{ name: "", goType: "[]R" }],
+        bodySource: "// body",
+        body: null,
+      },
+    ]);
+    const sig = extractFunctionSignatures(env)[0];
+    expect(sig?.params[0]?.tsType).toBe("T[]");
+    expect(sig?.params[1]?.tsType).toBe("(a0: T) => R");
+    expect(sig?.returnTypes).toEqual(["R[]"]);
+  });
+
+  it("does not break non-generic functions when type-param set is empty", () => {
+    const env = envelopeWith([
+      {
+        name: "Add",
+        receiver: null,
+        typeParams: [],
+        params: [
+          { name: "a", goType: "int" },
+          { name: "b", goType: "int" },
+        ],
+        results: [{ name: "", goType: "int" }],
+        bodySource: "return a + b",
+        body: null,
+      },
+    ]);
+    const sig = extractFunctionSignatures(env)[0];
+    expect(sig?.params.map((p) => p.tsType)).toEqual(["number", "number"]);
+    expect(sig?.returnTypes).toEqual(["number"]);
+  });
+
+  it("throws SignatureRaiseError when a type-param-named type appears in a non-generic func", () => {
+    // T is not in typeParams, so it should be an unsupported type
+    const env = envelopeWith([
+      {
+        name: "Bad",
+        receiver: null,
+        typeParams: [],
+        params: [{ name: "x", goType: "T" }],
+        results: [],
+        bodySource: "",
+        body: null,
+      },
+    ]);
+    expect(() => extractFunctionSignatures(env)).toThrow(SignatureRaiseError);
+  });
+});
+
 describe("extractFunctionSignatures -- compound production sequence", () => {
   it("exercises the full production path: envelope -> signatures -> types -> names", () => {
     // This test mirrors the real production sequence: the go/ast subprocess
