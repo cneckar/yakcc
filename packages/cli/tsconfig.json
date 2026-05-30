@@ -13,7 +13,11 @@
     { "path": "../ir" },
     { "path": "../compile" },
     { "path": "../compile-python" },
+    { "path": "../federation" },
+    { "path": "../hooks-base" },
     { "path": "../hooks-claude-code" },
-    { "path": "../seeds" }
+    { "path": "../seeds" },
+    { "path": "../shave" },
+    { "path": "../shave-python" }
   ]
 }

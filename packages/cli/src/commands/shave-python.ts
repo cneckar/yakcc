@@ -231,9 +231,7 @@ export async function runShavePython(
   } else {
     // Write all functions concatenated to a single file.
     const combined = results
-      .map(({ name, ir }) =>
-        results.length > 1 ? `// ---- function: ${name} ----\n${ir}` : ir,
-      )
+      .map(({ name, ir }) => (results.length > 1 ? `// ---- function: ${name} ----\n${ir}` : ir))
       .join("\n\n");
     writeFileSync(out, combined, "utf-8");
   }

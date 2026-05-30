@@ -99,14 +99,7 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
 
   if (parsed.values.help) {
     logger.log(
-      `Usage: yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <allow|reject|tag>]\n` +
-        `       [--target <ts|python|rust|go>] [--out <path>] [--function <name>]\n` +
-        `  Shave a source file into universalized result (atoms + intent + license).\n` +
-        `  .ts/.tsx files use the TS pipeline (default). .py files use the Python pipeline.\n` +
-        `  --target: override extension inference (default: inferred from file extension).\n` +
-        `  --out: output path for Python target (stdout when omitted).\n` +
-        `  --function: process only one named function (Python target only).\n` +
-        `  --foreign-policy: how to handle foreign-block deps (TS target only, default: ${FOREIGN_POLICY_DEFAULT})`,
+      `Usage: yakcc shave <path> [--registry <p>] [--offline] [--foreign-policy <allow|reject|tag>]\n       [--target <ts|python|rust|go>] [--out <path>] [--function <name>]\n  Shave a source file into universalized result (atoms + intent + license).\n  .ts/.tsx files use the TS pipeline (default). .py files use the Python pipeline.\n  --target: override extension inference (default: inferred from file extension).\n  --out: output path for Python target (stdout when omitted).\n  --function: process only one named function (Python target only).\n  --foreign-policy: how to handle foreign-block deps (TS target only, default: ${FOREIGN_POLICY_DEFAULT})`,
     );
     return 0;
   }
