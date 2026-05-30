@@ -223,7 +223,25 @@ function extractOne(fn: EnvelopeFunction): FunctionSignature {
     );
   }
 
-  const params: RaisedParam[] = fn.params.map((p) => {
+  // #923: for @classmethod, drop the first parameter named "cls" before any
+  // annotation checks.  cls is Python call-convention metadata — it holds a
+  // reference to the class itself and has no equivalent in the TS-subset IR.
+  // libcst typically emits cls without a type annotation, so without this
+  // exemption every classmethod extraction fails with MissingTypeAnnotationError.
+  //
+  // @decision DEC-923-001 — cls drop for classmethods
+  // @title First param "cls" is silently dropped from FunctionSignature.params when methodKind=="class"
+  // @status accepted (#923)
+  // @rationale Option (b) from the dispatch: dropping cls is cleaner than auto-annotating
+  //   it, because cls does not appear in the TS arrow at all.  The exemption is
+  //   keyed on BOTH methodKind==="class" AND p.name==="cls" AND position===0 so
+  //   that (a) module-level fns named cls are still rejected, (b) non-first params
+  //   named cls are still rejected, (c) annotated cls on classmethods is also
+  //   dropped (annotation is Python metadata, irrelevant to the TS surface).
+  const rawParams =
+    fn.methodKind === "class" && fn.params[0]?.name === "cls" ? fn.params.slice(1) : fn.params;
+
+  const params: RaisedParam[] = rawParams.map((p) => {
     if (p.annotation === null) {
       throw new MissingTypeAnnotationError(fn.name, p.name);
     }
