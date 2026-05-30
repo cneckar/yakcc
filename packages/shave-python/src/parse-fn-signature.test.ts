@@ -45,8 +45,8 @@ describe("extractFunctionSignatures — happy paths", () => {
     expect(sigs).toHaveLength(1);
     expect(sigs[0]?.name).toBe("add");
     expect(sigs[0]?.params).toEqual([
-      { name: "x", tsType: "number", pythonAnnotation: "int" },
-      { name: "y", tsType: "number", pythonAnnotation: "int" },
+      { name: "x", tsType: "number", pythonAnnotation: "int", warnings: [] },
+      { name: "y", tsType: "number", pythonAnnotation: "int", warnings: [] },
     ]);
     expect(sigs[0]?.returnType).toBe("number");
     expect(sigs[0]?.pythonReturnAnnotation).toBe("int");
@@ -174,5 +174,115 @@ describe("extractFunctionSignatures — rejections", () => {
       module: { type: "Module", stmt_count: 0 } as unknown as LibcstParseResult["module"],
     };
     expect(extractFunctionSignatures(env)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-889: LowerWarning threading through extractFunctionSignatures
+// ---------------------------------------------------------------------------
+// These tests verify the end-to-end path:
+//   envelope → extractFunctionSignatures → mapPythonType → RaisedParam.warnings
+//                                                         → FunctionSignature.returnWarnings
+//
+// Each test exercises the real production sequence (no mocks of mapPythonType).
+// ---------------------------------------------------------------------------
+
+describe("extractFunctionSignatures — WI-889 warning threading", () => {
+  it("threads any-widened warning onto param when annotation is 'Any'", () => {
+    const env = envelopeWith([
+      {
+        name: "accept_any",
+        params: [{ name: "val", annotation: "Any" }],
+        return_annotation: "str",
+        body_source: "    return str(val)",
+      },
+    ]);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    const param = sigs[0]?.params[0];
+    expect(param?.tsType).toBe("unknown");
+    expect(param?.warnings).toHaveLength(1);
+    expect(param?.warnings?.[0]?.code).toBe("any-widened");
+    expect(param?.warnings?.[0]?.pythonFragment).toBe("Any");
+    // Return should be lossless — no warnings
+    expect(sigs[0]?.returnWarnings).toHaveLength(0);
+  });
+
+  it("threads any-widened warning onto returnWarnings when return is 'Any'", () => {
+    const env = envelopeWith([
+      {
+        name: "returns_any",
+        params: [{ name: "x", annotation: "int" }],
+        return_annotation: "Any",
+        body_source: "    return x",
+      },
+    ]);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    expect(sigs[0]?.returnType).toBe("unknown");
+    expect(sigs[0]?.returnWarnings).toHaveLength(1);
+    expect(sigs[0]?.returnWarnings?.[0]?.code).toBe("any-widened");
+    expect(sigs[0]?.returnWarnings?.[0]?.pythonFragment).toBe("Any");
+    // Params should be lossless — no warnings
+    expect(sigs[0]?.params[0]?.warnings).toHaveLength(0);
+  });
+
+  it("threads module-type-widened warning onto param when annotation is 'types.ModuleType'", () => {
+    const env = envelopeWith([
+      {
+        name: "load_module",
+        params: [{ name: "mod", annotation: "types.ModuleType" }],
+        return_annotation: "str",
+        body_source: "    return mod.__name__",
+      },
+    ]);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    const param = sigs[0]?.params[0];
+    expect(param?.tsType).toBe("unknown");
+    expect(param?.warnings).toHaveLength(1);
+    expect(param?.warnings?.[0]?.code).toBe("module-type-widened");
+    expect(param?.warnings?.[0]?.pythonFragment).toBe("types.ModuleType");
+  });
+
+  it("threads callable-widened warning onto returnWarnings when return is 'Callable[..., str]'", () => {
+    const env = envelopeWith([
+      {
+        name: "make_formatter",
+        params: [{ name: "prefix", annotation: "str" }],
+        return_annotation: "Callable[..., str]",
+        body_source: "    return lambda x: prefix + x",
+      },
+    ]);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    expect(sigs[0]?.returnType).toBe("(...args: unknown[]) => string");
+    expect(sigs[0]?.returnWarnings).toHaveLength(1);
+    expect(sigs[0]?.returnWarnings?.[0]?.code).toBe("callable-widened");
+    // Params should be lossless
+    expect(sigs[0]?.params[0]?.warnings).toHaveLength(0);
+  });
+
+  it("compound: both param and return carry warnings (typing.Any param + bare Callable return)", () => {
+    // Production sequence: a real bs4-style function that takes Any and returns a bare Callable.
+    const env = envelopeWith([
+      {
+        name: "bind_handler",
+        params: [{ name: "tag", annotation: "typing.Any" }],
+        return_annotation: "Callable",
+        body_source: "    return lambda: tag",
+      },
+    ]);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    // Param warning
+    const param = sigs[0]?.params[0];
+    expect(param?.tsType).toBe("unknown");
+    expect(param?.warnings).toHaveLength(1);
+    expect(param?.warnings?.[0]?.code).toBe("any-widened");
+    // Return warning
+    expect(sigs[0]?.returnType).toBe("(...args: unknown[]) => unknown");
+    expect(sigs[0]?.returnWarnings).toHaveLength(1);
+    expect(sigs[0]?.returnWarnings?.[0]?.code).toBe("callable-widened");
   });
 });
