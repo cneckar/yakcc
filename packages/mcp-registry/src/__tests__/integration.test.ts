@@ -32,6 +32,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -293,5 +295,211 @@ describe("stdio MCP server integration", () => {
       arguments: { query: "probe" },
     });
     expect(callResult.isError).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tools/call yakcc_resolve — full round-trip through the global cascade (WI-953)
+//
+// @decision DEC-953B-RESOLVE-ROUNDTRIP-001
+// @title yakcc_resolve integration test exercises the global cascade end-to-end
+// @status decided (wi-953-b)
+// @rationale
+//   The compound-interaction requirement (CLAUDE.md) mandates a test that crosses
+//   multiple component boundaries in the real production sequence. For yakcc_resolve
+//   the production sequence is:
+//     LLM host → compiled dist/index.js (stdio MCP) → resolve handler
+//     → local SQLite registry (empty temp db, no candidates)
+//     → global cascade: GET /v1/blocks via HttpClient → mock registry server
+//     → merged response envelope with source="local+global" → LLM host
+//
+//   A separate describe/beforeEach is required because the server must be spawned
+//   with YAKCC_REGISTRY_PATH pointing to a valid directory so better-sqlite3 can
+//   create an empty registry file (no parent-dir creation needed in /tmp). The
+//   empty local registry returns zero candidates, which falls through to the global
+//   cascade, which hits the mock GET /v1/blocks route — proving the full cascade.
+//
+//   Asserted properties of the resolve envelope (D4 ADR Q5 hybrid mode):
+//     confidence_tier: "candidate_list" | "no_candidates" (no auto_accept from empty local)
+//     source: "local+global" (global cascade was exercised)
+//     candidates: array containing at least the global root from the mock response
+//     airgapped: false
+// ---------------------------------------------------------------------------
+
+describe("tools/call yakcc_resolve — global cascade round-trip (wi-953)", () => {
+  let mock: MockServer;
+  let client: Client;
+  let transport: StdioClientTransport;
+  let tmpRegistryDir: string;
+
+  beforeEach(async () => {
+    mock = await createMockRegistryServer();
+
+    // Create a temp directory where better-sqlite3 can create the registry file.
+    // The file itself is created by openRegistry on first call from the server binary.
+    tmpRegistryDir = mkdtempSync(join(tmpdir(), "yakcc-resolve-test-"));
+    const registryPath = join(tmpRegistryDir, "registry.sqlite");
+
+    transport = new StdioClientTransport({
+      command: "node",
+      args: [SERVER_DIST],
+      env: {
+        ...process.env,
+        YAKCC_REGISTRY_URL: mock.baseUrl,
+        // Point to a path in an existing dir; openRegistry creates the file.
+        YAKCC_REGISTRY_PATH: registryPath,
+        // Ensure global cascade is NOT suppressed.
+        YAKCC_AIRGAPPED: "",
+      },
+      stderr: "pipe",
+    });
+
+    client = new Client(
+      { name: "test-client-resolve", version: "0.0.0" },
+      { capabilities: {} },
+    );
+
+    await client.connect(transport);
+  });
+
+  afterEach(async () => {
+    try {
+      await client.close();
+    } catch {
+      // best-effort
+    }
+    await mock.close();
+    try {
+      rmSync(tmpRegistryDir, { recursive: true, force: true });
+    } catch {
+      // best-effort temp cleanup
+    }
+  });
+
+  it("yakcc_resolve global cascade: empty local registry falls through to GET /v1/blocks and returns resolve envelope", async () => {
+    // The mock registry returns two global roots.
+    // The local SQLite is fresh/empty → 0 local candidates → no auto_accept.
+    // The handler falls through to the global cascade: GET /v1/blocks?limit=N.
+    // The resolve envelope must carry: confidence_tier, source, candidates, airgapped.
+    mock.setNextResponse({
+      roots: [
+        "deadbeef112233445566778899aabbccddeeff00deadbeef112233445566778899",
+        "cafebabe112233445566778899aabbccddeeff00cafebabe112233445566778899",
+      ],
+      nextCursor: null,
+    });
+
+    const result = await client.callTool({
+      name: "yakcc_resolve",
+      arguments: {
+        intent: { title: "find matching blocks for integration test" },
+        limit: 5,
+      },
+    });
+
+    // The handler MUST NOT return isError=true for a normal cascade call.
+    expect(result.isError).toBeFalsy();
+
+    // Parse the text content — the resolve tool always returns a single text item.
+    const contentItem = (result.content as Array<{ type: string; text: string }>)[0];
+    expect(contentItem?.type).toBe("text");
+
+    const envelope = JSON.parse(contentItem?.text ?? "{}") as {
+      confidence_tier: string;
+      source: string;
+      candidates: Array<{ atom_id: string; score: number; source: string }>;
+      airgapped: boolean;
+    };
+
+    // D4 ADR Q5: empty local → no auto_accept; global candidates present → candidate_list.
+    // If the global call somehow returns 0 roots (degenerate), tier is no_candidates.
+    expect(["candidate_list", "no_candidates"]).toContain(envelope.confidence_tier);
+
+    // Global cascade was exercised — source must reflect that.
+    expect(envelope.source).toBe("local+global");
+
+    // airgapped must be false (we did not set YAKCC_AIRGAPPED=1).
+    expect(envelope.airgapped).toBe(false);
+
+    // candidates is always present (may be empty only if mock returned empty roots).
+    expect(Array.isArray(envelope.candidates)).toBe(true);
+
+    // The mock returned two roots — both should appear as global candidates.
+    const globalCandidates = envelope.candidates.filter((c) => c.source === "global");
+    expect(globalCandidates.length).toBe(2);
+
+    // Each global candidate has the atom_id = the full root hash (not sliced).
+    expect(globalCandidates[0]?.atom_id).toBe(
+      "deadbeef112233445566778899aabbccddeeff00deadbeef112233445566778899",
+    );
+    expect(globalCandidates[1]?.atom_id).toBe(
+      "cafebabe112233445566778899aabbccddeeff00cafebabe112233445566778899",
+    );
+    // Global candidates carry score=0 (no local semantic score in v1 catalog walk).
+    expect(globalCandidates[0]?.score).toBe(0);
+
+    // The global cascade hit GET /v1/blocks — confirm the mock saw the request.
+    const reqs = mock.getRequests();
+    const globalReq = reqs.find((r) => r.path.startsWith("/v1/blocks") && r.method === "GET");
+    expect(globalReq, "global cascade must hit GET /v1/blocks").toBeDefined();
+  });
+
+  it("yakcc_resolve returns a well-formed D4 envelope when YAKCC_AIRGAPPED=1 suppresses global cascade", async () => {
+    // Re-create transport with YAKCC_AIRGAPPED=1.
+    // The existing client uses the non-airgapped transport, so we create a fresh pair.
+    await client.close();
+    await mock.close();
+
+    mock = await createMockRegistryServer();
+    const registryPath = join(tmpRegistryDir, "registry-airgap.sqlite");
+
+    const airgapTransport = new StdioClientTransport({
+      command: "node",
+      args: [SERVER_DIST],
+      env: {
+        ...process.env,
+        YAKCC_REGISTRY_URL: mock.baseUrl,
+        YAKCC_REGISTRY_PATH: registryPath,
+        YAKCC_AIRGAPPED: "1",
+      },
+      stderr: "pipe",
+    });
+
+    const airgapClient = new Client(
+      { name: "test-client-airgap", version: "0.0.0" },
+      { capabilities: {} },
+    );
+    await airgapClient.connect(airgapTransport);
+
+    try {
+      const result = await airgapClient.callTool({
+        name: "yakcc_resolve",
+        arguments: { intent: { title: "airgapped resolve test" } },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const contentItem = (result.content as Array<{ type: string; text: string }>)[0];
+      const envelope = JSON.parse(contentItem?.text ?? "{}") as {
+        confidence_tier: string;
+        source: string;
+        airgapped: boolean;
+      };
+
+      // Airgapped → local_only source (no global cascade).
+      expect(envelope.source).toBe("local_only");
+      expect(envelope.airgapped).toBe(true);
+      expect(["candidate_list", "no_candidates"]).toContain(envelope.confidence_tier);
+
+      // The mock must NOT have received any /v1/blocks request (global was skipped).
+      const reqs = mock.getRequests();
+      const globalReq = reqs.find((r) => r.path.startsWith("/v1/blocks"));
+      expect(globalReq, "airgapped: global cascade must NOT fire").toBeUndefined();
+    } finally {
+      try {
+        await airgapClient.close();
+      } catch {
+        // best-effort
+      }
+    }
   });
 });

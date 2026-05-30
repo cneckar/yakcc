@@ -1281,3 +1281,118 @@ describe("init — go.mod routes .go files through @yakcc/shave-go (#870 slice 3
     expect(out).not.toContain("@yakcc/shave-rust");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 26: discovery snippet (WI-953 bite 2 — DEC-953B-SNIPPET-REFERENCE-001,
+//            DEC-953B-SURFACE-SETTINGS-001)
+//
+// Evaluation Contract required_tests:
+//   EC-953B-T1: snippet written — fresh init makes .claude/settings.json carry
+//               the yakcc-discovery marker referencing yakcc-discovery.md.
+//   EC-953B-T2: idempotency — running init twice does NOT duplicate the marker.
+//   EC-953B-T3: --airgapped path still writes the snippet (instruction is
+//               mode-independent; only the global cascade is gated).
+//   EC-953B-T4: per-IDE installer seam — the snippet goes through the existing
+//               installHookForIde dispatch table (claude-code surface verified).
+//
+// The snippet rides .claude/settings.json["yakcc-discovery"] (an additive key
+// inside the existing surface owned by hooksClaudeCodeInstall).  No CLAUDE.md
+// is created (DEC-953B-SURFACE-SETTINGS-001 / DEC-CLI-HOOKS-INSTALL-002).
+// ---------------------------------------------------------------------------
+
+function readDiscoverySnippet(dir: string): Record<string, unknown> | null | undefined {
+  const settingsPath = join(dir, ".claude", "settings.json");
+  if (!existsSync(settingsPath)) return undefined;
+  const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+  return settings["yakcc-discovery"] as Record<string, unknown> | null | undefined;
+}
+
+describe("init — discovery snippet: yakcc_resolve instruction written to .claude/settings.json (WI-953 bite 2)", () => {
+  // EC-953B-T1: snippet written after fresh init
+  it("fresh init --ide claude-code writes yakcc-discovery marker into .claude/settings.json", async () => {
+    const code = await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
+      overrideHome: tmpDir,
+      runFederation: noOpMirror,
+    });
+    expect(code).toBe(0);
+
+    const snippet = readDiscoverySnippet(tmpDir);
+    expect(snippet, "yakcc-discovery key must be present in .claude/settings.json").toBeDefined();
+    expect(snippet).not.toBeNull();
+
+    // DEC-953B-SNIPPET-REFERENCE-001: snippet references the canonical prompt path, not inline body
+    expect((snippet as Record<string, unknown>).promptRef).toContain("yakcc-discovery.md");
+    // Marker sentinel for idempotency detection
+    expect((snippet as Record<string, unknown>)._marker).toBe("yakcc-discovery-v1");
+    // Instruction imperative present
+    expect(typeof (snippet as Record<string, unknown>).instruction).toBe("string");
+    expect((snippet as Record<string, unknown>).instruction as string).toContain("yakcc_resolve");
+  });
+
+  // DEC-953B-SURFACE-SETTINGS-001: no CLAUDE.md resurrection
+  it("does NOT create .claude/CLAUDE.md (retired facade must not be resurrected)", async () => {
+    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
+      overrideHome: tmpDir,
+      runFederation: noOpMirror,
+    });
+    expect(existsSync(join(tmpDir, ".claude", "CLAUDE.md"))).toBe(false);
+  });
+
+  // EC-953B-T2: idempotency — second run must not duplicate the snippet
+  it("running init twice does NOT duplicate the yakcc-discovery entry (idempotency)", async () => {
+    const opts = { overrideHome: tmpDir, runFederation: noOpMirror };
+    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
+    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
+
+    // settings.json["yakcc-discovery"] must be an object (not an array), proving no duplication
+    const settingsPath = join(tmpDir, ".claude", "settings.json");
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+    expect(Array.isArray(settings["yakcc-discovery"])).toBe(false);
+    const snippet = settings["yakcc-discovery"] as Record<string, unknown>;
+    // Exactly one _marker — object, not duplicated
+    expect(snippet._marker).toBe("yakcc-discovery-v1");
+  });
+
+  // EC-953B-T3: --airgapped path still writes the snippet (instruction is mode-independent)
+  it("--airgapped still writes the discovery snippet (only the global cascade is gated)", async () => {
+    const code = await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--airgapped"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir },
+    );
+    expect(code).toBe(0);
+
+    const snippet = readDiscoverySnippet(tmpDir);
+    expect(snippet, "yakcc-discovery must be present even in --airgapped mode").toBeDefined();
+    expect(snippet).not.toBeNull();
+    expect((snippet as Record<string, unknown>)._marker).toBe("yakcc-discovery-v1");
+    // .yakccrc.json must not have the default registry peer (--airgapped)
+    const rc = readRc(tmpDir);
+    const peers = ((rc?.federation as Record<string, unknown> | undefined)?.peers as string[] | undefined) ?? [];
+    expect(peers.includes("https://registry.yakcc.com")).toBe(false);
+  });
+
+  // EC-953B-T4: per-IDE installer seam — discovery goes through installHookForIde
+  // (i.e., the existing .claude/settings.json the installer owns also carries the snippet)
+  it("discovery snippet is in the same .claude/settings.json surface the hook installer owns", async () => {
+    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
+      overrideHome: tmpDir,
+      runFederation: noOpMirror,
+    });
+
+    // Both the hook entry (PreToolUse) AND the discovery snippet live in settings.json — same file
+    const settingsPath = join(tmpDir, ".claude", "settings.json");
+    expect(existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+
+    // Hook entry is present (installer did its job)
+    const hooks = settings.hooks as Record<string, unknown[]> | undefined;
+    expect(Array.isArray(hooks?.PreToolUse)).toBe(true);
+    expect((hooks?.PreToolUse as unknown[]).length).toBeGreaterThan(0);
+
+    // Discovery snippet is present in the same file (no parallel writer)
+    const snippet = settings["yakcc-discovery"] as Record<string, unknown> | undefined;
+    expect(snippet).toBeDefined();
+    expect(snippet?._marker).toBe("yakcc-discovery-v1");
+  });
+});

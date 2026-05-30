@@ -113,6 +113,7 @@ import {
   readRc,
   writeRc,
 } from "../lib/yakccrc.js";
+import { writeDiscoverySnippet } from "./discovery-snippet.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";
 import { hooksContinueInstall } from "./hooks-continue-install.js";
@@ -525,6 +526,12 @@ export async function init(
       try {
         await installHookForIde(ide, targetDir, logger, opts?.overrideHome);
         installedHooks.push(ide);
+        // Write the discovery instruction snippet into the IDE's instruction surface
+        // after the hook installer has written/verified the base surface file.
+        // DEC-953B-SNIPPET-REFERENCE-001: the snippet references yakcc-discovery.md,
+        // not the 12.5 KB body.  DEC-953B-SURFACE-SETTINGS-001: for claude-code this
+        // extends .claude/settings.json (no CLAUDE.md resurrection).
+        writeDiscoverySnippet(ide, targetDir);
       } catch (err) {
         logger.error(`warning: ${String(err)} — continuing`);
         // Non-fatal: the registry is initialized; other hooks may still succeed.
