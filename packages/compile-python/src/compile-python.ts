@@ -35,12 +35,18 @@ export function compileToPython(
   atom: BlockTripletRow,
   opts?: CompilePythonOptions,
 ): PythonCompileResult {
-  const { pyLines, needsFunctools, needsOptional, warnings } = lowerSource(atom.implSource);
+  const { pyLines, needsFunctools, needsOptional, needsCallable, warnings } = lowerSource(
+    atom.implSource,
+  );
 
   // Build import block
   const importLines: string[] = [];
-  if (needsOptional) {
-    importLines.push("from typing import Optional");
+  // Collect typing imports so they can be emitted as a single "from typing import X, Y" line
+  const typingImports: string[] = [];
+  if (needsOptional) typingImports.push("Optional");
+  if (needsCallable) typingImports.push("Callable");
+  if (typingImports.length > 0) {
+    importLines.push(`from typing import ${typingImports.join(", ")}`);
   }
   if (needsFunctools) {
     importLines.push("import functools");
