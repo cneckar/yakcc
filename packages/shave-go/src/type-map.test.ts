@@ -84,8 +84,12 @@ describe("mapGoType -- rejection cases", () => {
     expect(() => mapGoType("")).toThrow(UnsupportedTypeError);
   });
 
-  it("throws for complex64", () => {
-    expect(() => mapGoType("complex64")).toThrow(UnsupportedTypeError);
+  it("passes through complex64 as user-defined type (WI-991 — not in primitive table)", () => {
+    // complex64 is not in the primitive mapping table; WI-991 passes it through
+    // verbatim with a user-defined-type-identifier warning instead of throwing.
+    const result = mapGoType("complex64", {});
+    expect(result.tsType).toBe("complex64");
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 
   it("throws for chan int", () => {
@@ -118,8 +122,12 @@ describe("mapGoType -- rejection cases", () => {
     expect(mapGoType("func(int) int")).toBe("(a0: number) => number");
   });
 
-  it("throws for named user type (MyStruct)", () => {
-    expect(() => mapGoType("MyStruct")).toThrow(UnsupportedTypeError);
+  it("no longer throws for named user type (MyStruct) — WI-991 passes through verbatim", () => {
+    // Pre-WI-991 this threw UnsupportedTypeError; now it passes through with a warning.
+    const result = mapGoType("MyStruct", {});
+    expect(result.tsType).toBe("MyStruct");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 });
 
@@ -169,14 +177,20 @@ describe("mapGoType -- generic type parameter passthrough (WI-963)", () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it("throws UnsupportedTypeError without a typeParams set for unknown T", () => {
-    expect(() => mapGoType("T")).toThrow(UnsupportedTypeError);
+  it("passes T through as user-defined type when no typeParams set supplied (WI-991)", () => {
+    // WI-991: plain identifier T with no opts → user-defined-type passthrough.
+    // The legacy (no-opts) overload returns a string; use opts overload to inspect warnings.
+    const result = mapGoType("T", {});
+    expect(result.tsType).toBe("T");
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 
-  it("throws UnsupportedTypeError when T is NOT in the typeParams set", () => {
+  it("passes T through as user-defined type when T is NOT in the typeParams set (WI-991)", () => {
     const typeParams = new Set(["R"]);
-    // T not in set
-    expect(() => mapGoType("T", { typeParams })).toThrow(UnsupportedTypeError);
+    // T not in set — WI-991: plain identifier passthrough with warning instead of throw.
+    const result = mapGoType("T", { typeParams });
+    expect(result.tsType).toBe("T");
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 
   it("backward compat: returns string (not object) when called without opts", () => {
@@ -255,5 +269,82 @@ describe("mapGoType -- #981 named parameters in func literal types", () => {
     const result = mapGoType("func(items ...T) T", { typeParams });
     expect(result.tsType).toBe("(a0: T) => T");
     expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #985: generic instantiation types (e.g. Tuple3[A, B, C])
+// ---------------------------------------------------------------------------
+
+describe("mapGoType -- #985 generic instantiation types (Foo[A, B, C])", () => {
+  it("maps Tuple3[A, B, C] -> Tuple3<A, B, C> with typeParams {A, B, C}", () => {
+    const typeParams = new Set(["A", "B", "C"]);
+    const result = mapGoType("Tuple3[A, B, C]", { typeParams });
+    expect(result.tsType).toBe("Tuple3<A, B, C>");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps Tuple2[A, B] -> Tuple2<A, B> with typeParams {A, B}", () => {
+    const typeParams = new Set(["A", "B"]);
+    const result = mapGoType("Tuple2[A, B]", { typeParams });
+    expect(result.tsType).toBe("Tuple2<A, B>");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps Pair[string, int] -> Pair<string, number> (primitive type args)", () => {
+    const result = mapGoType("Pair[string, int]", {});
+    expect(result.tsType).toBe("Pair<string, number>");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps []Tuple3[A, B, C] -> Tuple3<A, B, C>[] with typeParams {A, B, C}", () => {
+    const typeParams = new Set(["A", "B", "C"]);
+    const result = mapGoType("[]Tuple3[A, B, C]", { typeParams });
+    expect(result.tsType).toBe("Tuple3<A, B, C>[]");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps []Tuple2[A, B] -> Tuple2<A, B>[] with typeParams {A, B}", () => {
+    const typeParams = new Set(["A", "B"]);
+    const result = mapGoType("[]Tuple2[A, B]", { typeParams });
+    expect(result.tsType).toBe("Tuple2<A, B>[]");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps Wrapper[T] -> Wrapper<T> with single typeParam {T}", () => {
+    const typeParams = new Set(["T"]);
+    const result = mapGoType("Wrapper[T]", { typeParams });
+    expect(result.tsType).toBe("Wrapper<T>");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps nested Result[string, []int] -> Result<string, number[]>", () => {
+    const result = mapGoType("Result[string, []int]", {});
+    expect(result.tsType).toBe("Result<string, number[]>");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("maps Tuple4[A, B, C, D] -> Tuple4<A, B, C, D> with typeParams {A,B,C,D}", () => {
+    const typeParams = new Set(["A", "B", "C", "D"]);
+    const result = mapGoType("Tuple4[A, B, C, D]", { typeParams });
+    expect(result.tsType).toBe("Tuple4<A, B, C, D>");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  // Compound production sequence: full end-to-end for samber/lo Unpack3
+  it("compound: Unpack3[A,B,C any](t Tuple3[A,B,C]) (A,B,C) raises correctly", () => {
+    // This mirrors the production sequence for samber/lo Unpack3:
+    // The go/ast envelope has typeParams=[A,B,C], params=[{t, Tuple3[A, B, C]}],
+    // results=[{A}, {B}, {C}].
+    // extractFunctionSignatures should produce returnTypes=["A","B","C"]
+    // and param tsType="Tuple3<A, B, C>".
+    const typeParams = new Set(["A", "B", "C"]);
+    // param type
+    const paramResult = mapGoType("Tuple3[A, B, C]", { typeParams });
+    expect(paramResult.tsType).toBe("Tuple3<A, B, C>");
+    // each return type
+    expect(mapGoType("A", { typeParams }).tsType).toBe("A");
+    expect(mapGoType("B", { typeParams }).tsType).toBe("B");
+    expect(mapGoType("C", { typeParams }).tsType).toBe("C");
   });
 });

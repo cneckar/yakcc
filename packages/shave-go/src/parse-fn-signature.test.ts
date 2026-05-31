@@ -304,11 +304,12 @@ describe("extractFunctionSignatures -- WI-963 generic type parameter passthrough
     expect(sig?.returnTypes).toEqual(["number"]);
   });
 
-  it("throws SignatureRaiseError when a type-param-named type appears in a non-generic func", () => {
-    // T is not in typeParams, so it should be an unsupported type
+  it("passes through T in a non-generic func as user-defined type (WI-991)", () => {
+    // WI-991: T is no longer treated as unsupported when it is a plain identifier.
+    // It passes through verbatim as a user-defined type; no SignatureRaiseError thrown.
     const env = envelopeWith([
       {
-        name: "Bad",
+        name: "UsesUserType",
         receiver: null,
         typeParams: [],
         params: [{ name: "x", goType: "T" }],
@@ -317,7 +318,9 @@ describe("extractFunctionSignatures -- WI-963 generic type parameter passthrough
         body: null,
       },
     ]);
-    expect(() => extractFunctionSignatures(env)).toThrow(SignatureRaiseError);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    expect(sigs[0]?.params[0]?.tsType).toBe("T");
   });
 });
 
@@ -435,6 +438,183 @@ describe("extractFunctionSignatures -- #981 iteratee/predicate with named func p
     expect(filterSig?.name).toBe("Filter");
     expect(filterSig?.params[1]?.tsType).toBe("(a0: T, a1: number) => boolean");
     expect(filterSig?.returnTypes).toEqual(["T[]"]);
+  });
+});
+
+describe("extractFunctionSignatures -- #985 multi-name generic params (samber/lo Unpack3 shape)", () => {
+  it("raises Unpack3[A,B,C any](t Tuple3[A,B,C]) (A,B,C) with tuple-param and 3 returns", () => {
+    // Real production sequence: go/ast emits Tuple3[A, B, C] as the param goType,
+    // and A, B, C as separate result entries.  This test exercises the full
+    // extractFunctionSignatures path for the samber/lo Unpack3 shape.
+    const env: GoAstParseResult = {
+      version: 2,
+      packageName: "lo",
+      functions: [
+        {
+          name: "Unpack3",
+          receiver: null,
+          typeParams: [
+            { name: "A", constraint: "any" },
+            { name: "B", constraint: "any" },
+            { name: "C", constraint: "any" },
+          ],
+          params: [{ name: "t", goType: "Tuple3[A, B, C]" }],
+          results: [
+            { name: "", goType: "A" },
+            { name: "", goType: "B" },
+            { name: "", goType: "C" },
+          ],
+          bodySource: "return t.A, t.B, t.C",
+          body: null,
+        },
+      ],
+    };
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    const sig = sigs[0];
+    expect(sig?.name).toBe("Unpack3");
+    expect(sig?.typeParams).toHaveLength(3);
+    expect(sig?.params).toHaveLength(1);
+    expect(sig?.params[0]?.tsType).toBe("Tuple3<A, B, C>");
+    expect(sig?.returnTypes).toEqual(["A", "B", "C"]);
+  });
+
+  it("raises T3[A,B,C any](a A, b B, c C) Tuple3[A,B,C] with tuple return type", () => {
+    // T3 is the Tuple constructor: (a A, b B, c C) -> Tuple3[A, B, C]
+    const env: GoAstParseResult = {
+      version: 2,
+      packageName: "lo",
+      functions: [
+        {
+          name: "T3",
+          receiver: null,
+          typeParams: [
+            { name: "A", constraint: "any" },
+            { name: "B", constraint: "any" },
+            { name: "C", constraint: "any" },
+          ],
+          params: [
+            { name: "a", goType: "A" },
+            { name: "b", goType: "B" },
+            { name: "c", goType: "C" },
+          ],
+          results: [{ name: "", goType: "Tuple3[A, B, C]" }],
+          bodySource: "return Tuple3[A, B, C]{A: a, B: b, C: c}",
+          body: null,
+        },
+      ],
+    };
+    const sigs = extractFunctionSignatures(env);
+    const sig = sigs[0];
+    expect(sig?.params.map((p) => p.tsType)).toEqual(["A", "B", "C"]);
+    expect(sig?.returnTypes).toEqual(["Tuple3<A, B, C>"]);
+  });
+
+  it("raises Zip2[A,B any](a []A, b []B) []Tuple2[A,B] with slice-of-tuple return", () => {
+    const env: GoAstParseResult = {
+      version: 2,
+      packageName: "lo",
+      functions: [
+        {
+          name: "Zip2",
+          receiver: null,
+          typeParams: [
+            { name: "A", constraint: "any" },
+            { name: "B", constraint: "any" },
+          ],
+          params: [
+            { name: "a", goType: "[]A" },
+            { name: "b", goType: "[]B" },
+          ],
+          results: [{ name: "", goType: "[]Tuple2[A, B]" }],
+          bodySource: "return nil",
+          body: null,
+        },
+      ],
+    };
+    const sigs = extractFunctionSignatures(env);
+    const sig = sigs[0];
+    expect(sig?.params[0]?.tsType).toBe("A[]");
+    expect(sig?.params[1]?.tsType).toBe("B[]");
+    expect(sig?.returnTypes).toEqual(["Tuple2<A, B>[]"]);
+  });
+
+  // Compound test: multiple Unpack functions exercising the real production sequence
+  it("compound: raises Unpack2, Unpack3, Unpack4 end-to-end crossing type-map + sig-parser", () => {
+    const env: GoAstParseResult = {
+      version: 2,
+      packageName: "lo",
+      functions: [
+        {
+          name: "Unpack2",
+          receiver: null,
+          typeParams: [
+            { name: "A", constraint: "any" },
+            { name: "B", constraint: "any" },
+          ],
+          params: [{ name: "t", goType: "Tuple2[A, B]" }],
+          results: [
+            { name: "", goType: "A" },
+            { name: "", goType: "B" },
+          ],
+          bodySource: "return t.A, t.B",
+          body: null,
+        },
+        {
+          name: "Unpack3",
+          receiver: null,
+          typeParams: [
+            { name: "A", constraint: "any" },
+            { name: "B", constraint: "any" },
+            { name: "C", constraint: "any" },
+          ],
+          params: [{ name: "t", goType: "Tuple3[A, B, C]" }],
+          results: [
+            { name: "", goType: "A" },
+            { name: "", goType: "B" },
+            { name: "", goType: "C" },
+          ],
+          bodySource: "return t.A, t.B, t.C",
+          body: null,
+        },
+        {
+          name: "Unpack4",
+          receiver: null,
+          typeParams: [
+            { name: "A", constraint: "any" },
+            { name: "B", constraint: "any" },
+            { name: "C", constraint: "any" },
+            { name: "D", constraint: "any" },
+          ],
+          params: [{ name: "t", goType: "Tuple4[A, B, C, D]" }],
+          results: [
+            { name: "", goType: "A" },
+            { name: "", goType: "B" },
+            { name: "", goType: "C" },
+            { name: "", goType: "D" },
+          ],
+          bodySource: "return t.A, t.B, t.C, t.D",
+          body: null,
+        },
+      ],
+    };
+
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(3);
+
+    const [u2, u3, u4] = sigs;
+
+    expect(u2?.name).toBe("Unpack2");
+    expect(u2?.params[0]?.tsType).toBe("Tuple2<A, B>");
+    expect(u2?.returnTypes).toEqual(["A", "B"]);
+
+    expect(u3?.name).toBe("Unpack3");
+    expect(u3?.params[0]?.tsType).toBe("Tuple3<A, B, C>");
+    expect(u3?.returnTypes).toEqual(["A", "B", "C"]);
+
+    expect(u4?.name).toBe("Unpack4");
+    expect(u4?.params[0]?.tsType).toBe("Tuple4<A, B, C, D>");
+    expect(u4?.returnTypes).toEqual(["A", "B", "C", "D"]);
   });
 });
 

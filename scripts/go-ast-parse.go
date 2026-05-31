@@ -313,6 +313,35 @@ func marshalStmt(fset *token.FileSet, stmt ast.Stmt) json.RawMessage {
 			"op":     op,
 		})
 
+	case *ast.BranchStmt:
+		// #1001: BranchStmt covers break, continue, goto, and fallthrough.
+		// break and continue have direct TS equivalents and are raised as
+		// BranchStmt wire nodes. goto and fallthrough have no TS equivalent;
+		// emit UnsupportedStmt so raise-body.ts can throw
+		// GoUnsupportedConstructError with a clear message rather than a
+		// generic "unsupported" catch.
+		tok := s.Tok.String() // "break", "continue", "goto", "fallthrough"
+		if tok == "break" || tok == "continue" {
+			var label interface{}
+			if s.Label != nil {
+				label = s.Label.Name
+			}
+			return marshal(map[string]interface{}{
+				"type":  "BranchStmt",
+				"line":  line,
+				"col":   col,
+				"tok":   tok,
+				"label": label,
+			})
+		}
+		// goto and fallthrough: not raiseable to TS subset.
+		return marshal(map[string]interface{}{
+			"type":   "UnsupportedStmt",
+			"line":   line,
+			"col":    col,
+			"reason": fmt.Sprintf("BranchStmt(%s)", tok),
+		})
+
 	default:
 		return marshal(map[string]interface{}{
 			"type":   "UnsupportedStmt",
@@ -399,6 +428,38 @@ func marshalExpr(fset *token.FileSet, expr ast.Expr) json.RawMessage {
 			"col":   col,
 			"x":     marshalExpr(fset, e.X),
 			"index": marshalExpr(fset, e.Index),
+		})
+
+	case *ast.SliceExpr:
+		// #1000: s[i:j], s[i:], s[:j], s[:] — three-index s[i:j:k] is rejected.
+		// Emit SliceExpr wire node with nullable low/high fields.
+		if e.Max != nil {
+			// Three-index slice (s[i:j:k]) is out of scope for MVP; reject.
+			return marshal(map[string]interface{}{
+				"type":   "UnsupportedExpr",
+				"line":   line,
+				"col":    col,
+				"reason": "*ast.SliceExpr(3-index)",
+			})
+		}
+		var lowRaw, highRaw json.RawMessage
+		if e.Low != nil {
+			lowRaw = marshalExpr(fset, e.Low)
+		} else {
+			lowRaw = marshal(nil)
+		}
+		if e.High != nil {
+			highRaw = marshalExpr(fset, e.High)
+		} else {
+			highRaw = marshal(nil)
+		}
+		return marshal(map[string]interface{}{
+			"type": "SliceExpr",
+			"line": line,
+			"col":  col,
+			"x":    marshalExpr(fset, e.X),
+			"low":  lowRaw,
+			"high": highRaw,
 		})
 
 	case *ast.ParenExpr:

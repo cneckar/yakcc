@@ -1,0 +1,14 @@
+{
+  "name": "@yakcc/website",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "node scripts/sync-docs.mjs && astro build",
+    "prebuild": "node scripts/generate-benchmark-svgs.mjs",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^6.4.2"
+  }
+}

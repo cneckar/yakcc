@@ -496,8 +496,44 @@ function lowerVarStatement(node: Node, ctx: Ctx, depth: number): string[] {
   const vs = node.asKindOrThrow(SyntaxKind.VariableStatement);
   const lines: string[] = [];
   for (const vd of vs.getDeclarationList().getDeclarations()) {
-    const varName = toGoLocalName(vd.getName());
+    const nameNode = vd.getNameNode();
     const init = vd.getInitializer();
+
+    // #999: array destructure `const [a, b] = expr` -> Go `a, b := expr`
+    //
+    // @decision DEC-MULTIASSIGN-LOWER-001 (#999)
+    // @title TS const [a, b] = expr lowers to Go multi-value short assign a, b := expr
+    // @status accepted (#999)
+    // @rationale
+    //   shave-go emits `const [a, b] = f()` for Go's multi-return short assign `a, b := f()`.
+    //   The ts-morph ArrayBindingPattern carries the names as BindingElement nodes.
+    //   We extract the names in order and emit `name1, name2 := <rhs>`.
+    //   Only simple BindingElement names (no nested destructures, no rest elements) are supported.
+    //   Nested or rest patterns are rejected with CannotLowerToGoError — Go does not have nested
+    //   multi-return or rest assignment in the pure-function subset.
+    if (nameNode.getKind() === SyntaxKind.ArrayBindingPattern && init) {
+      const abp = nameNode.asKindOrThrow(SyntaxKind.ArrayBindingPattern);
+      const names: string[] = [];
+      for (const elem of abp.getElements()) {
+        if (elem.getKind() !== SyntaxKind.BindingElement) {
+          // OmittedExpression or rest: not in scope
+          const snippet = elem.getText().slice(0, 40);
+          throw new CannotLowerToGoError(
+            SyntaxKind[elem.getKind()],
+            nodeLocation(elem),
+            snippet,
+            ctx.fnName,
+          );
+        }
+        const be = elem.asKindOrThrow(SyntaxKind.BindingElement);
+        names.push(toGoLocalName(be.getName()));
+      }
+      const initStr = lowerExpr(init, ctx);
+      lines.push(`${ind}${names.join(", ")} := ${initStr}`);
+      continue;
+    }
+
+    const varName = toGoLocalName(vd.getName());
     if (init) {
       // #986: propagate the declared Go type as a hint for array/object literal lowering.
       // e.g. `const xs: number[] = []` -> hint="[]int" -> lowerArrayLiteral emits `[]int{}`
@@ -1227,6 +1263,49 @@ function lowerCall(node: Node, ctx: Ctx): string {
     if (method === "push" && args.length === 1) {
       const v = args[0];
       return `append(${objStr}, ${v ? lowerExpr(v, ctx) : ""})`;
+    }
+
+    // #1000: .slice() -> Go slice expression s[i:j].
+    // TS s.slice()    -> Go s[:]
+    // TS s.slice(i)   -> Go s[i:]
+    // TS s.slice(0,j) -> Go s[:j]   (only when first arg is numeric literal 0)
+    // TS s.slice(i,j) -> Go s[i:j]
+    //
+    // @decision DEC-SLICEEXPR-LOWER-001 (#1000)
+    // @title .slice() lowers to Go slice expression s[i:j]; 0 low arg collapses to s[:j]
+    // @status accepted (#1000)
+    // @rationale
+    //   shave-go emits s.slice(i, j) for Go s[i:j].  The round-trip is not required by
+    //   the dispatch (nice-to-have) but improves compilation fidelity for samber/lo functions
+    //   that use slice indexing.  We detect the .slice() method name and map arg count to
+    //   the correct Go slice expression.  A literal `0` as the first arg of a 2-arg .slice()
+    //   is collapsed to the s[:j] form.  Non-0 first args use s[i:j].
+    //   Other .slice() call patterns (negative indices, expressions as args) pass through
+    //   as-is using the fallthrough generic method call path — Go does not support negative
+    //   slice indices so emitting them would produce uncompilable output anyway.
+    if (method === "slice") {
+      if (args.length === 0) {
+        // s.slice() -> s[:]
+        return `${objStr}[:]`;
+      }
+      if (args.length === 1) {
+        const a = args[0];
+        const aStr = a ? lowerExpr(a, ctx) : "0";
+        // s.slice(i) -> s[i:]
+        return `${objStr}[${aStr}:]`;
+      }
+      if (args.length === 2) {
+        const a0 = args[0];
+        const a1 = args[1];
+        const a0Str = a0 ? lowerExpr(a0, ctx) : "0";
+        const a1Str = a1 ? lowerExpr(a1, ctx) : "";
+        // Collapse 0 low to s[:j] form
+        if (a0Str === "0") {
+          return `${objStr}[:${a1Str}]`;
+        }
+        return `${objStr}[${a0Str}:${a1Str}]`;
+      }
+      // 3+ args: not a Go slice pattern; fall through to generic method call.
     }
 
     // Generic method call

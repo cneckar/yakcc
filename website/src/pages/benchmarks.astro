@@ -1,0 +1,105 @@
+---
+/**
+ * benchmarks.astro — grid of all 12 benchmark cards
+ *
+ * @decision DEC-WEBSITE-BENCH-GRID-001
+ * Title: Static benchmark grid rendered from build-time data
+ * Status: active
+ * Rationale: All benchmark data is generated at prebuild time by
+ * generate-benchmark-svgs.mjs. This page reads the static JSON and
+ * renders a pure HTML+SVG grid. Zero client JS (DEC-WEBSITE-DOGFOOD-001).
+ * Cards link to per-bench SVG assets in public/benchmarks/.
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+import benchmarks from '../data/benchmarks.json';
+
+const BADGE_COLORS = {
+  PROVEN: { bg: '#14532d', border: '#16a34a', text: '#4ade80' },
+  PARTIAL: { bg: '#422006', border: '#ca8a04', text: '#fbbf24' },
+  'MEASUREMENT-LIMITED': { bg: '#431407', border: '#ea580c', text: '#fb923c' },
+  PENDING: { bg: '#1e293b', border: '#475569', text: '#94a3b8' },
+};
+
+type Bench = {
+  slug: string;
+  name: string;
+  status: keyof typeof BADGE_COLORS;
+  caption: string;
+  metric: string | null;
+  svgPath: string;
+  hasData: boolean;
+};
+
+const typedBenchmarks: Bench[] = benchmarks as Bench[];
+---
+<BaseLayout title="Benchmarks — yakcc">
+  <div style="padding: 2rem 0 1rem;">
+    <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Benchmarks</h1>
+    <p style="color: #64748b; font-size: 0.875rem; margin-bottom: 2rem;">
+      All results are from real measurements. Badges reflect honest verdicts — partial
+      and pending results are shown as such.
+    </p>
+
+    <div style="
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1.25rem;
+    ">
+      {typedBenchmarks.map((bench) => {
+        const colors = BADGE_COLORS[bench.status] ?? BADGE_COLORS.PENDING;
+        return (
+          <article style={`
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          `}>
+            <!-- SVG card -->
+            <div style="padding: 0.75rem; border-bottom: 1px solid #1e293b;">
+              <img
+                src={bench.svgPath}
+                alt={`${bench.name} benchmark — ${bench.status}`}
+                width="240"
+                height="140"
+                style="width: 100%; height: auto; display: block; border-radius: 6px;"
+              />
+            </div>
+
+            <!-- Meta below SVG -->
+            <div style="padding: 0.875rem; flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+                <span style="font-size: 0.875rem; font-weight: 600; color: #f1f5f9;">
+                  {bench.name}
+                </span>
+                <span style={`
+                  font-size: 0.7rem;
+                  font-weight: 700;
+                  padding: 2px 8px;
+                  border-radius: 999px;
+                  background: ${colors.bg};
+                  border: 1px solid ${colors.border};
+                  color: ${colors.text};
+                  white-space: nowrap;
+                `}>
+                  {bench.status}
+                </span>
+              </div>
+
+              {bench.metric && (
+                <div style="font-size: 0.8rem; color: #cbd5e1; font-weight: 500;">
+                  {bench.metric}
+                </div>
+              )}
+
+              <p style="font-size: 0.775rem; color: #64748b; line-height: 1.5; margin-top: auto;">
+                {bench.caption}
+              </p>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  </div>
+</BaseLayout>
