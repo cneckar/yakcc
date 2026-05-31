@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="140" viewBox="0 0 240 140">
+  <!-- Background -->
+  <rect width="240" height="140" rx="8" fill="#0f172a" />
+  <!-- Border -->
+  <rect width="240" height="140" rx="8" fill="none" stroke="#1e293b" stroke-width="1.5" />
+
+  <!-- Bench name -->
+  <text x="120" y="26" text-anchor="middle" font-size="13" font-weight="600"
+        font-family="ui-monospace,SFMono-Regular,Menlo,monospace" fill="#f1f5f9">B9-Min Surface</text>
+
+  <!-- Status badge pill -->
+  <rect x="80" y="34" width="80" height="20" rx="10" fill="#eab308" />
+  <text x="120" y="48" text-anchor="middle" font-size="10" font-weight="700"
+        font-family="ui-monospace,SFMono-Regular,Menlo,monospace" fill="#422006">PARTIAL</text>
+
+  <!-- Headline metric -->
+  <text x="120" y="78" text-anchor="middle" font-size="11" font-weight="500"
+        font-family="ui-monospace,SFMono-Regular,Menlo,monospace" fill="#cbd5e1">WARN-DIRECTIONAL</text>
+
+  <!-- Caption -->
+  <text x="120" y="118" text-anchor="middle" font-size="9" fill="#94a3b8">Minimum atom-surface for substrate</text>
+    <text x="120" y="131" text-anchor="middle" font-size="9" fill="#94a3b8">self-replication.</text>
+</svg>

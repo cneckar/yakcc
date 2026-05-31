@@ -1,0 +1,110 @@
+[
+  {
+    "slug": "b6-airgap",
+    "name": "B6-Airgap",
+    "status": "PROVEN",
+    "caption": "Installable with zero network during install.",
+    "metric": "0 outbound connections",
+    "svgPath": "/benchmarks/b6-airgap.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b7-commit",
+    "name": "B7-Commit",
+    "status": "PROVEN",
+    "caption": "Zero outbound network during commit verification.",
+    "metric": "1804.5ms warm median",
+    "svgPath": "/benchmarks/b7-commit.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b10-import",
+    "name": "B10-Import",
+    "status": "PROVEN",
+    "caption": "Drop-in replacement for transitively-bundled npm packages.",
+    "metric": "PASS-DIRECTIONAL",
+    "svgPath": "/benchmarks/b10-import.svg",
+    "hasData": true
+  },
+  {
+    "slug": "v0-smoke",
+    "name": "v0-Smoke",
+    "status": "PROVEN",
+    "caption": "End-to-end install + run smoke test on real OS.",
+    "metric": "11/11 steps passed",
+    "svgPath": "/benchmarks/v0-smoke.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b2-bloat",
+    "name": "B2-Bloat",
+    "status": "MEASUREMENT-LIMITED",
+    "caption": "Validator atom is 91% smaller than equivalent ajv bundle (cold corpus).",
+    "metric": "90% smaller bundle",
+    "svgPath": "/benchmarks/b2-bloat.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b5-coherence",
+    "name": "B5-Coherence",
+    "status": "PARTIAL",
+    "caption": "Cross-language semantic equivalence (TS↔Python). Below directional target — iterating.",
+    "metric": "76% coherence",
+    "svgPath": "/benchmarks/b5-coherence.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b1-latency",
+    "name": "B1-Latency",
+    "status": "PARTIAL",
+    "caption": "Per-atom cold-cache latency vs hand-written baseline.",
+    "metric": "566ms p50",
+    "svgPath": "/benchmarks/b1-latency.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b4-tokens",
+    "name": "B4-Tokens",
+    "status": "PARTIAL",
+    "caption": "Token-budget delta for LLM-driven shave + emit. Below directional target.",
+    "metric": "-15.6% token delta (haiku)",
+    "svgPath": "/benchmarks/b4-tokens.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b8-synthetic",
+    "name": "B8-Synthetic",
+    "status": "PARTIAL",
+    "caption": "Synthetic-vs-real harness validation. Slice 1 of 3.",
+    "metric": "0% mean hit rate",
+    "svgPath": "/benchmarks/b8-synthetic.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b9-min-surface",
+    "name": "B9-Min Surface",
+    "status": "PARTIAL",
+    "caption": "Minimum atom-surface for substrate self-replication.",
+    "metric": "WARN-DIRECTIONAL",
+    "svgPath": "/benchmarks/b9-min-surface.svg",
+    "hasData": true
+  },
+  {
+    "slug": "b3-cache-hit",
+    "name": "B3-Cache Hit",
+    "status": "PENDING",
+    "caption": "Atom cache hit-rate on real workloads.",
+    "metric": null,
+    "svgPath": "/benchmarks/b3-cache-hit.svg",
+    "hasData": false
+  },
+  {
+    "slug": "b8-curve",
+    "name": "B8-Curve",
+    "status": "PENDING",
+    "caption": "Coverage curve vs corpus size.",
+    "metric": null,
+    "svgPath": "/benchmarks/b8-curve.svg",
+    "hasData": false
+  }
+]
