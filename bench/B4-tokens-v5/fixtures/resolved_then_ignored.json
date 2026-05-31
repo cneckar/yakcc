@@ -1,0 +1,60 @@
+{
+  "_scenario": "resolved_then_ignored",
+  "_description": "Model calls yakcc_resolve, gets candidate_list (score 0.82 -- usable but below auto_accept), then ignores it and authors own implementation. Registers as flow_class=resolved_then_ignored, failure_class=model_ignored_candidate.",
+  "turns": [
+    {
+      "turn_index": 0,
+      "response": {
+        "stop_reason": "tool_use",
+        "content_blocks": [
+          {
+            "type": "tool_use",
+            "id": "tu_003",
+            "name": "yakcc_resolve",
+            "input": {
+              "intent": {
+                "title": "LRU cache with per-entry TTL and lazy expiry",
+                "description": "get evicts expired entries, capacity counts only live entries"
+              }
+            }
+          }
+        ],
+        "usage": { "input_tokens": 1700, "output_tokens": 140, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [
+        {
+          "tool_use_id": "tu_003",
+          "intent": "LRU cache with per-entry TTL and lazy expiry",
+          "envelope": {
+            "confidence_tier": "candidate_list",
+            "source": "local_only",
+            "candidates": [
+              { "atom_id": "lru001aaa", "score": 0.82, "summary": "LRU cache no TTL", "evidence": [] },
+              { "atom_id": "lru002bbb", "score": 0.71, "summary": "TTL map without LRU", "evidence": [] }
+            ],
+            "airgapped": true
+          }
+        }
+      ],
+      "wall_ms": 1300,
+      "ts": "2026-05-30T20:00:00.000Z"
+    },
+    {
+      "turn_index": 1,
+      "response": {
+        "stop_reason": "end_turn",
+        "content_blocks": [
+          {
+            "type": "text",
+            "text": "The candidates don't exactly match my needs, I'll implement it myself.\n\n```typescript\nexport class LRUTTLCache<K, V> {\n  constructor(private capacity: number, private defaultTtlMs: number) {}\n  get(key: K): V | undefined { return undefined; }\n  set(key: K, value: V, ttlMs?: number): void {}\n}\n```"
+          }
+        ],
+        "usage": { "input_tokens": 2300, "output_tokens": 120, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [],
+      "wall_ms": 1800,
+      "ts": "2026-05-30T20:00:02.000Z"
+    }
+  ],
+  "arm": "hooked"
+}

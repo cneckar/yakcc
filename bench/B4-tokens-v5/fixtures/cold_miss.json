@@ -1,0 +1,57 @@
+{
+  "_scenario": "cold_miss",
+  "_description": "Model calls yakcc_resolve, gets no_candidates, emits triplet (spec.yak + impl.ts + proof/). Registers as flow_class=cold_miss_authored, path_class=cold_miss.",
+  "turns": [
+    {
+      "turn_index": 0,
+      "response": {
+        "stop_reason": "tool_use",
+        "content_blocks": [
+          {
+            "type": "tool_use",
+            "id": "tu_002",
+            "name": "yakcc_resolve",
+            "input": {
+              "intent": {
+                "title": "Novel ring-buffer with eviction return value",
+                "description": "Fixed-capacity circular buffer where push returns evicted item"
+              }
+            }
+          }
+        ],
+        "usage": { "input_tokens": 1600, "output_tokens": 130, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [
+        {
+          "tool_use_id": "tu_002",
+          "intent": "Novel ring-buffer with eviction return value",
+          "envelope": {
+            "confidence_tier": "no_candidates",
+            "source": "local_only",
+            "candidates": [],
+            "airgapped": true
+          }
+        }
+      ],
+      "wall_ms": 1100,
+      "ts": "2026-05-30T20:00:00.000Z"
+    },
+    {
+      "turn_index": 1,
+      "response": {
+        "stop_reason": "end_turn",
+        "content_blocks": [
+          {
+            "type": "text",
+            "text": "No candidates found. I'll emit a triplet.\n\nspec.yak:\n```json\n{\"name\":\"ring-buffer\",\"level\":\"L0\"}\n```\n\nimpl.ts:\n```typescript\nexport class RingBuffer<T> { push(v: T): T | undefined { return undefined; } }\n```\n\nproof/manifest.json:\n```json\n{\"artifacts\":[{\"kind\":\"property_tests\",\"path\":\"tests.fast-check.ts\"}]}\n```\n\nRun: yakcc emit-atom ring-buffer/"
+          }
+        ],
+        "usage": { "input_tokens": 2400, "output_tokens": 280, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [],
+      "wall_ms": 2200,
+      "ts": "2026-05-30T20:00:02.000Z"
+    }
+  ],
+  "arm": "hooked"
+}

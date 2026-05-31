@@ -1,0 +1,7 @@
+{"_type":"probe_meta","registry_path":"/Users/cris/src/yakcc/bootstrap/yakcc.registry.sqlite","ts":"2026-05-31T03:22:00.082Z","n_tasks":6,"thresh_production":0.92,"thresh_doc":0.85}
+{"_type":"probe_row","task_id":"crc32c","tier_returned":"candidate_list","top1_score":0.75,"gap_to_2nd":0,"n_candidates":10,"n_above_threshold_092":0,"n_above_threshold_085":0,"airgapped":true}
+{"_type":"probe_row","task_id":"utf8-codec","tier_returned":"candidate_list","top1_score":0.7500000298023215,"gap_to_2nd":0,"n_candidates":10,"n_above_threshold_092":0,"n_above_threshold_085":0,"airgapped":true}
+{"_type":"probe_row","task_id":"base32-rfc4648","tier_returned":"candidate_list","top1_score":0.75,"gap_to_2nd":0,"n_candidates":10,"n_above_threshold_092":0,"n_above_threshold_085":0,"airgapped":true}
+{"_type":"probe_row","task_id":"lru-ttl-cache","tier_returned":"candidate_list","top1_score":0.75,"gap_to_2nd":0,"n_candidates":10,"n_above_threshold_092":0,"n_above_threshold_085":0,"airgapped":true}
+{"_type":"probe_row","task_id":"semver-range","tier_returned":"candidate_list","top1_score":0.75,"gap_to_2nd":0,"n_candidates":10,"n_above_threshold_092":0,"n_above_threshold_085":0,"airgapped":true}
+{"_type":"probe_row","task_id":"ring-buffer","tier_returned":"candidate_list","top1_score":0.75,"gap_to_2nd":0,"n_candidates":10,"n_above_threshold_092":0,"n_above_threshold_085":0,"airgapped":true}

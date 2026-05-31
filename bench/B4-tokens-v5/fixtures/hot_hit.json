@@ -1,0 +1,60 @@
+{
+  "_scenario": "hot_hit",
+  "_description": "Model calls yakcc_resolve, gets auto_accept tier (score 0.95 gap 0.18), emits yakcc compile. Registers as flow_class=followed, path_class=hot_hit.",
+  "turns": [
+    {
+      "turn_index": 0,
+      "response": {
+        "stop_reason": "tool_use",
+        "content_blocks": [
+          {
+            "type": "tool_use",
+            "id": "tu_001",
+            "name": "yakcc_resolve",
+            "input": {
+              "intent": {
+                "title": "CRC-32C Castagnoli checksum with update/digest/reset",
+                "description": "Compute CRC-32C using Castagnoli polynomial 0x82F63B78"
+              }
+            }
+          }
+        ],
+        "usage": { "input_tokens": 1500, "output_tokens": 120, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [
+        {
+          "tool_use_id": "tu_001",
+          "intent": "CRC-32C Castagnoli checksum with update/digest/reset",
+          "envelope": {
+            "confidence_tier": "auto_accept",
+            "source": "local_only",
+            "candidates": [
+              { "atom_id": "abc123def456", "score": 0.95, "summary": "CRC-32C implementation", "evidence": [] },
+              { "atom_id": "def789ghi012", "score": 0.77, "summary": "CRC-32 Ethernet", "evidence": [] }
+            ],
+            "airgapped": true
+          }
+        }
+      ],
+      "wall_ms": 1200,
+      "ts": "2026-05-30T20:00:00.000Z"
+    },
+    {
+      "turn_index": 1,
+      "response": {
+        "stop_reason": "end_turn",
+        "content_blocks": [
+          {
+            "type": "text",
+            "text": "Great, I found an exact match. I'll use the registered atom:\n\nyakcc compile abc123def456\n"
+          }
+        ],
+        "usage": { "input_tokens": 2100, "output_tokens": 35, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [],
+      "wall_ms": 800,
+      "ts": "2026-05-30T20:00:02.000Z"
+    }
+  ],
+  "arm": "hooked"
+}
