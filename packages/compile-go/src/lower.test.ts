@@ -295,3 +295,190 @@ describe("compileToGo — package name option", () => {
     expect(out.startsWith("package mypackage\n")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #978 — SwitchStatement lowering
+// ---------------------------------------------------------------------------
+
+describe("lowerSource — SwitchStatement (#978)", () => {
+  it("switch with one case and break emits Go switch (implicit break — no break emitted)", () => {
+    const src = `export function label(n: number): string {
+  switch (n) {
+    case 1: return "one";
+  }
+  return "other";
+}`;
+    const out = compile(src);
+    expect(out).toContain("switch n {");
+    expect(out).toContain("case 1:");
+    expect(out).toContain(`return "one"`);
+    // Go has implicit break — no explicit break emitted
+    expect(out).not.toContain("break");
+  });
+
+  it("switch with default clause emits Go default:", () => {
+    const src = `export function label(n: number): string {
+  switch (n) {
+    case 1: return "one";
+    default: return "other";
+  }
+  return "unknown";
+}`;
+    const out = compile(src);
+    expect(out).toContain("switch n {");
+    expect(out).toContain("case 1:");
+    expect(out).toContain("default:");
+    expect(out).not.toContain("break");
+  });
+
+  it("tagless switch (switch(true)) emits Go 'switch {' with no tag", () => {
+    const src = `export function classify(n: number): string {
+  switch (true) {
+    case n < 0: return "negative";
+    case n === 0: return "zero";
+    default: return "positive";
+  }
+  return "unknown";
+}`;
+    const out = compile(src);
+    // tagless: no expression after switch
+    expect(out).toContain("switch {");
+    expect(out).toContain("case n < 0:");
+    expect(out).toContain("case n == 0:");
+    expect(out).toContain("default:");
+  });
+
+  it("TS fallthrough (adjacent empty cases) emits Go multi-value case", () => {
+    // TS pattern: case a: case b: case c: body; break;
+    // This emits as separate case clauses in the AST; compile-go should merge them
+    const src = `export function isVowel(c: string): boolean {
+  switch (c) {
+    case "a":
+    case "e":
+    case "i":
+    case "o":
+    case "u":
+      return true;
+    default:
+      return false;
+  }
+  return false;
+}`;
+    const out = compile(src);
+    // Go multi-value case: case "a", "e", "i", "o", "u":
+    expect(out).toContain(`case "a", "e", "i", "o", "u":`);
+    expect(out).toContain("return true");
+    expect(out).toContain("default:");
+  });
+
+  it("switch is a valid statement inside a function (smoke test — does not throw)", () => {
+    const src = `export function test(x: number): number {
+  switch (x) {
+    case 0: return 0;
+    default: return x;
+  }
+  return -1;
+}`;
+    expect(() => compile(src)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #977 — Import synthesis
+// ---------------------------------------------------------------------------
+
+describe("compileToGo — import synthesis (#977)", () => {
+  it("function using reflect.ValueOf produces output with import 'reflect'", () => {
+    const src = `export function typeOf(x: any): string {
+  return reflect.ValueOf(x).Kind().String();
+}`;
+    const out = compile(src);
+    expect(out).toContain('import "reflect"');
+    expect(out).toContain("reflect.ValueOf(x)");
+  });
+
+  it("function using fmt.Sprintf produces import 'fmt'", () => {
+    const src = `export function greet(name: string): string {
+  return fmt.Sprintf("Hello, %s", name);
+}`;
+    const out = compile(src);
+    expect(out).toContain('import "fmt"');
+  });
+
+  it("function using multiple stdlib packages gets multi-line import block", () => {
+    const src = `export function work(s: string): string {
+  const upper = strings.ToUpper(s);
+  const n = strconv.Itoa(42);
+  return upper + n;
+}`;
+    const out = compile(src);
+    expect(out).toContain("import (");
+    expect(out).toContain('"strings"');
+    expect(out).toContain('"strconv"');
+    expect(out).toContain(")");
+  });
+
+  it("function using cases and language emits golang.org/x paths", () => {
+    const src = `export function capitalize(str: string): string {
+  return cases.Title(language.English).String(str);
+}`;
+    const out = compile(src);
+    expect(out).toContain('"golang.org/x/text/cases"');
+    expect(out).toContain('"golang.org/x/text/language"');
+  });
+
+  it("import block appears between package declaration and func declaration", () => {
+    const src = `export function capitalize(str: string): string {
+  return cases.Title(language.English).String(str);
+}`;
+    const out = compile(src);
+    const pkgIdx = out.indexOf("package yakcc");
+    const importIdx = out.indexOf("import");
+    const funcIdx = out.indexOf("func Capitalize");
+    expect(pkgIdx).toBeGreaterThanOrEqual(0);
+    expect(importIdx).toBeGreaterThan(pkgIdx);
+    expect(funcIdx).toBeGreaterThan(importIdx);
+  });
+
+  it("function with no dotted references produces no import block", () => {
+    const src = "export function add(a: number, b: number): number { return a + b; }";
+    const out = compile(src);
+    expect(out).not.toContain("import");
+  });
+
+  it("unknown package emits placeholder import and warning", () => {
+    const src = `export function test(x: any): any {
+  return mypkg.DoSomething(x);
+}`;
+    const result = (() => {
+      const row = {
+        blockMerkleRoot: "dead" as import("@yakcc/registry").BlockMerkleRoot,
+        specHash: "dead" as import("@yakcc/registry").SpecHash,
+        specCanonicalBytes: new Uint8Array(),
+        implSource: src,
+        proofManifestJson: "{}",
+        level: "L0" as const,
+        createdAt: 0,
+        canonicalAstHash: "dead" as import("@yakcc/registry").CanonicalAstHash,
+        artifacts: new Map(),
+      };
+      return compileToGo(row);
+    })();
+    // Placeholder import for unknown package
+    expect(result.source).toContain('"unknown/mypkg"');
+    // Warning must be present
+    expect(
+      result.warnings.some((w) => w.kind === "unknown-import" && w.message.includes("mypkg")),
+    ).toBe(true);
+  });
+
+  it("import block uses single-line form for exactly one import", () => {
+    const src = `export function test(x: any): any {
+  return reflect.ValueOf(x);
+}`;
+    const out = compile(src);
+    // Single import: import "reflect" (not import (...))
+    expect(out).toContain('import "reflect"');
+    expect(out).not.toContain("import (");
+  });
+});

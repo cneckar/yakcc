@@ -50,9 +50,30 @@ export interface GoCompileResult {
  */
 export function compileToGo(atom: BlockTripletRow, opts?: CompileGoOptions): GoCompileResult {
   const packageName = opts?.packageName ?? "yakcc";
-  const { goLines, warnings } = lowerSource(atom.implSource);
+  const { goLines, warnings, importPaths } = lowerSource(atom.implSource);
 
-  const allLines = [`package ${packageName}`, "", ...goLines];
+  // Synthesize import block (WI-977, DEC-WI977-001):
+  //   - 0 imports: no import block
+  //   - 1 import:  import "path"
+  //   - 2+ imports: import (\n\t"path1"\n\t"path2"\n)
+  // The block is inserted between the package declaration and the function lines.
+  const importLines: string[] = [];
+  if (importPaths.size === 1) {
+    const [single] = importPaths;
+    importLines.push(`import "${single}"`);
+    importLines.push("");
+  } else if (importPaths.size > 1) {
+    // Sort for deterministic output
+    const sorted = [...importPaths].sort();
+    importLines.push("import (");
+    for (const p of sorted) {
+      importLines.push(`\t"${p}"`);
+    }
+    importLines.push(")");
+    importLines.push("");
+  }
+
+  const allLines = [`package ${packageName}`, "", ...importLines, ...goLines];
   const source = `${allLines.join("\n").trimEnd()}\n`;
 
   return { source, warnings };
