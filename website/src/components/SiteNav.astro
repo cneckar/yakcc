@@ -1,0 +1,34 @@
+---
+/**
+ * SiteNav.astro — shared navigation component for all yakcc.com pages.
+ *
+ * @decision DEC-WEBSITE-NAV-001
+ * Title: Shared SiteNav component with aria-current page detection
+ * Status: accepted
+ * Rationale: All three layouts (index, BaseLayout, DocLayout) previously
+ * inlined their own nav markup. Centralising into this component means:
+ *   1. One place to add/remove links.
+ *   2. Active-page highlighting (aria-current) is computed once at build
+ *      time via Astro.url.pathname — zero JS required.
+ *   3. Mobile-responsive behaviour comes from the global .site-nav rules
+ *      in global.css; no per-layout media queries needed.
+ * Introduced by WI-1019-website-polish.
+ */
+
+const path = Astro.url.pathname;
+
+const navItems = [
+  { href: "/", label: "yakcc", isLogo: true },
+  { href: "/benchmarks", label: "benchmarks" },
+  { href: "/docs", label: "docs" },
+];
+---
+<nav class="site-nav">
+  {navItems.map(({ href, label, isLogo }) => (
+    <a
+      href={href}
+      class={isLogo ? "logo" : ""}
+      aria-current={path === href || (href !== "/" && path.startsWith(href)) ? "page" : undefined}
+    >{label}</a>
+  ))}
+</nav>

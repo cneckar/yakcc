@@ -23,6 +23,7 @@
  * Rationale: Zero JS by default, TypeScript-native, markdown-friendly.
  */
 import "../styles/global.css";
+import SiteNav from "../components/SiteNav.astro";
 ---
 
 <!doctype html>
@@ -37,11 +38,7 @@ import "../styles/global.css";
   <body>
 
     <!-- ===================== NAV ===================== -->
-    <nav class="site-nav">
-      <a href="/" class="logo">yakcc</a>
-      <a href="/benchmarks">benchmarks</a>
-      <a href="/docs">docs</a>
-    </nav>
+    <SiteNav />
 
     <!-- ===================== HERO ===================== -->
     <section class="hero">
