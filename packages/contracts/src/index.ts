@@ -301,6 +301,7 @@ export {
 export { pickPrimaryDeclaration, type PrimaryDeclaration } from "./source-pick.js";
 export {
   AmbiguousPurityError,
+  CannotLowerToGoError,
   CannotLowerToPythonError,
   CannotRaiseToIRError,
   type SourceLocation,
