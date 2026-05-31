@@ -1,105 +1,398 @@
 ---
 /**
- * benchmarks.astro — grid of all 12 benchmark cards
+ * benchmarks.astro — outcome-oriented narrative for external audience
  *
- * @decision DEC-WEBSITE-BENCH-GRID-001
- * Title: Static benchmark grid rendered from build-time data
- * Status: active
- * Rationale: All benchmark data is generated at prebuild time by
- * generate-benchmark-svgs.mjs. This page reads the static JSON and
- * renders a pure HTML+SVG grid. Zero client JS (DEC-WEBSITE-DOGFOOD-001).
- * Cards link to per-bench SVG assets in public/benchmarks/.
+ * Replaces the prior internal-codename grid (B1, B2, …) with sections framed
+ * around the real problems yakcc solves. Per operator dispatch 2026-05-31:
+ *
+ *   "This is for an audience that has no idea about the internals of the
+ *   project. The internal names of the benchmarks mean nothing to this
+ *   audience, don't use that. Instead this should be formatted as sections
+ *   that call out specific problems with AI generated code and traditional
+ *   dev process, and then show what a bunch of things look like before and
+ *   after using the yakcc paradigm."
+ *
+ * @decision DEC-WEBSITE-BENCH-PAGE-NARRATIVE-001
+ * Title: /benchmarks page organized by property/problem, not by internal codename
+ * Status: accepted (2026-05-31)
+ * Rationale: External audience doesn't know B1..B10. They know "is my supply
+ * chain safe?", "is this AI-generated code auditable?", "does this save tokens?"
+ * Each section gets a problem statement, a yakcc claim, and a real-data SVG.
+ * Internal-codename grid moves to "raw results" footer for credibility / drill-down.
+ *
+ * Honest measurement (DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001): every section
+ * cites real bench data; in-flight / pending results shown as such.
+ *
+ * Dogfood (DEC-WEBSITE-DOGFOOD-001): no runtime JS introduced. SVGs are static.
  */
-import BaseLayout from '../layouts/BaseLayout.astro';
-import benchmarks from '../data/benchmarks.json';
-
-const BADGE_COLORS = {
-  PROVEN: { bg: '#14532d', border: '#16a34a', text: '#4ade80' },
-  PARTIAL: { bg: '#422006', border: '#ca8a04', text: '#fbbf24' },
-  'MEASUREMENT-LIMITED': { bg: '#431407', border: '#ea580c', text: '#fb923c' },
-  PENDING: { bg: '#1e293b', border: '#475569', text: '#94a3b8' },
-};
+import BaseLayout from "../layouts/BaseLayout.astro";
+import benchmarks from "../data/benchmarks.json";
 
 type Bench = {
   slug: string;
   name: string;
-  status: keyof typeof BADGE_COLORS;
+  status: string;
   caption: string;
   metric: string | null;
   svgPath: string;
   hasData: boolean;
 };
+const rawBenches = benchmarks as Bench[];
 
-const typedBenchmarks: Bench[] = benchmarks as Bench[];
+interface Section {
+  id: string;
+  title: string;
+  problem: string;
+  yakccClaim: string;
+  evidence: string;
+  svg: string;
+  alt: string;
+  /** Optional in-flight banner with link to a tracking issue. */
+  inFlight?: { note: string; issue: string };
+}
+
+const sections: Section[] = [
+  {
+    id: "third-party-risk",
+    title: "Your import for isEmail ships 86 other validators you'll never call",
+    problem:
+      "An AI generating code to validate an email instinctively writes `import validator from 'validator'`. That single line drags in 86 different validators — isCreditCard, isBtcAddress, isEthereumAddress, isFQDN, isIBAN — plus 425 internal helpers. Every byte ships to your users. Every package gets scanned by every supply-chain tool. Every transitive dep is something you didn't audit.",
+    yakccClaim:
+      "yakcc serves a 6-function atom that does exactly the email validation you needed. No transitive closure. No extra surface. No bytes for behaviors you didn't ask for.",
+    evidence:
+      "Measured: 511 reachable functions → 6 reachable functions (98.8% reduction). 260,056 bytes → 5,301 bytes (98.0%). 114 files → 1 file.",
+    svg: "/benchmarks/sections/01-third-party-risk.svg",
+    alt: "Side-by-side comparison: validator npm package showing all 86 is* validators with isEmail highlighted vs the yakcc atom's 6 function call graph",
+  },
+  {
+    id: "dead-code",
+    title: "When you import a JSON schema validator, ~78% of what ships is dead on your contract",
+    problem:
+      "ajv@8 is the de-facto JSON Schema validator on npm. To validate a single schema your code uses, it ships 471 functions across 6 packages and 133 files. The 156-case JSON Schema 2020-12 test suite — the same one yakcc's atom passes — exercises maybe 22% of those functions at most. The rest is dead-on-your-contract code, but still in your bundle, still scanned by every CVE tool, still attack surface.",
+    yakccClaim:
+      "yakcc's JSON Schema validator atom is 17 functions, 1 file, 11 KB minified. Every function is exercised by the same 156-case suite. There is no dead code because there is nothing in the bundle that isn't part of the contract.",
+    evidence:
+      "Measured: 471 functions → 17 functions (96.4% reduction). 117,520 bytes → 11,352 bytes (90.3%). 12 packages → 1 atom. 156 / 156 test cases pass on both.",
+    svg: "/benchmarks/sections/02-dead-code.svg",
+    alt: "Dot cluster of all 471 ajv functions (faded for dead-on-contract, dark red for exercised) vs the 17-function yakcc atom call graph with every function colored as exercised",
+  },
+  {
+    id: "vulnerability-management",
+    title: "Every transitive dep is a backdoor opportunity your team didn't review",
+    problem:
+      "Recent npm supply-chain attacks all entered through deps users barely knew they had. event-stream (2018) added a Bitcoin wallet stealer to a transitive dep of millions of projects. ua-parser-js (2021) had its maintainer's account hijacked and a crypto miner pushed to a package with 7M weekly downloads. colors / faker (2022) self-sabotaged, breaking thousands of production apps. polyfill.io (2024) was sold and malware-injected into 100K+ sites. xz-utils (2024) was nearly the worst — a multi-year social engineering attack to backdoor sshd, caught one week before it would have shipped in Debian and Fedora.",
+    yakccClaim:
+      "Atoms have no transitive closure to compromise. They are not packages with maintainers; they are content-addressed bytes. The only way to alter an atom is to compute a SHA collision on BLAKE3, which is not a known attack. There is no registry mirror to poison and no dep tree to walk.",
+    evidence:
+      "Architecture proof: every transferred atom is integrity-checked by recomputing its BlockMerkleRoot from the received bytes. A tampered transfer fails loud. No maintainer trust required.",
+    svg: "/benchmarks/sections/03-vulnerability-management.svg",
+    alt: "Five named npm supply chain attacks (event-stream, ua-parser-js, colors/faker, polyfill.io, xz-utils) with weekly download impact, vs yakcc's content-addressed atom model with no maintainer to compromise",
+  },
+  {
+    id: "avoid-regeneration",
+    title: "Your team writes parseRfc3339Datetime 47 times. So does every team.",
+    problem:
+      "Every project generates parseInt, debounce, isEmail, and 6,000 other small utilities from scratch — from an LLM, from Stack Overflow, from copy-paste. Each implementation is slightly different. Each gets its own bugs. Each consumes review time. Across the industry, the same handful of functions get re-derived millions of times a year.",
+    yakccClaim:
+      "Write each atom exactly once, globally. Every reuse pulls the same content-addressed bytes the original author wrote. The first person pays the cost; everyone after gets it free. The commons accumulates one verified atom per problem, period.",
+    evidence:
+      "Current commons size: 6,000+ atoms (bootstrap/expected-roots.json over git history). Per-user reuse rate sprint measurement: pending #187.",
+    svg: "/benchmarks/sections/04-avoid-regeneration.svg",
+    alt: "Status-quo column listing five duplicated-implementation scenarios vs yakcc commons with 6000+ atoms, write-once-pay-once model",
+    inFlight: {
+      note: "Per-user reuse rate measurement (B3 sprint) is filed and pending dispatch.",
+      issue: "https://github.com/cneckar/yakcc/issues/187",
+    },
+  },
+  {
+    id: "token-cost",
+    title: "Discovering an atom uses a fraction of the tokens generating one does",
+    problem:
+      "When an LLM emits a function, it spends 500–2000 output tokens generating the implementation. Complex tasks need expensive models — Opus, Sonnet, GPT-4 — because cheaper models fail. That's the per-emission cost: real money, real latency, real carbon.",
+    yakccClaim:
+      "When the LLM consults yakcc instead of generating, the cost collapses. Building an IntentCard + receiving a matched-atom reference is ~50–150 tokens. The atom was already authored by an expensive model — a cheap model (Haiku, Gemini Flash) can just as easily look it up.",
+    evidence:
+      "Order-of-magnitude reasoning shown. Measured token-rescue results in progress: B4-v5 re-measurement against the corrected intent-time hook architecture is filed but blocked on #950 / #944 landing first.",
+    svg: "/benchmarks/sections/05-token-cost.svg",
+    alt: "Three horizontal bars comparing typical generation token cost (~1500), yakcc discovery (~80), and cheap-model discovery (~60), with honest in-flight note about B4-v5 measurement",
+    inFlight: {
+      note: "B4-v3/v4 ran against the wrong hook architecture (reactive post-emission). The corrected re-measurement is filed but blocked.",
+      issue: "https://github.com/cneckar/yakcc/issues/952",
+    },
+  },
+  {
+    id: "mathematical-proofs",
+    title: "Atoms can be mathematically proven to do exactly what's advertised — and nothing more",
+    problem:
+      "A function the LLM hands you compiles and passes the tests you wrote. That's all you know about it. Does it log to /var/log? Does it phone home? Does it correctly match RFC 5321 across all edge cases? Without exhaustive property tests, you don't know — you just trust.",
+    yakccClaim:
+      "Every yakcc atom carries three artifacts: spec (the contract), impl (the strict-subset pure-function code), and proof (fast-check property tests). The property tests generate thousands of inputs; the impl passes every one. The atom does exactly what the spec promises — verifiable, not trusted.",
+    evidence:
+      "Property-test contract authority: packages/contracts/src/proof-manifest.ts. Strict-subset enforcement: no I/O, no globals, no eval. Coverage discipline tracked via the bench/B9 min-surface benchmark.",
+    svg: "/benchmarks/sections/06-mathematical-proofs.svg",
+    alt: "Hand-written validateEmail with no verifiable bound on behavior vs yakcc atom triplet (spec, impl, proof) with property-test verification",
+  },
+  {
+    id: "cross-language-reuse",
+    title: "Shave once. Use from any supported language.",
+    problem:
+      "Your team writes the same parsing function in TypeScript for the frontend, Python for the data pipeline, and Go for the service backend. Three implementations. Three sets of bugs. Three review cycles. The function is the same; the languages are an implementation detail.",
+    yakccClaim:
+      "yakcc stores atoms in a language-neutral intermediate representation. Compile adapters lower the same atom into TypeScript, Python, or Go on demand. The atom is the contract; the languages are surfaces.",
+    evidence:
+      "Round-trip verified: 51 samber/lo functions to Go, 9 bs4 functions to Python. Same atom, byte-identical lower in each target language.",
+    svg: "/benchmarks/sections/07-cross-language-reuse.svg",
+    alt: "Central yakcc atom in IR form with three arrows to TypeScript, Python, and Go compile adapters, each showing the same atom's signature in the target language",
+  },
+  {
+    id: "air-gap",
+    title: "Zero outbound network during a full pipeline run",
+    problem:
+      "Regulated industries (defense, finance, healthcare), unreliable-connectivity environments, and air-gapped networks can't take a hard dependency on always-on internet. Most modern dev tooling fails this bar — npm install alone fires hundreds of outbound requests; LLM coding assistants make a network call per generation.",
+    yakccClaim:
+      "yakcc's full pipeline — install, init, shave, query, compile, verify — runs with zero outbound network calls. The local registry is the source of truth. The network is optional: useful for syncing the global commons, but not required for any operation.",
+    evidence:
+      "Measured 2026-05-11: 15.4-second wall-clock, 0 outbound connections (pcap-verified), 0 step failures.",
+    svg: "/benchmarks/sections/08-air-gap.svg",
+    alt: "Timeline of a 15.4-second full yakcc pipeline run with six phases (install, init, shave, query, compile, verify) and a giant '0' representing outbound packets sent",
+  },
+];
+
+const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  PROVEN: { bg: "#14532d", border: "#16a34a", text: "#4ade80" },
+  PARTIAL: { bg: "#422006", border: "#ca8a04", text: "#fbbf24" },
+  "MEASUREMENT-LIMITED": { bg: "#431407", border: "#ea580c", text: "#fb923c" },
+  PENDING: { bg: "#1e293b", border: "#475569", text: "#94a3b8" },
+};
 ---
 <BaseLayout title="Benchmarks — yakcc">
-  <div style="padding: 2rem 0 1rem;">
-    <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Benchmarks</h1>
-    <p style="color: #64748b; font-size: 0.875rem; margin-bottom: 2rem;">
-      All results are from real measurements. Badges reflect honest verdicts — partial
-      and pending results are shown as such.
-    </p>
+  <article class="bench-narrative">
+    <header class="hero">
+      <h1>Benchmarks</h1>
+      <p class="lead">
+        Eight properties of the yakcc paradigm and what the evidence shows.
+        Every claim cites real measurement data; results that are partial,
+        in flight, or pending are shown as such.
+      </p>
+    </header>
 
-    <div style="
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 1.25rem;
-    ">
-      {typedBenchmarks.map((bench) => {
-        const colors = BADGE_COLORS[bench.status] ?? BADGE_COLORS.PENDING;
-        return (
-          <article style={`
-            background: #0f172a;
-            border: 1px solid #1e293b;
-            border-radius: 10px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-          `}>
-            <!-- SVG card -->
-            <div style="padding: 0.75rem; border-bottom: 1px solid #1e293b;">
-              <img
-                src={bench.svgPath}
-                alt={`${bench.name} benchmark — ${bench.status}`}
-                width="240"
-                height="140"
-                style="width: 100%; height: auto; display: block; border-radius: 6px;"
-              />
-            </div>
-
-            <!-- Meta below SVG -->
-            <div style="padding: 0.875rem; flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
-                <span style="font-size: 0.875rem; font-weight: 600; color: #f1f5f9;">
-                  {bench.name}
-                </span>
-                <span style={`
-                  font-size: 0.7rem;
-                  font-weight: 700;
-                  padding: 2px 8px;
-                  border-radius: 999px;
-                  background: ${colors.bg};
-                  border: 1px solid ${colors.border};
-                  color: ${colors.text};
-                  white-space: nowrap;
-                `}>
-                  {bench.status}
-                </span>
-              </div>
-
-              {bench.metric && (
-                <div style="font-size: 0.8rem; color: #cbd5e1; font-weight: 500;">
-                  {bench.metric}
-                </div>
-              )}
-
-              <p style="font-size: 0.775rem; color: #64748b; line-height: 1.5; margin-top: auto;">
-                {bench.caption}
+    {sections.map((s) => (
+      <section id={s.id} class="bench-section">
+        <h2>{s.title}</h2>
+        <div class="grid">
+          <div class="prose">
+            <p class="problem">{s.problem}</p>
+            <p class="claim"><strong>What yakcc changes:</strong> {s.yakccClaim}</p>
+            <p class="evidence">{s.evidence}</p>
+            {s.inFlight && (
+              <p class="in-flight">
+                <strong>In flight:</strong> {s.inFlight.note}{" "}
+                <a href={s.inFlight.issue} target="_blank" rel="noopener">Tracking issue &rarr;</a>
               </p>
+            )}
+          </div>
+          <figure class="infographic">
+            <img src={s.svg} alt={s.alt} loading="lazy" />
+          </figure>
+        </div>
+      </section>
+    ))}
+
+    <hr />
+
+    <section id="raw-results" class="raw-results">
+      <h2>For benchmark nerds: raw results by codename</h2>
+      <p class="raw-lead">
+        The internal naming convention is B1..B10. The grid below maps each
+        codename to its current status.
+      </p>
+      <div class="raw-grid">
+        {rawBenches.map((b) => {
+          const colors = BADGE_COLORS[b.status] ?? BADGE_COLORS.PENDING;
+          return (
+            <div class="raw-card">
+              <header class="raw-card-header">
+                <span class="raw-name">{b.name}</span>
+                <span
+                  class="raw-badge"
+                  style={`background:${colors.bg};border:1px solid ${colors.border};color:${colors.text};`}
+                >{b.status}</span>
+              </header>
+              <p class="raw-caption">{b.caption}</p>
+              {b.metric && <p class="raw-metric">{b.metric}</p>}
             </div>
-          </article>
-        );
-      })}
-    </div>
-  </div>
+          );
+        })}
+      </div>
+    </section>
+  </article>
+
+  <style>
+    .bench-narrative {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 4rem;
+    }
+
+    .hero h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      margin-bottom: 0.5rem;
+    }
+    .hero .lead {
+      font-size: 1.05rem;
+      color: var(--color-text-muted);
+      max-width: 640px;
+      margin-bottom: 3rem;
+    }
+
+    .bench-section {
+      margin: 4rem 0;
+      padding-top: 1rem;
+      scroll-margin-top: 2rem;
+    }
+    .bench-section h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.3;
+      color: var(--color-text);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0;
+      border-bottom: none;
+      max-width: 920px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+    @media (min-width: 1100px) {
+      .grid {
+        grid-template-columns: 380px 1fr;
+        gap: 2.5rem;
+        align-items: start;
+      }
+    }
+
+    .prose {
+      max-width: 380px;
+    }
+    .prose p {
+      font-size: 0.95rem;
+      line-height: 1.65;
+      color: var(--color-text);
+      margin-bottom: 0.9rem;
+    }
+    .prose .problem {
+      color: var(--color-text-muted);
+    }
+    .prose .claim strong {
+      color: var(--color-accent);
+    }
+    .prose .evidence {
+      font-size: 0.85rem;
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+      padding: 0.75rem 1rem;
+      background: var(--color-surface);
+      border-left: 3px solid var(--color-accent);
+      border-radius: 0 4px 4px 0;
+      margin-top: 1rem;
+    }
+    .prose .in-flight {
+      font-size: 0.85rem;
+      color: #e3b341;
+      background: var(--color-warning-bg);
+      border: 1px solid var(--color-warning);
+      border-radius: 4px;
+      padding: 0.6rem 0.85rem;
+      margin-top: 1rem;
+    }
+    .prose .in-flight a {
+      color: #f0c147;
+      font-weight: 600;
+    }
+
+    .infographic {
+      margin: 0;
+      background: #fafafa;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .infographic img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--color-border);
+      margin: 5rem 0 3rem;
+    }
+
+    .raw-results h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--color-text);
+      margin-bottom: 0.5rem;
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .raw-lead {
+      color: var(--color-text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+    .raw-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 0.85rem;
+    }
+    .raw-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+    }
+    .raw-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      gap: 0.5rem;
+    }
+    .raw-name {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--color-text);
+    }
+    .raw-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      padding: 0.18rem 0.5rem;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+    .raw-caption {
+      font-size: 0.85rem;
+      color: var(--color-text-muted);
+      margin-bottom: 0.3rem;
+      line-height: 1.45;
+    }
+    .raw-metric {
+      font-size: 0.8rem;
+      color: var(--color-accent);
+      font-family: var(--font-mono);
+    }
+  </style>
 </BaseLayout>

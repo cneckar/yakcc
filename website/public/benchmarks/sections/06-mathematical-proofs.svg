@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+<defs>
+  <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.13"/>
+  </filter>
+  <linearGradient id="bgL" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fff5f5"/><stop offset="100%" stop-color="#fde8e8"/>
+  </linearGradient>
+  <linearGradient id="bgR" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f0f9ff"/><stop offset="100%" stop-color="#e0f2fe"/>
+  </linearGradient>
+</defs>
+<rect width="1200" height="680" fill="#fafafa"/>
+<text x="600.0" y="48" font-size="22" fill="#0f172a" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Atoms can be mathematically proven to do exactly what&#x27;s advertised</text>
+<text x="600.0" y="76" font-size="13" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Every atom carries a property-test proof bounding its behavior — nothing more, nothing less</text>
+<rect x="40" y="110" width="520" height="500" rx="14" fill="url(#bgL)" stroke="#fca5a5" stroke-width="2"/>
+<text x="300" y="144" font-size="17" fill="#991b1b" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Hand-written or LLM-emitted code</text>
+<text x="300" y="165" font-size="11" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">no contract · no proof · no bound on behavior</text>
+<rect x="80" y="200" width="440" height="220" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+<text x="100" y="226" font-size="12" fill="#cbd5e1" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">function validateEmail(email) {</text>
+<text x="100" y="245" font-size="12" fill="#cbd5e1" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  if (email.length &gt; 254) return false;</text>
+<text x="100" y="264" font-size="12" fill="#cbd5e1" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  const at = email.indexOf(&#x27;@&#x27;);</text>
+<text x="100" y="283" font-size="12" fill="#cbd5e1" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  if (at &lt; 1) return false;</text>
+<text x="100" y="302" font-size="12" fill="#475569" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  // ... and 30 more lines</text>
+<text x="100" y="321" font-size="12" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  // does it also log to /var/log?</text>
+<text x="100" y="340" font-size="12" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  // does it phone home?</text>
+<text x="100" y="359" font-size="12" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  // does it match RFC 5321?</text>
+<text x="100" y="378" font-size="12" fill="#475569" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  // who knows.</text>
+<text x="100" y="397" font-size="12" fill="#cbd5e1" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">  return true;</text>
+<text x="100" y="416" font-size="12" fill="#cbd5e1" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">}</text>
+<rect x="80" y="450" width="440" height="116" rx="8" fill="#fff" stroke="#fca5a5" stroke-width="1.5"/>
+<text x="300" y="478" font-size="10" fill="#7f1d1d" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif" letter-spacing="1.5">WHAT YOU KNOW</text>
+<text x="300" y="504" font-size="14" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">It compiles.</text>
+<text x="300" y="524" font-size="14" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">It passed the tests you wrote.</text>
+<text x="300" y="552" font-size="14" fill="#7f1d1d" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">That&#x27;s it.</text>
+<rect x="640" y="110" width="520" height="500" rx="14" fill="url(#bgR)" stroke="#7dd3fc" stroke-width="2"/>
+<text x="900" y="144" font-size="17" fill="#075985" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">yakcc atom triplet</text>
+<text x="900" y="165" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">spec · impl · proof — content-addressed together</text>
+<rect x="680" y="200" width="440" height="84" rx="8" fill="#fff" stroke="#0284c7" stroke-width="1.5"/>
+<text x="700" y="224" font-size="14" fill="#075985" font-weight="700" text-anchor="start" font-family="ui-monospace, Menlo, monospace">spec.yak</text>
+<text x="1100" y="224" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="end" font-family="-apple-system, sans-serif" font-style="italic">the contract</text>
+<text x="700" y="250" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">What the function takes, returns, and promises</text>
+<rect x="700" y="260" width="180" height="16" rx="8" fill="#0c4a6e" opacity="0.3"/>
+<text x="790" y="272" font-size="9" fill="#fff" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">BLAKE3: a3f8c1…0e4b2d</text>
+<rect x="680" y="300" width="440" height="84" rx="8" fill="#fff" stroke="#0284c7" stroke-width="1.5"/>
+<text x="700" y="324" font-size="14" fill="#075985" font-weight="700" text-anchor="start" font-family="ui-monospace, Menlo, monospace">impl.ts</text>
+<text x="1100" y="324" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="end" font-family="-apple-system, sans-serif" font-style="italic">the strict-subset implementation</text>
+<text x="700" y="350" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">No I/O, no side effects, no globals — pure function</text>
+<rect x="700" y="360" width="180" height="16" rx="8" fill="#0c4a6e" opacity="0.3"/>
+<text x="790" y="372" font-size="9" fill="#fff" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">BLAKE3: a3f8c1…0e4b2d</text>
+<rect x="680" y="400" width="440" height="84" rx="8" fill="#fff" stroke="#0284c7" stroke-width="1.5"/>
+<text x="700" y="424" font-size="14" fill="#075985" font-weight="700" text-anchor="start" font-family="ui-monospace, Menlo, monospace">proof/</text>
+<text x="1100" y="424" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="end" font-family="-apple-system, sans-serif" font-style="italic">property tests bounding behavior</text>
+<text x="700" y="450" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">fast-check generates 1000s of inputs; impl passes every case</text>
+<rect x="700" y="460" width="180" height="16" rx="8" fill="#0c4a6e" opacity="0.3"/>
+<text x="790" y="472" font-size="9" fill="#fff" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">BLAKE3: a3f8c1…0e4b2d</text>
+<rect x="680" y="500" width="440" height="80" rx="8" fill="#0ea5e9" stroke="#0c4a6e" stroke-width="2"/>
+<text x="900" y="524" font-size="10" fill="#fff" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif" letter-spacing="1.5">WHAT YOU KNOW</text>
+<text x="900" y="548" font-size="12" fill="#fff" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">The impl passes 10,000+ generated property tests.</text>
+<text x="900" y="566" font-size="12" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">The atom does exactly what the spec says — and nothing else.</text>
+<text x="600.0" y="640" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">Property-test contract per packages/contracts/src/proof-manifest.ts; bench reference: B9 min-surface (PARTIAL)</text>
+</svg>

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+<defs>
+  <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.13"/>
+  </filter>
+  <linearGradient id="bgL" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fff5f5"/><stop offset="100%" stop-color="#fde8e8"/>
+  </linearGradient>
+  <linearGradient id="bgR" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f0f9ff"/><stop offset="100%" stop-color="#e0f2fe"/>
+  </linearGradient>
+</defs>
+<rect width="1200" height="680" fill="#fafafa"/>
+<text x="600.0" y="48" font-size="24" fill="#0f172a" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Discovering atoms uses fewer tokens than generating them</text>
+<text x="600.0" y="76" font-size="13" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Atoms were authored by expensive models; discovery against that registry can be done by cheap (or free) models</text>
+<text x="112" y="178" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Generate from scratch</text>
+<rect x="120" y="160" width="630.0" height="70" rx="4" fill="#dc2626" filter="url(#shadow)"/>
+<text x="134" y="202" font-size="20" fill="#fff" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">1500 tokens</text>
+<text x="120" y="252" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Opus / Sonnet generates the impl from prompt; ~500-2000 tokens depending on function size</text>
+<text x="112" y="326" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Discover via yakcc</text>
+<rect x="120" y="308" width="33.6" height="70" rx="4" fill="#d97706" filter="url(#shadow)"/>
+<text x="167.6" y="350" font-size="20" fill="#0f172a" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">80 tokens</text>
+<text x="120" y="400" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Build IntentCard + receive matched-atom reference; ~50-150 tokens of output (no impl emitted)</text>
+<text x="112" y="474" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Discover with cheap model</text>
+<rect x="120" y="456" width="25.2" height="70" rx="4" fill="#0ea5e9" filter="url(#shadow)"/>
+<text x="159.2" y="498" font-size="20" fill="#0f172a" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">60 tokens</text>
+<text x="120" y="548" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Haiku-class model can do IntentCard lookup just as well — the atom was already authored by Opus</text>
+<line x1="120" y1="624" x2="960.0" y2="624" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="120.0" y1="620" x2="120.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
+<text x="120.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">0</text>
+<line x1="330.0" y1="620" x2="330.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
+<text x="330.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">500</text>
+<line x1="540.0" y1="620" x2="540.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
+<text x="540.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">1000</text>
+<line x1="750.0" y1="620" x2="750.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
+<text x="750.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">1500</text>
+<line x1="960.0" y1="620" x2="960.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
+<text x="960.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">2000</text>
+<text x="540.0" y="662" font-size="11" fill="#94a3b8" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">output tokens per emission (typical)</text>
+<rect x="60" y="580" width="1080" height="56" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+<text x="600.0" y="600" font-size="11" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Currently in measurement: B4-v3/v4 ran against the reactive hook architecture and the rescue effect was sub-statistical.</text>
+<text x="600.0" y="618" font-size="11" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Re-measurement (B4-v5) against the corrected intent-time architecture is filed but blocked on #950 / #944 landing.</text>
+<text x="600.0" y="660" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">Numbers shown are order-of-magnitude reasoning, not measured. Full results pending B4-v5 (#952).</text>
+</svg>
