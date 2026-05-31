@@ -106,6 +106,7 @@ import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { writeMcpJsonEntry } from "../lib/mcp-config.js";
 import {
   RC_FILENAME,
   type YakccEmbeddingConfig,
@@ -263,6 +264,27 @@ async function installHookForIde(
     case "claude-code": {
       const code = await hooksClaudeCodeInstall(["--target", targetDir], logger);
       if (code !== 0) throw new Error(`claude-code hook install failed (exit ${code})`);
+      // @decision DEC-CLI-MCP-INIT-001
+      // title: yakcc init registers yakcc-mcp-registry in .mcp.json for Claude Code
+      // status: accepted (WI-1005-mcp-init / #1005)
+      // rationale:
+      //   Without a .mcp.json entry, the yakcc-mcp-registry binary is never spawned
+      //   by Claude Code, making yakcc_resolve / yakcc_get_atom / search_atoms
+      //   uncallable from any default install. The fix belongs in the claude-code
+      //   arm of installHookForIde — it is the canonical place for all Claude Code
+      //   surface writes. writeMcpJsonEntry merge-by-key preserves any unrelated
+      //   MCP servers the user has already configured; re-running yakcc init is
+      //   idempotent (same key overwrites the same value).
+      //
+      //   npx vs direct binary: `npx -y yakcc-mcp-registry` works for both global
+      //   and ephemeral installs without requiring the user to have the package on
+      //   PATH. A globally-installed binary would need explicit PATH setup; npx
+      //   handles package resolution automatically. The -y flag suppresses the
+      //   "install?" prompt so the MCP spawn is non-interactive.
+      writeMcpJsonEntry(targetDir, "yakcc", {
+        command: "npx",
+        args: ["-y", "yakcc-mcp-registry"],
+      });
       break;
     }
     case "cursor": {
