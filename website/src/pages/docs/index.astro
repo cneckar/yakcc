@@ -1,0 +1,46 @@
+---
+// /docs/ — index listing all end-user doc pages.
+// Source docs are synced from monorepo docs/ at prebuild by scripts/sync-docs.mjs.
+// Dev docs (docs/archive/developer/**, ADRs) are intentionally absent — they link
+// to GitHub per issue #667.
+import DocLayout from "../../layouts/DocLayout.astro";
+
+const DOC_PAGES = [
+  {
+    slug: "using-yakcc",
+    title: "Using yakcc",
+    description: "End-user walkthrough: from a fresh TypeScript project to seeing registry hits in under 15 minutes.",
+  },
+  {
+    slug: "alpha",
+    title: "Alpha Release Notes",
+    description: "What's in the alpha, known limitations, and what comes next.",
+  },
+  {
+    slug: "advanced",
+    title: "Advanced Configuration",
+    description: "Deep-dive into yakcc's configuration options, IDE adapters, and hook customisation.",
+  },
+  {
+    slug: "troubleshooting",
+    title: "Troubleshooting",
+    description: "Diagnosis guides for common setup and runtime issues.",
+  },
+];
+---
+<DocLayout title="Documentation">
+  <h1>Documentation</h1>
+  <p>End-user guides for yakcc.</p>
+  <ul style="list-style: none; padding: 0; margin: 2rem 0;">
+    {DOC_PAGES.map((page) => (
+      <li style="margin-bottom: 1.5rem; padding: 1rem 1.25rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px;">
+        <a href={`/docs/${page.slug}/`} style="font-size: 1.1rem; font-weight: 600; text-decoration: none; color: var(--color-link);">{page.title}</a>
+        <p style="margin: 0.4rem 0 0; color: var(--color-text-muted); font-size: 0.9rem;">{page.description}</p>
+      </li>
+    ))}
+  </ul>
+  <hr />
+  <p style="font-size: 0.85rem; color: var(--color-text-muted);">
+    Developer docs and ADRs live on <a href="https://github.com/cneckar/yakcc/tree/main/docs/archive/developer">GitHub</a>.
+  </p>
+</DocLayout>
