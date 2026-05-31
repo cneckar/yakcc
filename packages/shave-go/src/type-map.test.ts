@@ -84,8 +84,12 @@ describe("mapGoType -- rejection cases", () => {
     expect(() => mapGoType("")).toThrow(UnsupportedTypeError);
   });
 
-  it("throws for complex64", () => {
-    expect(() => mapGoType("complex64")).toThrow(UnsupportedTypeError);
+  it("passes through complex64 as user-defined type (WI-991 — not in primitive table)", () => {
+    // complex64 is not in the primitive mapping table; WI-991 passes it through
+    // verbatim with a user-defined-type-identifier warning instead of throwing.
+    const result = mapGoType("complex64", {});
+    expect(result.tsType).toBe("complex64");
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 
   it("throws for chan int", () => {
@@ -118,8 +122,12 @@ describe("mapGoType -- rejection cases", () => {
     expect(mapGoType("func(int) int")).toBe("(a0: number) => number");
   });
 
-  it("throws for named user type (MyStruct)", () => {
-    expect(() => mapGoType("MyStruct")).toThrow(UnsupportedTypeError);
+  it("no longer throws for named user type (MyStruct) — WI-991 passes through verbatim", () => {
+    // Pre-WI-991 this threw UnsupportedTypeError; now it passes through with a warning.
+    const result = mapGoType("MyStruct", {});
+    expect(result.tsType).toBe("MyStruct");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 });
 
@@ -169,14 +177,20 @@ describe("mapGoType -- generic type parameter passthrough (WI-963)", () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it("throws UnsupportedTypeError without a typeParams set for unknown T", () => {
-    expect(() => mapGoType("T")).toThrow(UnsupportedTypeError);
+  it("passes T through as user-defined type when no typeParams set supplied (WI-991)", () => {
+    // WI-991: plain identifier T with no opts → user-defined-type passthrough.
+    // The legacy (no-opts) overload returns a string; use opts overload to inspect warnings.
+    const result = mapGoType("T", {});
+    expect(result.tsType).toBe("T");
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 
-  it("throws UnsupportedTypeError when T is NOT in the typeParams set", () => {
+  it("passes T through as user-defined type when T is NOT in the typeParams set (WI-991)", () => {
     const typeParams = new Set(["R"]);
-    // T not in set
-    expect(() => mapGoType("T", { typeParams })).toThrow(UnsupportedTypeError);
+    // T not in set — WI-991: plain identifier passthrough with warning instead of throw.
+    const result = mapGoType("T", { typeParams });
+    expect(result.tsType).toBe("T");
+    expect(result.warnings[0]?.code).toBe("user-defined-type-identifier");
   });
 
   it("backward compat: returns string (not object) when called without opts", () => {

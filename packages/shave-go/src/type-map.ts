@@ -21,6 +21,14 @@
 // when it is followed by a type-starting token.  Variadic `...T` forms are also
 // handled.
 //
+// WI-991 adds user-defined type identifier passthrough.  Plain Go identifiers
+// (e.g. `ifElse`, `Tuple3`) that are not in the primitive table and not in the
+// typeParams set are passed through verbatim as TS types with a
+// "user-defined-type-identifier" LowerWarning (mirroring shave-python #901).
+// Parameterized user types (e.g. `Foo[T, R]`) are expanded to `Foo<T, R>` via
+// recursive mapGoTypeInner calls on each type argument, preserving the current
+// typeParams scope.
+//
 // Composite types are recursively mapped.  Types outside the supported set
 // throw UnsupportedTypeError so callers can surface them via CannotRaiseToIRError
 // (slice 4 wires that -- slice 1 throws plain UnsupportedTypeError so the
@@ -83,8 +91,31 @@ export class UnsupportedTypeError extends Error {
  * A non-fatal warning emitted when a Go type maps with loss of fidelity.
  * WI-963: used for non-`any` generic constraints that are widened to the
  * bare TS type parameter.
+ * WI-991: adds `code` field (mirrors shave-python LowerWarning shape) and
+ * adds the "user-defined-type-identifier" code for plain Go identifiers that
+ * are not in the primitive mapping table.
+ *
+ * @decision DEC-SHAVE-GO-TYPE-MAP-991
+ * @title LowerWarning gains stable `code` discriminant; user-defined identifiers pass through
+ * @status accepted (WI-991)
+ * @rationale
+ *   Real Go codebases use user-defined types (type aliases, named structs,
+ *   NewType-equivalent patterns) pervasively.  Throwing on every unknown
+ *   identifier makes extraction fail for almost all annotated functions.
+ *   Option A (pass-through with warning, matching shave-python #901) is the
+ *   MVP: least friction, lets exploration proceed.  Adding `code` now aligns
+ *   the LowerWarning shape with shave-python so future cross-package
+ *   consumers can handle both without special-casing.  Only plain identifiers
+ *   and identifier-bracketed generics (Foo[T,R]) are eligible; dotted names
+ *   and other composite forms still throw.
  */
 export interface LowerWarning {
+  /**
+   * Stable code identifying the warning category.
+   * Adding new codes is non-breaking (no consumer should exhaustively switch
+   * without a default branch).
+   */
+  readonly code: "user-defined-type-identifier";
   /** Human-readable description of the fidelity loss. */
   readonly message: string;
   /** The original Go type string that triggered the warning. */
@@ -241,6 +272,72 @@ function mapGoTypeInner(
     case "interface{}":
       // Explicit any -- caller can treat as opaque.
       return { tsType: "unknown", warnings: [] };
+  }
+
+  // ---------------------------------------------------------------------------
+  // WI-991: User-defined generic type passthrough.
+  // Pattern: Identifier[TypeArg, TypeArg, ...] where Identifier matches
+  // /^[A-Za-z_][A-Za-z0-9_]*$/ and is followed immediately by '['.
+  // The outer name passes through verbatim; each type argument is recursively
+  // mapped via mapGoTypeInner (preserving the current typeParams scope).
+  // Result: Name<MappedArg1, MappedArg2, ...> with a user-defined-type-identifier
+  // warning on the outer name.
+  //
+  // This must come BEFORE the plain-identifier check so that `Foo[T]` is
+  // expanded rather than thrown as a plain-identifier match (plain identifiers
+  // do not contain '[').
+  // ---------------------------------------------------------------------------
+  const bracketIdx = t.indexOf("[");
+  if (bracketIdx > 0) {
+    const outerName = t.slice(0, bracketIdx);
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(outerName)) {
+      // Verify the rest is a balanced bracket list.
+      const rest = t.slice(bracketIdx);
+      if (rest.startsWith("[") && rest.endsWith("]")) {
+        const inner = rest.slice(1, rest.length - 1);
+        const typeArgs = splitTypeList(inner);
+        if (typeArgs.length > 0) {
+          const warnings: LowerWarning[] = [
+            {
+              code: "user-defined-type-identifier",
+              message: `Go user-defined type '${outerName}' passed through verbatim`,
+              goType: t,
+            },
+          ];
+          const mappedArgs = typeArgs.map((arg) => {
+            const mapped = mapGoTypeInner(arg, opts);
+            warnings.push(...mapped.warnings);
+            return mapped.tsType;
+          });
+          return { tsType: `${outerName}<${mappedArgs.join(", ")}>`, warnings };
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // WI-991: Plain user-defined type identifier pass-through.
+  // A bare Go identifier (no brackets, no operators, no dots) that is not in
+  // the mapping table and not in typeParams is likely a user-defined type
+  // (type alias, named struct, etc.).  Pass it through verbatim as the TS
+  // type name with a LowerWarning (mirrors shave-python #901).
+  //
+  // Acceptance rule:
+  //   - PLAIN identifier: /^[A-Za-z_][A-Za-z0-9_]*$/  (no brackets or operators)
+  //   - Known composite types ([]T, *T, map[K]V, func(...)) are handled above
+  //   - Dotted names (pkg.Type) still throw (contain a dot)
+  // ---------------------------------------------------------------------------
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) {
+    return {
+      tsType: t,
+      warnings: [
+        {
+          code: "user-defined-type-identifier",
+          message: `Go user-defined type '${t}' passed through verbatim`,
+          goType: t,
+        },
+      ],
+    };
   }
 
   throw new UnsupportedTypeError(
