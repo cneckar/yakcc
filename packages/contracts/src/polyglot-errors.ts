@@ -100,3 +100,35 @@ export class CannotLowerToPythonError extends Error {
     this.name = "CannotLowerToPythonError";
   }
 }
+
+/**
+ * Thrown by the IR→Go lower adapter (@yakcc/compile-go) when a
+ * TS-subset IR node has no Go equivalent and cannot be silently emitted.
+ *
+ * Mirrors CannotLowerToPythonError (WI-943) for the Go direction (WI-973).
+ * Loud failure over silent fallback: any unhandled IR construct produces
+ * an unmistakable error naming the node kind, location, and snippet so the
+ * next implementer knows exactly what coverage is missing.
+ *
+ * @decision DEC-WI973-004
+ * @title CannotLowerToGoError added to contracts as sibling of CannotLowerToPythonError
+ * @status accepted (WI-973)
+ * @rationale
+ *   Single authority for polyglot error vocabulary is packages/contracts/polyglot-errors.ts
+ *   (DEC-WI973-004). Same constructor signature as CannotLowerToPythonError so
+ *   consumers can handle both errors uniformly. Re-exported via contracts barrel
+ *   for use by any downstream consumer of compile-go.
+ */
+export class CannotLowerToGoError extends Error {
+  constructor(
+    public readonly nodeKind: string,
+    public readonly location: { line: number; column: number },
+    public readonly snippet: string,
+    public readonly fnName: string | undefined,
+  ) {
+    super(
+      `Cannot lower TS-subset IR to Go: ${nodeKind} at ${fnName ?? "<top-level>"}:${location.line}:${location.column} — ${snippet}`,
+    );
+    this.name = "CannotLowerToGoError";
+  }
+}

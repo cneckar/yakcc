@@ -1,49 +1,54 @@
-# PLAN — WI-954 LLM atom-triplet emission format + CLI parser
+# PLAN — WI-973 compile-go MVP: IR → Go lowering
 
-> Planner output for [`#954`](https://github.com/cneckar/yakcc/issues/954)
-> (Sub-WI of [`#950`](https://github.com/cneckar/yakcc/issues/950) — proactive
-> hook flow realignment). Workflow `wi-954-triplet-emission`, work item
-> `wi-954-plan`, goal `g-954`.
-> Branch `feature/954-llm-triplet` in worktree
-> `/Users/cris/src/yakcc/.worktrees/feature-954-llm-triplet`.
+> Planner output for [`#973`](https://github.com/cneckar/yakcc/issues/973)
+> (Companion to closed `#871` which shipped only `canLowerTo` slice 1).
+> Workflow `wi-973-compile-go-mvp`, work item `wi-973-plan`, goal `g-973`.
+> Branch `feature/973-compile-go-mvp` in worktree
+> `/Users/cris/src/yakcc/.worktrees/feature-973-compile-go-mvp`.
 >
-> Supersedes the prior WI-933/934 plan content at this path. WI-933/934 landed
-> upstream of this branch; this plan addresses the next sub-WI of #950's
-> Gap C (LLM-emits-atom-triplet pattern).
+> Supersedes the prior WI-954 plan content at this path. WI-954 landed
+> upstream of this branch (commit `350bf86`); this plan addresses the next
+> polyglot WI: the missing IR → Go emitter that mirrors `@yakcc/compile-python`.
 
 ---
 
 ## 0 — Headline
 
-When the canonical MCP discovery (`yakcc_resolve`) returns no fit, the
-operator's directive (#950) says the LLM must emit a **fully-formed yakcc
-atom** — a triplet of `spec.yak` + `impl.{ts,py,go}` +
-`proof/tests.fast-check.{ts,py}` — rather than raw code that gets post-hoc
-atomized by `@yakcc/variance`'s synthetic test generator. This WI defines that
-emission shape, documents it in the LLM-facing system prompt, and adds the
-CLI subcommand that consumes it: parse → validate strict-subset → run
-LLM-authored property tests → persist via `storeBlock` only if green.
-Variance generation becomes the **fallback** for emissions that aren't
-triplet-formatted; the triplet path becomes the default.
+`packages/compile-go/` currently contains only `canLowerTo()` — the static
+lowerability gate shipped in slice 1 of closed issue #871. The **actual IR → Go
+emitter does not exist**. Meanwhile `packages/shave-go/` (the inverse direction,
+Go → TS-subset IR) has progressed substantially: per #973's discovered context,
+35 of 436 `samber/lo` functions now raise cleanly through shave-go but cannot
+round-trip back to Go because compile-go's emitter is empty.
 
-**Critical reuse observation:** the substrate already has everything the
-emission path needs except the LLM-test execution step.
-- `parseBlockTriplet` (`@yakcc/ir/block-parser.ts`) reads a directory triplet,
-  validates `spec.yak` via `validateSpecYak`, runs the strict-subset validator
-  on `impl.ts`, validates `proof/manifest.json`, and derives the
-  `BlockMerkleRoot`.
-- `@yakcc/seeds/seed.ts` already wires `parseBlockTriplet` →
-  `registry.storeBlock` for the static-validation path (no test execution).
-- `@yakcc/contracts/triplet.test.ts` provides the canonical fixture vocabulary.
+This WI builds the IR → Go lowerer, mirroring `packages/compile-python/`'s
+proven structure (`lower.ts`, `names.ts`, `compile-python.ts`, `types.ts`,
+`index.ts`, plus `lower.props.test.ts`). The substrate already has
+the template: WI-943 (`#945`) replaced silent `getText()` fallbacks in
+compile-python with `CannotLowerToPythonError`, establishing the loud-failure
+pattern this WI replicates with a sibling `CannotLowerToGoError`.
 
-What's missing is exactly one thing: **a CLI subcommand that runs the LLM's
-`proof/tests.fast-check.ts` against `impl.ts` in-band, exits non-zero if the
-tests fail, and calls `storeBlock` only on green.** That's the load-bearing
-new code. Everything else is composition.
+**What is load-bearing new code:**
+1. `CannotLowerToGoError` in `@yakcc/contracts/polyglot-errors.ts` (mirror of
+   `CannotLowerToPythonError`).
+2. `packages/compile-go/src/lower.ts` — the ts-morph AST walk that emits Go
+   source, with the type emitter (inverse of shave-go's `mapGoType`) and the
+   statement lowerer (if/for/range/switch/return).
+3. `packages/compile-go/src/names.ts` — TS ↔ Go identifier transforms.
+4. `packages/compile-go/src/compile-go.ts` — public API `compileToGo()`.
+5. `packages/compile-go/src/types.ts` — `GoCompileResult`, `LowerWarning`.
+6. `packages/compile-go/src/index.ts` — barrel re-exports.
+7. `packages/compile-go/src/lower.props.test.ts` — invariant: every IR atom
+   either lowers OR throws `CannotLowerToGoError`. No silent garbage emission.
 
-The variance fallback discipline is the second deliverable: callers must use
-the triplet path when a `proof/tests.fast-check.*` file is present in the
-emission; variance synthesis only fires for bare-code emissions.
+**What is composition / inherited:** the `BlockTripletRow` shape, the ts-morph
+parse pipeline, the `LowerWarning` schema, the canLowerTo gate, the shave-go
+type mapping table (consulted in reverse to design the type emitter).
+
+The variance fallback discipline established by WI-943 is the second
+deliverable: any IR construct outside the documented Go MVP envelope must
+throw `CannotLowerToGoError` rather than leak raw TS syntax into the Go output.
+Property test enforces this. No silent passthrough.
 
 ---
 
@@ -51,513 +56,325 @@ emission; variance synthesis only fires for bare-code emissions.
 
 ### 1.1 What problem are we actually solving?
 
-**Surface problem:** today, when an LLM emits code that doesn't match an
-atom, `@yakcc/variance` synthesizes property tests from the spec. Those
-synthetic tests are heuristically derived from spec shape — they cover the
-type contract but not the operational intent. Quality of commons growth is
-bounded by the synthesis.
+**Surface problem:** Go cannot enter the same B2-style benchmark surface as
+TS and Python because the round-trip half is missing. shave-go raises Go to
+IR; compile-go must lower IR back to Go. Without the second half, the polyglot
+loop is not closed for Go.
 
-**Root problem:** the LLM has *more* context than a post-hoc synthesizer.
-It knows what the code is supposed to do, what edge cases matter, what
-invariants are load-bearing, because it just wrote both the spec and the
-impl. If the LLM authors the property tests at emission time, the commons
-grow with high-quality, behavior-driven contracts. If the LLM emits raw
-code, variance is the last-resort safety net.
+**Root problem:** the polyglot architecture (Q3 ADR) requires per-language
+adapter pairs. compile-python (#783) and compile-rust will follow the same
+template. compile-go's slice 1 (#871) only shipped the lowerability gate —
+the actual emitter was deferred but never built. This WI closes the gap so
+Go reaches feature parity with Python in the polyglot envelope.
 
-**Principle being made explicit:** the LLM is the highest-context proof
-author for code it just wrote. Substrate-side synthesis is a fallback for
-the bare-emission case, not the default. This WI codifies the format the LLM
-must emit and the CLI surface that consumes it.
+**Principle being made explicit:** the polyglot loop is symmetric. If
+shave-X raises, compile-X must lower. Asymmetric language support is a hidden
+authority gap — code that raises but cannot lower has no proof of semantic
+round-trip and silently degrades the commons.
 
 ### 1.2 Goals (measurable)
 
-- G1. `docs/system-prompts/yakcc-discovery.md` documents the canonical
-  triplet format (filenames, file roles, language coverage matrix) with at
-  least one worked example end-to-end (small atom, three files,
-  CLI command, expected output).
-- G2. New CLI subcommand `yakcc emit-atom <dir>` exists, registered in
-  `packages/cli/src/index.ts` and shown in `printUsage`.
-- G3. The subcommand reads a directory containing `spec.yak`, `impl.ts`,
-  `proof/manifest.json`, and `proof/tests.fast-check.ts` (TypeScript
-  triplet, MVP language), parses it via `parseBlockTriplet`, runs
-  `proof/tests.fast-check.ts` against `impl.ts` in-band, and either:
-  - On green: calls `registry.storeBlock` with the parsed
-    `BlockTripletRow`; prints the resulting `BlockMerkleRoot` and exits 0.
-  - On red (test failure): prints which property failed (counterexample
-    included where available) and exits non-zero with a clear gate name.
-  - On parse failure (spec invalid / strict-subset violation / manifest
-    invalid): exits non-zero naming the failed gate.
-- G4. The subcommand is unit-tested in `packages/cli/src/commands/emit-atom.test.ts`
-  with at least these cases:
-  - happy path (small atom, real `parseBlockTriplet`, real test execution,
-    real `storeBlock` against an in-memory or temp-file registry)
-  - missing spec.yak / missing impl.ts / missing proof/manifest.json /
-    missing proof/tests.fast-check.ts → distinct error messages, non-zero
-  - strict-subset violation in impl.ts → non-zero with the strict-subset
-    error surfaced
-  - property test failure (a deliberately wrong impl that the LLM-authored
-    tests catch) → non-zero, storeBlock NOT called
-  - integration end-to-end: emit-atom on a real triplet, then `yakcc
-    propose` against the resulting spec to confirm round-trip persistence
-    (or equivalent query roundtrip)
-- G5. Variance fallback discipline: documentation in
-  `yakcc-discovery.md` clearly states that variance synthesis only fires
-  when an emission lacks `proof/tests.fast-check.*`. No code edit to
-  `packages/variance/**` is required because variance is invoked by other
-  paths (post-hoc atomize at `storeBlock` seam); this WI's CLI does not
-  invoke variance at all — it operates strictly on triplet-formatted
-  emissions. The fallback discipline is therefore enforced by *which CLI
-  surface the caller uses*, documented for the LLM.
-- G6. `pnpm --filter @yakcc/cli test`, `typecheck`, `lint` all green. No
-  regressions.
+- **G1.** `packages/compile-go/src/compile-go.ts` exports `compileToGo(atom:
+  BlockTripletRow, opts?: CompileGoOptions): GoCompileResult` and is the
+  documented public API entry point.
+- **G2.** `compile-go.ts` mirrors `compile-python.ts`'s pipeline shape: parse
+  IR → walk AST → emit Go source string → return `GoCompileResult` with
+  `source: string`, `warnings: readonly LowerWarning[]`.
+- **G3.** Type emitter handles the documented MVP type table (see §2.3) for
+  primitives, slices (`[]T`), maps (`map[K]V`), pointers (`*T` for nullable),
+  function types (`func(A, B) R`), generic type parameters (`[T any]`).
+  Outside this set, throw `CannotLowerToGoError`.
+- **G4.** Statement lowerer handles: function declaration, variable
+  declaration (`const`/`let` → `var` or `:=`), `if`/`else`, `for` (C-style
+  and `for...of`/`for...in` → `range`), `switch`, `return`, `throw` (→ `panic`).
+  Anything else throws `CannotLowerToGoError`.
+- **G5.** `CannotLowerToGoError` is added to `@yakcc/contracts/polyglot-errors.ts`
+  with the same constructor signature pattern as `CannotLowerToPythonError`
+  (`nodeKind`, `location`, `snippet`, `fnName?`). Re-exported from
+  `@yakcc/contracts/index.ts`. Unit tests in `polyglot-errors.test.ts`.
+- **G6.** Property test `lower.props.test.ts` asserts the invariant for at
+  least one corpus of IR fixtures: every atom either produces non-empty Go
+  source OR throws `CannotLowerToGoError`. No third outcome (silent garbage,
+  raw TS leaking through `getText()`, empty string emission).
+- **G7.** At least one integration test takes a real shave-go output (an IR
+  atom raised from a samber/lo function) and round-trips it through
+  `compileToGo`, asserting the output is syntactically valid Go. Optional:
+  validate via `gofmt` subprocess if available in CI environment.
+- **G8.** `pnpm --filter @yakcc/compile-go test` is green. `pnpm --filter
+  @yakcc/contracts test` is green (covers the new error class). Full
+  workspace `pnpm -r build` and `pnpm -r test` are green.
 
 ### 1.3 Non-goals (explicit exclusions)
 
-- N1. **Multi-language triplet ingestion.** The MVP triplet ingest path
-  handles TypeScript (`impl.ts` + `proof/tests.fast-check.ts`) only. The
-  format DOC enumerates the canonical language vocabulary
-  (`impl.{ts,py,go}`, `proof/tests.fast-check.{ts,py}`) but the CLI
-  initially accepts only `impl.ts`+`proof/tests.fast-check.ts`. Python and
-  Go triplet ingest are deferred. Documented in DEC-WI954-001.
-- N2. **Modifying `@yakcc/variance` internals.** Variance behavior is
-  unchanged. The fallback discipline is enforced by the LLM's choice of
-  surface (triplet path = `yakcc emit-atom`; bare-code path =
-  storeBlock-time atomize). Forbidden by scope manifest in any case.
-- N3. **Modifying `@yakcc/ir`, `@yakcc/contracts`, `@yakcc/registry`,
-  `@yakcc/hooks-base`, `@yakcc/mcp-registry`.** All forbidden by scope
-  manifest. The CLI subcommand consumes them as workspace dependencies.
-- N4. **MCP description payload, `yakcc_resolve` cascade, confidence
-  bands.** All belong to companion WI `#953` (Gap A: `yakcc_resolve`
-  wiring). Out of scope for #954.
-- N5. **Wiring the LLM to actually call `yakcc emit-atom` at emission
-  time.** That wiring is the LLM's system prompt + the MCP description
-  payload (#953). This WI only delivers the format definition + CLI
-  consumer; the LLM-facing instructions land in `yakcc-discovery.md` but
-  the runtime delivery of that prompt to the LLM is #953's job.
-- N6. **Bundle/envelope alternative.** The triplet is emitted as a
-  directory of three files (matching the existing `packages/seeds/<name>/`
-  layout that `parseBlockTriplet` already understands). A
-  Markdown/YAML/JSON envelope is **rejected** by DEC-WI954-002.
-- N7. **Removing variance synthesis entirely.** Per #954 issue body and
-  #950 Gap C: variance stays as the fallback for emissions that aren't
-  triplet-formatted (no `proof/tests.fast-check.*` present).
-- N8. **Changes to `propose`, `seed`, `compile`.** No existing CLI surface
-  needs to change. `emit-atom` is a new sibling subcommand.
+- **NG1.** **gofmt subprocess** for canonical formatting. MVP emits
+  reasonably-formatted Go manually (indentation, brace placement). gofmt
+  may be wired in a follow-up WI once the emitter shape stabilizes.
+- **NG2.** **Idiomatic Go transforms** (`if err != nil` patterns, error
+  wrapping with `fmt.Errorf("%w")`, channel idioms, context propagation).
+  MVP emits literal lowerings; idiomatic-transform passes are a separate WI.
+- **NG3.** **Method receivers** (`func (r *Receiver) Method()`). The
+  shave-go side encodes class-methods as `ClassName_methodName` free
+  functions per #939. compile-go emits them as free functions on the Go side
+  with the same name shape. Restoring method-receiver syntax is out of scope.
+- **NG4.** **async/await/Promise → goroutines+channels.** Already blocked
+  at canLowerTo (BLOCKER-GO-004); the emitter doesn't need to handle async.
+- **NG5.** **Union types as tagged interfaces.** Already blocked at
+  canLowerTo (BLOCKER-GO-003).
+- **NG6.** **bigint → math/big.** Already blocked at canLowerTo (BLOCKER-GO-001).
+- **NG7.** **Cgo, build tags, package directives beyond `package main`.**
+  MVP emits a single file with a `package <name>` header derived from the
+  atom's spec or a default.
+- **NG8.** **Semantic round-trip equivalence.** MVP asserts syntactic
+  validity (Go parses) and structural fidelity (same number of statements,
+  same control-flow shape). Asserting that the Go executes with identical
+  semantics to the TS source is a separate, larger verification effort.
 
-### 1.4 Unknowns and ambiguities (resolved here)
+### 1.4 Unknowns and ambiguities (resolved before implementer dispatch)
 
-- U1. **Subcommand naming.** Three candidates: `yakcc emit-atom <dir>`,
-  `yakcc accept-atom <dir>`, `yakcc compile --emit <dir>`. Resolved:
-  `yakcc emit-atom <dir>` (DEC-WI954-003). The verb `emit` matches the
-  LLM-side semantics ("the LLM emits an atom triplet, the CLI receives
-  it"). Avoids overloading `compile` (which lowers a spec to source code,
-  conceptually inverse). Avoids "accept" (which implies a moderation
-  decision the CLI isn't making — the gate is property-test green, not a
-  policy judgment).
-- U2. **Test-execution mechanism.** Options:
-  (a) **Spawn `node --import tsx` on the `proof/tests.fast-check.ts` file**
-      and let the test file call `fc.assert(...)` directly, with the
-      process exit code as the green/red signal. Tests look like the
-      `packages/seeds/src/blocks/digit/proof/tests.fast-check.ts` files
-      already in the corpus — no test framework runner, just plain
-      `fc.assert` calls under `if (require.main === module)`.
-  (b) Spawn `pnpm --filter <ephemeral package> test` for vitest-shaped
-      tests. Too heavy for a single-atom emission gate.
-  (c) Dynamic `import()` inside the CLI process. Risky — node ESM cycles
-      with the LLM-supplied code; harder to sandbox; the failure surface
-      is muddier.
-  Resolved: option (a), `node --import tsx <proof/tests.fast-check.ts>`.
-  Document the test-file convention in `yakcc-discovery.md`: tests must
-  be runnable standalone — top-level `fc.assert(...)` calls, no test
-  framework required, exit code is the gate. DEC-WI954-004.
-- U3. **Registry path for `emit-atom`.** Mirror `propose`'s convention:
-  `--registry <path>` flag defaulting to
-  `DEFAULT_REGISTRY_PATH` (`.yakcc/registry.sqlite`). Use the existing
-  `openRegistry` + `makeCommonsBinding` pattern from `propose.ts` so the
-  commons-push at `storeBlock` seam fires identically (per
-  DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001). DEC-WI954-005.
-- U4. **What does the directory look like for the LLM?** The seed corpus
-  layout `<root>/{spec.yak, impl.ts, proof/{manifest.json,
-  tests.fast-check.ts}}` is the canonical shape `parseBlockTriplet` already
-  consumes. Document this exact layout in `yakcc-discovery.md` with a
-  small worked example (a `clamp` atom: spec defines clamp(value, min,
-  max), impl is a five-line TS function, tests assert idempotence,
-  bounds-check, and order-invariance). DEC-WI954-006.
-- U5. **`impl.ts` strict-subset coupling.** `parseBlockTriplet` already
-  invokes the strict-subset validator (`validateStrictSubset` from
-  `@yakcc/ir`). The CLI surfaces the result.validation.ok bit and the
-  ValidationError list verbatim — no new validation logic. DEC-WI954-007.
-- U6. **Where do property-test temp files live?** Spawning `node --import
-  tsx` needs the LLM's emitted directory to be reachable. Resolved: spawn
-  with `cwd = <emitDir>` and pass `proof/tests.fast-check.ts` as the
-  positional. The test file imports `../impl.js` (TS-compiled by tsx).
-  Document the relative-import convention. The CLI does NOT copy files
-  into `tmp/`. DEC-WI954-008.
-- U7. **What about a foreign triplet?** `@yakcc/contracts` already has
-  `ForeignTripletFields` (`{kind:"foreign", pkg, export, dtsHash?}`) for
-  node-builtin / npm-package shims. Foreign atoms have no `impl.ts` /
-  `proof/tests.fast-check.ts` — they reference a package symbol. Out of
-  scope for `emit-atom` in this WI; the subcommand only handles local
-  triplets. Document this carve-out in `yakcc-discovery.md`. DEC-WI954-009.
+- **U1 (resolved).** Should TS `number` map to Go `int` or `float64`? **The
+  current compile-python pattern lowers `number` to `int` for integer-like
+  usage** but Go is stricter about numeric types than Python. Decision:
+  default `number` → `int` for arithmetic-context, `float64` when the IR
+  carries a fractional literal or division operator. Cast explicitly with
+  `int(x)` / `float64(x)` at boundaries. Documented in DEC-WI973-002.
+- **U2 (resolved).** Does the scope manifest as defined in
+  `workflow_contract` allow editing `packages/contracts/**`? **No** —
+  `packages/contracts/**` is in `forbidden_paths`. This is a real scope
+  boundary. The implementer must extend the scope (via `cc-policy workflow
+  scope-sync`) to include `packages/contracts/src/polyglot-errors.ts`,
+  `packages/contracts/src/polyglot-errors.test.ts`, and
+  `packages/contracts/src/index.ts` before edits begin. Guardian:provision
+  re-issues the lease with the widened scope. Documented in §6.
+- **U3 (resolved).** Does compile-go need its own `LowerWarning` type or
+  reuse from contracts? **Define locally in `packages/compile-go/src/types.ts`**
+  mirroring compile-python's shape exactly. The two adapters' warning sets
+  diverge in `kind` strings (e.g. python emits `proof-properties-parse-error`,
+  go has no equivalent today). Sharing would couple the two adapters
+  needlessly. DEC-WI973-008.
+- **U4 (resolved).** Should `compileToGo` emit a test file analogue (like
+  compile-python's `testSource`)? **MVP: no.** compile-python emits a
+  hypothesis test from `proof/properties.json` because the property-spec
+  IR has a hypothesis emitter (`emitHypothesisTests` in contracts). There
+  is no Go property-test emitter yet (no analogue of hypothesis for Go).
+  `GoCompileResult` has only `source` and `warnings`. Adding a Go
+  property-test emitter is a follow-up WI. DEC-WI973-009.
 
 ### 1.5 Dominant constraints
 
-- C1. **Scope manifest is law.** Allowed:
-  `packages/cli/src/commands/**`, `packages/cli/src/lib/**`,
-  `packages/cli/src/index.ts`, `packages/cli/src/index.test.ts`,
-  `docs/system-prompts/yakcc-discovery.md`, `docs/decisions/*.md`,
-  `tmp/**`, `PLAN.md`.
-  Forbidden:
-  `packages/shave-python/**`, `packages/compile-python/**`,
-  `packages/shave/**`, `packages/compile/**`, `packages/contracts/**`,
-  `packages/registry/**`, `packages/federation/**`,
-  `packages/hooks-base/**`, `packages/ir/**`, `packages/variance/**`,
-  `packages/mcp-registry/**`, `bootstrap/**`, `.github/**`, `.claude/**`.
-- C2. **`packages/cli/package.json` is in `packages/cli/` but NOT in
-  allowed_paths.** Verify before the implementer needs a new dep. If
-  `tsx` and `fast-check` are not already in the CLI package's runtime
-  dependencies (they ship in @yakcc/seeds and @yakcc/ir respectively),
-  request a scope widening **before** the implementer starts. See §6.5
-  for the scope-sync action.
-- C3. **No edits to `@yakcc/variance`, `@yakcc/registry`, `@yakcc/ir`,
-  `@yakcc/contracts`.** The CLI consumes them as workspace deps —
-  imports only, no source modification.
-- C4. **Test-execution is in-band but sandboxed enough.** Spawning
-  `node --import tsx <test-file>` runs in a child process — failures
-  don't crash the CLI; stderr/stdout is captured and surfaced. The CLI's
-  own test suite uses real LLM-shaped triplet fixtures under `tmp/` or
-  `packages/cli/src/commands/__fixtures__/` (the latter is in scope under
-  `packages/cli/src/commands/**`).
-- C5. **No state-authority changes.** The CLI consumes existing
-  authorities (`@yakcc/contracts` for SpecYak, `@yakcc/ir` for
-  block-parser/strict-subset, `@yakcc/registry` for storeBlock). No new
-  state lives in this WI.
+- **C1.** ts-morph AST API parity with compile-python. The lowerer walks
+  the same Node kinds; the emit functions differ.
+- **C2.** Lossless name round-trip with shave-go. Identifier transforms
+  (DEC-WI973-005) must be inverse to whatever shave-go does on its side.
+  Concretely: shave-go's `name-normalize.ts` exists; compile-go's `names.ts`
+  must inverse it for round-trip parity.
+- **C3.** Loud failure. Every unhandled IR construct must throw
+  `CannotLowerToGoError` with a useful message. No silent `getText()`
+  fallback, no empty emission, no `/* WARN */` comments in output. This is
+  the lesson from WI-943 (#945).
+- **C4.** Single PR for the MVP. No incremental landings; the whole emitter
+  ships or none does. Sub-slices in §3 are internal staging within the WI.
 
 ---
 
 ## 2 — Architecture design & state-authority map
 
-### 2.1 State-authority map (where state lives)
+### 2.1 State-authority map
 
-| Operational fact | Authority | This WI touches? |
-|---|---|---|
-| Triplet directory shape (`{spec.yak, impl.ts, proof/{manifest.json,tests.fast-check.ts}}`) | `packages/ir/src/block-parser.ts` (`parseBlockTriplet`) | **read-only consume** via workspace dep |
-| SpecYak schema + `validateSpecYak` | `packages/contracts/src/spec-yak.ts` | **read-only consume** |
-| Strict-subset validation of `impl.ts` | `packages/ir/src/strict-subset.ts` (`validateStrictSubset`) | **read-only consume** (invoked transitively via `parseBlockTriplet`) |
-| L0 proof manifest validation | `packages/contracts/src/proof-manifest.ts` (`validateProofManifestL0`) | **read-only consume** |
-| BlockMerkleRoot derivation | `packages/contracts/src/merkle.ts` (`blockMerkleRoot`) | **read-only consume** |
-| Registry persistence (`storeBlock`) | `packages/registry/src/storage.ts` (`Storage.storeBlock`) via `openRegistry` | **read-only consume** |
-| Commons-push binding at storeBlock seam | `packages/cli/src/lib/commons-submit.ts` (`makeCommonsBinding`) | **read-only consume** (already in CLI scope; do not re-implement) |
-| LLM-facing system prompt | `docs/system-prompts/yakcc-discovery.md` | **extend** — append "Emission shape" section |
-| CLI subcommand routing | `packages/cli/src/index.ts` (`runCli`) | **extend** — new `case "emit-atom":` branch + usage text line |
-| Property-test execution (NEW) | `packages/cli/src/commands/emit-atom.ts` (new) | **create** — spawn `node --import tsx <proof/tests.fast-check.ts>`, capture exit code, stdout, stderr |
-| Variance fallback path | `packages/variance/src/index.ts` (invoked by storeBlock-time atomize for bare-code emissions) | **read-only acknowledge** — this WI does NOT invoke variance; documented in yakcc-discovery.md |
+| State domain                  | Canonical authority                                              | Notes                                                                                                  |
+|-------------------------------|------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| TS-subset IR shape            | `packages/ir/` + `packages/contracts/strict-subset.ts`            | Read-only; the lowerer consumes IR ASTs via ts-morph.                                                  |
+| `BlockTripletRow` shape       | `packages/registry/`                                              | Read-only; lowerer input type.                                                                         |
+| Polyglot error vocabulary     | `packages/contracts/src/polyglot-errors.ts`                      | **Mutated by this WI** — adds `CannotLowerToGoError`. Re-exported via barrel.                          |
+| Go type ↔ TS type mapping     | `packages/shave-go/src/type-map.ts` (Go → TS direction)           | Read-only reference; compile-go's type emitter is the **inverse mapping**, owned by `compile-go/lower.ts`. |
+| Go identifier normalization   | `packages/shave-go/src/name-normalize.ts` (Go → TS direction)     | Read-only reference; compile-go's `names.ts` is the **inverse mapping**.                              |
+| compile-go public API         | `packages/compile-go/src/compile-go.ts` (this WI)                 | **Created** by this WI. Mirrors `compile-python.ts`.                                                    |
+| canLowerTo gate               | `packages/compile-go/src/can-lower-to.ts` (already exists)        | **Read-only by this WI.** Pre-screens atoms; this WI assumes only `canLowerTo === true` atoms reach the emitter, but the emitter must still throw cleanly on out-of-envelope IR (defense in depth). |
 
-### 2.2 Subcommand surface
+### 2.2 Removal targets
 
-```
-yakcc emit-atom <directory>
-  [--registry <path>]      # default: .yakcc/registry.sqlite (DEC-WI954-005)
-  [--skip-tests]           # DANGEROUS — bypasses property-test gate; for CI-only triplet seeding
-  [--json]                 # machine-readable output (BlockMerkleRoot, validation errors as JSON)
-```
+None — this is purely additive. The empty `compile-go/src/` directory (only
+`can-lower-to.{ts,test.ts}` + `index.ts`) is filled in, not replaced.
 
-Exit codes:
-- 0 — triplet validated, tests green, stored.
-- 1 — usage / IO error.
-- 2 — spec.yak invalid (validateSpecYak threw).
-- 3 — impl.ts strict-subset violation.
-- 4 — proof/manifest.json invalid.
-- 5 — proof/tests.fast-check.ts failed (property test counterexample found).
-- 6 — storeBlock failed (registry write error).
+The stale WI-954 PLAN.md content is replaced by this plan as part of the WI's
+plan output (this commit).
 
-Each distinct exit code corresponds to a documented gate. The implementer
-encodes these as named constants (`EMIT_ATOM_EXIT_OK`,
-`EMIT_ATOM_EXIT_SPEC_INVALID`, etc.) in `emit-atom.ts` and asserts on them
-in tests.
+### 2.3 Type emitter table (TS → Go, MVP)
 
-### 2.3 emit-atom.ts module shape
+Inverse of `packages/shave-go/src/type-map.ts`. Lossy directions are
+documented with explicit `LowerWarning`s; round-trip-incompatible directions
+throw `CannotLowerToGoError`.
 
-```ts
-export interface EmitAtomOptions {
-  embeddings?: RegistryOptions["embeddings"];
-}
+| TS type                          | Go type                | Notes / fidelity                                                                                                    |
+|----------------------------------|------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `number` (integer context)       | `int`                  | Default. Matches Go convention.                                                                                     |
+| `number` (fractional context)    | `float64`              | Detected by presence of fractional literal / division on this binding.                                              |
+| `string`                         | `string`               | Direct.                                                                                                             |
+| `boolean`                        | `bool`                 | Direct.                                                                                                             |
+| `null` / `undefined` (in union)  | (handled by nullable)  | See below.                                                                                                          |
+| `T \| null` / `T \| undefined`   | `*T` (pointer)         | Idiomatic Go nullable. **Note:** canLowerTo currently blocks `UnionType` (BLOCKER-GO-003). compile-go must throw `CannotLowerToGoError` if a union reaches it. Native nullable handling lands in a follow-up; the MVP defers it. |
+| `T[]` / `Array<T>`               | `[]T`                  | Direct.                                                                                                             |
+| `Record<string, V>`              | `map[string]V`         | Direct.                                                                                                             |
+| `Map<K, V>`                      | `map[K]V`              | Direct.                                                                                                             |
+| `Uint8Array`                     | `[]byte`               | Direct.                                                                                                             |
+| `unknown` / `any`                | `any`                  | Go 1.18+ `any` alias for `interface{}`. Emit `any`.                                                                 |
+| `(a: A, b: B) => R`              | `func(A, B) R`         | Direct.                                                                                                             |
+| Generic `<T>` / `<T, R>`         | `[T any]` / `[T, R any]` | Direct in Go 1.18+. Non-`any` constraints throw `CannotLowerToGoError` for MVP (matches shave-go's WI-963 generic passthrough). |
+| `Error`                          | `error`                | Go's built-in error interface.                                                                                      |
+| `bigint`                         | (throws)               | Already blocked at canLowerTo; emitter throws for defense in depth.                                                 |
+| `Promise<T>`                     | (throws)               | Already blocked at canLowerTo.                                                                                      |
+| Class types (`class Foo`)        | (throws)               | Not in MVP envelope; classes are uncurried to free functions on the shave side.                                     |
+| Anything else                    | (throws)               | `CannotLowerToGoError` with `nodeKind` = the TS type node's `getKindName()`.                                        |
 
-/**
- * `yakcc emit-atom <dir> [--registry <p>] [--skip-tests] [--json]`
- *
- * Reads an LLM-emitted triplet directory, validates it, runs the
- * LLM-authored property tests against the impl, and persists via
- * storeBlock only if all gates are green.
- */
-export async function emitAtom(
-  argv: readonly string[],
-  logger: Logger,
-  opts?: EmitAtomOptions,
-): Promise<number>;
-```
+### 2.4 Statement lowering table
 
-Internal flow:
+| TS construct                              | Go emission                                                | Notes                                                                                          |
+|-------------------------------------------|------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| `function foo(...): R { ... }`            | `func foo(...) R { ... }`                                  | Top-level only (no nested functions in MVP).                                                   |
+| `const x: T = expr;` (top-level)          | `var x T = expr`                                           | Package-level scope.                                                                           |
+| `const x = expr;` (inside fn)             | `x := expr`                                                | Short declaration. Type inferred.                                                              |
+| `let x: T = expr;` (inside fn)            | `var x T = expr`                                           | Mutable.                                                                                       |
+| `if (cond) { ... } else { ... }`          | `if cond { ... } else { ... }`                             | No parens around cond.                                                                         |
+| `for (let i = 0; i < n; i++) { ... }`     | `for i := 0; i < n; i++ { ... }`                           | C-style.                                                                                       |
+| `for (const x of items) { ... }`          | `for _, x := range items { ... }`                          | range over slice/map values.                                                                   |
+| `for (const [k, v] of Object.entries(m))` | `for k, v := range m { ... }`                              | range over map kv.                                                                             |
+| `for (const k in obj) { ... }`            | (throws)                                                   | TS `for...in` over keys has no clean Go analogue without surrounding object shape; throw.      |
+| `switch (x) { case A: ...; break; }`      | `switch x { case A: ...; }`                                | Go cases don't fall through; drop `break`. Explicit `fallthrough` only if TS uses fallthrough. |
+| `return expr;` / `return;`                | `return expr` / `return`                                   | Direct.                                                                                        |
+| `throw new Error(msg);`                   | `panic(msg)`                                               | MVP. Idiomatic Go uses `return errors.New(msg)` from an `(R, error)`-typed fn; deferred.       |
+| `expr;` (expression statement)            | `expr`                                                     | Direct.                                                                                        |
+| `x = expr;` (assignment)                  | `x = expr`                                                 | Direct.                                                                                        |
+| `x += expr;` etc.                         | `x += expr`                                                | Compound ops match.                                                                            |
+| Anything else                             | (throws)                                                   | `CannotLowerToGoError`.                                                                        |
 
-1. **Parse argv** via `parseArgs` (DEC-V0-CLI-004 pattern from other
-   commands).
-2. **Resolve dir path** and verify it exists; require `spec.yak`,
-   `impl.ts`, `proof/manifest.json`, `proof/tests.fast-check.ts`. Missing
-   any → exit 1 with a clear error naming the missing file.
-3. **Call `parseBlockTriplet`** from `@yakcc/ir`. On throw → exit 2/3/4
-   depending on which gate threw (catch + classify by error message OR by
-   inspecting the validation result if `parseBlockTriplet` returns
-   structured errors — the implementer reads `block-parser.ts` to decide).
-4. **Run property tests** (unless `--skip-tests`):
-   ```
-   spawn("node", ["--import", "tsx", "proof/tests.fast-check.ts"], {
-     cwd: emitDir,
-     stdio: ["ignore", "pipe", "pipe"],
-   })
-   ```
-   On non-zero exit → exit 5; print captured stderr; do NOT call
-   storeBlock.
-5. **Build `BlockTripletRow`** from the `BlockTripletParseResult` (same
-   pattern as `packages/seeds/src/seed.ts:83-117`).
-6. **Open registry** with `makeCommonsBinding` wiring; call
-   `registry.storeBlock(row)`. On throw → exit 6.
-7. **Print result**: human form is `stored: <BlockMerkleRoot>` plus a
-   one-line summary; `--json` form is `{ "merkleRoot": "...", "specHash":
-   "...", "stored": true }`.
+### 2.5 Expression lowering table
 
-The implementer copies the storeBlock-row construction pattern from
-`packages/seeds/src/seed.ts` (which is read-only-consume — that file is
-forbidden, but its 30-line pattern can be re-implemented in
-`packages/cli/src/commands/emit-atom.ts` without modifying the seeds
-package).
+| TS construct                           | Go emission                  | Notes                                                                  |
+|----------------------------------------|------------------------------|------------------------------------------------------------------------|
+| Numeric literal `42`                   | `42`                         | Direct.                                                                |
+| String literal `"foo"`                 | `"foo"`                      | Double quotes.                                                         |
+| Template literal `` `foo${x}bar` ``   | `fmt.Sprintf("foo%vbar", x)` | MVP. Requires `import "fmt"`.                                          |
+| Boolean literal                        | `true` / `false`             | Direct.                                                                |
+| `null`                                 | `nil`                        | Only valid in pointer contexts; otherwise throw.                       |
+| `undefined`                            | (throws)                     | No Go equivalent; canLowerTo should screen, but emit defense throws.   |
+| Identifier                             | (identifier, normalized)     | Via `names.ts` transform.                                              |
+| Binary op `a + b`, `a * b`, etc.       | `a + b`, `a * b`, etc.       | Direct for arithmetic/comparison/logical. `===` → `==`, `!==` → `!=`.  |
+| Unary op `!x`, `-x`                    | `!x`, `-x`                   | Direct.                                                                |
+| Call `f(a, b)`                         | `f(a, b)`                    | Direct.                                                                |
+| Member access `obj.x`                  | `obj.x`                      | Direct.                                                                |
+| Element access `arr[i]`                | `arr[i]`                     | Direct.                                                                |
+| Array literal `[a, b, c]`              | `[]T{a, b, c}`               | T inferred from contextual type.                                       |
+| Object literal `{ a: 1, b: 2 }`        | `map[string]int{"a": 1, "b": 2}` or `struct{...}{...}` | MVP: emit as `map[string]V` when homogeneous; throw otherwise. |
+| Arrow function expression              | `func(...) R { ... }`        | Already blocked at canLowerTo (BLOCKER-GO-005); emitter throws as defense. |
+| Anything else                          | (throws)                     | `CannotLowerToGoError`.                                                |
 
-### 2.4 Property-test execution (DEC-WI954-004 detail)
+### 2.6 Identifier normalization (`names.ts`)
 
-The LLM-authored test file `proof/tests.fast-check.ts` must:
+| TS shape                       | Go shape                       | Rationale                                                              |
+|--------------------------------|--------------------------------|------------------------------------------------------------------------|
+| `myFunction` (camelCase)       | `myFunction` (unexported)      | Identifier preserved. Export decision is **out of MVP scope** — all emitted functions are exported by default via PascalCase capitalization. |
+| `MyFunction` (PascalCase)      | `MyFunction` (exported)        | Direct.                                                                |
+| `EntitySubstitution_substituteXml` | `EntitySubstitution_substituteXml` (exported via leading uppercase) | shave-go's class-method uncurry encoding round-trips losslessly. |
+| `_privateName` (leading underscore) | `privateName` (unexported)  | Go has no `_`-prefix convention for private; first-letter case controls visibility. The leading underscore is stripped and the first character is lowercased to keep it unexported. |
+| `ALL_CAPS_CONST`               | `ALL_CAPS_CONST`               | Go allows underscores in identifiers; preserved verbatim.              |
 
-- Import the impl: `import { theFunction } from "../impl.js"` (tsx
-  resolves `.js` → `.ts`).
-- Call `fc.assert(fc.property(...))` at the top level (not wrapped in
-  `describe`/`it`).
-- Exit non-zero on assertion failure (fast-check throws; node propagates
-  the unhandled exception to exit code 1).
+**Export policy for MVP:** emit functions and types with their original
+casing. If the first character is lowercase, the Go symbol is package-private;
+if uppercase, exported. The lowerer does not force uppercase. This matches
+the TS-side convention where `export function foo` is exported by JS module
+semantics but lowercase in Go means package-private. This is a documented
+fidelity gap in DEC-WI973-005 and may be revisited.
 
-Example (from the worked `clamp` example in §2.5):
-```ts
-import * as fc from "fast-check";
-import { clamp } from "../impl.js";
+### 2.7 Alternatives gate
 
-fc.assert(
-  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
-    const [min, max] = a <= b ? [a, b] : [b, a];
-    const r = clamp(v, min, max);
-    return r >= min && r <= max;
-  }),
-);
+**Considered and rejected.**
 
-console.log("clamp property tests: ok");
-```
-
-This shape mirrors what's already in
-`packages/seeds/src/blocks/digit/proof/tests.fast-check.ts` — the LLM is
-asked to author files matching the existing seed-corpus convention.
-That's load-bearing: the corpus already trains downstream tools (shave,
-compile-self) on this shape, so emission-time triplets are
-indistinguishable from seed triplets once stored.
-
-### 2.5 Worked example: `clamp` (documented in yakcc-discovery.md)
-
-```
-<temp-dir>/
-├── spec.yak                       # SpecYak JSON
-├── impl.ts                        # export function clamp(...)
-└── proof/
-    ├── manifest.json              # { "artifacts": [{ "kind": "property_tests", "path": "tests.fast-check.ts" }] }
-    └── tests.fast-check.ts        # fc.assert at top level
-```
-
-`spec.yak`:
-```json
-{
-  "name": "clamp",
-  "inputs": [
-    {"name": "value", "type": "number"},
-    {"name": "min", "type": "number"},
-    {"name": "max", "type": "number"}
-  ],
-  "outputs": [{"name": "result", "type": "number"}],
-  "preconditions": ["min <= max"],
-  "postconditions": ["min <= result <= max"],
-  "invariants": [],
-  "effects": [],
-  "level": "L0",
-  "behavior": "Clamp value to [min, max].",
-  "guarantees": [
-    {"id": "bounded", "description": "Result is in [min, max]."},
-    {"id": "idempotent", "description": "clamp(clamp(v,a,b),a,b) === clamp(v,a,b)."}
-  ],
-  "errorConditions": [],
-  "nonFunctional": {"purity": "pure", "threadSafety": "safe"},
-  "propertyTests": [
-    {"id": "bounded", "description": "Result is within bounds."},
-    {"id": "idempotent", "description": "Applying clamp twice equals once."}
-  ]
-}
-```
-
-`impl.ts`:
-```ts
-export function clamp(value: number, min: number, max: number): number {
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
-```
-
-`proof/manifest.json`:
-```json
-{"artifacts": [{"kind": "property_tests", "path": "tests.fast-check.ts"}]}
-```
-
-`proof/tests.fast-check.ts`:
-```ts
-import * as fc from "fast-check";
-import { clamp } from "../impl.js";
-
-// Bounded
-fc.assert(
-  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
-    const [min, max] = a <= b ? [a, b] : [b, a];
-    const r = clamp(v, min, max);
-    return r >= min && r <= max;
-  }),
-);
-
-// Idempotent
-fc.assert(
-  fc.property(fc.integer(), fc.integer(), fc.integer(), (v, a, b) => {
-    const [min, max] = a <= b ? [a, b] : [b, a];
-    return clamp(clamp(v, min, max), min, max) === clamp(v, min, max);
-  }),
-);
-
-console.log("clamp property tests: ok");
-```
-
-CLI invocation:
-```bash
-$ yakcc emit-atom ./clamp-emit
-stored: a7f3b2c8e9d1e4f5b6c7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9
-```
-
-### 2.6 Variance fallback discipline (documented, not coded here)
-
-The `yakcc-discovery.md` section will explicitly say:
-
-> When `yakcc_resolve` returns no match:
-> 1. **Preferred path:** emit a triplet directory and run `yakcc
->    emit-atom <dir>`. The CLI runs your property tests, persists if
->    green. This is the canonical path; commons growth quality depends
->    on you taking it.
-> 2. **Fallback path:** if you cannot author property tests (rare; only
->    if the spec is too vague for fc.property), emit bare code. The
->    substrate's PreToolUse hook will atomize it post-hoc and
->    `@yakcc/variance` will synthesize property tests from the spec
->    shape. Quality is bounded by synthesis; prefer path 1.
-
-No code in `packages/variance/**` changes. No code in this WI invokes
-variance. The discipline is enforced by *the LLM's choice of CLI surface*,
-mediated by the system prompt's preference ordering.
-
-### 2.7 Alternatives considered & rejected
-
-**Alt A — Single JSON envelope (`emission.json` with embedded spec, impl,
-tests).** Rejected. `parseBlockTriplet` already accepts a directory; an
-envelope adds a parse step and breaks symmetry with the existing seed-corpus
-layout that the substrate (shave, compile-self, federation) already
-understands. DEC-WI954-002.
-
-**Alt B — `yakcc compile --emit <dir>`.** Rejected. `compile` lowers a
-spec to source code (the opposite direction). Overloading it would conflate
-two flows. DEC-WI954-003.
-
-**Alt C — Spawn `pnpm test` or `vitest` to run property tests.** Rejected
-in DEC-WI954-004. Too heavy (test framework startup ~3s vs ~200ms for
-`node --import tsx`); requires the emit-dir to be a workspace; adds
-indirect deps.
-
-**Alt D — Dynamic `import()` inside the CLI process.** Rejected in
-DEC-WI954-004. ESM cycles with LLM-supplied code are unpredictable; child
-process gives a clean fail-shut boundary.
-
-**Alt E — Re-implement `parseBlockTriplet` in CLI to avoid the
-`@yakcc/ir` dep boundary.** Rejected — `@yakcc/ir` is already a CLI
-dependency (it's how `shave` and `compile` work). Reuse, don't fork.
-
-**Alt F — Persist on red, mark the atom as `provisional`.** Rejected.
-Issue body says "persists via `storeBlock` only if green." Red emissions
-exit non-zero; the LLM is expected to fix the impl and re-emit.
+- **A1.** **Use a separate `go-ast` library to generate Go syntax**
+  (e.g. parse-only `go-ast` via WASM, or a TS port of Go's `go/ast`).
+  *Rejected:* compile-python emits raw strings successfully without an AST
+  library; adding one is unjustified weight for MVP. The output is one
+  function per atom; manual string emission is tractable.
+- **A2.** **Subprocess to `gofmt` for canonical formatting on every emit.**
+  *Rejected for MVP:* gofmt requires `go` toolchain installed on the
+  developer machine and CI. compile-python doesn't subprocess to `black` or
+  `ruff`; emit-time formatting is the package's job. Follow-up WI can wire
+  `gofmt` validation in CI without making it a runtime emission dependency.
+- **A3.** **Emit Go that uses `(R, error)` tuple returns by default,
+  translating `throw` → `return ..., err`.** *Rejected for MVP:* this is an
+  idiomatic transform that changes the function signature shape (every fn
+  becomes 2-return). It would diverge from compile-python's literal lowering
+  and tangle the MVP scope. `throw` → `panic` is the literal lowering; the
+  idiomatic transform is a separate WI.
+- **A4.** **Define `compileToGo` to return `Promise<GoCompileResult>` for
+  future gofmt integration.** *Rejected:* premature async. compile-python is
+  synchronous; symmetry matters. Sync API; if gofmt is wired later, that's
+  a separate sync subprocess call.
 
 ### 2.8 Research gate
 
-The domain is well-understood: the codebase has six months of triplet
-shape documentation (`@yakcc/contracts/triplet.test.ts` with 20-seed-spec
-fixtures), the parser exists, the registry-write seam exists, the
-commons-submit hook is documented (`DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001`).
-The only novel mechanism is spawning `node --import tsx` for property
-tests, which is a 30-line shell-out using `child_process.spawn`. No
-external research needed.
+**Research performed.**
+
+- Read `packages/compile-python/src/{compile-python,lower,names,types,index}.ts`
+  and `lower.props.test.ts` — confirmed the template structure and contract
+  the WI must mirror.
+- Read `packages/contracts/src/polyglot-errors.ts` — confirmed
+  `CannotLowerToPythonError` shape that `CannotLowerToGoError` mirrors.
+- Read `packages/compile-go/src/can-lower-to.ts` — confirmed the blocker
+  taxonomy (BLOCKER-GO-001 through 005) that the emitter must respect.
+- Read `packages/shave-go/src/type-map.ts` — confirmed the inverse type
+  table that the emitter implements.
+- Read `packages/compile-go/package.json` — confirmed dependencies
+  (`ts-morph`, `@yakcc/contracts`, `@yakcc/registry`) already present; no
+  new deps needed.
+
+No external research required. The pattern is well-established; this WI is
+a faithful sibling of compile-python.
 
 ---
 
 ## 3 — Wave decomposition
 
-One PR, one work item closed. The slices are small enough to ship together;
-shipping them separately would land non-functional intermediate states
-(docs without consumer, or consumer without docs).
+Single PR for the MVP. Sub-slices below are internal staging within the
+implementer's worktree; they do not produce intermediate PRs or landings.
 
-| W-ID | Title | Weight | Gate | Deps | Issues closed | Integration |
-|---|---|---|---|---|---|---|
-| W-A | yakcc-discovery.md — emission section | S | none | — | #954 (partial) | `docs/system-prompts/yakcc-discovery.md` |
-| W-B | emit-atom.ts subcommand scaffold + argv parsing | S | none | — | #954 (partial) | `packages/cli/src/commands/emit-atom.ts` (new), `packages/cli/src/index.ts` (extend `runCli` + `printUsage`) |
-| W-C | Wire `parseBlockTriplet` → storeBlock-row construction | M | none | W-B | #954 (partial) | `emit-atom.ts` (extend) |
-| W-D | Property-test execution via `node --import tsx` | M | none | W-C | #954 (partial) | `emit-atom.ts` (extend) |
-| W-E | Registry open + commons-binding + storeBlock | S | none | W-D | #954 (partial) | `emit-atom.ts` (extend) |
-| W-F | Test fixtures + unit tests (happy + failure paths) | M | none | W-E | #954 (partial) | `packages/cli/src/commands/emit-atom.test.ts` (new), `packages/cli/src/commands/__fixtures__/emit-atom/**` (new) |
-| W-G | End-to-end integration test (real triplet → real registry → query roundtrip) | M | review | W-F | #954 (closes) | `emit-atom.test.ts` (extend) |
-| W-H | Final lint/typecheck + barrel hygiene | S | none | W-G | — | `packages/cli/src/index.ts` (final touches) |
+| Slice | Weight | Gate    | Deps   | Description                                                                                          |
+|-------|--------|---------|--------|------------------------------------------------------------------------------------------------------|
+| **A** | S      | none    | —      | Add `CannotLowerToGoError` to `@yakcc/contracts/polyglot-errors.ts` + tests + barrel re-export.       |
+| **B** | S      | none    | —      | Create `packages/compile-go/src/types.ts` with `LowerWarning` + `GoCompileResult` (mirror compile-python). |
+| **C** | S      | none    | —      | Create `packages/compile-go/src/names.ts` with identifier transforms per §2.6 + unit tests.           |
+| **D** | M      | none    | A,B    | Create `packages/compile-go/src/lower.ts` — type emitter per §2.3 (TS → Go types).                    |
+| **E** | M      | none    | A,B,D  | Extend `lower.ts` — statement lowerer per §2.4.                                                       |
+| **F** | M      | none    | A,B,D,E | Extend `lower.ts` — expression lowerer per §2.5.                                                      |
+| **G** | S      | none    | C,D,E,F | Create `packages/compile-go/src/compile-go.ts` — public API `compileToGo(atom, opts?)`.              |
+| **H** | S      | none    | G      | Update `packages/compile-go/src/index.ts` — barrel re-exports for `compileToGo`, `CompileGoOptions`, `GoCompileResult`, `LowerWarning`. |
+| **I** | M      | review  | G,H    | Tests: unit per construct (`lower.test.ts`, `names.test.ts`, `compile-go.test.ts`), property test (`lower.props.test.ts`), integration test taking a shave-go raised IR atom and round-tripping it (`integration.test.ts`). |
+| **J** | S      | review  | I      | Workspace-wide `pnpm -r build` + `pnpm -r test` green. Lint clean. typecheck clean.                  |
 
-**Critical path:** W-B → W-C → W-D → W-E → W-F → W-G. W-A is doc-only and
-can land first (recommend first commit so the LLM-facing principle is
-visible in the PR diff before the consumer).
+**Critical path:** A → B → D → E → F → G → I → J. Slices C, H are parallelizable
+inside the worktree (no cross-slice landing). Max width effectively 1 (single
+implementer, single PR).
 
-**Single PR:** the slices are mutually load-bearing. A PR that ships W-A
-through W-D is non-functional (no registry persistence). A PR through W-H
-is the minimum viable proof.
+**Why no separate work items per slice:** the MVP is small (~500-800 LOC
+across the new files, comparable to compile-python which is ~1500 LOC total).
+Splitting into multiple PRs would create N partial polyglot adapters that
+each fail the property invariant until the last lands. Single PR keeps the
+invariant green at every landing.
 
 ---
 
 ## 4 — Decision Log
 
-| DEC-ID | Title | Rationale |
-|---|---|---|
-| **DEC-WI954-001** | MVP triplet ingest is TypeScript-only; format DOC enumerates ts/py/go vocabulary | The CLI initially accepts `impl.ts` + `proof/tests.fast-check.ts`. The discovery doc explicitly lists `impl.{ts,py,go}` and `proof/tests.fast-check.{ts,py}` as the canonical vocabulary the LLM may emit, with a note that Python and Go ingest are deferred. This keeps the LLM-facing prompt aligned with the long-term shape while bounding implementation. |
-| **DEC-WI954-002** | Directory triplet, not envelope | `parseBlockTriplet` (`@yakcc/ir/block-parser.ts`) already consumes directory triplets matching the seed-corpus layout. Symmetry with seeds means a stored atom from `emit-atom` is byte-indistinguishable from a seeded atom; downstream tools (shave, compile-self, federation) work unchanged. Markdown/YAML/JSON envelope adds parse complexity for no benefit. |
-| **DEC-WI954-003** | Subcommand name: `yakcc emit-atom <dir>` | "Emit" matches the LLM-side semantics ("I emit an atom triplet, the CLI receives it"). Avoids overloading `compile` (which lowers spec → source; conceptually inverse). Avoids "accept" (implies a moderation decision the CLI isn't making). |
-| **DEC-WI954-004** | Property-test execution via child process: `node --import tsx <test-file>` | Fastest fail-shut boundary. ~200ms startup vs ~3s for vitest. Tests are plain top-level `fc.assert` calls — no test framework runner needed. Matches the existing seed-corpus test file convention (`packages/seeds/src/blocks/digit/proof/tests.fast-check.ts`). Stderr/stdout captured; non-zero exit → property failed. |
-| **DEC-WI954-005** | Registry path + commons-binding: reuse `propose.ts` pattern | `openRegistry(registryPath, { commonsSubmit })` via `makeCommonsBinding({ registryPath, airgapped })` — identical to `propose.ts:92-104`. Default `registryPath` is `DEFAULT_REGISTRY_PATH` (`.yakcc/registry.sqlite`). Commons-push fires at storeBlock seam per `DEC-COMMONS-SUBMIT-AT-STOREBLOCK-001`. |
-| **DEC-WI954-006** | Worked example in yakcc-discovery.md: `clamp(value, min, max)` | Small, complete, language-agnostic in intent, with two clear property-test cases (bounded + idempotent). The full directory listing is reproduced in the doc so the LLM sees the canonical layout. |
-| **DEC-WI954-007** | Strict-subset validation is consumed via `parseBlockTriplet`, not re-implemented | `parseBlockTriplet` already invokes `validateStrictSubset` from `@yakcc/ir`. The CLI surfaces `result.validation.ok` + the `ValidationError[]` list verbatim. Exit code 3 on strict-subset failure. |
-| **DEC-WI954-008** | Test-file cwd convention: spawn with `cwd = <emitDir>`, import `../impl.js` | Test file lives in `<emitDir>/proof/tests.fast-check.ts` and imports the impl as `../impl.js` (tsx resolves `.js` → `.ts`). The CLI does NOT copy files into `tmp/`. This convention matches the existing seed-corpus layout. |
-| **DEC-WI954-009** | Foreign triplets out of scope for `emit-atom` MVP | `@yakcc/contracts` has `ForeignTripletFields` for npm-package / node-builtin shims. Foreign atoms have no `impl.ts` / `proof/tests.fast-check.ts` — they reference a package symbol. `emit-atom` handles local triplets only in this WI; foreign emission deferred. Documented in yakcc-discovery.md. |
-| **DEC-WI954-010** | Variance fallback discipline enforced by surface choice, not by code change | This WI does NOT modify `@yakcc/variance`. The discipline is documented in `yakcc-discovery.md`: triplet emission → `yakcc emit-atom` (canonical); bare-code emission → existing PreToolUse path → storeBlock-time atomize → variance synthesis (fallback). The LLM's choice of surface enforces the ordering. |
-| **DEC-WI954-011** | Distinct exit codes per gate (0..6) | 0=ok, 1=usage, 2=spec invalid, 3=strict-subset, 4=manifest invalid, 5=property test failed, 6=storeBlock failed. Encoded as named constants in `emit-atom.ts`. Asserted in tests. Lets downstream automation (LLM session telemetry, CI) distinguish "the LLM emitted a bad spec" from "the LLM's impl violates strict-subset" from "the LLM's tests caught a real bug in the LLM's impl" — these are different LLM-quality signals. |
-| **DEC-WI954-012** | Fixture layout: `packages/cli/src/commands/__fixtures__/emit-atom/` | New fixtures directory under the CLI commands tree, in scope. Contains at minimum: `clamp-green/` (happy path), `clamp-strict-violation/` (impl uses banned construct), `clamp-bad-spec/` (missing required SpecYak field), `clamp-failing-tests/` (impl deliberately wrong; LLM-authored tests catch it). |
-| **DEC-WI954-013** | `--skip-tests` flag for CI seeding bypass | Allows CI scripts to ingest pre-vetted triplets without re-running tests (e.g. bulk seed from a known-good registry export). Documented as DANGEROUS in usage text — for human-LLM emission this should never be used. The flag exists so the same CLI surface covers both "LLM emission gate" and "bulk admin seeding" without needing two commands. |
-| **DEC-WI954-014** | Test execution timeout: 30s per file | Spawned `node --import tsx` runs property tests; reasonable upper bound. Exceeding the timeout → kill the child, exit 5 with "property tests exceeded 30s timeout". The implementer encodes this as a configurable constant `EMIT_ATOM_TEST_TIMEOUT_MS` so future tuning is one-line. |
-
-Each row maps 1:1 to an `@decision` annotation the implementer emits at the
-point of implementation.
+| ID                  | Title                                                                                                          | Rationale (short)                                                                                                                                                                                                                                                                          | Status  |
+|---------------------|----------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
+| DEC-WI973-001       | Module structure mirrors compile-python exactly                                                                | The compile-python layout (`lower.ts`, `names.ts`, `compile-python.ts`, `types.ts`, `index.ts`, `lower.props.test.ts`) is the proven template. Symmetry across language adapters reduces cognitive load for future polyglot adapter authors and makes the property-test pattern reusable. | accepted |
+| DEC-WI973-002       | `number` defaults to `int`; `float64` when fractional context detected                                         | Go is strict about numeric types. `int` matches the Go convention for default integer arithmetic. `float64` only when the IR explicitly uses fractional literals or division — matches the principle of least-surprise emission. Idiomatic refinement deferred.                          | accepted |
+| DEC-WI973-003       | Statement set: `const`/`let`/`if`/`for`/`for-of`/`for-in-Object.entries`/`switch`/`return`/`throw`/expr/assign | Matches the canLowerTo MVP envelope. `for-in` over plain objects throws (no clean Go shape). `throw` → `panic` literal lowering; idiomatic `(R, error)` deferred.                                                                                                                          | accepted |
+| DEC-WI973-004       | `CannotLowerToGoError` added to `@yakcc/contracts/polyglot-errors.ts`                                          | Sibling of `CannotLowerToPythonError` (WI-943). Same constructor signature (`nodeKind`, `location`, `snippet`, `fnName?`). Re-exported via barrel for consumer use. Loud failure over silent fallback (Ethos).                                                                              | accepted |
+| DEC-WI973-005       | Identifier transforms preserve original casing; Go visibility follows first-character case                     | Lossless round-trip with shave-go's `name-normalize.ts`. `_privateName` strips the underscore and lowercases first char (Go convention for unexported). `ClassName_methodName` preserved verbatim. ALL_CAPS preserved. Documented fidelity gap noted for follow-up.                          | accepted |
+| DEC-WI973-006       | Property test `lower.props.test.ts` enforces dichotomy: lower OR throw                                          | Mirror of compile-python's property-test pattern (WI-943, #945). No third outcome (no silent garbage, no raw TS leakage, no empty emission). Catches future emitter regressions immediately.                                                                                                | accepted |
+| DEC-WI973-007       | MVP excludes gofmt subprocess, idiomatic transforms, method receivers, semantic round-trip verification        | Scope discipline. Each excluded item is a tractable follow-up WI on its own. Mixing them into MVP would tangle the property invariant.                                                                                                                                                       | accepted |
+| DEC-WI973-008       | `LowerWarning` defined locally in `compile-go/src/types.ts`, not shared with compile-python                    | The two adapters' warning vocabularies diverge (no Go analogue of `proof-properties-parse-error`). Sharing would couple them needlessly. Shape mirrors compile-python's `LowerWarning` exactly for predictability.                                                                          | accepted |
+| DEC-WI973-009       | MVP `GoCompileResult` has `source` + `warnings` only — no `testSource`                                          | compile-python emits `testSource` because contracts provides `emitHypothesisTests`. There is no Go analogue (no Go property-test emitter, no hypothesis equivalent). Adding one is a separate WI. Keeps MVP scope tight.                                                                     | accepted |
+| DEC-WI973-010       | Scope widening to include `packages/contracts/src/polyglot-errors.{ts,test.ts}` and `packages/contracts/src/index.ts` | The current scope manifest forbids `packages/contracts/**` but the WI requires adding `CannotLowerToGoError` there (mirror of WI-943's pattern). Documented scope widening with explicit `scope-sync` action before implementer dispatch.                                                  | accepted |
 
 ---
 
@@ -565,317 +382,313 @@ point of implementation.
 
 ### 5.1 Required tests
 
-| Test | Location | Asserts |
-|---|---|---|
-| Argv parsing | `emit-atom.test.ts` | Missing positional → exit 1. Unknown flag → exit 1. `--help`-like → usage. |
-| Missing files in dir | `emit-atom.test.ts` | Missing `spec.yak` / `impl.ts` / `proof/manifest.json` / `proof/tests.fast-check.ts` → exit 1 with named-file error. |
-| Spec invalid | `emit-atom.test.ts` | `clamp-bad-spec` fixture (missing `level` field) → exit 2; storeBlock NOT called. |
-| Strict-subset violation | `emit-atom.test.ts` | `clamp-strict-violation` fixture (impl uses banned construct like dynamic import) → exit 3; storeBlock NOT called. |
-| Manifest invalid | `emit-atom.test.ts` | A fixture with `proof/manifest.json` containing `kind: "smt_cert"` (L2-only) → exit 4; storeBlock NOT called. |
-| Property test failure | `emit-atom.test.ts` | `clamp-failing-tests` fixture (impl returns value unclamped; LLM-authored test catches it) → exit 5; stderr surfaces the counterexample; storeBlock NOT called. |
-| Happy path: storeBlock fires | `emit-atom.test.ts` | `clamp-green` fixture → exit 0; `stored: <root>` printed; `--json` form returns a valid `{merkleRoot, specHash, stored:true}` object. |
-| Round-trip persistence | `emit-atom.test.ts` (integration) | After a green `emit-atom`, the stored block is queryable via `selectBlocks(specHash)` and `selectByMerkleRoot(root)` returns matching impl + manifest + artifact bytes. |
-| `--skip-tests` bypasses gate | `emit-atom.test.ts` | A fixture whose property tests would fail still stores when `--skip-tests` is set (proving the flag is a real bypass; the implementer prints a warning to stderr). |
-| Custom `--registry` honored | `emit-atom.test.ts` | The CLI opens the registry at the path specified by `--registry`, not the default. |
-| Exit code enumeration | `emit-atom.test.ts` | All six exit codes (0..6) covered by at least one test case. |
-| Subcommand registration | `packages/cli/src/index.test.ts` (extend) | `runCli(["emit-atom"])` exits 1 with usage error; `runCli(["--help"])` prints `emit-atom` in the usage text. |
+- **T1.** `packages/compile-go/src/names.test.ts` — unit coverage for every
+  identifier-transform branch in `names.ts`: camelCase preserved, PascalCase
+  preserved, `ClassName_methodName` preserved, leading-underscore stripped+lowercased,
+  ALL_CAPS preserved.
+- **T2.** `packages/compile-go/src/lower.test.ts` — unit coverage for every
+  TS construct in the lowering table (§2.3 type emitter rows, §2.4 statement
+  rows, §2.5 expression rows). At minimum one happy-path test per row.
+  At minimum one throw test per documented-to-throw construct.
+- **T3.** `packages/compile-go/src/compile-go.test.ts` — public API smoke
+  tests: well-formed atom in → `GoCompileResult` out, malformed atom in →
+  `CannotLowerToGoError` thrown.
+- **T4.** `packages/compile-go/src/lower.props.test.ts` — property invariant:
+  for a corpus of IR fixtures (drawn from compile-python's existing fixture
+  set + at least 5 shave-go raised IR atoms), every atom either produces
+  non-empty `source` (with no `/* WARN */`, no raw TS leakage detected by
+  grepping for `function ` / `=>` / `const ` / `let ` patterns Go doesn't
+  use) OR throws `CannotLowerToGoError`. No third outcome.
+- **T5.** `packages/compile-go/src/integration.test.ts` — end-to-end: take
+  at least one samber/lo function that raises cleanly through shave-go,
+  run it through `compileToGo`, assert the output parses as Go (syntactically
+  valid). gofmt validation is **optional** — if available in CI, also pipe
+  output through `gofmt -e` and assert exit 0; otherwise skip the gofmt step
+  with a logged warning.
+- **T6.** `packages/contracts/src/polyglot-errors.test.ts` — add coverage for
+  `CannotLowerToGoError` mirroring the existing `CannotLowerToPythonError`
+  test block: constructor field exposure, `name` property, `instanceof` works,
+  thrown-and-caught lifecycle.
 
-Minimum coverage clears WI-954's acceptance bullets:
-- "LLM session emits a triplet for a novel atom; the CLI parses it, runs
-  the property tests, persists if green" — covered by happy-path +
-  round-trip tests.
-- "Resulting atom carries the LLM-authored property tests (verifiable via
-  `yakcc get-atom <root>` showing the proof origin)" — round-trip test
-  asserts artifact bytes match what was emitted.
-- "`@yakcc/variance` still runs for non-triplet emissions (the fallback
-  works)" — out-of-scope test (variance package is forbidden); covered by
-  documentation in yakcc-discovery.md + reference to existing variance
-  tests untouched.
-- "New triplet format documented in `docs/system-prompts/yakcc-discovery.md`
-  with at least one worked example" — covered by W-A and verified by the
-  reviewer reading the doc.
+### 5.2 Required evidence
 
-### 5.2 Required evidence (paste to PR description)
-
-- Raw output of `pnpm --filter @yakcc/cli test` (all green; emit-atom
-  suite visible).
-- Raw output of `pnpm --filter @yakcc/cli typecheck`.
-- Raw output of `pnpm --filter @yakcc/cli lint`.
-- Live invocation of `yakcc emit-atom <fixture-dir>` against the real
-  `clamp-green` fixture, showing the printed `stored: <root>` and the
-  round-trip query confirming persistence.
-- The four-fixture test directory listing under
-  `packages/cli/src/commands/__fixtures__/emit-atom/` so the reviewer can
-  see what the LLM-authored shape looks like in practice.
+- **E1.** `pnpm --filter @yakcc/compile-go test` exits 0 with all tests
+  green. Test count summary captured in PR description (e.g. "47 passed, 0
+  failed").
+- **E2.** `pnpm --filter @yakcc/contracts test` exits 0 (covers the new
+  error class).
+- **E3.** `pnpm -r build` exits 0 across the workspace (compile-go,
+  contracts, and all downstream consumers — none today, but defensive).
+- **E4.** `pnpm -r test` exits 0 across the workspace.
+- **E5.** `pnpm --filter @yakcc/compile-go lint` exits 0 (biome clean on
+  `src/`).
+- **E6.** `pnpm --filter @yakcc/compile-go typecheck` exits 0 (tsc strict
+  clean).
+- **E7.** At least one snippet of the emitted Go source from an end-to-end
+  test is captured in the PR description for human inspection.
 
 ### 5.3 Required real-path checks
 
-- End-to-end: build a `clamp` triplet directory under `tmp/`, invoke
-  `yakcc emit-atom tmp/clamp-emit --registry tmp/test-registry.sqlite`,
-  observe a 64-char BlockMerkleRoot, then `yakcc propose
-  tmp/clamp-emit/spec.yak --registry tmp/test-registry.sqlite` confirms
-  the atom is now matchable by spec.
-- Verify the LLM-authored property-test execution actually catches a
-  wrong impl: edit `tmp/clamp-emit/impl.ts` to return `value` unclamped,
-  re-invoke `emit-atom`, observe exit 5 with a fast-check counterexample.
+- **R1.** Pick a real samber/lo function that raises through shave-go today
+  (per #973 discovered context, 35 such functions exist; concrete candidates
+  documented in shave-go's e2e fixtures). Run shave-go on the Go source to
+  produce a TS-subset IR `BlockTripletRow`. Run `compileToGo` on that
+  `BlockTripletRow`. Assert the output Go is syntactically valid (parses).
+- **R2.** If `gofmt` is available on the CI runner, pipe the emitted Go
+  through `gofmt -e` and assert exit 0. If unavailable, log a skip notice;
+  do not fail the gate. (gofmt as a hard gate is deferred per DEC-WI973-007.)
+- **R3.** Pick at least one IR atom that contains a construct from each of
+  the 5 BLOCKER-GO classes (bigint, generic non-`any` constraint, union,
+  Promise/async, function-typed value), and verify `compileToGo` throws
+  `CannotLowerToGoError` for each. canLowerTo screens most of these
+  upstream, but the emitter must also throw as defense in depth.
 
 ### 5.4 Required authority invariants
 
-- **No edits to forbidden packages.** Grep proof in PR description:
-  ```bash
-  git diff main...HEAD -- packages/ir packages/contracts packages/registry packages/variance packages/hooks-base packages/mcp-registry packages/shave packages/compile packages/shave-python packages/compile-python packages/federation bootstrap .github .claude
-  ```
-  Must return empty.
-- **`parseBlockTriplet` is called, not re-implemented.** Grep proof:
-  ```bash
-  rg "parseBlockTriplet" packages/cli/src/commands/emit-atom.ts
-  ```
-  Must show ≥1 hit (import + call).
-- **`storeBlock` is called via `openRegistry`, not via direct sqlite.**
-  Grep proof:
-  ```bash
-  rg "better-sqlite3|new Database" packages/cli/src/commands/emit-atom.ts
-  ```
-  Must return empty.
-- **`fast-check`/`tsx` are only invoked via child process, not imported
-  in the CLI src.** Grep proof:
-  ```bash
-  rg "from ['\"]fast-check['\"]|from ['\"]tsx['\"]" packages/cli/src/commands/emit-atom.ts
-  ```
-  Must return empty (the CLI spawns tsx as a tool; it doesn't import
-  fast-check in the CLI process).
+- **I1.** `packages/compile-go/src/lower.ts` is the single authority for
+  IR → Go emission. No parallel emission path may exist after this WI lands.
+- **I2.** `CannotLowerToGoError` is declared in
+  `packages/contracts/src/polyglot-errors.ts` and re-exported from
+  `packages/contracts/src/index.ts`. No other module declares a competing
+  error class with the same purpose.
+- **I3.** The blocker taxonomy in `packages/compile-go/src/can-lower-to.ts`
+  (BLOCKER-GO-001 through 005) must remain consistent with the emitter's
+  throw set. If the emitter is extended to handle a previously-blocked
+  construct, `can-lower-to.ts` must be updated in the same change (single
+  source of truth for what Go can lower).
+- **I4.** The `GoCompileResult` shape (`source`, `warnings`) is the contract
+  with downstream consumers. Mutating this shape requires a separate ADR
+  and consumer migration plan.
 
 ### 5.5 Required integration points
 
-- `@yakcc/ir` — `parseBlockTriplet` imported.
-- `@yakcc/registry` — `openRegistry`, `BlockTripletRow` type imported.
-- `@yakcc/contracts` — `canonicalize`, `validateSpecYak` types
-  transitively used; no direct import needed if `parseBlockTriplet`
-  already exposes everything.
-- `packages/cli/src/lib/commons-submit.ts` — `makeCommonsBinding`
-  imported.
-- `packages/cli/src/lib/yakccrc.ts` — `readRc` for airgapped detection
-  (mirror `propose.ts`).
-- `packages/cli/src/commands/registry-init.ts` — `DEFAULT_REGISTRY_PATH`
-  imported.
-- `packages/cli/src/index.ts` — new `case "emit-atom":` branch in
-  `runCli`; usage text line added to `printUsage`; `emitAtom` import.
+- **N1.** `@yakcc/contracts` barrel (`packages/contracts/src/index.ts`) is
+  updated to re-export `CannotLowerToGoError`.
+- **N2.** `@yakcc/compile-go` barrel (`packages/compile-go/src/index.ts`) is
+  updated to export `compileToGo`, `CompileGoOptions`, `GoCompileResult`,
+  `LowerWarning`. The existing `canLowerTo` + `CanLowerResult` +
+  `TargetLanguage` re-exports remain unchanged.
+- **N3.** No changes required in `@yakcc/shave-go` — this WI is the
+  consumer of shave-go's IR output, not a co-modifier.
+- **N4.** No changes required in `@yakcc/compile-python` — sibling, not
+  dependent.
 
 ### 5.6 Forbidden shortcuts
 
-- **Do NOT modify `packages/variance/**`.** Variance behavior is
-  unchanged by this WI. Forbidden by scope manifest.
-- **Do NOT modify `packages/ir/**`, `packages/contracts/**`,
-  `packages/registry/**`.** Forbidden by scope manifest.
-- **Do NOT re-implement `parseBlockTriplet`.** Import and call it from
-  `@yakcc/ir`.
-- **Do NOT bypass property-test execution silently.** If the LLM didn't
-  provide `proof/tests.fast-check.ts`, exit 1 with a clear error.
-  `--skip-tests` is the only legitimate bypass and it logs a stderr
-  warning.
-- **Do NOT call variance synthesis as a fallback inside `emit-atom`.**
-  The variance fallback fires elsewhere (PreToolUse + storeBlock-time
-  atomize); `emit-atom` operates strictly on triplet-formatted
-  emissions.
-- **Do NOT add a new fast-check dependency to the CLI package.**
-  fast-check runs in the spawned child process (which has tsx +
-  fast-check available via the LLM-emitted test file's own resolution;
-  in the test fixtures, the fixture-local resolution picks up the
-  workspace fast-check). If a CLI-test-runtime dep is needed, request
-  scope widening for `packages/cli/package.json` before starting.
-- **Do NOT persist on red.** Exit codes 2..5 must skip `storeBlock`.
+- **F1.** No silent `getText()` fallback. Every unhandled IR construct must
+  throw `CannotLowerToGoError` with a useful `nodeKind` + `location` +
+  `snippet`. (Direct lesson from WI-943.)
+- **F2.** No `/* TODO */` or `/* WARN */` comments in emitted Go source.
+  Either lower correctly or throw.
+- **F3.** No untranslated TS syntax in Go output. Property test enforces
+  this by grepping for TS-specific patterns (`=>`, `const `, `let `,
+  `function `, `interface `, `type `) in `result.source`.
+- **F4.** No silent type widening. If the IR has a non-`any` generic
+  constraint, throw rather than emit `any`. (Matches shave-go's WI-963
+  fidelity-warning pattern in the inverse direction.)
+- **F5.** No new dependencies added to `packages/compile-go/package.json`
+  beyond what compile-python uses. (`ts-morph`, `@yakcc/contracts`,
+  `@yakcc/registry` already present.)
+- **F6.** No edits outside the scope manifest (§6). The implementer must
+  not silently modify shave-go, contracts schemas, registry, or any other
+  package.
 
 ### 5.7 Ready-for-guardian definition
 
-The reviewer may issue `REVIEW_VERDICT: ready_for_guardian` when:
+The reviewer declares `READY_FOR_GUARDIAN` when **all of the following** hold
+on the current HEAD:
 
-1. All required tests (§5.1) exist and pass on current HEAD.
-2. All required evidence (§5.2) is recorded in the PR description.
-3. `pnpm --filter @yakcc/cli test typecheck lint` all green — raw
-   output captured.
-4. All four required grep invariants (§5.4) return the expected
-   results.
-5. The live round-trip real-path check (§5.3) is reproduced in the PR
-   description (or a developer note shows the exact commands + output).
-6. `docs/system-prompts/yakcc-discovery.md` contains the emission
-   section with the `clamp` worked example, the canonical directory
-   shape, the language matrix (ts/py/go), and the variance-fallback
-   discipline statement.
-7. No edits exist outside scope manifest's allowed_paths.
-8. All `@decision` annotations corresponding to DEC-WI954-001..014 are
-   present at their respective implementation points.
-9. No regressions: existing CLI tests, `index.test.ts`, and the rest
-   of `pnpm test` at workspace level still pass.
+1. All tests in §5.1 exist and are green (`pnpm -r test` exit 0).
+2. `pnpm -r build` exits 0.
+3. `pnpm --filter @yakcc/compile-go lint` exits 0.
+4. `pnpm --filter @yakcc/compile-go typecheck` exits 0.
+5. Real-path checks §5.3 R1, R3 pass. R2 is best-effort (skip allowed).
+6. Authority invariants §5.4 are visibly satisfied (single lower.ts emitter,
+   single CannotLowerToGoError declaration, blocker-taxonomy consistency
+   check passes by inspection).
+7. Integration points §5.5 are wired (barrel exports present).
+8. No forbidden shortcuts §5.6 detected (grep checks clean on `src/`).
+9. `cc-policy evaluation get <workflow_id>` returns `status: ready_for_guardian`
+   and `head_sha` matches the landing head.
+10. `cc-policy test-state get --project-root <repo_root>` reports a passing
+    state for the current HEAD.
 
 ### 5.8 Rollback boundary
 
-Single PR. If the round-trip test fails (storeBlock rejects, or the
-re-queried atom doesn't match the emission bytes), the PR is held — no
-partial merge. The likely cause is either a mismatch in how the CLI
-constructs `BlockTripletRow` vs. how `seed.ts` does it (compare against
-`packages/seeds/src/seed.ts:83-117`) or a strict-subset gap surfaced by
-the LLM-shaped fixture.
+Single PR. If the WI must be rolled back, `git revert <merge_commit>` cleanly
+restores the prior state. The added file set is contained:
 
-If the property-test execution path is flaky in CI (timing, tsx
-availability), the implementer escalates rather than masking with
-retries; the fail-shut child-process boundary is load-bearing for the
-gate's credibility.
+- `packages/compile-go/src/lower.ts` (new)
+- `packages/compile-go/src/lower.test.ts` (new)
+- `packages/compile-go/src/lower.props.test.ts` (new)
+- `packages/compile-go/src/names.ts` (new)
+- `packages/compile-go/src/names.test.ts` (new)
+- `packages/compile-go/src/compile-go.ts` (new)
+- `packages/compile-go/src/compile-go.test.ts` (new)
+- `packages/compile-go/src/types.ts` (new)
+- `packages/compile-go/src/integration.test.ts` (new)
+- `packages/compile-go/src/index.ts` (modified — adds 4 exports)
+- `packages/contracts/src/polyglot-errors.ts` (modified — adds 1 class)
+- `packages/contracts/src/polyglot-errors.test.ts` (modified — adds 1 describe block)
+- `packages/contracts/src/index.ts` (modified — adds 1 re-export)
+
+No state migrations, no schema changes, no public API surface broken.
 
 ---
 
 ## 6 — Scope manifest
 
-### 6.1 Allowed paths (writes)
+### 6.1 Allowed paths (the implementer may modify)
 
-- `packages/cli/src/commands/emit-atom.ts` — new subcommand handler
-- `packages/cli/src/commands/emit-atom.test.ts` — unit + integration tests
-- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-green/**` — happy-path fixture
-- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-strict-violation/**` — strict-subset failure fixture
-- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-bad-spec/**` — spec validation failure fixture
-- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-failing-tests/**` — property test failure fixture
-- `packages/cli/src/commands/__fixtures__/emit-atom/clamp-bad-manifest/**` — manifest validation failure fixture
-- `packages/cli/src/index.ts` — register subcommand in `runCli` + update `printUsage`
-- `packages/cli/src/index.test.ts` — assert `emit-atom` is wired and surfaced
-- `docs/system-prompts/yakcc-discovery.md` — append "Emission shape" section
-- `docs/decisions/DEC-WI954-EMIT-ATOM-001.md` — optional canonical decision record (mirrors DEC-WI954-001..014 in concise form)
-- `tmp/**` — working notes, ad-hoc test triplets, evidence captures
-- `PLAN.md` — this file (planner-owned)
+```
+packages/compile-go/src/lower.ts
+packages/compile-go/src/lower.test.ts
+packages/compile-go/src/lower.props.test.ts
+packages/compile-go/src/names.ts
+packages/compile-go/src/names.test.ts
+packages/compile-go/src/compile-go.ts
+packages/compile-go/src/compile-go.test.ts
+packages/compile-go/src/types.ts
+packages/compile-go/src/integration.test.ts
+packages/compile-go/src/index.ts
+packages/compile-go/package.json
+packages/compile-go/tsconfig.json
+packages/contracts/src/polyglot-errors.ts
+packages/contracts/src/polyglot-errors.test.ts
+packages/contracts/src/index.ts
+tmp/**
+PLAN.md
+```
 
 ### 6.2 Required paths (must be modified)
 
-- `docs/system-prompts/yakcc-discovery.md` — emission section is the W-A deliverable
-- `packages/cli/src/commands/emit-atom.ts` — the WI doesn't exist without this file
-- `packages/cli/src/index.ts` — subcommand must be wired into `runCli`
+```
+packages/compile-go/src/lower.ts          (CREATE)
+packages/compile-go/src/names.ts          (CREATE)
+packages/compile-go/src/compile-go.ts     (CREATE)
+packages/compile-go/src/types.ts          (CREATE)
+packages/compile-go/src/index.ts          (MODIFY — add exports)
+packages/compile-go/src/lower.props.test.ts (CREATE)
+packages/compile-go/src/lower.test.ts     (CREATE)
+packages/compile-go/src/names.test.ts     (CREATE)
+packages/compile-go/src/compile-go.test.ts (CREATE)
+packages/compile-go/src/integration.test.ts (CREATE)
+packages/contracts/src/polyglot-errors.ts (MODIFY — add CannotLowerToGoError)
+packages/contracts/src/polyglot-errors.test.ts (MODIFY — add tests)
+packages/contracts/src/index.ts           (MODIFY — re-export)
+```
 
-### 6.3 Forbidden paths (must not touch)
+### 6.3 Forbidden paths (must not be touched)
 
-- `packages/shave-python/**`
-- `packages/compile-python/**`
-- `packages/shave/**`
-- `packages/compile/**`
-- `packages/contracts/**`
-- `packages/registry/**`
-- `packages/federation/**`
-- `packages/hooks-base/**`
-- `packages/ir/**`
-- `packages/variance/**`
-- `packages/mcp-registry/**`
-- `bootstrap/**`
-- `.github/**`
-- `.claude/**`
+```
+packages/shave-go/**
+packages/shave-python/**
+packages/compile-python/**
+packages/shave/**
+packages/compile/**
+packages/ir/**
+packages/cli/**
+packages/registry/**
+bootstrap/**
+.github/**
+.claude/**
+runtime/**
+hooks/**
+```
+
+(Inherits the workflow_contract forbidden set; explicitly extends with
+`packages/registry/**`, `runtime/**`, `hooks/**` since none of those need to
+move for this WI.)
 
 ### 6.4 Expected state authorities touched
 
-- LLM-facing system prompt content (`docs/system-prompts/yakcc-discovery.md`) — additive extension
-- CLI top-level command vocabulary (`packages/cli/src/index.ts`) — new subcommand registered
-- CLI commands directory — new module + new test + new fixtures
-- No data-plane authority touched. No registry schema change. No new
-  state domain.
+- **Polyglot error vocabulary** (`packages/contracts/src/polyglot-errors.ts`)
+  — adding one new class.
+- **compile-go public API surface** (`packages/compile-go/src/index.ts` +
+  the new module files).
 
-### 6.5 Scope manifest sync (orchestrator action before dispatching implementer)
+No runtime state, no SQLite tables, no hook config, no settings.json. This
+is a pure library WI.
 
-The dispatched scope summary enumerates `packages/cli/src/commands/*.ts`
-and `packages/cli/src/commands/**/*.ts`, which covers the new
-`emit-atom.ts` and the `__fixtures__/` subtree. However, per operator
-memory `feedback_scope_manifest_fnmatch_globs.md`, both `*` and `**` shapes
-are required to defeat the fnmatch zero-segment quirk for top-level files.
-The provided scope already lists both — good.
+### 6.5 Scope-sync action (required before implementer dispatch)
 
-**Critical scope-widening checks before dispatching the implementer:**
+The workflow_contract as currently bound has `packages/contracts/**` in
+`forbidden_paths`. The orchestrator (or guardian:provision) MUST run scope
+widening before the implementer is dispatched:
 
-1. **Is `packages/cli/package.json` in scope?** It is NOT enumerated in
-   the dispatched scope. If the implementer needs to add `tsx` as a CLI
-   `dependency` (not a devDependency — `tsx` is invoked from the CLI
-   process), the scope must widen to include `packages/cli/package.json`.
-   **Action:** verify whether `tsx` is already in
-   `packages/cli/package.json` `dependencies` (it probably is, since
-   `compile-python.ts` or similar may shell out). If yes, no widening
-   needed. If no, widen scope before dispatch:
-   ```bash
-   cc-policy workflow scope-sync wi-954-triplet-emission \
-     --work-item-id wi-954-impl \
-     --scope-file tmp/wi-954-scope.json
-   ```
-   where `tmp/wi-954-scope.json` adds `packages/cli/package.json` to
-   allowed_paths.
+```bash
+# Write tmp/973-scope.json (planner emits this — see Phase 3b output) then:
+cc-policy workflow scope-sync wi-973-compile-go-mvp \
+  --work-item-id wi-973-impl \
+  --scope-file tmp/973-scope.json
+```
 
-2. **Is `docs/decisions/*.md` reachable?** The dispatched scope lists
-   `docs/decisions/*.md`. The implementer may optionally write
-   `docs/decisions/DEC-WI954-EMIT-ATOM-001.md` to mirror the decision
-   log in canonical form. No additional widening needed.
-
-3. **Are `packages/cli/src/commands/__fixtures__/**` reachable?**
-   The dispatched scope's `packages/cli/src/commands/**/*.ts` glob covers
-   `__fixtures__/**/*.ts` (TS files inside the fixture). However the
-   fixtures also contain `.json` (spec.yak, proof/manifest.json) — does
-   the scope glob cover them? The dispatched scope lists
-   `packages/cli/src/commands/**/*.ts` only. **Action:** widen scope to
-   include `packages/cli/src/commands/**/*.json` and
-   `packages/cli/src/commands/**/*.yak` (yes, `spec.yak` is the filename
-   but contents are JSON — pick whichever extension is canonical;
-   `parseBlockTriplet` expects `spec.yak` as the filename). Add to
-   `tmp/wi-954-scope.json` before dispatch.
-
-The orchestrator must run `scope-sync` before dispatching the implementer.
-Without scope-sync, hook enforcement will deny writes to
-`packages/cli/src/commands/__fixtures__/emit-atom/clamp-green/spec.yak`
-when the implementer creates the fixture.
+The scope file enumerates §6.1 (allowed), §6.2 (required), §6.3 (forbidden),
+§6.4 (authorities). The implementer's pre-write hooks then enforce the
+widened scope mechanically.
 
 ---
 
 ## 7 — Open questions for operator (none blocking)
 
-None block the implementer. The planner-resolved open questions in §1.4
-cover everything that needs an answer before the implementer starts. If
-the implementer hits a real new ambiguity (e.g. `parseBlockTriplet`
-exposes errors in a shape that doesn't cleanly map to the six exit
-codes), they escalate via SendMessage rather than guessing.
+All design questions were resolved during planning (see §1.4 U1-U4). The
+following items are **noted for future follow-up WIs, not blockers for this
+MVP**:
+
+- **Q1 (follow-up).** Wire `gofmt` subprocess validation in CI. Requires
+  Go toolchain in CI image. Tracked as a separate WI; not in scope for #973.
+- **Q2 (follow-up).** Idiomatic Go transforms: `if err != nil` patterns,
+  channel idioms, context propagation. Tracked as a separate WI.
+- **Q3 (follow-up).** Method receivers. Requires coordination with shave-go
+  (DEC-941-style class-method encoding) and a decision on whether to reverse
+  the encoding on the Go emit side.
+- **Q4 (follow-up).** Go property-test emitter (analogue of hypothesis
+  emission). Would enable `GoCompileResult.testSource` field.
+- **Q5 (follow-up).** Semantic round-trip verification (TS → IR → Go,
+  execute both, assert behavior identity). Requires Go execution
+  infrastructure in tests.
+
+If the operator wants any of Q1-Q5 elevated to a sub-slice of this MVP, that
+changes the scope and the trailer; otherwise these stay in the issue backlog.
 
 ---
 
 ## 8 — Continuation rules (post-landing)
 
-After this WI lands (Guardian merges to main):
+When this WI lands:
 
-- **Companion WI #953 (Gap A: `yakcc_resolve` MCP wiring)** becomes the
-  next planner work item. #953 delivers the LLM's discovery surface and
-  the system-prompt delivery mechanism (`yakcc-discovery.md` injection
-  into the MCP tool description or settings). With #953 + #954 landed,
-  the operator's directive (#950) is functionally complete for
-  TypeScript.
-- **Python triplet ingest** is the next follow-up after #953. The
-  emission DOC enumerates `impl.py` + `proof/tests.fast-check.py`; the
-  CLI extension adds language detection and a Python-side property-test
-  runner (likely `python -m pytest` or a fast-check-py equivalent).
-- **Go triplet ingest** follows the Python pattern.
-- **Foreign atom emission** (`@yakcc/contracts` `ForeignTripletFields`)
-  may also surface as a separate CLI flag (`yakcc emit-atom --foreign
-  <pkg> --export <symbol>`) if commons growth observation shows enough
-  foreign emissions to justify a dedicated path.
-- **Variance synthesis comparison telemetry:** once `emit-atom` is in
-  use, compare commons quality (e.g. property-test counterexample-find
-  rate via mutation testing) between LLM-authored triplets and
-  variance-synthesized triplets. The hypothesis: LLM-authored tests
-  catch more mutants. This is a measurement WI, not an implementation
-  one.
+1. **Auto-continue:** the polyglot adapter set advances toward parity. Next
+   candidate WI is **compile-rust MVP** (no issue filed yet; would mirror
+   compile-go/compile-python). The operator may file or the planner may
+   propose it as the next work item.
+2. **Auto-continue:** track adoption of `compileToGo` in downstream consumers
+   (none today, but the shave-go e2e fixtures and any commons round-trip
+   tooling become candidates).
+3. **Follow-up backlog:** file separate issues for Q1-Q5 (gofmt, idiomatic
+   transforms, method receivers, property-test emitter, semantic
+   round-trip).
+4. **No new continuation rules are added to MASTER_PLAN.md** — the polyglot
+   continuation rules already cover this (per-language adapter parity is a
+   first-class invariant).
 
 ---
 
 ## 9 — Quality gate (self-check before emitting trailer)
 
-- All dependencies and authorities are logically mapped (§2.1)
-- Every guardian-bound work item has an Evaluation Contract (§5)
-- Every guardian-bound work item has a Scope Manifest (§6)
-- No work item relies on narrative completion — every claim has a
-  measurable check (§5.1–§5.4 are all observable)
-- Alternatives gate cleared (§2.7)
-- Decisions logged (§4)
-- Forbidden shortcuts named (§5.6)
-- Ready-for-guardian definition is executable (§5.7)
-- Rollback boundary defined (§5.8)
-- Scope-sync action enumerated before implementer dispatch (§6.5)
+- [x] All dependencies and authorities are logically mapped (§2.1)
+- [x] Every guardian-bound work item has an Evaluation Contract (§5)
+- [x] Every guardian-bound work item has a Scope Manifest (§6)
+- [x] No work item relies on narrative completion — every claim has a
+      measurable check (§5.1–§5.4)
+- [x] Alternatives gate cleared (§2.7)
+- [x] Decisions logged (§4) — DEC-WI973-001 through DEC-WI973-010
+- [x] Forbidden shortcuts named (§5.6)
+- [x] Ready-for-guardian definition is executable (§5.7)
+- [x] Rollback boundary defined (§5.8)
+- [x] Scope-sync action enumerated before implementer dispatch (§6.5)
+- [x] Open questions filed as follow-ups, not blockers (§7)
 
 Plan is ready for the implementer.
 
 PLAN_VERDICT: next_work_item
-PLAN_SUMMARY: WI-954 plan complete — new `yakcc emit-atom <dir>` CLI subcommand consuming the existing `parseBlockTriplet` + `storeBlock` substrate, plus LLM-authored property-test execution via spawned `node --import tsx`, plus emission-format documentation in `yakcc-discovery.md`. Next: guardian:provision to verify scope-sync (need to widen for `packages/cli/package.json` if `tsx` dep is missing, and for `__fixtures__/**/*.{json,yak}`) before dispatching the implementer to the existing worktree at `.worktrees/feature-954-llm-triplet`.
+PLAN_SUMMARY: WI-973 plan complete — compile-go MVP IR → Go emitter (`lower.ts`, `names.ts`, `compile-go.ts`, `types.ts`, `lower.props.test.ts`) mirroring `packages/compile-python/`, plus `CannotLowerToGoError` in `@yakcc/contracts/polyglot-errors.ts` (mirror of WI-943's pattern), single PR. Next: guardian:provision must scope-sync to include `packages/contracts/src/polyglot-errors.{ts,test.ts}` and `packages/contracts/src/index.ts` (currently in forbidden_paths) before dispatching the implementer; scope file at `tmp/973-scope.json`, evaluation contract at `tmp/973-evaluation.json`.
