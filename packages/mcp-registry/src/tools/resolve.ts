@@ -538,12 +538,62 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
 // Default production registry opener
 // ---------------------------------------------------------------------------
 
+// @decision DEC-MCP-RESOLVE-SEMANTIC-EMBED-001
+// @title yakcc_resolve uses semantic embedding provider (Xenova/bge-small-en-v1.5) for queries
+// @status decided (wi-1006-resolve-semantic-embedding)
+// @rationale
+//   The prior implementation used createOfflineEmbeddingProvider() (BLAKE3 hash stub)
+//   for the query provider, producing semantically meaningless vectors that cannot
+//   retrieve related atoms by cosine distance. WI-1006 replaces it with the semantic
+//   provider (Xenova/bge-small-en-v1.5, 384-dim, same as the ingest provider), restoring
+//   retrieval quality.
+//
+//   Key invariants preserved:
+//   - Schema unchanged: FLOAT[384] (DEC-EMBED-010). bge-small-en-v1.5 is 384-dim.
+//   - Provider parity: query-side modelId == stored-side modelId when the registry
+//     was populated with createLocalEmbeddingProvider(). The storage.ts cross-provider
+//     gate (DEC-V3-IMPL-QUERY-002, storage.ts:823) enforces this at query time.
+//   - Lazy-singleton preserved (DEC-EMBED-SINGLETON-CLOSURE-001): createLocalEmbeddingProvider()
+//     delegates to the getPipeline singleton defined in contracts/embeddings.ts — one
+//     ONNX load per process regardless of how many times defaultOpenRegistry is called.
+//   - YAKCC_EMBEDDING_PROVIDER env override honored: resolveEmbeddingProviderFromEnv()
+//     is checked first (returns null when unset), so no new env var is introduced
+//     (DEC-EMBED-ENV-RESOLUTION-001).
+//
+//   Supersedes: the hash-stub rationale comment at this location in v1 (~resolve.ts:546).
+
+// @decision DEC-MCP-RESOLVE-OFFLINE-GUARANTEE-001
+// @title yakcc_resolve pins @xenova/transformers env.allowRemoteModels=false before first embed
+// @status decided (wi-1006-resolve-semantic-embedding)
+// @rationale
+//   Cornerstone B6 (air-gap) requires that yakcc_resolve NEVER fetches a model from
+//   HuggingFace at runtime. Without pinning, @xenova/transformers would silently
+//   download the ONNX model if not in cache, violating the offline guarantee.
+//
+//   Implementation: we set `env.allowRemoteModels = false` synchronously before
+//   opening the registry (and thus before the first embed() call). This is done
+//   inside defaultOpenRegistry so it happens unconditionally on the production path.
+//   A missing local model (cache miss) surfaces as a LOUD Error thrown by @xenova,
+//   which propagates as a "registry_unavailable" structured error content via
+//   DEC-MCP-ERROR-AS-CONTENT-004 — never a silent download or zero-vector fallback.
+//
+//   @xenova/transformers is added as a direct dependency of @yakcc/mcp-registry so
+//   TypeScript can resolve the env import; the ONNX model itself is loaded transitively
+//   through @yakcc/contracts's pipeline at first embed().
+
 /**
  * Default registry opener for production use.
  *
  * Resolves the registry path from YAKCC_REGISTRY_PATH env var or falls back
  * to ".yakcc/registry.sqlite" relative to process.cwd().
- * Uses createOfflineEmbeddingProvider for deterministic, low-latency embeddings.
+ *
+ * Provider selection (DEC-MCP-RESOLVE-SEMANTIC-EMBED-001):
+ *   1. Explicit YAKCC_EMBEDDING_PROVIDER env var → resolveEmbeddingProviderFromEnv()
+ *   2. Default: createLocalEmbeddingProvider() (Xenova/bge-small-en-v1.5, 384-dim)
+ *
+ * Offline guarantee (DEC-MCP-RESOLVE-OFFLINE-GUARANTEE-001):
+ *   @xenova/transformers env.allowRemoteModels is set to false before any embed()
+ *   call. A missing ONNX cache throws loudly rather than fetching from HuggingFace.
  *
  * Cross-reference: DEC-HOOK-PHASE-3-L3-MCP-001-C (registry path resolution),
  * DEC-HOOK-PHASE-3-L3-MCP-001-A (embedded-library-call discipline).
@@ -551,13 +601,24 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
 async function defaultOpenRegistry(): Promise<Registry> {
   const { resolve } = await import("node:path");
   const { openRegistry } = await import("@yakcc/registry");
-  const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
+  const { createLocalEmbeddingProvider, resolveEmbeddingProviderFromEnv } = await import(
+    "@yakcc/contracts"
+  );
+
+  // B6 offline guarantee: pin allowRemoteModels=false before any embed call so
+  // @xenova/transformers cannot fetch from HuggingFace at runtime.
+  // This must execute before the provider's first embed() call (which is lazy,
+  // triggered by the first yakccResolve handler invocation, but we pin eagerly
+  // here at registry-open time to be safe regardless of call ordering).
+  const xenovaEnv = await import("@xenova/transformers").then((mod) => mod.env);
+  xenovaEnv.allowRemoteModels = false;
 
   const DEFAULT_REGISTRY_PATH = ".yakcc/registry.sqlite";
   const registryPath =
     process.env.YAKCC_REGISTRY_PATH ?? resolve(process.cwd(), DEFAULT_REGISTRY_PATH);
 
-  const provider = createOfflineEmbeddingProvider();
+  // Provider selection: env override > local semantic default
+  const provider = resolveEmbeddingProviderFromEnv() ?? createLocalEmbeddingProvider();
   return openRegistry(registryPath, { embeddings: provider });
 }
 
