@@ -304,11 +304,12 @@ describe("extractFunctionSignatures -- WI-963 generic type parameter passthrough
     expect(sig?.returnTypes).toEqual(["number"]);
   });
 
-  it("throws SignatureRaiseError when a type-param-named type appears in a non-generic func", () => {
-    // T is not in typeParams, so it should be an unsupported type
+  it("passes through T in a non-generic func as user-defined type (WI-991)", () => {
+    // WI-991: T is no longer treated as unsupported when it is a plain identifier.
+    // It passes through verbatim as a user-defined type; no SignatureRaiseError thrown.
     const env = envelopeWith([
       {
-        name: "Bad",
+        name: "UsesUserType",
         receiver: null,
         typeParams: [],
         params: [{ name: "x", goType: "T" }],
@@ -317,7 +318,9 @@ describe("extractFunctionSignatures -- WI-963 generic type parameter passthrough
         body: null,
       },
     ]);
-    expect(() => extractFunctionSignatures(env)).toThrow(SignatureRaiseError);
+    const sigs = extractFunctionSignatures(env);
+    expect(sigs).toHaveLength(1);
+    expect(sigs[0]?.params[0]?.tsType).toBe("T");
   });
 });
 
