@@ -156,6 +156,18 @@ const sections: Section[] = [
     svg: "/benchmarks/sections/08-air-gap.svg",
     alt: "Timeline of a 15.4-second full yakcc pipeline run with six phases (install, init, shave, query, compile, verify) and a giant '0' representing outbound packets sent",
   },
+  {
+    id: "reproducibility",
+    title: "Same atom on every machine produces byte-identical bytes",
+    problem:
+      "\"Works on my machine\" isn't a meme; it's an industry. The same Python program produces different floating-point results on different CPUs. The same npm install produces different lockfiles on different days. The same Docker build varies by ~110 bytes between dev and CI because of build-time timestamps and host-specific paths. Reproducibility is asserted constantly and proven almost never.",
+    yakccClaim:
+      "yakcc's reproducibility is asserted on every push to main, against the strongest possible test: yakcc shaves its own source code into atoms, then shaves the same source again, and every single one of the 7,064 resulting atoms must have a byte-identical BlockMerkleRoot between the two passes. Same logical content → same canonical bytes → same content hash. If this ever goes red, the headline claim is broken; if it stays green, every other atom in the commons inherits the same property.",
+    evidence:
+      "Measured on every push: 7,064 atoms in the workspace, all byte-identical between pass-1 and pass-2 of the self-shave test. Authority: DEC-V2-CI-GATE-FINAL-001 (unconditional gate) + DEC-V2-HARNESS-STRICT-EQUALITY-001 (strict byte-identity assertion).",
+    svg: "/benchmarks/sections/09-reproducibility.svg",
+    alt: "Status quo column showing nondeterministic Python floats, varying package sha256s, and differing build output sizes, vs yakcc's two-pass self-shave proof asserting 7,064 atoms byte-identical on every commit",
+  },
 ];
 
 const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
