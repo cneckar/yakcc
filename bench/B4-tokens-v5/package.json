@@ -1,0 +1,25 @@
+{
+  "name": "@yakcc-bench/b4-tokens-v5",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "B4-v5 -- Production-path instrumented re-measurement (yakcc#952).",
+  "notes": [
+    "NOT in the pnpm workspace (pnpm-workspace.yaml only includes packages/* and examples/*).",
+    "@anthropic-ai/sdk is bench-local -- must NOT appear in root package.json.",
+    "Install: pnpm --dir bench/B4-tokens-v5 install",
+    "Unit tests run fixture/derivation logic only -- no API key needed.",
+    "Phase 2 live run requires ANTHROPIC_API_KEY + YAKCC_REGISTRY_PATH."
+  ],
+  "scripts": {
+    "test": "vitest run --config vitest.config.mjs",
+    "phase2:dry": "node harness/phase2-v5.mjs --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^4.1.5"
+  }
+}

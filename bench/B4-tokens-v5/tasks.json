@@ -1,0 +1,88 @@
+{
+  "_decision": {
+    "id": "DEC-BENCH-B4-V4-TASKS-001",
+    "title": "B4-v4: 6-task corpus-redesign suite — task-scale composite atoms + recalibrated Haiku-failure boundary",
+    "status": "accepted",
+    "rationale": "Issue #722 (WI-B4-V4-CORPUS-REDESIGN) corrects the DEC-BENCH-B4-V3-001 null finding. Root cause: B4-v3 shave produced 194 atoms ALL at L0 leaf-level (avg 88 chars), making whole-impl rescue impossible. Two fixes: (1) coarse-shave in Phase 1 persists whole-impl atoms via maxControlFlowBoundaries=999 (DEC-B4-V4-CORPUS-COMPOSITE-001); (2) new task suite targets tasks demonstrably at/beyond Haiku-4.5 failure boundary. Each task is a single exported class, which both matches the composite-atom design (one class = one whole-impl atom) and provides a clear task contract for oracle testing. Per-task Haiku traps documented in per_task_traps.",
+    "locked_by": "WI-B4-V4-CORPUS-REDESIGN (#722)",
+    "per_task_traps": {
+      "crc32c": "Haiku uses CRC-32 (Ethernet) polynomial 0xEDB88320 instead of CRC-32C (Castagnoli) 0x82F63B78 — produces silently wrong checksums; all test vectors fail",
+      "utf8-codec": "Haiku uses TextEncoder/TextDecoder APIs (forbidden by constraint), or gets multi-byte encoding wrong: incorrect byte masks for 3/4-byte sequences, fails to convert surrogate pairs to single 4-byte sequences, omits overlong-encoding rejection in decode()",
+      "base32-rfc4648": "Haiku confuses Base32 (A-Z2-7) with Base32Hex (0-9A-V) or Base64; wrong alphabet produces wrong output for all test vectors; also omits invalid-length detection and case-insensitive decode",
+      "lru-ttl-cache": "Haiku omits lazy TTL eviction in get() (returns stale entries), counts expired entries toward capacity (triggering premature LRU eviction), mishandles ttlMs=0 vs Infinity, wrong LRU order after re-set",
+      "semver-range": "Haiku uses ^1.x.y semantics for ^0.x.y: ^0.2.3 → <1.0.0 (wrong) instead of <0.3.0 (correct); ^0.0.3 → <1.0.0 (wrong) instead of <0.0.4. This is the most reliable discriminator.",
+      "ring-buffer": "Haiku uses a dynamic array instead of fixed pre-allocated buffer, omits wrap-around logic, get() with negative index is wrong or missing, push() on full buffer doesn't return the evicted item, iterator doesn't work after wrap-around"
+    }
+  },
+  "note": "Task manifest for B4-tokens-v4 corpus-redesign matrix. SHA-256 hashes content-address each prompt file. Harness verifies on startup and aborts on drift.",
+  "schema_version": 1,
+  "n_tasks": 6,
+  "tasks": [
+    {
+      "id": "crc32c",
+      "prompt_file": "tasks/crc32c/prompt.md",
+      "oracle_test": "tasks/crc32c/oracle.test.ts",
+      "reference_impl": "tasks/crc32c/reference-impl.ts",
+      "sha256": "2bde57dc9517f23b11fc748f601db0222a64697f7a19d2e8a5fea95c5587f498",
+      "description": "CRC-32C (Castagnoli) checksum class — Castagnoli polynomial 0x82F63B78 (NOT CRC-32 0xEDB88320). update/digest/reset/clone methods.",
+      "adversarial_framing": "Polynomial trap: Haiku almost always implements CRC-32 (Ethernet), not CRC-32C (Castagnoli). The polynomials differ; all test vectors fail silently with the wrong one. Test vector 0xE3069283 for '123456789' is the canonical discriminator.",
+      "expected_export": "named:CRC32C",
+      "complexity_domain": "checksum_algorithm"
+    },
+    {
+      "id": "utf8-codec",
+      "prompt_file": "tasks/utf8-codec/prompt.md",
+      "oracle_test": "tasks/utf8-codec/oracle.test.ts",
+      "reference_impl": "tasks/utf8-codec/reference-impl.ts",
+      "sha256": "527fcc77ee84db617ba09a8fc87c93f5d15701df36e3144bd2606f43884d6a51",
+      "description": "UTF-8 encoder/decoder without TextEncoder/TextDecoder. Handles 1/2/3/4-byte sequences, surrogate pairs, overlong encoding rejection.",
+      "adversarial_framing": "API constraint trap: Haiku uses TextEncoder/TextDecoder (forbidden). When constrained, it commonly gets multi-byte masks wrong (e.g. 0xC080 for U+0000 = overlong), fails to combine surrogate pairs into 4-byte sequences, or omits invalid-sequence detection in decode().",
+      "expected_export": "named:Utf8Codec",
+      "complexity_domain": "encoding_codec"
+    },
+    {
+      "id": "base32-rfc4648",
+      "prompt_file": "tasks/base32-rfc4648/prompt.md",
+      "oracle_test": "tasks/base32-rfc4648/oracle.test.ts",
+      "reference_impl": "tasks/base32-rfc4648/reference-impl.ts",
+      "sha256": "64fc0edd5efb90392a5adca2e6283400d20e8547b9da95cb5ac3b682299f06db",
+      "description": "RFC 4648 Base32 encode/decode — alphabet A-Z2-7 (NOT Base32Hex 0-9A-V). Padding, case-insensitive decode, invalid-character and invalid-length errors.",
+      "adversarial_framing": "Alphabet trap: Haiku confuses RFC 4648 Base32 (A-Z2-7) with Base32Hex (0-9A-V) or Base64. Wrong alphabet produces wrong output for every test vector. RFC §10 test vector 'MY======' for 'f' is the immediate discriminator.",
+      "expected_export": "named:Base32Codec",
+      "complexity_domain": "encoding_codec"
+    },
+    {
+      "id": "lru-ttl-cache",
+      "prompt_file": "tasks/lru-ttl-cache/prompt.md",
+      "oracle_test": "tasks/lru-ttl-cache/oracle.test.ts",
+      "reference_impl": "tasks/lru-ttl-cache/reference-impl.ts",
+      "sha256": "944263147ec864a9719ddffd4f520baabed30336babcf78bd4f44ebea4027f9a",
+      "description": "LRU cache with per-entry TTL. Lazy expiry on get/has/size, capacity counts only live entries, ttlMs=0 defers to defaultTtlMs, Infinity = never expires.",
+      "adversarial_framing": "Interaction trap: Haiku commonly (a) returns stale entries without lazy eviction, (b) counts expired entries toward capacity, (c) confuses ttlMs=0 (defer to default) with Infinity (never expire), (d) produces wrong LRU order after re-setting an existing key.",
+      "expected_export": "named:LRUTTLCache",
+      "complexity_domain": "stateful_fsm"
+    },
+    {
+      "id": "semver-range",
+      "prompt_file": "tasks/semver-range/prompt.md",
+      "oracle_test": "tasks/semver-range/oracle.test.ts",
+      "reference_impl": "tasks/semver-range/reference-impl.ts",
+      "sha256": "b650cfe9d31cf01a0d742a56c2b9c570830f37ebf7796b3cdcb1df4dcee4e432",
+      "description": "SemVer range satisfaction: ^, ~, >=, <=, >, <, =, *, || (OR), space (AND). Critical: ^0.x.y semantics differ from ^1.x.y.",
+      "adversarial_framing": "Caret-range trap: Haiku almost always applies ^1.x.y semantics to all caret ranges. For ^0.2.3, the correct upper bound is <0.3.0, but Haiku produces <1.0.0. For ^0.0.3, correct is <0.0.4, Haiku produces <1.0.0 or <0.1.0. This is a well-documented node-semver subtlety that Haiku consistently misses.",
+      "expected_export": "named:SemVerRange",
+      "complexity_domain": "range_algebra"
+    },
+    {
+      "id": "ring-buffer",
+      "prompt_file": "tasks/ring-buffer/prompt.md",
+      "oracle_test": "tasks/ring-buffer/oracle.test.ts",
+      "reference_impl": "tasks/ring-buffer/reference-impl.ts",
+      "sha256": "25a2cf1d7fcbe99f2bff2f6bb73619b2365045212a67f4efa0d5c61c2b4e2b23",
+      "description": "Fixed-capacity ring buffer: push (with eviction return), shift, peek, get (with negative index), Symbol.iterator, size/capacity, clear.",
+      "adversarial_framing": "Wrap-around trap: Haiku uses a dynamic array, omits pre-allocation constraint, or gets head/tail pointer arithmetic wrong after wrap-around. Negative index support in get() is commonly omitted or wrong. push() returning the evicted item is frequently missed.",
+      "expected_export": "named:RingBuffer",
+      "complexity_domain": "data_structure"
+    }
+  ]
+}

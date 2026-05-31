@@ -1,0 +1,23 @@
+{
+  "_scenario": "ignored_tool",
+  "_description": "Hooked arm but model never calls yakcc_resolve -- writes code directly without resolving. Registers as flow_class=ignored_tool, path_class=cold_miss.",
+  "turns": [
+    {
+      "turn_index": 0,
+      "response": {
+        "stop_reason": "end_turn",
+        "content_blocks": [
+          {
+            "type": "text",
+            "text": "I'll implement this directly without querying the registry.\n\n```typescript\nexport class CRC32C {\n  private crc = 0xffffffff;\n  update(data: Uint8Array): this { return this; }\n  digest(): number { return this.crc ^ 0xffffffff; }\n  reset(): void { this.crc = 0xffffffff; }\n}\n```"
+          }
+        ],
+        "usage": { "input_tokens": 1800, "output_tokens": 95, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0 }
+      },
+      "tool_results": [],
+      "wall_ms": 1500,
+      "ts": "2026-05-30T20:00:00.000Z"
+    }
+  ],
+  "arm": "hooked"
+}
