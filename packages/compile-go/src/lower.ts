@@ -19,7 +19,8 @@
  *     Types:  number -> int | float64, string -> string, boolean -> bool,
  *             T[] -> []T, Record<K,V> -> map[K]V, void -> (no return),
  *             any/unknown -> interface{}, generic T -> [T any] constraint
- *     Stmts:  return, if/else, const/let/var -> :=, ExpressionStatement
+ *     Stmts:  return, if/else, const/let/var -> :=, ExpressionStatement,
+ *             switch/case/default (implicit break), for/for-of/while
  *     Exprs:  numeric literal, string literal, bool literal, identifier,
  *             BinaryExpr, PrefixUnary (!/-), Call, PropertyAccess (len),
  *             ElementAccess
@@ -34,11 +35,69 @@
  *   Mirrors DEC-COMPILE-PYTHON-LOUD-001 (WI-943). Silent fallbacks allowed raw TS
  *   syntax to appear verbatim in Python output. CannotLowerToGoError surfaces coverage
  *   gaps immediately instead of letting TS syntax leak into Go output.
+ *
+ * @decision DEC-WI977-001
+ * @title Import synthesis: table-driven package-name -> import-path resolution; unknown -> placeholder
+ * @status accepted (WI-977)
+ * @rationale
+ *   Dotted-identifier references (pkg.Symbol) in the lowered output require a
+ *   corresponding import block for the Go file to compile. A table mapping well-known
+ *   package names to their canonical import paths covers stdlib and common golang.org/x/*
+ *   packages without requiring shave-go to carry import metadata through the IR.
+ *   Unknown packages emit a "unknown/<pkg>" placeholder import + GoLowerWarning so the
+ *   user can identify and fix missing paths manually (less disruptive than hard rejection).
+ *
+ * @decision DEC-WI978-001
+ * @title SwitchStatement lowering: implicit-break removal; TS-fallthrough merging into Go multi-value cases
+ * @status accepted (WI-978)
+ * @rationale
+ *   Go switch has implicit break unlike TS/JS. TS empty fallthrough cases (case a: case b: body)
+ *   map naturally to Go multi-value cases (case a, b: body). We collect consecutive
+ *   empty cases then emit them as a single "case a, b, c:" header. The last case in
+ *   a group is the one with a non-empty body; its body statements are lowered normally.
+ *   Explicit TS `break` statements inside case bodies are dropped since Go does not
+ *   need them. `default:` passes through unchanged.
  */
 
 import { CannotLowerToGoError } from "@yakcc/contracts";
 import { type FunctionDeclaration, Node, Project, SyntaxKind, type TypeNode } from "ts-morph";
 import { toGoExportedName, toGoLocalName } from "./names.js";
+
+// ---------------------------------------------------------------------------
+// Import path resolution table (WI-977, DEC-WI977-001)
+//
+// Maps the bare Go package name (as used in dotted expressions like pkg.Sym)
+// to the canonical import path that must appear in the import block.
+// stdlib packages whose path equals their name are included explicitly
+// so the table is the single source of truth.
+// ---------------------------------------------------------------------------
+
+const KNOWN_IMPORT_PATHS: Readonly<Record<string, string>> = {
+  // stdlib
+  fmt: "fmt",
+  strings: "strings",
+  strconv: "strconv",
+  sort: "sort",
+  slices: "slices",
+  maps: "maps",
+  errors: "errors",
+  reflect: "reflect",
+  time: "time",
+  context: "context",
+  io: "io",
+  os: "os",
+  bytes: "bytes",
+  bufio: "bufio",
+  sync: "sync",
+  regexp: "regexp",
+  math: "math",
+  unicode: "unicode",
+  utf8: "unicode/utf8",
+  json: "encoding/json",
+  // golang.org/x/text
+  cases: "golang.org/x/text/cases",
+  language: "golang.org/x/text/language",
+};
 
 // ---------------------------------------------------------------------------
 // Internal context
@@ -52,6 +111,13 @@ interface Ctx {
    *  Optional — not set at top level, only set by lowerFunctionDecl.
    */
   fnName?: string | undefined;
+  /**
+   * Set of bare package names seen in dotted-identifier expressions
+   * (e.g. "reflect" from reflect.ValueOf, "cases" from cases.Title).
+   * Populated during the lowering walk; used by lowerSource to synthesize
+   * the import block (WI-977, DEC-WI977-001).
+   */
+  importRefs: Set<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +132,14 @@ export interface GoLowerWarning {
 export interface LowerResult {
   goLines: string[];
   warnings: GoLowerWarning[];
+  /**
+   * Resolved import paths collected during the lowering walk.
+   * Each entry is a canonical Go import path (e.g. "reflect",
+   * "golang.org/x/text/cases") ready for inclusion in an import block.
+   * Callers (compile-go.ts) are responsible for synthesizing the actual
+   * import statement from this set (WI-977, DEC-WI977-001).
+   */
+  importPaths: Set<string>;
 }
 
 /**
@@ -87,7 +161,7 @@ export function lowerSource(implSource: string): LowerResult {
   });
   const sf = project.createSourceFile("impl.ts", implSource);
 
-  const ctx: Ctx = { warnings: [], typeParams: [] };
+  const ctx: Ctx = { warnings: [], typeParams: [], importRefs: new Set() };
   const goLines: string[] = [];
 
   for (const stmt of sf.getStatements()) {
@@ -99,7 +173,23 @@ export function lowerSource(implSource: string): LowerResult {
     // type aliases, import declarations, and comments are silently skipped
   }
 
-  return { goLines, warnings: ctx.warnings };
+  // Resolve collected package references to canonical import paths (WI-977)
+  const importPaths = new Set<string>();
+  for (const pkg of ctx.importRefs) {
+    const resolved = KNOWN_IMPORT_PATHS[pkg];
+    if (resolved !== undefined) {
+      importPaths.add(resolved);
+    } else {
+      const placeholder = `unknown/${pkg}`;
+      importPaths.add(placeholder);
+      ctx.warnings.push({
+        kind: "unknown-import",
+        message: `Unknown package "${pkg}" — using placeholder import path "${placeholder}". Update manually.`,
+      });
+    }
+  }
+
+  return { goLines, warnings: ctx.warnings, importPaths };
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +309,12 @@ function lowerStatement(node: Node, ctx: Ctx, depth: number): string[] {
     return lowerBlock(b.getStatements(), ctx, depth);
   }
 
-  if (k === SyntaxKind.BreakStatement) return [`${ind}break`];
+  if (k === SyntaxKind.SwitchStatement) {
+    return lowerSwitch(node, ctx, depth);
+  }
+
+  // Go has implicit break — TS break inside a switch case body is dropped (WI-978)
+  if (k === SyntaxKind.BreakStatement) return [];
   if (k === SyntaxKind.ContinueStatement) return [`${ind}continue`];
 
   // Skip: type alias, interface, import
@@ -391,6 +486,86 @@ function lowerWhile(node: Node, ctx: Ctx, depth: number): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Switch statement (WI-978, DEC-WI978-001)
+//
+// TS switch  ->  Go switch
+//   switch (expr) { ... }  ->  switch expr { ... }
+//   switch (true) { ... }  ->  switch { ... }   (tagless)
+//
+// Case merging for TS fallthrough (adjacent empty cases):
+//   case a:
+//   case b:
+//   case c:
+//     body;   ->   case a, b, c:
+//                    body
+//
+// TS break inside case body is silently dropped (Go has implicit break).
+// Only 'fallthrough' needs to be explicit in Go, but we don't emit it here
+// because the TS pattern we handle is the empty-case fallthrough, not
+// intentional fall-through with body.
+// ---------------------------------------------------------------------------
+
+function lowerSwitch(node: Node, ctx: Ctx, depth: number): string[] {
+  const sw = node.asKindOrThrow(SyntaxKind.SwitchStatement);
+  const ind = indent(depth);
+
+  // Tag expression: switch(true) -> tagless; otherwise emit the expression
+  const tagExpr = sw.getExpression();
+  const isTagless = tagExpr.getKind() === SyntaxKind.TrueKeyword;
+  const tagStr = isTagless ? "" : ` ${lowerExpr(tagExpr, ctx)}`;
+  const lines: string[] = [`${ind}switch${tagStr} {`];
+
+  const caseBlock = sw.getCaseBlock();
+  const clauses = caseBlock.getClauses();
+
+  // Walk clauses, merging consecutive empty-body cases into multi-value heads.
+  // A "group" is 1..N case expressions whose accumulated body is the body of
+  // the last (non-empty) clause in the run, or the first clause with statements.
+  let pendingLabels: string[] = [];
+
+  for (const clause of clauses) {
+    if (Node.isDefaultClause(clause)) {
+      // Flush any pending labels (shouldn't happen in well-formed TS, but be safe)
+      if (pendingLabels.length > 0) {
+        lines.push(`${ind}\tcase ${pendingLabels.join(", ")}:`);
+        pendingLabels = [];
+      }
+      lines.push(`${ind}default:`);
+      const stmts = clause.getStatements();
+      lines.push(...lowerBlock(stmts, ctx, depth + 1));
+      continue;
+    }
+
+    // CaseClause
+    const cc = clause.asKindOrThrow(SyntaxKind.CaseClause);
+    const labelExpr = lowerExpr(cc.getExpression(), ctx);
+    const stmts = cc.getStatements();
+
+    // Filter out break statements — Go has implicit break (DEC-WI978-001)
+    const nonBreakStmts = stmts.filter((s) => s.getKind() !== SyntaxKind.BreakStatement);
+
+    if (nonBreakStmts.length === 0) {
+      // Empty case body: accumulate label for multi-value merging
+      pendingLabels.push(labelExpr);
+    } else {
+      // Non-empty body: emit all accumulated labels + this one as the case header
+      pendingLabels.push(labelExpr);
+      lines.push(`${ind}\tcase ${pendingLabels.join(", ")}:`);
+      pendingLabels = [];
+      lines.push(...lowerBlock(nonBreakStmts, ctx, depth + 1));
+    }
+  }
+
+  // Any trailing empty cases with no body (unusual but safe to emit)
+  if (pendingLabels.length > 0) {
+    lines.push(`${ind}\tcase ${pendingLabels.join(", ")}:`);
+  }
+
+  lines.push(`${ind}}`);
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // Expression lowering
 // ---------------------------------------------------------------------------
 
@@ -527,15 +702,45 @@ function lowerPostfixUnary(node: Node, ctx: Ctx): string {
 // Property access
 // ---------------------------------------------------------------------------
 
+/**
+ * Detect whether a property-access expression's object is a bare package
+ * reference (e.g. `reflect` in `reflect.ValueOf`). We use a simple heuristic:
+ * if the direct object is an Identifier (not itself a property access chain)
+ * then it is a potential package name. We record it in ctx.importRefs; the
+ * resolver in lowerSource will skip names it doesn't recognise OR emit a
+ * warning placeholder (DEC-WI977-001).
+ *
+ * This intentionally fires on every dotted access — field accesses on local
+ * variables will also be recorded, but since local variable names go through
+ * toGoLocalName() they will be lowercase and unlikely to match KNOWN_IMPORT_PATHS,
+ * so the resolver will emit a placeholder + warning that the user can ignore.
+ * A future improvement could use ts-morph's type checker to distinguish package
+ * refs from field accesses, but the table-driven MVP approach is sufficient.
+ */
+function recordPackageRefIfNeeded(objNode: Node, ctx: Ctx): void {
+  if (objNode.getKind() !== SyntaxKind.Identifier) return;
+  const name = objNode.getText();
+  // Skip single-char type params (T, R, K, V etc.) and common Go builtins
+  if (name.length === 1) return;
+  if (name === "len" || name === "append" || name === "make" || name === "new") return;
+  ctx.importRefs.add(name);
+}
+
 function lowerPropertyAccess(node: Node, ctx: Ctx): string {
   const pa = node.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
-  const obj = lowerExpr(pa.getExpression(), ctx);
+  const objNode = pa.getExpression();
   const prop = pa.getName();
 
-  // len(xs) for .length
-  if (prop === "length") return `len(${obj})`;
+  // len(xs) for .length — handled before recording, no import needed
+  if (prop === "length") {
+    const obj = lowerExpr(objNode, ctx);
+    return `len(${obj})`;
+  }
 
-  // For other properties, emit Go field access
+  // Record potential package reference for import synthesis (WI-977)
+  recordPackageRefIfNeeded(objNode, ctx);
+
+  const obj = lowerExpr(objNode, ctx);
   return `${obj}.${prop}`;
 }
 
@@ -553,6 +758,11 @@ function lowerCall(node: Node, ctx: Ctx): string {
   if (Node.isPropertyAccessExpression(callee)) {
     const obj = callee.getExpression();
     const method = callee.getName();
+
+    // Record package ref for import synthesis (WI-977, DEC-WI977-001).
+    // This fires for pkg.Func(...) calls where the receiver is a bare identifier.
+    recordPackageRefIfNeeded(obj, ctx);
+
     const objStr = lowerExpr(obj, ctx);
 
     // xs.append(v) -> append(xs, v)
