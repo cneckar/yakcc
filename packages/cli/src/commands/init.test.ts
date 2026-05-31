@@ -1310,10 +1310,14 @@ function readDiscoverySnippet(dir: string): Record<string, unknown> | null | und
 describe("init — discovery snippet: yakcc_resolve instruction written to .claude/settings.json (WI-953 bite 2)", () => {
   // EC-953B-T1: snippet written after fresh init
   it("fresh init --ide claude-code writes yakcc-discovery marker into .claude/settings.json", async () => {
-    const code = await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: tmpDir,
-      runFederation: noOpMirror,
-    });
+    const code = await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      {
+        overrideHome: tmpDir,
+        runFederation: noOpMirror,
+      },
+    );
     expect(code).toBe(0);
 
     const snippet = readDiscoverySnippet(tmpDir);
@@ -1341,8 +1345,16 @@ describe("init — discovery snippet: yakcc_resolve instruction written to .clau
   // EC-953B-T2: idempotency — second run must not duplicate the snippet
   it("running init twice does NOT duplicate the yakcc-discovery entry (idempotency)", async () => {
     const opts = { overrideHome: tmpDir, runFederation: noOpMirror };
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      opts,
+    );
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      opts,
+    );
 
     // settings.json["yakcc-discovery"] must be an object (not an array), proving no duplication
     const settingsPath = join(tmpDir, ".claude", "settings.json");
@@ -1368,7 +1380,9 @@ describe("init — discovery snippet: yakcc_resolve instruction written to .clau
     expect((snippet as Record<string, unknown>)._marker).toBe("yakcc-discovery-v1");
     // .yakccrc.json must not have the default registry peer (--airgapped)
     const rc = readRc(tmpDir);
-    const peers = ((rc?.federation as Record<string, unknown> | undefined)?.peers as string[] | undefined) ?? [];
+    const peers =
+      ((rc?.federation as Record<string, unknown> | undefined)?.peers as string[] | undefined) ??
+      [];
     expect(peers.includes("https://registry.yakcc.com")).toBe(false);
   });
 
