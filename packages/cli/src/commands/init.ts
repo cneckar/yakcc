@@ -106,6 +106,7 @@ import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
+import { writeMcpJsonEntry } from "../lib/mcp-config.js";
 import {
   RC_FILENAME,
   type YakccEmbeddingConfig,
@@ -113,7 +114,6 @@ import {
   readRc,
   writeRc,
 } from "../lib/yakccrc.js";
-import { writeMcpJsonEntry } from "../lib/mcp-config.js";
 import { writeDiscoverySnippet } from "./discovery-snippet.js";
 import { hooksAiderInstall } from "./hooks-aider-install.js";
 import { hooksClineInstall } from "./hooks-cline-install.js";

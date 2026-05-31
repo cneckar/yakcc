@@ -1490,8 +1490,16 @@ describe("init — .mcp.json MCP server registration (#1005)", () => {
   // EC-MCP-T3: idempotent — running init twice does not corrupt .mcp.json
   it("running init twice does not corrupt .mcp.json (idempotent)", async () => {
     const opts = { overrideHome: tmpDir, runFederation: noOpMirror };
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      opts,
+    );
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      opts,
+    );
 
     const mcp = readMcpJson(tmpDir);
     const servers = mcp?.mcpServers as Record<string, unknown>;
