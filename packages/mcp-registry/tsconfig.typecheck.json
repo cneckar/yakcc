@@ -7,8 +7,10 @@
   },
   "include": ["src", "vitest.config.ts"],
   "references": [
+    { "path": "../compile" },
     { "path": "../contracts" },
     { "path": "../hooks-base" },
-    { "path": "../registry" }
+    { "path": "../registry" },
+    { "path": "../seeds" }
   ]
 }

@@ -8,8 +8,10 @@
   },
   "include": ["src"],
   "references": [
+    { "path": "../compile" },
     { "path": "../contracts" },
     { "path": "../hooks-base" },
-    { "path": "../registry" }
+    { "path": "../registry" },
+    { "path": "../seeds" }
   ]
 }

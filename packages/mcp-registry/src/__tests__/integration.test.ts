@@ -157,14 +157,15 @@ describe("stdio MCP server integration", () => {
   // tools/list
   // -------------------------------------------------------------------------
 
-  it("tools/list returns exactly 9 tool definitions including yakcc_resolve (wi-953)", async () => {
+  it("tools/list returns exactly 10 tool definitions including yakcc_resolve and yakcc_compile (wi-953, wi-1007)", async () => {
     const result = await client.listTools();
-    expect(result.tools).toHaveLength(9);
+    expect(result.tools).toHaveLength(10);
     const names = result.tools.map((t) => t.name);
     expect(names).toContain("yakcc_search_atoms");
     // Spot-check the full expected set
     const expected = [
       "yakcc_resolve",
+      "yakcc_compile",
       "yakcc_search_atoms",
       "yakcc_get_atom",
       "yakcc_list_specs",
@@ -288,7 +289,7 @@ describe("stdio MCP server integration", () => {
     // a full round-trip without errors, which is only possible if stdout is clean.
     mock.setNextResponse({ blocks: [], nextCursor: null });
     const result = await client.listTools();
-    expect(result.tools).toHaveLength(9);
+    expect(result.tools).toHaveLength(10);
     // Also do a tool call to confirm wire integrity for request/response cycle
     const callResult = await client.callTool({
       name: "yakcc_search_atoms",
