@@ -141,6 +141,11 @@ import SiteNav from "../components/SiteNav.astro";
               rewrites import paths to atom references end-to-end.
             </li>
             <li>
+              <strong>Self-shave proof green:</strong> yakcc shaves its own
+              source byte-identically twice in a row, asserted unconditionally
+              on every push to main (7,064 atoms verified).
+            </li>
+            <li>
               <strong>Python adapter:</strong> 9 <code>bs4</code> functions
               round-trip end-to-end (shave &rarr; IR &rarr; compile-python).
             </li>
@@ -157,12 +162,6 @@ import SiteNav from "../components/SiteNav.astro";
             <li>
               <strong>B5 coherence</strong> &mdash; below target bar; active
               measurement work in progress.
-            </li>
-            <li>
-              <strong>Self-shave CI red</strong> &mdash; tracked in
-              <a href="https://github.com/cneckar/yakcc/issues/836">#836</a>.
-              The yakcc-shaves-yakcc loop has a failing test that is not yet
-              resolved.
             </li>
             <li>
               <strong>Discovery MCP hook</strong> &mdash;
