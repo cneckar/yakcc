@@ -226,6 +226,17 @@ interface Ctx {
    * the import block (WI-977, DEC-WI977-001).
    */
   importRefs: Set<string>;
+  /**
+   * Go type hint propagated from the surrounding variable declaration.
+   * Set by lowerVarStatement when a TypeNode is present (e.g. `const x: number[] = [1, 2]`
+   * or inferred from the declared type in `const x: Record<string, number> = {}`).
+   * Consumed by lowerArrayLiteral and lowerObjectLiteral (#986) to emit the correct
+   * Go element/key/value types instead of falling back to `interface{}`.
+   *
+   * This field is transient: it is set immediately before lowering the initializer
+   * expression and cleared after.  It MUST NOT be used outside expression lowering.
+   */
+  goTypeHint?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +499,16 @@ function lowerVarStatement(node: Node, ctx: Ctx, depth: number): string[] {
     const varName = toGoLocalName(vd.getName());
     const init = vd.getInitializer();
     if (init) {
-      lines.push(`${ind}${varName} := ${lowerExpr(init, ctx)}`);
+      // #986: propagate the declared Go type as a hint for array/object literal lowering.
+      // e.g. `const xs: number[] = []` -> hint="[]int" -> lowerArrayLiteral emits `[]int{}`
+      // The hint is cleared after lowering the initializer (transient, see Ctx.goTypeHint).
+      const typeNode = vd.getTypeNode();
+      if (typeNode) {
+        ctx.goTypeHint = lowerTypeNode(typeNode, ctx);
+      }
+      const initStr = lowerExpr(init, ctx);
+      ctx.goTypeHint = undefined;
+      lines.push(`${ind}${varName} := ${initStr}`);
     } else {
       // uninitialized var: emit var x T (requires type annotation)
       const typeNode = vd.getTypeNode();
@@ -932,14 +952,135 @@ function lowerExpr(node: Node, ctx: Ctx): string {
   }
 
   if (k === SyntaxKind.ArrayLiteralExpression) {
-    const al = node.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
-    const elems = al.getElements().map((e) => lowerExpr(e, ctx));
-    return `[]interface{}{${elems.join(", ")}}`;
+    return lowerArrayLiteral(node, ctx);
+  }
+
+  // #986: ObjectLiteralExpression -> map[K]V{k: v, ...}
+  // shave-go emits map[K]V{} as TS `{}` or `{k: v}` object literals.
+  // compile-go resolves the Go map type from variable-declaration context
+  // via the Ctx.goTypeHint set by lowerVarStatement, or defaults to
+  // map[string]interface{}{} when no hint is available.
+  if (k === SyntaxKind.ObjectLiteralExpression) {
+    return lowerObjectLiteral(node, ctx);
   }
 
   // Loud failure: unhandled expression kind (DEC-WI973-003)
   const snippet = node.getText().slice(0, 60).replace(/\n/g, " ");
   throw new CannotLowerToGoError(SyntaxKind[k], nodeLocation(node), snippet, ctx.fnName);
+}
+
+// ---------------------------------------------------------------------------
+// #986: Array and Object literal lowering
+//
+// @decision DEC-COMPOSITELIT-LOWER-001 (#986)
+// @title Array/object literals use goTypeHint from surrounding declaration; fall back to interface{}
+// @status accepted (#986)
+// @rationale
+//   The Go element/key/value types for composite literals cannot be inferred from
+//   the TS literal elements alone (e.g. `[1, 2, 3]` could be []int, []int64, or []float64).
+//   The surrounding variable declaration type node (e.g. `number[]` -> `[]int`) is the
+//   correct authority.  lowerVarStatement sets ctx.goTypeHint before calling lowerExpr on
+//   the initializer.  lowerArrayLiteral / lowerObjectLiteral read the hint to emit the
+//   correct Go element/key/value type.
+//   When no hint is available (e.g. literal in return position or argument position),
+//   fall back to `interface{}` to avoid silent type corruption — the Go compiler will
+//   flag the mismatch if the inferred type is wrong.
+//   Return-position type propagation (reading the enclosing function's return type) is
+//   deferred to a later work item; it requires threading the return TypeNode through Ctx.
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a Go slice type string (e.g. "[]int", "[]string") and return just the
+ * element type ("int", "string"). Returns "interface{}" for unrecognized shapes.
+ */
+function sliceElementType(goSliceType: string): string {
+  if (goSliceType.startsWith("[]")) {
+    return goSliceType.slice(2);
+  }
+  return "interface{}";
+}
+
+/**
+ * Parse a Go map type string (e.g. "map[string]int") and return [keyType, valueType].
+ * Returns ["string", "interface{}"] for unrecognized shapes.
+ */
+function mapKeyValueTypes(goMapType: string): [string, string] {
+  // map[K]V — find the ] that closes the key bracket
+  if (!goMapType.startsWith("map[")) return ["string", "interface{}"];
+  let depth = 0;
+  let closeIdx = -1;
+  for (let i = 4; i < goMapType.length; i++) {
+    const ch = goMapType[i];
+    if (ch === "[") depth++;
+    else if (ch === "]") {
+      if (depth === 0) {
+        closeIdx = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (closeIdx < 0) return ["string", "interface{}"];
+  const keyType = goMapType.slice(4, closeIdx);
+  const valueType = goMapType.slice(closeIdx + 1);
+  return [keyType || "string", valueType || "interface{}"];
+}
+
+/**
+ * Lower a TS array literal `[a, b, c]` to Go `[]T{a, b, c}`.
+ * Uses ctx.goTypeHint (set by lowerVarStatement) to determine T.
+ */
+function lowerArrayLiteral(node: Node, ctx: Ctx): string {
+  const al = node.asKindOrThrow(SyntaxKind.ArrayLiteralExpression);
+  const elems = al.getElements().map((e) => lowerExpr(e, ctx));
+  const elemType = ctx.goTypeHint ? sliceElementType(ctx.goTypeHint) : "interface{}";
+  return `[]${elemType}{${elems.join(", ")}}`;
+}
+
+/**
+ * Lower a TS object literal `{k: v}` to Go `map[K]V{k: v}`.
+ * Uses ctx.goTypeHint to determine K and V.
+ * String property keys are emitted as Go string literals (double-quoted).
+ * Numeric (computed) property keys are emitted as-is.
+ */
+function lowerObjectLiteral(node: Node, ctx: Ctx): string {
+  const ol = node.asKindOrThrow(SyntaxKind.ObjectLiteralExpression);
+  const [keyType, valueType] = ctx.goTypeHint
+    ? mapKeyValueTypes(ctx.goTypeHint)
+    : ["string", "interface{}"];
+
+  const entries = ol.getProperties().map((prop) => {
+    if (prop.getKind() === SyntaxKind.PropertyAssignment) {
+      const pa = prop.asKindOrThrow(SyntaxKind.PropertyAssignment);
+      const nameNode = pa.getNameNode();
+      const valExpr = lowerExpr(pa.getInitializer() ?? pa, ctx);
+
+      // Key rendering: string identifier keys become Go string literals.
+      // Numeric literal keys pass through verbatim.
+      let keyStr: string;
+      if (nameNode.getKind() === SyntaxKind.Identifier) {
+        // Bare identifier property key: emit as Go string literal.
+        keyStr = `"${nameNode.getText()}"`;
+      } else if (nameNode.getKind() === SyntaxKind.StringLiteral) {
+        // Already a string literal: use as-is (TS double-quoted matches Go).
+        keyStr = nameNode.getText();
+      } else {
+        // Computed / numeric: lower as expression.
+        keyStr = lowerExpr(nameNode, ctx);
+      }
+      return `${keyStr}: ${valExpr}`;
+    }
+    // Shorthand, spread, method: not in scope for #986 MVP.
+    const snippet = prop.getText().slice(0, 40);
+    throw new CannotLowerToGoError(
+      SyntaxKind[prop.getKind()],
+      nodeLocation(prop),
+      snippet,
+      ctx.fnName,
+    );
+  });
+
+  return `map[${keyType}]${valueType}{${entries.join(", ")}}`;
 }
 
 // ---------------------------------------------------------------------------

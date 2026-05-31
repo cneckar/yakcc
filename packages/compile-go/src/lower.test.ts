@@ -737,3 +737,168 @@ describe("compileToGo — constraint round-trip (#976)", () => {
     expect(out).toContain('"golang.org/x/exp/constraints"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #986 — CompositeLit lowering: TS array/object literal -> Go []T{} / map[K]V{}
+//
+// @decision DEC-COMPOSITELIT-LOWER-001 (#986)
+// @title Array/object literals use goTypeHint from surrounding declaration; fall back to interface{}
+// @status accepted (#986)
+// @rationale
+//   The Go element/key/value types cannot be inferred from TS literal elements alone.
+//   The surrounding variable declaration type node is the correct authority.
+//   lowerVarStatement propagates lowerTypeNode(typeNode) into ctx.goTypeHint before
+//   lowerExpr runs on the initializer.  lowerArrayLiteral / lowerObjectLiteral consume
+//   this hint to emit the correct Go type prefix.
+// ---------------------------------------------------------------------------
+
+describe("lowerSource — array literal (#986)", () => {
+  it("typed []int with explicit type annotation: const xs: number[] = [1, 2, 3]", () => {
+    const src = `export function nums(): number[] {
+  const xs: number[] = [1, 2, 3];
+  return xs;
+}`;
+    const out = compile(src);
+    expect(out).toContain("xs := []int{1, 2, 3}");
+  });
+
+  it('typed []string: const ss: string[] = ["a", "b"]', () => {
+    const src = `export function strs(): string[] {
+  const ss: string[] = ["a", "b"];
+  return ss;
+}`;
+    const out = compile(src);
+    expect(out).toContain(`ss := []string{"a", "b"}`);
+  });
+
+  it("empty slice with type annotation: const xs: number[] = []", () => {
+    const src = `export function empty(): number[] {
+  const xs: number[] = [];
+  return xs;
+}`;
+    const out = compile(src);
+    expect(out).toContain("xs := []int{}");
+  });
+
+  it("array literal with expression elements", () => {
+    const src = `export function computed(a: number, b: number): number[] {
+  const xs: number[] = [a + b, a - b];
+  return xs;
+}`;
+    const out = compile(src);
+    expect(out).toContain("xs := []int{a + b, a - b}");
+  });
+
+  it("array literal in return position without type hint falls back to []interface{}", () => {
+    // Return-position type propagation is deferred (DEC-COMPOSITELIT-LOWER-001).
+    // Without a type hint, the literal uses interface{} element type.
+    const src = `export function fallback(): any {
+  return [1, 2, 3];
+}`;
+    const out = compile(src);
+    expect(out).toContain("[]interface{}{1, 2, 3}");
+  });
+});
+
+describe("lowerSource — object literal / map (#986)", () => {
+  it('typed Record<string,int> map literal: const m: Record<string,number> = {"a": 1}', () => {
+    const src = `export function scores(): Record<string, number> {
+  const m: Record<string, number> = {"a": 1, "b": 2};
+  return m;
+}`;
+    const out = compile(src);
+    expect(out).toContain(`m := map[string]int{"a": 1, "b": 2}`);
+  });
+
+  it("empty map literal: const m: Record<string,number> = {}", () => {
+    const src = `export function emptyMap(): Record<string, number> {
+  const m: Record<string, number> = {};
+  return m;
+}`;
+    const out = compile(src);
+    expect(out).toContain("m := map[string]int{}");
+  });
+
+  it("identifier property keys become Go string literals", () => {
+    // TS `{foo: 1}` bare identifier key -> `"foo": 1` in Go map literal.
+    const src = `export function bareKey(): Record<string, number> {
+  const m: Record<string, number> = {foo: 1, bar: 2};
+  return m;
+}`;
+    const out = compile(src);
+    expect(out).toContain('"foo": 1');
+    expect(out).toContain('"bar": 2');
+    expect(out).toContain("map[string]int{");
+  });
+
+  it("object literal in return position without type hint uses map[string]interface{}", () => {
+    // Deferred return-position propagation: default key/value types used.
+    const src = `export function fallback(): any {
+  return {"key": 42};
+}`;
+    const out = compile(src);
+    expect(out).toContain('map[string]interface{}{"key": 42}');
+  });
+
+  it("shorthand or spread properties throw CannotLowerToGoError", () => {
+    // Spread / shorthand are not in the CompositeLit MVP scope.
+    const src = `export function spread(m: Record<string, number>): any {
+  return {...m};
+}`;
+    expect(() => compile(src)).toThrow(CannotLowerToGoError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #986 — Compound end-to-end: shave-go IR -> compile-go CompositeLit round-trip
+//
+// Simulates what happens when a Go function using composite literals is shaved
+// (shave-go emits SliceLit/MapLit wire nodes, raise-body renders them as TS
+// array/object literals) and then compiled back to Go (compile-go lowers the
+// TS literals back to []T{} / map[K]V{} using the variable declaration type hint).
+// ---------------------------------------------------------------------------
+
+describe("compileToGo — CompositeLit round-trip compound (#986)", () => {
+  it("#986 compound: slice init + assignment + return: []int{1,2,3} round-trips", () => {
+    // IR as shave-go would emit for:
+    //   func Nums() []int { xs := []int{1, 2, 3}; return xs }
+    // After raise-body renders: const xs: number[] = [1, 2, 3]; return xs;
+    const src = `export function nums(): number[] {
+  const xs: number[] = [1, 2, 3];
+  return xs;
+}`;
+    const out = compile(src);
+    expect(out).toContain("func Nums() []int {");
+    expect(out).toContain("xs := []int{1, 2, 3}");
+    expect(out).toContain("return xs");
+  });
+
+  it("#986 compound: map[string]int{...} round-trips via Record<string,number>", () => {
+    // IR as shave-go would emit for:
+    //   func Scores() map[string]int { m := map[string]int{"a": 1}; return m }
+    // After raise-body renders: const m: Record<string, number> = {"a": 1}; return m;
+    const src = `export function scores(): Record<string, number> {
+  const m: Record<string, number> = {"a": 1, "b": 2};
+  return m;
+}`;
+    const out = compile(src);
+    expect(out).toContain("func Scores() map[string]int {");
+    expect(out).toContain(`m := map[string]int{"a": 1, "b": 2}`);
+    expect(out).toContain("return m");
+  });
+
+  it("#986 compound: slice + for-range over it: []string{...} + key-only range", () => {
+    // Simulates a function that initializes a slice and iterates over it.
+    const src = `export function process(): string {
+  const items: string[] = ["x", "y", "z"];
+  for (const i in items) {
+    return items[i];
+  }
+  return "";
+}`;
+    const out = compile(src);
+    expect(out).toContain(`items := []string{"x", "y", "z"}`);
+    expect(out).toContain("for i := range items {");
+    expect(out).toContain("return items[i]");
+  });
+});
