@@ -272,6 +272,26 @@ export interface GoAstIncDecStmt extends GoAstLocation {
   readonly op: "++" | "--";
 }
 
+/**
+ * Branch statement: `break` or `continue` (#1001).
+ * Go's *ast.BranchStmt covers four tokens: break, continue, goto, fallthrough.
+ * Only break and continue are raised to this wire node; goto and fallthrough
+ * are emitted as UnsupportedStmt by go-ast-parse.go so raise-body.ts throws
+ * GoUnsupportedConstructError with a clear token-specific message.
+ *
+ * `label` is null for unlabeled break/continue (the common case).  Labeled
+ * break/continue (e.g. `break outer`) carry the label name as a string; the
+ * raiser emits `break outer;` / `continue outer;` verbatim, which is valid
+ * TS syntax for labeled loops.
+ */
+export interface GoAstBranchStmt extends GoAstLocation {
+  readonly type: "BranchStmt";
+  /** "break" or "continue" */
+  readonly tok: "break" | "continue";
+  /** Label name for labeled break/continue, null for unlabeled. */
+  readonly label: string | null;
+}
+
 /** Statement not in the slice-2 supported set. */
 export interface GoAstUnsupportedStmt extends GoAstLocation {
   readonly type: "UnsupportedStmt";
@@ -367,6 +387,7 @@ export type GoAstStmt =
   | GoAstRangeStmt
   | GoAstSwitchStmt
   | GoAstIncDecStmt
+  | GoAstBranchStmt
   | GoAstUnsupportedStmt;
 
 /** Variable spec declaration (from a DeclStmt). */

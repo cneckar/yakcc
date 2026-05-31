@@ -69,6 +69,7 @@ import {
 } from "./errors.js";
 import type {
   GoAstBodyNode,
+  GoAstBranchStmt,
   GoAstCaseClause,
   GoAstDecl,
   GoAstElseBody,
@@ -239,6 +240,10 @@ function checkStmtPurity(stmt: GoAstStmt): void {
     // #982: IncDecStmt (i++, i--) is a pure mutation of a local numeric variable.
     // No channel ops, goroutines, or side effects outside the local scope.
     case "IncDecStmt":
+      return;
+
+    // #1001: BranchStmt (break/continue) — no operands, always pure.
+    case "BranchStmt":
       return;
 
     case "UnsupportedStmt":
@@ -544,6 +549,12 @@ export function renderStmt(stmt: GoAstStmt, indent = "  ", file = "stdin.go"): s
     case "IncDecStmt":
       return `${indent}${stmt.target}${stmt.op};`;
 
+    // #1001: BranchStmt — break/continue map directly to TS break/continue.
+    // Labeled break/continue (e.g. `break outer`) are also valid TS syntax for
+    // labeled loops; the label is emitted verbatim after the keyword.
+    case "BranchStmt":
+      return renderBranchStmt(stmt, indent);
+
     case "UnsupportedStmt":
       throw new GoUnsupportedConstructError(stmt.reason, { file, line: stmt.line, col: stmt.col });
   }
@@ -818,6 +829,25 @@ function renderCaseClause(
   lines.push(bodyLines);
   lines.push(`${bodyIndent}break;`);
   return lines.join("\n");
+}
+
+/**
+ * Render a BranchStmt (break or continue) to TS.
+ *
+ * Go:   break          TS:   break;
+ * Go:   continue       TS:   continue;
+ * Go:   break outer    TS:   break outer;
+ * Go:   continue loop  TS:   continue loop;
+ *
+ * Labeled break/continue are valid TS for labeled loops; the label is emitted
+ * verbatim.  goto and fallthrough are rejected at the Go parser level
+ * (emitted as UnsupportedStmt) so they never reach this renderer.
+ */
+function renderBranchStmt(stmt: GoAstBranchStmt, indent: string): string {
+  if (stmt.label !== null) {
+    return `${indent}${stmt.tok} ${stmt.label};`;
+  }
+  return `${indent}${stmt.tok};`;
 }
 
 /**
