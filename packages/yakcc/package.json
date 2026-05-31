@@ -1,6 +1,6 @@
 {
   "name": "yakcc",
-  "version": "0.6.0-alpha.0",
+  "version": "0.7.0-alpha.1",
   "description": "Content-addressed block registry — yakcc CLI (unscoped alias for @yakcc/cli).",
   "license": "Apache-2.0",
   "type": "module",
@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@yakcc/cli": "0.6.0-alpha.0"
+    "@yakcc/cli": "workspace:*"
   },
   "publishConfig": {
     "access": "public",
