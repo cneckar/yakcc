@@ -105,6 +105,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
+import { writeCLaudeMdDiscovery } from "../lib/claude-md-config.js";
 import { type IdeName, KNOWN_IDE_NAMES, detectInstalledIdes } from "../lib/ide-detect.js";
 import { writeMcpJsonEntry } from "../lib/mcp-config.js";
 import {
@@ -554,6 +555,14 @@ export async function init(
         // not the 12.5 KB body.  DEC-953B-SURFACE-SETTINGS-001: for claude-code this
         // extends .claude/settings.json (no CLAUDE.md resurrection).
         writeDiscoverySnippet(ide, targetDir);
+        // Inject the discovery guidance into CLAUDE.md so the LLM context receives
+        // the full 299-line prompt body (score bands, self-check, compile-and-stop)
+        // on every session start.  DEC-1008-CLAUDE-MD-CONTEXT-INJECT-001: this is
+        // the context-loading surface; the hook wiring lives in settings.json (above).
+        // Only claude-code uses CLAUDE.md; other IDEs are future follow-ups.
+        if (ide === "claude-code") {
+          writeCLaudeMdDiscovery(targetDir);
+        }
       } catch (err) {
         logger.error(`warning: ${String(err)} — continuing`);
         // Non-fatal: the registry is initialized; other hooks may still succeed.
