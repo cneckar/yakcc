@@ -168,6 +168,18 @@ const sections: Section[] = [
     svg: "/benchmarks/sections/09-reproducibility.svg",
     alt: "Status quo column showing nondeterministic Python floats, varying package sha256s, and differing build output sizes, vs yakcc's two-pass self-shave proof asserting 7,064 atoms byte-identical on every commit",
   },
+  {
+    id: "composition",
+    title: "Programs are graphs of verified atoms, not opaque LLM-emitted monoliths",
+    problem:
+      "When an LLM gives you a 500-line file, the unit of trust is the entire file. You read it linearly. If there's a bug, you re-read it linearly. If a reviewer wants to verify it, they read it linearly. Provenance per function is informal at best — the file is one undifferentiated thing emitted in one breath. There is no graph to walk, no atom to bisect, no individual piece you can verify and check off.",
+    yakccClaim:
+      "`yakcc compile` produces a program as a graph: a top-level binding, its child atoms, their child atoms, and so on. Every node carries a content-addressed BlockMerkleRoot. Every program ships with a provenance manifest naming every constituent atom by its content hash. Code review collapses from \"read all 500 lines\" to \"verify only the atoms not already verified.\" Bug in production? Identify the atom hash; every other program using the same atom is bug-compatible, so the bug isolates instantly.",
+    evidence:
+      "Structural property of every yakcc compile output. Provenance manifest produced by packages/compile/src. README authority: \"Every assembled program carries a provenance manifest naming every constituent block by its content-address. Bit-for-bit reproducibility is not a build option — it is the default.\"",
+    svg: "/benchmarks/sections/10-composition.svg",
+    alt: "Status quo monolithic 500-line LLM-emitted file you have to read top to bottom, vs yakcc compile output as a tree of named atoms each with a content hash and verifiable independently",
+  },
 ];
 
 const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
