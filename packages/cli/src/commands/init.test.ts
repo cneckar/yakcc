@@ -1149,7 +1149,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
     const out = logger.logLines.join("\n");
-    expect(out).toContain("Python project detected (pyproject.toml)");
+    expect(out).toContain("hint: Python project detected (pyproject.toml)");
     expect(out).toContain("npm install @yakcc/shave-python @yakcc/compile-python");
     expect(out).toContain("yakcc shave <dir> --language=py");
   });
@@ -1159,7 +1159,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const logger = new CollectingLogger();
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
-    expect(logger.logLines.join("\n")).toContain("Python project detected (setup.py)");
+    expect(logger.logLines.join("\n")).toContain("hint: Python project detected (setup.py)");
   });
 
   it("emits a Go hint with not-yet-published caveat for go.mod", async () => {
@@ -1168,7 +1168,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
     const out = logger.logLines.join("\n");
-    expect(out).toContain("Go project detected (go.mod)");
+    expect(out).toContain("hint: Go project detected (go.mod)");
     expect(out).toContain("not yet published on npm");
     expect(out).toContain("npm install @yakcc/shave-go");
   });
@@ -1179,7 +1179,7 @@ describe("init — polyglot adapter detection (#785)", () => {
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
     const out = logger.logLines.join("\n");
-    expect(out).toContain("Rust project detected (Cargo.toml)");
+    expect(out).toContain("hint: Rust project detected (Cargo.toml)");
     expect(out).toContain("not yet published on npm");
     expect(out).toContain("npm install @yakcc/shave-rust");
   });
@@ -1191,8 +1191,8 @@ describe("init — polyglot adapter detection (#785)", () => {
     const code = await init(["--target", tmpDir, "--skip-hooks", "--no-seed", "--local"], logger);
     expect(code).toBe(0);
     const out = logger.logLines.join("\n");
-    expect(out).toContain("Python project detected");
-    expect(out).toContain("Go project detected");
+    expect(out).toContain("hint: Python project detected");
+    expect(out).toContain("hint: Go project detected");
   });
 
   it("emits NO hint in a TS-only project (no language config files)", async () => {
@@ -1275,7 +1275,7 @@ describe("init — go.mod routes .go files through @yakcc/shave-go (#870 slice 3
     // Primary: explicitly confirms @yakcc/shave-go is the routing target for Go
     expect(out).toContain("@yakcc/shave-go");
     // Secondary: the detection message names shave-go as the adapter
-    expect(out).toContain("Go project detected (go.mod)");
+    expect(out).toContain("hint: Go project detected (go.mod)");
     // Negative: a Go project must not route to the Python or Rust adapters
     expect(out).not.toContain("@yakcc/shave-python");
     expect(out).not.toContain("@yakcc/shave-rust");

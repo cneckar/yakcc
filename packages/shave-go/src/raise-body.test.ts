@@ -1634,3 +1634,188 @@ describe("renderBody — CompositeLit compound round-trips (#986)", () => {
     expect(renderBody(b)).toBe('  return {"x": (a + b)};');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1000: SliceExpr expression rendering
+// ---------------------------------------------------------------------------
+
+import type { GoAstSliceExpr } from "./go-ast-parser.js";
+
+describe("renderExpr — SliceExpr (#1000)", () => {
+  function sliceExpr(x: GoAstExpr, low: GoAstExpr | null, high: GoAstExpr | null): GoAstSliceExpr {
+    return { type: "SliceExpr", line: 1, col: 1, x, low, high };
+  }
+
+  it("s[i:j] -> s.slice(i, j)", () => {
+    expect(renderExpr(sliceExpr(ident("s"), ident("i"), ident("j")))).toBe("s.slice(i, j)");
+  });
+
+  it("s[i:] -> s.slice(i)", () => {
+    expect(renderExpr(sliceExpr(ident("s"), ident("i"), null))).toBe("s.slice(i)");
+  });
+
+  it("s[:j] -> s.slice(0, j)", () => {
+    expect(renderExpr(sliceExpr(ident("s"), null, ident("j")))).toBe("s.slice(0, j)");
+  });
+
+  it("s[:] -> s.slice()", () => {
+    expect(renderExpr(sliceExpr(ident("s"), null, null))).toBe("s.slice()");
+  });
+
+  it("s[1:3] with literals -> s.slice(1, 3)", () => {
+    expect(renderExpr(sliceExpr(ident("s"), intLit("1"), intLit("3")))).toBe("s.slice(1, 3)");
+  });
+
+  it("SliceExpr purity: passes checkBodyPurity for pure operands", () => {
+    const b: GoAstBodyNode = {
+      stmts: [returnStmt([sliceExpr(ident("s"), intLit("0"), intLit("3"))])],
+    };
+    expect(() => checkBodyPurity(b)).not.toThrow();
+  });
+
+  it("SliceExpr purity: rejects ChanRecv in x operand", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([sliceExpr({ type: "ChanRecv", line: 1, col: 1 }, intLit("0"), intLit("3"))]),
+      ],
+    };
+    expect(() => checkBodyPurity(b)).toThrow(GoChanRecvError);
+  });
+
+  it("SliceExpr purity: rejects ChanRecv in high bound", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([sliceExpr(ident("s"), intLit("0"), { type: "ChanRecv", line: 1, col: 5 })]),
+      ],
+    };
+    expect(() => checkBodyPurity(b)).toThrow(GoChanRecvError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #999: Multi-LHS AssignStmt rendering
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — AssignStmt multi-LHS (#999)", () => {
+  it("a, b := f() renders as const [a, b] = f()", () => {
+    const callExpr: GoAstExpr = {
+      type: "CallExpr",
+      line: 1,
+      col: 9,
+      fun: ident("f"),
+      args: [],
+    };
+    const stmt: GoAstStmt = {
+      type: "AssignStmt",
+      line: 1,
+      col: 1,
+      lhs: [ident("a"), ident("b")],
+      rhs: [callExpr],
+      tok: ":=",
+    };
+    expect(renderStmt(stmt)).toBe("  const [a, b] = f();");
+  });
+
+  it("three targets: x, y, z := g() renders as const [x, y, z] = g()", () => {
+    const callExpr: GoAstExpr = {
+      type: "CallExpr",
+      line: 1,
+      col: 13,
+      fun: ident("g"),
+      args: [],
+    };
+    const stmt: GoAstStmt = {
+      type: "AssignStmt",
+      line: 1,
+      col: 1,
+      lhs: [ident("x"), ident("y"), ident("z")],
+      rhs: [callExpr],
+      tok: ":=",
+    };
+    expect(renderStmt(stmt)).toBe("  const [x, y, z] = g();");
+  });
+
+  it("multi-lhs with non-identifier LHS throws GoUnsupportedConstructError", () => {
+    // e.g. a.b, c := f() — non-identifier LHS target not supported
+    const nonIdentLhs: GoAstExpr = {
+      type: "SelectorExpr",
+      line: 1,
+      col: 1,
+      x: ident("a"),
+      sel: "b",
+    };
+    const stmt: GoAstStmt = {
+      type: "AssignStmt",
+      line: 1,
+      col: 1,
+      lhs: [nonIdentLhs, ident("c")],
+      rhs: [{ type: "CallExpr", line: 1, col: 9, fun: ident("f"), args: [] }],
+      tok: ":=",
+    };
+    expect(() => renderStmt(stmt)).toThrow(GoUnsupportedConstructError);
+  });
+
+  it("parallel assign a, b = x, y (multi-rhs) throws GoUnsupportedConstructError", () => {
+    const stmt: GoAstStmt = {
+      type: "AssignStmt",
+      line: 1,
+      col: 1,
+      lhs: [ident("a"), ident("b")],
+      rhs: [ident("x"), ident("y")],
+      tok: ":=",
+    };
+    expect(() => renderStmt(stmt)).toThrow(GoUnsupportedConstructError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #999 + #1000 compound: multi-assign + SliceExpr in a single function body
+//
+// This is the compound-interaction test exercising the real production sequence:
+// Go source with multi-return call and slice expression -> wire AST ->
+// raise-body renders to TS IR. Both #999 and #1000 features are exercised
+// in one body to verify they coexist correctly.
+// ---------------------------------------------------------------------------
+
+describe("renderBody — compound #999+#1000 multi-assign + SliceExpr", () => {
+  it("a, b := f(); return a[i:j] exercises both features end-to-end", () => {
+    // Simulates:
+    //   func Process(f func() ([]int, int)) int {
+    //     a, n := f()
+    //     return a[0:n]   // SliceExpr
+    //   }
+    const callExpr: GoAstExpr = {
+      type: "CallExpr",
+      line: 1,
+      col: 13,
+      fun: ident("f"),
+      args: [],
+    };
+    const multiAssign: GoAstStmt = {
+      type: "AssignStmt",
+      line: 1,
+      col: 1,
+      lhs: [ident("a"), ident("n")],
+      rhs: [callExpr],
+      tok: ":=",
+    };
+    const sliceReturn: GoAstStmt = {
+      type: "ReturnStmt",
+      line: 2,
+      col: 1,
+      results: [
+        {
+          type: "SliceExpr",
+          line: 2,
+          col: 8,
+          x: ident("a"),
+          low: intLit("0"),
+          high: ident("n"),
+        } satisfies GoAstSliceExpr,
+      ],
+    };
+    const b: GoAstBodyNode = { stmts: [multiAssign, sliceReturn] };
+    const result = renderBody(b);
+    expect(result).toBe("  const [a, n] = f();\n  return a.slice(0, n);");
+  });
+});

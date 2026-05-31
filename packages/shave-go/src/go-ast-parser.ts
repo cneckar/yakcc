@@ -178,6 +178,21 @@ export interface GoAstMapEntry {
   readonly value: GoAstExpr;
 }
 
+/**
+ * Slice expression: `s[i:j]`, `s[i:]`, `s[:j]`, or `s[:]` (#1000).
+ * Three-index form `s[i:j:k]` is rejected as UnsupportedExpr.
+ * low and high are null when omitted (e.g. s[:j] -> low=null, high=j).
+ */
+export interface GoAstSliceExpr extends GoAstLocation {
+  readonly type: "SliceExpr";
+  /** The sliced expression (e.g. the identifier `s`). */
+  readonly x: GoAstExpr;
+  /** Low bound; null means 0 (e.g. s[:j]). */
+  readonly low: GoAstExpr | null;
+  /** High bound; null means len(x) (e.g. s[i:]). */
+  readonly high: GoAstExpr | null;
+}
+
 /** Expression not in the slice-2 supported set. */
 export interface GoAstUnsupportedExpr extends GoAstLocation {
   readonly type: "UnsupportedExpr";
@@ -197,6 +212,7 @@ export type GoAstExpr =
   | GoAstChanRecvExpr
   | GoAstSliceLitExpr
   | GoAstMapLitExpr
+  | GoAstSliceExpr
   | GoAstUnsupportedExpr;
 
 /** Return statement: `return expr1, expr2, ...` */
