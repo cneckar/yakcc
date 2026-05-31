@@ -4,13 +4,18 @@
  *
  * Slice 2: hero, install one-liner, alpha banner, what-is section,
  *          current-status, docs links + footer.
+ * Slice 6: clipboardCopyText atom wired for copy button (closes #930).
  *
  * @decision DEC-WEBSITE-DOGFOOD-001
- * Title: Zero runtime JS until copy-button atom lands (slice 6)
- * Status: accepted — constraint enforced here
- * Rationale: Per #922 hard constraint, all runtime JS must be yakcc atoms.
- * Copy-button island is deferred to slice 6. This page ships zero JS.
- * No <script> tags. No client:* directives.
+ * Title: All runtime JS must originate as yakcc atoms (dogfood gate)
+ * Status: fulfilled — slice 6 ships clipboardCopyText atom
+ * Rationale: Per #922 hard constraint, all runtime JS on yakcc.com must be a
+ * yakcc-shaped atom. The copy-button JS is compiled from
+ * website/atoms/clipboard-copy-text.ts and served as
+ * /atoms/clipboard-copy-text.js. Source file is the single authority for the
+ * runtime artifact; the compiled .js is committed alongside it.
+ * Future: DEC-WEBSITE-DOGFOOD-002 will route through the full shave→IR→compile
+ * chain once TS atoms are natively supported by the substrate.
  *
  * @decision DEC-WEBSITE-001
  * Title: Astro as SSG, static output
@@ -39,13 +44,50 @@ import "../styles/global.css";
         Universalize functions across TypeScript, Python, and Go.
       </p>
 
-      <!-- Install one-liner: static text, copy with cmd-c/ctrl-c.
-           Copy-button island is deferred to slice 6 per DEC-WEBSITE-DOGFOOD-001. -->
+      <!-- Install one-liner with copy button.
+           The copy button is wired via the clipboardCopyText atom (slice 6).
+           JS source: website/atoms/clipboard-copy-text.ts → public/atoms/clipboard-copy-text.js
+           This is the dogfood gate: every JS byte on this page originates as a yakcc atom. -->
       <div class="install-block">
-        <pre><code>npm install -g @yakcc/cli@alpha</code></pre>
-        <p class="install-hint">Requires Node 18+. Copy and paste into your terminal.</p>
+        <div class="install-row">
+          <pre><code id="install-cmd">npm install -g @yakcc/cli@alpha</code></pre>
+          <button
+            class="copy-btn"
+            id="copy-install-btn"
+            aria-label="Copy install command"
+            title="Copy to clipboard"
+          >
+            Copy
+          </button>
+        </div>
+        <p class="install-hint">Requires Node 18+. Paste into your terminal.</p>
       </div>
     </section>
+
+    <!-- clipboardCopyText atom — compiled from website/atoms/clipboard-copy-text.ts
+         This script tag is the dogfood gate: only yakcc-shaped atoms ship as runtime JS.
+         See DEC-WEBSITE-DOGFOOD-001 above. -->
+    <script type="module" src="/atoms/clipboard-copy-text.js"></script>
+    <script type="module">
+      import { clipboardCopyText } from "/atoms/clipboard-copy-text.js";
+
+      const btn = document.getElementById("copy-install-btn");
+      const cmd = document.getElementById("install-cmd");
+      if (btn && cmd) {
+        btn.addEventListener("click", async () => {
+          const text = cmd.textContent ?? "";
+          const ok = await clipboardCopyText(text);
+          if (ok) {
+            btn.textContent = "Copied!";
+            btn.classList.add("copied");
+            setTimeout(() => {
+              btn.textContent = "Copy";
+              btn.classList.remove("copied");
+            }, 2000);
+          }
+        });
+      }
+    </script>
 
     <!-- ===================== ALPHA BANNER ===================== -->
     <div class="alpha-banner" role="note">
