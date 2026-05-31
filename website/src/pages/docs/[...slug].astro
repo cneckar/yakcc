@@ -1,0 +1,44 @@
+---
+// Dynamic route for end-user docs rendered from content collection.
+//
+// @decision DEC-WEBSITE-SLICE4-005
+// Title: Static getStaticPaths from content collection (Astro v6 Content Layer)
+// Status: accepted
+// Rationale: Astro output:static requires getStaticPaths() to enumerate all
+// routes at build time. We fetch all entries from the 'docs' content collection
+// (populated by scripts/sync-docs.mjs at prebuild) and return one path per
+// entry. The rendered HTML is fully static — zero client JS.
+//
+// In Astro v6 Content Layer API:
+// - entries have an `id` field (filename without extension, from glob loader)
+// - render() is imported from "astro:content" and takes the entry directly
+// - no entry.slug — use entry.id as the URL slug
+
+import { getCollection, render } from "astro:content";
+import DocLayout from "../../layouts/DocLayout.astro";
+
+// Enumerate all doc entries at build time
+export async function getStaticPaths() {
+  const docs = await getCollection("docs");
+  return docs.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+
+// Derive a readable title from the id (filename slug) if frontmatter has no title.
+const titleFromId = entry.id
+  .split("-")
+  .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+  .join(" ");
+
+const title = (entry.data.title as string | undefined) ?? titleFromId;
+const description = entry.data.description as string | undefined;
+---
+<DocLayout title={title} description={description}>
+  <div class="breadcrumb"><a href="/docs/">Docs</a> / {title}</div>
+  <Content />
+</DocLayout>
