@@ -88,6 +88,7 @@ import { CannotLowerToGoError } from "@yakcc/contracts";
 import {
   type ForOfStatement,
   type FunctionDeclaration,
+  type FunctionTypeNode,
   Node,
   Project,
   SyntaxKind,
@@ -1153,6 +1154,31 @@ export function lowerTypeNode(typeNode: TypeNode, ctx: Ctx): string {
     }
 
     return name;
+  }
+
+  // @decision DEC-WI984-001
+  // @title FunctionType lowering: TS (a0: T, a1: number) => boolean -> Go func(T, int) bool
+  // @status accepted (WI-984)
+  // @rationale
+  //   shave-go #981 made iteratee params structurally typed as TS FunctionType nodes
+  //   (e.g. `(a0: T, a1: number) => boolean`). Without this case, lowerTypeNode fell
+  //   through to the `interface{}` fallback, producing uncompilable Go (predicate
+  //   interface{} instead of func(T, int) bool). Go func-type literals omit param
+  //   names — only types are emitted. The void return is handled by checking lowerTypeNode
+  //   for the return node: "" (void) -> no return suffix; anything else -> " ReturnType".
+  if (k === SyntaxKind.FunctionType) {
+    const fnType = typeNode.asKindOrThrow(SyntaxKind.FunctionType) as FunctionTypeNode;
+    const paramStrs = fnType.getParameters().map((p) => {
+      const pTypeNode = p.getTypeNode();
+      // Go func types don't include param names; emit type only.
+      return pTypeNode ? lowerTypeNode(pTypeNode, ctx) : "interface{}";
+    });
+    const retNode = fnType.getReturnTypeNode();
+    const ret = retNode ? lowerTypeNode(retNode, ctx) : "";
+    // void lowers to "" — no return suffix for void functions
+    return ret && ret !== ""
+      ? `func(${paramStrs.join(", ")}) ${ret}`
+      : `func(${paramStrs.join(", ")})`;
   }
 
   // Fallback: emit the raw TS text as a Go comment-style placeholder

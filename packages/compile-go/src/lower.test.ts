@@ -550,6 +550,101 @@ describe("compileToGo — range round-trip (#975)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #984 — FunctionType lowering (iteratee params: no interface{} fallthrough)
+// ---------------------------------------------------------------------------
+
+describe("lowerTypeNode — FunctionType (#984)", () => {
+  function makeTypeCtx(typeParams: string[] = []) {
+    return { warnings: [], typeParams, fnName: undefined, importRefs: new Set<string>() };
+  }
+
+  function parseTypeNode(tsType: string) {
+    const project = new Project({
+      useInMemoryFileSystem: true,
+      compilerOptions: { strict: true, target: 99, module: 99, skipLibCheck: true },
+    });
+    const sf = project.createSourceFile("t.ts", `type _T = ${tsType};`);
+    const ta = sf.getStatements()[0];
+    if (!ta) throw new Error("no statement");
+    const typeAlias = ta.asKindOrThrow(SyntaxKind.TypeAliasDeclaration);
+    const tn = typeAlias.getTypeNode();
+    if (!tn) throw new Error("no type node");
+    return tn;
+  }
+
+  it("#984: (a: T) => boolean -> func(T) bool", () => {
+    const ctx = makeTypeCtx(["T"]);
+    expect(lowerTypeNode(parseTypeNode("(a: T) => boolean"), ctx)).toBe("func(T) bool");
+  });
+
+  it("#984: (a: T, b: number) => R -> func(T, int) R", () => {
+    const ctx = makeTypeCtx(["T", "R"]);
+    expect(lowerTypeNode(parseTypeNode("(a: T, b: number) => R"), ctx)).toBe("func(T, int) R");
+  });
+
+  it("#984: () => void -> func() (no return suffix)", () => {
+    const ctx = makeTypeCtx([]);
+    expect(lowerTypeNode(parseTypeNode("() => void"), ctx)).toBe("func()");
+  });
+
+  it("#984: (a: T) => void -> func(T) (no return suffix)", () => {
+    const ctx = makeTypeCtx(["T"]);
+    expect(lowerTypeNode(parseTypeNode("(a: T) => void"), ctx)).toBe("func(T)");
+  });
+
+  it("#984: nested (cb: (x: T) => boolean) => T[] -> func(func(T) bool) []T", () => {
+    const ctx = makeTypeCtx(["T"]);
+    expect(lowerTypeNode(parseTypeNode("(cb: (x: T) => boolean) => T[]"), ctx)).toBe(
+      "func(func(T) bool) []T",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #984 — End-to-end: samber/lo iteratee params no longer collapse to interface{}
+// ---------------------------------------------------------------------------
+
+describe("compileToGo — iteratee FunctionType round-trip (#984)", () => {
+  it("#984: Filter predicate (a0: T, a1: number) => boolean -> func(T, int) bool (not interface{})", () => {
+    // This is the exact IR shave-go emits for samber/lo Filter after #981
+    const src = `export function filter<T, Slice extends GoConstraint_Tilde_SliceOf_T>(
+  collection: Slice,
+  predicate: (a0: T, a1: number) => boolean
+): Slice {
+  return collection;
+}`;
+    const out = compile(src);
+    expect(out).toContain("predicate func(T, int) bool");
+    expect(out).not.toContain("predicate interface{}");
+  });
+
+  it("#984: Reduce accumulator (a0: R, a1: T, a2: number) => R -> func(R, T, int) R", () => {
+    const src = `export function reduce<T, R>(
+  collection: T[],
+  iteratee: (a0: R, a1: T, a2: number) => R,
+  initial: R
+): R {
+  return initial;
+}`;
+    const out = compile(src);
+    expect(out).toContain("iteratee func(R, T, int) R");
+    expect(out).not.toContain("iteratee interface{}");
+  });
+
+  it("#984: Map iteratee (a0: T, a1: number) => R -> func(T, int) R", () => {
+    const src = `export function mapFn<T, R>(
+  collection: T[],
+  iteratee: (a0: T, a1: number) => R
+): R[] {
+  return [];
+}`;
+    const out = compile(src);
+    expect(out).toContain("iteratee func(T, int) R");
+    expect(out).not.toContain("iteratee interface{}");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #976 — Generic constraint round-trip fidelity
 // ---------------------------------------------------------------------------
 
