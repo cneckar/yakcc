@@ -76,6 +76,7 @@ import type {
   GoAstForStmt,
   GoAstIfStmt,
   GoAstIncDecStmt,
+  GoAstMapEntry,
   GoAstRangeStmt,
   GoAstStmt,
   GoAstSwitchStmt,
@@ -143,6 +144,21 @@ function checkExprPurity(expr: GoAstExpr): void {
 
     case "ChanRecv":
       throw new GoChanRecvError(loc(expr));
+
+    // #986: SliceLit — walk element expressions for purity.
+    case "SliceLit":
+      for (const el of expr.elements) {
+        checkExprPurity(el);
+      }
+      return;
+
+    // #986: MapLit — walk key and value expressions for purity.
+    case "MapLit":
+      for (const entry of expr.entries) {
+        checkExprPurity(entry.key);
+        checkExprPurity(entry.value);
+      }
+      return;
 
     case "UnsupportedExpr":
       // Unsupported expressions are not banned purity boundaries per se.
@@ -394,6 +410,47 @@ export function renderExpr(expr: GoAstExpr, file = "stdin.go"): string {
 
     case "ChanRecv":
       throw new GoChanRecvError({ file, line: expr.line, col: expr.col });
+
+    // #986: SliceLit — Go []T{a, b, c} -> TS array literal [a, b, c].
+    //
+    // @decision DEC-COMPOSITELIT-RAISE-001 (#986)
+    // @title Slice literals lower to plain TS array literals; map literals to object literals
+    // @status accepted (#986)
+    // @rationale
+    //   []T{a, b, c} -> [a, b, c] is the natural TS representation and round-trips
+    //   back correctly through compile-go's ArrayLiteralExpression handler (which
+    //   uses variable-declaration type context to reconstruct the Go element type).
+    //   map[K]V{k: v} -> {k: v} as an object literal matches the Record<K,V> type
+    //   used for Go maps throughout the IR, and round-trips via ObjectLiteralExpression
+    //   handling in compile-go.  Type annotation comments are NOT emitted here because
+    //   the variable declaration that receives the literal already carries the Go type
+    //   via shave-go's type-map pass; compile-go reads it from the assignment context.
+    case "SliceLit": {
+      const elems = expr.elements.map((e) => renderExpr(e, file)).join(", ");
+      return `[${elems}]`;
+    }
+
+    // #986: MapLit — Go map[K]V{k: v} -> TS object literal {k: v}.
+    // Non-string keys are rendered via renderExpr (numeric keys become computed
+    // property notation via bracket syntax in the object literal).
+    case "MapLit": {
+      const entries = expr.entries
+        .map((entry: GoAstMapEntry) => {
+          const keyStr = renderExpr(entry.key, file);
+          const valStr = renderExpr(entry.value, file);
+          // String literal keys: use bare key (strip quotes for property name).
+          // Non-string keys: use computed property [key]: value.
+          if (entry.key.type === "BasicLit" && entry.key.kind === "STRING") {
+            // Strip Go string delimiters to get the bare property name.
+            // e.g. `"foo"` -> `"foo": val` (keep quoted for TS object literal).
+            return `${keyStr}: ${valStr}`;
+          }
+          // Numeric or identifier key: computed property.
+          return `[${keyStr}]: ${valStr}`;
+        })
+        .join(", ");
+      return `{${entries}}`;
+    }
 
     case "UnsupportedExpr":
       throw new GoUnsupportedConstructError(expr.reason, { file, line: expr.line, col: expr.col });

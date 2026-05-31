@@ -35,7 +35,10 @@ import type {
   GoAstForStmt,
   GoAstIfStmt,
   GoAstIncDecStmt,
+  GoAstMapEntry,
+  GoAstMapLitExpr,
   GoAstRangeStmt,
+  GoAstSliceLitExpr,
   GoAstStmt,
   GoAstSwitchStmt,
 } from "./go-ast-parser.js";
@@ -1114,5 +1117,260 @@ describe("renderBody — compound round-trips for #982 IncDecStmt", () => {
     };
     const result = renderBody(b);
     expect(result).toBe("  i--;\n  return i;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #986: SliceLit and MapLit expression rendering
+// ---------------------------------------------------------------------------
+
+describe("renderExpr — SliceLit (#986)", () => {
+  it("renders empty slice literal as []", () => {
+    const expr: GoAstSliceLitExpr = {
+      type: "SliceLit",
+      line: 1,
+      col: 1,
+      elementType: "int",
+      elements: [],
+    };
+    expect(renderExpr(expr)).toBe("[]");
+  });
+
+  it("renders single-element []int{42}", () => {
+    const expr: GoAstSliceLitExpr = {
+      type: "SliceLit",
+      line: 1,
+      col: 1,
+      elementType: "int",
+      elements: [intLit("42")],
+    };
+    expect(renderExpr(expr)).toBe("[42]");
+  });
+
+  it('renders multi-element []string{"a","b"} as array literal', () => {
+    const expr: GoAstSliceLitExpr = {
+      type: "SliceLit",
+      line: 1,
+      col: 1,
+      elementType: "string",
+      elements: [strLit('"a"'), strLit('"b"'), strLit('"c"')],
+    };
+    expect(renderExpr(expr)).toBe('["a", "b", "c"]');
+  });
+
+  it("renders nested expressions inside slice", () => {
+    const expr: GoAstSliceLitExpr = {
+      type: "SliceLit",
+      line: 1,
+      col: 1,
+      elementType: "int",
+      elements: [binExpr("+", ident("a"), intLit("1")), binExpr("*", ident("b"), intLit("2"))],
+    };
+    expect(renderExpr(expr)).toBe("[(a + 1), (b * 2)]");
+  });
+
+  it("SliceLit purity: passes checkBodyPurity for pure elements", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([
+          {
+            type: "SliceLit",
+            line: 1,
+            col: 3,
+            elementType: "int",
+            elements: [intLit("1"), intLit("2")],
+          } satisfies GoAstSliceLitExpr,
+        ]),
+      ],
+    };
+    expect(() => checkBodyPurity(b)).not.toThrow();
+  });
+
+  it("SliceLit purity: rejects ChanRecv inside elements", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([
+          {
+            type: "SliceLit",
+            line: 1,
+            col: 1,
+            elementType: "int",
+            elements: [{ type: "ChanRecv", line: 1, col: 5 }],
+          } satisfies GoAstSliceLitExpr,
+        ]),
+      ],
+    };
+    expect(() => checkBodyPurity(b)).toThrow(GoChanRecvError);
+  });
+});
+
+describe("renderExpr — MapLit (#986)", () => {
+  it("renders empty map literal as {}", () => {
+    const expr: GoAstMapLitExpr = {
+      type: "MapLit",
+      line: 1,
+      col: 1,
+      keyType: "string",
+      valueType: "int",
+      entries: [],
+    };
+    expect(renderExpr(expr)).toBe("{}");
+  });
+
+  it("renders string-key map literal", () => {
+    const entries: GoAstMapEntry[] = [
+      { key: strLit('"foo"'), value: intLit("1") },
+      { key: strLit('"bar"'), value: intLit("2") },
+    ];
+    const expr: GoAstMapLitExpr = {
+      type: "MapLit",
+      line: 1,
+      col: 1,
+      keyType: "string",
+      valueType: "int",
+      entries,
+    };
+    expect(renderExpr(expr)).toBe('{"foo": 1, "bar": 2}');
+  });
+
+  it("renders numeric key map literal using computed property syntax", () => {
+    const entries: GoAstMapEntry[] = [{ key: intLit("0"), value: strLit('"zero"') }];
+    const expr: GoAstMapLitExpr = {
+      type: "MapLit",
+      line: 1,
+      col: 1,
+      keyType: "int",
+      valueType: "string",
+      entries,
+    };
+    // Non-string keys use computed property [key]: value
+    expect(renderExpr(expr)).toBe('{[0]: "zero"}');
+  });
+
+  it("MapLit purity: passes checkBodyPurity for pure entries", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([
+          {
+            type: "MapLit",
+            line: 1,
+            col: 1,
+            keyType: "string",
+            valueType: "int",
+            entries: [{ key: strLit('"k"'), value: intLit("1") }],
+          } satisfies GoAstMapLitExpr,
+        ]),
+      ],
+    };
+    expect(() => checkBodyPurity(b)).not.toThrow();
+  });
+
+  it("MapLit purity: rejects ChanRecv in entry value", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([
+          {
+            type: "MapLit",
+            line: 1,
+            col: 1,
+            keyType: "string",
+            valueType: "int",
+            entries: [{ key: strLit('"k"'), value: { type: "ChanRecv", line: 1, col: 10 } }],
+          } satisfies GoAstMapLitExpr,
+        ]),
+      ],
+    };
+    expect(() => checkBodyPurity(b)).toThrow(GoChanRecvError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #986: CompositeLit compound round-trips through renderBody
+// ---------------------------------------------------------------------------
+
+describe("renderBody — CompositeLit compound round-trips (#986)", () => {
+  it("slice literal in return: []int{1,2,3} -> [1, 2, 3]", () => {
+    // Simulates: func Nums() []int { return []int{1, 2, 3} }
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "ReturnStmt",
+          line: 1,
+          col: 2,
+          results: [
+            {
+              type: "SliceLit",
+              line: 1,
+              col: 9,
+              elementType: "int",
+              elements: [intLit("1"), intLit("2"), intLit("3")],
+            } satisfies GoAstSliceLitExpr,
+          ],
+        },
+      ],
+    };
+    expect(renderBody(b)).toBe("  return [1, 2, 3];");
+  });
+
+  it('map literal in assignment: map[string]int{"a":1} -> {"a":1}', () => {
+    // Simulates: func Scores() map[string]int { m := map[string]int{"a": 1}; return m }
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "AssignStmt",
+          line: 1,
+          col: 2,
+          lhs: [ident("m")],
+          rhs: [
+            {
+              type: "MapLit",
+              line: 1,
+              col: 7,
+              keyType: "string",
+              valueType: "int",
+              entries: [{ key: strLit('"a"'), value: intLit("1") }],
+            } satisfies GoAstMapLitExpr,
+          ],
+          tok: ":=",
+        },
+        returnStmt([ident("m")]),
+      ],
+    };
+    expect(renderBody(b)).toBe('  const m = {"a": 1};\n  return m;');
+  });
+
+  it("slice literal with identifier elements: []string{s, t}", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([
+          {
+            type: "SliceLit",
+            line: 1,
+            col: 9,
+            elementType: "string",
+            elements: [ident("s"), ident("t")],
+          } satisfies GoAstSliceLitExpr,
+        ]),
+      ],
+    };
+    expect(renderBody(b)).toBe("  return [s, t];");
+  });
+
+  it('map literal with binary-expr value: map[string]int{"x": a+b}', () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        returnStmt([
+          {
+            type: "MapLit",
+            line: 1,
+            col: 9,
+            keyType: "string",
+            valueType: "int",
+            entries: [{ key: strLit('"x"'), value: binExpr("+", ident("a"), ident("b")) }],
+          } satisfies GoAstMapLitExpr,
+        ]),
+      ],
+    };
+    expect(renderBody(b)).toBe('  return {"x": (a + b)};');
   });
 });

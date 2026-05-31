@@ -411,6 +411,13 @@ func marshalExpr(fset *token.FileSet, expr ast.Expr) json.RawMessage {
 			"col":  col,
 		})
 
+	case *ast.CompositeLit:
+		// #986: CompositeLit covers slice/map/struct literals.
+		// Slice:  []T{a, b, c}  — Type is *ast.ArrayType
+		// Map:    map[K]V{k: v} — Type is *ast.MapType
+		// Struct: Foo{X: 1}     — deferred; emit UnsupportedExpr for MVP.
+		return marshalCompositeLit(fset, e, line, col)
+
 	default:
 		return marshal(map[string]interface{}{
 			"type":   "UnsupportedExpr",
@@ -462,6 +469,97 @@ func typeExprToString(fset *token.FileSet, expr ast.Expr) string {
 		return fmt.Sprintf("%v", expr)
 	}
 	return buf.String()
+}
+
+// ---------------------------------------------------------------------------
+// #986: CompositeLit marshaling (slice and map literals)
+// ---------------------------------------------------------------------------
+
+// marshalCompositeLit emits SliceLit or MapLit wire nodes for []T{...} and
+// map[K]V{...} expressions.  Struct literals (Ident or SelectorExpr type) are
+// deferred for MVP and emitted as UnsupportedExpr so raise-body.ts can throw
+// GoUnsupportedConstructError without re-parsing raw source text.
+//
+// @decision DEC-COMPOSITELIT-WIRE-001 (#986)
+// @title Emit distinct SliceLit/MapLit wire nodes; defer StructLit to UnsupportedExpr
+// @status accepted (#986)
+// @rationale
+//   Conflating slice/map/struct literals into a single "CompositeLit" node would
+//   force raise-body.ts to re-parse the Go type string to distinguish variants --
+//   defeating the structured wire design.  Emitting named variants with decoded
+//   type fields keeps raise-body.ts as a pure TS consumer with no Go syntax
+//   knowledge.  Struct literals require type resolution to handle field names and
+//   are deferred to a later work item.
+func marshalCompositeLit(fset *token.FileSet, e *ast.CompositeLit, line, col int) json.RawMessage {
+	if e.Type == nil {
+		// Untyped composite literal (e.g. struct field shorthand or implicit type).
+		// Not in scope for #986 MVP.
+		return marshal(map[string]interface{}{
+			"type":   "UnsupportedExpr",
+			"line":   line,
+			"col":    col,
+			"reason": "*ast.CompositeLit(untyped)",
+		})
+	}
+
+	switch t := e.Type.(type) {
+	case *ast.ArrayType:
+		// []T{a, b, c} -- slice literal (ArrayType with nil Len means slice, not array).
+		// Fixed-size arrays (e.g. [3]int{1,2,3}) also match ArrayType; treat as slice
+		// for MVP since the pure-function subset rarely uses fixed arrays.
+		elementTypeStr := typeExprToString(fset, t.Elt)
+		elements := make([]json.RawMessage, len(e.Elts))
+		for i, elt := range e.Elts {
+			elements[i] = marshalExpr(fset, elt)
+		}
+		return marshal(map[string]interface{}{
+			"type":        "SliceLit",
+			"line":        line,
+			"col":         col,
+			"elementType": elementTypeStr,
+			"elements":    elements,
+		})
+
+	case *ast.MapType:
+		// map[K]V{k: v, ...} -- map literal.
+		keyTypeStr := typeExprToString(fset, t.Key)
+		valueTypeStr := typeExprToString(fset, t.Value)
+		entries := make([]json.RawMessage, 0, len(e.Elts))
+		for _, elt := range e.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				// Non-KV element in map literal: should not occur in valid Go.
+				return marshal(map[string]interface{}{
+					"type":   "UnsupportedExpr",
+					"line":   line,
+					"col":    col,
+					"reason": "*ast.CompositeLit(map-non-kv)",
+				})
+			}
+			entry := marshal(map[string]interface{}{
+				"key":   marshalExpr(fset, kv.Key),
+				"value": marshalExpr(fset, kv.Value),
+			})
+			entries = append(entries, entry)
+		}
+		return marshal(map[string]interface{}{
+			"type":      "MapLit",
+			"line":      line,
+			"col":       col,
+			"keyType":   keyTypeStr,
+			"valueType": valueTypeStr,
+			"entries":   entries,
+		})
+
+	default:
+		// Struct literal or unknown: deferred for MVP.
+		return marshal(map[string]interface{}{
+			"type":   "UnsupportedExpr",
+			"line":   line,
+			"col":    col,
+			"reason": fmt.Sprintf("*ast.CompositeLit(%T)", e.Type),
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

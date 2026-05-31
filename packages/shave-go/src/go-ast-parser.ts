@@ -146,6 +146,38 @@ export interface GoAstChanRecvExpr extends GoAstLocation {
   readonly type: "ChanRecv";
 }
 
+/**
+ * Slice literal expression: `[]T{a, b, c}` (#986).
+ * Type field captures the element type as a Go source string (e.g. "int", "string").
+ * elements is the ordered list of element expressions.
+ */
+export interface GoAstSliceLitExpr extends GoAstLocation {
+  readonly type: "SliceLit";
+  /** Go element type string, e.g. "int", "string", "T". */
+  readonly elementType: string;
+  readonly elements: readonly GoAstExpr[];
+}
+
+/**
+ * Map literal expression: `map[K]V{k: v, ...}` (#986).
+ * keyType and valueType capture the Go source strings.
+ * entries is the ordered list of key/value pairs.
+ */
+export interface GoAstMapLitExpr extends GoAstLocation {
+  readonly type: "MapLit";
+  /** Go key type string, e.g. "string", "int". */
+  readonly keyType: string;
+  /** Go value type string, e.g. "int", "bool". */
+  readonly valueType: string;
+  readonly entries: readonly GoAstMapEntry[];
+}
+
+/** One key/value pair in a MapLit expression (#986). */
+export interface GoAstMapEntry {
+  readonly key: GoAstExpr;
+  readonly value: GoAstExpr;
+}
+
 /** Expression not in the slice-2 supported set. */
 export interface GoAstUnsupportedExpr extends GoAstLocation {
   readonly type: "UnsupportedExpr";
@@ -163,6 +195,8 @@ export type GoAstExpr =
   | GoAstSelectorExpr
   | GoAstIndexExpr
   | GoAstChanRecvExpr
+  | GoAstSliceLitExpr
+  | GoAstMapLitExpr
   | GoAstUnsupportedExpr;
 
 /** Return statement: `return expr1, expr2, ...` */
