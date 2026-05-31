@@ -307,46 +307,9 @@ function mapGoTypeInner(
       return { tsType: "unknown", warnings: [] };
   }
 
-  // ---------------------------------------------------------------------------
-  // WI-991: User-defined generic type passthrough.
-  // Pattern: Identifier[TypeArg, TypeArg, ...] where Identifier matches
-  // /^[A-Za-z_][A-Za-z0-9_]*$/ and is followed immediately by '['.
-  // The outer name passes through verbatim; each type argument is recursively
-  // mapped via mapGoTypeInner (preserving the current typeParams scope).
-  // Result: Name<MappedArg1, MappedArg2, ...> with a user-defined-type-identifier
-  // warning on the outer name.
-  //
-  // This must come BEFORE the plain-identifier check so that `Foo[T]` is
-  // expanded rather than thrown as a plain-identifier match (plain identifiers
-  // do not contain '[').
-  // ---------------------------------------------------------------------------
-  const bracketIdx = t.indexOf("[");
-  if (bracketIdx > 0) {
-    const outerName = t.slice(0, bracketIdx);
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(outerName)) {
-      // Verify the rest is a balanced bracket list.
-      const rest = t.slice(bracketIdx);
-      if (rest.startsWith("[") && rest.endsWith("]")) {
-        const inner = rest.slice(1, rest.length - 1);
-        const typeArgs = splitTypeList(inner);
-        if (typeArgs.length > 0) {
-          const warnings: LowerWarning[] = [
-            {
-              code: "user-defined-type-identifier",
-              message: `Go user-defined type '${outerName}' passed through verbatim`,
-              goType: t,
-            },
-          ];
-          const mappedArgs = typeArgs.map((arg) => {
-            const mapped = mapGoTypeInner(arg, opts);
-            warnings.push(...mapped.warnings);
-            return mapped.tsType;
-          });
-          return { tsType: `${outerName}<${mappedArgs.join(", ")}>`, warnings };
-        }
-      }
-    }
-  }
+  // WI-991 user-defined generic type passthrough was superseded by the
+  // findGenericInstBracket / parseGenericInstType branch above (#985), which
+  // uses proper bracket balancing and validates trailing characters.
 
   // ---------------------------------------------------------------------------
   // WI-991: Plain user-defined type identifier pass-through.
