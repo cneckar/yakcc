@@ -649,41 +649,65 @@ function renderForPost(stmt: GoAstStmt, file: string): string {
 }
 
 /**
- * Render a range loop to TS for...of Object.entries().
+ * Render a range loop to TS, preserving Go range semantics for round-trip fidelity.
+ *
+ * @decision DEC-POLYGLOT-GO-RANGE-ROUNDTRIP-001 (#975)
+ * @title Key-only range uses TS for...in to enable precise Go round-trip
+ * @status accepted (#975)
+ * @rationale
+ *   The prior implementation emitted `for (const k of Object.keys(x))` for
+ *   key-only range. compile-go's lowerForOf would then emit `for _, k := range x`
+ *   (adding a spurious blank `_` prefix), corrupting the round-trip and producing
+ *   non-building Go output.
+ *
+ *   TS `for...in` (ForInStatement) is the natural semantic match for Go's key-only
+ *   range: both iterate over the keys of a collection. compile-go detects the
+ *   ForInStatement SyntaxKind and emits `for k := range x` without the `_` prefix.
+ *   This is a distinct AST node from ForOfStatement, enabling precise lowering.
+ *
+ *   Key+value range continues to use `for (const [k, v] of Object.entries(x))`.
+ *   compile-go detects the Object.entries() callee pattern in lowerForOf to emit
+ *   `for k, v := range x` (preserving both bindings).
+ *
+ *   Value-only range (blank key `_`) uses `for (const v of Object.values(x))` and
+ *   compile-go emits `for _, v := range x`.
  *
  * Go:   for k, v := range m { body }
  * TS:   for (const [k, v] of Object.entries(m)) { body }
  *
  * If only the key is present:
  * Go:   for k := range m { body }
- * TS:   for (const k of Object.keys(m)) { body }
+ * TS:   for (const k in m) { body }         ← ForInStatement, not ForOfStatement
  *
  * If only the value (key is blank):
  * Go:   for _, v := range m { body }
  * TS:   for (const v of Object.values(m)) { body }
  *
- * The `for...of` form (not forEach) is chosen because it correctly propagates
- * `return` statements from the outer function — forEach would trap them inside
- * the callback and silently change semantics.
+ * The `for...of`/`for...in` forms (not forEach) are chosen because they correctly
+ * propagate `return` statements from the outer function — forEach would trap them
+ * inside the callback and silently change semantics.
  */
 function renderRangeStmt(stmt: GoAstRangeStmt, indent: string, file: string): string {
   const childIndent = `${indent}  `;
   const xStr = renderExpr(stmt.x, file);
   const bodyLines = renderBodyLines(stmt.body, childIndent, file);
 
-  let loopVar: string;
+  let header: string;
   if (stmt.key !== null && stmt.value !== null) {
-    loopVar = `const [${stmt.key}, ${stmt.value}] of Object.entries(${xStr})`;
+    // key+value: for (const [k, v] of Object.entries(x))
+    header = `for (const [${stmt.key}, ${stmt.value}] of Object.entries(${xStr}))`;
   } else if (stmt.key !== null) {
-    loopVar = `const ${stmt.key} of Object.keys(${xStr})`;
+    // key-only: for (const k in x) — ForInStatement, round-trips precisely to Go
+    header = `for (const ${stmt.key} in ${xStr})`;
   } else if (stmt.value !== null) {
-    loopVar = `const ${stmt.value} of Object.values(${xStr})`;
+    // value-only (blank key): for (const v of Object.values(x))
+    header = `for (const ${stmt.value} of Object.values(${xStr}))`;
   } else {
     // Both key and value are blank — iterate for side effects only.
-    loopVar = `const _entry of Object.values(${xStr})`;
+    header = `for (const _entry of Object.values(${xStr}))`;
   }
 
-  return [`${indent}for (${loopVar}) {`, bodyLines, `${indent}}`].join("\n");
+  return [`${indent}${header} {`, bodyLines, `${indent}}`].join("\n");
 }
 
 /**

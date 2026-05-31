@@ -107,10 +107,13 @@ describe("lowerSource — generic functions", () => {
     expect(out).toContain("func Identity[T any](x T) T {");
   });
 
-  it("two type params <T, R> -> [T, R any]", () => {
+  it("two type params <T, R> -> [T any, R any] (#976: each param gets explicit constraint)", () => {
+    // Prior to #976: emitted [T, R any] (grouped). Post-#976: each param gets
+    // its own constraint: [T any, R any]. Both are valid Go; the per-param form
+    // is required once constraints differ (e.g. [T constraints.Ordered, R any]).
     const src = "export function transform<T, R>(x: T, fn: R): R { return fn; }";
     const out = compile(src);
-    expect(out).toContain("func Transform[T, R any](x T, fn R) R {");
+    expect(out).toContain("func Transform[T any, R any](x T, fn R) R {");
   });
 });
 
@@ -480,5 +483,162 @@ describe("compileToGo — import synthesis (#977)", () => {
     // Single import: import "reflect" (not import (...))
     expect(out).toContain('import "reflect"');
     expect(out).not.toContain("import (");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #975 — Go range round-trip fidelity
+// ---------------------------------------------------------------------------
+
+describe("compileToGo — range round-trip (#975)", () => {
+  it("#975: key-only range: for (const k in x) -> for k := range x (no blank _ prefix)", () => {
+    // shave-go emits key-only range as `for (const k in items)` (ForInStatement).
+    // compile-go must emit `for k := range items` — NOT `for _, k := range items`.
+    const src = `export function indexOf<T>(collection: T[], element: T): number {
+  for (const i in collection) {
+    if (collection[i] === element) { return i as unknown as number; }
+  }
+  return -1;
+}`;
+    const out = compile(src);
+    // Key-only range: no blank _ prefix
+    expect(out).toContain("for i := range collection {");
+    expect(out).not.toContain("for _, i := range");
+    expect(out).not.toContain("Object.keys");
+  });
+
+  it("#975: key+value range: for (const [k, v] of Object.entries(x)) -> for k, v := range x", () => {
+    // shave-go emits key+value range as `for (const [k, v] of Object.entries(x))`.
+    // compile-go must emit `for k, v := range x`.
+    const src = `export function mapPairs(m: Record<string, number>): number {
+  let total = 0;
+  for (const [k, v] of Object.entries(m)) {
+    total = total + v;
+  }
+  return total;
+}`;
+    const out = compile(src);
+    // Key+value range: both bindings present, no _ prefix
+    expect(out).toContain("for k, v := range m {");
+    expect(out).not.toContain("for _, v := range m");
+    expect(out).not.toContain("Object.entries");
+  });
+
+  it("#975: value-only range: for (const v of Object.values(x)) -> for _, v := range x", () => {
+    const src = `export function sumValues(xs: number[]): number {
+  let total = 0;
+  for (const v of Object.values(xs)) {
+    total = total + v;
+  }
+  return total;
+}`;
+    const out = compile(src);
+    // Value-only range: blank _ key
+    expect(out).toContain("for _, v := range xs {");
+    expect(out).not.toContain("Object.values");
+  });
+
+  it("#975: general for-of (non-Object.entries/values) still emits for _, x := range", () => {
+    const src = `export function sumArr(xs: number[]): number {
+  let total = 0;
+  for (const x of xs) { total = total + x; }
+  return total;
+}`;
+    const out = compile(src);
+    expect(out).toContain("for _, x := range xs {");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #976 — Generic constraint round-trip fidelity
+// ---------------------------------------------------------------------------
+
+describe("compileToGo — constraint round-trip (#976)", () => {
+  it("#976: <T extends Ordered> -> [T constraints.Ordered] with import", () => {
+    // shave-go emits `<T extends Ordered>` for Go `[T constraints.Ordered]`.
+    // compile-go must emit `[T constraints.Ordered]` and include the import.
+    const src = `export function clamp<T extends Ordered>(value: T, mIn: T, mAx: T): T {
+  if (value < mIn) { return mIn; }
+  if (value > mAx) { return mAx; }
+  return value;
+}`;
+    const out = compile(src);
+    expect(out).toContain("func Clamp[T constraints.Ordered](value T, mIn T, mAx T) T {");
+    // Must import the constraints package
+    expect(out).toContain('"golang.org/x/exp/constraints"');
+  });
+
+  it("#976: <T extends Comparable> -> [T comparable] (built-in, no import)", () => {
+    const src = `export function indexOf<T extends Comparable>(collection: T[], element: T): number {
+  for (const i in collection) {
+    if (collection[i] === element) { return i as unknown as number; }
+  }
+  return -1;
+}`;
+    const out = compile(src);
+    expect(out).toContain("func IndexOf[T comparable](");
+    // comparable is a built-in; no external import needed
+    expect(out).not.toContain('"golang.org/x/exp/constraints"');
+  });
+
+  it("#976: <T> with no extends -> [T any] (default, no import)", () => {
+    const src = "export function identity<T>(x: T): T { return x; }";
+    const out = compile(src);
+    expect(out).toContain("func Identity[T any](x T) T {");
+    expect(out).not.toContain("constraints");
+  });
+
+  it("#976: custom interface constraint passes through verbatim", () => {
+    const src = "export function process<T extends MyInterface>(x: T): T { return x; }";
+    const out = compile(src);
+    expect(out).toContain("func Process[T MyInterface](x T) T {");
+  });
+
+  it("#976: tilde type-set GoConstraint_Tilde_SliceOf_T -> ~[]T", () => {
+    // shave-go encodes ~[]T as GoConstraint_Tilde_SliceOf_T in the extends clause.
+    // compile-go must reverse-decode it to ~[]T.
+    const src = `export function reverse<T, Slice extends GoConstraint_Tilde_SliceOf_T>(collection: Slice): Slice {
+  return collection;
+}`;
+    const out = compile(src);
+    expect(out).toContain("func Reverse[T any, Slice ~[]T](");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Compound end-to-end: shave-go IR -> compile-go, crossing both #975 + #976
+  //
+  // This is the required "compound-interaction test" that exercises the real
+  // production sequence. It simulates what happens when samber/lo's Clamp
+  // function is shaved (shave-go emits IR with extends Ordered + ForIn range)
+  // and then compiled back to Go (compile-go reconstructs constraints + range).
+  // ---------------------------------------------------------------------------
+
+  it("#975+#976 compound: Clamp[T constraints.Ordered] with range body round-trips fully", () => {
+    // This IR is what shave-go would emit for a function like:
+    //   func Clamp[T constraints.Ordered](value, mIn, mAx T) T {
+    //     for i := range someList { ... }  (key-only range)
+    //     if value < mIn { return mIn }
+    //     if value > mAx { return mAx }
+    //     return value
+    //   }
+    const src = `export function clamp<T extends Ordered>(value: T, mIn: T, mAx: T): T {
+  for (const i in someList) {
+    return someList[i];
+  }
+  if (value < mIn) { return mIn; }
+  if (value > mAx) { return mAx; }
+  return value;
+}`;
+    const out = compile(src);
+    // Constraint preserved
+    expect(out).toContain("[T constraints.Ordered]");
+    // Key-only range preserved (no _ prefix)
+    expect(out).toContain("for i := range someList {");
+    expect(out).not.toContain("for _, i := range");
+    // Operators work (no compilation errors expected from constraint)
+    expect(out).toContain("if value < mIn {");
+    expect(out).toContain("if value > mAx {");
+    // Import synthesized
+    expect(out).toContain('"golang.org/x/exp/constraints"');
   });
 });
