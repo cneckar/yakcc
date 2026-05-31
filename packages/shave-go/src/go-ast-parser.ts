@@ -224,6 +224,20 @@ export interface GoAstSendStmt extends GoAstLocation {
   readonly type: "SendStmt";
 }
 
+/**
+ * Increment/decrement statement: `i++` or `i--` (#982).
+ * Go's *ast.IncDecStmt is a first-class statement node (not an expression
+ * statement wrapping a unary operator).  TS supports postfix `i++` / `i--`
+ * natively; the wire shape records just the target name and operator.
+ */
+export interface GoAstIncDecStmt extends GoAstLocation {
+  readonly type: "IncDecStmt";
+  /** Name of the target identifier (e.g. "i"). */
+  readonly target: string;
+  /** "++" or "--" */
+  readonly op: "++" | "--";
+}
+
 /** Statement not in the slice-2 supported set. */
 export interface GoAstUnsupportedStmt extends GoAstLocation {
   readonly type: "UnsupportedStmt";
@@ -318,6 +332,7 @@ export type GoAstStmt =
   | GoAstForStmt
   | GoAstRangeStmt
   | GoAstSwitchStmt
+  | GoAstIncDecStmt
   | GoAstUnsupportedStmt;
 
 /** Variable spec declaration (from a DeclStmt). */

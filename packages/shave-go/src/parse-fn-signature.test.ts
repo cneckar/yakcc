@@ -321,6 +321,123 @@ describe("extractFunctionSignatures -- WI-963 generic type parameter passthrough
   });
 });
 
+describe("extractFunctionSignatures -- #981 iteratee/predicate with named func params", () => {
+  it("raises Map[T, R any](collection []T, iteratee func(item T, index int) R) []R", () => {
+    const env = envelopeWith([
+      {
+        name: "Map",
+        receiver: null,
+        typeParams: [
+          { name: "T", constraint: "any" },
+          { name: "R", constraint: "any" },
+        ],
+        params: [
+          { name: "collection", goType: "[]T" },
+          { name: "iteratee", goType: "func(item T, index int) R" },
+        ],
+        results: [{ name: "", goType: "[]R" }],
+        bodySource: "// body",
+        body: null,
+      },
+    ]);
+    const sig = extractFunctionSignatures(env)[0];
+    expect(sig?.params[0]?.tsType).toBe("T[]");
+    expect(sig?.params[1]?.tsType).toBe("(a0: T, a1: number) => R");
+    expect(sig?.returnTypes).toEqual(["R[]"]);
+  });
+
+  it("raises Filter[T any](collection []T, predicate func(item T, index int) bool) []T", () => {
+    const env = envelopeWith([
+      {
+        name: "Filter",
+        receiver: null,
+        typeParams: [{ name: "T", constraint: "any" }],
+        params: [
+          { name: "collection", goType: "[]T" },
+          { name: "predicate", goType: "func(item T, index int) bool" },
+        ],
+        results: [{ name: "", goType: "[]T" }],
+        bodySource: "// body",
+        body: null,
+      },
+    ]);
+    const sig = extractFunctionSignatures(env)[0];
+    expect(sig?.params[1]?.tsType).toBe("(a0: T, a1: number) => boolean");
+    expect(sig?.returnTypes).toEqual(["T[]"]);
+  });
+
+  it("raises Reduce[T, R any](collection []T, accumulator func(agg R, item T, index int) R, initial R) R", () => {
+    const env = envelopeWith([
+      {
+        name: "Reduce",
+        receiver: null,
+        typeParams: [
+          { name: "T", constraint: "any" },
+          { name: "R", constraint: "any" },
+        ],
+        params: [
+          { name: "collection", goType: "[]T" },
+          { name: "accumulator", goType: "func(agg R, item T, index int) R" },
+          { name: "initial", goType: "R" },
+        ],
+        results: [{ name: "", goType: "R" }],
+        bodySource: "// body",
+        body: null,
+      },
+    ]);
+    const sig = extractFunctionSignatures(env)[0];
+    expect(sig?.params[0]?.tsType).toBe("T[]");
+    expect(sig?.params[1]?.tsType).toBe("(a0: R, a1: T, a2: number) => R");
+    expect(sig?.params[2]?.tsType).toBe("R");
+    expect(sig?.returnTypes).toEqual(["R"]);
+  });
+
+  it("compound: full production sequence for samber/lo-style Map + Filter", () => {
+    // This exercises the complete production path across parse-fn-signature +
+    // type-map + name-normalize, with named func-typed params (#981 target).
+    const env = envelopeWith([
+      {
+        name: "Map",
+        receiver: null,
+        typeParams: [
+          { name: "T", constraint: "any" },
+          { name: "R", constraint: "any" },
+        ],
+        params: [
+          { name: "collection", goType: "[]T" },
+          { name: "iteratee", goType: "func(item T, index int) R" },
+        ],
+        results: [{ name: "", goType: "[]R" }],
+        bodySource: null,
+        body: null,
+      },
+      {
+        name: "Filter",
+        receiver: null,
+        typeParams: [{ name: "T", constraint: "any" }],
+        params: [
+          { name: "collection", goType: "[]T" },
+          { name: "predicate", goType: "func(item T, index int) bool" },
+        ],
+        results: [{ name: "", goType: "[]T" }],
+        bodySource: null,
+        body: null,
+      },
+    ]);
+
+    const [mapSig, filterSig] = extractFunctionSignatures(env);
+
+    expect(mapSig?.name).toBe("Map");
+    expect(mapSig?.params[0]?.tsType).toBe("T[]");
+    expect(mapSig?.params[1]?.tsType).toBe("(a0: T, a1: number) => R");
+    expect(mapSig?.returnTypes).toEqual(["R[]"]);
+
+    expect(filterSig?.name).toBe("Filter");
+    expect(filterSig?.params[1]?.tsType).toBe("(a0: T, a1: number) => boolean");
+    expect(filterSig?.returnTypes).toEqual(["T[]"]);
+  });
+});
+
 describe("extractFunctionSignatures -- compound production sequence", () => {
   it("exercises the full production path: envelope -> signatures -> types -> names", () => {
     // This test mirrors the real production sequence: the go/ast subprocess

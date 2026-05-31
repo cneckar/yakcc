@@ -12,6 +12,15 @@
 // supplied, identifiers that appear in that set are emitted verbatim as TS
 // generic type parameters rather than looked up in the mapping table.
 //
+// WI-981 extends parseFuncLitType to handle named parameters inside Go func
+// literal types (e.g. `func(item T) R` as the goType of an iteratee/predicate
+// parameter).  Before WI-981, only anonymous-parameter func types worked
+// (func(T) R); named ones like `func(item T, index int) R` (used by samber/lo
+// Map, Filter, Reduce, etc.) threw UnsupportedTypeError on the "item T" token.
+// The fix: strip the leading Go identifier from each comma-split parameter token
+// when it is followed by a type-starting token.  Variadic `...T` forms are also
+// handled.
+//
 // Composite types are recursively mapped.  Types outside the supported set
 // throw UnsupportedTypeError so callers can surface them via CannotRaiseToIRError
 // (slice 4 wires that -- slice 1 throws plain UnsupportedTypeError so the
@@ -38,6 +47,22 @@
 //   no opts still receive a plain string so no existing call sites require changes.
 //   func literal types (func(T) R) are parsed and emitted as TS arrow types so
 //   higher-order generic functions (samber/lo Map, Filter, etc.) raise correctly.
+//
+// @decision DEC-POLYGLOT-GO-NAMED-FUNC-PARAMS-001 (WI-981)
+// @title Strip Go parameter names from func-literal-type parameter tokens
+// @status accepted (WI-981)
+// @rationale
+//   In Go, `func(item T) R` is a valid function-typed parameter where "item" is
+//   the parameter name and "T" is the type.  The type-mapper only needs the type
+//   token for conversion; the name is discarded (TS arrow types use synthesized
+//   names a0, a1, ...).  Detection rule: if a comma-split token starts with a Go
+//   identifier (matches /^[A-Za-z_]\w*/) followed by a space followed by a
+//   type-starting character (not itself an identifier start — so the second token
+//   must start with *, [, f (for func), or be a known primitive), strip the first
+//   token.  Variadic ...T strips the "..." prefix before type-mapping and treats
+//   the result as a plain T (TS doesn't model variadic parameter types in arrow
+//   signatures at slice-1).  This handles the full samber/lo iteratee/predicate
+//   surface.
 
 /**
  * Thrown when a Go type cannot be mapped to a TS-subset IR type using the
@@ -153,9 +178,13 @@ function mapGoTypeInner(
   }
 
   // Slice types: []T -> T[]
+  // Arrow types (from func literals) need parentheses to avoid precedence
+  // ambiguity: []func(T) R must become ((a0: T) => R)[] not (a0: T) => R[].
   if (t.startsWith("[]")) {
     const inner = mapGoTypeInner(t.slice(2), opts);
-    return { tsType: `${inner.tsType}[]`, warnings: inner.warnings };
+    const needsParens = inner.tsType.includes("=>");
+    const elemType = needsParens ? `(${inner.tsType})` : inner.tsType;
+    return { tsType: `${elemType}[]`, warnings: inner.warnings };
   }
 
   // Map types: map[K]V -> Record<K, V>.  Slice 1 requires K = string.
@@ -229,8 +258,14 @@ function mapGoTypeInner(
  * into a TS arrow type `(a0: T) => R`.
  *
  * Supports void (no return) func types: `func(T)` -> `(a0: T) => void`.
- * Parameter names are synthesized as `a0`, `a1`, ... since Go func literals
- * in type position have no parameter names.
+ * Parameter names are synthesized as `a0`, `a1`, ... since TS arrow types
+ * in type position do not use Go parameter names.
+ *
+ * WI-981: Also handles named Go parameters like `func(item T, index int) R` —
+ * go/ast's printer.Fprint preserves the parameter name when it is present in
+ * the source.  The name token is detected and stripped before type-mapping.
+ * Variadic `...T` (or `items ...T`) strips the `...` prefix and maps the base
+ * type (TS does not model variadic arrow parameter types at slice-1).
  *
  * Throws `UnsupportedTypeError` on malformed input or types outside the
  * supported set.
@@ -265,9 +300,10 @@ function parseFuncLitType(
   const warnings: LowerWarning[] = [];
 
   // Parse param types (comma-separated, respecting nested brackets/parens).
-  const paramTypes = paramStr.length === 0 ? [] : splitTypeList(paramStr);
-  const tsParams = paramTypes.map((pType, idx) => {
-    const mapped = mapGoTypeInner(pType, opts);
+  const paramTokens = paramStr.length === 0 ? [] : splitTypeList(paramStr);
+  const tsParams = paramTokens.map((pToken, idx) => {
+    const typeStr = stripGoParamName(pToken);
+    const mapped = mapGoTypeInner(typeStr, opts);
     warnings.push(...mapped.warnings);
     return `a${idx}: ${mapped.tsType}`;
   });
@@ -282,6 +318,61 @@ function parseFuncLitType(
 
   const tsType = `(${tsParams.join(", ")}) => ${tsReturn}`;
   return { tsType, warnings };
+}
+
+/**
+ * Strip a Go parameter name from a func-literal parameter token.
+ *
+ * In Go, a parameter inside a func-literal type can appear in two forms:
+ *   - Anonymous: just the type, e.g. `T`, `int`, `[]T`, `func(T) R`
+ *   - Named: identifier + type, e.g. `item T`, `index int`, `items ...T`
+ *
+ * go/ast's printer.Fprint preserves the name when present.  We detect the
+ * named form by checking whether the token starts with a bare Go identifier
+ * (matches `[A-Za-z_]\w*`) followed by a space.  If yes, we strip the
+ * identifier prefix to get the pure type token.
+ *
+ * Variadic parameters `...T` (or `items ...T`) have their `...` prefix
+ * stripped because TS arrow types do not model variadic parameter types
+ * at slice-1; the base element type is used instead.
+ *
+ * WI-981: This is the key fix for samber/lo iteratee/predicate shapes.
+ */
+function stripGoParamName(token: string): string {
+  const t = token.trim();
+
+  // Check for named parameter: starts with a Go identifier followed by a space.
+  // A Go identifier is /^[A-Za-z_]\w*/; type-starting characters are not plain
+  // identifiers before a space (they start with *, [, f(unc), or are keywords
+  // we already handle).  We split on the first space and check that the prefix
+  // is a pure identifier (no brackets, dots, etc.).
+  const spaceIdx = t.indexOf(" ");
+  if (spaceIdx > 0) {
+    const prefix = t.slice(0, spaceIdx);
+    const rest = t.slice(spaceIdx + 1).trim();
+    // prefix is a plain Go identifier if it matches [A-Za-z_]\w* with no special
+    // characters.  This distinguishes `item T` (name + type) from a type that
+    // could never have a space in it (all Go types that contain spaces are not
+    // valid in this position).
+    if (/^[A-Za-z_]\w*$/.test(prefix)) {
+      // Named parameter detected; rest is the type (possibly "...T" variadic).
+      return stripVariadic(rest);
+    }
+  }
+
+  // No name prefix — strip variadic `...` if present (unnamed variadic param).
+  return stripVariadic(t);
+}
+
+/**
+ * Strip a leading `...` variadic prefix from a Go type token.
+ * `...T` -> `T`, `...[]int` -> `[]int`, `T` -> `T` (no-op).
+ */
+function stripVariadic(t: string): string {
+  if (t.startsWith("...")) {
+    return t.slice(3);
+  }
+  return t;
 }
 
 /**
