@@ -772,6 +772,18 @@ beforeAll(async () => {
   const seedRoots = buildSeedRootMap(rawEntries);
   resolvedEntries = resolveExpectedAtoms(rawEntries, seedRoots);
 
+  // #1013: the shipped bootstrap registry is now semantically embedded with
+  // Xenova/bge-small-en-v1.5. openRegistry's cross-provider gate will reject
+  // any mismatched provider — including createOfflineEmbeddingProvider used
+  // when USE_LOCAL_PROVIDER is false. All meaningful tests in this file are
+  // already gated on USE_LOCAL_PROVIDER (the offline-stub path produces
+  // degenerate KNN regardless), so just skip the registry open when the test
+  // is running with the stub provider. The previously-empty branch existed
+  // when bootstrap stored zero-vector embeddings and the gate didn't fire.
+  if (!USE_LOCAL_PROVIDER) {
+    return;
+  }
+
   // Open the bootstrap registry (read-write so we can re-embed and add seed atoms)
   registry = await openRegistry(BOOTSTRAP_REGISTRY_PATH, { embeddings: embeddingProvider });
 
@@ -928,9 +940,15 @@ describe("discovery-eval-full-corpus — seed root resolution", () => {
 // ---------------------------------------------------------------------------
 
 describe("discovery-eval-full-corpus — full registry benchmark", () => {
-  it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)("bootstrap registry opens successfully", async () => {
-    expect(registry).not.toBeNull();
-  });
+  // #1013: registry is only opened when USE_LOCAL_PROVIDER because the
+  // shipped bootstrap registry is bge-small-embedded and openRegistry's
+  // cross-provider gate rejects the offline stub used by default tests.
+  it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS || !USE_LOCAL_PROVIDER)(
+    "bootstrap registry opens successfully",
+    async () => {
+      expect(registry).not.toBeNull();
+    },
+  );
 
   it.skipIf(!BOOTSTRAP_REGISTRY_EXISTS)(
     "runBenchmarkEntries returns one result per corpus entry",
