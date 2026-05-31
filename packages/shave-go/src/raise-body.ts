@@ -79,6 +79,7 @@ import type {
   GoAstIncDecStmt,
   GoAstMapEntry,
   GoAstRangeStmt,
+  GoAstSliceExpr,
   GoAstStmt,
   GoAstSwitchStmt,
 } from "./go-ast-parser.js";
@@ -151,6 +152,13 @@ function checkExprPurity(expr: GoAstExpr): void {
       for (const el of expr.elements) {
         checkExprPurity(el);
       }
+      return;
+
+    // #1000: SliceExpr — walk x, low, high for purity.
+    case "SliceExpr":
+      checkExprPurity(expr.x);
+      if (expr.low !== null) checkExprPurity(expr.low);
+      if (expr.high !== null) checkExprPurity(expr.high);
       return;
 
     // #986: MapLit — walk key and value expressions for purity.
@@ -457,6 +465,40 @@ export function renderExpr(expr: GoAstExpr, file = "stdin.go"): string {
       return `{${entries}}`;
     }
 
+    // #1000: SliceExpr — Go s[i:j] -> TS s.slice(i, j).
+    //
+    // @decision DEC-SLICEEXPR-RAISE-001 (#1000)
+    // @title SliceExpr lowers to TS .slice() call; omitted bounds use .slice() argument conventions
+    // @status accepted (#1000)
+    // @rationale
+    //   Go s[i:j] maps directly to TS s.slice(i, j). Omitted bounds follow TS Array.prototype.slice
+    //   conventions: s[i:] -> s.slice(i) (omit second arg = slice to end), s[:j] -> s.slice(0, j)
+    //   (explicit 0 for start), s[:] -> s.slice() (no args = full copy).
+    //   Three-index form s[i:j:k] is rejected at the Go parse layer (UnsupportedExpr) and never
+    //   reaches this branch.  The rendered form is a method call on the sliced expression, which
+    //   matches the Go semantics for string/slice types that are the dominant use-case in the
+    //   pure-function subset.
+    case "SliceExpr": {
+      const xStr = renderExpr(expr.x, file);
+      const { low, high } = expr as GoAstSliceExpr;
+      if (low === null && high === null) {
+        // s[:] -> s.slice()
+        return `${xStr}.slice()`;
+      }
+      if (low === null) {
+        // s[:j] -> s.slice(0, j)
+        // high is non-null: the low===null && high===null case is handled above
+        const highExpr = high as GoAstExpr;
+        return `${xStr}.slice(0, ${renderExpr(highExpr, file)})`;
+      }
+      if (high === null) {
+        // s[i:] -> s.slice(i)
+        return `${xStr}.slice(${renderExpr(low, file)})`;
+      }
+      // s[i:j] -> s.slice(i, j)
+      return `${xStr}.slice(${renderExpr(low, file)}, ${renderExpr(high, file)})`;
+    }
+
     case "UnsupportedExpr":
       throw new GoUnsupportedConstructError(expr.reason, { file, line: expr.line, col: expr.col });
   }
@@ -507,12 +549,54 @@ export function renderStmt(stmt: GoAstStmt, indent = "  ", file = "stdin.go"): s
         }
         return `${indent}${lhsStr} = ${rhsStr};`;
       }
-      // Multi-assign: not in slice-2 subset.
-      throw new GoUnsupportedConstructError("AssignStmt(multi-lhs)", {
-        file,
-        line: stmt.line,
-        col: stmt.col,
-      });
+      // #999: Multi-LHS assign: `a, b := f()` -> `const [a, b] = f();`
+      // Only supported when all LHS nodes are plain identifiers and there is
+      // exactly one RHS expression (function-call return expansion).
+      // RHS with multiple expressions (e.g. `a, b = x, y`) is rejected — that
+      // is a parallel assignment, not a function-call destructure.
+      //
+      // @decision DEC-MULTIASSIGN-RAISE-001 (#999)
+      // @title Multi-LHS := with single RHS lowers to TS array destructure; parallel assign rejected
+      // @status accepted (#999)
+      // @rationale
+      //   Go `a, b := f()` (len(Lhs)>1, len(Rhs)==1) is the "function returns multiple values"
+      //   pattern.  The natural TS representation is `const [a, b] = f()` (array destructure).
+      //   Parallel assignment `a, b = x, y` (len(Rhs)>1) has no direct TS equivalent and is
+      //   rejected with GoUnsupportedConstructError so the caller can decide how to handle it.
+      //   Non-identifier LHS targets (e.g. `a.b, c := f()`) are also rejected because property
+      //   targets in a destructure are a different TS pattern requiring type information.
+      //   The comma-ok idiom `v, ok := m[key]` (RHS is IndexExpr) is NOT specially rejected here
+      //   at the rendering level — it lowers to `const [v, ok] = m[key]` which is technically
+      //   valid TS (treating the index as returning a tuple), though semantically imprecise.
+      //   A future slice can add map-type awareness to reject comma-ok specifically.
+      if (stmt.lhs.length > 1 && stmt.rhs.length === 1 && stmt.tok === ":=") {
+        const rhsNode = stmt.rhs[0];
+        if (rhsNode === undefined) {
+          throw new GoUnsupportedConstructError("AssignStmt(empty-rhs)", {
+            file,
+            line: stmt.line,
+            col: stmt.col,
+          });
+        }
+        // Require all LHS nodes to be Ident (plain names).
+        const names: string[] = [];
+        for (const lhsNode of stmt.lhs) {
+          if (lhsNode.type !== "Ident") {
+            throw new GoUnsupportedConstructError(
+              `AssignStmt(multi-lhs-non-ident:${lhsNode.type})`,
+              { file, line: stmt.line, col: stmt.col },
+            );
+          }
+          names.push(lhsNode.name);
+        }
+        const rhsStr = renderExpr(rhsNode, file);
+        return `${indent}const [${names.join(", ")}] = ${rhsStr};`;
+      }
+      // All other multi-assign shapes (parallel assign, non-ident targets, etc.) — reject.
+      throw new GoUnsupportedConstructError(
+        `AssignStmt(multi-lhs,lhs=${stmt.lhs.length},rhs=${stmt.rhs.length},tok=${stmt.tok})`,
+        { file, line: stmt.line, col: stmt.col },
+      );
     }
 
     case "DeclStmt":

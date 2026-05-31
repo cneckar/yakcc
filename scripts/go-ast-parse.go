@@ -430,6 +430,38 @@ func marshalExpr(fset *token.FileSet, expr ast.Expr) json.RawMessage {
 			"index": marshalExpr(fset, e.Index),
 		})
 
+	case *ast.SliceExpr:
+		// #1000: s[i:j], s[i:], s[:j], s[:] — three-index s[i:j:k] is rejected.
+		// Emit SliceExpr wire node with nullable low/high fields.
+		if e.Max != nil {
+			// Three-index slice (s[i:j:k]) is out of scope for MVP; reject.
+			return marshal(map[string]interface{}{
+				"type":   "UnsupportedExpr",
+				"line":   line,
+				"col":    col,
+				"reason": "*ast.SliceExpr(3-index)",
+			})
+		}
+		var lowRaw, highRaw json.RawMessage
+		if e.Low != nil {
+			lowRaw = marshalExpr(fset, e.Low)
+		} else {
+			lowRaw = marshal(nil)
+		}
+		if e.High != nil {
+			highRaw = marshalExpr(fset, e.High)
+		} else {
+			highRaw = marshal(nil)
+		}
+		return marshal(map[string]interface{}{
+			"type": "SliceExpr",
+			"line": line,
+			"col":  col,
+			"x":    marshalExpr(fset, e.X),
+			"low":  lowRaw,
+			"high": highRaw,
+		})
+
 	case *ast.ParenExpr:
 		return marshalExpr(fset, e.X)
 
