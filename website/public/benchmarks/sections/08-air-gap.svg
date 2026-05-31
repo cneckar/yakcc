@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 580" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+<defs>
+  <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.13"/>
+  </filter>
+  <linearGradient id="bgL" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fff5f5"/><stop offset="100%" stop-color="#fde8e8"/>
+  </linearGradient>
+  <linearGradient id="bgR" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f0f9ff"/><stop offset="100%" stop-color="#e0f2fe"/>
+  </linearGradient>
+</defs>
+<rect width="1200" height="580" fill="#fafafa"/>
+<text x="600.0" y="48" font-size="24" fill="#0f172a" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Zero outbound network during a full pipeline run</text>
+<text x="600.0" y="76" font-size="12" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Install yakcc, shave a project, query the registry, compile output — entire cycle works offline</text>
+<rect x="60" y="130" width="1080" height="320" rx="14" fill="url(#bgR)" stroke="#7dd3fc" stroke-width="2"/>
+<text x="600.0" y="160" font-size="14" fill="#075985" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif" letter-spacing="1.5">B6 air-gap benchmark — measured 2026-05-11</text>
+<line x1="130" y1="380" x2="1100" y2="380" stroke="#0c4a6e" stroke-width="2"/>
+<line x1="130.0" y1="374" x2="130.0" y2="386" stroke="#0c4a6e" stroke-width="1.5"/>
+<text x="130.0" y="402" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">0s</text>
+<line x1="318.6180969665543" y1="374" x2="318.6180969665543" y2="386" stroke="#0c4a6e" stroke-width="1.5"/>
+<text x="318.6180969665543" y="402" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">3s</text>
+<line x1="507.2361939331086" y1="374" x2="507.2361939331086" y2="386" stroke="#0c4a6e" stroke-width="1.5"/>
+<text x="507.2361939331086" y="402" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">6s</text>
+<line x1="695.8542908996629" y1="374" x2="695.8542908996629" y2="386" stroke="#0c4a6e" stroke-width="1.5"/>
+<text x="695.8542908996629" y="402" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">9s</text>
+<line x1="884.4723878662172" y1="374" x2="884.4723878662172" y2="386" stroke="#0c4a6e" stroke-width="1.5"/>
+<text x="884.4723878662172" y="402" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">12s</text>
+<line x1="1073.0904848327714" y1="374" x2="1073.0904848327714" y2="386" stroke="#0c4a6e" stroke-width="1.5"/>
+<text x="1073.0904848327714" y="402" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">15s</text>
+<rect x="130.0" y="220" width="132.032667876588" height="40" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="1"/>
+<text x="196.016333938294" y="246" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">install</text>
+<rect x="262.032667876588" y="220" width="150.89447757324348" height="40" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="1"/>
+<text x="337.4799066632097" y="246" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">init project</text>
+<rect x="412.92714544983147" y="220" width="333.2253046409126" height="40" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="1"/>
+<text x="579.5397977702878" y="246" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">shave source</text>
+<rect x="746.1524500907441" y="220" width="88.021778584392" height="40" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="1"/>
+<text x="790.1633393829401" y="246" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">query registry</text>
+<rect x="834.1742286751361" y="220" width="150.89447757324342" height="40" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="1"/>
+<text x="909.6214674617578" y="246" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">compile</text>
+<rect x="985.0687062483795" y="220" width="113.17085817993268" height="40" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="1"/>
+<text x="1041.654135338346" y="246" font-size="11" fill="#fff" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">verify</text>
+<text x="600.0" y="295" font-size="12" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">outbound packets:</text>
+<text x="600.0" y="325" font-size="72" fill="#0ea5e9" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">0</text>
+<line x1="130" y1="330" x2="130" y2="374" stroke="#0c4a6e" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="1100" y1="330" x2="1100" y2="374" stroke="#0c4a6e" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="100" y="490" width="1000" height="46" rx="8" fill="#0ea5e9" stroke="#0369a1" stroke-width="2"/>
+<text x="600.0" y="519" font-size="15" fill="#fff" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">PROVEN — 15.4s wall, 0 outbound connections, 0 step failures</text>
+<text x="600.0" y="562" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">bench/B6-airgap/results-b6a-2026-05-11.json · pcap-verified zero outbound during 15.4s run</text>
+</svg>
