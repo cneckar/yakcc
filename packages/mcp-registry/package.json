@@ -23,9 +23,11 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@xenova/transformers": "^2.17.2",
+    "@yakcc/compile": "workspace:*",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/hooks-base": "workspace:*",
-    "@yakcc/registry": "workspace:*"
+    "@yakcc/registry": "workspace:*",
+    "@yakcc/seeds": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -561,6 +561,9 @@ importers:
       '@xenova/transformers':
         specifier: ^2.17.2
         version: 2.17.2
+      '@yakcc/compile':
+        specifier: workspace:*
+        version: link:../compile
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -570,6 +573,9 @@ importers:
       '@yakcc/registry':
         specifier: workspace:*
         version: link:../registry
+      '@yakcc/seeds':
+        specifier: workspace:*
+        version: link:../seeds
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
