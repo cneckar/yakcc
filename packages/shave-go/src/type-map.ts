@@ -21,6 +21,14 @@
 // when it is followed by a type-starting token.  Variadic `...T` forms are also
 // handled.
 //
+// WI-991 adds user-defined type identifier passthrough.  Plain Go identifiers
+// (e.g. `ifElse`, `Tuple3`) that are not in the primitive table and not in the
+// typeParams set are passed through verbatim as TS types with a
+// "user-defined-type-identifier" LowerWarning (mirroring shave-python #901).
+// Parameterized user types (e.g. `Foo[T, R]`) are expanded to `Foo<T, R>` via
+// recursive mapGoTypeInner calls on each type argument, preserving the current
+// typeParams scope.
+//
 // Composite types are recursively mapped.  Types outside the supported set
 // throw UnsupportedTypeError so callers can surface them via CannotRaiseToIRError
 // (slice 4 wires that -- slice 1 throws plain UnsupportedTypeError so the
@@ -83,8 +91,31 @@ export class UnsupportedTypeError extends Error {
  * A non-fatal warning emitted when a Go type maps with loss of fidelity.
  * WI-963: used for non-`any` generic constraints that are widened to the
  * bare TS type parameter.
+ * WI-991: adds `code` field (mirrors shave-python LowerWarning shape) and
+ * adds the "user-defined-type-identifier" code for plain Go identifiers that
+ * are not in the primitive mapping table.
+ *
+ * @decision DEC-SHAVE-GO-TYPE-MAP-991
+ * @title LowerWarning gains stable `code` discriminant; user-defined identifiers pass through
+ * @status accepted (WI-991)
+ * @rationale
+ *   Real Go codebases use user-defined types (type aliases, named structs,
+ *   NewType-equivalent patterns) pervasively.  Throwing on every unknown
+ *   identifier makes extraction fail for almost all annotated functions.
+ *   Option A (pass-through with warning, matching shave-python #901) is the
+ *   MVP: least friction, lets exploration proceed.  Adding `code` now aligns
+ *   the LowerWarning shape with shave-python so future cross-package
+ *   consumers can handle both without special-casing.  Only plain identifiers
+ *   and identifier-bracketed generics (Foo[T,R]) are eligible; dotted names
+ *   and other composite forms still throw.
  */
 export interface LowerWarning {
+  /**
+   * Stable code identifying the warning category.
+   * Adding new codes is non-breaking (no consumer should exhaustively switch
+   * without a default branch).
+   */
+  readonly code: "user-defined-type-identifier";
   /** Human-readable description of the fidelity loss. */
   readonly message: string;
   /** The original Go type string that triggered the warning. */
@@ -206,6 +237,39 @@ function mapGoTypeInner(
     return parseFuncLitType(t, opts);
   }
 
+  // Generic instantiation types: Foo[A, B, C] -> Foo<A, B, C> (#985).
+  //
+  // Go generic instantiation types appear in two contexts that block samber/lo:
+  //   - Parameter types: `t Tuple3[A, B, C]` in Unpack3
+  //   - Return types:    `Tuple3[A, B, C]` in T3, `[]Tuple2[A, B]` in Zip2
+  //
+  // Detection: a Go identifier (no brackets/parens/dots) followed immediately
+  // by `[`.  This is distinct from slice types (which start with `[`) and map
+  // types (which start with `map[`).  The type arguments are parsed with the
+  // same bracket-depth-aware splitter used for func params.
+  //
+  // Each type argument is recursively mapped so that type params (e.g. A, B)
+  // pass through verbatim (via typeParams set) and primitives are mapped.
+  //
+  // @decision DEC-POLYGLOT-GO-GENERIC-INST-001 (#985)
+  // @title Generic instantiation types map Go Foo[A,B] to TS Foo<A,B>
+  // @status accepted (#985)
+  // @rationale
+  //   samber/lo tuples.go uses Tuple2..Tuple9 as both parameter and return types
+  //   in Unpack*, T*, Zip* functions.  The type string `Tuple3[A, B, C]` is
+  //   emitted verbatim by go/ast's printer.Fprint for *ast.IndexListExpr nodes
+  //   (Go 1.18+).  The TS equivalent is `Tuple3<A, B, C>` — a direct syntactic
+  //   substitution of `[...]` with `<...>`.  Each type argument is recursively
+  //   mapped so that generic type params pass through verbatim and primitives
+  //   (string, int, bool) receive their proper TS mapping.  The detection rule
+  //   (bare identifier + `[`) is unambiguous because: slice types start with
+  //   bare `[`, map types start with `map[`, func types start with `func(`, and
+  //   all other recognized patterns are handled before this branch.
+  const bracketIdx = findGenericInstBracket(t);
+  if (bracketIdx !== -1) {
+    return parseGenericInstType(t, bracketIdx, opts);
+  }
+
   // Primitives -- signed integers
   switch (t) {
     case "int":
@@ -241,6 +305,35 @@ function mapGoTypeInner(
     case "interface{}":
       // Explicit any -- caller can treat as opaque.
       return { tsType: "unknown", warnings: [] };
+  }
+
+  // WI-991 user-defined generic type passthrough was superseded by the
+  // findGenericInstBracket / parseGenericInstType branch above (#985), which
+  // uses proper bracket balancing and validates trailing characters.
+
+  // ---------------------------------------------------------------------------
+  // WI-991: Plain user-defined type identifier pass-through.
+  // A bare Go identifier (no brackets, no operators, no dots) that is not in
+  // the mapping table and not in typeParams is likely a user-defined type
+  // (type alias, named struct, etc.).  Pass it through verbatim as the TS
+  // type name with a LowerWarning (mirrors shave-python #901).
+  //
+  // Acceptance rule:
+  //   - PLAIN identifier: /^[A-Za-z_][A-Za-z0-9_]*$/  (no brackets or operators)
+  //   - Known composite types ([]T, *T, map[K]V, func(...)) are handled above
+  //   - Dotted names (pkg.Type) still throw (contain a dot)
+  // ---------------------------------------------------------------------------
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) {
+    return {
+      tsType: t,
+      warnings: [
+        {
+          code: "user-defined-type-identifier",
+          message: `Go user-defined type '${t}' passed through verbatim`,
+          goType: t,
+        },
+      ],
+    };
   }
 
   throw new UnsupportedTypeError(
@@ -394,6 +487,100 @@ function splitTypeList(s: string): string[] {
   }
   parts.push(s.slice(start).trim());
   return parts.filter((p) => p.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// #985: Generic instantiation type parser (Foo[A, B, C] -> Foo<A, B, C>)
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the index of the opening `[` that starts the type argument list for a
+ * Go generic instantiation type (e.g. `Tuple3[A, B, C]`).
+ *
+ * Returns -1 if the type string does not match the `Identifier[...` pattern.
+ *
+ * Detection rule: the string must begin with one or more Go identifier
+ * characters (`[A-Za-z_][\w.]*`) followed immediately by `[`.  This
+ * distinguishes generic instantiations from:
+ *   - slice types (`[]T` — starts with bare `[`)
+ *   - map types   (`map[K]V` — handled by the `map[` branch above)
+ *   - func types  (`func(...)` — handled by `func(` branch above)
+ */
+function findGenericInstBracket(t: string): number {
+  // A generic instantiation name is a qualified or simple identifier:
+  // e.g. "Tuple3", "lo.Tuple3", "MyPkg.Pair"
+  // It must start with a letter or underscore and contain only word chars and dots.
+  let i = 0;
+  // Must start with an identifier character.
+  if (i >= t.length || !/^[A-Za-z_]/.test(t)) {
+    return -1;
+  }
+  // Consume identifier + qualified-name dots.
+  while (i < t.length && /[\w.]/.test(t[i] ?? "")) {
+    i++;
+  }
+  // At least one identifier character must have been consumed, and next char
+  // must be `[`.
+  if (i === 0 || i >= t.length || t[i] !== "[") {
+    return -1;
+  }
+  return i;
+}
+
+/**
+ * Parse a Go generic instantiation type `Name[T1, T2, ...]` into a TS
+ * generic instantiation `Name<T1, T2, ...>`, recursively mapping each type
+ * argument through `mapGoTypeInner`.
+ *
+ * Called only when `findGenericInstBracket` returned a non-negative index,
+ * so the input is guaranteed to be `<identifier>[<typeArgs>]`.
+ */
+function parseGenericInstType(
+  t: string,
+  bracketIdx: number,
+  opts: MapGoTypeOpts,
+): { tsType: string; warnings: LowerWarning[] } {
+  const name = t.slice(0, bracketIdx);
+
+  // Find the matching closing `]` for the opening `[` at bracketIdx.
+  let depth = 1;
+  let i = bracketIdx + 1;
+  while (i < t.length && depth > 0) {
+    if (t[i] === "[") depth++;
+    else if (t[i] === "]") depth--;
+    i++;
+  }
+  if (depth !== 0) {
+    throw new UnsupportedTypeError(
+      t,
+      `Malformed generic instantiation type: unbalanced brackets in '${t}'`,
+    );
+  }
+  // Trailing characters after the closing `]` are not expected for a bare type.
+  if (i !== t.length) {
+    throw new UnsupportedTypeError(
+      t,
+      `Malformed generic instantiation type: unexpected trailing characters in '${t}'`,
+    );
+  }
+
+  const argStr = t.slice(bracketIdx + 1, i - 1).trim();
+  if (argStr.length === 0) {
+    throw new UnsupportedTypeError(
+      t,
+      `Generic instantiation type has empty type argument list: '${t}'`,
+    );
+  }
+
+  const argTokens = splitTypeList(argStr);
+  const warnings: LowerWarning[] = [];
+  const mappedArgs = argTokens.map((arg) => {
+    const mapped = mapGoTypeInner(arg.trim(), opts);
+    warnings.push(...mapped.warnings);
+    return mapped.tsType;
+  });
+
+  return { tsType: `${name}<${mappedArgs.join(", ")}>`, warnings };
 }
 
 /**
