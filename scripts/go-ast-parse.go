@@ -313,6 +313,35 @@ func marshalStmt(fset *token.FileSet, stmt ast.Stmt) json.RawMessage {
 			"op":     op,
 		})
 
+	case *ast.BranchStmt:
+		// #1001: BranchStmt covers break, continue, goto, and fallthrough.
+		// break and continue have direct TS equivalents and are raised as
+		// BranchStmt wire nodes. goto and fallthrough have no TS equivalent;
+		// emit UnsupportedStmt so raise-body.ts can throw
+		// GoUnsupportedConstructError with a clear message rather than a
+		// generic "unsupported" catch.
+		tok := s.Tok.String() // "break", "continue", "goto", "fallthrough"
+		if tok == "break" || tok == "continue" {
+			var label interface{}
+			if s.Label != nil {
+				label = s.Label.Name
+			}
+			return marshal(map[string]interface{}{
+				"type":  "BranchStmt",
+				"line":  line,
+				"col":   col,
+				"tok":   tok,
+				"label": label,
+			})
+		}
+		// goto and fallthrough: not raiseable to TS subset.
+		return marshal(map[string]interface{}{
+			"type":   "UnsupportedStmt",
+			"line":   line,
+			"col":    col,
+			"reason": fmt.Sprintf("BranchStmt(%s)", tok),
+		})
+
 	default:
 		return marshal(map[string]interface{}{
 			"type":   "UnsupportedStmt",
