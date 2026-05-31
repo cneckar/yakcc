@@ -34,6 +34,7 @@ import type {
   GoAstExpr,
   GoAstForStmt,
   GoAstIfStmt,
+  GoAstIncDecStmt,
   GoAstRangeStmt,
   GoAstStmt,
   GoAstSwitchStmt,
@@ -1001,5 +1002,117 @@ describe("renderBody — compound round-trips (WI-964)", () => {
     };
     const result = renderBody(b);
     expect(result).toBe("  for (const [i, v] of Object.entries(xs)) {\n    return v;\n  }");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #982: IncDecStmt (i++, i--)
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — IncDecStmt (#982)", () => {
+  it("renders i++ as i++", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 1,
+      col: 1,
+      target: "i",
+      op: "++",
+    };
+    expect(renderStmt(stmt)).toBe("  i++;");
+  });
+
+  it("renders i-- as i--", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 1,
+      col: 1,
+      target: "i",
+      op: "--",
+    };
+    expect(renderStmt(stmt)).toBe("  i--;");
+  });
+
+  it("renders j++ (arbitrary variable name)", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 2,
+      col: 4,
+      target: "j",
+      op: "++",
+    };
+    expect(renderStmt(stmt)).toBe("  j++;");
+  });
+
+  it("renders IncDecStmt with custom indent", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 1,
+      col: 1,
+      target: "n",
+      op: "--",
+    };
+    expect(renderStmt(stmt, "    ")).toBe("    n--;");
+  });
+
+  it("IncDecStmt is pure (passes checkBodyPurity)", () => {
+    const b = body([
+      { type: "IncDecStmt", line: 1, col: 1, target: "i", op: "++" } satisfies GoAstIncDecStmt,
+    ]);
+    expect(() => checkBodyPurity(b)).not.toThrow();
+  });
+});
+
+describe("renderBody — compound round-trips for #982 IncDecStmt", () => {
+  it("for-loop with IncDecStmt post (i++) renders correctly", () => {
+    // Simulates: for i := 0; i < n; i++ { ... }
+    // The post statement is an IncDecStmt, which must render without trailing ;
+    // inside the for(...) header.
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "ForStmt",
+          line: 1,
+          col: 2,
+          init: {
+            type: "AssignStmt",
+            line: 1,
+            col: 6,
+            lhs: [ident("i")],
+            rhs: [intLit("0")],
+            tok: ":=",
+          },
+          cond: binExpr("<", ident("i"), ident("n")),
+          post: {
+            type: "IncDecStmt",
+            line: 1,
+            col: 20,
+            target: "i",
+            op: "++",
+          } satisfies GoAstIncDecStmt,
+          body: {
+            stmts: [returnStmt([ident("i")])],
+          },
+        } satisfies GoAstForStmt,
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  for (let i = 0; (i < n); i++) {\n    return i;\n  }");
+  });
+
+  it("standalone i-- statement (not in for-post) renders with semicolon", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "IncDecStmt",
+          line: 1,
+          col: 1,
+          target: "i",
+          op: "--",
+        } satisfies GoAstIncDecStmt,
+        returnStmt([ident("i")]),
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  i--;\n  return i;");
   });
 });

@@ -75,6 +75,7 @@ import type {
   GoAstExpr,
   GoAstForStmt,
   GoAstIfStmt,
+  GoAstIncDecStmt,
   GoAstRangeStmt,
   GoAstStmt,
   GoAstSwitchStmt,
@@ -217,6 +218,11 @@ function checkStmtPurity(stmt: GoAstStmt): void {
         for (const e of c.list) checkExprPurity(e);
         checkBodyNodePurity(c.body);
       }
+      return;
+
+    // #982: IncDecStmt (i++, i--) is a pure mutation of a local numeric variable.
+    // No channel ops, goroutines, or side effects outside the local scope.
+    case "IncDecStmt":
       return;
 
     case "UnsupportedStmt":
@@ -475,6 +481,11 @@ export function renderStmt(stmt: GoAstStmt, indent = "  ", file = "stdin.go"): s
 
     case "SwitchStmt":
       return renderSwitchStmt(stmt, indent, file);
+
+    // #982: IncDecStmt — Go i++/i-- map directly to TS postfix i++/i--.
+    // TS supports postfix increment/decrement natively; round-trip is lossless.
+    case "IncDecStmt":
+      return `${indent}${stmt.target}${stmt.op};`;
 
     case "UnsupportedStmt":
       throw new GoUnsupportedConstructError(stmt.reason, { file, line: stmt.line, col: stmt.col });

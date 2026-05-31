@@ -186,3 +186,74 @@ describe("mapGoType -- generic type parameter passthrough (WI-963)", () => {
     expect(mapGoType("[]bool")).toBe("boolean[]");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #981: named parameters inside func literal types
+// ---------------------------------------------------------------------------
+
+describe("mapGoType -- #981 named parameters in func literal types", () => {
+  it("strips param name from 'func(item T) R' with typeParams {T, R}", () => {
+    const typeParams = new Set(["T", "R"]);
+    const result = mapGoType("func(item T) R", { typeParams });
+    expect(result.tsType).toBe("(a0: T) => R");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("strips param name from 'func(item T, idx int) bool' (Map/Filter iteratee shape)", () => {
+    const typeParams = new Set(["T"]);
+    const result = mapGoType("func(item T, idx int) bool", { typeParams });
+    expect(result.tsType).toBe("(a0: T, a1: number) => boolean");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles samber/lo Map iteratee: func(item T, index int) R", () => {
+    const typeParams = new Set(["T", "R"]);
+    const result = mapGoType("func(item T, index int) R", { typeParams });
+    expect(result.tsType).toBe("(a0: T, a1: number) => R");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles Reduce accumulator: func(agg R, item T, index int) R", () => {
+    const typeParams = new Set(["T", "R"]);
+    const result = mapGoType("func(agg R, item T, index int) R", { typeParams });
+    expect(result.tsType).toBe("(a0: R, a1: T, a2: number) => R");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles Filter predicate: func(item T, index int) bool", () => {
+    const typeParams = new Set(["T"]);
+    const result = mapGoType("func(item T, index int) bool", { typeParams });
+    expect(result.tsType).toBe("(a0: T, a1: number) => boolean");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles named params with slice type: func(collection []T, item T) bool", () => {
+    const typeParams = new Set(["T"]);
+    const result = mapGoType("func(collection []T, item T) bool", { typeParams });
+    expect(result.tsType).toBe("(a0: T[], a1: T) => boolean");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles nested func type in param position: []func(T) R with named outer params", () => {
+    const typeParams = new Set(["T", "R"]);
+    // outer func has a param of type []func(T) R
+    const result = mapGoType("[]func(T) R", { typeParams });
+    expect(result.tsType).toBe("((a0: T) => R)[]");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles unnamed params (no change from current behavior)", () => {
+    const typeParams = new Set(["T", "R"]);
+    const result = mapGoType("func(T) R", { typeParams });
+    expect(result.tsType).toBe("(a0: T) => R");
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("handles variadic func type: func(items ...T) T", () => {
+    const typeParams = new Set(["T"]);
+    // ...T is a variadic — go/ast printer emits "...T" as type string
+    const result = mapGoType("func(items ...T) T", { typeParams });
+    expect(result.tsType).toBe("(a0: T) => T");
+    expect(result.warnings).toHaveLength(0);
+  });
+});
