@@ -582,9 +582,11 @@ describe("renderStmt — RangeStmt (WI-964)", () => {
     expect(result).toBe("  for (const [k, v] of Object.entries(items)) {\n    return v;\n  }");
   });
 
-  it("renders key-only range as for..of Object.keys()", () => {
+  it("renders key-only range as for..in (ForInStatement, #975 round-trip fidelity)", () => {
     const result = renderStmt(makeRangeStmt({ value: null }));
-    expect(result).toBe("  for (const k of Object.keys(items)) {\n    return v;\n  }");
+    // #975: key-only range uses for...in (TS ForInStatement) so compile-go can
+    // emit `for k := range x` without adding a spurious blank `_` prefix.
+    expect(result).toBe("  for (const k in items) {\n    return v;\n  }");
   });
 
   it("renders value-only range (blank key) as for..of Object.values()", () => {
@@ -940,5 +942,64 @@ describe("renderBody — compound round-trips (WI-964)", () => {
       ],
     };
     expect(renderBody(b)).toBe("  return (n >> 2);");
+  });
+
+  // ---------------------------------------------------------------------------
+  // #975: key-only range round-trip fidelity
+  // ---------------------------------------------------------------------------
+
+  it("#975: key-only range (for i := range collection) -> for...in IR", () => {
+    // Simulates: func IndexOf(collection []T, element T) int {
+    //   for i := range collection { if collection[i] == element { return i } }
+    //   return -1
+    // }
+    // The key-only range must emit `for (const i in collection)` (ForInStatement)
+    // so compile-go can reconstruct `for i := range collection` without `_`.
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "RangeStmt",
+          line: 1,
+          col: 2,
+          key: "i",
+          value: null,
+          tok: ":=",
+          x: ident("collection"),
+          body: {
+            stmts: [
+              {
+                type: "ReturnStmt",
+                line: 2,
+                col: 4,
+                results: [ident("i")],
+              },
+            ],
+          },
+        } satisfies GoAstRangeStmt,
+      ],
+    };
+    const result = renderBody(b);
+    // Must use for...in (not Object.keys) for round-trip fidelity
+    expect(result).toBe("  for (const i in collection) {\n    return i;\n  }");
+    expect(result).not.toContain("Object.keys");
+  });
+
+  it("#975: key+value range (for i, v := range xs) -> for...of Object.entries() IR", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "RangeStmt",
+          line: 1,
+          col: 2,
+          key: "i",
+          value: "v",
+          tok: ":=",
+          x: ident("xs"),
+          body: { stmts: [returnStmt([ident("v")])] },
+        } satisfies GoAstRangeStmt,
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  for (const [i, v] of Object.entries(xs)) {\n    return v;\n  }");
   });
 });

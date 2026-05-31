@@ -20,11 +20,13 @@
  *             T[] -> []T, Record<K,V> -> map[K]V, void -> (no return),
  *             any/unknown -> interface{}, generic T -> [T any] constraint
  *     Stmts:  return, if/else, const/let/var -> :=, ExpressionStatement,
- *             switch/case/default (implicit break), for/for-of/while
+ *             switch/case/default (implicit break), for/for-of/while,
+ *             for-in -> range (key-only, #975), for-of Object.entries -> range (#975)
  *     Exprs:  numeric literal, string literal, bool literal, identifier,
  *             BinaryExpr, PrefixUnary (!/-), Call, PropertyAccess (len),
  *             ElementAccess
- *     Fn:     export function name<T,R>(p T, q int): R -> func Name[T,R any](p T, q int) R
+ *     Fn:     export function name<T extends Ordered,R>(p T, q int): R
+ *             -> func Name[T constraints.Ordered, R any](p T, q int) R (#976)
  *
  *   Everything else -> CannotLowerToGoError (loud failure, DEC-WI973-003).
  *
@@ -57,11 +59,114 @@
  *   a group is the one with a non-empty body; its body statements are lowered normally.
  *   Explicit TS `break` statements inside case bodies are dropped since Go does not
  *   need them. `default:` passes through unchanged.
+ *
+ * @decision DEC-POLYGLOT-GO-RANGE-ROUNDTRIP-001 (#975)
+ * @title for...in (ForInStatement) lowered to Go key-only range; Object.entries() to key+value range
+ * @status accepted (#975)
+ * @rationale
+ *   shave-go emits key-only range as TS `for (const k in x)` (ForInStatement) and
+ *   key+value range as `for (const [k, v] of Object.entries(x))` (ForOfStatement).
+ *   This lowerer detects both patterns precisely at the ts-morph AST level — no
+ *   text-pattern matching needed — and emits the correct Go range form in each case.
+ *   Prior to #975, key-only range was emitted as `for (const k of Object.keys(x))`
+ *   which lowerForOf treated as `for _, k := range x` (adding spurious `_` blank).
+ *
+ * @decision DEC-POLYGLOT-GO-CONSTRAINT-ROUNDTRIP-001 (#976)
+ * @title TS `extends Constraint` in type params is reverse-mapped to Go constraint syntax
+ * @status accepted (#976)
+ * @rationale
+ *   shave-go emits `<T extends Ordered>` for `[T constraints.Ordered]` in Go.
+ *   This lowerer reads the ts-morph TypeParameter's constraint node and reverse-maps
+ *   the TS name back to the canonical Go constraint string using TS_CONSTRAINT_TO_GO.
+ *   `GoConstraint_*` prefix names carry encoded tilde type-sets; others are custom
+ *   interfaces passed through verbatim. The prior code emitted `[T any]` for every
+ *   type parameter regardless of constraint, causing functions that use `<` or `>`
+ *   on `T` to fail compilation in Go.
  */
 
 import { CannotLowerToGoError } from "@yakcc/contracts";
-import { type FunctionDeclaration, Node, Project, SyntaxKind, type TypeNode } from "ts-morph";
+import {
+  type ForOfStatement,
+  type FunctionDeclaration,
+  Node,
+  Project,
+  SyntaxKind,
+  type TypeNode,
+  type TypeParameterDeclaration,
+} from "ts-morph";
 import { toGoExportedName, toGoLocalName } from "./names.js";
+
+// ---------------------------------------------------------------------------
+// Constraint back-mapping table (#976, DEC-POLYGLOT-GO-CONSTRAINT-ROUNDTRIP-001)
+//
+// Maps the TS `extends X` name emitted by shave-go back to the canonical Go
+// constraint string.  This is the exact inverse of GO_CONSTRAINT_TO_TS in
+// packages/shave-go/src/raise-function.ts — both tables must stay in sync.
+//
+// Key:   TS extends name (what appears after `extends` in the IR)
+// Value: Go constraint string (what to emit between [ and ] in the type param list)
+// ---------------------------------------------------------------------------
+
+const TS_CONSTRAINT_TO_GO: Readonly<Record<string, string>> = {
+  Ordered: "constraints.Ordered", // golang.org/x/exp/constraints.Ordered
+  Comparable: "comparable", // Go built-in comparable interface
+};
+
+/**
+ * Reverse-map a TS `extends` constraint name to a Go constraint string.
+ *
+ * Handles:
+ *   - Well-known mapped names ("Ordered" -> "constraints.Ordered")
+ *   - GoConstraint_Tilde_SliceOf_T prefix (tilde type-sets)
+ *   - Custom interface names (pass-through verbatim)
+ *   - Empty string / undefined (maps to "any")
+ */
+function tsConstraintToGo(tsConstraint: string | undefined): string {
+  if (!tsConstraint || tsConstraint === "") return "any";
+
+  // Well-known table lookup
+  const mapped = TS_CONSTRAINT_TO_GO[tsConstraint];
+  if (mapped !== undefined) return mapped;
+
+  // GoConstraint_Tilde_SliceOf_T -> ~[]T (decode the encoding from raise-function.ts)
+  if (tsConstraint.startsWith("GoConstraint_Tilde_SliceOf_")) {
+    const typeArg = tsConstraint.slice("GoConstraint_Tilde_SliceOf_".length);
+    return `~[]${typeArg}`;
+  }
+  if (tsConstraint.startsWith("GoConstraint_Tilde_")) {
+    const rest = tsConstraint.slice("GoConstraint_Tilde_".length);
+    return `~${rest}`;
+  }
+  if (tsConstraint.startsWith("GoConstraint_")) {
+    // Unknown GoConstraint_ encoding: strip prefix and pass through
+    return tsConstraint.slice("GoConstraint_".length);
+  }
+
+  // Custom interface or unknown: pass through verbatim
+  return tsConstraint;
+}
+
+/**
+ * Mapping from canonical Go constraint string to the bare package name that
+ * must be added to ctx.importRefs for KNOWN_IMPORT_PATHS resolution.
+ * Only constraints that require a non-stdlib import are listed here.
+ */
+const CONSTRAINT_IMPORT_PKG: Readonly<Record<string, string>> = {
+  "constraints.Ordered": "constraints",
+};
+
+/**
+ * Record any package references needed for constraint import synthesis.
+ * e.g. `constraints.Ordered` requires `import "golang.org/x/exp/constraints"`.
+ * The package name is added to ctx.importRefs; lowerSource resolves it via
+ * KNOWN_IMPORT_PATHS (which includes `constraints` -> `golang.org/x/exp/constraints`).
+ */
+function recordConstraintImport(goConstraint: string, ctx: Ctx): void {
+  const pkg = CONSTRAINT_IMPORT_PKG[goConstraint];
+  if (pkg) {
+    ctx.importRefs.add(pkg);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Import path resolution table (WI-977, DEC-WI977-001)
@@ -97,6 +202,8 @@ const KNOWN_IMPORT_PATHS: Readonly<Record<string, string>> = {
   // golang.org/x/text
   cases: "golang.org/x/text/cases",
   language: "golang.org/x/text/language",
+  // golang.org/x/exp/constraints (#976 — constraint round-trip)
+  constraints: "golang.org/x/exp/constraints",
 };
 
 // ---------------------------------------------------------------------------
@@ -220,8 +327,11 @@ function lowerFunctionDecl(fn: FunctionDeclaration, ctx: Ctx): string[] {
   ctx.typeParams = typeParams;
   ctx.fnName = name;
 
-  // Build type constraint suffix: [T, R any]
-  const typeParamStr = typeParams.length > 0 ? `[${typeParams.join(", ")} any]` : "";
+  // Build type constraint suffix: [T constraints.Ordered, R any] etc.
+  // #976: read the `extends` constraint from each TypeParameter node and
+  // reverse-map to the Go constraint string.
+  const typeParamStr =
+    typeParams.length > 0 ? `[${tpNodes.map((tp) => lowerTypeParam(tp, ctx)).join(", ")}]` : "";
 
   // Parameters: (p1 T, p2 int)
   const params = fn.getParameters().map((p) => {
@@ -249,6 +359,36 @@ function lowerFunctionDecl(fn: FunctionDeclaration, ctx: Ctx): string[] {
   lines.push(...bodyLines);
   lines.push("}");
   return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Type parameter lowering (#976, DEC-POLYGLOT-GO-CONSTRAINT-ROUNDTRIP-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lower a single TS TypeParameter to its Go `Name Constraint` form.
+ *
+ * Reads the `extends` clause (if any) from the TypeParameter node via ts-morph,
+ * reverse-maps the TS constraint name to the canonical Go constraint string,
+ * records any required import (e.g. `constraints`), and returns the Go fragment.
+ *
+ * Examples:
+ *   T (no extends)           -> "T any"
+ *   T extends Ordered        -> "T constraints.Ordered"
+ *   T extends Comparable     -> "T comparable"
+ *   T extends MyInterface    -> "T MyInterface"
+ *   T extends GoConstraint_Tilde_SliceOf_T -> "T ~[]T"
+ */
+function lowerTypeParam(tp: TypeParameterDeclaration, ctx: Ctx): string {
+  const name = tp.getName();
+  const constraintNode = tp.getConstraint();
+  const tsConstraint = constraintNode?.getText() ?? "";
+  const goConstraint = tsConstraintToGo(tsConstraint);
+
+  // Record import for well-known constraint packages
+  recordConstraintImport(goConstraint, ctx);
+
+  return `${name} ${goConstraint}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +434,10 @@ function lowerStatement(node: Node, ctx: Ctx, depth: number): string[] {
 
   if (k === SyntaxKind.ForOfStatement) {
     return lowerForOf(node, ctx, depth);
+  }
+
+  if (k === SyntaxKind.ForInStatement) {
+    return lowerForIn(node, ctx, depth);
   }
 
   if (k === SyntaxKind.ForStatement) {
@@ -401,13 +545,142 @@ function lowerIf(node: Node, ctx: Ctx, depth: number): string[] {
 
 // ---------------------------------------------------------------------------
 // For-of: for (const x of xs) -> for _, x := range xs { ... }
+//         for (const [k, v] of Object.entries(xs)) -> for k, v := range xs { ... }  (#975)
 // ---------------------------------------------------------------------------
+
+/**
+ * Detect whether a ts-morph Node is a call to `Object.entries(expr)`.
+ * Returns the inner iterable expression text if matched, or null.
+ *
+ * @decision DEC-POLYGLOT-GO-RANGE-ROUNDTRIP-001 (#975)
+ * @title Object.entries() callee pattern detection enables key+value range round-trip
+ * @status accepted (#975)
+ * @rationale
+ *   shave-go emits `for (const [k, v] of Object.entries(x))` for Go's key+value range.
+ *   We detect the `Object.entries` callee at the AST level (not via text matching)
+ *   so we can emit `for k, v := range x` preserving both bindings.
+ *   Similarly, `Object.values(x)` is detected for value-only range -> `for _, v := range x`.
+ *   The ForOfStatement without these patterns falls back to the general `for _, v := range`.
+ */
+/** General for-of fallback: for (const x of xs) -> for _, x := range xs */
+function lowerForOfGeneral(fo: ForOfStatement, initDecl: Node, ctx: Ctx, depth: number): string[] {
+  const ind = indent(depth);
+  let varName = "item";
+  if (Node.isVariableDeclarationList(initDecl)) {
+    const decls = initDecl.getDeclarations();
+    const first = decls[0];
+    if (first) varName = toGoLocalName(first.getName());
+  }
+  const iterable = lowerExpr(fo.getExpression(), ctx);
+  const lines: string[] = [`${ind}for _, ${varName} := range ${iterable} {`];
+  const body = fo.getStatement();
+  if (Node.isBlock(body)) {
+    lines.push(...lowerBlock(body.getStatements(), ctx, depth + 1));
+  } else {
+    lines.push(...lowerStatement(body, ctx, depth + 1));
+  }
+  lines.push(`${ind}}`);
+  return lines;
+}
+
+function detectObjectMethod(expr: Node, method: "entries" | "values"): string | null {
+  if (expr.getKind() !== SyntaxKind.CallExpression) return null;
+  const ce = expr.asKindOrThrow(SyntaxKind.CallExpression);
+  const callee = ce.getExpression();
+  if (callee.getKind() !== SyntaxKind.PropertyAccessExpression) return null;
+  const pa = callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
+  if (pa.getName() !== method) return null;
+  const obj = pa.getExpression();
+  if (obj.getKind() !== SyntaxKind.Identifier) return null;
+  if (obj.getText() !== "Object") return null;
+  const args = ce.getArguments();
+  if (args.length !== 1 || !args[0]) return null;
+  return lowerExprText(args[0], {} as Ctx); // get raw text of the iterable
+}
+
+/**
+ * Get the Go expression text for a Node — thin wrapper used only for iterable
+ * extraction where ctx doesn't matter (identifier or dotted path).
+ */
+function lowerExprText(node: Node, ctx: Ctx): string {
+  return lowerExpr(node, ctx);
+}
 
 function lowerForOf(node: Node, ctx: Ctx, depth: number): string[] {
   const fo = node.asKindOrThrow(SyntaxKind.ForOfStatement);
   const initDecl = fo.getInitializer();
   const ind = indent(depth);
+  const iterExpr = fo.getExpression();
 
+  // Detect Object.entries(x) -> for k, v := range x
+  const entriesIterable = detectObjectMethod(iterExpr, "entries");
+  if (entriesIterable !== null) {
+    // Initializer must be a destructuring: const [k, v]
+    let keyName = "_";
+    let valName = "_";
+    if (Node.isVariableDeclarationList(initDecl)) {
+      const decls = initDecl.getDeclarations();
+      const first = decls[0];
+      if (first) {
+        // The binding is an ArrayBindingPattern: [k, v]
+        const nameNode = first.getNameNode();
+        if (nameNode.getKind() === SyntaxKind.ArrayBindingPattern) {
+          const abp = nameNode.asKindOrThrow(SyntaxKind.ArrayBindingPattern);
+          const elements = abp.getElements();
+          const k = elements[0];
+          const v = elements[1];
+          if (k && k.getKind() === SyntaxKind.BindingElement) {
+            keyName = toGoLocalName(k.asKindOrThrow(SyntaxKind.BindingElement).getName());
+          }
+          if (v && v.getKind() === SyntaxKind.BindingElement) {
+            valName = toGoLocalName(v.asKindOrThrow(SyntaxKind.BindingElement).getName());
+          }
+        } else {
+          // Fallback: treat as value name
+          valName = toGoLocalName(first.getName());
+        }
+      }
+    }
+    const entriesCallArgs = iterExpr.asKindOrThrow(SyntaxKind.CallExpression).getArguments();
+    const entriesArg = entriesCallArgs[0];
+    if (!entriesArg) return lowerForOfGeneral(fo, initDecl, ctx, depth); // unreachable: detectObjectMethod checked
+    const iterableStr = lowerExpr(entriesArg, ctx);
+    const lines: string[] = [`${ind}for ${keyName}, ${valName} := range ${iterableStr} {`];
+    const body = fo.getStatement();
+    if (Node.isBlock(body)) {
+      lines.push(...lowerBlock(body.getStatements(), ctx, depth + 1));
+    } else {
+      lines.push(...lowerStatement(body, ctx, depth + 1));
+    }
+    lines.push(`${ind}}`);
+    return lines;
+  }
+
+  // Detect Object.values(x) -> for _, v := range x
+  const valuesIterable = detectObjectMethod(iterExpr, "values");
+  if (valuesIterable !== null) {
+    let varName = "v";
+    if (Node.isVariableDeclarationList(initDecl)) {
+      const decls = initDecl.getDeclarations();
+      const first = decls[0];
+      if (first) varName = toGoLocalName(first.getName());
+    }
+    const valuesCallArgs = iterExpr.asKindOrThrow(SyntaxKind.CallExpression).getArguments();
+    const valuesArg = valuesCallArgs[0];
+    if (!valuesArg) return lowerForOfGeneral(fo, initDecl, ctx, depth); // unreachable: detectObjectMethod checked
+    const iterableStr = lowerExpr(valuesArg, ctx);
+    const lines: string[] = [`${ind}for _, ${varName} := range ${iterableStr} {`];
+    const body = fo.getStatement();
+    if (Node.isBlock(body)) {
+      lines.push(...lowerBlock(body.getStatements(), ctx, depth + 1));
+    } else {
+      lines.push(...lowerStatement(body, ctx, depth + 1));
+    }
+    lines.push(`${ind}}`);
+    return lines;
+  }
+
+  // General for-of: for (const x of xs) -> for _, x := range xs
   let varName = "item";
   if (Node.isVariableDeclarationList(initDecl)) {
     const decls = initDecl.getDeclarations();
@@ -420,6 +693,49 @@ function lowerForOf(node: Node, ctx: Ctx, depth: number): string[] {
   const iterable = lowerExpr(fo.getExpression(), ctx);
   const lines: string[] = [`${ind}for _, ${varName} := range ${iterable} {`];
   const body = fo.getStatement();
+  if (Node.isBlock(body)) {
+    lines.push(...lowerBlock(body.getStatements(), ctx, depth + 1));
+  } else {
+    lines.push(...lowerStatement(body, ctx, depth + 1));
+  }
+  lines.push(`${ind}}`);
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// For-in: for (const k in obj) -> for k := range obj { ... }  (#975)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lower a TS `for...in` statement to Go key-only range.
+ *
+ * TS:   for (const k in items) { body }
+ * Go:   for k := range items { body }
+ *
+ * @decision DEC-POLYGLOT-GO-RANGE-ROUNDTRIP-001 (#975)
+ * @title ForInStatement lowers to Go key-only range without blank `_` prefix
+ * @status accepted (#975)
+ * @rationale
+ *   shave-go emits key-only range as `for (const k in x)` (TS ForInStatement),
+ *   a distinct AST node from ForOfStatement. This handler emits `for k := range x`
+ *   precisely matching the original Go source and avoiding the spurious `_` blank
+ *   that the prior Object.keys() path introduced.
+ */
+function lowerForIn(node: Node, ctx: Ctx, depth: number): string[] {
+  const fi = node.asKindOrThrow(SyntaxKind.ForInStatement);
+  const initDecl = fi.getInitializer();
+  const ind = indent(depth);
+
+  let keyName = "k";
+  if (Node.isVariableDeclarationList(initDecl)) {
+    const decls = initDecl.getDeclarations();
+    const first = decls[0];
+    if (first) keyName = toGoLocalName(first.getName());
+  }
+
+  const iterable = lowerExpr(fi.getExpression(), ctx);
+  const lines: string[] = [`${ind}for ${keyName} := range ${iterable} {`];
+  const body = fi.getStatement();
   if (Node.isBlock(body)) {
     lines.push(...lowerBlock(body.getStatements(), ctx, depth + 1));
   } else {
