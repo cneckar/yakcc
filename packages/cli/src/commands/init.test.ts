@@ -1410,3 +1410,134 @@ describe("init — discovery snippet: yakcc_resolve instruction written to .clau
     expect(snippet?._marker).toBe("yakcc-discovery-v1");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 27: .mcp.json MCP server registration (WI-1005-mcp-init / #1005)
+//
+// Evaluation Contract required behaviour:
+//   EC-MCP-T1: Fresh init --ide claude-code writes .mcp.json with mcpServers.yakcc
+//              entry using npx -y yakcc-mcp-registry.
+//   EC-MCP-T2: Existing .mcp.json with an unrelated server: yakcc entry added,
+//              existing server preserved (merge, not replace).
+//   EC-MCP-T3: Re-running yakcc init is idempotent: .mcp.json not corrupted,
+//              yakcc key written exactly once.
+//   EC-MCP-T4: Compound production sequence — init → hooks install → mcp.json
+//              + settings.json both present in the same run (DEC-CLI-MCP-INIT-001).
+//   EC-MCP-T5: Non-claude-code init (--skip-hooks) does NOT write .mcp.json
+//              (MCP config is Claude Code-specific).
+//
+// @decision DEC-CLI-MCP-INIT-001 — see init.ts claude-code arm for full rationale.
+// ---------------------------------------------------------------------------
+
+function readMcpJson(dir: string): Record<string, unknown> | null {
+  const p = join(dir, ".mcp.json");
+  if (!existsSync(p)) return null;
+  return JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+}
+
+describe("init — .mcp.json MCP server registration (#1005)", () => {
+  // EC-MCP-T1: fresh init writes .mcp.json with mcpServers.yakcc
+  it("fresh init --ide claude-code writes .mcp.json with mcpServers.yakcc using npx", async () => {
+    const code = await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir, runFederation: noOpMirror },
+    );
+    expect(code).toBe(0);
+
+    expect(existsSync(join(tmpDir, ".mcp.json"))).toBe(true);
+    const mcp = readMcpJson(tmpDir);
+    expect(mcp).not.toBeNull();
+    const servers = mcp?.mcpServers as Record<string, unknown> | undefined;
+    expect(servers).toBeDefined();
+    const yakcc = servers?.yakcc as Record<string, unknown> | undefined;
+    expect(yakcc).toBeDefined();
+    expect(yakcc?.command).toBe("npx");
+    expect(Array.isArray(yakcc?.args)).toBe(true);
+    expect((yakcc?.args as string[]).includes("-y")).toBe(true);
+    expect((yakcc?.args as string[]).includes("yakcc-mcp-registry")).toBe(true);
+  });
+
+  // EC-MCP-T2: existing .mcp.json with unrelated server → yakcc entry added, other preserved
+  it("existing .mcp.json with unrelated server: yakcc entry added, existing server preserved", async () => {
+    // Pre-populate .mcp.json with a different server
+    const existing = {
+      mcpServers: {
+        "my-db-tool": { command: "node", args: ["db-mcp.js"] },
+      },
+    };
+    writeFileSyncForPolyglot(join(tmpDir, ".mcp.json"), JSON.stringify(existing, null, 2));
+
+    const code = await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir, runFederation: noOpMirror },
+    );
+    expect(code).toBe(0);
+
+    const mcp = readMcpJson(tmpDir);
+    const servers = mcp?.mcpServers as Record<string, unknown>;
+    // yakcc entry added
+    const yakcc = servers?.yakcc as Record<string, unknown> | undefined;
+    expect(yakcc).toBeDefined();
+    expect(yakcc?.command).toBe("npx");
+    // unrelated server preserved
+    const dbTool = servers?.["my-db-tool"] as Record<string, unknown> | undefined;
+    expect(dbTool).toBeDefined();
+    expect(dbTool?.command).toBe("node");
+  });
+
+  // EC-MCP-T3: idempotent — running init twice does not corrupt .mcp.json
+  it("running init twice does not corrupt .mcp.json (idempotent)", async () => {
+    const opts = { overrideHome: tmpDir, runFederation: noOpMirror };
+    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
+    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), opts);
+
+    const mcp = readMcpJson(tmpDir);
+    const servers = mcp?.mcpServers as Record<string, unknown>;
+    // yakcc key written exactly once (object, not duplicated)
+    expect(typeof servers?.yakcc).toBe("object");
+    // The file must be valid JSON (already parsed above without throw)
+    // mcpServers must have exactly 1 key (no accidental duplication)
+    expect(Object.keys(servers).length).toBe(1);
+  });
+
+  // EC-MCP-T4: compound — .mcp.json AND .claude/settings.json both present
+  it("compound: .mcp.json and .claude/settings.json both written in the same claude-code init", async () => {
+    const fakeHome = join(tmpDir, "fakehome-mcp-compound");
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+
+    const code = await init(["--target", tmpDir, "--no-seed"], new CollectingLogger(), {
+      overrideHome: fakeHome,
+      runFederation: noOpMirror,
+    });
+    expect(code).toBe(0);
+
+    // Both surfaces written
+    expect(existsSync(join(tmpDir, ".mcp.json"))).toBe(true);
+    expect(existsSync(join(tmpDir, ".claude", "settings.json"))).toBe(true);
+
+    // .mcp.json has yakcc entry
+    const mcp = readMcpJson(tmpDir);
+    const yakcc = (mcp?.mcpServers as Record<string, unknown>)?.yakcc as
+      | Record<string, unknown>
+      | undefined;
+    expect(yakcc?.command).toBe("npx");
+
+    // settings.json has PreToolUse hook entry
+    const settings = readSettings(tmpDir);
+    const hooks = settings?.hooks as Record<string, unknown[]> | undefined;
+    expect(Array.isArray(hooks?.PreToolUse)).toBe(true);
+  });
+
+  // EC-MCP-T5: --skip-hooks does NOT write .mcp.json (Claude Code-specific path skipped)
+  it("--skip-hooks does NOT write .mcp.json", async () => {
+    const code = await init(
+      ["--target", tmpDir, "--skip-hooks", "--no-seed"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir, runFederation: noOpMirror },
+    );
+    expect(code).toBe(0);
+    expect(existsSync(join(tmpDir, ".mcp.json"))).toBe(false);
+  });
+});
