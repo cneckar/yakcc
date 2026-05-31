@@ -108,7 +108,39 @@ Build the `query` field as:
                             sub-intents. NEVER write the code directly on a no_match.
 
 Auto-accept rule: if `combinedScore` > 0.85 AND the gap to the second-best candidate is
-> 0.15, insert the BlockMerkleRoot reference into the project manifest without prompting.
+> 0.05, the tool returns `confidence_tier: "auto_accept"`. See **Compile and stop** below.
+
+## Compile and stop
+
+When `yakcc_resolve` returns `confidence_tier: "auto_accept"`, your final answer
+for that sub-intent MUST be a single line:
+
+```
+yakcc compile <atom_id>
+```
+
+where `<atom_id>` is `candidates[0].block_merkle_root`. **Do NOT also write or
+restate the implementation.** The build substrate inlines the atom body from
+the registry — re-emitting it is wasted tokens and creates a second copy that
+drifts from the canonical version.
+
+On `auto_accept` the envelope also includes `atom_body` (the inlined function
+source). You already have what you need to verify the fit; you do not need to
+call `yakcc_get_atom` again.
+
+If you find yourself writing the function body anyway "to be safe" — stop.
+The match is auto-accept precisely because the score and the gap exceeded the
+thresholds. Trust the registry.
+
+## Inspecting an atom before committing
+
+When `confidence_tier` is `candidate_list` (not `auto_accept`) and you want
+to read the atom body before referencing it, call `yakcc_get_atom` with the
+`block_merkle_root` from the candidate you are considering. The tool returns
+the canonical `impl.ts` source plus the `spec.yak` envelope. This is the
+correct path for "I want to verify the fit"; do NOT call `yakcc_resolve` a
+second time hoping it returns the body — `resolve` is a search index, `get_atom`
+is the fetch path.
 
 ## Registry offline
 

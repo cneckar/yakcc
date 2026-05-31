@@ -1549,3 +1549,148 @@ describe("init — .mcp.json MCP server registration (#1005)", () => {
     expect(existsSync(join(tmpDir, ".mcp.json"))).toBe(false);
   });
 });
+
+// Suite 26: CLAUDE.md discovery context injection (WI-1008)
+//
+// DEC-1008-CLAUDE-MD-CONTEXT-INJECT-001: `yakcc init --ide claude-code` must
+// write a CLAUDE.md containing the @-import directive so the 299-line
+// discovery prompt body reaches the LLM context on every session start.
+//
+// Production sequence exercised:
+//   init(--ide claude-code) → hooksClaudeCodeInstall → writeCLaudeMdDiscovery
+//   → CLAUDE.md with sentinel-delimited section containing:
+//       @docs/system-prompts/yakcc-discovery.md
+//
+// Tests:
+//   T1 — fresh init creates CLAUDE.md with managed section + @-import
+//   T2 — existing CLAUDE.md (with user content) is preserved; section appended
+//   T3 — re-running init is idempotent (no duplicate sections)
+//   T4 — compound: CLAUDE.md + settings.json + .yakccrc.json all written in one init
+// ---------------------------------------------------------------------------
+
+describe("init — CLAUDE.md discovery context injection (WI-1008)", () => {
+  function readCLaudeMd(dir: string): string | null {
+    const p = join(dir, "CLAUDE.md");
+    if (!existsSync(p)) return null;
+    return readFileSync(p, "utf-8");
+  }
+
+  // T1: fresh init creates CLAUDE.md with managed section + @-import directive
+  it("fresh init (--ide claude-code) creates CLAUDE.md with @-import for discovery prompt", async () => {
+    const fakeHome = join(tmpDir, "fakehome-claude-md-fresh");
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+
+    const code = await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      { overrideHome: fakeHome, runFederation: noOpMirror },
+    );
+
+    expect(code).toBe(0);
+    const content = readCLaudeMd(tmpDir);
+    expect(content, "CLAUDE.md must be created by yakcc init").not.toBeNull();
+    // Must contain the sentinel markers that delimit the managed section
+    expect(content).toContain("<!-- yakcc-discovery:start -->");
+    expect(content).toContain("<!-- yakcc-discovery:end -->");
+    // Must contain the @-import directive pointing at the canonical prompt
+    expect(content).toContain("@docs/system-prompts/yakcc-discovery.md");
+  });
+
+  // T2: existing CLAUDE.md with user content is preserved; managed section is appended
+  it("existing CLAUDE.md with user content is preserved when managed section is appended", async () => {
+    const fakeHome = join(tmpDir, "fakehome-claude-md-existing");
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+
+    // Write a CLAUDE.md with existing user-owned content
+    const existingContent = "# My Project\n\nSome project-specific instructions.\n";
+    writeFileSyncForPolyglot(join(tmpDir, "CLAUDE.md"), existingContent, "utf-8");
+
+    const code = await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      { overrideHome: fakeHome, runFederation: noOpMirror },
+    );
+
+    expect(code).toBe(0);
+    const content = readCLaudeMd(tmpDir);
+    expect(content, "CLAUDE.md must still exist").not.toBeNull();
+    // User's original content must be preserved verbatim
+    expect(content).toContain("# My Project");
+    expect(content).toContain("Some project-specific instructions.");
+    // Managed section must be appended
+    expect(content).toContain("<!-- yakcc-discovery:start -->");
+    expect(content).toContain("@docs/system-prompts/yakcc-discovery.md");
+  });
+
+  // T3: re-running init is idempotent — no duplicate sections
+  it("re-running init is idempotent: no duplicate managed sections in CLAUDE.md", async () => {
+    const fakeHome = join(tmpDir, "fakehome-claude-md-idempotent");
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+
+    const opts = { overrideHome: fakeHome, runFederation: noOpMirror };
+
+    // Run init twice
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      opts,
+    );
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      new CollectingLogger(),
+      opts,
+    );
+
+    const content = readCLaudeMd(tmpDir);
+    expect(content, "CLAUDE.md must exist after two runs").not.toBeNull();
+
+    // Count sentinel occurrences — must be exactly 1 each
+    const startCount = (content?.match(/<!-- yakcc-discovery:start -->/g) ?? []).length;
+    const endCount = (content?.match(/<!-- yakcc-discovery:end -->/g) ?? []).length;
+    expect(startCount).toBe(1);
+    expect(endCount).toBe(1);
+
+    // @-import must appear exactly once
+    const importCount = (content?.match(/@docs\/system-prompts\/yakcc-discovery\.md/g) ?? [])
+      .length;
+    expect(importCount).toBe(1);
+  });
+
+  // T4 (compound): single init call writes CLAUDE.md + settings.json + .yakccrc.json atomically
+  // This exercises the real production sequence: all three surfaces must be consistent.
+  it("compound: CLAUDE.md + settings.json + .yakccrc.json all written in a single init", async () => {
+    const fakeHome = join(tmpDir, "fakehome-claude-md-compound");
+    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
+
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], logger, {
+      overrideHome: fakeHome,
+      runFederation: noOpMirror,
+    });
+
+    expect(code).toBe(0);
+
+    // Surface 1: CLAUDE.md with @-import directive (context loading)
+    const claudeMd = readCLaudeMd(tmpDir);
+    expect(claudeMd).not.toBeNull();
+    expect(claudeMd).toContain("@docs/system-prompts/yakcc-discovery.md");
+
+    // Surface 2: .claude/settings.json with PreToolUse hook + discovery snippet (hook wiring)
+    const settings = readSettings(tmpDir);
+    expect(settings).not.toBeNull();
+    const hooks = settings?.hooks as Record<string, unknown[]> | undefined;
+    expect(Array.isArray(hooks?.PreToolUse)).toBe(true);
+    const snippet = settings?.["yakcc-discovery"] as Record<string, unknown> | undefined;
+    expect(snippet?._marker).toBe("yakcc-discovery-v1");
+    expect(snippet?.promptRef).toBe("docs/system-prompts/yakcc-discovery.md");
+
+    // Surface 3: .yakccrc.json with mode + installedHooks (registry config)
+    const rc = readRc(tmpDir);
+    expect(rc?.version).toBe(1);
+    expect((rc?.installedHooks as string[]).includes("claude-code")).toBe(true);
+
+    // All three surfaces are written atomically in a single init call —
+    // this is the compound-interaction proof that the real production sequence works.
+    expect(logger.logLines.join("\n")).toContain("Installed in");
+  });
+});
