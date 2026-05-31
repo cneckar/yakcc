@@ -1,0 +1,157 @@
+---
+/**
+ * yakcc.com — landing page
+ *
+ * Slice 2: hero, install one-liner, alpha banner, what-is section,
+ *          current-status, docs links + footer.
+ *
+ * @decision DEC-WEBSITE-DOGFOOD-001
+ * Title: Zero runtime JS until copy-button atom lands (slice 6)
+ * Status: accepted — constraint enforced here
+ * Rationale: Per #922 hard constraint, all runtime JS must be yakcc atoms.
+ * Copy-button island is deferred to slice 6. This page ships zero JS.
+ * No <script> tags. No client:* directives.
+ *
+ * @decision DEC-WEBSITE-001
+ * Title: Astro as SSG, static output
+ * Status: accepted
+ * Rationale: Zero JS by default, TypeScript-native, markdown-friendly.
+ */
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="yakcc — content-addressed atom registry for code reuse across TypeScript, Python, and Go." />
+    <title>yakcc</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+
+    <!-- ===================== HERO ===================== -->
+    <section class="hero">
+      <h1>yakcc</h1>
+      <p class="tagline">
+        Content-addressed atom registry for code reuse.
+        Universalize functions across TypeScript, Python, and Go.
+      </p>
+
+      <!-- Install one-liner: static text, copy with cmd-c/ctrl-c.
+           Copy-button island is deferred to slice 6 per DEC-WEBSITE-DOGFOOD-001. -->
+      <div class="install-block">
+        <pre><code>npm install -g @yakcc/cli@alpha</code></pre>
+        <p class="install-hint">Requires Node 18+. Copy and paste into your terminal.</p>
+      </div>
+    </section>
+
+    <!-- ===================== ALPHA BANNER ===================== -->
+    <div class="alpha-banner" role="note">
+      <strong>Alpha</strong> &mdash; currently
+      <code>@yakcc/cli@0.5.0-alpha.2</code>.
+      This is pre-release software; APIs and atom schema will change before 1.0.&nbsp;
+      <a href="https://github.com/cneckar/yakcc/releases/latest" target="_blank" rel="noopener">
+        View latest GitHub Release &rarr;
+      </a>
+    </div>
+
+    <!-- ===================== WHAT IS YAKCC ===================== -->
+    <section id="what-is-yakcc">
+      <h2>What is yakcc?</h2>
+      <p>
+        yakcc is a content-addressed function-atom registry. Write small pure
+        functions; yakcc shaves them into language-neutral IR atoms keyed by
+        BLAKE3 hash, stores them in a federated registry, and lets you compose
+        programs by reference instead of by bundling. The registry currently
+        supports TypeScript, Python, and Go.
+      </p>
+    </section>
+
+    <!-- ===================== CURRENT STATUS ===================== -->
+    <section id="current-status">
+      <h2>Current status</h2>
+      <p>
+        Honest accounting of what is proven, what is in flight, and what is not
+        yet built.
+      </p>
+
+      <div class="status-grid">
+
+        <div class="status-card working">
+          <h3>Working</h3>
+          <ul>
+            <li>
+              <strong>B6 — air-gap installable:</strong> yakcc installs and runs
+              fully offline after initial fetch.
+            </li>
+            <li>
+              <strong>B7 — zero net network on cold install:</strong> install
+              path makes no unexpected outbound requests.
+            </li>
+            <li>
+              <strong>B10 — import replacement:</strong> <code>yakcc</code>
+              rewrites import paths to atom references end-to-end.
+            </li>
+            <li>
+              <strong>Python adapter:</strong> 9 <code>bs4</code> functions
+              round-trip end-to-end (shave &rarr; IR &rarr; compile-python).
+            </li>
+            <li>
+              <strong>Go adapter:</strong> 51 <code>samber/lo</code> functions
+              round-trip, verified with <code>go build</code>.
+            </li>
+          </ul>
+        </div>
+
+        <div class="status-card in-flight">
+          <h3>In flight</h3>
+          <ul>
+            <li>
+              <strong>B5 coherence</strong> &mdash; below target bar; active
+              measurement work in progress.
+            </li>
+            <li>
+              <strong>Self-shave CI red</strong> &mdash; tracked in
+              <a href="https://github.com/cneckar/yakcc/issues/836">#836</a>.
+              The yakcc-shaves-yakcc loop has a failing test that is not yet
+              resolved.
+            </li>
+            <li>
+              <strong>Discovery MCP hook</strong> &mdash;
+              <a href="https://github.com/cneckar/yakcc/issues/950">#950</a>
+              wires atom discovery into editor hook lifecycle.
+            </li>
+          </ul>
+        </div>
+
+        <div class="status-card not-yet">
+          <h3>Not yet</h3>
+          <ul>
+            <li>
+              <strong>Rust adapter</strong> &mdash; tracked in
+              <a href="https://github.com/cneckar/yakcc/issues/868">#868</a> /
+              <a href="https://github.com/cneckar/yakcc/issues/869">#869</a>.
+            </li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ===================== FOOTER ===================== -->
+    <footer class="site-footer">
+      <a href="https://github.com/cneckar/yakcc" target="_blank" rel="noopener">
+        GitHub
+      </a>
+      <a href="https://github.com/cneckar/yakcc/discussions" target="_blank" rel="noopener">
+        Discussions
+      </a>
+      <a href="https://github.com/cneckar/yakcc/releases/latest" target="_blank" rel="noopener">
+        Releases
+      </a>
+    </footer>
+
+  </body>
+</html>
