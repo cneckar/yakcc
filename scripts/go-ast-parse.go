@@ -285,6 +285,34 @@ func marshalStmt(fset *token.FileSet, stmt ast.Stmt) json.RawMessage {
 		// WI-964: emit structured SwitchStmt node.
 		return marshalSwitchStmt(fset, s, line, col)
 
+	case *ast.IncDecStmt:
+		// #982: emit IncDecStmt wire node for i++/i-- statements.
+		// Only identifier targets are supported in the pure-function subset;
+		// non-identifier targets (e.g. arr[i]++ or a.b++) fall through to
+		// UnsupportedStmt since they imply mutation of complex lvalue paths.
+		target := ""
+		if id, ok := s.X.(*ast.Ident); ok {
+			target = id.Name
+		} else {
+			return marshal(map[string]interface{}{
+				"type":   "UnsupportedStmt",
+				"line":   line,
+				"col":    col,
+				"reason": fmt.Sprintf("IncDecStmt(non-ident target: %T)", s.X),
+			})
+		}
+		op := "++"
+		if s.Tok == token.DEC {
+			op = "--"
+		}
+		return marshal(map[string]interface{}{
+			"type":   "IncDecStmt",
+			"line":   line,
+			"col":    col,
+			"target": target,
+			"op":     op,
+		})
+
 	default:
 		return marshal(map[string]interface{}{
 			"type":   "UnsupportedStmt",

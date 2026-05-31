@@ -34,6 +34,7 @@ import type {
   GoAstExpr,
   GoAstForStmt,
   GoAstIfStmt,
+  GoAstIncDecStmt,
   GoAstRangeStmt,
   GoAstStmt,
   GoAstSwitchStmt,
@@ -582,9 +583,11 @@ describe("renderStmt — RangeStmt (WI-964)", () => {
     expect(result).toBe("  for (const [k, v] of Object.entries(items)) {\n    return v;\n  }");
   });
 
-  it("renders key-only range as for..of Object.keys()", () => {
+  it("renders key-only range as for..in (ForInStatement, #975 round-trip fidelity)", () => {
     const result = renderStmt(makeRangeStmt({ value: null }));
-    expect(result).toBe("  for (const k of Object.keys(items)) {\n    return v;\n  }");
+    // #975: key-only range uses for...in (TS ForInStatement) so compile-go can
+    // emit `for k := range x` without adding a spurious blank `_` prefix.
+    expect(result).toBe("  for (const k in items) {\n    return v;\n  }");
   });
 
   it("renders value-only range (blank key) as for..of Object.values()", () => {
@@ -940,5 +943,176 @@ describe("renderBody — compound round-trips (WI-964)", () => {
       ],
     };
     expect(renderBody(b)).toBe("  return (n >> 2);");
+  });
+
+  // ---------------------------------------------------------------------------
+  // #975: key-only range round-trip fidelity
+  // ---------------------------------------------------------------------------
+
+  it("#975: key-only range (for i := range collection) -> for...in IR", () => {
+    // Simulates: func IndexOf(collection []T, element T) int {
+    //   for i := range collection { if collection[i] == element { return i } }
+    //   return -1
+    // }
+    // The key-only range must emit `for (const i in collection)` (ForInStatement)
+    // so compile-go can reconstruct `for i := range collection` without `_`.
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "RangeStmt",
+          line: 1,
+          col: 2,
+          key: "i",
+          value: null,
+          tok: ":=",
+          x: ident("collection"),
+          body: {
+            stmts: [
+              {
+                type: "ReturnStmt",
+                line: 2,
+                col: 4,
+                results: [ident("i")],
+              },
+            ],
+          },
+        } satisfies GoAstRangeStmt,
+      ],
+    };
+    const result = renderBody(b);
+    // Must use for...in (not Object.keys) for round-trip fidelity
+    expect(result).toBe("  for (const i in collection) {\n    return i;\n  }");
+    expect(result).not.toContain("Object.keys");
+  });
+
+  it("#975: key+value range (for i, v := range xs) -> for...of Object.entries() IR", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "RangeStmt",
+          line: 1,
+          col: 2,
+          key: "i",
+          value: "v",
+          tok: ":=",
+          x: ident("xs"),
+          body: { stmts: [returnStmt([ident("v")])] },
+        } satisfies GoAstRangeStmt,
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  for (const [i, v] of Object.entries(xs)) {\n    return v;\n  }");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #982: IncDecStmt (i++, i--)
+// ---------------------------------------------------------------------------
+
+describe("renderStmt — IncDecStmt (#982)", () => {
+  it("renders i++ as i++", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 1,
+      col: 1,
+      target: "i",
+      op: "++",
+    };
+    expect(renderStmt(stmt)).toBe("  i++;");
+  });
+
+  it("renders i-- as i--", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 1,
+      col: 1,
+      target: "i",
+      op: "--",
+    };
+    expect(renderStmt(stmt)).toBe("  i--;");
+  });
+
+  it("renders j++ (arbitrary variable name)", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 2,
+      col: 4,
+      target: "j",
+      op: "++",
+    };
+    expect(renderStmt(stmt)).toBe("  j++;");
+  });
+
+  it("renders IncDecStmt with custom indent", () => {
+    const stmt: GoAstIncDecStmt = {
+      type: "IncDecStmt",
+      line: 1,
+      col: 1,
+      target: "n",
+      op: "--",
+    };
+    expect(renderStmt(stmt, "    ")).toBe("    n--;");
+  });
+
+  it("IncDecStmt is pure (passes checkBodyPurity)", () => {
+    const b = body([
+      { type: "IncDecStmt", line: 1, col: 1, target: "i", op: "++" } satisfies GoAstIncDecStmt,
+    ]);
+    expect(() => checkBodyPurity(b)).not.toThrow();
+  });
+});
+
+describe("renderBody — compound round-trips for #982 IncDecStmt", () => {
+  it("for-loop with IncDecStmt post (i++) renders correctly", () => {
+    // Simulates: for i := 0; i < n; i++ { ... }
+    // The post statement is an IncDecStmt, which must render without trailing ;
+    // inside the for(...) header.
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "ForStmt",
+          line: 1,
+          col: 2,
+          init: {
+            type: "AssignStmt",
+            line: 1,
+            col: 6,
+            lhs: [ident("i")],
+            rhs: [intLit("0")],
+            tok: ":=",
+          },
+          cond: binExpr("<", ident("i"), ident("n")),
+          post: {
+            type: "IncDecStmt",
+            line: 1,
+            col: 20,
+            target: "i",
+            op: "++",
+          } satisfies GoAstIncDecStmt,
+          body: {
+            stmts: [returnStmt([ident("i")])],
+          },
+        } satisfies GoAstForStmt,
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  for (let i = 0; (i < n); i++) {\n    return i;\n  }");
+  });
+
+  it("standalone i-- statement (not in for-post) renders with semicolon", () => {
+    const b: GoAstBodyNode = {
+      stmts: [
+        {
+          type: "IncDecStmt",
+          line: 1,
+          col: 1,
+          target: "i",
+          op: "--",
+        } satisfies GoAstIncDecStmt,
+        returnStmt([ident("i")]),
+      ],
+    };
+    const result = renderBody(b);
+    expect(result).toBe("  i--;\n  return i;");
   });
 });

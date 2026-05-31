@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AmbiguousPurityError,
+  CannotLowerToGoError,
   CannotLowerToPythonError,
   CannotRaiseToIRError,
   type SourceLocation,
@@ -110,6 +111,60 @@ describe("CannotLowerToPythonError", () => {
 
   it("is distinct from CannotRaiseToIRError via instanceof", () => {
     const err = new CannotLowerToPythonError("SwitchStatement", loc, "switch", undefined);
+    expect(err).not.toBeInstanceOf(CannotRaiseToIRError);
+    expect(err).not.toBeInstanceOf(AmbiguousPurityError);
+  });
+});
+
+describe("CannotLowerToGoError", () => {
+  const loc = { line: 7, column: 2 };
+
+  it("message includes nodeKind, fnName, location, and snippet", () => {
+    const err = new CannotLowerToGoError(
+      "TemplateExpression",
+      loc,
+      "\`Hello, ${name}!\`",
+      "greet",
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(CannotLowerToGoError);
+    expect(err.name).toBe("CannotLowerToGoError");
+    expect(err.message).toBe(
+      "Cannot lower TS-subset IR to Go: TemplateExpression at greet:7:2 \u2014 \`Hello, ${name}!\`",
+    );
+    expect(err.nodeKind).toBe("TemplateExpression");
+    expect(err.location).toEqual(loc);
+    expect(err.snippet).toBe("\`Hello, ${name}!\`");
+    expect(err.fnName).toBe("greet");
+  });
+
+  it("uses <top-level> when fnName is undefined", () => {
+    const err = new CannotLowerToGoError(
+      "SwitchStatement",
+      { line: 1, column: 0 },
+      "switch (x) {",
+      undefined,
+    );
+    expect(err.message).toContain("<top-level>");
+    expect(err.fnName).toBeUndefined();
+  });
+
+  it("is throw/catch usable via instanceof", () => {
+    let caught: unknown = null;
+    try {
+      throw new CannotLowerToGoError("ForInStatement", loc, "for (k in obj)", undefined);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CannotLowerToGoError);
+    if (caught instanceof CannotLowerToGoError) {
+      expect(caught.nodeKind).toBe("ForInStatement");
+    }
+  });
+
+  it("is distinct from CannotLowerToPythonError and CannotRaiseToIRError via instanceof", () => {
+    const err = new CannotLowerToGoError("SwitchStatement", loc, "switch", undefined);
+    expect(err).not.toBeInstanceOf(CannotLowerToPythonError);
     expect(err).not.toBeInstanceOf(CannotRaiseToIRError);
     expect(err).not.toBeInstanceOf(AmbiguousPurityError);
   });

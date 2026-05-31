@@ -292,6 +292,81 @@ describe("renderFunctionDeclaration", () => {
     expect(out).toContain("export function Add(");
   });
 
+  // ---------------------------------------------------------------------------
+  // #976: constraint preservation through shave-go IR
+  // ---------------------------------------------------------------------------
+
+  it("#976: Clamp[T constraints.Ordered] -> <T extends Ordered> in TS IR", () => {
+    const signature = sig({
+      name: "Clamp",
+      typeParams: [{ name: "T", constraint: "constraints.Ordered" }],
+      params: [
+        { name: "value", tsType: "T", goType: "T" },
+        { name: "mIn", tsType: "T", goType: "T" },
+        { name: "mAx", tsType: "T", goType: "T" },
+      ],
+      returnTypes: ["T"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    // Must emit extends Ordered, not bare <T>
+    expect(out).toContain("export function Clamp<T extends Ordered>");
+    expect(out).not.toContain("<T>");
+  });
+
+  it("#976: comparable constraint -> <T extends Comparable>", () => {
+    const signature = sig({
+      name: "IndexOf",
+      typeParams: [{ name: "T", constraint: "comparable" }],
+      params: [
+        { name: "collection", tsType: "T[]", goType: "[]T" },
+        { name: "element", tsType: "T", goType: "T" },
+      ],
+      returnTypes: ["number"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    expect(out).toContain("<T extends Comparable>");
+  });
+
+  it("#976: any constraint -> bare <T> (no extends clause)", () => {
+    const signature = sig({
+      name: "Identity",
+      typeParams: [{ name: "T", constraint: "any" }],
+      params: [{ name: "x", tsType: "T", goType: "T" }],
+      returnTypes: ["T"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    // `any` maps to empty string -> no extends clause
+    expect(out).toContain("<T>");
+    expect(out).not.toContain("extends");
+  });
+
+  it("#976: custom interface constraint -> extends CustomInterface verbatim", () => {
+    const signature = sig({
+      name: "Process",
+      typeParams: [{ name: "T", constraint: "MyInterface" }],
+      params: [{ name: "x", tsType: "T", goType: "T" }],
+      returnTypes: ["T"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    expect(out).toContain("<T extends MyInterface>");
+  });
+
+  it("#976: tilde type-set ~[]T -> GoConstraint_ encoded form", () => {
+    const signature = sig({
+      name: "Reverse",
+      typeParams: [
+        { name: "T", constraint: "any" },
+        { name: "Slice", constraint: "~[]T" },
+      ],
+      params: [{ name: "collection", tsType: "Slice", goType: "Slice" }],
+      returnTypes: ["Slice"],
+    });
+    const out = renderFunctionDeclaration(signature, emptyBody());
+    // T any -> <T>, Slice ~[]T -> <Slice extends GoConstraint_Tilde_SliceOf_T>
+    expect(out).toContain("T,");
+    expect(out).toContain("extends GoConstraint_Tilde_SliceOf_T");
+  });
+
   it("WI-963: compound end-to-end — func Map[T, R any](s []T, f func(T) R) []R raised from envelope", () => {
     // This test exercises the real production sequence:
     //   envelope (wire shape from go-ast-parse.go)
