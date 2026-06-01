@@ -201,15 +201,64 @@ async function getRegistry(registryPath) {
 }
 
 /**
- * Materialize the full assembled source for an atom from its block_merkle_root.
+ * Resolve a possibly-short atom_id to a unique full 64-char BlockMerkleRoot.
+ *
+ * Mirrors packages/mcp-registry/src/tools/compile.ts `resolveAtomId`
+ * (DEC-1028-COMPILE-FULL-ROOTS-001): enumerates the FULL registry block set
+ * via enumerateSpecs() → selectBlocks() and prefix-matches the short id.
+ *
+ * @decision DEC-BENCH-B4-V5-SHORTID-RESOLVE-001
+ * @title materializeAtomSource short-id → full-root resolution before assemble()
+ * @status accepted
+ * @rationale
+ *   yakcc_resolve returns 8-char atom_id prefixes (short ids) in its candidates
+ *   envelope. When the hooked arm calls materializeAtomSource with that short id,
+ *   assemble() cannot locate the block (it needs the full 64-char root). The fix
+ *   mirrors compile.ts WI-1028: enumerate the FULL registry root set and
+ *   prefix-match. Unique match → resolved full root. Zero/ambiguous → clear error.
+ *   One authority: the registry's own block set (no seed-only fallback).
+ *
+ * @param {import("../../../packages/registry/dist/index.js").Registry} registry
+ *   An already-open registry instance (from getRegistry()).
+ * @param {string} shortId  A non-64-char prefix (e.g. 8-char crc32c short id).
+ * @returns {Promise<{kind: "full", root: string} | {kind: "not_found"} | {kind: "ambiguous", matches: string[]}>}
+ */
+async function resolveShortId(registry, shortId) {
+  const prefix = shortId.toLowerCase();
+  // Enumerate the FULL registry block root set (DEC-1028-COMPILE-FULL-ROOTS-001).
+  // Same pattern as packages/mcp-registry/src/tools/compile.ts:186-191
+  // and packages/registry/src/rebuild.ts:104-112.
+  const specHashes = await registry.enumerateSpecs();
+  const fullRoots = [];
+  for (const sh of specHashes) {
+    const roots = await registry.selectBlocks(sh);
+    for (const root of roots) fullRoots.push(root);
+  }
+
+  const matches = fullRoots.filter((r) => r.startsWith(prefix));
+
+  if (matches.length === 0) return { kind: "not_found" };
+  if (matches.length > 1) return { kind: "ambiguous", matches };
+  return { kind: "full", root: matches[0] };
+}
+
+/**
+ * Materialize the full assembled source for an atom from its block_merkle_root
+ * or a short 8-char prefix id.
  *
  * Uses the REAL @yakcc/compile assemble() — the same DFS resolver that
  * yakcc_compile and `yakcc build` use.  This is the authoritative oracle path
  * for auto_accept: it verifies the resolved atom's materialized impl passes the
  * task oracle, proving the reference-emit substitution is semantically correct.
  *
+ * Accepts either:
+ *   - A full 64-char BlockMerkleRoot (passed straight through to assemble())
+ *   - A short id (8+ chars, non-64): resolved to the full root via the registry's
+ *     FULL block set (enumerateSpecs → selectBlocks, prefix-match).
+ *     Mirrors the production short-id resolution in compile.ts (WI-1028).
+ *
  * @param {string} registryPath  Absolute path to the registry SQLite file.
- * @param {string} atomRoot      The 64-char block_merkle_root (full root).
+ * @param {string} atomRoot      64-char BlockMerkleRoot OR short 8-char prefix id.
  * @returns {Promise<{source: string} | {error: string, failure_class: string}>}
  */
 export async function materializeAtomSource(registryPath, atomRoot) {
@@ -234,9 +283,31 @@ export async function materializeAtomSource(registryPath, atomRoot) {
     const compileDist = join(REPO_ROOT, "packages", "compile", "dist");
     const { assemble } = await import(new URL(`file://${join(compileDist, "assemble.js")}`).href);
 
-    // assemble() needs the full 64-char root; short IDs need to be resolved first.
-    // For the bench oracle, candidates[0].root from yakcc_resolve is always the full root.
-    const root = atomRoot.toLowerCase();
+    // Resolve short id → full 64-char root before calling assemble().
+    // assemble() requires the full BlockMerkleRoot; passing a short id silently
+    // produces a not-found error (0/0 oracle result).
+    //
+    // Resolution: if atomRoot is already 64 chars, use it directly.
+    // Otherwise, enumerate the full registry block set and prefix-match
+    // (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001, mirrors compile.ts WI-1028).
+    let root = atomRoot.toLowerCase();
+
+    if (root.length < 64) {
+      const resolved = await resolveShortId(registry, root);
+      if (resolved.kind === "not_found") {
+        return {
+          error: `Short id not found in registry: ${root}`,
+          failure_class: "atom_fetch_failed",
+        };
+      }
+      if (resolved.kind === "ambiguous") {
+        return {
+          error: `Short id is ambiguous (${resolved.matches.length} matches): ${root}`,
+          failure_class: "atom_fetch_failed",
+        };
+      }
+      root = resolved.root;
+    }
 
     const artifact = await assemble(root, registry);
     return { source: artifact.source };

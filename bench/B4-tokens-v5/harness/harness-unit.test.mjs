@@ -541,3 +541,90 @@ describe('OFFLINE SANITY PROOF: materializeAtomSource → oracle for crc32c (no 
     ).toBe(true);
   }, 30_000);
 });
+
+// ─── SHORT-ID RESOLUTION PROOF (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001) ─────────
+//
+// Required evidence: materializeAtomSource(corpus, short_crc32c_id) resolves the
+// short id to the full root and returns source passing the crc32c oracle.
+//
+// This is the production-path fix: yakcc_resolve returns 8-char short ids in its
+// candidates envelope. Before this fix, passing a short id to materializeAtomSource
+// caused assemble() to fail silently (0/0). After the fix, the short id is resolved
+// to the full 64-char root via the registry's full block set before assemble() is called.
+//
+// Production sequence exercised (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001):
+//   1. yakcc_resolve returns auto_accept with candidates[0].atom_id = 'f0834da0' (8-char)
+//   2. Hooked arm calls materializeAtomSource(corpusPath, 'f0834da0')
+//   3. materializeAtomSource detects short id (length < 64), calls resolveShortId()
+//   4. resolveShortId enumerates full registry → prefix-match → unique full root
+//   5. assemble(fullRoot, registry) → source
+//   6. runOracle('crc32c', source) → oracle_passed = true
+
+// The 8-char short id is the first 8 chars of CRC32C_CORPUS_ROOT (f0834da0...).
+// In production, yakcc_resolve returns this as candidates[0].atom_id.
+const CRC32C_SHORT_ID = CRC32C_CORPUS_ROOT.slice(0, 8); // 'f0834da0'
+
+describe('SHORT-ID RESOLUTION PROOF: materializeAtomSource(short_id) → oracle (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001)', () => {
+  it('short crc32c id resolves to full root and assembles without error', async () => {
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+
+    // Step 1: call materializeAtomSource with the 8-char short id (the production input)
+    const result = await materializeAtomSource(BENCH_CORPUS, CRC32C_SHORT_ID);
+
+    // The resolution must succeed: no error
+    expect(result.error, `short-id resolution failed: ${result.error}`).toBeUndefined();
+    expect(typeof result.source).toBe('string');
+    expect(result.source.length).toBeGreaterThan(0);
+
+    // The materialized source must be identical to what the full-root path produces
+    // (content-addressed: same root → same source).
+    const fullRootResult = await materializeAtomSource(BENCH_CORPUS, CRC32C_CORPUS_ROOT);
+    expect(fullRootResult.error).toBeUndefined();
+    expect(result.source).toBe(fullRootResult.source);
+  }, 30_000);
+
+  it('short crc32c id materializes source that passes the crc32c oracle (compound production sequence)', async () => {
+    // This is the compound-interaction test required by the evaluation contract:
+    // it crosses short-id resolution, assemble(), and the oracle in one sequence.
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+
+    // Step 1–4: resolve short id → full root → assemble (the production short-id path)
+    const result = await materializeAtomSource(BENCH_CORPUS, CRC32C_SHORT_ID);
+    expect(result.error, `materialize(short_id) failed: ${result.error}`).toBeUndefined();
+
+    // Step 5: run the crc32c oracle on the materialized source
+    const { runOracle } = await import(new URL(`file://${join(__dirname, 'oracle-runner.mjs')}`).href);
+    const oracle = await runOracle('crc32c', result.source);
+
+    // Well-formed oracle result
+    expect(typeof oracle.oracle_passed).toBe('boolean');
+    expect(typeof oracle.oracle_pass_count).toBe('number');
+    expect(typeof oracle.oracle_total).toBe('number');
+    expect(Array.isArray(oracle.oracle_failures)).toBe(true);
+
+    // THE KEY PROOF: short-id resolution → assemble → oracle must pass.
+    // Before the fix: assemble() received a short id → not_found → 0/0.
+    // After the fix: resolved to full root → correct assembly → oracle passes.
+    expect(
+      oracle.oracle_passed,
+      `crc32c oracle failed via short id '${CRC32C_SHORT_ID}' (${oracle.oracle_pass_count}/${oracle.oracle_total}): ${JSON.stringify(oracle.oracle_failures)}`
+    ).toBe(true);
+  }, 30_000);
+
+  it('materializeAtomSource returns not_found for a short id with no match', async () => {
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+    // '00000000' is guaranteed not to prefix-match any real atom root
+    const result = await materializeAtomSource(BENCH_CORPUS, '00000000');
+    expect(result.error).toMatch(/Short id not found in registry/);
+    expect(result.failure_class).toBe('atom_fetch_failed');
+  }, 30_000);
+});
