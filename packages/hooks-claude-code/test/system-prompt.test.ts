@@ -167,7 +167,9 @@ describe("score bands and auto-accept rule", () => {
   it("documents the auto-accept rule with both conditions", () => {
     expect(prompt).toMatch(/auto.accept|auto accept/i);
     expect(prompt).toMatch(/0\.85/);
-    expect(prompt).toMatch(/0\.15/);
+    // #1029 revised the gap threshold from 0.15 to 0.05 (and added the 0.92 high-confidence
+    // override that waives the gap entirely). Verify the current rule is present.
+    expect(prompt).toMatch(/0\.05|0\.92/);
   });
 });
 
@@ -182,5 +184,28 @@ describe("ADR authority line", () => {
 
   it("references the WI-578 revision decision record", () => {
     expect(prompt).toContain("DEC-WI578");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Forceful substitution directive (#1030 / DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001)
+// ---------------------------------------------------------------------------
+
+describe("forceful substitution directive (WI-1030)", () => {
+  it("frames re-implementation as a protocol violation", () => {
+    // The B4-v5 validated wording that flipped all 6 hooked cells.
+    expect(prompt).toContain("protocol violation");
+  });
+
+  it("instructs writing the compiled source verbatim", () => {
+    expect(promptLower).toContain("verbatim");
+  });
+
+  it("carries the DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001 annotation", () => {
+    expect(prompt).toContain("DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001");
+  });
+
+  it("provides an explicit Do NOT list for the compile path", () => {
+    expect(prompt).toMatch(/Do NOT/);
   });
 });
