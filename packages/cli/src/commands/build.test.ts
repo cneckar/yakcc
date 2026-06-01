@@ -38,6 +38,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   addReference,
   emptyManifest,
+  materializedDtsPath,
   materializedModulePath,
   serializeProjectManifest,
 } from "@yakcc/compile";
@@ -298,5 +299,152 @@ describe("build — EC-2: oracle check (materialized module executes correctly)"
     const atomPath = join(projectRoot, materializedModulePath(ASCII_CHAR_ALIAS));
     const materializedSource = readFileSync(atomPath, "utf-8");
     expect(materializedSource).toBe(directSource);
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// #1046 EC-DTS-1: .d.ts is emitted alongside the .ts, is non-empty, and
+//   contains the correct export declare function signature.
+// ---------------------------------------------------------------------------
+
+describe("build — #1046 EC-DTS-1: .d.ts emitted alongside .ts", () => {
+  it("emits .yakcc/atoms/<alias>.d.ts after build", async () => {
+    const logger = new CollectingLogger();
+    const code = await build(["--registry", registryPath, projectRoot], logger, {
+      embeddings: offlineEmbeddings,
+    });
+    expect(code).toBe(0);
+
+    // The .d.ts must exist at the path materializedDtsPath() designates.
+    const dtsPath = join(projectRoot, materializedDtsPath(ASCII_CHAR_ALIAS));
+    expect(existsSync(dtsPath)).toBe(true);
+
+    const dtsText = readFileSync(dtsPath, "utf-8");
+
+    // Non-empty.
+    expect(dtsText.length).toBeGreaterThan(0);
+
+    // Must contain the export declare function for the bound symbol "asciiChar".
+    // The exact declaration is produced by generateAtomDts() from the SpecYak.
+    expect(dtsText).toContain("export declare function asciiChar(");
+
+    // Must mention the DEC-COMPOSE-BY-REF-DTS-001 decision (header comment).
+    expect(dtsText).toContain("DEC-COMPOSE-BY-REF-DTS-001");
+
+    // Log line must announce both .ts and .d.ts emission.
+    expect(logger.logLines.join("\n")).toContain(".ts + .d.ts");
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// #1046 EC-DTS-2 (acceptance crux): a reference consumer typechecks with
+//   ONLY the .d.ts present — no .ts impl.
+//
+// Production sequence:
+//   1. yakcc_reference emits `import { asciiChar } from ".yakcc/atoms/<alias>"`
+//   2. Project typechecks BEFORE `yakcc build` has materialised the .ts impl
+//   3. .d.ts from `yakcc build` is the only artefact → tsc must find zero errors
+//
+// Strategy: run build to obtain the .d.ts, then copy it to a temp dir WITHOUT
+// the .ts counterpart, write a consumer source, and run the TypeScript
+// programmatic API (createProgram) asserting zero diagnostics.
+// Mirror of the EC-5 pattern from packages/compile/src/atom-dts.test.ts.
+// ---------------------------------------------------------------------------
+
+describe("build — #1046 EC-DTS-2: no-impl reference typecheck proof", () => {
+  it("reference consumer typechecks against the generated .d.ts with NO .ts impl present", async () => {
+    // Step 1: run build to produce the .d.ts.
+    const logger = new CollectingLogger();
+    const code = await build(["--registry", registryPath, projectRoot], logger, {
+      embeddings: offlineEmbeddings,
+    });
+    expect(code).toBe(0);
+
+    // Step 2: read the generated .d.ts.
+    const dtsPath = join(projectRoot, materializedDtsPath(ASCII_CHAR_ALIAS));
+    expect(existsSync(dtsPath)).toBe(true);
+    const dtsText = readFileSync(dtsPath, "utf-8");
+
+    // Step 3: set up a temp dir with ONLY the .d.ts — no .ts impl.
+    const tmpBase = join(__dirname, "../../../../tmp");
+    mkdirSync(tmpBase, { recursive: true });
+    const typeCheckDir = mkdtempSync(join(tmpBase, "build-dts-typecheck-"));
+
+    try {
+      const isolatedDtsPath = join(typeCheckDir, `${ASCII_CHAR_ALIAS}.d.ts`);
+      writeFileSync(isolatedDtsPath, dtsText, "utf-8");
+
+      // Step 4: write a consumer that uses the declared symbol.
+      // The import path mirrors how reference source looks after yakcc_reference.
+      const consumerSrc = [
+        `import { asciiChar } from "./${ASCII_CHAR_ALIAS}";`,
+        `const c: string = asciiChar("hello", 0);`,
+        "void c;",
+      ].join("\n");
+      const consumerPath = join(typeCheckDir, "consumer.ts");
+      writeFileSync(consumerPath, consumerSrc, "utf-8");
+
+      // Step 5: run the TypeScript compiler API — no .ts impl in scope, only .d.ts.
+      const program = ts.createProgram([consumerPath, isolatedDtsPath], {
+        noEmit: true,
+        strict: true,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+        skipLibCheck: false,
+      });
+
+      const diagnostics = ts.getPreEmitDiagnostics(program);
+
+      // Step 6: assert zero errors — the .d.ts alone is sufficient to typecheck.
+      if (diagnostics.length > 0) {
+        const messages = ts
+          .formatDiagnosticsWithColorAndContext(diagnostics, {
+            getCanonicalFileName: (f) => f,
+            getCurrentDirectory: () => typeCheckDir,
+            getNewLine: () => "\n",
+          })
+          .trim();
+        throw new Error(
+          `Expected zero TypeScript diagnostics (no-impl reference typecheck), but got:\n${messages}`,
+        );
+      }
+
+      expect(diagnostics.length).toBe(0);
+    } finally {
+      try {
+        rmSync(typeCheckDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal cleanup.
+      }
+    }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// #1046 EC-DTS-3: idempotency — .d.ts is byte-identical across two build runs.
+// Mirrors the EC-3 idempotency test for the .ts file.
+// ---------------------------------------------------------------------------
+
+describe("build — #1046 EC-DTS-3: .d.ts idempotency", () => {
+  it("idempotent: running build twice yields byte-identical .yakcc/atoms/<alias>.d.ts", async () => {
+    const logger1 = new CollectingLogger();
+    const code1 = await build(["--registry", registryPath, projectRoot], logger1, {
+      embeddings: offlineEmbeddings,
+    });
+    expect(code1).toBe(0);
+
+    const dtsPath = join(projectRoot, materializedDtsPath(ASCII_CHAR_ALIAS));
+    const firstRun = readFileSync(dtsPath, "utf-8");
+    expect(firstRun.length).toBeGreaterThan(0);
+
+    const logger2 = new CollectingLogger();
+    const code2 = await build(["--registry", registryPath, projectRoot], logger2, {
+      embeddings: offlineEmbeddings,
+    });
+    expect(code2).toBe(0);
+
+    const secondRun = readFileSync(dtsPath, "utf-8");
+    expect(secondRun).toBe(firstRun);
   }, 60_000);
 });
