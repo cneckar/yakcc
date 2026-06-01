@@ -119,6 +119,18 @@ const HYBRID_AUTO_ACCEPT_THRESHOLD = 0.85;
  */
 const AUTO_ACCEPT_GAP_THRESHOLD = 0.05;
 
+/**
+ * High-confidence auto-accept override: when top score exceeds this, gap rule
+ * is waived. Per #1029 (B4-v5 rerun): real corpora cluster semantic neighbors
+ * tightly, so a 0.95 top-1 correct match can land in candidate_list when the
+ * 2nd-best is within 0.05. The flow rule "drop the gap requirement when top
+ * is very strong" exists precisely for this case.
+ *
+ * Source: #1029 issue body recommendation.
+ * Cross-reference: DEC-1029-HIGH-CONF-OVERRIDE-001.
+ */
+const HIGH_CONFIDENCE_THRESHOLD = 0.92;
+
 // ---------------------------------------------------------------------------
 // Public IntentCard input shape (minimal subset for MCP surface)
 // ---------------------------------------------------------------------------
@@ -150,13 +162,19 @@ type ConfidenceTier = "auto_accept" | "candidate_list" | "no_candidates";
 /**
  * Map a ResolveResult's candidates to one of three D4 ADR Q5 confidence tiers.
  *
- * auto_accept:    top score > HYBRID_AUTO_ACCEPT_THRESHOLD (0.85)
- *                 AND gap to second candidate > AUTO_ACCEPT_GAP_THRESHOLD (0.05)
+ * auto_accept:    top score > HIGH_CONFIDENCE_THRESHOLD (0.92), gap waived
+ *                 OR top score > HYBRID_AUTO_ACCEPT_THRESHOLD (0.85)
+ *                    AND gap to second candidate > AUTO_ACCEPT_GAP_THRESHOLD (0.05)
  * candidate_list: has candidates but not auto_accept
  * no_candidates:  no candidates after full merge
  *
  * This logic is the MCP adapter's responsibility (D4 ADR Q5 "hybrid" mode).
  * yakccResolve returns the raw status + candidates; the adapter maps to tiers.
+ *
+ * #1029: high-confidence override added. Real corpora cluster semantic neighbors
+ * tightly (gap < 0.05 common even for clearly-correct top-1), so strong matches
+ * were getting suppressed into candidate_list and the compile-and-stop flow never
+ * fired. The override lets very high top-1 scores commit unconditionally.
  */
 function deriveConfidenceTier(candidates: readonly EvidenceProjection[]): ConfidenceTier {
   if (candidates.length === 0) {
@@ -168,6 +186,11 @@ function deriveConfidenceTier(candidates: readonly EvidenceProjection[]): Confid
   const topScore = top.score;
   const secondScore = candidates[1]?.score ?? 0;
   const gap = topScore - secondScore;
+
+  // #1029: high-confidence override — drop the gap requirement when top is very strong.
+  if (topScore > HIGH_CONFIDENCE_THRESHOLD) {
+    return "auto_accept";
+  }
 
   if (topScore > HYBRID_AUTO_ACCEPT_THRESHOLD && gap > AUTO_ACCEPT_GAP_THRESHOLD) {
     return "auto_accept";
