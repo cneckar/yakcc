@@ -16,7 +16,10 @@ export default {
     testTimeout: 60_000,
     isolate: true,
     pool: "forks",
-    include: ["bench/B4-tokens-v5/reference-emit/measure.test.mjs"],
+    include: [
+      "bench/B4-tokens-v5/reference-emit/measure.test.mjs",
+      "bench/B4-tokens-v5/reference-emit/paid-experiment.test.mjs",
+    ],
     environment: "node",
     reporter: ["verbose"],
   },
