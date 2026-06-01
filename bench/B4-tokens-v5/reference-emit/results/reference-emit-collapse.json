@@ -1,0 +1,144 @@
+{
+  "atoms": [
+    {
+      "atomId": "crc32c",
+      "symbol": "CRC32C",
+      "root": "406d30eb907a054f5b5f37e80086b0f3fa25c1a7cd78c631f8ed5f50cfd6a537",
+      "importLine": "import { CRC32C } from \".yakcc/atoms/406d30eb907a\";",
+      "dtsPath": ".yakcc/atoms/406d30eb907a.d.ts",
+      "verbatim": {
+        "chars": 1233,
+        "tokens": 309
+      },
+      "reference": {
+        "chars": 51,
+        "tokens": 13
+      },
+      "dts": {
+        "chars": 272,
+        "tokens": 68,
+        "path": ".yakcc/atoms/406d30eb907a.d.ts"
+      },
+      "collapseRatio": 23.76923076923077
+    },
+    {
+      "atomId": "utf8-codec",
+      "symbol": "Utf8Codec",
+      "root": "ff7a1a62f8c1728bbc76efc6d54c705e1221e7d085cf1f91cfcbeb9db65f863c",
+      "importLine": "import { Utf8Codec } from \".yakcc/atoms/ff7a1a62f8c1\";",
+      "dtsPath": ".yakcc/atoms/ff7a1a62f8c1.d.ts",
+      "verbatim": {
+        "chars": 3105,
+        "tokens": 777
+      },
+      "reference": {
+        "chars": 54,
+        "tokens": 14
+      },
+      "dts": {
+        "chars": 275,
+        "tokens": 69,
+        "path": ".yakcc/atoms/ff7a1a62f8c1.d.ts"
+      },
+      "collapseRatio": 55.5
+    },
+    {
+      "atomId": "base32-rfc4648",
+      "symbol": "Base32Codec",
+      "root": "8005b57d903d9f8d156e8b1d3b8f3ade8e31943239f48012ba08f7031c24e75f",
+      "importLine": "import { Base32Codec } from \".yakcc/atoms/8005b57d903d\";",
+      "dtsPath": ".yakcc/atoms/8005b57d903d.d.ts",
+      "verbatim": {
+        "chars": 2081,
+        "tokens": 521
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "dts": {
+        "chars": 277,
+        "tokens": 70,
+        "path": ".yakcc/atoms/8005b57d903d.d.ts"
+      },
+      "collapseRatio": 37.214285714285715
+    },
+    {
+      "atomId": "lru-ttl-cache",
+      "symbol": "LRUTTLCache",
+      "root": "d1f2af8fa19c256fdac7916f60f52e1ee2ca7e0ac6f8d0ac55af30419aea4240",
+      "importLine": "import { LRUTTLCache } from \".yakcc/atoms/d1f2af8fa19c\";",
+      "dtsPath": ".yakcc/atoms/d1f2af8fa19c.d.ts",
+      "verbatim": {
+        "chars": 4407,
+        "tokens": 1102
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "dts": {
+        "chars": 277,
+        "tokens": 70,
+        "path": ".yakcc/atoms/d1f2af8fa19c.d.ts"
+      },
+      "collapseRatio": 78.71428571428571
+    },
+    {
+      "atomId": "semver-range",
+      "symbol": "SemVerRange",
+      "root": "ff40ae2d5899bb5f287427050ee0257ff04a9d3df84710adeec2d80171fd0899",
+      "importLine": "import { SemVerRange } from \".yakcc/atoms/ff40ae2d5899\";",
+      "dtsPath": ".yakcc/atoms/ff40ae2d5899.d.ts",
+      "verbatim": {
+        "chars": 3777,
+        "tokens": 945
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "dts": {
+        "chars": 277,
+        "tokens": 70,
+        "path": ".yakcc/atoms/ff40ae2d5899.d.ts"
+      },
+      "collapseRatio": 67.5
+    },
+    {
+      "atomId": "ring-buffer",
+      "symbol": "RingBuffer",
+      "root": "385cf658bbd3e57c546082a97c996ca0c0b972da2a70c4dc94cb320b6dc4f0f7",
+      "importLine": "import { RingBuffer } from \".yakcc/atoms/385cf658bbd3\";",
+      "dtsPath": ".yakcc/atoms/385cf658bbd3.d.ts",
+      "verbatim": {
+        "chars": 2132,
+        "tokens": 533
+      },
+      "reference": {
+        "chars": 55,
+        "tokens": 14
+      },
+      "dts": {
+        "chars": 276,
+        "tokens": 69,
+        "path": ".yakcc/atoms/385cf658bbd3.d.ts"
+      },
+      "collapseRatio": 38.07142857142857
+    }
+  ],
+  "aggregate": {
+    "totalVerbatimChars": 16735,
+    "totalReferenceChars": 328,
+    "totalVerbatimTokens": 4187,
+    "totalReferenceTokens": 83,
+    "corpusCollapseRatio": 50.44578313253012,
+    "meanRatio": 50.12820512820513,
+    "medianRatio": 46.785714285714285,
+    "minRatio": 23.76923076923077,
+    "maxRatio": 78.71428571428571,
+    "n": 6
+  },
+  "tokenHeuristic": "tokens = ceil(chars / 4) — standard rough heuristic; ratio is robust to tokenizer choice",
+  "measuredAt": "2026-06-01T11:28:28.139Z"
+}
