@@ -17,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { BlockMerkleRoot } from "@yakcc/contracts";
 import { describe, expect, it } from "vitest";
 import {
   PROJECT_MANIFEST_PATH,
@@ -29,7 +30,6 @@ import {
   referenceImportLine,
   serializeProjectManifest,
 } from "./project-manifest.js";
-import type { BlockMerkleRoot } from "@yakcc/contracts";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -46,9 +46,9 @@ function fakeRoot(char: string): BlockMerkleRoot {
 /** A fixture root that starts with 'a' repeated 12 times, then diverges. */
 const ROOT_A = ("a".repeat(12) + "b".repeat(52)) as BlockMerkleRoot;
 /** A fixture root that shares 12-char prefix with ROOT_A but differs at char 13. */
-const ROOT_A_COLLISION = ("a".repeat(12) + "c" + "b".repeat(51)) as BlockMerkleRoot;
+const ROOT_A_COLLISION = `${"a".repeat(12)}c${"b".repeat(51)}` as BlockMerkleRoot;
 /** A root with a completely different prefix. */
-const ROOT_B = ("b".repeat(64)) as BlockMerkleRoot;
+const ROOT_B = "b".repeat(64) as BlockMerkleRoot;
 
 // ---------------------------------------------------------------------------
 // emptyManifest
@@ -233,7 +233,7 @@ describe("parseProjectManifest — rejection", () => {
           root,
           symbol: "x",
           alias,
-          importPath: `.yakcc/atoms/WRONG`,
+          importPath: ".yakcc/atoms/WRONG",
           registry: "local",
           version: null,
         },
@@ -321,7 +321,14 @@ describe("serializeProjectManifest", () => {
     const obj = JSON.parse(text) as Record<string, unknown>;
     expect(Object.keys(obj)).toEqual(["version", "references"]);
     const ref = (obj.references as unknown[])[0] as Record<string, unknown>;
-    expect(Object.keys(ref)).toEqual(["root", "symbol", "alias", "importPath", "registry", "version"]);
+    expect(Object.keys(ref)).toEqual([
+      "root",
+      "symbol",
+      "alias",
+      "importPath",
+      "registry",
+      "version",
+    ]);
   });
 });
 
@@ -432,9 +439,9 @@ describe("addReference — alias collision extension", () => {
   it("triple collision: three roots sharing 12-char prefix all get distinct aliases", () => {
     // All three share the same first 12 chars but diverge at position 12, 13, 14.
     const prefix12 = "abcdef012345";
-    const rootX = (prefix12 + "0" + "f".repeat(51)) as BlockMerkleRoot;
-    const rootY = (prefix12 + "1" + "f".repeat(51)) as BlockMerkleRoot;
-    const rootZ = (prefix12 + "2" + "f".repeat(51)) as BlockMerkleRoot;
+    const rootX = `${prefix12}0${"f".repeat(51)}` as BlockMerkleRoot;
+    const rootY = `${prefix12}1${"f".repeat(51)}` as BlockMerkleRoot;
+    const rootZ = `${prefix12}2${"f".repeat(51)}` as BlockMerkleRoot;
 
     const { manifest: m1 } = addReference(emptyManifest(), { root: rootX, symbol: "x" });
     const { manifest: m2 } = addReference(m1, { root: rootY, symbol: "y" });
@@ -445,8 +452,12 @@ describe("addReference — alias collision extension", () => {
     // All aliases must be unique
     expect(new Set(aliases).size).toBe(3);
     // All must be prefixes of their respective roots
-    expect(rootX.startsWith(m3.references[0]!.alias)).toBe(true);
-    expect(rootY.startsWith(m3.references[1]!.alias)).toBe(true);
+    const refX = m3.references[0];
+    const refY = m3.references[1];
+    expect(refX).toBeDefined();
+    expect(refY).toBeDefined();
+    expect(rootX.startsWith(refX?.alias ?? "")).toBe(true);
+    expect(rootY.startsWith(refY?.alias ?? "")).toBe(true);
     expect(rootZ.startsWith(refZ.alias)).toBe(true);
   });
 });
@@ -477,7 +488,7 @@ describe("referenceImportLine", () => {
     expect(line).toBe(`import { crc32c } from ".yakcc/atoms/${ROOT_A.slice(0, 12)}";`);
   });
 
-  it("matches the format: import { <symbol> } from \"<importPath>\"", () => {
+  it('matches the format: import { <symbol> } from "<importPath>"', () => {
     const { reference } = addReference(emptyManifest(), {
       root: ROOT_B,
       symbol: "parseInt",
@@ -562,8 +573,13 @@ describe("compound production sequence: build manifest → serialize → parse �
     expect(loaded.references).toHaveLength(2);
 
     // Step 5: #1047 MCP tool computes the import lines for the model to emit
-    const line1 = referenceImportLine(loaded.references[0]!);
-    const line2 = referenceImportLine(loaded.references[1]!);
+    const loadedRef1 = loaded.references[0];
+    const loadedRef2 = loaded.references[1];
+    if (loadedRef1 === undefined || loadedRef2 === undefined) {
+      throw new Error("Expected 2 loaded references");
+    }
+    const line1 = referenceImportLine(loadedRef1);
+    const line2 = referenceImportLine(loadedRef2);
 
     expect(line1).toBe(`import { crc32c } from "${ref1.importPath}";`);
     expect(line2).toBe(`import { utf8Encode } from "${ref2.importPath}";`);

@@ -269,10 +269,7 @@ export function emptyManifest(): ProjectManifest {
  * Alias uniqueness is per-reference, not per-root. Two imports of different symbols
  * from the same atom each get a unique import path, keeping the alias namespace flat.
  */
-function computeAlias(
-  root: BlockMerkleRoot,
-  takenAliases: ReadonlySet<string>,
-): string {
+function computeAlias(root: BlockMerkleRoot, takenAliases: ReadonlySet<string>): string {
   for (let len = DEFAULT_ALIAS_LENGTH; len <= root.length; len++) {
     const candidate = root.slice(0, len);
     if (!takenAliases.has(candidate)) {
