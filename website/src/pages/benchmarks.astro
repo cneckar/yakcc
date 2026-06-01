@@ -194,32 +194,41 @@ const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }>
     <header class="hero">
       <h1>Benchmarks</h1>
       <p class="lead">
-        Eight properties of the yakcc paradigm and what the evidence shows.
-        Every claim cites real measurement data; results that are partial,
-        in flight, or pending are shown as such.
+        Ten properties of the yakcc paradigm and what the evidence shows for
+        each. <strong>Click any section to expand its full detail</strong>
+        (problem statement, what yakcc changes, real-data infographic).
+        Inside each section, click the infographic to open it at full size.
+      </p>
+      <p class="lead-honest">
+        Every claim cites real measurement data; results that are partial, in
+        flight, or pending are shown as such.
       </p>
     </header>
 
     {sections.map((s) => (
-      <section id={s.id} class="bench-section">
-        <h2>{s.title}</h2>
-        <div class="grid">
-          <div class="prose">
-            <p class="problem">{s.problem}</p>
-            <p class="claim"><strong>What yakcc changes:</strong> {s.yakccClaim}</p>
-            <p class="evidence">{s.evidence}</p>
-            {s.inFlight && (
-              <p class="in-flight">
-                <strong>In flight:</strong> {s.inFlight.note}{" "}
-                <a href={s.inFlight.issue} target="_blank" rel="noopener">Tracking issue &rarr;</a>
-              </p>
-            )}
-          </div>
+      <details id={s.id} class="bench-section">
+        <summary>
+          <span class="bench-title">{s.title}</span>
+          <span class="bench-chevron" aria-hidden="true">+</span>
+        </summary>
+        <div class="bench-body">
+          <p class="problem">{s.problem}</p>
+          <p class="claim"><strong>What yakcc changes:</strong> {s.yakccClaim}</p>
+          <p class="evidence">{s.evidence}</p>
+          {s.inFlight && (
+            <p class="in-flight">
+              <strong>In flight:</strong> {s.inFlight.note}{" "}
+              <a href={s.inFlight.issue} target="_blank" rel="noopener">Tracking issue &rarr;</a>
+            </p>
+          )}
           <figure class="infographic">
-            <img src={s.svg} alt={s.alt} loading="lazy" />
+            <a href={s.svg} target="_blank" rel="noopener" title="Click to open at full size">
+              <img src={s.svg} alt={s.alt} loading="lazy" />
+            </a>
+            <figcaption class="infographic-hint">Click image to open at full size in a new tab</figcaption>
           </figure>
         </div>
-      </section>
+      </details>
     ))}
 
     <hr />
@@ -266,48 +275,95 @@ const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }>
     }
     .hero .lead {
       font-size: 1.05rem;
+      color: var(--color-text);
+      max-width: 700px;
+      margin-bottom: 1rem;
+    }
+    .hero .lead strong {
+      color: var(--color-accent);
+    }
+    .hero .lead-honest {
+      font-size: 0.9rem;
       color: var(--color-text-muted);
-      max-width: 640px;
+      max-width: 700px;
       margin-bottom: 3rem;
     }
 
+    /* Each section is a disclosure widget. Collapsed by default so the page
+     * loads as a scannable list of problem-framed callouts; click to expand
+     * the full detail (prose + infographic). Pure HTML5 <details>/<summary>,
+     * zero runtime JS required, dogfood gate untouched. */
     .bench-section {
-      margin: 4rem 0;
-      padding-top: 1rem;
+      margin: 0.6rem 0;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
       scroll-margin-top: 2rem;
+      overflow: hidden;
+      transition: border-color 0.15s, background 0.15s;
     }
-    .bench-section h2 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      letter-spacing: -0.01em;
-      line-height: 1.3;
-      color: var(--color-text);
-      margin-bottom: 1.5rem;
-      padding-bottom: 0;
-      border-bottom: none;
-      max-width: 920px;
+    .bench-section:hover {
+      border-color: var(--color-accent-dim);
+    }
+    .bench-section[open] {
+      background: var(--color-bg);
+      border-color: var(--color-accent-dim);
     }
 
-    /* Vertical stack: prose first (narrow, optimized for reading) then
-     * full-width infographic below. The earlier 2-column layout squeezed
-     * the SVGs to ~870px, making embedded text unreadable. */
-    .prose {
-      max-width: 720px;
-      margin-bottom: 2rem;
+    /* Summary is the always-visible callout. Native disclosure marker
+     * hidden in favor of a custom +/− chevron on the right. */
+    .bench-section summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 1rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      user-select: none;
     }
-    .prose p {
+    .bench-section summary::-webkit-details-marker {
+      display: none;
+    }
+    .bench-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1.35;
+      color: var(--color-text);
+    }
+    .bench-chevron {
+      font-size: 1.4rem;
+      font-weight: 400;
+      color: var(--color-text-muted);
+      width: 1.5rem;
+      text-align: center;
+      flex-shrink: 0;
+      transition: transform 0.18s, color 0.15s;
+    }
+    .bench-section[open] .bench-chevron {
+      transform: rotate(45deg);
+      color: var(--color-accent);
+    }
+
+    /* Expanded body: full prose + full-width infographic. */
+    .bench-body {
+      padding: 0 1.25rem 1.5rem;
+      border-top: 1px solid var(--color-border);
+    }
+    .bench-body p {
       font-size: 0.95rem;
       line-height: 1.65;
       color: var(--color-text);
-      margin-bottom: 0.9rem;
+      margin: 1rem 0 0.9rem;
+      max-width: 720px;
     }
-    .prose .problem {
+    .bench-body .problem {
       color: var(--color-text-muted);
     }
-    .prose .claim strong {
+    .bench-body .claim strong {
       color: var(--color-accent);
     }
-    .prose .evidence {
+    .bench-body .evidence {
       font-size: 0.85rem;
       color: var(--color-text-muted);
       font-family: var(--font-mono);
@@ -316,8 +372,9 @@ const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }>
       border-left: 3px solid var(--color-accent);
       border-radius: 0 4px 4px 0;
       margin-top: 1rem;
+      max-width: 720px;
     }
-    .prose .in-flight {
+    .bench-body .in-flight {
       font-size: 0.85rem;
       color: #e3b341;
       background: var(--color-warning-bg);
@@ -325,29 +382,37 @@ const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }>
       border-radius: 4px;
       padding: 0.6rem 0.85rem;
       margin-top: 1rem;
+      max-width: 720px;
     }
-    .prose .in-flight a {
+    .bench-body .in-flight a {
       color: #f0c147;
       font-weight: 600;
     }
 
     .infographic {
-      margin: 0;
+      margin: 1.5rem 0 0;
       background: #fafafa;
       border: 1px solid var(--color-border);
       border-radius: 8px;
       padding: 1rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    }
+    .infographic a {
+      display: block;
+      cursor: zoom-in;
+      text-decoration: none;
     }
     .infographic img {
       width: 100%;
       height: auto;
       display: block;
-      /* Cap so the SVG renders close to its native size on huge displays
-       * without becoming wider than the content column. */
       max-width: 100%;
+    }
+    .infographic-hint {
+      font-size: 0.78rem;
+      color: var(--color-text-muted);
+      text-align: center;
+      margin-top: 0.6rem;
+      font-style: italic;
     }
 
     hr {
