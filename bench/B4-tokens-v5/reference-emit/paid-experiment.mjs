@@ -223,30 +223,43 @@ export function buildVerbatimMessage(artifacts) {
 }
 
 /**
- * Build the user message for the REFERENCE condition.
+ * Build the user message for the REFERENCE condition (apply-mode).
  *
- * Simulates: .yakcc/manifest.json is present + yakcc_reference returned artifacts.
- * The system prompt Section A instructs: write only the import line, append manifest
- * entry, write dts — do NOT write the implementation body.
- * Expected model output: import line + brief notes (~10–15 tokens of real content).
+ * Simulates: .yakcc/manifest.json is present + yakcc_reference called with project_root
+ * (apply-mode). The tool ALREADY recorded the manifest entry to .yakcc/manifest.json and
+ * wrote the .d.ts to .yakcc/atoms/<alias>.d.ts as side effects (applied: true).
+ * The system prompt Section A instructs: write ONLY the import_line — the tool did the rest.
+ * Expected model output: ~14 tokens (the import line only, no manifest JSON, no .d.ts, no prose).
+ *
+ * @decision DEC-BENCH-B4-REFEMIT-PAID-001 continued
+ * @rationale
+ *   apply-mode (#1062b, DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001) removes the manifest-entry
+ *   append and .d.ts write from the model's task. The tool applies them as side effects when
+ *   project_root is passed. The experiment message must reflect this: the model receives only
+ *   the import_line from the tool response and writes only that.
  *
  * @param {AtomArtifacts} artifacts
  * @returns {string}
  */
 export function buildReferenceMessage(artifacts) {
-  const { task, importLine, dtsContent, dtsPath, manifestEntry } = artifacts;
+  const { task, importLine } = artifacts;
   const description = task.description ?? task.id;
+  // apply-mode tool result — ONLY import_line is returned (applied: true)
+  // manifest_entry and dts_ref are NOT in the apply-mode response (tool handled them)
   const referenceToolResult = JSON.stringify({
-    manifest_entry: manifestEntry,
     import_line: importLine,
-    dts_ref: { path: dtsPath, dts: dtsContent },
+    applied: true,
+    manifest_path: ".yakcc/manifest.json",
+    dts_path: `.yakcc/atoms/${importLine.match(/atoms\/([^'"`\s]+)/)?.[1] ?? "alias"}.d.ts`,
   }, null, 2);
   return (
     `This project is configured for compose-by-reference (\`.yakcc/manifest.json\` is present). ` +
     `You called yakcc_resolve for «${description}» and got confidence_tier auto_accept. ` +
-    `You then called yakcc_reference and received:\n\n` +
+    `You then called yakcc_reference({ atom_id, project_root }) in apply-mode. ` +
+    `The tool ALREADY recorded the manifest entry to .yakcc/manifest.json and wrote the .d.ts — ` +
+    `you do NOT need to write those. The tool returned:\n\n` +
     `${referenceToolResult}\n\n` +
-    `Complete the task now.`
+    `Complete the task now. Write ONLY the import_line: \`${importLine}\``
   );
 }
 

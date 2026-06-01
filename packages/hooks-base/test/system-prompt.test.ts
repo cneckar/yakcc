@@ -248,31 +248,52 @@ describe("compose-by-reference reference-emit path (WI-1048)", () => {
     expect(promptText).toMatch(/import_line/);
   });
 
-  it("instructs recording manifest_entry", () => {
+  it("references manifest_entry (appears in decision comments and legacy sequence)", () => {
+    // manifest_entry still appears in the prompt inside the decision annotations
+    // and the legacy (non-apply) sequence block for reference; it is NOT a model
+    // write instruction in Section A post-apply-mode.
     expect(promptText).toMatch(/manifest_entry/);
   });
 
-  it("references dts_ref (the path field returned by yakcc_reference)", () => {
-    // The prompt references dts_ref as a field in the yakcc_reference result —
-    // the model uses dts_ref.path as a reference only; it MUST NOT write the file.
+  it("references dts_ref (appears in decision comments and legacy sequence)", () => {
+    // dts_ref still appears in the prompt inside decision annotations and the
+    // legacy non-apply sequence block; the model MUST NOT write it in either path.
     expect(promptText).toMatch(/dts_ref/);
   });
 
   it("instructs NOT writing the .d.ts (yakcc build generates it)", () => {
     // #1062 fix: yakcc build (#1046) generates the .d.ts from the manifest;
-    // the model must not emit it. Both a forbid-write directive and a
-    // reference to yakcc build must be present.
+    // apply-mode writes it as a side effect; the model must not emit it.
     expect(promptText).toMatch(/MUST NOT write the \.d\.ts|do NOT write it.*yakcc build|yakcc build.*generates/i);
   });
 
   it("contains a terseness directive forbidding narration on the reference path", () => {
     // #1062 fix: ~300–500 tokens of narration dominated the #1061 paid run.
     // The prompt must explicitly forbid narration/prose/commentary.
-    expect(promptText).toMatch(/MUST NOT narrate|no narration|do not narrate|Emit ONLY these/i);
+    expect(promptText).toMatch(/MUST NOT narrate|no narration|do not narrate|Emit ONLY/i);
   });
 
   it("forbids writing the atom implementation body on reference path (imperative)", () => {
     expect(promptText).toMatch(/You MUST NOT write the atom/);
+  });
+
+  it("instructs apply-mode: pass project_root to yakcc_reference so the tool records the manifest", () => {
+    // #1062b (DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001): the model passes project_root
+    // to yakcc_reference; the tool writes the manifest entry + .d.ts as side effects.
+    expect(promptText).toMatch(/project_root/);
+    expect(promptText).toMatch(/applied.*true|apply.mode|side.effect/i);
+  });
+
+  it("forbids the model from appending the manifest entry (tool already applied it)", () => {
+    // apply-mode: tool records manifest_entry when applied:true; model MUST NOT
+    // append it again (would create duplicate). Assert the directive is present.
+    expect(promptText).toMatch(/MUST NOT append the manifest entry/);
+  });
+
+  it("describes exactly ONE write operation on the reference path (the import_line)", () => {
+    // apply-mode reduces the model's task to exactly one write: the import_line.
+    // The prompt must describe this single-write constraint.
+    expect(promptText).toMatch(/exactly ONE write|ONE write operation|one.*write.*import_line|write.*only the.*import.line/i);
   });
 
   it("preserves the verbatim yakcc_compile fallback path for non-reference projects", () => {
