@@ -545,6 +545,304 @@ type, failure-mode shapes, and D4/D5 boundary are all unchanged. Only the
 
 ---
 
+### Q10: Compose-by-reference emit path on strong match (2026-06-01)
+
+**Decision:** When `.yakcc/manifest.json` is present at the project root
+(indicating the project is wired for `yakcc build`), on `auto_accept` the model
+MUST call `yakcc_reference` (not `yakcc_compile`) and write only the returned
+`import_line` (~10 tokens). The verbatim `yakcc_compile` path from Q9/#1030
+remains valid for projects not wired for compose-by-reference.
+
+**Detection signal:** `.yakcc/manifest.json` presence at project root. This file
+is created when the project adopts compose-by-reference (#1044). Its presence is
+the unambiguous signal that `yakcc build` is wired and will materialize atom
+implementations at build time.
+
+**What changed:**
+
+The Q9 directive (#1030) mandated: `yakcc_resolve → auto_accept →
+yakcc_compile → Write(source verbatim)`. The B4-v5 rerun (#1041) proved this
+path is token-negative: writing `yakcc_compile`'s returned source (~370 tokens)
+equals re-authoring the implementation. The reference-emit path collapses that
+to ~10 tokens (the import line alone).
+
+The revised two-branch directive (as of this WI, issue #1048) adds a detection
+gate before the Q9 sequence:
+
+1. **Reference path** (`.yakcc/manifest.json` present — preferred, token-savings):
+   - Call `yakcc_reference({ atom_id: candidates[0].atom_id })` — NOT `yakcc_compile`.
+   - Write the returned `import_line` verbatim to the target file.
+   - Append the returned `manifest_entry` to the `references` array in
+     `.yakcc/manifest.json`.
+   - Write the returned `dts_ref.dts` to `dts_ref.path` (enables typecheck before build).
+   - You MUST NOT write the atom's implementation body. `yakcc build` materializes it.
+
+2. **Verbatim path** (`.yakcc/manifest.json` absent — fallback, existing Q9 behaviour):
+   - Call `yakcc_compile({ atom_id })` and write the returned `source` verbatim.
+   - The Q9 "protocol violation" framing for re-implementation remains fully in force.
+
+**Token rationale (#1041):**
+- Verbatim path: ~370 output tokens (the full implementation body).
+- Reference path: ~10 output tokens (one import line).
+- Savings: ~360 tokens per `auto_accept` hit on a reference-wired project.
+- This is the empirical motivation documented in #1041 that justifies the
+  reference-emit path as the preferred fork rather than a suggestion.
+
+**Relationship to prior Q-sections:**
+- Branches from Q9/#1030: the verbatim `yakcc_compile` directive is preserved
+  as the fallback; it is NOT deleted or superseded for non-reference projects.
+- Coexists with #1029 (auto_accept tier): the detection gate fires AFTER
+  `auto_accept` is confirmed; the `confidence_tier` semantics and score bands
+  are unchanged.
+- References the `yakcc_reference` MCP tool introduced by #1047
+  (DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001).
+
+**Invariants verified (DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001):**
+- `grep -c "yakcc_reference" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "manifest.json" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "import_line" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "manifest_entry" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "dts_ref" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "You MUST NOT write the atom" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- The Section B verbatim path (yakcc_compile) still exists exactly once.
+- `grep -c "You SHOULD consider\|Try to\|When possible\|Reserve hand-written code"` = 0
+
+**What is NOT changed:** Q1–Q9 substantive decisions remain in force. The
+two-branch detection gate does not alter tool-call shape, evidence rendering
+contract, 4-band protocol, `status` enum, `ConfidenceMode` type, failure-mode
+shapes, or D4/D5 boundary. The Q9 verbatim `yakcc_compile` path is preserved as
+the fallback for all non-reference-wired projects.
+
+**Rollback:** `git revert` the WI-1048 landing commit. The prompt file reverts
+to the Q9/single-path form; Section A is removed; Section B reverts to the flat
+verbatim directive.
+
+**Issue:** https://github.com/cneckar/yakcc/issues/1048
+**Decision ID:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001
+**Date:** 2026-06-01
+
+---
+
+### Q11: Reference-emit output minimization — terse, no model-written .d.ts (2026-06-01)
+
+**Decision:** Revise Section A of `docs/system-prompts/yakcc-discovery.md` so
+the model emits ONLY two artifacts on the reference path (import line + manifest
+entry), tersely, with no narration. The model MUST NOT write the `.d.ts` file —
+`yakcc build` (#1046) generates `.yakcc/atoms/<alias>.d.ts` from the manifest.
+
+**New decision ID:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001
+**Issue:** https://github.com/cneckar/yakcc/issues/1062
+**Refines:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001 (#1048, Q10)
+**Date:** 2026-06-01
+
+**Empirical basis — #1061 paid run:**
+
+The #1061 paid run measured reference-mode output at ~430–635 tokens versus the
+idealized ~14-token import line, yielding only 1.3–6× collapse rather than the
+expected ~30×. Token breakdown:
+
+| component            | tokens (approx) |
+|----------------------|-----------------|
+| import line          | ~14             |
+| manifest entry       | ~40             |
+| `.d.ts` content      | ~68             |
+| narration/prose      | ~300–500        |
+| **total**            | **~430–635**    |
+
+Two defects in the #1048 Section A caused this:
+
+1. **Redundant `.d.ts` write (step 4):** The old Section A instructed the model
+   to "Write the returned `dts_ref.dts` to `dts_ref.path` so the import
+   typechecks before `yakcc build` runs." But `yakcc build` (#1046) already
+   generates `.yakcc/atoms/<alias>.d.ts` from the manifest automatically —
+   the model-emitted `.d.ts` was entirely redundant output (~68 tokens).
+
+2. **Narration invited by numbered steps:** The "Step by step — you MUST follow
+   all four steps" structure trained the model to narrate each step
+   ("I will now complete Step 1… Step 2…"), dominating the output with
+   ~300–500 tokens of prose that carried zero semantic value.
+
+**What changed (as of this WI, issue #1062):**
+
+1. The four-step sequence is collapsed to two write operations + an explicit
+   stop instruction.
+2. The `.d.ts` step is removed entirely. The `dts_ref` field is explicitly
+   labelled "for your reference only — do NOT write it; yakcc build generates
+   it."
+3. A direct terseness directive is added:
+   > "Emit ONLY these two artifacts. You MUST NOT narrate the steps, explain
+   > what you are doing, or add any prose or commentary — the discovery work
+   > is done; output only the import line and the manifest entry. Narration
+   > is wasted output."
+4. An explicit directive added: "You MUST NOT write the `.d.ts` file. …
+   Emitting the `.d.ts` yourself is a protocol violation equivalent to
+   emitting the implementation body."
+
+**Token savings (measured — #1061 paid re-run, $0.44, 32 cells, 100% behavioral compliance):**
+- Pre-fix reference output: ~430–635 tokens (narration + .d.ts + import + manifest)
+- Post-fix reference output: **~139–288 tokens** (Sonnet: 139–170; Haiku: 227–288),
+  scaling with atom size
+- Measured collapse: **2.7–19.4×** vs pre-fix baseline — large atoms with Sonnet
+  reach 19.4× (avl-tree) and 17.1× (dijkstra-heap); Haiku large atoms ~5–12×;
+  small atoms (crc32c) ~2.7–3.3×
+- The model still emits minor framing prose alongside the manifest entry, so output
+  does NOT reach the idealized floor of ~54 tokens (import line ~14 + manifest entry
+  ~40). That idealized floor is a structural lower bound, not the achieved result.
+- The remaining lever toward the ~30×+ structural target is moving the manifest-entry
+  append into the `yakcc_reference` tool itself, so the model writes only the import
+  line (~14 tokens). That is deferred to a follow-up WI.
+
+**Relationship to prior Q-sections:**
+- Refines Q10/#1048: Section A is updated; Section B (verbatim `yakcc_compile`
+  fallback) is fully preserved — untouched.
+- Q9/#1030 forceful substitution directive: unchanged and still in force.
+- Q8/#578 imperative descent-and-compose discipline: unchanged.
+- The `dts_ref` field is still DESCRIBED in the prompt (the model receives it
+  from `yakcc_reference`) — only the write instruction is removed.
+
+**Invariants verified (DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001):**
+- `grep -c "MUST NOT write the .d.ts\|do NOT write it\|yakcc build.*generates" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -ci "MUST NOT narrate\|Emit ONLY these\|no narration\|do not narrate" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "dts_ref" docs/system-prompts/yakcc-discovery.md` ≥ 1 (field still referenced)
+- `grep -c "You MUST NOT write the atom" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- Section B verbatim path (`yakcc_compile`) still exists exactly once.
+- `grep -c "You SHOULD consider\|Try to\|When possible"` = 0 (no soft phrases)
+
+**What is NOT changed:** Q1–Q10 substantive decisions remain in force. The
+tool-call shape, evidence rendering contract, 4-band protocol, `status` enum,
+`ConfidenceMode` type, failure-mode shapes, and D4/D5 boundary are all unchanged.
+The `dts_ref` field in the `yakcc_reference` return shape is unchanged (D5/tool
+layer). Only the model's write instructions in Section A are updated.
+
+**Rollback:** `git revert` the WI-1062 landing commit. Section A reverts to the
+Q10/four-step form with the `.d.ts` write instruction.
+
+---
+
+### Q12: apply-mode — manifest+dts written by tool, model writes only import_line (2026-06-01)
+
+**Decision:** Revise Section A of `docs/system-prompts/yakcc-discovery.md` so
+the model passes `project_root` to `yakcc_reference`, which applies the manifest
+entry and `.d.ts` as side effects, then writes ONLY the returned `import_line`
+(~14 tokens). The manifest-entry append and `.d.ts` write are removed from the
+model's task entirely.
+
+**New decision ID:** DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001
+**Issue:** https://github.com/cneckar/yakcc/issues/1062
+**Refines:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001 (Q11/#1062)
+**Date:** 2026-06-01
+
+**Context — Q11 post-fix measurements (#1061 paid re-run):**
+
+After Q11 removed the `.d.ts` write and the narration invitation, reference-mode
+output fell to ~139–288 tokens. Token breakdown of the remaining output:
+
+| component            | tokens (approx) |
+|----------------------|-----------------|
+| import line          | ~14             |
+| manifest entry JSON  | ~40             |
+| framing/prose        | ~85–234         |
+| **total**            | **~139–288**    |
+
+The manifest-entry append (step 3 of Q11 Section A) accounted for ~40 tokens of
+deterministic JSON that the tool already computed. Both the manifest-entry JSON
+and the surrounding framing were model output that carried no semantic value —
+the tool had already computed all of this. The structural floor (import line
+only) was ~14 tokens.
+
+**What changed (as of this WI, DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001 / part 2 of #1062):**
+
+1. `yakcc_reference` now accepts an optional `project_root` parameter (apply-mode,
+   implemented in `packages/mcp-registry/src/tools/reference.ts`). When present:
+   - The tool reads `<project_root>/.yakcc/manifest.json` via `parseProjectManifest`
+     (or starts from `emptyManifest()` if absent).
+   - Calls `addReference(existingManifest, {root, symbol})` — idempotent on re-apply;
+     re-applying the same atom does not create a duplicate manifest entry.
+   - Writes the updated manifest back via `serializeProjectManifest`.
+   - Writes the `.d.ts` via `generateAtomDts(spec, symbol)` to
+     `materializedDtsPath(alias)` under `project_root`.
+   - Returns ONLY `{ atom_id, root, import_line, applied: true, manifest_path, dts_path }`.
+   When `project_root` is absent, the full legacy artifact is returned unchanged
+   (`applied: false`) — backward-compatible for non-apply callers.
+
+2. Section A of `docs/system-prompts/yakcc-discovery.md` is revised so the
+   correct sequence is:
+   - Call `yakcc_reference({ atom_id, project_root })` — ONE tool call.
+   - Write the returned `import_line` verbatim — ONE write.
+   - STOP. The manifest entry and `.d.ts` are already written by the tool.
+
+3. The model is explicitly forbidden from appending the manifest entry itself
+   (`You MUST NOT append the manifest entry yourself`). Without this directive
+   the model could inadvertently double-append on auto_accept.
+
+**Token savings (measured; $0.41 run, Haiku+Sonnet, N=2, 100% behavioral compliance):**
+
+Three-stage progression of reference-emit output collapse (all measured):
+
+| Stage | Reference output | Collapse vs verbatim |
+|-------|-----------------|----------------------|
+| #1048 broken prompt (narration + redundant .d.ts) | ~430–635 tok | 1.3–6× |
+| #1063 terse fix (no .d.ts, no narration; model still wrote manifest entry) | ~139–288 tok | 2.7–19.4× |
+| #1062b apply-mode (tool writes manifest+dts; model writes only the import line) | **~25–35 tok** | **17.7–101.8×** |
+
+Per-atom measured collapse at apply-mode (#1062b), all N=2 runs:
+- crc32c: 17.7× (Haiku) / 18.0× (Sonnet)
+- lru-ttl-cache: 47.8× / 46.6×
+- avl-tree: 100.6× / 101.8×
+- dijkstra-heap: 59.7× / 97.4×
+
+The behavioral collapse now meets and exceeds the structural ~50× ceiling on large atoms.
+Because the model's reference output is ~25–35 tokens regardless of atom size (it emits only the
+import line), larger atoms collapse harder — avl-tree and dijkstra both exceed 97×. The
+"structural ceiling" framing is superseded: apply-mode collapses to a near-constant token floor,
+not a proportional fraction of verbatim output.
+
+**Authority invariant (Sacred Practice #12):**
+Manifest I/O is exclusively via `parseProjectManifest` / `serializeProjectManifest` /
+`addReference` from `@yakcc/compile` (DEC-COMPOSE-BY-REF-MANIFEST-001). The `.d.ts`
+path is exclusively via `materializedDtsPath` / `generateAtomDts`
+(DEC-COMPOSE-BY-REF-DTS-001). No parallel manifest logic exists in the handler.
+The `project-manifest.ts` and `assemble.ts` source files in `@yakcc/compile` are
+unchanged — only `reference.ts` (the MCP tool handler) and the system prompt
+are modified by this WI.
+
+**Error discipline (DEC-MCP-ERROR-AS-CONTENT-004):**
+The handler NEVER throws on apply-mode failure. An unwritable `project_root` or
+unparseable existing manifest returns `{ error: "apply_failed", message: … }` as
+content — error-as-content, not a thrown exception.
+
+**Relationship to prior Q-sections:**
+- Refines Q11/#1062: Section A is updated; Section B (verbatim `yakcc_compile`
+  fallback) is fully preserved — untouched.
+- Refines Q10/#1048: the two-branch detection gate (reference path vs verbatim
+  path) remains in force. Apply-mode is the updated reference path.
+- Q9/#1030 forceful substitution directive: unchanged and still in force for Section B.
+- Q8/#578 imperative descent-and-compose discipline: unchanged.
+- The `dts_ref` field is still present in the non-apply-mode response (legacy
+  callers); Section A no longer instructs the model to write it.
+
+**Invariants verified (DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001):**
+- `grep -c "project_root" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "applied.*true\|apply-mode\|MUST NOT append the manifest" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "MUST NOT narrate\|Emit ONLY\|one.*write\|ONE write" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "MUST NOT write the .d.ts\|do NOT write it\|yakcc build.*generates" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "You MUST NOT write the atom" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- Section B verbatim path (`yakcc_compile`) still exists exactly once.
+- `grep -c "You SHOULD consider\|Try to\|When possible"` = 0 (no soft phrases)
+
+**What is NOT changed:** Q1–Q11 substantive decisions remain in force. The
+tool-call shape, evidence rendering contract, 4-band protocol, `status` enum,
+`ConfidenceMode` type, failure-mode shapes, and D4/D5 boundary are all unchanged.
+The non-apply-mode response shape (legacy callers without `project_root`) is
+unchanged. Only the model's write instructions in Section A and the tool handler's
+apply-mode branch are modified by this WI.
+
+**Rollback:** `git revert` the WI-1062b landing commit. Section A reverts to the
+Q11/two-write form (import_line + manifest_entry append); `reference.ts` reverts
+to the non-apply-mode-only form.
+
+---
+
 ### Q7: Boundary with D5 (quality measurement)
 
 **Decision:** D4 pins **interaction shape** in v1; D5 measures and tunes **calibration knobs**.
@@ -972,6 +1270,14 @@ The fallback path is intentionally NOT retired. Agents in the wild that don't kn
 
 ## References
 
+- Issue #1062 (WI-1062b — apply-mode: manifest+dts written by tool, model writes only import_line; D4 ADR revision in Q12)
+- `DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001` — apply-mode; model writes only import_line (`docs/system-prompts/yakcc-discovery.md`, Q12 of this ADR)
+- Issue #1062 (WI-1062 — Reference-emit output minimization; D4 ADR revision in Q11)
+- `DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001` — terse reference-emit, no model-written .d.ts (`docs/system-prompts/yakcc-discovery.md`, Q11 of this ADR)
+- Issue #1048 (WI-1048 — Compose-by-reference reference-emit path; D4 ADR revision in Q10)
+- `DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001` — reference-emit preferred path when `.yakcc/manifest.json` present (`docs/system-prompts/yakcc-discovery.md`, Q10 of this ADR)
+- Issue #1047 (`yakcc_reference` MCP tool; `DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001`)
+- Issue #1041 (B4-v5 token-savings analysis; empirical basis for Q10)
 - Issue #1030 (WI-1030 — Forceful substitution directive; D4 ADR revision in Q9)
 - `DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001` — B4-v5 rerun empirical validation; forceful compile-and-stop directive (`docs/system-prompts/yakcc-discovery.md`, Q9 of this ADR)
 - Issue #578 (WI-578 — Descent-and-Compose prompt rewrite; D4 ADR revision in Q8)

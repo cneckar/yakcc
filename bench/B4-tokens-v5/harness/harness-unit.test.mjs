@@ -430,3 +430,201 @@ describe('compound integration: substitution oracle on real atom body', () => {
     expect(Array.isArray(oracle.oracle_failures)).toBe(true);
   });
 });
+
+// ─── Reference-emit helpers (DEC-BENCH-B4-V5-REFEMIT-ARM-001) ────────────────
+//
+// Tests for the reference-emit arm: tool definition shape, manifest-present
+// helper, and the oracle materialization path (materializeAtomSource).
+//
+// The offline sanity proof is the key requirement: given the committed bench corpus,
+// materializeAtomSource(candidates[0].root) for crc32c MUST produce source that
+// passes the crc32c oracle — proving the new oracle path materializes correctly.
+
+const { YAKCC_REFERENCE_TOOL_DEF, writeManifestPresent, materializeAtomSource } = await import(
+  new URL('file://' + join(__dirname, 'refemit-helpers.mjs')).href
+);
+
+// The committed bench corpus registry (bench/B4-tokens-v5/corpus/registry.sqlite, #1066).
+// This corpus probes auto_accept for all 6 B4-v5 tasks; crc32c has a known root.
+const BENCH_CORPUS = join(BENCH_ROOT, 'corpus', 'registry.sqlite');
+
+// The crc32c atom root from the committed bench corpus (stable, content-addressed).
+// Obtained from: SELECT block_merkle_root FROM blocks WHERE spec_canonical_bytes LIKE '%CRC-32C%'
+const CRC32C_CORPUS_ROOT = 'f0834da06c8606167ad106bb7f70ac570166cbfe99702784a1101615e68601b2';
+
+describe('DEC-BENCH-B4-V5-REFEMIT-ARM-001: reference-emit helpers', () => {
+  it('YAKCC_REFERENCE_TOOL_DEF has correct name and required atom_id input', () => {
+    expect(YAKCC_REFERENCE_TOOL_DEF.name).toBe('yakcc_reference');
+    expect(YAKCC_REFERENCE_TOOL_DEF.input_schema.required).toContain('atom_id');
+    // project_root is optional (apply-mode) — must NOT be in required
+    expect(YAKCC_REFERENCE_TOOL_DEF.input_schema.required).not.toContain('project_root');
+    // description must mention compose-by-reference / import line
+    expect(YAKCC_REFERENCE_TOOL_DEF.description).toMatch(/import/);
+    expect(YAKCC_REFERENCE_TOOL_DEF.description).toMatch(/apply.*mode|apply mode/i);
+  });
+
+  it('writeManifestPresent creates a valid .yakcc/manifest.json', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const tmpDir = mkdtempSync(join(tmpdir(), 'bench-refemit-'));
+    try {
+      writeManifestPresent(tmpDir);
+      const manifestPath = join(tmpDir, '.yakcc', 'manifest.json');
+      expect(existsSync(manifestPath)).toBe(true);
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      expect(manifest.version).toBe(1);
+      expect(Array.isArray(manifest.references)).toBe(true);
+      // Idempotent: calling again must not throw and must not corrupt the file
+      writeManifestPresent(tmpDir);
+      const manifest2 = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      expect(manifest2.version).toBe(1);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('materializeAtomSource returns error for nonexistent registry', async () => {
+    const result = await materializeAtomSource('/nonexistent/registry.sqlite', CRC32C_CORPUS_ROOT);
+    expect(result.error).toMatch(/Registry not found/);
+    expect(result.failure_class).toBeDefined();
+  });
+
+  it('materializeAtomSource returns error for invalid atom root', async () => {
+    const result = await materializeAtomSource(BENCH_CORPUS, 'tooshort');
+    expect(result.error).toMatch(/Invalid atom root/);
+  });
+});
+
+// ─── OFFLINE SANITY PROOF (DEC-BENCH-B4-V5-REFEMIT-ARM-001) ──────────────────
+//
+// Required evidence: given the committed bench corpus, assemble(candidates[0].root)
+// for crc32c MUST produce source that passes the crc32c oracle.
+// This proves the new oracle materialization path works end-to-end without any
+// Anthropic API call.
+//
+// Production sequence exercised:
+//   1. Registry opened at bench corpus path (the corpus auto_accept probes)
+//   2. materializeAtomSource(registryPath, crc32c_root) → calls real assemble()
+//   3. Resulting source written to scratch file
+//   4. runOracle('crc32c', source) → runs the real crc32c oracle tests
+//   5. oracle_passed must be true (the corpus atom is a known-good implementation)
+
+describe('OFFLINE SANITY PROOF: materializeAtomSource → oracle for crc32c (no API call)', () => {
+  it('bench corpus crc32c atom materializes and passes the crc32c oracle', async () => {
+    // Skip if bench corpus not present (shouldn't happen — it's committed)
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+
+    // Step 1: materialize via assemble() (the reference-emit oracle path)
+    const materializeResult = await materializeAtomSource(BENCH_CORPUS, CRC32C_CORPUS_ROOT);
+    expect(materializeResult.error, `materialize failed: ${materializeResult.error}`).toBeUndefined();
+    expect(typeof materializeResult.source).toBe('string');
+    expect(materializeResult.source.length).toBeGreaterThan(0);
+
+    // Step 2: run the real crc32c oracle on the materialized source
+    const { runOracle } = await import(new URL('file://' + join(__dirname, 'oracle-runner.mjs')).href);
+    const oracle = await runOracle('crc32c', materializeResult.source);
+
+    // Contract: well-formed oracle result (always present)
+    expect(typeof oracle.oracle_passed).toBe('boolean');
+    expect(typeof oracle.oracle_pass_count).toBe('number');
+    expect(typeof oracle.oracle_total).toBe('number');
+    expect(Array.isArray(oracle.oracle_failures)).toBe(true);
+
+    // THE KEY PROOF: the corpus atom must pass the oracle.
+    // This proves the reference-emit oracle path materializes a correct implementation.
+    expect(
+      oracle.oracle_passed,
+      `crc32c corpus atom failed oracle (${oracle.oracle_pass_count}/${oracle.oracle_total}): ${JSON.stringify(oracle.oracle_failures)}`
+    ).toBe(true);
+  }, 30_000);
+});
+
+// ─── SHORT-ID RESOLUTION PROOF (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001) ─────────
+//
+// Required evidence: materializeAtomSource(corpus, short_crc32c_id) resolves the
+// short id to the full root and returns source passing the crc32c oracle.
+//
+// This is the production-path fix: yakcc_resolve returns 8-char short ids in its
+// candidates envelope. Before this fix, passing a short id to materializeAtomSource
+// caused assemble() to fail silently (0/0). After the fix, the short id is resolved
+// to the full 64-char root via the registry's full block set before assemble() is called.
+//
+// Production sequence exercised (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001):
+//   1. yakcc_resolve returns auto_accept with candidates[0].atom_id = 'f0834da0' (8-char)
+//   2. Hooked arm calls materializeAtomSource(corpusPath, 'f0834da0')
+//   3. materializeAtomSource detects short id (length < 64), calls resolveShortId()
+//   4. resolveShortId enumerates full registry → prefix-match → unique full root
+//   5. assemble(fullRoot, registry) → source
+//   6. runOracle('crc32c', source) → oracle_passed = true
+
+// The 8-char short id is the first 8 chars of CRC32C_CORPUS_ROOT (f0834da0...).
+// In production, yakcc_resolve returns this as candidates[0].atom_id.
+const CRC32C_SHORT_ID = CRC32C_CORPUS_ROOT.slice(0, 8); // 'f0834da0'
+
+describe('SHORT-ID RESOLUTION PROOF: materializeAtomSource(short_id) → oracle (DEC-BENCH-B4-V5-SHORTID-RESOLVE-001)', () => {
+  it('short crc32c id resolves to full root and assembles without error', async () => {
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+
+    // Step 1: call materializeAtomSource with the 8-char short id (the production input)
+    const result = await materializeAtomSource(BENCH_CORPUS, CRC32C_SHORT_ID);
+
+    // The resolution must succeed: no error
+    expect(result.error, `short-id resolution failed: ${result.error}`).toBeUndefined();
+    expect(typeof result.source).toBe('string');
+    expect(result.source.length).toBeGreaterThan(0);
+
+    // The materialized source must be identical to what the full-root path produces
+    // (content-addressed: same root → same source).
+    const fullRootResult = await materializeAtomSource(BENCH_CORPUS, CRC32C_CORPUS_ROOT);
+    expect(fullRootResult.error).toBeUndefined();
+    expect(result.source).toBe(fullRootResult.source);
+  }, 30_000);
+
+  it('short crc32c id materializes source that passes the crc32c oracle (compound production sequence)', async () => {
+    // This is the compound-interaction test required by the evaluation contract:
+    // it crosses short-id resolution, assemble(), and the oracle in one sequence.
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+
+    // Step 1–4: resolve short id → full root → assemble (the production short-id path)
+    const result = await materializeAtomSource(BENCH_CORPUS, CRC32C_SHORT_ID);
+    expect(result.error, `materialize(short_id) failed: ${result.error}`).toBeUndefined();
+
+    // Step 5: run the crc32c oracle on the materialized source
+    const { runOracle } = await import(new URL(`file://${join(__dirname, 'oracle-runner.mjs')}`).href);
+    const oracle = await runOracle('crc32c', result.source);
+
+    // Well-formed oracle result
+    expect(typeof oracle.oracle_passed).toBe('boolean');
+    expect(typeof oracle.oracle_pass_count).toBe('number');
+    expect(typeof oracle.oracle_total).toBe('number');
+    expect(Array.isArray(oracle.oracle_failures)).toBe(true);
+
+    // THE KEY PROOF: short-id resolution → assemble → oracle must pass.
+    // Before the fix: assemble() received a short id → not_found → 0/0.
+    // After the fix: resolved to full root → correct assembly → oracle passes.
+    expect(
+      oracle.oracle_passed,
+      `crc32c oracle failed via short id '${CRC32C_SHORT_ID}' (${oracle.oracle_pass_count}/${oracle.oracle_total}): ${JSON.stringify(oracle.oracle_failures)}`
+    ).toBe(true);
+  }, 30_000);
+
+  it('materializeAtomSource returns not_found for a short id with no match', async () => {
+    if (!existsSync(BENCH_CORPUS)) {
+      console.warn('SKIP: bench corpus not found:', BENCH_CORPUS);
+      return;
+    }
+    // '00000000' is guaranteed not to prefix-match any real atom root
+    const result = await materializeAtomSource(BENCH_CORPUS, '00000000');
+    expect(result.error).toMatch(/Short id not found in registry/);
+    expect(result.failure_class).toBe('atom_fetch_failed');
+  }, 30_000);
+});

@@ -1335,3 +1335,76 @@ function executeWithTelemetry(toolName: string): void {
     expect(hasSourceContaining(tree.root, "sessionId !== undefined")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1035: TemplateExpression decomposes via span expressions
+// ---------------------------------------------------------------------------
+
+describe("decompose — TemplateExpression with multi-ternary spans (#1035)", () => {
+  /**
+   * Pre-#1035 repro: a TemplateExpression with two inline ternary+call
+   * branches threw DidNotReachAtomError because decomposableChildrenOf had
+   * no TemplateExpression branch. Mirrors the
+   * packages/compile-python/src/lower.ts:575 site that broke self-shave
+   * (workaround applied in PR #1034; this is the underlying engine fix).
+   *
+   * Production sequence:
+   * decompose() → SourceFile → FunctionDeclaration → Block →
+   *   ReturnStatement → TemplateExpression → [TemplateSpan.expression,
+   *   TemplateSpan.expression] (ConditionalExpressions) → ternary children →
+   *   atoms.
+   *
+   * Before the fix: decomposableChildrenOf(TemplateExpression) returned [],
+   * recurse() saw zero children for a non-atomic node, threw
+   * DidNotReachAtomError.
+   */
+  it("template literal with two inline ternary+call branches decomposes (was DidNotReachAtomError)", async () => {
+    // This is the exact shape from compile-python/lower.ts:575 (#1034 workaround target)
+    const src = `
+declare function lowerExpr(node: unknown, ctx: unknown): string;
+declare const objStr: string;
+declare const ctx: unknown;
+declare const start: unknown;
+declare const end: unknown;
+
+function buildSlice(): string {
+  return \`\${objStr}[\${start ? lowerExpr(start, ctx) : ""}:\${end ? lowerExpr(end, ctx) : ""}]\`;
+}
+`.trim();
+    // Must not throw — two ternaries inside one template literal → CF count > 1
+    // → non-atomic; must descend through TemplateExpression spans into the
+    // ConditionalExpressions and bottom out at atom leaves.
+    const tree = await decompose(src, emptyRegistry);
+
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+
+    // Verify the ternary subexpressions are reached by descent
+    function hasSourceContaining(node: typeof tree.root, text: string): boolean {
+      if (node.source.includes(text)) return true;
+      if (node.kind === "branch") return node.children.some((c) => hasSourceContaining(c, text));
+      return false;
+    }
+    expect(hasSourceContaining(tree.root, "start ? lowerExpr(start, ctx)")).toBe(true);
+    expect(hasSourceContaining(tree.root, "end ? lowerExpr(end, ctx)")).toBe(true);
+  });
+
+  it("template literal with a single ternary span also decomposes (regression guard)", async () => {
+    // This pattern previously worked because compile-python/lower.ts:571 (the
+    // args.length === 1 branch) is the same shape but with one ternary
+    // instead of two. After the fix, it should still atomize.
+    const src = `
+declare function lowerExpr(node: unknown, ctx: unknown): string;
+declare const objStr: string;
+declare const ctx: unknown;
+declare const start: unknown;
+
+function buildSliceOpen(): string {
+  return \`\${objStr}[\${start ? lowerExpr(start, ctx) : ""}:]\`;
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});

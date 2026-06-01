@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "references": [
+    {
+      "root": "0009c5df8b5829f90f336ae70820fedbe054415115039002cf0ec3d9b5a8caf7",
+      "symbol": "crc32c",
+      "alias": "0009c5df8b58",
+      "importPath": ".yakcc/atoms/0009c5df8b58",
+      "registry": "local",
+      "version": null
+    }
+  ]
+}

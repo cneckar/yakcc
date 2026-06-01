@@ -63,3 +63,24 @@ export {
   GATE_INTERCEPT_ALLOWLIST,
 } from "./import-gate.js";
 export type { AssertNoUnexpandedImportsOptions } from "./import-gate.js";
+
+// Compose-by-reference project manifest (#1044, DEC-COMPOSE-BY-REF-MANIFEST-001)
+// ProjectManifest is the project-level content-address registry for referenced atoms.
+// Consumed by: #1045 (build-inline/materialize), #1046 (.d.ts stubs), #1047 (MCP tool).
+export type { ProjectManifest, AtomReference } from "./project-manifest.js";
+export {
+  ProjectManifestError,
+  PROJECT_MANIFEST_PATH,
+  parseProjectManifest,
+  serializeProjectManifest,
+  emptyManifest,
+  addReference,
+  materializedModulePath,
+  materializedDtsPath,
+  referenceImportLine,
+} from "./project-manifest.js";
+
+// Compose-by-reference .d.ts generator (#1046, DEC-COMPOSE-BY-REF-DTS-001)
+// generateAtomDts: SpecYak + symbol → .d.ts text so reference source typechecks pre-build.
+// Consumed by: `yakcc build` (#1045/#1046 emission wiring), `yakcc_reference` (#1047).
+export { generateAtomDts } from "./atom-dts.js";

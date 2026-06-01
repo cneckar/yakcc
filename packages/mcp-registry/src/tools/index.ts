@@ -1,5 +1,5 @@
 /**
- * Tool registry — re-exports all 10 MCP tool modules as a single array.
+ * Tool registry — re-exports all 11 MCP tool modules as a single array.
  *
  * @decision DEC-MCP-TOOLS-REGISTRY-020
  * @title TOOLS array as the single authority for registered tool modules
@@ -20,6 +20,7 @@ import { getProvenance } from "./get-provenance.js";
 import { getShaveStatus } from "./get-shave-status.js";
 import { getSpec } from "./get-spec.js";
 import { listSpecs } from "./list-specs.js";
+import { referenceTool } from "./reference.js";
 import { requestShave } from "./request-shave.js";
 import { resolveTool } from "./resolve.js";
 import { searchAtoms } from "./search-atoms.js";
@@ -32,6 +33,7 @@ export { getProvenance } from "./get-provenance.js";
 export { getShaveStatus } from "./get-shave-status.js";
 export { getSpec } from "./get-spec.js";
 export { listSpecs } from "./list-specs.js";
+export { referenceTool } from "./reference.js";
 export { requestShave } from "./request-shave.js";
 export { resolveTool } from "./resolve.js";
 export { searchAtoms } from "./search-atoms.js";
@@ -39,14 +41,16 @@ export { submitAtom } from "./submit-atom.js";
 export type { ToolModule } from "./types.js";
 
 /**
- * Ordered registry of all 10 tool modules.
+ * Ordered registry of all 11 tool modules.
  * The bite-3 stdio server iterates this array to register with the MCP SDK.
  * resolveTool added per wi-953 (DEC-HOOK-PROACTIVE-A-001).
  * compileTool added per wi-1007 (DEC-MCP-COMPILE-EXEC-1007-001).
+ * referenceTool added per wi-1047 (DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001).
  */
 export const TOOLS: ToolModule[] = [
   resolveTool,
   compileTool,
+  referenceTool,
   searchAtoms,
   getAtom,
   listSpecs,

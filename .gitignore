@@ -7,7 +7,12 @@ coverage/
 .DS_Store
 .env
 .env.local
-.yakcc/
+# Compose-by-reference project dir (#1044, DEC-COMPOSE-BY-REF-MANIFEST-001):
+# .yakcc/manifest.json is the committable authority that pins referenced atom
+# content-addresses; .yakcc/atoms/ is regenerable build output (materialized by
+# `yakcc build`, #1045) and must stay ignored.
+.yakcc/*
+!.yakcc/manifest.json
 .yakccrc.json
 tmp/
 # NOTE: tmp/discovery-eval/baseline-single-vector-2026-05-10.json and
@@ -25,6 +30,10 @@ DECISIONS.md.tmp.*
 # expected-roots.json is committed separately (WI-V2-BOOTSTRAP-03).
 bootstrap/yakcc.registry.sqlite-wal
 bootstrap/yakcc.registry.sqlite-shm
+# B4-v5 corpus — registry.sqlite is committed; WAL/SHM are transient; intent-cache is build artifact.
+bench/B4-tokens-v5/corpus/*.sqlite-wal
+bench/B4-tokens-v5/corpus/*.sqlite-shm
+bench/B4-tokens-v5/corpus/intent-cache/
 bootstrap/report.json
 bootstrap/.write.lock
 

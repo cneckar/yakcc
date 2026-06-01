@@ -37,6 +37,7 @@ import type { RegistryOptions } from "@yakcc/registry";
 import pkg from "../package.json" with { type: "json" };
 import { benchB3 } from "./commands/bench-b3.js";
 import { bootstrap } from "./commands/bootstrap.js";
+import { build } from "./commands/build.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
 import { emitAtom } from "./commands/emit-atom.js";
@@ -177,6 +178,7 @@ COMMANDS
         [--function <name>]           Python target: process only one named function
         [--foreign-policy             TS target only: how to handle foreign-block deps
               <allow|reject|tag>]     (ignored with warning for --target python)
+  build [--registry <p>] [<dir>]      Materialize .yakcc/manifest.json atom references into .yakcc/atoms/
   compile <entry> [--registry <p>]   Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
                [--target <ts|python|  Language target (default: ts); python writes module.py
@@ -302,6 +304,15 @@ export async function runCli(
         `error: unknown registry subcommand: ${subcommand ?? "(none)"}. Did you mean 'registry init', 'registry rebuild', or 'registry export'?`,
       );
       return 1;
+    }
+
+    case "build": {
+      // `yakcc build [--registry <p>] [<project-root>]` (#1045, DEC-COMPOSE-BY-REF-BUILD-001)
+      // Reads .yakcc/manifest.json and materializes each referenced atom to
+      // .yakcc/atoms/<alias>.ts via assemble() — offline, deterministic, idempotent.
+      // subcommand may be a flag (--registry) or a project-root positional — reassemble.
+      const buildArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return build(buildArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "compile": {
