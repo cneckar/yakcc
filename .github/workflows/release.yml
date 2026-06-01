@@ -94,4 +94,27 @@ jobs:
       - name: Touch bootstrap sqlite (bypass mtime freshness check)
         run: touch bootstrap/yakcc.registry.sqlite
 
-      - run: pnpm --filter @yakcc/cli --filter yakcc publish --provenance --access public --no-git-checks
+      # @decision DEC-WI1051-DROP-UNSCOPED-YAKCC-001
+      # title: Publish @yakcc/cli only — unscoped `yakcc` wrapper dropped
+      # status: accepted (2026-06-01)
+      # rationale:
+      #   The unscoped `yakcc` package was never successfully published to npm
+      #   (v0.6.0-alpha.0 + v0.7.0-alpha.2 attempts both 404'd). Reason: npm's
+      #   trusted-publisher / token model requires the package to exist before
+      #   permissions can target it by name; the npm UI does not surface a
+      #   "create trusted publisher for a future package" path, and our
+      #   operator's 2FA mode + passkey-only second factor blocks the
+      #   one-shot interactive publish that would seed it. Three sessions of
+      #   workarounds (token rescoping, web-auth, npm token create) all
+      #   bottomed out at the same per-publish OTP challenge.
+      #
+      #   `@yakcc/cli` publishes cleanly via OIDC and is the documented
+      #   install path (`npm install @yakcc/cli`). The unscoped wrapper was
+      #   a convenience alias only (WI-856) — not load-bearing for any user
+      #   flow. Dropping it from the release pipeline lets every future
+      #   release succeed instead of failing on the second publish step.
+      #
+      #   Re-add path (future): if/when npm's trusted-publisher UX matures,
+      #   first seed `yakcc@<next>` via whatever path is then practical, then
+      #   restore `--filter yakcc` here.
+      - run: pnpm --filter @yakcc/cli publish --provenance --access public --no-git-checks
