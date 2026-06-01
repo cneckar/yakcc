@@ -485,6 +485,66 @@ file at `docs/system-prompts/yakcc-discovery.md`.
 
 ---
 
+### Q9: Forceful substitution directive — B4-v5 rerun (2026-05-31)
+
+**Decision:** Replace the weak "Compile and stop" section in
+`docs/system-prompts/yakcc-discovery.md` with an imperative substitution directive
+that makes the `yakcc_compile` → verbatim-write path unambiguous and frames
+re-implementation as a protocol violation.
+
+**What changed:**
+
+The pre-1030 "Compile and stop" section (predating the `yakcc_compile` tool→source
+path) gave soft guidance:
+
+- "your final answer for that sub-intent MUST be a single line: `yakcc compile <atom_id>`"
+- "Do NOT also write or restate the implementation."
+
+The B4-v5 benchmark rerun identified the failure mode: models were calling
+`yakcc_compile` (compile=1 in 5/6 hooked cells) but then re-authoring the full
+implementation anyway (`wrote_compiled_source=false` everywhere), producing 3,400–5,100
+output tokens of unnecessary re-implementation. The old directive targeted the pre-tool
+CLI path and did not address the case where the tool returns a `source` field that the
+model should write verbatim.
+
+The revised directive (as of this WI, issue #1030) replaces the weak section with:
+
+1. An explicit 4-step sequence: call `yakcc_compile({ atom_id })` → tool returns
+   `source` → write THAT EXACT `source` verbatim using Write/Edit → STOP.
+2. A "protocol violation" framing for re-implementation: "Re-implementing what
+   `yakcc_compile` already returned is a protocol violation."
+3. A correct-flow diagram (`yakcc_resolve → auto_accept → yakcc_compile → Write(verbatim)`).
+4. An explicit "Do NOT" list covering the four observed failure patterns.
+5. A "stop immediately, delete, substitute" instruction for mid-stream self-correction.
+
+**Empirical evidence:**
+
+With the new directive + `auto_accept` tier firing (the score/gap threshold gate) +
+the #1028 compile fix (which corrected `atom_id` → correct field in the tool call),
+all 6 hooked B4-v5 cells flipped from re-authoring to verbatim substitution
+(`wrote_compiled_source=true`). Output token count halved vs the hedge/re-author
+baseline. This is the empirical validation that justifies the wording as production
+copy rather than a further experimental variant.
+
+**Invariants verified (DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001):**
+- `grep -c "protocol violation" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -ci "verbatim" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- The `## Compile and stop` section exists exactly once (no duplicate/contradictory section).
+
+**What is NOT changed:** D4 design decisions Q1–Q8 remain in force. The tool call
+shape, evidence rendering contract, 4-band protocol, `status` enum, `ConfidenceMode`
+type, failure-mode shapes, and D4/D5 boundary are all unchanged. Only the
+"Compile and stop" subsection of the system-prompt text is updated.
+
+**Rollback:** `git revert` the WI-1030 landing commit.
+
+**Issue:** https://github.com/cneckar/yakcc/issues/1030
+**Decision ID:** DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001
+**Date:** 2026-05-31
+
+---
+
 ### Q7: Boundary with D5 (quality measurement)
 
 **Decision:** D4 pins **interaction shape** in v1; D5 measures and tunes **calibration knobs**.
@@ -912,6 +972,8 @@ The fallback path is intentionally NOT retired. Agents in the wild that don't kn
 
 ## References
 
+- Issue #1030 (WI-1030 — Forceful substitution directive; D4 ADR revision in Q9)
+- `DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001` — B4-v5 rerun empirical validation; forceful compile-and-stop directive (`docs/system-prompts/yakcc-discovery.md`, Q9 of this ADR)
 - Issue #578 (WI-578 — Descent-and-Compose prompt rewrite; D4 ADR revision in Q8)
 - Issue #154 (this work item — V3-DISCOVERY-D4)
 - Issue #153 (D3 — V3-DISCOVERY-D3)

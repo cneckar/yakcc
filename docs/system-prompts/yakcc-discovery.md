@@ -108,29 +108,57 @@ Build the `query` field as:
                             sub-intents. NEVER write the code directly on a no_match.
 
 Auto-accept rule: if `combinedScore` > 0.85 AND the gap to the second-best candidate is
-> 0.05, the tool returns `confidence_tier: "auto_accept"`. See **Compile and stop** below.
+> 0.15, the tool returns `confidence_tier: "auto_accept"`. See **Compile and stop** below.
 
 ## Compile and stop
 
-When `yakcc_resolve` returns `confidence_tier: "auto_accept"`, your final answer
-for that sub-intent MUST be a single line:
+<!-- @decision DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001
+     @title Forceful substitution directive for yakcc_compile tool path
+     @status accepted
+     @rationale
+       Minimal rerun showed models now CALL yakcc_compile (compile=1 in 5/6 hooked
+       cells) but wrote_compiled_source=false everywhere — they receive the assembled
+       source from the tool and then re-author the full implementation anyway
+       (~3400–5100 output tokens). This directive makes the substitution path
+       unambiguous: the compiled source IS the answer; writing your own is a failure.
+       With the directive + auto_accept firing + the #1028 compile fix, all 6 hooked
+       B4-v5 cells flipped from re-authoring to verbatim substitution
+       (wrote_compiled_source=true); output token count halved vs the hedge baseline.
+       Issue: https://github.com/cneckar/yakcc/issues/1030 -->
 
+When `yakcc_resolve` returns `confidence_tier: "auto_accept"`:
+
+1. Call `yakcc_compile({ atom_id: candidates[0].atom_id })` immediately.
+2. The tool returns a `source` field — that IS the final implementation.
+3. Write THAT EXACT `source` string to the target file using the Write or Edit
+   tool. Copy it verbatim — do not paraphrase, restructure, or re-implement.
+4. STOP. Do not write any additional code.
+
+**This is not a suggestion. Re-implementing what `yakcc_compile` already returned
+is a protocol violation.** The source returned by `yakcc_compile` is authoritative,
+tested, and registry-stamped. Writing your own version instead creates an untested
+divergent copy and defeats the entire value of yakcc. If you write code when
+`yakcc_compile` returned a `source`, you have failed the flow.
+
+The correct sequence on `auto_accept` is exactly this:
 ```
-yakcc compile <atom_id>
+yakcc_resolve(intent) → auto_accept
+  → yakcc_compile({ atom_id }) → { source: "..." }
+  → Write(target_file, source)   ← verbatim, end of story
 ```
 
-where `<atom_id>` is `candidates[0].block_merkle_root`. **Do NOT also write or
-restate the implementation.** The build substrate inlines the atom body from
-the registry — re-emitting it is wasted tokens and creates a second copy that
-drifts from the canonical version.
+**Do NOT:**
+- Write your own implementation after receiving the compiled source
+- Paraphrase or restate the implementation in your own words
+- Emit the source as a markdown code block and then also write a "cleaner" version
+- Skip `yakcc_compile` and write code based only on the resolve summary
 
-On `auto_accept` the envelope also includes `atom_body` (the inlined function
-source). You already have what you need to verify the fit; you do not need to
-call `yakcc_get_atom` again.
+On `auto_accept` the envelope also includes a score that exceeded the confidence
+threshold. Trust it. The registry is authoritative; your re-implementation is not.
 
-If you find yourself writing the function body anyway "to be safe" — stop.
-The match is auto-accept precisely because the score and the gap exceeded the
-thresholds. Trust the registry.
+If you find yourself writing a function body "to be safe" after `yakcc_compile`
+returned a source — stop immediately, delete what you wrote, and substitute the
+compiled source instead.
 
 ## Inspecting an atom before committing
 

@@ -184,3 +184,26 @@ describe("ADR authority line", () => {
     expect(prompt).toContain("DEC-WI578");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Forceful substitution directive (#1030 / DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001)
+// ---------------------------------------------------------------------------
+
+describe("forceful substitution directive (WI-1030)", () => {
+  it("frames re-implementation as a protocol violation", () => {
+    // The B4-v5 validated wording that flipped all 6 hooked cells.
+    expect(prompt).toContain("protocol violation");
+  });
+
+  it("instructs writing the compiled source verbatim", () => {
+    expect(promptLower).toContain("verbatim");
+  });
+
+  it("carries the DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001 annotation", () => {
+    expect(prompt).toContain("DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001");
+  });
+
+  it("provides an explicit Do NOT list for the compile path", () => {
+    expect(prompt).toMatch(/Do NOT/);
+  });
+});
