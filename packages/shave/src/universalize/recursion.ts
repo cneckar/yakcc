@@ -1232,6 +1232,58 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     return result;
   }
 
+  // TemplateExpression: `\`prefix${expr1}middle${expr2}suffix\`` — decompose to
+  // [expr1, expr2, ...] so each interpolation expression can be atomized
+  // individually. The TemplateHead and TemplateMiddle/Tail string fragments
+  // carry no behavior and don't need their own atoms.
+  //
+  // @decision DEC-SLICER-TEMPLATE-EXPRESSION-001 (closes #1035)
+  // title: TemplateExpression decomposes via its span expressions
+  // status: accepted
+  // rationale:
+  //   Pre-#1035, decomposableChildrenOf had no TemplateExpression branch.
+  //   A template literal that isAtom() classified as non-atomic (e.g. because
+  //   one or more interpolation slots held complex expressions like ternary
+  //   chains over calls) fell through to return []. The recurse() caller then
+  //   threw DidNotReachAtomError. Workaround applied at #1034:
+  //   extract each interpolation expression to a local variable so the
+  //   template only interpolates plain identifiers
+  //   (packages/compile-python/src/lower.ts:575). This is the general fix:
+  //   surface each TemplateSpan.expression as a decomposable child. Each
+  //   child then routes through the existing ConditionalExpression /
+  //   CallExpression / BinaryExpression branches and resolves to atoms as
+  //   expected.
+  //
+  // alternatives:
+  //   A. Make TemplateExpression always-atomic — rejected: a long template
+  //      with genuinely complex interpolations should decompose, not become
+  //      one monolithic atom (quality-of-decomposition matters; same argument
+  //      as DEC-SHAVE-PRIVATE-CLASS-FIELD-001 alternative B).
+  //   B. Extract template literals to locals at every source site — rejected:
+  //      moves the problem to source-style discipline and doesn't address the
+  //      pipeline gap; #1034 applied this workaround once, but future source
+  //      sites will hit the same shape.
+  //
+  // consequences:
+  //   - Files with template literals containing multiple inline ternary+call
+  //     branches now shave without needing the local-extraction workaround.
+  //   - Existing template+ternary sites that already shave (8 sites in
+  //     compile-python/lower.ts with 0 or 1 inline ternaries) are
+  //     unaffected — they were already atomic via isAtom() and decomposition
+  //     is only consulted when isAtom() returns false.
+  if (kind === SyntaxKind.TemplateExpression) {
+    const te = node as Node & { getTemplateSpans?(): readonly Node[] };
+    const spans = te.getTemplateSpans?.() ?? [];
+    const result: Node[] = [];
+    for (const span of spans) {
+      const expr = (span as Node & { getExpression?(): Node | undefined }).getExpression?.();
+      if (expr !== undefined) {
+        result.push(expr);
+      }
+    }
+    return result;
+  }
+
   // All other nodes (expressions, type nodes, etc.) — not decomposable.
   return [];
 }
