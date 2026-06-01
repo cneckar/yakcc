@@ -1,16 +1,26 @@
 /**
  * Tool: yakcc_compile
  *
- * @decision DEC-MCP-COMPILE-EXEC-1007-001
- * @title yakcc_compile — materialize an atom's impl source from the local registry
- * @status decided (wi-1007)
+ * @decision DEC-1028-COMPILE-FULL-ROOTS-001
+ * @title yakcc_compile — use full registry block roots for id-resolution and assembly
+ * @status decided (wi-1028)
  * @rationale
- *   After yakcc_resolve surfaces a candidate (auto_accept or chosen from
- *   candidate_list), the model used to emit the inert CLI string
- *   `yakcc compile <id>` — which produced nothing inside a Claude Code session.
- *   This tool closes that gap: it resolves the atom in the LOCAL registry,
- *   runs `assemble()` from @yakcc/compile, and returns the write-ready
- *   `artifact.source` so the model can immediately pass it to Edit/Write.
+ *   Prior to WI-1028, short-id prefix matching used seedRegistry().merkleRoots
+ *   (~26 seed blocks). yakcc_resolve returns 8-char prefixes of BlockMerkleRoots
+ *   from the FULL local registry, which can contain many non-seed atoms. Attempting
+ *   to compile a non-seed atom (by short id) always returned not_found/"ghost
+ *   reference" even though the atom was present in the registry.
+ *
+ *   Fix: enumerate the FULL registry block roots via
+ *     for (const sh of await registry.enumerateSpecs())
+ *       for (const root of await registry.selectBlocks(sh)) fullRoots.push(root);
+ *   and use those roots for BOTH prefix matching (resolveAtomId) AND as
+ *   knownMerkleRoots in assemble(). This is the canonical pattern used by
+ *   packages/registry/src/rebuild.ts:104-112.
+ *
+ *   seedRegistry is retained so seed blocks are present in the local DB on first
+ *   use, but its merkleRoots are no longer authoritative for id-resolution. After
+ *   seeding, fullRoots is built from the registry itself — one authority.
  *
  *   Architecture decisions:
  *
@@ -19,37 +29,37 @@
  *       an atom that exists only in the global commons (not in the local DB)
  *       is not in scope for WI-1007 (follow-up WI).
  *
- *   (2) SHORT-ID RESOLUTION (one authority):
+ *   (2) FULL-REGISTRY SHORT-ID RESOLUTION (one authority, WI-1028):
  *       An 8-char (or any non-64-char) atom_id is treated as a prefix against
- *       the full set of BlockMerkleRoots known to the seeded registry
- *       (seedRegistry(registry).merkleRoots — the same set CLI compile.ts:199
- *       uses). Unique prefix → resolve; ambiguous → structured
- *       ambiguous_short_id content; no match → not_found.
- *       Full 64-char root passes straight through (no seedRegistry call needed).
+ *       the FULL set of BlockMerkleRoots enumerated from the registry
+ *       (enumerateSpecs → selectBlocks). Unique prefix → resolve; ambiguous →
+ *       structured ambiguous_short_id content; no match → not_found.
+ *       Full 64-char root passes straight through (no enumeration needed).
  *       One short-id authority; no parallel scheme.
  *
  *   (3) ASSEMBLE PREFERRED:
  *       Uses assemble() from @yakcc/compile (not just registry.getBlock().implSource)
- *       so multi-block composite atoms work correctly. The knownMerkleRoots from
- *       seedRegistry are forwarded as the pre-scan stem index (same as CLI).
+ *       so multi-block composite atoms work correctly. The fullRoots from the
+ *       full-registry enumeration are forwarded as the pre-scan stem index.
  *
  *   (4) ERROR DISCIPLINE (DEC-MCP-ERROR-AS-CONTENT-004):
  *       All errors returned as structured MCP content. The handler NEVER throws.
  *       Structured error codes: invalid_input, registry_unavailable,
  *       not_found, ambiguous_short_id, assembly_failed.
  *
- *   (5) LAZY REGISTRY OPEN:
+ *   (5) LAZY REGISTRY OPEN + FULL-ROOTS CACHE:
  *       Registry opened once per tool instance (same pattern as resolve.ts).
+ *       Full registry roots are enumerated once and cached alongside the registry.
  *       Factory injectable for tests.
  *
  *   Cross-references:
- *     DEC-HOOK-PROACTIVE-PRIMARY-001 — initiative umbrella
- *     DEC-MCP-ERROR-AS-CONTENT-004   — errors as content, never throw
- *     DEC-MCP-STDERR-LOGGING-005     — no stdout (no console.log)
- *     Sacred Practice #12            — single authority for short-id resolution
- *     CLI compile.ts lines 195-257   — reference implementation for assemble flow
+ *     DEC-HOOK-PROACTIVE-PRIMARY-001       — initiative umbrella
+ *     DEC-MCP-ERROR-AS-CONTENT-004         — errors as content, never throw
+ *     DEC-MCP-STDERR-LOGGING-005           — no stdout (no console.log)
+ *     Sacred Practice #12                  — single authority for short-id resolution
+ *     packages/registry/src/rebuild.ts:104 — canonical enumerateSpecs→selectBlocks pattern
  *
- * Implements: yakcc#1007
+ * Implements: yakcc#1007, yakcc#1028
  */
 
 import { assemble } from "@yakcc/compile";
@@ -57,7 +67,6 @@ import type { Artifact } from "@yakcc/compile";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
-import type { SeedResult } from "@yakcc/seeds";
 import type { HttpClient } from "../http-client.js";
 import type { MCPContent, ToolModule } from "./types.js";
 
@@ -95,14 +104,18 @@ type ResolveIdResult =
  * Resolve a possibly-short atom_id to a unique BlockMerkleRoot.
  *
  * - 64-char hex string → pass straight through as BlockMerkleRoot.
- * - Shorter string → prefix-match against knownRoots (the seeded registry set).
+ * - Shorter string → prefix-match against knownRoots (FULL registry block set).
  *   Unique match → resolve. Multiple matches → ambiguous. Zero → not_found.
  *
  * This is the single short-id resolution authority for the MCP compile tool
- * (Sacred Practice #12). The knownRoots come from seedRegistry().merkleRoots,
- * matching CLI compile.ts line 199.
+ * (Sacred Practice #12, DEC-1028-COMPILE-FULL-ROOTS-001). knownRoots must
+ * come from the full registry enumeration (enumerateSpecs → selectBlocks),
+ * NOT from seedRegistry().merkleRoots, so non-seed atoms resolve correctly.
  */
-function resolveAtomId(atomId: string, knownRoots: ReadonlyArray<BlockMerkleRoot>): ResolveIdResult {
+function resolveAtomId(
+  atomId: string,
+  knownRoots: ReadonlyArray<BlockMerkleRoot>,
+): ResolveIdResult {
   // Full 64-char merkle root: pass through directly.
   if (/^[a-f0-9]{64}$/i.test(atomId)) {
     return { kind: "full", root: atomId.toLowerCase() as BlockMerkleRoot };
@@ -149,23 +162,35 @@ export interface CreateCompileToolOptions {
  * Create a yakcc_compile ToolModule with an optionally injected registry factory.
  *
  * Handler is a closure over the lazy registry promise. The registry is opened
- * once and seeded once per tool instance. The seeded merkle roots are cached
- * alongside the registry so subsequent calls don't re-seed.
+ * once, seeded once, and the FULL block root set is enumerated once per tool
+ * instance (DEC-1028-COMPILE-FULL-ROOTS-001). All three are cached so subsequent
+ * calls pay zero setup cost.
  *
  * @param opts - Optional registry factory override (for tests).
  */
 export function createCompileTool(opts?: CreateCompileToolOptions): ToolModule {
-  // Lazy-cached registry + seed state (opened and seeded at most once per instance).
-  let registryPromise: Promise<{ registry: Registry; seedResult: SeedResult }> | null = null;
+  // Lazy-cached registry + full block roots (opened/enumerated at most once per instance).
+  let registryPromise: Promise<{ registry: Registry; fullRoots: BlockMerkleRoot[] }> | null = null;
 
-  function getRegistryAndSeed(): Promise<{ registry: Registry; seedResult: SeedResult }> {
+  function getRegistryAndFullRoots(): Promise<{ registry: Registry; fullRoots: BlockMerkleRoot[] }> {
     if (registryPromise !== null) return registryPromise;
     const factory = opts?.openRegistry ?? defaultOpenRegistry;
     registryPromise = factory().then(async (registry) => {
-      // seedRegistry is idempotent (INSERT OR IGNORE) — safe to call on an
-      // already-seeded registry. We need its merkleRoots for short-id resolution.
-      const seedResult = await seedRegistry(registry);
-      return { registry, seedResult };
+      // Seed the registry so seed blocks are present for resolution and assembly.
+      // seedRegistry is idempotent (INSERT OR IGNORE) — safe on an already-seeded DB.
+      await seedRegistry(registry);
+
+      // Enumerate the FULL registry block root set (DEC-1028-COMPILE-FULL-ROOTS-001).
+      // This is the canonical pattern from packages/registry/src/rebuild.ts:104-112.
+      // Using seed roots alone misses non-seed atoms returned by yakcc_resolve.
+      const fullRoots: BlockMerkleRoot[] = [];
+      const specHashes = await registry.enumerateSpecs();
+      for (const sh of specHashes) {
+        const roots = await registry.selectBlocks(sh);
+        for (const root of roots) fullRoots.push(root);
+      }
+
+      return { registry, fullRoots };
     });
     return registryPromise;
   }
@@ -219,11 +244,11 @@ export function createCompileTool(opts?: CreateCompileToolOptions): ToolModule {
 
       const { atomId } = parsed;
 
-      // --- Open registry + seed (lazy, cached) ---
+      // --- Open registry + seed + enumerate full roots (lazy, cached) ---
       let registry: Registry;
-      let seedResult: SeedResult;
+      let fullRoots: BlockMerkleRoot[];
       try {
-        ({ registry, seedResult } = await getRegistryAndSeed());
+        ({ registry, fullRoots } = await getRegistryAndFullRoots());
       } catch (err) {
         return [
           {
@@ -236,8 +261,8 @@ export function createCompileTool(opts?: CreateCompileToolOptions): ToolModule {
         ];
       }
 
-      // --- Short-id → full-root resolution ---
-      const resolved = resolveAtomId(atomId, seedResult.merkleRoots);
+      // --- Short-id → full-root resolution (against FULL registry, not seed-only) ---
+      const resolved = resolveAtomId(atomId, fullRoots);
 
       if (resolved.kind === "not_found") {
         return [
@@ -272,7 +297,7 @@ export function createCompileTool(opts?: CreateCompileToolOptions): ToolModule {
       let artifact: Artifact;
       try {
         artifact = await assemble(entryRoot, registry, undefined, {
-          knownMerkleRoots: seedResult.merkleRoots,
+          knownMerkleRoots: fullRoots,
         });
       } catch (err) {
         return [
