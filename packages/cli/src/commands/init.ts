@@ -98,11 +98,12 @@
 //   ROLLBACK: revert the slice PR; yakcc init returns to offline-first default;
 //   no .yakccrc.json migration needed (change affects new init runs only).
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { PROJECT_MANIFEST_PATH, emptyManifest, serializeProjectManifest } from "@yakcc/compile";
 import { type Registry, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 import { writeCLaudeMdDiscovery } from "../lib/claude-md-config.js";
@@ -515,6 +516,44 @@ export async function init(
   }
 
   // -------------------------------------------------------------------------
+  // 4b. Scaffold .yakcc/manifest.json for compose-by-reference (idempotent)
+  //
+  // @decision DEC-COMPOSE-BY-REF-DEFAULT-001
+  // title: yakcc init scaffolds .yakcc/manifest.json so compose-by-reference
+  //        (reference-emit) is the default discovery behavior for new projects;
+  //        verbatim remains the fallback when the manifest is absent.
+  // status: accepted (WI compose-ref-init-default / #1048 integration point)
+  // rationale:
+  //   The discovery prompt (#1048) gates reference-emit on the PRESENCE of
+  //   .yakcc/manifest.json. Without this file, new projects silently fall to
+  //   the verbatim fallback — writing full implementations instead of the
+  //   ~10-token reference import. By having `yakcc init` scaffold an empty,
+  //   valid manifest at first init, compose-by-reference becomes THE STANDARD
+  //   for all new projects without any additional user action.
+  //
+  //   Verbatim remains the explicit fallback for projects that lack a build
+  //   step (no manifest file means no build pipeline, so verbatim is correct).
+  //
+  //   The manifest is written ONLY via the @yakcc/compile authorities:
+  //   emptyManifest() + serializeProjectManifest() — never hand-rolled JSON.
+  //   This ensures parseProjectManifest() accepts it (single authority).
+  //
+  //   Idempotency: if .yakcc/manifest.json already exists (e.g. re-init on
+  //   an active project with references), we skip the write to avoid clobbering
+  //   the user's existing compose-by-reference registry.
+  // -------------------------------------------------------------------------
+
+  const manifestPath = join(targetDir, PROJECT_MANIFEST_PATH);
+  if (!existsSync(manifestPath)) {
+    try {
+      writeFileSync(manifestPath, serializeProjectManifest(emptyManifest()), "utf-8");
+    } catch (err) {
+      logger.error(`warning: cannot write ${manifestPath}: ${String(err)} — continuing`);
+      // Non-fatal: the registry is still initialized and hooks still install.
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // 5. Initialize the registry (idempotent via openRegistry/applyMigrations)
   // -------------------------------------------------------------------------
 
@@ -792,6 +831,9 @@ export async function init(
   logger.log("");
   logger.log(`Installed in ${targetDir}. ${hookedLine} Registry: ${seedCount} atoms.`);
   logger.log(`Telemetry: ${telemetryDir}/<session>.jsonl (written on next Edit/Write tool call)`);
+  logger.log(
+    "Compose-by-reference: .yakcc/manifest.json scaffolded — run `yakcc build` to materialize referenced atoms.",
+  );
 
   // @decision DEC-CLI-INIT-NO-IDE-HINT-001 (WI-687-S7 / #746 AC2)
   // title: When auto-detect finds nothing and --skip-hooks was not passed, surface a
