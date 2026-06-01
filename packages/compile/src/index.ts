@@ -79,3 +79,8 @@ export {
   materializedDtsPath,
   referenceImportLine,
 } from "./project-manifest.js";
+
+// Compose-by-reference .d.ts generator (#1046, DEC-COMPOSE-BY-REF-DTS-001)
+// generateAtomDts: SpecYak + symbol → .d.ts text so reference source typechecks pre-build.
+// Consumed by: `yakcc build` (#1045/#1046 emission wiring), `yakcc_reference` (#1047).
+export { generateAtomDts } from "./atom-dts.js";
