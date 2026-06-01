@@ -232,6 +232,46 @@ describe("no forbidden carve-out keywords as permissive guidance", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test: compose-by-reference path (#1048 / DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001)
+// ---------------------------------------------------------------------------
+
+describe("compose-by-reference reference-emit path (WI-1048)", () => {
+  it("references the yakcc_reference MCP tool by name", () => {
+    expect(promptText).toMatch(/yakcc_reference/);
+  });
+
+  it("uses .yakcc/manifest.json as the detection signal", () => {
+    expect(promptText).toMatch(/\.yakcc\/manifest\.json/);
+  });
+
+  it("instructs writing import_line verbatim", () => {
+    expect(promptText).toMatch(/import_line/);
+  });
+
+  it("instructs recording manifest_entry", () => {
+    expect(promptText).toMatch(/manifest_entry/);
+  });
+
+  it("instructs writing dts_ref to enable typecheck before build", () => {
+    expect(promptText).toMatch(/dts_ref/);
+  });
+
+  it("forbids writing the atom implementation body on reference path (imperative)", () => {
+    expect(promptText).toMatch(/You MUST NOT write the atom/);
+  });
+
+  it("preserves the verbatim yakcc_compile fallback path for non-reference projects", () => {
+    // Section B must still instruct calling yakcc_compile and writing source verbatim.
+    expect(promptText).toMatch(/yakcc_compile/);
+    expect(promptText).toMatch(/verbatim/i);
+  });
+
+  it("carries the DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001 annotation", () => {
+    expect(promptText).toMatch(/DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test: structural invariants
 // ---------------------------------------------------------------------------
 

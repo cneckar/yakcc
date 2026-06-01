@@ -545,6 +545,84 @@ type, failure-mode shapes, and D4/D5 boundary are all unchanged. Only the
 
 ---
 
+### Q10: Compose-by-reference emit path on strong match (2026-06-01)
+
+**Decision:** When `.yakcc/manifest.json` is present at the project root
+(indicating the project is wired for `yakcc build`), on `auto_accept` the model
+MUST call `yakcc_reference` (not `yakcc_compile`) and write only the returned
+`import_line` (~10 tokens). The verbatim `yakcc_compile` path from Q9/#1030
+remains valid for projects not wired for compose-by-reference.
+
+**Detection signal:** `.yakcc/manifest.json` presence at project root. This file
+is created when the project adopts compose-by-reference (#1044). Its presence is
+the unambiguous signal that `yakcc build` is wired and will materialize atom
+implementations at build time.
+
+**What changed:**
+
+The Q9 directive (#1030) mandated: `yakcc_resolve → auto_accept →
+yakcc_compile → Write(source verbatim)`. The B4-v5 rerun (#1041) proved this
+path is token-negative: writing `yakcc_compile`'s returned source (~370 tokens)
+equals re-authoring the implementation. The reference-emit path collapses that
+to ~10 tokens (the import line alone).
+
+The revised two-branch directive (as of this WI, issue #1048) adds a detection
+gate before the Q9 sequence:
+
+1. **Reference path** (`.yakcc/manifest.json` present — preferred, token-savings):
+   - Call `yakcc_reference({ atom_id: candidates[0].atom_id })` — NOT `yakcc_compile`.
+   - Write the returned `import_line` verbatim to the target file.
+   - Append the returned `manifest_entry` to the `references` array in
+     `.yakcc/manifest.json`.
+   - Write the returned `dts_ref.dts` to `dts_ref.path` (enables typecheck before build).
+   - You MUST NOT write the atom's implementation body. `yakcc build` materializes it.
+
+2. **Verbatim path** (`.yakcc/manifest.json` absent — fallback, existing Q9 behaviour):
+   - Call `yakcc_compile({ atom_id })` and write the returned `source` verbatim.
+   - The Q9 "protocol violation" framing for re-implementation remains fully in force.
+
+**Token rationale (#1041):**
+- Verbatim path: ~370 output tokens (the full implementation body).
+- Reference path: ~10 output tokens (one import line).
+- Savings: ~360 tokens per `auto_accept` hit on a reference-wired project.
+- This is the empirical motivation documented in #1041 that justifies the
+  reference-emit path as the preferred fork rather than a suggestion.
+
+**Relationship to prior Q-sections:**
+- Branches from Q9/#1030: the verbatim `yakcc_compile` directive is preserved
+  as the fallback; it is NOT deleted or superseded for non-reference projects.
+- Coexists with #1029 (auto_accept tier): the detection gate fires AFTER
+  `auto_accept` is confirmed; the `confidence_tier` semantics and score bands
+  are unchanged.
+- References the `yakcc_reference` MCP tool introduced by #1047
+  (DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001).
+
+**Invariants verified (DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001):**
+- `grep -c "yakcc_reference" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "manifest.json" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "import_line" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "manifest_entry" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "dts_ref" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "You MUST NOT write the atom" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- The Section B verbatim path (yakcc_compile) still exists exactly once.
+- `grep -c "You SHOULD consider\|Try to\|When possible\|Reserve hand-written code"` = 0
+
+**What is NOT changed:** Q1–Q9 substantive decisions remain in force. The
+two-branch detection gate does not alter tool-call shape, evidence rendering
+contract, 4-band protocol, `status` enum, `ConfidenceMode` type, failure-mode
+shapes, or D4/D5 boundary. The Q9 verbatim `yakcc_compile` path is preserved as
+the fallback for all non-reference-wired projects.
+
+**Rollback:** `git revert` the WI-1048 landing commit. The prompt file reverts
+to the Q9/single-path form; Section A is removed; Section B reverts to the flat
+verbatim directive.
+
+**Issue:** https://github.com/cneckar/yakcc/issues/1048
+**Decision ID:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001
+**Date:** 2026-06-01
+
+---
+
 ### Q7: Boundary with D5 (quality measurement)
 
 **Decision:** D4 pins **interaction shape** in v1; D5 measures and tunes **calibration knobs**.
@@ -972,6 +1050,10 @@ The fallback path is intentionally NOT retired. Agents in the wild that don't kn
 
 ## References
 
+- Issue #1048 (WI-1048 — Compose-by-reference reference-emit path; D4 ADR revision in Q10)
+- `DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001` — reference-emit preferred path when `.yakcc/manifest.json` present (`docs/system-prompts/yakcc-discovery.md`, Q10 of this ADR)
+- Issue #1047 (`yakcc_reference` MCP tool; `DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001`)
+- Issue #1041 (B4-v5 token-savings analysis; empirical basis for Q10)
 - Issue #1030 (WI-1030 — Forceful substitution directive; D4 ADR revision in Q9)
 - `DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001` — B4-v5 rerun empirical validation; forceful compile-and-stop directive (`docs/system-prompts/yakcc-discovery.md`, Q9 of this ADR)
 - Issue #578 (WI-578 — Descent-and-Compose prompt rewrite; D4 ADR revision in Q8)

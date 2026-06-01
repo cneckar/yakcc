@@ -113,7 +113,23 @@ Auto-accept rule: the tool returns `confidence_tier: "auto_accept"` when either:
 
 See **Compile and stop** below.
 
-## Compile and stop
+## Compose by reference (preferred) and compile-and-stop (fallback)
+
+<!-- @decision DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001
+     @title Compose-by-reference emit path on strong/auto_accept match
+     @status accepted
+     @rationale
+       B4-v5 rerun (#1041) proved that writing yakcc_compile's returned source
+       (~370 tokens) is token-negative compared to writing only the import line
+       (~10 tokens) when the project is wired for yakcc build. The yakcc_reference
+       tool (#1047, DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001) returns
+       { manifest_entry, import_line, dts_ref } — the model writes the import line
+       verbatim and does NOT write the implementation body; yakcc build materializes
+       it. This path is preferred when .yakcc/manifest.json is present. The
+       yakcc_compile verbatim path remains valid for projects not wired for
+       compose-by-reference.
+       Issue: https://github.com/cneckar/yakcc/issues/1048
+       Branches from: DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001 (#1030) -->
 
 <!-- @decision DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001
      @title Forceful substitution directive for yakcc_compile tool path
@@ -130,6 +146,61 @@ See **Compile and stop** below.
        Issue: https://github.com/cneckar/yakcc/issues/1030 -->
 
 When `yakcc_resolve` returns `confidence_tier: "auto_accept"`:
+
+**Detection: is the project wired for compose-by-reference?**
+
+Check whether `.yakcc/manifest.json` exists at the project root.
+
+- If `.yakcc/manifest.json` IS present → use the **reference path** (Section A below).
+- If `.yakcc/manifest.json` is NOT present → use the **verbatim path** (Section B below).
+
+---
+
+### Section A — Reference path (`.yakcc/manifest.json` present)
+
+<!-- @decision DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001 continued -->
+
+The project is wired for compose-by-reference. `yakcc build` (#1045) will
+materialize atom implementations from the manifest. You MUST NOT write the
+atom's implementation body — writing it duplicates work that `yakcc build` does
+and defeats the token-savings purpose of compose-by-reference.
+
+The correct sequence on `auto_accept` when `.yakcc/manifest.json` is present:
+
+```
+yakcc_resolve(intent) → auto_accept
+  → yakcc_reference({ atom_id: candidates[0].atom_id })
+      returns { manifest_entry, import_line, dts_ref: { path, dts } }
+  → Write import_line verbatim to the target file       ← ~10 tokens, end of story
+  → Append manifest_entry to .yakcc/manifest.json references array
+  → Write dts_ref.dts to dts_ref.path                  ← enables typecheck before build
+```
+
+Step by step — you MUST follow all four steps:
+
+1. Call `yakcc_reference({ atom_id: candidates[0].atom_id })`.
+2. Write the returned `import_line` verbatim to the target file. Copy it exactly
+   as returned — do not paraphrase or alter it.
+3. Append the returned `manifest_entry` to the `references` array in
+   `.yakcc/manifest.json`.
+4. Write the returned `dts_ref.dts` to `dts_ref.path` so the import typechecks
+   before `yakcc build` runs.
+
+**You MUST NOT write the atom's implementation body.** `yakcc build` materializes
+the implementation from the manifest. Writing the body yourself creates an
+untested divergent copy and wastes the token budget that compose-by-reference
+was designed to save.
+
+**This is not a suggestion.** Calling `yakcc_compile` and writing the full source
+when `.yakcc/manifest.json` is present is a protocol violation. Use
+`yakcc_reference` and write only the import line.
+
+---
+
+### Section B — Verbatim path (`.yakcc/manifest.json` absent)
+
+The project is NOT wired for compose-by-reference. You MUST use `yakcc_compile`
+and write the returned source verbatim.
 
 1. Call `yakcc_compile({ atom_id: candidates[0].atom_id })` immediately.
 2. The tool returns a `source` field — that IS the final implementation.

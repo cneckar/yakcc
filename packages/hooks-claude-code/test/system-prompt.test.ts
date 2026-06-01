@@ -188,6 +188,45 @@ describe("ADR authority line", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Compose-by-reference reference-emit path (#1048 / DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001)
+// ---------------------------------------------------------------------------
+
+describe("compose-by-reference reference-emit path (WI-1048)", () => {
+  it("references the yakcc_reference MCP tool by name", () => {
+    expect(prompt).toMatch(/yakcc_reference/);
+  });
+
+  it("uses .yakcc/manifest.json as the detection signal for reference path", () => {
+    expect(prompt).toMatch(/\.yakcc\/manifest\.json/);
+  });
+
+  it("instructs writing import_line to the target file", () => {
+    expect(prompt).toMatch(/import_line/);
+  });
+
+  it("instructs recording manifest_entry into the manifest", () => {
+    expect(prompt).toMatch(/manifest_entry/);
+  });
+
+  it("instructs writing dts_ref to enable typecheck before build", () => {
+    expect(prompt).toMatch(/dts_ref/);
+  });
+
+  it("forbids writing the atom implementation body on the reference path (imperative)", () => {
+    expect(prompt).toMatch(/You MUST NOT write the atom/);
+  });
+
+  it("preserves the verbatim yakcc_compile fallback path for non-reference projects", () => {
+    expect(prompt).toMatch(/yakcc_compile/);
+    expect(promptLower).toContain("verbatim");
+  });
+
+  it("carries the DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001 annotation", () => {
+    expect(prompt).toMatch(/DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Forceful substitution directive (#1030 / DEC-BENCH-B4-V5-SUBSTITUTION-DIRECTIVE-001)
 // ---------------------------------------------------------------------------
 
