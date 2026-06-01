@@ -1,0 +1,349 @@
+{
+  "atoms": [
+    {
+      "atomId": "crc32c",
+      "stratum": "small",
+      "symbol": "CRC32C",
+      "implLines": 48,
+      "verbatim": {
+        "chars": 1233,
+        "tokens": 309
+      },
+      "reference": {
+        "chars": 51,
+        "tokens": 13
+      },
+      "absoluteSavings": 296,
+      "collapseRatio": 23.76923076923077,
+      "importLine": "import { CRC32C } from \".yakcc/atoms/406d30eb907a\";"
+    },
+    {
+      "atomId": "base32-rfc4648",
+      "stratum": "small",
+      "symbol": "Base32Codec",
+      "implLines": 76,
+      "verbatim": {
+        "chars": 2081,
+        "tokens": 521
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "absoluteSavings": 507,
+      "collapseRatio": 37.214285714285715,
+      "importLine": "import { Base32Codec } from \".yakcc/atoms/8005b57d903d\";"
+    },
+    {
+      "atomId": "ring-buffer",
+      "stratum": "small",
+      "symbol": "RingBuffer",
+      "implLines": 79,
+      "verbatim": {
+        "chars": 2132,
+        "tokens": 533
+      },
+      "reference": {
+        "chars": 55,
+        "tokens": 14
+      },
+      "absoluteSavings": 519,
+      "collapseRatio": 38.07142857142857,
+      "importLine": "import { RingBuffer } from \".yakcc/atoms/385cf658bbd3\";"
+    },
+    {
+      "atomId": "utf8-codec",
+      "stratum": "small",
+      "symbol": "Utf8Codec",
+      "implLines": 103,
+      "verbatim": {
+        "chars": 3105,
+        "tokens": 777
+      },
+      "reference": {
+        "chars": 54,
+        "tokens": 14
+      },
+      "absoluteSavings": 763,
+      "collapseRatio": 55.5,
+      "importLine": "import { Utf8Codec } from \".yakcc/atoms/ff7a1a62f8c1\";"
+    },
+    {
+      "atomId": "semver-range",
+      "stratum": "small",
+      "symbol": "SemVerRange",
+      "implLines": 121,
+      "verbatim": {
+        "chars": 3777,
+        "tokens": 945
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "absoluteSavings": 931,
+      "collapseRatio": 67.5,
+      "importLine": "import { SemVerRange } from \".yakcc/atoms/ff40ae2d5899\";"
+    },
+    {
+      "atomId": "lru-ttl-cache",
+      "stratum": "small",
+      "symbol": "LRUTTLCache",
+      "implLines": 175,
+      "verbatim": {
+        "chars": 4407,
+        "tokens": 1102
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "absoluteSavings": 1088,
+      "collapseRatio": 78.71428571428571,
+      "importLine": "import { LRUTTLCache } from \".yakcc/atoms/d1f2af8fa19c\";"
+    },
+    {
+      "atomId": "dijkstra-heap",
+      "stratum": "large",
+      "symbol": "Graph",
+      "implLines": 241,
+      "verbatim": {
+        "chars": 7717,
+        "tokens": 1930
+      },
+      "reference": {
+        "chars": 50,
+        "tokens": 13
+      },
+      "absoluteSavings": 1917,
+      "collapseRatio": 148.46153846153845,
+      "importLine": "import { Graph } from \".yakcc/atoms/0586be742874\";"
+    },
+    {
+      "atomId": "pratt-expr-eval",
+      "stratum": "large",
+      "symbol": "ExpressionEvaluator",
+      "implLines": 236,
+      "verbatim": {
+        "chars": 7764,
+        "tokens": 1941
+      },
+      "reference": {
+        "chars": 64,
+        "tokens": 16
+      },
+      "absoluteSavings": 1925,
+      "collapseRatio": 121.3125,
+      "importLine": "import { ExpressionEvaluator } from \".yakcc/atoms/762529ae3408\";"
+    },
+    {
+      "atomId": "avl-tree",
+      "stratum": "large",
+      "symbol": "AVLTree",
+      "implLines": 287,
+      "verbatim": {
+        "chars": 8034,
+        "tokens": 2009
+      },
+      "reference": {
+        "chars": 52,
+        "tokens": 13
+      },
+      "absoluteSavings": 1996,
+      "collapseRatio": 154.53846153846155,
+      "importLine": "import { AVLTree } from \".yakcc/atoms/7611771ac342\";"
+    }
+  ],
+  "smallAtoms": [
+    {
+      "atomId": "crc32c",
+      "stratum": "small",
+      "symbol": "CRC32C",
+      "implLines": 48,
+      "verbatim": {
+        "chars": 1233,
+        "tokens": 309
+      },
+      "reference": {
+        "chars": 51,
+        "tokens": 13
+      },
+      "absoluteSavings": 296,
+      "collapseRatio": 23.76923076923077,
+      "importLine": "import { CRC32C } from \".yakcc/atoms/406d30eb907a\";"
+    },
+    {
+      "atomId": "base32-rfc4648",
+      "stratum": "small",
+      "symbol": "Base32Codec",
+      "implLines": 76,
+      "verbatim": {
+        "chars": 2081,
+        "tokens": 521
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "absoluteSavings": 507,
+      "collapseRatio": 37.214285714285715,
+      "importLine": "import { Base32Codec } from \".yakcc/atoms/8005b57d903d\";"
+    },
+    {
+      "atomId": "ring-buffer",
+      "stratum": "small",
+      "symbol": "RingBuffer",
+      "implLines": 79,
+      "verbatim": {
+        "chars": 2132,
+        "tokens": 533
+      },
+      "reference": {
+        "chars": 55,
+        "tokens": 14
+      },
+      "absoluteSavings": 519,
+      "collapseRatio": 38.07142857142857,
+      "importLine": "import { RingBuffer } from \".yakcc/atoms/385cf658bbd3\";"
+    },
+    {
+      "atomId": "utf8-codec",
+      "stratum": "small",
+      "symbol": "Utf8Codec",
+      "implLines": 103,
+      "verbatim": {
+        "chars": 3105,
+        "tokens": 777
+      },
+      "reference": {
+        "chars": 54,
+        "tokens": 14
+      },
+      "absoluteSavings": 763,
+      "collapseRatio": 55.5,
+      "importLine": "import { Utf8Codec } from \".yakcc/atoms/ff7a1a62f8c1\";"
+    },
+    {
+      "atomId": "semver-range",
+      "stratum": "small",
+      "symbol": "SemVerRange",
+      "implLines": 121,
+      "verbatim": {
+        "chars": 3777,
+        "tokens": 945
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "absoluteSavings": 931,
+      "collapseRatio": 67.5,
+      "importLine": "import { SemVerRange } from \".yakcc/atoms/ff40ae2d5899\";"
+    },
+    {
+      "atomId": "lru-ttl-cache",
+      "stratum": "small",
+      "symbol": "LRUTTLCache",
+      "implLines": 175,
+      "verbatim": {
+        "chars": 4407,
+        "tokens": 1102
+      },
+      "reference": {
+        "chars": 56,
+        "tokens": 14
+      },
+      "absoluteSavings": 1088,
+      "collapseRatio": 78.71428571428571,
+      "importLine": "import { LRUTTLCache } from \".yakcc/atoms/d1f2af8fa19c\";"
+    }
+  ],
+  "largeAtoms": [
+    {
+      "atomId": "dijkstra-heap",
+      "stratum": "large",
+      "symbol": "Graph",
+      "implLines": 241,
+      "verbatim": {
+        "chars": 7717,
+        "tokens": 1930
+      },
+      "reference": {
+        "chars": 50,
+        "tokens": 13
+      },
+      "absoluteSavings": 1917,
+      "collapseRatio": 148.46153846153845,
+      "importLine": "import { Graph } from \".yakcc/atoms/0586be742874\";"
+    },
+    {
+      "atomId": "pratt-expr-eval",
+      "stratum": "large",
+      "symbol": "ExpressionEvaluator",
+      "implLines": 236,
+      "verbatim": {
+        "chars": 7764,
+        "tokens": 1941
+      },
+      "reference": {
+        "chars": 64,
+        "tokens": 16
+      },
+      "absoluteSavings": 1925,
+      "collapseRatio": 121.3125,
+      "importLine": "import { ExpressionEvaluator } from \".yakcc/atoms/762529ae3408\";"
+    },
+    {
+      "atomId": "avl-tree",
+      "stratum": "large",
+      "symbol": "AVLTree",
+      "implLines": 287,
+      "verbatim": {
+        "chars": 8034,
+        "tokens": 2009
+      },
+      "reference": {
+        "chars": 52,
+        "tokens": 13
+      },
+      "absoluteSavings": 1996,
+      "collapseRatio": 154.53846153846155,
+      "importLine": "import { AVLTree } from \".yakcc/atoms/7611771ac342\";"
+    }
+  ],
+  "smallAggregate": {
+    "n": 6,
+    "totalVerbatimTokens": 4187,
+    "totalImportTokens": 83,
+    "totalSavings": 4104,
+    "corpusCollapseRatio": 50.44578313253012,
+    "medianAbsoluteSavings": 641,
+    "medianCollapseRatio": 46.785714285714285,
+    "minCollapseRatio": 23.76923076923077,
+    "maxCollapseRatio": 78.71428571428571
+  },
+  "largeAggregate": {
+    "n": 3,
+    "totalVerbatimTokens": 5880,
+    "totalImportTokens": 42,
+    "totalSavings": 5838,
+    "corpusCollapseRatio": 140,
+    "medianAbsoluteSavings": 1925,
+    "medianCollapseRatio": 148.46153846153845,
+    "minCollapseRatio": 121.3125,
+    "maxCollapseRatio": 154.53846153846155
+  },
+  "combinedAggregate": {
+    "n": 9,
+    "totalVerbatimTokens": 10067,
+    "totalImportTokens": 125,
+    "totalSavings": 9942,
+    "corpusCollapseRatio": 80.536,
+    "medianAbsoluteSavings": 931,
+    "medianCollapseRatio": 67.5,
+    "minCollapseRatio": 23.76923076923077,
+    "maxCollapseRatio": 154.53846153846155
+  },
+  "tokenHeuristic": "tokens = ceil(chars / 4) — standard rough heuristic; ratio is robust to tokenizer choice",
+  "measuredAt": "2026-06-01T12:00:25.126Z"
+}
