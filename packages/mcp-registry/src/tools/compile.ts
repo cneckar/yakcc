@@ -341,26 +341,20 @@ export function createCompileTool(opts?: CreateCompileToolOptions): ToolModule {
 /**
  * Default registry opener for production use.
  *
- * Resolves the registry path from YAKCC_REGISTRY_PATH env var or falls back
- * to ".yakcc/registry.sqlite" relative to process.cwd().
- * Uses createOfflineEmbeddingProvider for deterministic, low-latency embeddings
- * (same approach as resolve.ts defaultOpenRegistry — DEC-HOOK-PHASE-3-L3-MCP-001-C).
+ * Delegates to openRegistryMatchingStoredProvider so the registry opens
+ * successfully against BOTH local-embedded (Xenova/bge-small-en-v1.5) and
+ * offline-embedded (yakcc/offline-blake3-stub) registries. Previously used
+ * createOfflineEmbeddingProvider explicitly, which threw a provider-mismatch
+ * error against any standard local-embedded registry (issue #1069).
  *
- * Note: compile does not use embeddings for root lookup, but openRegistry
- * requires an embedding provider for schema consistency. Offline provider
- * is zero-cost for operations that never query the vector index.
+ * @decision DEC-1069-REFEMIT-PROVIDER-001
  */
 async function defaultOpenRegistry(): Promise<Registry> {
-  const { resolve } = await import("node:path");
-  const { openRegistry } = await import("@yakcc/registry");
-  const { createOfflineEmbeddingProvider } = await import("@yakcc/contracts");
-
-  const DEFAULT_REGISTRY_PATH = ".yakcc/registry.sqlite";
-  const registryPath =
-    process.env.YAKCC_REGISTRY_PATH ?? resolve(process.cwd(), DEFAULT_REGISTRY_PATH);
-
-  const provider = createOfflineEmbeddingProvider();
-  return openRegistry(registryPath, { embeddings: provider });
+  const { resolveDefaultRegistryPath, openRegistryMatchingStoredProvider } = await import(
+    "./registry-open.js"
+  );
+  const registryPath = await resolveDefaultRegistryPath();
+  return openRegistryMatchingStoredProvider(registryPath);
 }
 
 // ---------------------------------------------------------------------------
