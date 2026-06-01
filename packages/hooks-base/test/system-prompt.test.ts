@@ -252,8 +252,23 @@ describe("compose-by-reference reference-emit path (WI-1048)", () => {
     expect(promptText).toMatch(/manifest_entry/);
   });
 
-  it("instructs writing dts_ref to enable typecheck before build", () => {
+  it("references dts_ref (the path field returned by yakcc_reference)", () => {
+    // The prompt references dts_ref as a field in the yakcc_reference result —
+    // the model uses dts_ref.path as a reference only; it MUST NOT write the file.
     expect(promptText).toMatch(/dts_ref/);
+  });
+
+  it("instructs NOT writing the .d.ts (yakcc build generates it)", () => {
+    // #1062 fix: yakcc build (#1046) generates the .d.ts from the manifest;
+    // the model must not emit it. Both a forbid-write directive and a
+    // reference to yakcc build must be present.
+    expect(promptText).toMatch(/MUST NOT write the \.d\.ts|do NOT write it.*yakcc build|yakcc build.*generates/i);
+  });
+
+  it("contains a terseness directive forbidding narration on the reference path", () => {
+    // #1062 fix: ~300–500 tokens of narration dominated the #1061 paid run.
+    // The prompt must explicitly forbid narration/prose/commentary.
+    expect(promptText).toMatch(/MUST NOT narrate|no narration|do not narrate|Emit ONLY these/i);
   });
 
   it("forbids writing the atom implementation body on reference path (imperative)", () => {

@@ -90,8 +90,12 @@ export const EXPERIMENT_DEFAULTS = {
     reference: 15,
   },
   // max_tokens to request from Anthropic — caps spending and forces brief output.
-  maxTokensVerbatim: 800,
-  maxTokensReference: 60,
+  // #1062: raised from 800/60 → 3000/800 because the #1061 run showed the old caps
+  // truncated real output (verbatim cells hit 800, reference cells hit ~60 mid-narration).
+  // The new caps give each condition enough headroom to emit its full output so we can
+  // measure the true collapse ratio after the terse/no-.d.ts fix.
+  maxTokensVerbatim: 3000,
+  maxTokensReference: 800,
 };
 
 // ---------------------------------------------------------------------------
