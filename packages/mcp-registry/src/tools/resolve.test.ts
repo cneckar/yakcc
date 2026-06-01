@@ -403,9 +403,45 @@ describe("yakcc_resolve handler — confidence band mapping", () => {
     }
   });
 
-  it("auto_accept tier: matched status + score>0.92 AND gap>0.15 → auto_accept", async () => {
-    // Single candidate, score 0.95. No second candidate → gap is effectively 1.0 > 0.15.
+  it("auto_accept tier: matched status + score>0.85 AND gap>0.05 → auto_accept", async () => {
+    // Single candidate, score 0.95. No second candidate → gap is effectively 1.0 > 0.05.
     vi.mocked(yakccResolve).mockResolvedValue(makeAutoAcceptResult());
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "hash string" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as { confidence_tier: string };
+    expect(parsed.confidence_tier).toBe("auto_accept");
+  });
+
+  // @mock-exempt: mirrors the established mock pattern in this describe block
+  // (yakccResolve is replaced via vi.mock("@yakcc/hooks-base") at the top so
+  // every tier test can drive the unit-under-test deterministically).
+  it("auto_accept tier: #1029 high-confidence override — top>0.92 auto-accepts regardless of gap", async () => {
+    // Top 0.95 with a 2nd candidate at 0.93 -> gap is 0.02 (< 0.05 threshold).
+    // Without the override this would be candidate_list and the model would
+    // hedge; with override it correctly auto-accepts.
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "aaaabbbb",
+          behavior: "perfect match",
+          signature: "(x: string) => number",
+          score: 0.95,
+          guarantees: [],
+          tests: { count: 2 },
+          usage: null,
+        },
+        {
+          address: "ccccdddd",
+          behavior: "very close runner-up",
+          signature: "(x: string) => number",
+          score: 0.93,
+          guarantees: [],
+          tests: { count: 2 },
+          usage: null,
+        },
+      ],
+    });
     const http = makeHttp();
     const result = await tool.handler({ intent: { title: "hash string" } }, http);
     const parsed = JSON.parse(result[0]!.text) as { confidence_tier: string };

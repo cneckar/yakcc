@@ -107,8 +107,11 @@ Build the `query` field as:
 - score < 0.50 (poor):     `result.status` = "no_match". You MUST zoom in and query
                             sub-intents. NEVER write the code directly on a no_match.
 
-Auto-accept rule: if `combinedScore` > 0.85 AND the gap to the second-best candidate is
-> 0.05, the tool returns `confidence_tier: "auto_accept"`. See **Compile and stop** below.
+Auto-accept rule: the tool returns `confidence_tier: "auto_accept"` when either:
+- `combinedScore > 0.92` (high-confidence override — gap requirement waived), OR
+- `combinedScore > 0.85` AND the gap to the second-best candidate `> 0.05`
+
+See **Compile and stop** below.
 
 ## Compile and stop
 
