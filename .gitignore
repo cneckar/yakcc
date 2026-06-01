@@ -7,7 +7,12 @@ coverage/
 .DS_Store
 .env
 .env.local
-.yakcc/
+# Compose-by-reference project dir (#1044, DEC-COMPOSE-BY-REF-MANIFEST-001):
+# .yakcc/manifest.json is the committable authority that pins referenced atom
+# content-addresses; .yakcc/atoms/ is regenerable build output (materialized by
+# `yakcc build`, #1045) and must stay ignored.
+.yakcc/*
+!.yakcc/manifest.json
 .yakccrc.json
 tmp/
 # NOTE: tmp/discovery-eval/baseline-single-vector-2026-05-10.json and
