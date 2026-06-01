@@ -572,7 +572,13 @@ function lowerCall(node: Node, ctx: Ctx): string {
       }
       const start = args[0];
       const end = args[1];
-      return `${objStr}[${start ? lowerExpr(start, ctx) : ""}:${end ? lowerExpr(end, ctx) : ""}]`;
+      // Extracted to locals so the template literal interpolates plain
+      // identifiers — a single template with two inline ternary+call branches
+      // is the one shape the self-shave atomizer can't decompose (single inline
+      // ternary works at the args.length === 1 branch above).
+      const startStr = start ? lowerExpr(start, ctx) : "";
+      const endStr = end ? lowerExpr(end, ctx) : "";
+      return `${objStr}[${startStr}:${endStr}]`;
     }
 
     // xs.push(v) → xs.append(v)
