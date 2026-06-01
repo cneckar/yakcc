@@ -1,0 +1,320 @@
+{
+  "run_id": "phase2-v5-2026-06-01T18-26-18",
+  "completed_at": "2026-06-01T19:28:28.482Z",
+  "total_runs": 162,
+  "total_cost_usd": 24.396870919999998,
+  "cap_usd": 30,
+  "hooked_arm": "reference-emit",
+  "task_names": [
+    "crc32c",
+    "utf8-codec",
+    "base32-rfc4648",
+    "lru-ttl-cache",
+    "semver-range",
+    "ring-buffer"
+  ],
+  "cell_stats": {
+    "A": {
+      "cellId": "A",
+      "label": "Opus unhooked",
+      "passN": 18,
+      "passTotal": 18,
+      "passPct": 100,
+      "meanInTok": 785,
+      "meanOutTok": 1330,
+      "meanCacheRead": 0,
+      "meanCostUsd": 0.11155083333333334,
+      "meanTurns": 1
+    },
+    "B": {
+      "cellId": "B",
+      "label": "Opus hooked, cache off",
+      "passN": 13,
+      "passTotal": 18,
+      "passPct": 72,
+      "meanInTok": 39553,
+      "meanOutTok": 668,
+      "meanCacheRead": 0,
+      "meanCostUsd": 0.6433808333333334,
+      "meanTurns": 3
+    },
+    "B2": {
+      "cellId": "B2",
+      "label": "Opus hooked, cache on",
+      "passN": 11,
+      "passTotal": 18,
+      "passPct": 61,
+      "meanInTok": 6282,
+      "meanOutTok": 654,
+      "meanCacheRead": 26872,
+      "meanCostUsd": 0.3024125833333333,
+      "meanTurns": 3
+    },
+    "C": {
+      "cellId": "C",
+      "label": "Sonnet unhooked",
+      "passN": 17,
+      "passTotal": 18,
+      "passPct": 94,
+      "meanInTok": 593,
+      "meanOutTok": 1392,
+      "meanCacheRead": 0,
+      "meanCostUsd": 0.022657833333333335,
+      "meanTurns": 1
+    },
+    "D": {
+      "cellId": "D",
+      "label": "Sonnet hooked, cache off",
+      "passN": 9,
+      "passTotal": 18,
+      "passPct": 50,
+      "meanInTok": 35648,
+      "meanOutTok": 1704,
+      "meanCacheRead": 0,
+      "meanCostUsd": 0.13250099999999998,
+      "meanTurns": 3.3
+    },
+    "D2": {
+      "cellId": "D2",
+      "label": "Sonnet hooked, cache on",
+      "passN": 12,
+      "passTotal": 18,
+      "passPct": 67,
+      "meanInTok": 7926,
+      "meanOutTok": 2366,
+      "meanCacheRead": 21370,
+      "meanCostUsd": 0.08474505,
+      "meanTurns": 3.2
+    },
+    "E": {
+      "cellId": "E",
+      "label": "Haiku unhooked",
+      "passN": 12,
+      "passTotal": 18,
+      "passPct": 67,
+      "meanInTok": 592,
+      "meanOutTok": 1179,
+      "meanCacheRead": 0,
+      "meanCostUsd": 0.005189955555555555,
+      "meanTurns": 1
+    },
+    "F": {
+      "cellId": "F",
+      "label": "Haiku hooked, cache off",
+      "passN": 10,
+      "passTotal": 18,
+      "passPct": 56,
+      "meanInTok": 38876,
+      "meanOutTok": 1194,
+      "meanCacheRead": 0,
+      "meanCostUsd": 0.035876844444444445,
+      "meanTurns": 3.5
+    },
+    "F2": {
+      "cellId": "F2",
+      "label": "Haiku hooked, cache on",
+      "passN": 9,
+      "passTotal": 18,
+      "passPct": 50,
+      "meanInTok": 7077,
+      "meanOutTok": 1057,
+      "meanCacheRead": 24666,
+      "meanCostUsd": 0.01706678444444444,
+      "meanTurns": 3.5
+    }
+  },
+  "tier_conditioned": {
+    "auto_accept": {
+      "pass": 58,
+      "total": 64,
+      "pct": 91
+    },
+    "candidate_list": {
+      "pass": 6,
+      "total": 44,
+      "pct": 14
+    }
+  },
+  "substitution_stats": {
+    "B": {
+      "passN": 13,
+      "totalN": 13,
+      "passPct": 100
+    },
+    "B2": {
+      "passN": 11,
+      "totalN": 11,
+      "passPct": 100
+    },
+    "D": {
+      "passN": 8,
+      "totalN": 10,
+      "passPct": 80
+    },
+    "D2": {
+      "passN": 9,
+      "totalN": 9,
+      "passPct": 100
+    },
+    "F": {
+      "passN": 9,
+      "totalN": 11,
+      "passPct": 82
+    },
+    "F2": {
+      "passN": 8,
+      "totalN": 10,
+      "passPct": 80
+    }
+  },
+  "output_collapse": {
+    "B": {
+      "followedMean": 634,
+      "followedN": 13,
+      "ignoredMean": 756,
+      "ignoredN": 5
+    },
+    "B2": {
+      "followedMean": 627,
+      "followedN": 11,
+      "ignoredMean": 696,
+      "ignoredN": 7
+    },
+    "D": {
+      "followedMean": 671,
+      "followedN": 8,
+      "ignoredMean": 1905,
+      "ignoredN": 8
+    },
+    "D2": {
+      "followedMean": 538,
+      "followedN": 6,
+      "ignoredMean": 2772,
+      "ignoredN": 9
+    },
+    "F": {
+      "followedMean": 780,
+      "followedN": 11,
+      "ignoredMean": 1846,
+      "ignoredN": 7
+    },
+    "F2": {
+      "followedMean": 721,
+      "followedN": 10,
+      "ignoredMean": 1476,
+      "ignoredN": 8
+    }
+  },
+  "auto_accept_coverage": {
+    "opus": {
+      "cellId": "B",
+      "aaCount": 13,
+      "total": 18,
+      "pct": 72
+    },
+    "sonnet": {
+      "cellId": "D",
+      "aaCount": 10,
+      "total": 18,
+      "pct": 56
+    },
+    "haiku": {
+      "cellId": "F",
+      "aaCount": 11,
+      "total": 18,
+      "pct": 61
+    }
+  },
+  "failure_classes": {
+    "none": 64,
+    "model_ignored_candidate": 44
+  },
+  "flow_classes": {
+    "followed": 59,
+    "resolved_then_ignored": 44,
+    "malformed": 5
+  },
+  "haiku_rescue": {
+    "e_raw": {
+      "pass": 12,
+      "total": 18,
+      "pct": 67
+    },
+    "f_raw": {
+      "pass": 10,
+      "total": 18,
+      "pct": 56
+    },
+    "raw_delta_ppt": -11,
+    "per_task": {
+      "crc32c": {
+        "ePass": 3,
+        "eTotal": 3,
+        "fPass": 3,
+        "fTotal": 3
+      },
+      "utf8-codec": {
+        "ePass": 2,
+        "eTotal": 3,
+        "fPass": 0,
+        "fTotal": 3
+      },
+      "base32-rfc4648": {
+        "ePass": 2,
+        "eTotal": 3,
+        "fPass": 1,
+        "fTotal": 3
+      },
+      "lru-ttl-cache": {
+        "ePass": 2,
+        "eTotal": 3,
+        "fPass": 2,
+        "fTotal": 3
+      },
+      "semver-range": {
+        "ePass": 0,
+        "eTotal": 3,
+        "fPass": 1,
+        "fTotal": 3
+      },
+      "ring-buffer": {
+        "ePass": 3,
+        "eTotal": 3,
+        "fPass": 3,
+        "fTotal": 3
+      }
+    },
+    "f_conditioned": {
+      "auto_accept": {
+        "pass": 9,
+        "total": 11,
+        "pct": 82
+      },
+      "candidate_list": {
+        "pass": 1,
+        "total": 7,
+        "pct": 14
+      }
+    }
+  },
+  "cache_effect": {
+    "opus": {
+      "off": 0.6433808333333334,
+      "on": 0.3024125833333333,
+      "cacheRead": 26872,
+      "savingPct": 53
+    },
+    "sonnet": {
+      "off": 0.13250099999999998,
+      "on": 0.08474505,
+      "cacheRead": 21370,
+      "savingPct": 36
+    },
+    "haiku": {
+      "off": 0.035876844444444445,
+      "on": 0.01706678444444444,
+      "cacheRead": 24666,
+      "savingPct": 52
+    }
+  }
+}
