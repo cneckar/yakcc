@@ -623,6 +623,102 @@ verbatim directive.
 
 ---
 
+### Q11: Reference-emit output minimization — terse, no model-written .d.ts (2026-06-01)
+
+**Decision:** Revise Section A of `docs/system-prompts/yakcc-discovery.md` so
+the model emits ONLY two artifacts on the reference path (import line + manifest
+entry), tersely, with no narration. The model MUST NOT write the `.d.ts` file —
+`yakcc build` (#1046) generates `.yakcc/atoms/<alias>.d.ts` from the manifest.
+
+**New decision ID:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001
+**Issue:** https://github.com/cneckar/yakcc/issues/1062
+**Refines:** DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001 (#1048, Q10)
+**Date:** 2026-06-01
+
+**Empirical basis — #1061 paid run:**
+
+The #1061 paid run measured reference-mode output at ~430–635 tokens versus the
+idealized ~14-token import line, yielding only 1.3–6× collapse rather than the
+expected ~30×. Token breakdown:
+
+| component            | tokens (approx) |
+|----------------------|-----------------|
+| import line          | ~14             |
+| manifest entry       | ~40             |
+| `.d.ts` content      | ~68             |
+| narration/prose      | ~300–500        |
+| **total**            | **~430–635**    |
+
+Two defects in the #1048 Section A caused this:
+
+1. **Redundant `.d.ts` write (step 4):** The old Section A instructed the model
+   to "Write the returned `dts_ref.dts` to `dts_ref.path` so the import
+   typechecks before `yakcc build` runs." But `yakcc build` (#1046) already
+   generates `.yakcc/atoms/<alias>.d.ts` from the manifest automatically —
+   the model-emitted `.d.ts` was entirely redundant output (~68 tokens).
+
+2. **Narration invited by numbered steps:** The "Step by step — you MUST follow
+   all four steps" structure trained the model to narrate each step
+   ("I will now complete Step 1… Step 2…"), dominating the output with
+   ~300–500 tokens of prose that carried zero semantic value.
+
+**What changed (as of this WI, issue #1062):**
+
+1. The four-step sequence is collapsed to two write operations + an explicit
+   stop instruction.
+2. The `.d.ts` step is removed entirely. The `dts_ref` field is explicitly
+   labelled "for your reference only — do NOT write it; yakcc build generates
+   it."
+3. A direct terseness directive is added:
+   > "Emit ONLY these two artifacts. You MUST NOT narrate the steps, explain
+   > what you are doing, or add any prose or commentary — the discovery work
+   > is done; output only the import line and the manifest entry. Narration
+   > is wasted output."
+4. An explicit directive added: "You MUST NOT write the `.d.ts` file. …
+   Emitting the `.d.ts` yourself is a protocol violation equivalent to
+   emitting the implementation body."
+
+**Token savings (measured — #1061 paid re-run, $0.44, 32 cells, 100% behavioral compliance):**
+- Pre-fix reference output: ~430–635 tokens (narration + .d.ts + import + manifest)
+- Post-fix reference output: **~139–288 tokens** (Sonnet: 139–170; Haiku: 227–288),
+  scaling with atom size
+- Measured collapse: **2.7–19.4×** vs pre-fix baseline — large atoms with Sonnet
+  reach 19.4× (avl-tree) and 17.1× (dijkstra-heap); Haiku large atoms ~5–12×;
+  small atoms (crc32c) ~2.7–3.3×
+- The model still emits minor framing prose alongside the manifest entry, so output
+  does NOT reach the idealized floor of ~54 tokens (import line ~14 + manifest entry
+  ~40). That idealized floor is a structural lower bound, not the achieved result.
+- The remaining lever toward the ~30×+ structural target is moving the manifest-entry
+  append into the `yakcc_reference` tool itself, so the model writes only the import
+  line (~14 tokens). That is deferred to a follow-up WI.
+
+**Relationship to prior Q-sections:**
+- Refines Q10/#1048: Section A is updated; Section B (verbatim `yakcc_compile`
+  fallback) is fully preserved — untouched.
+- Q9/#1030 forceful substitution directive: unchanged and still in force.
+- Q8/#578 imperative descent-and-compose discipline: unchanged.
+- The `dts_ref` field is still DESCRIBED in the prompt (the model receives it
+  from `yakcc_reference`) — only the write instruction is removed.
+
+**Invariants verified (DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001):**
+- `grep -c "MUST NOT write the .d.ts\|do NOT write it\|yakcc build.*generates" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -ci "MUST NOT narrate\|Emit ONLY these\|no narration\|do not narrate" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- `grep -c "dts_ref" docs/system-prompts/yakcc-discovery.md` ≥ 1 (field still referenced)
+- `grep -c "You MUST NOT write the atom" docs/system-prompts/yakcc-discovery.md` ≥ 1
+- Section B verbatim path (`yakcc_compile`) still exists exactly once.
+- `grep -c "You SHOULD consider\|Try to\|When possible"` = 0 (no soft phrases)
+
+**What is NOT changed:** Q1–Q10 substantive decisions remain in force. The
+tool-call shape, evidence rendering contract, 4-band protocol, `status` enum,
+`ConfidenceMode` type, failure-mode shapes, and D4/D5 boundary are all unchanged.
+The `dts_ref` field in the `yakcc_reference` return shape is unchanged (D5/tool
+layer). Only the model's write instructions in Section A are updated.
+
+**Rollback:** `git revert` the WI-1062 landing commit. Section A reverts to the
+Q10/four-step form with the `.d.ts` write instruction.
+
+---
+
 ### Q7: Boundary with D5 (quality measurement)
 
 **Decision:** D4 pins **interaction shape** in v1; D5 measures and tunes **calibration knobs**.
@@ -1050,6 +1146,8 @@ The fallback path is intentionally NOT retired. Agents in the wild that don't kn
 
 ## References
 
+- Issue #1062 (WI-1062 — Reference-emit output minimization; D4 ADR revision in Q11)
+- `DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001` — terse reference-emit, no model-written .d.ts (`docs/system-prompts/yakcc-discovery.md`, Q11 of this ADR)
 - Issue #1048 (WI-1048 — Compose-by-reference reference-emit path; D4 ADR revision in Q10)
 - `DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001` — reference-emit preferred path when `.yakcc/manifest.json` present (`docs/system-prompts/yakcc-discovery.md`, Q10 of this ADR)
 - Issue #1047 (`yakcc_reference` MCP tool; `DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001`)
