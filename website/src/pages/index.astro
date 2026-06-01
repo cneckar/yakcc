@@ -31,7 +31,7 @@ import SiteNav from "../components/SiteNav.astro";
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="yakcc — content-addressed atom registry for code reuse across TypeScript, Python, and Go." />
+    <meta name="description" content="A shared library of verified, tested functions for AI coding assistants. Instead of regenerating the same parsers and validators on every prompt, the AI pulls pre-verified versions. Works across TypeScript, Python, and Go." />
     <title>yakcc</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
@@ -44,8 +44,9 @@ import SiteNav from "../components/SiteNav.astro";
     <section class="hero">
       <h1>yakcc</h1>
       <p class="tagline">
-        Content-addressed atom registry for code reuse.
-        Universalize functions across TypeScript, Python, and Go.
+        AI coding assistants regenerate the same functions on every prompt.
+        yakcc gives them a shared, verified library to pull from instead &mdash;
+        across TypeScript, Python, and Go.
       </p>
 
       <!-- Install one-liner with copy button.
@@ -107,11 +108,30 @@ import SiteNav from "../components/SiteNav.astro";
     <section id="what-is-yakcc">
       <h2>What is yakcc?</h2>
       <p>
-        yakcc is a content-addressed function-atom registry. Write small pure
-        functions; yakcc shaves them into language-neutral IR atoms keyed by
-        BLAKE3 hash, stores them in a federated registry, and lets you compose
-        programs by reference instead of by bundling. The registry currently
-        supports TypeScript, Python, and Go.
+        When an AI assistant in your editor needs a small function &mdash;
+        to parse a date, validate an email, debounce a callback &mdash; it
+        generates the code from scratch every time. The same dozen functions
+        get reinvented across every codebase, each with subtle differences,
+        each verified only by the tests you happen to write, each shipped
+        to your users as part of your bundle.
+      </p>
+      <p>
+        yakcc is a shared library of those functions. Each piece &mdash; we
+        call them <em>atoms</em> &mdash; comes with a stated contract, a
+        small implementation, and property tests that prove the
+        implementation matches the contract. When the AI in your editor
+        reaches for "a function that validates an email," yakcc serves the
+        verified atom that already exists instead of letting the AI
+        generate a new one.
+      </p>
+      <p>
+        Atoms are identified by the hash of their content, so the same
+        logical function always has the same identity &mdash; no matter who
+        wrote it or when. They work across TypeScript, Python, and Go
+        through a single shared format. The library is offline-first: the
+        whole pipeline runs without ever touching the network. The public
+        registry grows as developers contribute new atoms; every atom
+        contributed once is available to everyone, forever.
       </p>
     </section>
 
@@ -129,29 +149,38 @@ import SiteNav from "../components/SiteNav.astro";
           <h3>Working</h3>
           <ul>
             <li>
-              <strong>B6 — air-gap installable:</strong> yakcc installs and runs
-              fully offline after initial fetch.
+              <strong>Offline-first.</strong> The full pipeline &mdash;
+              install, shave, query, compile, verify &mdash; runs with zero
+              outbound network calls. Regulated environments work fine.
             </li>
             <li>
-              <strong>B7 — zero net network on cold install:</strong> install
-              path makes no unexpected outbound requests.
+              <strong>Bundle reduction.</strong> A JSON schema validator
+              built from yakcc atoms ships ~1/10th the bytes of the
+              equivalent npm dependency, on the same 156-case test suite.
             </li>
             <li>
-              <strong>B10 — import replacement:</strong> <code>yakcc</code>
-              rewrites import paths to atom references end-to-end.
+              <strong>Import replacement.</strong> When the AI's instinct
+              is <code>import validator from 'validator'</code>, yakcc
+              swaps in a 6-function atom &mdash; 98.8% fewer reachable
+              functions, same correctness.
             </li>
             <li>
-              <strong>Self-shave proof green:</strong> yakcc shaves its own
-              source byte-identically twice in a row, asserted unconditionally
-              on every push to main (7,064 atoms verified).
+              <strong>Verified reproducibility.</strong> yakcc proves
+              bit-for-bit identity by re-shaving its own source code on
+              every commit. All 7,064 of its own atoms match byte-for-byte
+              between the two passes.
             </li>
             <li>
-              <strong>Python adapter:</strong> 9 <code>bs4</code> functions
-              round-trip end-to-end (shave &rarr; IR &rarr; compile-python).
+              <strong>Cross-language support.</strong> The same atom binds
+              into TypeScript, Python, and Go. 9 BeautifulSoup functions
+              and 51 lodash-equivalent (samber/lo) functions round-trip
+              end-to-end.
             </li>
             <li>
-              <strong>Go adapter:</strong> 51 <code>samber/lo</code> functions
-              round-trip, verified with <code>go build</code>.
+              <strong>Mathematical proofs of behavior.</strong> Every atom
+              ships with property tests that prove the implementation
+              matches the contract &mdash; not just the cases you happened
+              to think of.
             </li>
           </ul>
         </div>
@@ -160,13 +189,15 @@ import SiteNav from "../components/SiteNav.astro";
           <h3>In flight</h3>
           <ul>
             <li>
-              <strong>B5 coherence</strong> &mdash; below target bar; active
-              measurement work in progress.
+              <strong>Multi-turn conversation coherence.</strong> Active
+              measurement work; current results below target bar.
             </li>
             <li>
-              <strong>Discovery MCP hook</strong> &mdash;
-              <a href="https://github.com/cneckar/yakcc/issues/950">#950</a>
-              wires atom discovery into editor hook lifecycle.
+              <strong>Editor-side discovery hook.</strong> Wiring atom
+              discovery into the AI assistant's lifecycle so it consults
+              yakcc <em>before</em> generating code, not after &mdash;
+              tracked in
+              <a href="https://github.com/cneckar/yakcc/issues/950">#950</a>.
             </li>
           </ul>
         </div>
@@ -175,8 +206,8 @@ import SiteNav from "../components/SiteNav.astro";
           <h3>Not yet</h3>
           <ul>
             <li>
-              <strong>Rust adapter</strong> &mdash; tracked in
-              <a href="https://github.com/cneckar/yakcc/issues/868">#868</a> /
+              <strong>Rust support.</strong> Tracked in
+              <a href="https://github.com/cneckar/yakcc/issues/868">#868</a> and
               <a href="https://github.com/cneckar/yakcc/issues/869">#869</a>.
             </li>
           </ul>
