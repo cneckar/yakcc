@@ -9,6 +9,8 @@
 
 ---
 
+> **Superseded by the B4-v5 dossier** → bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.md (measured 2026-06-01; auto_accept 91% oracle, prompt-cache −36–53%, coverage-gated 56–72%).
+
 ## Context
 
 The compose-by-reference design (DEC-COMPOSE-BY-REF-MANIFEST-001) lets the model emit a

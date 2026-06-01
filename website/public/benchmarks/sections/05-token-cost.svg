@@ -12,20 +12,20 @@
   </linearGradient>
 </defs>
 <rect width="1200" height="680" fill="#fafafa"/>
-<text x="600.0" y="48" font-size="24" fill="#0f172a" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Discovering atoms uses fewer tokens than generating them</text>
-<text x="600.0" y="76" font-size="13" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Atoms were authored by expensive models; discovery against that registry can be done by cheap (or free) models</text>
+<text x="600.0" y="48" font-size="24" fill="#0f172a" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Reference-emit collapses output when resolve auto-accepts</text>
+<text x="600.0" y="76" font-size="13" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">B4-v5: 91% oracle pass on auto_accept path; output 538–780 tokens vs 700–2772 on ignored path. Coverage 56–72% today.</text>
 <text x="112" y="178" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Generate from scratch</text>
 <rect x="120" y="160" width="630.0" height="70" rx="4" fill="#dc2626" filter="url(#shadow)"/>
 <text x="134" y="202" font-size="20" fill="#fff" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">1500 tokens</text>
-<text x="120" y="252" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Opus / Sonnet generates the impl from prompt; ~500-2000 tokens depending on function size</text>
-<text x="112" y="326" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Discover via yakcc</text>
-<rect x="120" y="308" width="33.6" height="70" rx="4" fill="#d97706" filter="url(#shadow)"/>
-<text x="167.6" y="350" font-size="20" fill="#0f172a" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">80 tokens</text>
-<text x="120" y="400" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Build IntentCard + receive matched-atom reference; ~50-150 tokens of output (no impl emitted)</text>
-<text x="112" y="474" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Discover with cheap model</text>
-<rect x="120" y="456" width="25.2" height="70" rx="4" fill="#0ea5e9" filter="url(#shadow)"/>
-<text x="159.2" y="498" font-size="20" fill="#0f172a" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">60 tokens</text>
-<text x="120" y="548" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Haiku-class model can do IntentCard lookup just as well — the atom was already authored by Opus</text>
+<text x="120" y="252" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Opus / Sonnet generates the impl from prompt; ~500–2000 tokens depending on function size</text>
+<text x="112" y="326" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Discover via yakcc (followed)</text>
+<rect x="120" y="308" width="273.0" height="70" rx="4" fill="#d97706" filter="url(#shadow)"/>
+<text x="134" y="350" font-size="20" fill="#fff" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">650 tokens</text>
+<text x="120" y="400" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Followed path: model emits reference line; in-run output 538–780 tokens (B4-v5 followed-path means across cells)</text>
+<text x="112" y="474" font-size="14" fill="#0f172a" font-weight="700" text-anchor="end" font-family="-apple-system, sans-serif">Discover via yakcc (ignored)</text>
+<rect x="120" y="456" width="798.0" height="70" rx="4" fill="#94a3b8" filter="url(#shadow)"/>
+<text x="134" y="498" font-size="20" fill="#fff" font-weight="700" text-anchor="start" font-family="-apple-system, sans-serif">1900 tokens</text>
+<text x="120" y="548" font-size="11" fill="#64748b" font-weight="400" text-anchor="start" font-family="-apple-system, sans-serif">Ignored path: model writes verbatim code; in-run output 700–2772 tokens. Win requires auto_accept (56–72% coverage today)</text>
 <line x1="120" y1="624" x2="960.0" y2="624" stroke="#cbd5e1" stroke-width="1"/>
 <line x1="120.0" y1="620" x2="120.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
 <text x="120.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">0</text>
@@ -38,8 +38,8 @@
 <line x1="960.0" y1="620" x2="960.0" y2="628" stroke="#94a3b8" stroke-width="1"/>
 <text x="960.0" y="642" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">2000</text>
 <text x="540.0" y="662" font-size="11" fill="#94a3b8" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">output tokens per emission (typical)</text>
-<rect x="60" y="580" width="1080" height="56" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
-<text x="600.0" y="600" font-size="11" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Currently in measurement: B4-v3/v4 ran against the reactive hook architecture and the rescue effect was sub-statistical.</text>
-<text x="600.0" y="618" font-size="11" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Re-measurement (B4-v5) against the corrected intent-time architecture is filed but blocked on #950 / #944 landing.</text>
-<text x="600.0" y="660" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">Numbers shown are order-of-magnitude reasoning, not measured. Full results pending B4-v5 (#952).</text>
+<rect x="60" y="580" width="1080" height="56" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+<text x="600.0" y="600" font-size="11" fill="#14532d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">B4-v5 measured (2026-06-01): auto_accept path → 91% oracle pass; output collapses to reference line vs full verbatim on ignored path.</text>
+<text x="600.0" y="618" font-size="11" fill="#14532d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">Prompt caching cuts hooked-arm cost 36-53% (clean win). End-to-end win is coverage-gated: auto_accept coverage 56-72% today.</text>
+<text x="600.0" y="660" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">Source: bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.md — 162 real-API runs, 6 tasks x 9 cells x 3 reps.</text>
 </svg>

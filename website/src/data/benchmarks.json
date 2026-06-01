@@ -66,8 +66,8 @@
     "slug": "b4-tokens",
     "name": "B4-Tokens",
     "status": "PARTIAL",
-    "caption": "Token-budget delta for LLM-driven shave + emit. Below directional target.",
-    "metric": "-15.6% token delta (haiku)",
+    "caption": "When confident (auto_accept): 91% oracle pass; prompt cache −36–53%. Coverage-gated (56–72%).",
+    "metric": "91% oracle pass (auto_accept)",
     "svgPath": "/benchmarks/b4-tokens.svg",
     "hasData": true
   },
