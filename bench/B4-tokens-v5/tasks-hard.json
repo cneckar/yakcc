@@ -1,0 +1,52 @@
+{
+  "_decision": {
+    "id": "DEC-BENCH-B4-V5-HARD-TASKS-001",
+    "title": "B4-v5-hard: 3-task large/hard-atom corpus — large composite atoms at the Haiku-failure boundary",
+    "status": "accepted",
+    "rationale": "Issue #1049 (epic #1043). #1041 showed that substitution value lives on the LARGE/HARD tail: atoms where a weak model (Haiku) fails unhooked and where authoring costs many output tokens. This set adds three genuinely hard, large atoms (each >=200 lines or the specified target) with documented Haiku failure modes so the operator-gated matrix run (pass-rate / rescue-rate / token-delta by size) can measure payoff on the difficult tail. New tasks are additive — they do NOT modify the governed v5 harness (phase2-v5/matrix-v5/PROTOCOL.md) or the existing tasks.json.",
+    "locked_by": "WI-1049 (#1049 / epic #1043)",
+    "per_task_traps": {
+      "avl-tree": "Haiku implements single-rotation (LL/RR) cases correctly but fails the double-rotation (LR/RL) cases required after deletion. It also stops rebalancing after the first rotation instead of propagating the fix all the way up the ancestor chain. The oracle tests expose both failure modes via isBalanced() checks after non-trivial delete sequences.",
+      "pratt-expr-eval": "Haiku gets left-associativity wrong for subtraction/division (right-associates 2-3-4 as 3 instead of -5), rejects unary minus after a binary operator (1 + -2 should be -1), places % at additive precedence (wrong), and returns NaN or 0 instead of throwing a typed ParseError on malformed input.",
+      "dijkstra-heap": "Haiku's sift-down compares against only the left child (not min(left,right)), making the heap non-minimal. It also omits lazy-deletion / decrease-key handling so stale heap entries produce wrong shortest distances when multiple paths reach the same node. Unreachable-node handling and negative-weight rejection are also common omissions."
+    }
+  },
+  "note": "Hard/large-atom task manifest for B4-tokens-v5. Operator can point the v5 matrix runner at this file instead of tasks.json to measure pass-rate and rescue-rate on the hard tail. SHA-256 hashes content-address each reference implementation. Harness verifies on startup and aborts on drift. OPERATOR-GATED: pass-rate/rescue-rate numbers require paid model runs — see bench/B4-tokens-v5/PROTOCOL.md for the exact command.",
+  "schema_version": 1,
+  "n_tasks": 3,
+  "tasks": [
+    {
+      "id": "avl-tree",
+      "prompt_file": "tasks-hard/avl-tree/prompt.md",
+      "oracle_test": "tasks-hard/avl-tree/oracle.test.ts",
+      "reference_impl": "tasks-hard/avl-tree/reference-impl.ts",
+      "sha256": "7611771ac3421fb77fffd17635b75095b382068129719fc11b59a78df2974714",
+      "description": "Self-balancing AVL tree: insert, get, delete (with in-order-successor replacement), keysInOrder, height, size. Balance invariant |bf|<=1 must hold at every node after every operation.",
+      "adversarial_framing": "Double-rotation trap: Haiku implements LL/RR single-rotation correctly but fails LR/RL double-rotation cases, and stops rebalancing after the first rotation instead of walking up the full ancestor chain. The oracle verifies isBalanced() after non-trivial delete sequences and checks the exact double-rotation case [50,30,70,20,40,60,80,35,45] with delete(20).",
+      "expected_export": "named:AVLTree",
+      "complexity_domain": "data_structure"
+    },
+    {
+      "id": "pratt-expr-eval",
+      "prompt_file": "tasks-hard/pratt-expr-eval/prompt.md",
+      "oracle_test": "tasks-hard/pratt-expr-eval/oracle.test.ts",
+      "reference_impl": "tasks-hard/pratt-expr-eval/reference-impl.ts",
+      "sha256": "762529ae340835da7e26e6fca089fbcdd180d131a584dfaf43f356bdc730d03f",
+      "description": "Pratt (top-down operator precedence) expression parser+evaluator: +,-,*,/,% with correct precedence, left-associativity, unary minus, parentheses, integer+decimal literals, typed ParseError on malformed input.",
+      "adversarial_framing": "Precedence + left-associativity trap: Haiku right-associates subtraction (2-3-4 = 3 instead of -5), rejects unary minus after binary ops (1+-2 throws instead of -1), places % at additive precedence (wrong), and silently returns NaN/0 instead of throwing ParseError on bad input.",
+      "expected_export": "named:ExpressionEvaluator",
+      "complexity_domain": "parser_evaluator"
+    },
+    {
+      "id": "dijkstra-heap",
+      "prompt_file": "tasks-hard/dijkstra-heap/prompt.md",
+      "oracle_test": "tasks-hard/dijkstra-heap/oracle.test.ts",
+      "reference_impl": "tasks-hard/dijkstra-heap/reference-impl.ts",
+      "sha256": "0586be74287435f3d557092b4cf292b1568a91d9c83a570d679807f62e4ee47f",
+      "description": "Dijkstra shortest-path on a directed weighted graph backed by an inline binary min-heap (0-based, sift-up/down, lazy-deletion for decrease-key). shortestPath returns distance+path; shortestDistances returns full Map. Rejects negative weights with NegativeWeightError. Unreachable nodes: distance=Infinity, path=[].",
+      "adversarial_framing": "Heap + decrease-key trap: Haiku's sift-down compares against only the left child (not min(left,right)), and omits lazy-deletion so stale heap entries produce wrong distances when multiple paths reach the same node. The oracle uses the classic 6-node textbook graph plus a 5-node decrease-key stress test (S→A:10 but S→B:1,B→A:1 makes A reachable at dist 2).",
+      "expected_export": "named:Graph",
+      "complexity_domain": "graph_algorithm"
+    }
+  ]
+}
