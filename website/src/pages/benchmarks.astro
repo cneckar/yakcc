@@ -156,6 +156,30 @@ const sections: Section[] = [
     svg: "/benchmarks/sections/08-air-gap.svg",
     alt: "Timeline of a 15.4-second full yakcc pipeline run with six phases (install, init, shave, query, compile, verify) and a giant '0' representing outbound packets sent",
   },
+  {
+    id: "reproducibility",
+    title: "Same atom on every machine produces byte-identical bytes",
+    problem:
+      "\"Works on my machine\" isn't a meme; it's an industry. The same Python program produces different floating-point results on different CPUs. The same npm install produces different lockfiles on different days. The same Docker build varies by ~110 bytes between dev and CI because of build-time timestamps and host-specific paths. Reproducibility is asserted constantly and proven almost never.",
+    yakccClaim:
+      "yakcc's reproducibility is asserted on every push to main, against the strongest possible test: yakcc shaves its own source code into atoms, then shaves the same source again, and every single one of the 7,064 resulting atoms must have a byte-identical BlockMerkleRoot between the two passes. Same logical content → same canonical bytes → same content hash. If this ever goes red, the headline claim is broken; if it stays green, every other atom in the commons inherits the same property.",
+    evidence:
+      "Measured on every push: 7,064 atoms in the workspace, all byte-identical between pass-1 and pass-2 of the self-shave test. Authority: DEC-V2-CI-GATE-FINAL-001 (unconditional gate) + DEC-V2-HARNESS-STRICT-EQUALITY-001 (strict byte-identity assertion).",
+    svg: "/benchmarks/sections/09-reproducibility.svg",
+    alt: "Status quo column showing nondeterministic Python floats, varying package sha256s, and differing build output sizes, vs yakcc's two-pass self-shave proof asserting 7,064 atoms byte-identical on every commit",
+  },
+  {
+    id: "composition",
+    title: "Programs are graphs of verified atoms, not opaque LLM-emitted monoliths",
+    problem:
+      "When an LLM gives you a 500-line file, the unit of trust is the entire file. You read it linearly. If there's a bug, you re-read it linearly. If a reviewer wants to verify it, they read it linearly. Provenance per function is informal at best — the file is one undifferentiated thing emitted in one breath. There is no graph to walk, no atom to bisect, no individual piece you can verify and check off.",
+    yakccClaim:
+      "`yakcc compile` produces a program as a graph: a top-level binding, its child atoms, their child atoms, and so on. Every node carries a content-addressed BlockMerkleRoot. Every program ships with a provenance manifest naming every constituent atom by its content hash. Code review collapses from \"read all 500 lines\" to \"verify only the atoms not already verified.\" Bug in production? Identify the atom hash; every other program using the same atom is bug-compatible, so the bug isolates instantly.",
+    evidence:
+      "Structural property of every yakcc compile output. Provenance manifest produced by packages/compile/src. README authority: \"Every assembled program carries a provenance manifest naming every constituent block by its content-address. Bit-for-bit reproducibility is not a build option — it is the default.\"",
+    svg: "/benchmarks/sections/10-composition.svg",
+    alt: "Status quo monolithic 500-line LLM-emitted file you have to read top to bottom, vs yakcc compile output as a tree of named atoms each with a content hash and verifiable independently",
+  },
 ];
 
 const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
@@ -264,21 +288,12 @@ const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }>
       max-width: 920px;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 1.5rem;
-    }
-    @media (min-width: 1100px) {
-      .grid {
-        grid-template-columns: 380px 1fr;
-        gap: 2.5rem;
-        align-items: start;
-      }
-    }
-
+    /* Vertical stack: prose first (narrow, optimized for reading) then
+     * full-width infographic below. The earlier 2-column layout squeezed
+     * the SVGs to ~870px, making embedded text unreadable. */
     .prose {
-      max-width: 380px;
+      max-width: 720px;
+      margin-bottom: 2rem;
     }
     .prose p {
       font-size: 0.95rem;
@@ -330,6 +345,9 @@ const BADGE_COLORS: Record<string, { bg: string; border: string; text: string }>
       width: 100%;
       height: auto;
       display: block;
+      /* Cap so the SVG renders close to its native size on huge displays
+       * without becoming wider than the content column. */
+      max-width: 100%;
     }
 
     hr {

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+<defs>
+  <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.13"/>
+  </filter>
+  <linearGradient id="bgL" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fff5f5"/><stop offset="100%" stop-color="#fde8e8"/>
+  </linearGradient>
+  <linearGradient id="bgR" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f0f9ff"/><stop offset="100%" stop-color="#e0f2fe"/>
+  </linearGradient>
+</defs>
+<rect width="1200" height="660" fill="#fafafa"/>
+<text x="600.0" y="48" font-size="24" fill="#0f172a" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Same atom on every machine produces byte-identical bytes</text>
+<text x="600.0" y="76" font-size="13" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">The self-shave proof: yakcc shaves its own source byte-identically twice in a row, on every commit</text>
+<rect x="40" y="110" width="520" height="460" rx="14" fill="url(#bgL)" stroke="#fca5a5" stroke-width="2"/>
+<text x="300" y="144" font-size="18" fill="#991b1b" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Status quo</text>
+<text x="300" y="164" font-size="11" fill="#7f1d1d" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">&quot;works on my machine&quot;</text>
+<text x="70" y="200" font-size="11" fill="#7f1d1d" font-weight="600" text-anchor="start" font-family="-apple-system, sans-serif">Same Python on machine A:</text>
+<rect x="70" y="208" width="460" height="28" rx="4" fill="#1e293b"/>
+<text x="80" y="227" font-size="11" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">result == 0.30000000000000004</text>
+<text x="70" y="256" font-size="11" fill="#7f1d1d" font-weight="600" text-anchor="start" font-family="-apple-system, sans-serif">Same Python on machine B:</text>
+<rect x="70" y="264" width="460" height="28" rx="4" fill="#1e293b"/>
+<text x="80" y="283" font-size="11" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">result == 0.30000000000000010</text>
+<text x="70" y="312" font-size="11" fill="#7f1d1d" font-weight="600" text-anchor="start" font-family="-apple-system, sans-serif">Same package install Mon:</text>
+<rect x="70" y="320" width="460" height="28" rx="4" fill="#1e293b"/>
+<text x="80" y="339" font-size="11" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">sha256 = a3f8c1...0e4b2d</text>
+<text x="70" y="368" font-size="11" fill="#7f1d1d" font-weight="600" text-anchor="start" font-family="-apple-system, sans-serif">Same package install Tue:</text>
+<rect x="70" y="376" width="460" height="28" rx="4" fill="#1e293b"/>
+<text x="80" y="395" font-size="11" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">sha256 = c7d2a9...4e1b87</text>
+<text x="70" y="424" font-size="11" fill="#7f1d1d" font-weight="600" text-anchor="start" font-family="-apple-system, sans-serif">Build on dev machine:</text>
+<rect x="70" y="432" width="460" height="28" rx="4" fill="#1e293b"/>
+<text x="80" y="451" font-size="11" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">out.zip = 1,452,818 bytes</text>
+<text x="70" y="480" font-size="11" fill="#7f1d1d" font-weight="600" text-anchor="start" font-family="-apple-system, sans-serif">Same build in CI:</text>
+<rect x="70" y="488" width="460" height="28" rx="4" fill="#1e293b"/>
+<text x="80" y="507" font-size="11" fill="#fca5a5" font-weight="400" text-anchor="start" font-family="ui-monospace, Menlo, monospace">out.zip = 1,452,927 bytes</text>
+<rect x="640" y="110" width="520" height="460" rx="14" fill="url(#bgR)" stroke="#7dd3fc" stroke-width="2"/>
+<text x="900" y="144" font-size="18" fill="#075985" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">yakcc self-shave proof</text>
+<text x="900" y="164" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">asserted on every push:main + PR</text>
+<text x="900" y="250" font-size="72" fill="#0ea5e9" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">7,064</text>
+<text x="900" y="286" font-size="14" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif">atoms in the workspace</text>
+<text x="900" y="312" font-size="12" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">every one byte-identical between pass-1 and pass-2</text>
+<text x="900" y="360" font-size="12" fill="#075985" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">The test:</text>
+<rect x="680" y="390" width="200" height="60" rx="8" fill="#0284c7" stroke="#075985" stroke-width="1.5"/>
+<text x="780" y="412" font-size="12" fill="#fff" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Pass 1</text>
+<text x="780" y="432" font-size="10" fill="#bae6fd" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">shave yakcc → atoms</text>
+<path d="M 880 420 L 920 420" stroke="#475569" stroke-width="2" marker-end="url(#arrowSection)"/>
+<rect x="920" y="390" width="200" height="60" rx="8" fill="#0284c7" stroke="#075985" stroke-width="1.5"/>
+<text x="1020" y="412" font-size="12" fill="#fff" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">Pass 2</text>
+<text x="1020" y="432" font-size="10" fill="#bae6fd" font-weight="400" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">shave again → atoms</text>
+<defs><marker id="arrowSection" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker></defs>
+<text x="900" y="480" font-size="12" fill="#0c4a6e" font-weight="600" text-anchor="middle" font-family="ui-monospace, Menlo, monospace">BlockMerkleRoot(pass-1) ≡ BlockMerkleRoot(pass-2)</text>
+<text x="900" y="502" font-size="11" fill="#0c4a6e" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">byte-for-byte, every atom, every commit, every machine</text>
+<rect x="680" y="528" width="440" height="32" rx="6" fill="#0ea5e9" stroke="#0369a1" stroke-width="2"/>
+<text x="900" y="548" font-size="13" fill="#fff" font-weight="700" text-anchor="middle" font-family="-apple-system, sans-serif">GREEN ON main — self-hosting proof</text>
+<text x="600.0" y="620" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" font-family="-apple-system, sans-serif" font-style="italic">Sources: .github/workflows/self-shave.yml · DEC-V2-CI-GATE-FINAL-001 · DEC-V2-HARNESS-STRICT-EQUALITY-001</text>
+</svg>
