@@ -55,6 +55,35 @@
  *       Same pattern as compile.ts (DEC-1028-COMPILE-FULL-ROOTS-001).
  *       Registry opened once per tool instance; fullRoots enumerated once; both cached.
  *
+ * @decision DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001
+ * @title yakcc_reference apply-mode — manifest+dts written by tool, model writes only import_line
+ * @status decided (wi-1062b)
+ * @rationale
+ *   Paid B4-v5 runs (#1061/#1063) showed that even in reference mode the model was still
+ *   writing ~139–288 tokens: the manifest_entry JSON object + the dts content + framing.
+ *   Those writes are fully deterministic — the tool already computes them. Moving them
+ *   off the model's output and into the tool as a side-effect reduces the model's task to
+ *   the single ~14-token import line. This closes the remaining gap toward the structural
+ *   ~50× ceiling.
+ *
+ *   Apply-mode is triggered by an OPTIONAL `project_root` input. When present the handler:
+ *     a) reads <project_root>/.yakcc/manifest.json (parseProjectManifest), or starts from
+ *        emptyManifest() if it does not yet exist;
+ *     b) calls addReference(existingManifest, {root, symbol}) — idempotent on re-apply;
+ *     c) writes the updated manifest back via serializeProjectManifest;
+ *     d) writes generateAtomDts(spec, symbol) to materializedDtsPath(alias) under project_root;
+ *     e) returns ONLY { atom_id, root, import_line, applied: true, manifest_path, dts_path }
+ *        — the model writes only the import_line.
+ *   When project_root is absent the full artifact is returned unchanged (applied: false).
+ *
+ *   Authority invariant (Sacred Practice #12): manifest I/O is exclusively via
+ *   parseProjectManifest / serializeProjectManifest / addReference from @yakcc/compile;
+ *   dts via generateAtomDts / materializedDtsPath. No parallel manifest logic.
+ *
+ *   Fail-loud: an unwritable project_root or unparseable existing manifest returns
+ *   { error: "apply_failed", message: … } as content — never a thrown exception
+ *   (DEC-MCP-ERROR-AS-CONTENT-004).
+ *
  *   Cross-references:
  *     DEC-COMPOSE-BY-REF-MANIFEST-001       — manifest / addReference / importPath authority
  *     DEC-COMPOSE-BY-REF-DTS-001            — generateAtomDts authority
@@ -63,7 +92,7 @@
  *     DEC-MCP-TOOLS-REGISTRY-020            — TOOLS array authority
  *     Sacred Practice #12                   — single authority per domain
  *
- * Implements: yakcc#1047 (epic #1043 [4/6])
+ * Implements: yakcc#1047 (epic #1043 [4/6]), yakcc#1062b (wi-1062b)
  */
 
 import {
@@ -71,7 +100,9 @@ import {
   emptyManifest,
   generateAtomDts,
   materializedDtsPath,
+  parseProjectManifest,
   referenceImportLine,
+  serializeProjectManifest,
 } from "@yakcc/compile";
 import type { BlockMerkleRoot, SpecYak } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
@@ -83,7 +114,9 @@ import type { MCPContent, ToolModule } from "./types.js";
 // Input validation
 // ---------------------------------------------------------------------------
 
-type ParsedInput = { ok: true; atomId: string } | { ok: false; message: string };
+type ParsedInput =
+  | { ok: true; atomId: string; projectRoot: string | null }
+  | { ok: false; message: string };
 
 function parseArgs(args: unknown): ParsedInput {
   if (args === null || typeof args !== "object" || Array.isArray(args)) {
@@ -94,7 +127,15 @@ function parseArgs(args: unknown): ParsedInput {
   if (typeof atomId !== "string" || atomId.length === 0) {
     return { ok: false, message: "atom_id must be a non-empty string" };
   }
-  return { ok: true, atomId };
+  const projectRoot = obj.project_root;
+  if (projectRoot !== undefined && (typeof projectRoot !== "string" || projectRoot.length === 0)) {
+    return { ok: false, message: "project_root must be a non-empty string when provided" };
+  }
+  return {
+    ok: true,
+    atomId,
+    projectRoot: typeof projectRoot === "string" ? projectRoot : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,17 +309,23 @@ export function createReferenceTool(opts?: CreateReferenceToolOptions): ToolModu
       "  - An 8-character short id (the `atom_id` prefix from resolve candidates)",
       "  - A full 64-character BLAKE3 hex merkle root",
       "",
-      "Returns { manifest_entry, import_line, dts_ref } — NO implementation body.",
+      "APPLY MODE (recommended): pass `project_root` (absolute path to your project).",
+      "  The tool writes the manifest entry to <project_root>/.yakcc/manifest.json",
+      "  and the .d.ts to <project_root>/.yakcc/atoms/<alias>.d.ts automatically.",
+      "  Returns ONLY { import_line, applied: true } — write ONLY the import_line.",
+      "",
+      "WITHOUT project_root (legacy): returns { manifest_entry, import_line, dts_ref } — NO implementation body.",
       "  - manifest_entry: the AtomReference object to append to .yakcc/manifest.json",
       "  - import_line:    the ~10-token import statement to write into your source file",
       "  - dts_ref.path:   where to write the .d.ts so the import typechecks pre-build",
       "  - dts_ref.dts:    the .d.ts content to write to dts_ref.path",
       "",
-      "After writing import_line and the .d.ts, run `yakcc build` to materialise the impl.",
+      "After writing import_line, run `yakcc build` to materialise the impl.",
       "",
       "Error codes:",
-      "  - not_found         → atom not in local registry (seed or fetch first)",
+      "  - not_found          → atom not in local registry (seed or fetch first)",
       "  - ambiguous_short_id → prefix matches multiple atoms; use a longer prefix",
+      "  - apply_failed       → project_root unwritable or manifest unparseable",
     ].join("\n"),
 
     inputSchema: {
@@ -290,6 +337,12 @@ export function createReferenceTool(opts?: CreateReferenceToolOptions): ToolModu
           minLength: 1,
           description:
             "8-character short id (address prefix from yakcc_resolve) or full 64-char BLAKE3 hex merkle root.",
+        },
+        project_root: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Absolute path to the project root. When provided, apply-mode writes the manifest entry and .d.ts as side effects; the response contains only import_line (applied: true). When omitted, returns the full artifact without touching the filesystem (applied: false).",
         },
       },
       additionalProperties: false,
@@ -307,7 +360,7 @@ export function createReferenceTool(opts?: CreateReferenceToolOptions): ToolModu
         ];
       }
 
-      const { atomId } = parsed;
+      const { atomId, projectRoot } = parsed;
 
       // --- Open registry + seed + enumerate full roots (lazy, cached) ---
       let registry: Registry;
@@ -414,7 +467,27 @@ export function createReferenceTool(opts?: CreateReferenceToolOptions): ToolModu
       // DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001.
       const symbol = deriveSymbol(row.implSource, spec);
 
-      // --- Build the reference artifact via @yakcc/compile (single authorities) ---
+      // --- APPLY MODE (DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001) ---
+      // When project_root is present: the tool writes the manifest entry + .d.ts as side
+      // effects so the model only needs to emit the ~14-token import_line.
+      //
+      // Authority invariant (Sacred Practice #12):
+      //   - Manifest I/O exclusively via parseProjectManifest / serializeProjectManifest /
+      //     addReference from @yakcc/compile (DEC-COMPOSE-BY-REF-MANIFEST-001).
+      //   - .d.ts path via materializedDtsPath(alias); content via generateAtomDts(spec, symbol)
+      //     (DEC-COMPOSE-BY-REF-DTS-001).
+      //   No hand-rolled JSON manifest logic anywhere in this handler.
+      if (projectRoot !== null) {
+        return applyMode({
+          atomId,
+          entryRoot,
+          symbol,
+          spec,
+          projectRoot,
+        });
+      }
+
+      // --- NON-APPLY MODE: build artifact from emptyManifest and return full payload ---
       // addReference: computes alias (12-char prefix), importPath (.yakcc/atoms/<alias>)
       // referenceImportLine: the ~10-token import statement
       // materializedDtsPath: .yakcc/atoms/<alias>.d.ts
@@ -453,6 +526,7 @@ export function createReferenceTool(opts?: CreateReferenceToolOptions): ToolModu
               root: entryRoot,
               manifest_entry,
               import_line,
+              applied: false,
               dts_ref: {
                 path: dts_path,
                 dts: dts_content,
@@ -465,6 +539,111 @@ export function createReferenceTool(opts?: CreateReferenceToolOptions): ToolModu
       ];
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Apply-mode implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Perform the apply-mode side effects and return the slim response.
+ *
+ * Reads (or creates) the project manifest, adds the reference (idempotent),
+ * writes the updated manifest and the .d.ts, then returns only the import_line.
+ *
+ * This is extracted as a top-level async function (not inline in the handler)
+ * so the types are explicit and testable. It NEVER throws — all failures are
+ * returned as error-as-content (DEC-MCP-ERROR-AS-CONTENT-004).
+ *
+ * @decision DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001
+ */
+async function applyMode(opts: {
+  atomId: string;
+  entryRoot: BlockMerkleRoot;
+  symbol: string;
+  spec: SpecYak;
+  projectRoot: string;
+}): Promise<MCPContent[]> {
+  const { atomId, entryRoot, symbol, spec, projectRoot } = opts;
+
+  try {
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+
+    // 1. Read existing manifest or start from empty.
+    //    parseProjectManifest is the single authority for manifest validation
+    //    (DEC-COMPOSE-BY-REF-MANIFEST-001). Fail-loud on a corrupt manifest.
+    const manifestDir = join(projectRoot, ".yakcc");
+    const manifestPath = join(manifestDir, "manifest.json");
+
+    let existingText: string | null = null;
+    try {
+      existingText = await readFile(manifestPath, "utf8");
+    } catch (e) {
+      // ENOENT → start from emptyManifest (not an error).
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        return errorContent("apply_failed", `Cannot read ${manifestPath}: ${String(e)}`);
+      }
+    }
+
+    const existingManifest =
+      existingText !== null ? parseProjectManifest(existingText) : emptyManifest();
+
+    // 2. addReference is idempotent: re-applying the same root+symbol returns the
+    //    existing reference without creating a duplicate entry.
+    const { manifest: updatedManifest, reference } = addReference(existingManifest, {
+      root: entryRoot,
+      symbol,
+    });
+
+    // 3. Derive import_line and dts path from the returned reference (alias may
+    //    differ from a fresh emptyManifest call if there was a collision in the
+    //    existing manifest). Using the same reference object throughout ensures
+    //    alias → importPath → dts path → import_line are all consistent.
+    const import_line = referenceImportLine(reference);
+    const relDtsPath = materializedDtsPath(reference.alias);
+    const dts_content = generateAtomDts(spec, symbol);
+
+    // 4. Write the updated manifest (mkdir -p .yakcc/).
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(manifestPath, serializeProjectManifest(updatedManifest), "utf8");
+
+    // 5. Write the .d.ts (mkdir -p .yakcc/atoms/).
+    const atomsDir = join(projectRoot, ".yakcc", "atoms");
+    const absDbtsPath = join(projectRoot, relDtsPath);
+    await mkdir(atomsDir, { recursive: true });
+    await writeFile(absDbtsPath, dts_content, "utf8");
+
+    // 6. Return slim apply response — model writes ONLY the import_line.
+    return [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            atom_id: atomId,
+            root: entryRoot,
+            import_line,
+            applied: true,
+            manifest_path: ".yakcc/manifest.json",
+            dts_path: relDtsPath,
+          },
+          null,
+          2,
+        ),
+      },
+    ];
+  } catch (err) {
+    return errorContent(
+      "apply_failed",
+      `Failed to apply reference for ${entryRoot.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/** Build a structured error content block (never throw). DEC-MCP-ERROR-AS-CONTENT-004. */
+function errorContent(error: string, message: string): MCPContent[] {
+  return [{ type: "text", text: JSON.stringify({ error, message }) }];
 }
 
 // ---------------------------------------------------------------------------

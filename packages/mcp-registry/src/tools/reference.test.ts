@@ -8,6 +8,8 @@
 // The mock factory imports ONLY the two sub-modules that provide the functions reference.ts needs
 // (project-manifest.ts and atom-dts.ts) — both have zero runtime imports from aliased packages.
 // All returned functions are the REAL compile implementations; no behavior is stubbed.
+// parseProjectManifest + serializeProjectManifest are added to the same mock factory (same
+// structural reason — they live in project-manifest.ts, already imported above).
 /**
  * Tests for yakcc_reference tool.
  *
@@ -33,6 +35,11 @@
  *   (11) getBlock returns null → not_found structured error, no throw
  *   (12) lazy registry open: factory called exactly once across multiple calls
  *   (13) Tool shape: name, description, inputSchema
+ *   (14) apply-mode: writes manifest.json + .d.ts to real temp dir; returns import_line only
+ *   (15) apply-mode: idempotent — re-applying same atom does NOT duplicate manifest entry
+ *   (16) apply-mode: reads and EXTENDS existing manifest (not emptyManifest)
+ *   (17) non-apply mode: applied:false in response + full artifact present
+ *   (18) apply-mode: invalid project_root value → invalid_input structured error
  *
  * Compound-Interaction Test Requirement (CLAUDE.md):
  *   Case (1)/(3) exercise the full production sequence end-to-end:
@@ -43,7 +50,15 @@
  *   materializedDtsPath → generateAtomDts → structured response (no assemble()).
  *   Proves the full reference path crosses all internal component boundaries correctly.
  *
- * Implements: yakcc#1047 (epic #1043 [4/6])
+ *   Case (14) exercises the apply-mode production sequence end-to-end:
+ *   createReferenceTool() → handler({ atom_id, project_root }) →
+ *   registry resolve → deriveSymbol → applyMode() →
+ *   readFile(manifest.json) → parseProjectManifest → addReference →
+ *   serializeProjectManifest → writeFile(manifest.json) →
+ *   generateAtomDts → writeFile(.d.ts) → { import_line, applied: true }
+ *   Proves apply-mode crosses all fs + compile authority boundaries on a real temp dir.
+ *
+ * Implements: yakcc#1047 (epic #1043 [4/6]), yakcc#1062b (wi-1062b)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,14 +115,21 @@ vi.mock("@yakcc/compile", async () => {
     addReference: pm.addReference,
     materializedDtsPath: pm.materializedDtsPath,
     referenceImportLine: pm.referenceImportLine,
+    parseProjectManifest: pm.parseProjectManifest,
+    serializeProjectManifest: pm.serializeProjectManifest,
     generateAtomDts: dts.generateAtomDts,
   };
 });
 
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { BlockMerkleRoot, SpecHash, SpecYak } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import { seedRegistry } from "@yakcc/seeds";
 import { createReferenceTool, referenceTool } from "./reference.js";
+// Real parseProjectManifest from the mock factory above (real implementation).
+import { parseProjectManifest } from "@yakcc/compile";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -628,9 +650,235 @@ describe("yakcc_reference tool shape", () => {
     expect(referenceTool.description).toContain("NO implementation body");
   });
 
-  it("(13c) inputSchema has type=object, required=[atom_id]", () => {
+  it("(13c) inputSchema has type=object, required=[atom_id], project_root optional", () => {
     expect(referenceTool.inputSchema.type).toBe("object");
     expect(referenceTool.inputSchema.required).toContain("atom_id");
     expect(referenceTool.inputSchema.properties).toHaveProperty("atom_id");
+    // project_root is optional — must be in properties but NOT in required
+    expect(referenceTool.inputSchema.properties).toHaveProperty("project_root");
+    expect(referenceTool.inputSchema.required).not.toContain("project_root");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case (14): Apply-mode — real temp-dir fs assertions
+// (Compound-Interaction Test for apply-mode production sequence)
+// ---------------------------------------------------------------------------
+
+describe("yakcc_reference — apply-mode writes manifest + .d.ts (real temp dir)", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.mocked(seedRegistry).mockResolvedValue({ stored: 0, merkleRoots: [] } as never);
+    // Create a real temp dir inside the project's tmp/ directory.
+    // Per sacred practice #3: use project tmp/, not /tmp/.
+    const projectTmp = new URL("../../../../../tmp", import.meta.url).pathname;
+    await mkdir(projectTmp, { recursive: true });
+    tmpDir = await mkdtemp(join(projectTmp, "reference-apply-test-"));
+  });
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("(14) with project_root: writes manifest.json + .d.ts, returns {import_line, applied:true}", async () => {
+    // This is the compound-interaction test for apply-mode:
+    // handler({ atom_id, project_root }) → resolve → applyMode() →
+    // read/parse manifest → addReference → serialize → writeFile manifest →
+    // generateAtomDts → writeFile .d.ts → { import_line, applied: true }
+    const tool = makeTool();
+    const result = await tool.handler({ atom_id: ROOT_A, project_root: tmpDir }, STUB_HTTP);
+
+    expect(result).toHaveLength(1);
+    const parsed = JSON.parse(result[0]!.text) as {
+      atom_id: string;
+      root: string;
+      import_line: string;
+      applied: boolean;
+      manifest_path: string;
+      dts_path: string;
+    };
+
+    // (a) Response shape: applied:true, import_line present, no full artifact fields
+    expect(parsed.applied).toBe(true);
+    expect(typeof parsed.import_line).toBe("string");
+    expect(parsed.import_line).toContain("asciiChar");
+    expect(parsed.import_line).toMatch(/^import \{ asciiChar \} from "\.yakcc\/atoms\//);
+    expect(parsed.manifest_path).toBe(".yakcc/manifest.json");
+    expect(parsed.dts_path).toMatch(/^\.yakcc\/atoms\/[a-f0-9]+\.d\.ts$/);
+
+    // Response must NOT contain the full artifact fields (model writes only import_line)
+    expect(parsed).not.toHaveProperty("manifest_entry");
+    expect(parsed).not.toHaveProperty("dts_ref");
+
+    // (b) manifest.json was written and contains the reference entry
+    const manifestText = await readFile(join(tmpDir, ".yakcc", "manifest.json"), "utf8");
+    const manifest = parseProjectManifest(manifestText);
+    expect(manifest.version).toBe(1);
+    expect(manifest.references).toHaveLength(1);
+    const ref = manifest.references[0]!;
+    expect(ref.root).toBe(ROOT_A);
+    expect(ref.symbol).toBe("asciiChar");
+    expect(ref.alias).toBe(ROOT_A.slice(0, 12));
+    expect(ref.importPath).toBe(`.yakcc/atoms/${ROOT_A.slice(0, 12)}`);
+
+    // (c) .d.ts file was written at the correct path
+    const absDbtsPath = join(tmpDir, parsed.dts_path);
+    const dtsText = await readFile(absDbtsPath, "utf8");
+    expect(dtsText).toContain("export declare function asciiChar(");
+    expect(dtsText).toContain("input: string");
+    expect(dtsText).toContain("position: number");
+    expect(dtsText).toContain("): string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case (15): Apply-mode idempotency
+// ---------------------------------------------------------------------------
+
+describe("yakcc_reference — apply-mode idempotency (no duplicate manifest entry)", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.mocked(seedRegistry).mockResolvedValue({ stored: 0, merkleRoots: [] } as never);
+    const projectTmp = new URL("../../../../../tmp", import.meta.url).pathname;
+    await mkdir(projectTmp, { recursive: true });
+    tmpDir = await mkdtemp(join(projectTmp, "reference-idempotent-test-"));
+  });
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("(15) calling apply twice for same atom does NOT duplicate the manifest references entry", async () => {
+    // Each call re-uses the same tool instance (shared lazy registry).
+    const tool = makeTool();
+
+    await tool.handler({ atom_id: ROOT_A, project_root: tmpDir }, STUB_HTTP);
+    await tool.handler({ atom_id: ROOT_A, project_root: tmpDir }, STUB_HTTP);
+
+    const manifestText = await readFile(join(tmpDir, ".yakcc", "manifest.json"), "utf8");
+    const manifest = parseProjectManifest(manifestText);
+
+    // addReference is idempotent: same root+symbol yields ONE entry, not two.
+    expect(manifest.references).toHaveLength(1);
+    expect(manifest.references[0]!.root).toBe(ROOT_A);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case (16): Apply-mode reads + extends existing manifest (not emptyManifest)
+// ---------------------------------------------------------------------------
+
+describe("yakcc_reference — apply-mode reads existing manifest and accumulates entries", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    vi.mocked(seedRegistry).mockResolvedValue({ stored: 0, merkleRoots: [] } as never);
+    const projectTmp = new URL("../../../../../tmp", import.meta.url).pathname;
+    await mkdir(projectTmp, { recursive: true });
+    tmpDir = await mkdtemp(join(projectTmp, "reference-extend-test-"));
+  });
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("(16) apply-mode preserves existing manifest entries when adding a new atom", async () => {
+    // Pre-seed the manifest with a different atom reference so we can assert
+    // that the tool reads + extends (not overwrites) the existing content.
+    const { writeFile } = await import("node:fs/promises");
+    const yakkcDir = join(tmpDir, ".yakcc");
+    await mkdir(yakkcDir, { recursive: true });
+
+    // Use a root that does NOT share ROOT_A's 12-char alias prefix.
+    const EXISTING_ROOT =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as BlockMerkleRoot;
+    const existingManifest = {
+      version: 1,
+      references: [
+        {
+          root: EXISTING_ROOT,
+          symbol: "someExistingFn",
+          alias: EXISTING_ROOT.slice(0, 12),
+          importPath: `.yakcc/atoms/${EXISTING_ROOT.slice(0, 12)}`,
+          registry: "local",
+          version: null,
+        },
+      ],
+    };
+    await writeFile(
+      join(yakkcDir, "manifest.json"),
+      JSON.stringify(existingManifest, null, 2) + "\n",
+      "utf8",
+    );
+
+    const tool = makeTool();
+    await tool.handler({ atom_id: ROOT_A, project_root: tmpDir }, STUB_HTTP);
+
+    const manifestText = await readFile(join(tmpDir, ".yakcc", "manifest.json"), "utf8");
+    const manifest = parseProjectManifest(manifestText);
+
+    // Both entries must be present: the pre-existing one + the newly added one.
+    expect(manifest.references).toHaveLength(2);
+    const roots = manifest.references.map((r) => r.root);
+    expect(roots).toContain(EXISTING_ROOT);
+    expect(roots).toContain(ROOT_A);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case (17): Non-apply mode — applied:false in response + full artifact present
+// ---------------------------------------------------------------------------
+
+describe("yakcc_reference — non-apply mode returns applied:false with full artifact", () => {
+  beforeEach(() => {
+    vi.mocked(seedRegistry).mockResolvedValue({ stored: 0, merkleRoots: [] } as never);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("(17) without project_root: applied:false + manifest_entry + dts_ref present", async () => {
+    const tool = makeTool();
+    const result = await tool.handler({ atom_id: ROOT_A }, STUB_HTTP);
+
+    expect(result).toHaveLength(1);
+    const parsed = JSON.parse(result[0]!.text) as Record<string, unknown>;
+
+    // applied flag must be false
+    expect(parsed["applied"]).toBe(false);
+
+    // Full artifact must be present
+    expect(parsed).toHaveProperty("manifest_entry");
+    expect(parsed).toHaveProperty("dts_ref");
+    expect(parsed).toHaveProperty("import_line");
+    expect(parsed).toHaveProperty("root");
+    expect(parsed).toHaveProperty("atom_id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case (18): Apply-mode — invalid project_root value
+// ---------------------------------------------------------------------------
+
+describe("yakcc_reference — apply-mode input validation for project_root", () => {
+  beforeEach(() => {
+    vi.mocked(seedRegistry).mockResolvedValue({ stored: 0, merkleRoots: [] } as never);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("(18) empty string project_root → invalid_input, does not throw", async () => {
+    const tool = makeTool();
+    const result = await tool.handler({ atom_id: ROOT_A, project_root: "" }, STUB_HTTP);
+    const parsed = JSON.parse(result[0]!.text) as { error: string };
+    expect(parsed.error).toBe("invalid_input");
   });
 });

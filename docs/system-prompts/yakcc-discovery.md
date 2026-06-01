@@ -177,6 +177,19 @@ Check whether `.yakcc/manifest.json` exists at the project root.
        Issue: https://github.com/cneckar/yakcc/issues/1062
        Refines: DEC-COMPOSE-BY-REF-REFERENCE-EMIT-001 (#1048) -->
 
+<!-- @decision DEC-COMPOSE-BY-REF-REFERENCE-APPLY-001
+     @title apply-mode: yakcc_reference records manifest+dts; model writes only import_line
+     @status accepted
+     @rationale
+       Q11/#1062 measured post-fix reference output at ~139–288 tokens — still far above
+       the structural ~14-token floor. The remaining token load was the manifest_entry JSON
+       (~40 tok) and framing prose. Both writes are fully deterministic; the tool already
+       computes them. apply-mode (pass project_root to yakcc_reference) moves those writes
+       off the model's output into the tool as side-effects, reducing the model's task to
+       the single ~14-token import_line. Closes the remaining gap toward the ~50× ceiling.
+       Issue: https://github.com/cneckar/yakcc/issues/1062
+       Refines: DEC-COMPOSE-BY-REF-REFERENCE-EMIT-MIN-001 (Q11) -->
+
 The project is wired for compose-by-reference. `yakcc build` (#1046) will
 materialize atom implementations AND generate `.yakcc/atoms/<alias>.d.ts` type
 stubs from the manifest. You MUST NOT write the atom's implementation body and
@@ -188,24 +201,32 @@ The correct sequence on `auto_accept` when `.yakcc/manifest.json` is present:
 
 ```
 yakcc_resolve(intent) → auto_accept
-  → yakcc_reference({ atom_id: candidates[0].atom_id })
-      returns { manifest_entry, import_line, dts_ref: { path, dts } }
-  → Write import_line verbatim to the target file       ← ~14 tokens, done
-  → Append manifest_entry to .yakcc/manifest.json references array
-  (dts_ref is for your reference only — do NOT write it; yakcc build generates it)
+  → yakcc_reference({ atom_id: candidates[0].atom_id, project_root: <absolute-project-path> })
+      APPLIES: records manifest_entry to .yakcc/manifest.json  (tool side-effect)
+      APPLIES: writes .yakcc/atoms/<alias>.d.ts                (tool side-effect)
+      returns { import_line, applied: true, manifest_path, dts_path }
+  → Write import_line verbatim to the target file              ← ~14 tokens, done
+  (manifest and .d.ts already written by the tool — do NOT write them)
 ```
 
-Call `yakcc_reference`, then perform exactly TWO write operations and STOP:
+Call `yakcc_reference` with `project_root`, then perform exactly ONE write
+operation and STOP:
 
-1. Call `yakcc_reference({ atom_id: candidates[0].atom_id })`.
+1. Call `yakcc_reference({ atom_id: candidates[0].atom_id, project_root })`.
+   The tool records the manifest entry to `.yakcc/manifest.json` AND writes the
+   `.d.ts` to `.yakcc/atoms/<alias>.d.ts` as side effects (`applied: true`).
+   The `dts_ref` field in non-apply responses is for reference only.
 2. Write the returned `import_line` verbatim to the target file. Copy it exactly
    as returned — do not paraphrase or alter it.
-3. Append the returned `manifest_entry` to the `references` array in
-   `.yakcc/manifest.json`.
 
-**Emit ONLY these two artifacts. You MUST NOT narrate the steps, explain what
-you are doing, or add any prose or commentary — the discovery work is done;
-output only the import line and the manifest entry. Narration is wasted output.**
+**Emit ONLY this one artifact: the import_line. You MUST NOT narrate the steps,
+explain what you are doing, or add any prose or commentary — the discovery work
+is done; output only the import line. Narration is wasted output.**
+
+**You MUST NOT append the manifest entry yourself.** The tool already recorded
+it as a side effect when `applied: true`. Appending it again creates a duplicate
+entry. The model's only job on `auto_accept` with `.yakcc/manifest.json` present
+is to write the single import line returned by the tool.
 
 **You MUST NOT write the atom's implementation body.** `yakcc build` materializes
 the implementation from the manifest. Writing the body yourself creates an
@@ -213,14 +234,13 @@ untested divergent copy and wastes the token budget that compose-by-reference
 was designed to save.
 
 **You MUST NOT write the `.d.ts` file.** `yakcc build` (#1046) generates
-`.yakcc/atoms/<alias>.d.ts` from the manifest automatically. The `dts_ref`
-field in the `yakcc_reference` result is provided for your reference (so you
-know the path) — do NOT write it. Emitting the `.d.ts` yourself is a protocol
-violation equivalent to emitting the implementation body.
+`.yakcc/atoms/<alias>.d.ts` from the manifest automatically, and apply-mode
+writes it immediately as a side effect. Emitting the `.d.ts` yourself is a
+protocol violation equivalent to emitting the implementation body.
 
 **This is not a suggestion.** Calling `yakcc_compile` and writing the full source
 when `.yakcc/manifest.json` is present is a protocol violation. Use
-`yakcc_reference` and write only the import line and manifest entry.
+`yakcc_reference` with `project_root` and write only the import line.
 
 ---
 
