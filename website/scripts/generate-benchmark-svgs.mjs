@@ -159,17 +159,23 @@ const BENCHMARKS = [
     slug: 'b4-tokens',
     name: 'B4-Tokens',
     status: 'PARTIAL',
-    jsonPath: 'bench/B4-tokens/results-min-darwin-2026-05-14.json',
+    // @decision DEC-WEBSITE-B4V5-HONEST-001
+    // Title: B4-Tokens headline sourced from v5 dossier (tier-conditioned, not raw aggregate)
+    // Status: active
+    // Rationale: Prior path read bench/B4-tokens/results-min-darwin-2026-05-14.json and
+    // extracted raw-aggregate mean_token_reduction_pct (−15.6%), which mixed auto_accept wins
+    // with candidate_list failures and was forbidden per DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001.
+    // The B4-v5 dossier (162 runs, 2026-06-01) separates tiers:
+    // auto_accept = 91% oracle pass (58/64); candidate_list = 14% (6/44).
+    // Coverage ceiling 56–72%. Headline is conditional win with coverage caveat.
+    // Source of truth: bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.json
+    jsonPath: 'bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.json',
     jsonGlob: false,
-    caption: 'Token-budget delta for LLM-driven shave + emit. Below directional target.',
+    caption: 'When confident (auto_accept): 91% oracle pass; prompt cache −36–53%. Coverage-gated (56–72%).',
     extractMetric: (d) => {
-      const rows = d.summary?.results_table?.rows ?? [];
-      for (const row of rows) {
-        const hooked = row['hooked-default'];
-        if (hooked?.mean_token_reduction_pct !== undefined) {
-          const pct = (hooked.mean_token_reduction_pct * 100).toFixed(1);
-          return `${pct}% token delta (${row.driver})`;
-        }
+      const aa = d.tier_conditioned?.auto_accept;
+      if (aa?.pct !== undefined) {
+        return `${aa.pct}% oracle pass (auto_accept)`;
       }
       return null;
     },

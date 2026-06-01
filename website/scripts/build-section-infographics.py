@@ -199,9 +199,9 @@ def build_token_cost():
     W, H = 1200, 680
     out = header(W, H)
     out.append(f'<rect width="{W}" height="{H}" fill="#fafafa"/>')
-    out.append(text(W / 2, 48, "Discovering atoms uses fewer tokens than generating them",
+    out.append(text(W / 2, 48, "Reference-emit collapses output when resolve auto-accepts",
                     size=24, weight="700", color="#0f172a", anchor="middle"))
-    out.append(text(W / 2, 76, "Atoms were authored by expensive models; discovery against that registry can be done by cheap (or free) models",
+    out.append(text(W / 2, 76, "B4-v5: 91% oracle pass on auto_accept path; output 538–780 tokens vs 700–2772 on ignored path. Coverage 56–72% today.",
                     size=13, color="#64748b", anchor="middle"))
 
     # Three bars — generation vs discovery vs cheap-model discovery
@@ -214,9 +214,9 @@ def build_token_cost():
     scale = (W - 360) / max_tokens
 
     bars = [
-        ("Generate from scratch", 1500, "#dc2626", "Opus / Sonnet generates the impl from prompt; ~500-2000 tokens depending on function size"),
-        ("Discover via yakcc", 80, "#d97706", "Build IntentCard + receive matched-atom reference; ~50-150 tokens of output (no impl emitted)"),
-        ("Discover with cheap model", 60, "#0ea5e9", "Haiku-class model can do IntentCard lookup just as well — the atom was already authored by Opus"),
+        ("Generate from scratch", 1500, "#dc2626", "Opus / Sonnet generates the impl from prompt; ~500–2000 tokens depending on function size"),
+        ("Discover via yakcc (followed)", 650, "#d97706", "Followed path: model emits reference line; in-run output 538–780 tokens (B4-v5 followed-path means across cells)"),
+        ("Discover via yakcc (ignored)", 1900, "#94a3b8", "Ignored path: model writes verbatim code; in-run output 700–2772 tokens. Win requires auto_accept (56–72% coverage today)"),
     ]
 
     by = bar_y_start
@@ -247,13 +247,13 @@ def build_token_cost():
     out.append(text(bar_x + scale * max_tokens / 2, ruler_y + 38, "output tokens per emission (typical)",
                     size=11, color="#94a3b8", anchor="middle", italic=True))
 
-    # Honesty callout
-    out.append(f'<rect x="60" y="{H - 100}" width="{W - 120}" height="56" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>')
-    out.append(text(W / 2, H - 80, "Currently in measurement: B4-v3/v4 ran against the reactive hook architecture and the rescue effect was sub-statistical.",
-                    size=11, color="#7f1d1d", anchor="middle"))
-    out.append(text(W / 2, H - 62, "Re-measurement (B4-v5) against the corrected intent-time architecture is filed but blocked on #950 / #944 landing.",
-                    size=11, color="#7f1d1d", anchor="middle"))
-    out.append(footer_cite(W, H - 20, "Numbers shown are order-of-magnitude reasoning, not measured. Full results pending B4-v5 (#952)."))
+    # Measured result callout (B4-v5)
+    out.append(f'<rect x="60" y="{H - 100}" width="{W - 120}" height="56" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>')
+    out.append(text(W / 2, H - 80, "B4-v5 measured (2026-06-01): auto_accept path → 91% oracle pass; output collapses to reference line vs full verbatim on ignored path.",
+                    size=11, color="#14532d", anchor="middle"))
+    out.append(text(W / 2, H - 62, "Prompt caching cuts hooked-arm cost 36-53% (clean win). End-to-end win is coverage-gated: auto_accept coverage 56-72% today.",
+                    size=11, color="#14532d", anchor="middle"))
+    out.append(footer_cite(W, H - 20, "Source: bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.md — 162 real-API runs, 6 tasks x 9 cells x 3 reps."))
     out.append("</svg>")
     return "\n".join(out)
 

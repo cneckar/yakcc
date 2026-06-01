@@ -106,19 +106,15 @@ const sections: Section[] = [
   },
   {
     id: "token-cost",
-    title: "Discovering an atom uses a fraction of the tokens generating one does",
+    title: "When the registry is confident, the model emits a reference instead of re-writing the code",
     problem:
       "When an LLM emits a function, it spends 500–2000 output tokens generating the implementation. Complex tasks need expensive models — Opus, Sonnet, GPT-4 — because cheaper models fail. That's the per-emission cost: real money, real latency, real carbon.",
     yakccClaim:
-      "When the LLM consults yakcc instead of generating, the cost collapses. Building an IntentCard + receiving a matched-atom reference is ~50–150 tokens. The atom was already authored by an expensive model — a cheap model (Haiku, Gemini Flash) can just as easily look it up.",
+      "TOKEN ECONOMICS (measured, B4-v5 — 162 runs). When the registry is confident (auto_accept), the model emits a compact reference (~25–35 tokens in isolation) instead of re-writing the implementation: 91% oracle pass on the referenced atom, and ~1.1–5.2× less output than writing it verbatim within a full multi-turn run. In a controlled reference-emit experiment the isolated emission is 17–100× smaller than the full body. Prompt caching is 36–53% cheaper with no quality loss. The ceiling today is resolve coverage (56–72%): when confidence is low the model may ignore the reference, and the hooked context can underperform the unhooked baseline — so raising coverage is the next milestone.",
     evidence:
-      "Order-of-magnitude reasoning shown. Measured token-rescue results in progress: B4-v5 re-measurement against the corrected intent-time hook architecture is filed but blocked on #950 / #944 landing first.",
+      "Measured 2026-06-01 (B4-v5, 162 runs, $24.40). auto_accept tier: 91% oracle pass (58/64 runs). candidate_list tier: 14% (6/44). prompt cache: −36–53% cost, no quality change. Coverage ceiling: 56–72% (auto_accept coverage by model). Raw-aggregate hooked vs unhooked REDUCES pass rate — the conditional win is the honest headline.",
     svg: "/benchmarks/sections/05-token-cost.svg",
-    alt: "Three horizontal bars comparing typical generation token cost (~1500), yakcc discovery (~80), and cheap-model discovery (~60), with honest in-flight note about B4-v5 measurement",
-    inFlight: {
-      note: "B4-v3/v4 ran against the wrong hook architecture (reactive post-emission). The corrected re-measurement is filed but blocked.",
-      issue: "https://github.com/cneckar/yakcc/issues/952",
-    },
+    alt: "TOKEN ECONOMICS: bar chart showing followed path 538–780 tokens vs ignored path 700–2772 tokens (in-run B4-v5 data); auto_accept 91% oracle pass; prompt cache −36–53% cost; coverage ceiling 56–72%",
   },
   {
     id: "mathematical-proofs",

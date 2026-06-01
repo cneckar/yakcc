@@ -14,7 +14,7 @@ What we're testing:
 
 1. **The walkthrough is honest.** Following [`docs/USING_YAKCC.md`](USING_YAKCC.md) end-to-end should produce the experience it describes, without you having to read source or dig in Discord. If it doesn't, that's the most important bug class.
 2. **The flywheel is real.** Atomize an emission once, see it surface in the next session's `yakcc query`. If the round-trip is silent or surfaces wrong atoms, we need to know.
-3. **The cost story holds.** Hooked Claude/Cursor on your real work should produce fewer output tokens than unhooked Claude/Cursor on the same task, at equal-or-better quality. Telemetry captures the data; we'll ask for snapshots.
+3. **The cost story holds.** On the **auto_accept / followed path** (when `yakcc_resolve` returns a high-confidence match), hooked Claude/Cursor produces fewer output tokens than unhooked, at equal-or-better quality — B4-v5 measured 91% oracle pass under auto_accept. In raw aggregate the win is coverage-gated (auto_accept coverage 56–72% against the 6-atom corpus today); the gap closes as your corpus grows. Telemetry captures the data; we'll ask for snapshots.
 4. **Cold-start is tolerable.** Even with the bundled yakcc corpus (`yakcc seed --yakcc`), early sessions on your code may see lots of `synthesis-required`. That's expected; what matters is whether it improves week-over-week as your personal corpus grows.
 
 What we are **not** testing in this alpha:
@@ -176,6 +176,6 @@ rate on your own code. The protocol is self-contained:
 
 ## Thank you
 
-You're testing software whose primary value-proposition is "every session grows the corpus, and the corpus saves you tokens." That value emerges over time, not on day 1. Your feedback during the awkward early period is what lets us reshape the rough edges before public launch.
+You're testing software whose primary value-proposition is "every session grows the corpus, and the corpus saves you tokens on the auto_accept path." That value emerges over time, not on day 1. Your feedback during the awkward early period is what lets us reshape the rough edges before public launch.
 
 We owe you working software in return. If something is broken in a way that wastes your time, tell us — that's the most useful signal we can get.

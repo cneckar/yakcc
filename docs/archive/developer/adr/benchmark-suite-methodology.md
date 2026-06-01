@@ -7,6 +7,8 @@
 
 ---
 
+> **Superseded by the B4-v5 dossier** → bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.md (measured 2026-06-01; auto_accept 91% oracle, prompt-cache −36–53%, coverage-gated 56–72%).
+
 ## Context
 
 Yakcc's viability rests on quantitative claims that today live in `MASTER_PLAN.md`, `DESIGN.md`, the v3 discovery design ADRs, and the WI-HOOK-LAYER ADR. None have been measured against an adversarial benchmark harness. Before yakcc enters investor / enterprise conversations where these numbers will be challenged, the project needs:
