@@ -30,6 +30,10 @@ DECISIONS.md.tmp.*
 # expected-roots.json is committed separately (WI-V2-BOOTSTRAP-03).
 bootstrap/yakcc.registry.sqlite-wal
 bootstrap/yakcc.registry.sqlite-shm
+# B4-v5 corpus — registry.sqlite is committed; WAL/SHM are transient; intent-cache is build artifact.
+bench/B4-tokens-v5/corpus/*.sqlite-wal
+bench/B4-tokens-v5/corpus/*.sqlite-shm
+bench/B4-tokens-v5/corpus/intent-cache/
 bootstrap/report.json
 bootstrap/.write.lock
 
