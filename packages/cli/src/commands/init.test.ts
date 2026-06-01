@@ -40,6 +40,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
   writeFileSync as writeFileSyncForPolyglot,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -712,13 +713,13 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
     expect(allLog).toContain("claude-code");
   });
 
-  it("success output is ≤8 lines on default happy path (G6 + WI-760 telemetry lines)", async () => {
+  it("success output is ≤9 lines on default happy path (G6 + WI-760 telemetry lines + compose-by-ref line)", async () => {
     // @decision DEC-CLI-INIT-WI760-G6-UPDATE-001
-    // title: G6 line-count limit is 8 to accommodate WI-760 telemetry discoverability
-    // status: accepted (WI-760; confirmed stable with DEC-WPE-DEFAULT-PEER-001 mirror seam)
+    // title: G6 line-count limit is 9 to accommodate WI-760 telemetry + compose-by-ref line
+    // status: updated (DEC-COMPOSE-BY-REF-DEFAULT-001 adds the manifest-scaffold summary line)
     // rationale: WI-760 adds a "telemetry will land in" line from hooksClaudeCodeInstall and a
-    //   "Telemetry:" summary line from init itself. Both are required per the WI-760 acceptance
-    //   criteria. The prior G6=6 constraint is updated to G6=8 to reflect these two additions.
+    //   "Telemetry:" summary line from init itself. DEC-COMPOSE-BY-REF-DEFAULT-001 adds a
+    //   "Compose-by-reference:" manifest-scaffold line. Prior G6=8 → G6=9.
     //   DEC-WPE-DEFAULT-PEER-001 mirror path does not add a log line on the happy path (the
     //   pre-mirror log was removed; only a warning is emitted on failure). noOpMirror is
     //   injected here so the count is deterministic even when registry.yakcc.com is unreachable.
@@ -734,7 +735,7 @@ describe("init — summary output (G6: ≤6 lines on happy path)", () => {
 
     // Count non-empty log lines
     const nonEmptyLines = logger.logLines.filter((l) => l.trim().length > 0);
-    expect(nonEmptyLines.length).toBeLessThanOrEqual(8);
+    expect(nonEmptyLines.length).toBeLessThanOrEqual(9);
   });
 
   // EC-S7-T1: no-detect path surfaces a structured hint (DEC-CLI-INIT-NO-IDE-HINT-001)
@@ -1692,5 +1693,125 @@ describe("init — CLAUDE.md discovery context injection (WI-1008)", () => {
     // All three surfaces are written atomically in a single init call —
     // this is the compound-interaction proof that the real production sequence works.
     expect(logger.logLines.join("\n")).toContain("Installed in");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 28: .yakcc/manifest.json scaffold (DEC-COMPOSE-BY-REF-DEFAULT-001)
+//
+// Evaluation Contract required_tests:
+//   EC-CRD-T1: yakcc init writes a valid empty .yakcc/manifest.json that
+//              parseProjectManifest accepts (version 1, empty references).
+//   EC-CRD-T2: re-running init does NOT clobber a manifest that already has
+//              references (idempotency).
+//   EC-CRD-T3: the summary line mentions compose-by-reference.
+//   EC-CRD-T4: compound — manifest + .yakccrc.json + registry all written in
+//              a single init call (real production sequence).
+//
+// Required authority: manifest written ONLY via @yakcc/compile emptyManifest()
+// + serializeProjectManifest() — parseProjectManifest must accept it without
+// throwing (the authority check is parseProjectManifest round-tripping).
+// ---------------------------------------------------------------------------
+
+describe("init — .yakcc/manifest.json scaffold (DEC-COMPOSE-BY-REF-DEFAULT-001)", () => {
+  // EC-CRD-T1: fresh init writes valid empty manifest accepted by parseProjectManifest
+  it("fresh init writes .yakcc/manifest.json that parseProjectManifest accepts (version 1, empty references)", async () => {
+    const { parseProjectManifest } = await import("@yakcc/compile");
+
+    const code = await init(
+      ["--target", tmpDir, "--local", "--no-seed", "--skip-hooks"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir },
+    );
+    expect(code).toBe(0);
+
+    const manifestPath = join(tmpDir, ".yakcc", "manifest.json");
+    expect(existsSync(manifestPath)).toBe(true);
+
+    const text = readFileSync(manifestPath, "utf-8");
+    // Must not throw — this is the authority check (single authority: @yakcc/compile)
+    const manifest = parseProjectManifest(text);
+    expect(manifest.version).toBe(1);
+    expect(manifest.references).toHaveLength(0);
+  });
+
+  // EC-CRD-T2: idempotency — re-init does NOT clobber a manifest with references
+  it("re-running init does NOT clobber an existing manifest that has references", async () => {
+    const {
+      addReference,
+      serializeProjectManifest: serialize,
+      emptyManifest: empty,
+      parseProjectManifest,
+    } = await import("@yakcc/compile");
+
+    // First init to set up the directory
+    const code1 = await init(
+      ["--target", tmpDir, "--local", "--no-seed", "--skip-hooks"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir },
+    );
+    expect(code1).toBe(0);
+
+    // Simulate an active project: add a reference to the manifest
+    const manifestPath = join(tmpDir, ".yakcc", "manifest.json");
+    const fakeRoot = "a".repeat(64) as Parameters<typeof addReference>[1]["root"];
+    const { manifest: withRef } = addReference(empty(), {
+      root: fakeRoot,
+      symbol: "myFn",
+    });
+    writeFileSync(manifestPath, serialize(withRef), "utf-8");
+
+    // Re-run init — must not clobber the manifest
+    const code2 = await init(
+      ["--target", tmpDir, "--local", "--no-seed", "--skip-hooks"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir },
+    );
+    expect(code2).toBe(0);
+
+    const text = readFileSync(manifestPath, "utf-8");
+    const manifest = parseProjectManifest(text);
+    // References must still be there — not reset to empty
+    expect(manifest.references).toHaveLength(1);
+    expect(manifest.references[0]?.symbol).toBe("myFn");
+  });
+
+  // EC-CRD-T3: summary mentions compose-by-reference
+  it("summary output mentions compose-by-reference and yakcc build", async () => {
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--local", "--no-seed", "--skip-hooks"], logger, {
+      overrideHome: tmpDir,
+    });
+    expect(code).toBe(0);
+    const allLog = logger.logLines.join("\n");
+    expect(allLog).toContain("Compose-by-reference");
+    expect(allLog).toContain("yakcc build");
+  });
+
+  // EC-CRD-T4: compound — manifest + .yakccrc.json + registry all in one init run
+  it("compound: .yakcc/manifest.json + .yakccrc.json + registry.sqlite all written in a single init call", async () => {
+    const { parseProjectManifest } = await import("@yakcc/compile");
+
+    const code = await init(
+      ["--target", tmpDir, "--local", "--no-seed", "--skip-hooks"],
+      new CollectingLogger(),
+      { overrideHome: tmpDir },
+    );
+    expect(code).toBe(0);
+
+    // .yakcc/manifest.json — valid empty manifest (single @yakcc/compile authority)
+    const manifestPath = join(tmpDir, ".yakcc", "manifest.json");
+    expect(existsSync(manifestPath)).toBe(true);
+    const manifest = parseProjectManifest(readFileSync(manifestPath, "utf-8"));
+    expect(manifest.version).toBe(1);
+    expect(manifest.references).toHaveLength(0);
+
+    // .yakccrc.json — written by writeRc
+    expect(existsSync(join(tmpDir, ".yakccrc.json"))).toBe(true);
+    const rc = readRc(tmpDir);
+    expect(rc?.version).toBe(1);
+
+    // registry.sqlite — created by registryInit
+    expect(existsSync(join(tmpDir, ".yakcc", "registry.sqlite"))).toBe(true);
   });
 });
