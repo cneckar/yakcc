@@ -89,9 +89,17 @@ export const EXPERIMENT_DEFAULTS = {
     verbatim: 400,
     reference: 15,
   },
-  // max_tokens to request from Anthropic — caps spending and forces brief output.
-  maxTokensVerbatim: 800,
-  maxTokensReference: 60,
+  // max_tokens to request from Anthropic — must capture each mode's FULL natural output.
+  // verbatim: raised to 3000 to accommodate large impls (~2009 tokens in dijkstra-heap/avl-tree)
+  //   plus any narration the model prepends; first run showed 800 truncated all verbatim cells.
+  // reference: raised to 800 to capture the complete Section A write — the model records the
+  //   manifest entry, writes the import line, AND generates the .d.ts stub before finishing;
+  //   60 tokens truncated every reference response before the import line was complete,
+  //   producing false behavioral_pass=false and understating the real reference output size.
+  // The cost gate ($5 cap) still bounds total spend; measured avg reference output is ~150-300
+  //   tokens, not the idealized ~14-token import-line-only figure.
+  maxTokensVerbatim: 3000,
+  maxTokensReference: 800,
 };
 
 // ---------------------------------------------------------------------------

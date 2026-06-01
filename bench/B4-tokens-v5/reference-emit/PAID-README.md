@@ -86,11 +86,18 @@ Results are written to:
 - `results/paid-experiment.json` — raw cell data (output_tokens, input_tokens, cache fields, behavioral pass, response text)
 - `results/paid-experiment.md` — formatted dossier with per-(atom, model) averages and ratio
 
-## Expected Headline
+## Measured Headline (clean run, 2026-06-01)
 
-Reference condition expected output: ~10–20 tokens (import line + brief affirmation).
-Verbatim condition expected output: 200–600 tokens (full implementation body).
-Expected ratio: 20–60x, confirming the offline measure.mjs prediction.
+Reference condition actual output: **430–635 tokens** (import line + manifest entry + .d.ts + narration — full Section A write).
+Verbatim condition actual output: **591–2867 tokens** (full implementation body, scales with impl size).
+Measured behavioral session-output collapse: **1.3x–6.0x** (small→large atoms); scales with impl size.
+Reference behavioral compliance: **100%** across all 32 cells (both models, all atoms).
+
+Note: The original ~10–20 token figure was the *import-line-only* artifact measured offline by
+`measure.mjs`. The real model also writes the manifest entry, .d.ts stub, and narration as
+required by Section A of the discovery prompt, bringing real reference output to 430–635 tokens.
+The structural artifact collapse (what lands in the codebase) remains ~50x per measure.mjs;
+the behavioral session-output collapse (what the API bills) is 1.3x–6.0x depending on impl size.
 
 ## Behavioral Correctness Flag
 
