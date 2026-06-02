@@ -1,0 +1,3 @@
+# Cargo build artifacts — the syn-based AST parser is built on demand
+# (locally and in polyglot-rust.yml CI); never commit the target/ tree.
+/target/

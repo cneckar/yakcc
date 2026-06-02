@@ -1,0 +1,85 @@
+# @decision DEC-POLYGLOT-CI-RUST-001
+# Title: Per-language polyglot-rust CI in a dedicated workflow
+# Status: accepted (WI-868 slice 1, mirrors DEC-POLYGLOT-CI-OPTIONAL-001)
+# Rationale: pr-ci.yml stays TS-only. The Rust adapter owns its own CI workflow
+# that provisions the Rust toolchain and runs only when the adapter package paths
+# change (or on nightly). Same pattern as polyglot-py.yml. TS-only contributors
+# and TS-only CI runs are unaffected.
+
+name: polyglot-rust
+
+on:
+  pull_request:
+    paths:
+      - "packages/shave-rust/**"
+      - ".github/workflows/polyglot-rust.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/shave-rust/**"
+  schedule:
+    # Nightly at 03:41 UTC — staggers with other nightly jobs
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: polyglot-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shave-rust:
+    name: "@yakcc/shave-rust — Rust ${{ matrix.rust-version }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        rust-version: ["stable", "1.70"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Rust ${{ matrix.rust-version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust-version }}
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/shave-rust/rust-ast-parse/target
+          key: cargo-${{ matrix.rust-version }}-${{ hashFiles('packages/shave-rust/rust-ast-parse/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.rust-version }}-
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dependency chain
+        run: pnpm -r --filter @yakcc/shave-rust... --filter @yakcc/shave... build
+
+      - name: typecheck @yakcc/shave-rust
+        run: pnpm --filter @yakcc/shave-rust typecheck
+
+      - name: Build rust-ast-parse cargo helper
+        run: cargo build --manifest-path packages/shave-rust/rust-ast-parse/Cargo.toml
+
+      - name: test @yakcc/shave-rust (unit — pure-Node, no cargo)
+        run: pnpm --filter @yakcc/shave-rust test
+
+      - name: test @yakcc/shave-rust (real cargo end-to-end)
+        run: pnpm --filter @yakcc/shave-rust test
+        env:
+          YAKCC_RUST_E2E: "1"
+          YAKCC_CARGO: cargo

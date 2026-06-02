@@ -968,6 +968,192 @@ The residual hard problems v0 still defers:
 
 ## Active Initiatives
 
+### Initiative: #868 — `@yakcc/shave-rust` Rust raise adapter (polyglot MVP)
+
+Status: **planning (2026-06-02).** Read-only planner pass on worktree
+`feature/868-shave-rust` @ current `main`. New workspace package
+`packages/shave-rust/` plus a first-in-repo Rust helper crate. Template is
+`packages/shave-go` (WI-870) — the closest analog (statically typed, explicit
+AST, subprocess-with-injectable-spawn). Mirrors `packages/shave-python` (#864)
+for purity/error-taxonomy cadence. The polyglot architecture is already cleared:
+the IR envelope target (`@yakcc/contracts` `polyglot-errors.ts` —
+`CannotRaiseToIRError`, `AmbiguousPurityError`, `SourceLocation`,
+DEC-POLYGLOT-IR-ENVELOPE-001) exists; init auto-detect already registers
+`Cargo.toml → @yakcc/shave-rust` (#785, `init.ts` `POLYGLOT_ECOSYSTEMS`); and
+`lang-target.ts` already maps `.rs → rust` (DEC-WI877-005) with
+`TARGETS_TRACKED.rust = 868` as the unstub anchor.
+
+**Problem / why this is the right thing:** yakcc's polyglot supply-chain story
+is only as broad as its raise adapters. Python (#864) and Go (#870) ship;
+Rust is the highest-value next ecosystem (large permissive-licensed crate
+corpus). The challenge to scope: the issue offers "tree-sitter-rust (Node
+binding) OR `syn` via subprocess." We reject tree-sitter-rust — it is a native
+Node addon requiring a per-platform build step in CI, which contradicts the
+established DEC-POLYGLOT-GO-SUBPROCESS-001 posture (keep the Node side pure
+JS/TS, gate all toolchain concerns behind one mockable subprocess seam). The
+80%-value path is a tiny Rust helper that uses `syn` and emits the same
+versioned JSON AST envelope shipped by `scripts/go-ast-parse.go`, behind an
+injectable `spawnImpl` so pure-Node CI needs no Rust toolchain.
+
+**State-Authority Map (integration surfaces this initiative touches):**
+
+| State domain | Canonical authority | shave-rust relationship |
+|---|---|---|
+| Polyglot IR error/location surface | `@yakcc/contracts` `polyglot-errors.ts` (`CannotRaiseToIRError`, `AmbiguousPurityError`, `SourceLocation`) | **Consumes only.** shave-rust errors wrap these; it must NOT define a parallel error hierarchy (mirror DEC-POLYGLOT-GO-ERROR-TAXONOMY-001). |
+| Extension → target-language inference | `packages/cli/src/commands/lang-target.ts` (DEC-WI877-005); `.rs → rust` already mapped; `TARGETS_TRACKED.rust = 868` | **Unstub (Slice 4 only).** Remove `rust` from `TARGETS_TRACKED`, add `case "rust"` arms in `shave.ts:129` + `roundtrip.ts:337`. Single authority — no new extension map. |
+| Polyglot ecosystem detection at `yakcc init` | `packages/cli/src/commands/init.ts` `POLYGLOT_ECOSYSTEMS` (DEC-POLYGLOT-ADAPTER-PACKAGING-001 / #785) | **Already registered** (`Cargo.toml → @yakcc/shave-rust`). Slice 4 only flips `notYetPublished`/marker once the package resolves and adds a `followUp` hint. No new detection mechanism. |
+| Rust AST wire schema | NEW: `packages/shave-rust/rust-ast-parse/` (syn helper crate) + the TS wire types in `rust-ast-parser.ts` | shave-rust **owns** this; it mirrors the versioned envelope shape of `scripts/go-ast-parse.go` (`{version, packageName/crateName, functions[]}`). |
+| Per-language adapter CI | DEC-POLYGLOT-CI-OPTIONAL-001: `pr-ci.yml` stays TS-only (pure-Node, full `pnpm -r build` + filtered vitest, picks up new package automatically); real-toolchain tests live in a dedicated workflow (`polyglot-py.yml` precedent) | shave-rust adds `polyglot-rust.yml` (mirror) for real-`cargo` tests; pure-Node mock-spawn tests ride `pr-ci.yml` with zero `pr-ci.yml` edits. |
+| Workspace membership | `pnpm-workspace.yaml` glob `packages/*` (no root tsconfig `references` array) | New package is auto-included by glob; `pnpm -r build` (composite tsc) builds it. No root-config edit required. |
+
+**Module list for `packages/shave-rust/src/` (mirrors shave-go exactly):**
+- `rust-ast-parser.ts` — subprocess wrapper invoking the syn helper; versioned JSON envelope wire types; injectable `SpawnImpl`; `AdapterSubprocessError`; `parseRustSource(source, options)`.
+- `parse-fn-signature.ts` — narrow the envelope into typed `FunctionSignature[]` (params + return type), apply type-map + name-normalize; `SignatureRaiseError`.
+- `type-map.ts` — Rust primitive/std → TS-subset IR (`i8..i128/u8..u128/usize/isize/f32/f64 → number`, `bool → boolean`, `str/String → string`, `()→void`, `Vec<T>→T[]`, `&T`/`&mut T` flatten, `Option<T>→T | null`, `Result<T,E>` deferred to roadmap); `UnsupportedTypeError`; `LowerWarning` (user-defined identifier passthrough).
+- `name-normalize.ts` — `snake_case → camelCase` (per #847 Python pattern — this is a REAL transform for Rust, unlike Go's no-op); `InvalidIdentifierError`; `isPublic` (`pub` marker).
+- `raise-function.ts` — `renderFunctionDeclaration` (signature surface; Slice 1).
+- `raise-body.ts` — `renderBody`/`renderExpr`/`renderStmt` + `checkBodyPurity` (Slice 2/3).
+- `errors.ts` — ≥5 unsupported-construct classes, each wrapping `@yakcc/contracts` (Slice 2): lifetimes, traits/trait-bounds, macros, `unsafe` blocks, `async`/`.await`. NO parallel hierarchy.
+- `index.ts` — public API barrel + `@decision DEC-POLYGLOT-RUST-001`.
+- Test siblings (`*.test.ts`) per module; `acceptance.test.ts` (Slice 1) and `integration.test.ts` (Slice 3); `__fixtures__/` JSON golden envelopes.
+
+**Rust helper crate (the Slice-1 crux):**
+- Location: `packages/shave-rust/rust-ast-parse/` — a Cargo project (`Cargo.toml` + `src/main.rs`) depending on `syn` (full features) + `serde`/`serde_json`. This is the FIRST Rust/Cargo in the repo.
+- Invocation: `cargo run --quiet --manifest-path <crate>/Cargo.toml` (or a prebuilt binary path via `YAKCC_RUST_PARSE` override), Rust source over stdin, JSON envelope on stdout, non-zero exit + stderr on parse failure — byte-for-byte the same lifecycle the Go `spawnImpl` mock honors.
+- Wire schema (`version: 1` to start; bump on body-AST add, mirroring Go's v1→v2): `{ "version": 1, "crateName": string, "functions": [{ "name", "isPub": bool, "params": [{"name","rustType"}], "returnType": string|null, "bodySource": string|null }] }`. Slice 2 adds the structured `body` node union + bumps to `version: 2`.
+- Injectable-spawn test strategy: `RustAstParseOptions.spawnImpl` defaults to `node:child_process.spawn`; every unit/acceptance test injects a `mockSpawn` (verbatim port of `go-ast-parser.test.ts`'s `EventEmitter`-based mock) that emits a known stdout/stderr/exit triple. **No `cargo` in pure-Node CI.**
+
+#### Slice 1 — scaffold + syn-subprocess parser + signature surface (the first PR, implementable now)
+
+| ID | Title | Description | Deps | Weight | Gate | State |
+|---|---|---|---|---|---|---|
+| WI-868-1A | Package scaffold | Create `packages/shave-rust/package.json` (`private: true`, `@yakcc/shave-rust`, dep `@yakcc/contracts: workspace:*`, scripts build/typecheck/test/lint mirroring shave-go), `tsconfig.json` (extends `../../tsconfig.base.json`, `composite`), `vitest.config.ts` (`pool: forks`), `biome.json`. Verify `pnpm -r build` includes it. | — | S | review | [ ] planned |
+| WI-868-1B | syn helper crate + wire schema | Create `packages/shave-rust/rust-ast-parse/Cargo.toml` (+ `Cargo.lock`) and `src/main.rs`: read stdin, `syn::parse_file`, emit `version:1` JSON envelope (crateName + signature-only functions). Skip lifetimes/advanced generics. | — | M | review | [ ] planned |
+| WI-868-1C | `rust-ast-parser.ts` + mock-spawn tests | TS wrapper: wire types, `parseRustSource`, injectable `SpawnImpl`, `AdapterSubprocessError` with `cargo`-install remediation hint, runtime envelope validator. `rust-ast-parser.test.ts` ports go's mock-spawn harness — all tests pure-Node. | WI-868-1A | M | review | [ ] planned |
+| WI-868-1D | type-map + name-normalize | `type-map.ts` (Rust primitives + `Vec<T>`, `&T`/`&mut T` flatten, `Option<T>→T\|null`; `Result`/advanced deferred) + tests; `name-normalize.ts` (`snake_case→camelCase`, REAL transform) + tests. | WI-868-1A | M | review | [ ] planned |
+| WI-868-1E | parse-fn-signature + raise-function | `parse-fn-signature.ts` narrows envelope → typed signatures via type-map/name-normalize; `raise-function.ts` renders the TS declaration. Module tests. | WI-868-1C, WI-868-1D | M | review | [ ] planned |
+| WI-868-1F | fixtures + acceptance + index | 3–5 signature-only `__fixtures__/*.json` golden envelopes (e.g. `add-ints`, `greet-string`, `is-even-bool`, `noop-unit`, `snake-to-camel`); `acceptance.test.ts` drives them through mock-spawn → signature; `index.ts` barrel + `@decision DEC-POLYGLOT-RUST-001`. | WI-868-1E | M | review | [ ] planned |
+| WI-868-1G | polyglot-rust.yml CI | Add `.github/workflows/polyglot-rust.yml` mirroring `polyglot-py.yml`: triggers on `packages/shave-rust/**` paths + nightly; provisions Rust via `dtolnay/rust-toolchain`; runs the real-`cargo` gated tests. `pr-ci.yml` is NOT edited (pure-Node tests ride the existing filter). | WI-868-1F | S | review | [ ] planned |
+
+Waves: W1 = {1A} → W2 = {1B, 1C, 1D} (1B independent of TS; 1C/1D dep 1A) →
+W3 = {1E} (dep 1C+1D) → W4 = {1F} (dep 1E) → W5 = {1G} (dep 1F). Critical path
+1A→1C→1E→1F→1G. Max width 3 (W2). 1B can land in parallel with 1C/1D since the
+mock-spawn tests do not depend on the real crate.
+
+#### Slice 1 — Evaluation Contract (guardian-bound; applies to every WI in Slice 1)
+
+- **Required tests (must pass, pure-Node, no Rust toolchain):**
+  - `pnpm --filter @yakcc/shave-rust test` is green. Every test that exercises `parseRustSource` injects a mock `spawnImpl`; ZERO tests invoke real `cargo` in this suite.
+  - `rust-ast-parser.test.ts` covers: success envelope parse, non-zero exit → `AdapterSubprocessError` (with remediation hint), spawn-throws (cargo missing) → `AdapterSubprocessError`, malformed JSON → error, schema-version mismatch → error. (Port go's coverage set.)
+  - `type-map.test.ts`: every documented Rust primitive maps; `Vec<T>`, `&T`/`&mut T`, `Option<T>`; an unsupported type (e.g. `Result<T,E>`, a lifetime-bearing type) throws `UnsupportedTypeError`; user-defined identifier passthrough emits a `LowerWarning`.
+  - `name-normalize.test.ts`: `is_even → isEven`, `parse_int_list → parseIntList`, leading-underscore preserved, empty → `InvalidIdentifierError`.
+  - `parse-fn-signature.test.ts` + `acceptance.test.ts`: the 3–5 fixtures raise to the expected `FunctionSignature` (name camelCased, params typed, return type mapped).
+- **Required evidence (pasted in the reviewer hand-off):**
+  - Raw `pnpm --filter @yakcc/shave-rust test` output showing the pass count and the absence of any `cargo`/skipped-real-toolchain line.
+  - Raw `pnpm -r build` output proving the new package compiles in the composite-tsc workspace build (CI merge gate authority — DEC-CI-MERGE-GATE-ENFORCE-002). Scoped typecheck alone is NOT sufficient.
+- **Required real-path checks:**
+  - At least ONE real-toolchain test exists and is **gated** (env-guarded `it.skipIf` / `describe.skipIf` keyed off a `YAKCC_RUST` or cargo-availability probe, mirroring shave-python's `YAKCC_PY` gating) so it runs only in `polyglot-rust.yml`, never in `pr-ci.yml`. The reviewer confirms the gate exists and that the default `pnpm test` run does NOT execute it.
+  - The syn helper crate `cargo build` succeeds (evidence captured from `polyglot-rust.yml` or a local run; not required in pure-Node PR CI).
+- **Required authority invariants:**
+  - shave-rust imports `CannotRaiseToIRError` / `AmbiguousPurityError` / `SourceLocation` from `@yakcc/contracts` and defines NO parallel error base class (Slice 1 may throw plain `UnsupportedTypeError`/`AdapterSubprocessError` locally — the contracts wrap lands in Slice 2's `errors.ts`, mirroring shave-go's slice ordering).
+  - The Rust→target inference remains solely in `lang-target.ts`; shave-rust contains NO `.endsWith(".rs")` or `--target` parsing.
+  - The JSON wire schema is **versioned** (`version: 1`) and the TS validator rejects a mismatched version (parity with go-ast-parser's `version !== 2` guard).
+- **Required integration points (must still work after the slice):**
+  - `pnpm -r build`, `pnpm typecheck`, `pnpm lint` across the workspace stay green (new package conforms to root configs).
+  - `@yakcc/contracts` is unmodified (consumed only).
+  - `lang-target.ts`, `shave.ts`, `roundtrip.ts`, `init.ts` are UNMODIFIED in Slice 1 (unstub is Slice 4) — `TARGETS_TRACKED.rust` still points at #868.
+- **Forbidden shortcuts:**
+  - NO `tree-sitter-rust` / native Node addon (violates DEC-POLYGLOT-GO-SUBPROCESS-001 posture; rejected above).
+  - NO real `cargo` invocation in the `pr-ci.yml` path or in any non-gated test.
+  - NO parallel error hierarchy; NO second extension-inference map; NO hand-edit of a derived CI surface to force the package into `pr-ci.yml` by name.
+  - NO `Result<T,E>`, lifetimes, traits, macros, `unsafe`, or `async` handling claimed as working — those are explicit roadmap/unsupported.
+- **Ready-for-guardian definition:** all Slice-1 WIs merged into the branch; `pnpm --filter @yakcc/shave-rust test` green with zero real-toolchain execution; `pnpm -r build` green; the gated real-`cargo` test present-and-skipped under default run; `polyglot-rust.yml` added; `index.ts` carries `@decision DEC-POLYGLOT-RUST-001`; reviewer has pasted the two required raw outputs and confirmed the four authority invariants. Reviewer emits `REVIEW_VERDICT=ready_for_guardian`.
+
+#### Slice 1 — Scope Manifest (JSON)
+
+```json
+{
+  "allowed_paths": [
+    "packages/shave-rust/*",
+    "packages/shave-rust/**/*",
+    "packages/shave-rust/src/*",
+    "packages/shave-rust/src/**/*",
+    "packages/shave-rust/src/__fixtures__/*",
+    "packages/shave-rust/src/__fixtures__/**/*",
+    "packages/shave-rust/rust-ast-parse/*",
+    "packages/shave-rust/rust-ast-parse/**/*",
+    ".github/workflows/polyglot-rust.yml"
+  ],
+  "required_paths": [
+    "packages/shave-rust/package.json",
+    "packages/shave-rust/tsconfig.json",
+    "packages/shave-rust/vitest.config.ts",
+    "packages/shave-rust/src/index.ts",
+    "packages/shave-rust/src/rust-ast-parser.ts",
+    "packages/shave-rust/src/type-map.ts",
+    "packages/shave-rust/src/name-normalize.ts",
+    "packages/shave-rust/src/parse-fn-signature.ts",
+    "packages/shave-rust/src/raise-function.ts",
+    "packages/shave-rust/src/acceptance.test.ts",
+    "packages/shave-rust/rust-ast-parse/Cargo.toml",
+    "packages/shave-rust/rust-ast-parse/src/main.rs",
+    ".github/workflows/polyglot-rust.yml"
+  ],
+  "forbidden_paths": [
+    "packages/contracts/**",
+    "packages/cli/**",
+    "packages/shave-go/**",
+    "packages/shave-python/**",
+    ".github/workflows/pr-ci.yml",
+    ".github/workflows/self-shave.yml",
+    "pnpm-workspace.yaml",
+    "tsconfig.base.json",
+    "docs/archive/developer/MASTER_PLAN.md"
+  ],
+  "expected_state_authorities_touched": [
+    "Rust AST wire schema (NEW — owned by packages/shave-rust)",
+    "Per-language adapter CI (DEC-POLYGLOT-CI-OPTIONAL-001 — additive polyglot-rust.yml only)"
+  ]
+}
+```
+
+Note (fnmatch companion globs — MEMORY): top-level files in
+`packages/shave-rust/src/` need BOTH `packages/shave-rust/src/*` and
+`packages/shave-rust/src/**/*` in `allowed_paths` (fnmatch `**` does not match
+the zero-segment case), and likewise for `rust-ast-parse/`. Before dispatching
+the implementer, write this manifest to runtime via
+`cc-policy workflow scope-sync 868-shave-rust --work-item-id <wi> --scope-file tmp/868-slice1-scope.json`.
+
+#### Slices 2–4 — roadmap (lighter detail; each maps to #868 acceptance checkboxes)
+
+- **Slice 2 — purity inference + error taxonomy.** `errors.ts` with ≥5 classes each wrapping `@yakcc/contracts` (`CannotRaiseToIRError`/`AmbiguousPurityError`): `unsafe` block, trait/trait-bound, macro invocation, lifetime-bearing signature, `async`/`.await`. `checkBodyPurity`: `&T` immut-only params pure; `&mut T`, I/O (`println!`/`std::fs`), globals/`static mut` → impure/ambiguous. Bumps wire schema to `version: 2` (structured body node union, mirroring go's slice-2). **Satisfies #868 checkbox:** "Error taxonomy documents ≥5 unsupported-construct classes with examples." (Also lands the contracts-wrap invariant deferred from Slice 1.)
+- **Slice 3 — body raiser + integration round-trip.** `raise-body.ts` (`renderExpr`/`renderStmt`/`renderBody`) for the supported expression/statement subset (literals, binary/unary ops, calls, `if`/`match`-as-`switch` where 1:1, `let`, `return`); ~10 `.rs` fixtures driven end-to-end through the (gated) real parser in `polyglot-rust.yml` + mock-spawn goldens in `pr-ci.yml`. **Satisfies #868 checkboxes:** "At least the function-signature surface works on a fixture set (~10 small `.rs` files)" and the round-trip integration intent.
+- **Slice 4 — init routing unstub + DEC + final CI.** In `lang-target.ts` remove `rust` from `TARGETS_TRACKED`; add `case "rust"` arms in `shave.ts:129` and `roundtrip.ts:337` dispatching to `@yakcc/shave-rust`; flip the `init.ts` Rust ecosystem entry (`notYetPublished`/`installedMarker`) once the package resolves and add its `followUp` hint (`yakcc shave <dir> --language=rust`); finalize `polyglot-rust.yml`; confirm `DEC-POLYGLOT-RUST-001` annotation. **Satisfies #868 checkboxes:** "`packages/shave-rust/` ships as new workspace package (`private: true`)" (Slice 1, re-verified here), "`yakcc init` in a project with `Cargo.toml` detects Rust and routes `.rs` files through this adapter," "CI runs the package's vitest suite on every PR" (pure-Node ride on `pr-ci.yml` + dedicated `polyglot-rust.yml`), "`DEC-POLYGLOT-RUST-001` annotated in the package's `index.ts`." This slice touches `packages/cli/**` and is the ONLY slice whose Scope Manifest opens those files — re-scoped at provisioning time, not inherited from Slice 1.
+
+**Acceptance-checkbox → slice map (#868):**
+
+| #868 acceptance checkbox | Slice |
+|---|---|
+| `packages/shave-rust/` ships as new workspace package (`private: true`) | Slice 1 (1A) |
+| Function-signature surface works on ~10 small `.rs` fixtures | Slice 1 signatures (3–5) → Slice 3 full ~10 round-trip |
+| `yakcc init` + `Cargo.toml` routes `.rs` through this adapter | Slice 4 (init already detects; unstub `lang-target`/`shave`/`roundtrip`) |
+| CI runs the package vitest on every PR | Slice 1 (1G `polyglot-rust.yml`) + pure-Node ride on `pr-ci.yml` |
+| Error taxonomy ≥5 unsupported-construct classes with examples | Slice 2 (`errors.ts`) |
+| `DEC-POLYGLOT-RUST-001` in `index.ts` | Slice 1 (1F) |
+
+**RISKS:**
+- **CI-without-Rust-toolchain (HIGH→mitigated):** the entire design rests on the injectable-spawn seam. If any test forgets to inject `spawnImpl`, `pr-ci.yml` would attempt real `cargo` and fail on toolchain-less runners. Mitigation: Evaluation Contract requires the reviewer to confirm ZERO real-`cargo` execution in the default `pnpm test` run; the one real-path test must be env-gated.
+- **`syn` version pinning:** `syn`'s AST shape can shift across major versions (1.x vs 2.x). Mitigation: commit `Cargo.lock`, pin `syn = "2"` with explicit features, and version the JSON wire envelope so a `syn` bump that changes output is caught by the TS validator's version check rather than silently corrupting envelopes.
+- **IR envelope coupling:** shave-rust must consume `@yakcc/contracts` `polyglot-errors.ts` exactly as shave-go/python do; a divergent local error base would fragment the cross-adapter `instanceof` surface (DEC-POLYGLOT-GO-ERROR-TAXONOMY-001). Mitigation: authority invariant + forbidden-shortcut in the contract; `packages/contracts/**` is forbidden scope.
+- **init-routing seam:** the temptation to unstub `lang-target.ts`/`shave.ts`/`roundtrip.ts` early in Slice 1 would leave a `case "rust"` dispatching into a half-built package and break the CLI on `main`. Mitigation: Slice 1 forbids `packages/cli/**`; unstub is isolated to Slice 4 with its own re-scoped manifest.
+- **Name collisions with shave-go/python shared utils:** there is no shared util package — each adapter re-implements `type-map`/`name-normalize`/`errors` locally (confirmed: shave-go and shave-python each own theirs). shave-rust follows suit; it must NOT import from `@yakcc/shave-go` or `@yakcc/shave-python` (both are forbidden scope). The `snake_case→camelCase` normalizer is genuinely Rust-specific (Go's is a near no-op, Python's #847 is the closest analog to copy).
+
+**Build / test commands (confirmed against shave-go):**
+- Workspace build (CI merge-gate authority): `pnpm -r build`.
+- Package tests (pure-Node, default): `pnpm --filter @yakcc/shave-rust test` (→ `vitest run`).
+- Package typecheck: `pnpm --filter @yakcc/shave-rust typecheck`.
+- Real-toolchain (gated, `polyglot-rust.yml` / local): `YAKCC_RUST=1 pnpm --filter @yakcc/shave-rust test` (or cargo-availability probe).
+
 ### Initiative: #1074 — Benchmark-honest website + live docs (B4-v5 economics)
 
 Status: **planning (2026-06-01).** Read-only planner pass on worktree
@@ -2911,6 +3097,9 @@ are added at the top; older entries are not edited.
 | DEC-LICENSE-WIRING-002 | The license gate is **structural**, not a flag: there is no `--ignore-license` / `--force` / `--unsafe-licenses` opt-out on `yakcc shave`, and `universalize()` does not accept a `skipLicenseGate: true` parameter. A user who wants to ingest non-permissive code must do so outside `yakcc shave` (e.g. by reauthoring a clean-room TS implementation and feeding that through `yakcc propose`). **Why:** the cornerstone permissive-only commitment is load-bearing for the federation story — once the registry is shared (F1+), a single GPL atom poisons the commons because consumers cannot tell which atoms are safe to redistribute. A bypass flag, even one defaulted off, is a vector for that contamination by accident or social pressure. Aligns with Sacred Practice #12: "no parallel mechanisms" — there cannot be a "permissive-only path" and a "permissive-or-not path" coexisting in the codebase. **How to apply:** any future PR that adds a license-bypass surface (CLI flag, env var, config knob, package option) must be rejected at reviewer; the only legitimate way to expand the accepted-license set is a new DEC entry that updates DEC-LICENSE-GATE-001's table. |
 | DEC-SHAVE-PIPELINE-001 | `shave(sourcePath, registry, options): Promise<ShaveResult>` is implemented as a **thin file-ingestion adapter over `universalize()`**, not as a parallel pipeline. The adapter (a) reads the source file, (b) invokes `universalize(source, registry)`, (c) maps the resulting `SlicePlan` entries to a `ShaveResult` shape that surfaces both pointer entries (resolved primitives) and novel-glue entries (atoms to be persisted). Each `NovelGlueEntry` is given a **deterministic placeholder ID** of the form `"shave-atom-" + canonicalAstHash.slice(0, 8)` — content-addressable and stable across re-runs on the same source. **Why:** a parallel pipeline would duplicate the license gate / intent / decompose / slice machinery and immediately drift from `universalize()`'s invariants (Sacred Practice #12). Making `shave` an adapter means the v0.7 demo's correctness is the same as `universalize()`'s correctness; the only `shave`-specific code is the file-IO and the placeholder-ID scheme. The deterministic placeholder ID matters for WI-014-03 (persistence) and WI-014-05 (resolver wiring): both need to map placeholders back to `BlockMerkleRoot`s, and a non-deterministic placeholder would force a stateful side-channel. **How to apply:** any future ingestion entry point (URL fetch, multi-file directory ingest, streaming) is also implemented as an adapter over `universalize()`; do not duplicate the pipeline. The placeholder-ID scheme is part of the `@yakcc/shave` public contract — changes require a DEC. |
 | DEC-SHAVE-CLI-001 | The `yakcc shave` CLI subcommand bridges `@yakcc/registry`'s `Registry` interface to `@yakcc/shave`'s `ShaveRegistryView` interface via a **local adapter inside the CLI command**, not by changing either upstream API. The adapter's only substantive translation is the `getBlock(merkleRoot)` return type: registry returns `BlockTripletRow \| null`, but `ShaveRegistryView` expects `BlockTripletRow \| undefined`; the adapter does the `null → undefined` bridge inline. **Why:** changing `@yakcc/registry`'s return type to match would ripple into `@yakcc/compile`, `@yakcc/seeds`, and the test corpus — a wide blast radius for a CLI-only ergonomic preference. Changing `@yakcc/shave`'s view interface to match would couple the shave package to the registry's nullability convention, which is itself an implementation choice not a load-bearing invariant. The CLI is the right place to do the translation because the CLI is where `Registry` and `ShaveRegistryView` first meet at runtime. **How to apply:** when a future CLI subcommand needs to bridge the same two interfaces, reuse this adapter (lift it into a shared CLI helper if it gains a second caller); do not push the bridge into the registry or shave packages. |
+| DEC-POLYGLOT-RUST-001 | `@yakcc/shave-rust` is the Rust raise adapter for the TS-subset IR (#868), structured identically to `@yakcc/shave-go` (WI-870): one source-language adapter package whose entire Rust-toolchain dependency is gated behind a single subprocess seam (`parseRustSource` with an injectable `SpawnImpl`), public API stable across slices, errors wrapping `@yakcc/contracts` `polyglot-errors.ts` rather than a parallel hierarchy. The Rust AST is produced by a tiny helper crate at `packages/shave-rust/rust-ast-parse/` using `syn`, emitting the same versioned JSON envelope shape as `scripts/go-ast-parse.go`. **Rationale:** the polyglot architecture (one adapter per source language) is established; Rust mirrors Go because both are statically typed with explicit ASTs. The `snake_case→camelCase` normalizer is the one genuinely Rust-specific module (Go's name-normalize is a near no-op; Python's #847 is the closest precedent to port). Annotated in `packages/shave-rust/src/index.ts`. |
+| DEC-POLYGLOT-RUST-SUBPROCESS-001 | The Rust AST parser is a **subprocess to a `syn`-based helper crate**, NOT `tree-sitter-rust` (the Node native-addon binding the #868 issue offered as an alternative). `parseRustSource(source, options)` spawns `cargo run --manifest-path packages/shave-rust/rust-ast-parse/Cargo.toml` (overridable via `YAKCC_RUST_PARSE`), feeds Rust source over stdin, and reads a versioned JSON envelope from stdout; a default `spawnImpl` uses `node:child_process.spawn` and tests inject a mock. **Rationale:** mirrors DEC-POLYGLOT-GO-SUBPROCESS-001 — using a subprocess to a stdlib-grade parser (`syn` is the de-facto Rust AST library) rather than a native Node addon keeps the Node side pure JS/TS and avoids a per-platform native build step in CI. The mockable seam is what lets the full unit/acceptance suite run in pure-Node `pr-ci.yml` with no Rust toolchain installed; real-`cargo` tests are env-gated and run only in `polyglot-rust.yml`. tree-sitter-rust was rejected specifically because its native-addon build contradicts the established toolchain-free `pr-ci.yml` posture. |
+| DEC-POLYGLOT-RUST-CI-001 | shave-rust adds a dedicated `.github/workflows/polyglot-rust.yml` for real-`cargo` tests (triggered on `packages/shave-rust/**` paths + nightly, provisioning Rust via a toolchain action), and does **NOT** add any shave-rust-specific step to `pr-ci.yml`. The pure-Node mock-spawn vitest suite is picked up automatically by `pr-ci.yml`'s full-workspace `pnpm -r build` + affected-package filter. **Rationale:** direct application of DEC-POLYGLOT-CI-OPTIONAL-001 (the Python precedent in `polyglot-py.yml`) — `pr-ci.yml` stays TS-only; each per-language adapter owns its toolchain-provisioning workflow that runs only on its own path changes. Hand-editing `pr-ci.yml` to name shave-rust would create a second CI authority for the package and is forbidden by the Slice-1 Evaluation Contract. |
 | DEC-V07-CLOSURE-001 | v0.7 closes at `4ded2c2` (WI-015 demo + offline-tolerant acceptance harness) plus `e7b2c64` (vitest timeout bump for the integration-test path). The v0.7 demo against `lukeed/mri` passes under the offline-tolerant harness path. **Three follow-up items did not land inside v0.7 and are explicitly lifted into v1 rather than treated as v0.7 stragglers:** WI-013-03 (property-test corpus extraction, was deferred per its own row in the v0.7 ledger) becomes WI-016; B-003 (parent-block lineage population in `atom-persist`, partial WI-015 acceptance criterion (e)) becomes WI-017; B-002 (public `seedIntentCache` test-helper export from `@yakcc/shave`, which left three `assemble-candidate.test.ts` tests skipped) becomes WI-018. **Why lift rather than backfill v0.7:** all three are prerequisites for external-facing federation work (substantive L0 verification, full provenance lineage, unblocked test coverage) and they sequence naturally with v1 wave-1, so re-opening v0.7 to backfill them would re-cut the closed substrate boundary for no operational gain. Sacred Practice #12 is preserved: there is no parallel "v0.7 with backfilled property tests" path coexisting with the closed v0.7 substrate; the property-test work simply happens at the next stage. The v0.7 Plan history milestone above is the durable record of v0.7's actual landed state at closure. |
 | DEC-V1-WAVE-1-SCOPE-001 | v1 wave-1 ships **L0 substantiation + F1 read-only-mirror federation only**. Concrete in-scope: WI-016 (property-test corpus), WI-017 (parent-block lineage), WI-018 (`seedIntentCache` helper), WI-019 (federation protocol design), WI-020 (`@yakcc/federation` F1 read-only mirror), WI-021 (v1 demo). **Out of v1 wave-1 (deferred to a follow-on v1 wave):** the WASM backend in `@yakcc/compile`; `@yakcc/hooks-cursor` and `@yakcc/hooks-codex`; F2+ attestation publishing; large-scale differential execution against upstream library sources beyond the per-target corpus that already gates WI-021. **Why this cut:** the v1 thesis (federation, additional codegen targets, additional hooks, differential validation) is four independent risk surfaces. Shipping all four at once entangles them: a federation-protocol bug looks like a WASM-codegen bug; a Cursor-hook regression looks like an attestation-publishing regression. Wave-1 isolates federation against a substrate that already has substantive L0 (WI-016 + WI-017) so the cross-machine round-trip in WI-021 is the only new variable. The deferred surfaces become independent v1-wave-2 / v1-wave-3 initiatives, each with their own first-implementer slice and Evaluation Contract, planned at the start of that wave rather than pre-committed here. **How to apply:** any PR or DEC that adds WASM/hook/F2-publishing/large-scale-fuzz scope to v1 wave-1 must be rejected at reviewer; the only legitimate way to add scope to wave-1 is a new DEC that supersedes this one with an explicit re-justification. |
 | DEC-V1-WAVE-2-SCOPE-001 | v1 wave-2 ships **WASM backend (WI-V1W2-WASM-01..04) + 3 IDE hooks (WI-V1W2-HOOKS-01..03)**. Concrete in-scope: the WASM emitter scaffold in `@yakcc/compile` (WI-V1W2-WASM-01), type-lowering for primitives + structural types (WI-V1W2-WASM-02), the host-contract surface and `WASM_HOST_CONTRACT.md` repo-root doc (WI-V1W2-WASM-03), and the parity-harness demo at `examples/v1-wave-2-wasm-demo/` (WI-V1W2-WASM-04); production-hardening of `@yakcc/hooks-claude-code` against the WI-025 vector-search surface (WI-V1W2-HOOKS-01); scaffolding of `@yakcc/hooks-cursor` (WI-V1W2-HOOKS-02) and `@yakcc/hooks-codex` (WI-V1W2-HOOKS-03) sharing a single `IdeHook` interface (Sacred Practice #12). **Out of v1 wave-2 (deferred to v1 wave-3 / future):** F2+ federation publishing surface (signed manifests, peer keypairs, attestation signatures, per-caller trust filtering — all already deferred in `DEC-V1-FEDERATION-PROTOCOL-001` and not lifted here); large-scale differential execution against upstream library sources beyond the per-target corpus that already gates the parity harness in WI-V1W2-WASM-04; persistent attestation publishing as a network-visible surface; deeper IDE-hook surfaces beyond the registry-hit / synthesis-required / passthrough triad (e.g. multi-block recomposition prompts, federation-aware suggestion ranking — these become v1-wave-3 candidates once the wave-2 hooks have soaked). **Why this cut:** the v1 wave-2 thesis is **two** independent risk surfaces, not three. WASM is one risk surface (codegen — emitter correctness, type-lowering correctness, host-runtime contract correctness); IDE hooks are an independent risk surface (extension wiring, intent-extraction quality, registry-call path, threshold tuning); F2+ publishing is a third independent surface that benefits from waiting until both wave-2 surfaces are proven. Shipping all three at once entangles them: a hook-extension regression looks like a WASM-codegen regression looks like an attestation bug, and the bisect cost across three new surfaces is multiplicative, not additive. Wave-2 isolates the WASM and IDE-hook surfaces against a federation substrate that has already proven the cross-machine byte-identity invariant (WI-021 at `d9cb449`); F2+ publishing becomes its own wave when the wave-2 surfaces have shipped and the publishing surface can be evaluated against a populated registry rather than a hypothetical one. The two wave-2 surfaces are themselves chosen to be disjoint (WASM in `@yakcc/compile`; hooks in `@yakcc/hooks-*`) so the W1 dispatches `{WI-V1W2-WASM-01, WI-V1W2-HOOKS-01}` may run concurrently in sister sessions without merge conflict. **How to apply:** any PR or DEC that adds F2+ publishing, large-scale differential-execution scope (beyond the wave-2 parity harness's per-target corpus), or a new IDE hook surface beyond the WI-V1W2-HOOKS-01..03 trio to v1 wave-2 must be rejected at reviewer; the only legitimate way to add scope is a new DEC that supersedes this one with an explicit re-justification. The wave's close criterion is the simultaneous landed-state of `{WI-V1W2-WASM-04, WI-V1W2-HOOKS-02, WI-V1W2-HOOKS-03}` — when those three terminal WIs are merged to main, v1 wave-2 closes and v1 wave-3 (or v2 acceleration) becomes the next planning target. |

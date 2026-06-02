@@ -1,0 +1,18 @@
+{
+    "version": 1,
+    "crateName": "stdin.rs",
+    "functions": [
+        {
+            "name": "greet",
+            "isPub": true,
+            "params": [
+                {
+                    "name": "name",
+                    "rustType": "String"
+                }
+            ],
+            "returnType": "String",
+            "bodySource": "format ! (\"Hello, {}\" , name)"
+        }
+    ]
+}

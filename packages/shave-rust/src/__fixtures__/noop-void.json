@@ -1,0 +1,13 @@
+{
+    "version": 1,
+    "crateName": "stdin.rs",
+    "functions": [
+        {
+            "name": "noop",
+            "isPub": true,
+            "params": [],
+            "returnType": "",
+            "bodySource": ""
+        }
+    ]
+}
