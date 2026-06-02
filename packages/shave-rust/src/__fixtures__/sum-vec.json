@@ -1,18 +1,18 @@
 {
-    "version": 1,
-    "crateName": "stdin.rs",
-    "functions": [
+  "version": 1,
+  "crateName": "stdin.rs",
+  "functions": [
+    {
+      "name": "sum_vec",
+      "isPub": true,
+      "params": [
         {
-            "name": "sum_vec",
-            "isPub": true,
-            "params": [
-                {
-                    "name": "xs",
-                    "rustType": "Vec<i32>"
-                }
-            ],
-            "returnType": "i32",
-            "bodySource": "xs . iter () . sum ()"
+          "name": "xs",
+          "rustType": "Vec<i32>"
         }
-    ]
+      ],
+      "returnType": "i32",
+      "bodySource": "xs . iter () . sum ()"
+    }
+  ]
 }

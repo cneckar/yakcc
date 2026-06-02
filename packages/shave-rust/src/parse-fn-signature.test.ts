@@ -6,9 +6,7 @@ import { describe, expect, it } from "vitest";
 import { SignatureRaiseError, extractFunctionSignatures } from "./parse-fn-signature.js";
 import type { RustAstParseResult } from "./rust-ast-parser.js";
 
-function envelope(
-  fns: RustAstParseResult["functions"],
-): RustAstParseResult {
+function envelope(fns: RustAstParseResult["functions"]): RustAstParseResult {
   return { version: 1, crateName: "stdin.rs", functions: fns };
 }
 
@@ -29,7 +27,8 @@ describe("extractFunctionSignatures", () => {
       ]),
     );
     expect(sigs).toHaveLength(1);
-    const sig = sigs[0]!;
+    const sig = sigs[0];
+    if (!sig) throw new Error("expected sigs[0] to be defined");
     expect(sig.name).toBe("add");
     expect(sig.rustName).toBe("add");
     expect(sig.isPub).toBe(true);

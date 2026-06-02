@@ -23,8 +23,8 @@
 //   Keeping them separate from the subprocess seam allows independent testing
 //   of each concern.
 
-import type { RustAstParseResult } from "./rust-ast-parser.js";
 import { InvalidIdentifierError, normalizeRustName } from "./name-normalize.js";
+import type { RustAstParseResult } from "./rust-ast-parser.js";
 import { UnsupportedTypeError, mapRustType } from "./type-map.js";
 
 export interface RaisedParam {

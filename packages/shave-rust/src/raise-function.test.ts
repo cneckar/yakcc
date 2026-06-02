@@ -3,8 +3,8 @@
 // raise-function.test.ts -- unit tests for the IR render layer (WI-868 slice 1).
 
 import { describe, expect, it } from "vitest";
-import { renderFunctionDeclaration, renderSignatureType } from "./raise-function.js";
 import type { FunctionSignature } from "./parse-fn-signature.js";
+import { renderFunctionDeclaration, renderSignatureType } from "./raise-function.js";
 
 function sig(overrides: Partial<FunctionSignature> = {}): FunctionSignature {
   return {
@@ -43,9 +43,7 @@ describe("renderFunctionDeclaration", () => {
   });
 
   it("renders snake_case-derived camelCase name", () => {
-    const out = renderFunctionDeclaration(
-      sig({ name: "getUserId", rustName: "get_user_id" }),
-    );
+    const out = renderFunctionDeclaration(sig({ name: "getUserId", rustName: "get_user_id" }));
     expect(out).toContain("export function getUserId");
   });
 

@@ -40,14 +40,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { extractFunctionSignatures } from "./parse-fn-signature.js";
+import { renderFunctionDeclaration } from "./raise-function.js";
 import {
   type RustAstParseOptions,
   type RustAstParseResult,
   type SpawnImpl,
   parseRustSource,
 } from "./rust-ast-parser.js";
-import { extractFunctionSignatures } from "./parse-fn-signature.js";
-import { renderFunctionDeclaration } from "./raise-function.js";
 
 // ---------------------------------------------------------------------------
 // Infrastructure: mock subprocess + fixture loader

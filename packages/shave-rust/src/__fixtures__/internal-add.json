@@ -1,22 +1,22 @@
 {
-    "version": 1,
-    "crateName": "stdin.rs",
-    "functions": [
+  "version": 1,
+  "crateName": "stdin.rs",
+  "functions": [
+    {
+      "name": "internal_add",
+      "isPub": false,
+      "params": [
         {
-            "name": "internal_add",
-            "isPub": false,
-            "params": [
-                {
-                    "name": "a",
-                    "rustType": "i32"
-                },
-                {
-                    "name": "b",
-                    "rustType": "i32"
-                }
-            ],
-            "returnType": "i32",
-            "bodySource": "a + b"
+          "name": "a",
+          "rustType": "i32"
+        },
+        {
+          "name": "b",
+          "rustType": "i32"
         }
-    ]
+      ],
+      "returnType": "i32",
+      "bodySource": "a + b"
+    }
+  ]
 }

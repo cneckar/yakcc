@@ -218,7 +218,10 @@ function parseGenericType(t: string): string {
     }
   }
   if (closeIdx === -1) {
-    throw new UnsupportedTypeError(t, `Malformed generic type: unbalanced angle brackets in '${t}'`);
+    throw new UnsupportedTypeError(
+      t,
+      `Malformed generic type: unbalanced angle brackets in '${t}'`,
+    );
   }
   const argStr = t.slice(angleBracket + 1, closeIdx).trim();
   const trailing = t.slice(closeIdx + 1).trim();
@@ -230,7 +233,10 @@ function parseGenericType(t: string): string {
     case "Option": {
       const args = splitTypeList(argStr);
       if (args.length !== 1) {
-        throw new UnsupportedTypeError(t, `Option<T> requires exactly 1 type argument, got ${args.length}`);
+        throw new UnsupportedTypeError(
+          t,
+          `Option<T> requires exactly 1 type argument, got ${args.length}`,
+        );
       }
       const inner = mapRustTypeInner(args[0] ?? "");
       return `${inner} | null`;
@@ -239,7 +245,10 @@ function parseGenericType(t: string): string {
     case "Vec": {
       const args = splitTypeList(argStr);
       if (args.length !== 1) {
-        throw new UnsupportedTypeError(t, `Vec<T> requires exactly 1 type argument, got ${args.length}`);
+        throw new UnsupportedTypeError(
+          t,
+          `Vec<T> requires exactly 1 type argument, got ${args.length}`,
+        );
       }
       const inner = mapRustTypeInner(args[0] ?? "");
       return `${inner}[]`;
@@ -250,7 +259,10 @@ function parseGenericType(t: string): string {
       // The caller's return type will be T; error propagation is out of scope.
       const args = splitTypeList(argStr);
       if (args.length !== 2) {
-        throw new UnsupportedTypeError(t, `Result<T, E> requires exactly 2 type arguments, got ${args.length}`);
+        throw new UnsupportedTypeError(
+          t,
+          `Result<T, E> requires exactly 2 type arguments, got ${args.length}`,
+        );
       }
       return mapRustTypeInner(args[0] ?? "");
     }
@@ -261,7 +273,10 @@ function parseGenericType(t: string): string {
       // Smart pointers: Box<T>, Rc<T>, Arc<T> — flatten to inner type.
       const args = splitTypeList(argStr);
       if (args.length !== 1) {
-        throw new UnsupportedTypeError(t, `${name}<T> requires exactly 1 type argument, got ${args.length}`);
+        throw new UnsupportedTypeError(
+          t,
+          `${name}<T> requires exactly 1 type argument, got ${args.length}`,
+        );
       }
       return mapRustTypeInner(args[0] ?? "");
     }
