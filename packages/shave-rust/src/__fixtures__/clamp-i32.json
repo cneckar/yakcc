@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "crateName": "stdin.rs",
+  "functions": [
+    {
+      "name": "clamp",
+      "isPub": true,
+      "params": [
+        {
+          "name": "value",
+          "rustType": "i32"
+        },
+        {
+          "name": "min_val",
+          "rustType": "i32"
+        },
+        {
+          "name": "max_val",
+          "rustType": "i32"
+        }
+      ],
+      "returnType": "i32",
+      "bodySource": "if value < min_val { min_val } else if value > max_val { max_val } else { value }"
+    }
+  ]
+}

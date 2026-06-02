@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "crateName": "stdin.rs",
+  "functions": [
+    {
+      "name": "is_even",
+      "isPub": true,
+      "params": [
+        {
+          "name": "n",
+          "rustType": "i32"
+        }
+      ],
+      "returnType": "bool",
+      "bodySource": "n % 2 == 0"
+    }
+  ]
+}

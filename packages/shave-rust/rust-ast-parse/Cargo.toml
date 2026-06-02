@@ -1,0 +1,23 @@
+[package]
+name = "rust-ast-parse"
+version = "0.1.0"
+edition = "2021"
+description = "syn-based AST parser subprocess for @yakcc/shave-rust — reads Rust source on stdin, emits JSON envelope on stdout"
+license = "Apache-2.0"
+
+[[bin]]
+name = "rust-ast-parse"
+path = "src/main.rs"
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# Minimize binary size for the subprocess helper — fast startup matters more
+# than peak throughput for a per-file invocation model.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

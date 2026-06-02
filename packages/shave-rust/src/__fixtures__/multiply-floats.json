@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "crateName": "stdin.rs",
+  "functions": [
+    {
+      "name": "multiply_floats",
+      "isPub": true,
+      "params": [
+        {
+          "name": "x",
+          "rustType": "f64"
+        },
+        {
+          "name": "y",
+          "rustType": "f64"
+        }
+      ],
+      "returnType": "f64",
+      "bodySource": "x * y"
+    }
+  ]
+}
