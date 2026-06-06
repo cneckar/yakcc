@@ -74,14 +74,15 @@ jobs:
         run: pnpm -r build
 
       - name: Run additive bootstrap
+        id: bootstrap
         continue-on-error: true
         # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-CONTINUE-ON-ERROR (#348)
         # The accumulator is best-effort per the eventual-invariant design.
         # Shave-failures (e.g. DidNotReachAtomError on individual files) must
         # NOT block the push of partial manifest progress. Step 6's
-        # `git diff --quiet && exit 0` guard already noops on no-change, so
-        # this is safe: if bootstrap fully failed, no diff to push.
-        # Follow-up to WI-BOOTSTRAP-ACCUMULATE-FIX (#339).
+        # `git diff --quiet && exit 0` guard already noops on no-change.
+        # See the silent-complete-failure gate below (#1110) for how complete
+        # bootstrap failures are surfaced even with continue-on-error: true.
         # @decision DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 / WI-BOOTSTRAP-ACCUMULATE-FIX (#339)
         # FIXED: `pnpm yakcc bootstrap` was broken since 7e68860 (2026-05-11).
         # Root-package.json defines `yakcc` as `pnpm --filter @yakcc/cli exec yakcc`.
@@ -94,6 +95,32 @@ jobs:
         # prior entries are retained; new entries from this shave are merged in.
         # Output: "bootstrap: prior=N, shaved=M, added=K, total=N+K"
         run: node packages/cli/dist/bin.js bootstrap
+
+      - name: Fail on silent-complete-failure (no atoms recorded AND bootstrap step errored)
+        # @decision DEC-BOOTSTRAP-ACCUMULATE-SILENT-FAILURE-GATE-001 (#1110)
+        # @title Distinguish complete bootstrap failure from "no new atoms"
+        # @status accepted
+        # @rationale
+        #   `continue-on-error: true` on the bootstrap step preserves best-effort
+        #   semantics (per DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001 — a single
+        #   DidNotReachAtomError must not abandon the whole accumulator). But the
+        #   downstream `git diff --quiet && exit 0` cannot distinguish:
+        #     (a) bootstrap ran fully, no new atoms found → genuine no-op (green is correct)
+        #     (b) bootstrap died at startup (e.g. embed-provider gate, #1031),
+        #         zero atoms shaved → "no diff" but workflow falsely reports green (#1110 root cause)
+        #   This step catches (b): if the bootstrap step's outcome was 'failure'
+        #   AND the manifest is unchanged, emit a workflow error annotation and
+        #   exit non-zero so the workflow turns RED. The accumulator's best-effort
+        #   contract is preserved: partial success (some atoms added before
+        #   failure) still pushes via the following step.
+        if: steps.bootstrap.outcome == 'failure'
+        run: |
+          if git diff --quiet bootstrap/expected-roots.json; then
+            echo "::error::bootstrap step failed AND no atoms were recorded — complete-failure mode (see #1110)"
+            exit 1
+          else
+            echo "::warning::bootstrap step failed but some atoms were recorded — partial success per DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001"
+          fi
 
       - name: Push updated manifest to main if changed
         # @decision DEC-BOOTSTRAP-ACCUMULATE-PUSH-GATE-001
