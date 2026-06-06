@@ -1,0 +1,52 @@
+{
+  "name": "@yakcc/proof-verifier",
+  "version": "0.6.0-alpha.0",
+  "description": "Verifier daemon for yakcc proof incentive layer — watches proof_claims in REVEAL state, runs Lean checker, emits Ed25519-signed attestations.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/proof-verifier"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/proof-verifier#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "proof",
+    "verifier",
+    "lean",
+    "ed25519",
+    "attestation"
+  ],
+  "scripts": {
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "lint": "echo \"no lint yet\""
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@yakcc/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^4.1.5"
+  }
+}
