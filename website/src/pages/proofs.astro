@@ -1,0 +1,249 @@
+---
+// @ts-nocheck
+// SPDX-License-Identifier: MIT
+//
+// /proofs — public-facing landing for the proof incentive layer.
+// Audience: outside contributors. Mirrors the structure of /benchmarks.
+//
+// @decision DEC-WEBSITE-PROOFS-001 (#1090 / Slice G+)
+// title: /proofs page surface
+// status: accepted
+// rationale:
+//   §1 of plans/proof-incentive-layer.md names community connection as the
+//   load-bearing motivation. This page is the first contact point — it must
+//   convert a curious visitor into a request to read docs/PROOFS.md.
+
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="yakcc — proofs">
+  <header class="proof-hero">
+    <h1>Prove an atom, earn reputation</h1>
+    <p class="lead">
+      A market for machine-checked formal proofs of code primitives. Yakcc
+      atoms already ship with property tests; the proof market funds the next
+      tier — Lean (or Coq) refinement proofs that the atom does exactly what
+      its spec says, and only that.
+    </p>
+    <p class="lead">
+      Anyone can post a bounty. Anyone can claim it. Anyone can run a verifier
+      daemon and earn for honest attestation. Reputation accrues to people
+      doing the work; the leaderboard reflects sustained verification effort.
+    </p>
+  </header>
+
+  <section class="three-roles">
+    <h2>Three roles</h2>
+    <div class="role-grid">
+      <article class="role-card">
+        <h3>Requester</h3>
+        <p>
+          Posts a bounty against a specific atom + theorem statement. Funds the
+          reward. Gets a verified proof shipped with the atom on the next
+          revision.
+        </p>
+      </article>
+      <article class="role-card">
+        <h3>Claimant</h3>
+        <p>
+          Constructs a Lean or Coq proof against the bounty's theorem. Commits
+          a hash, then reveals the artifact. Wins the bounty + stake refund on
+          accept.
+        </p>
+      </article>
+      <article class="role-card">
+        <h3>Verifier</h3>
+        <p>
+          Runs a daemon that watches revealed proofs, runs the pinned checker,
+          signs an attestation. Earns a fraction of every bounty escrow for
+          honest attestation.
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="lifecycle">
+    <h2>The lifecycle</h2>
+    <p>
+      Commit-reveal scheme so revealed proofs can't be front-run. Verifier
+      attestations are deterministic (same proof + same Lean version = same
+      result), so a single verifier is reproducible by anyone; multi-verifier
+      supermajority becomes meaningful at N=3 (v0.2 target).
+    </p>
+    <pre class="diagram">
+[OPEN]
+  └─ requester escrows bounty against (atom_bmr, theorem_statement_hash)
+       │
+       ▼
+[COMMIT]  (T_commit window, default 24h)
+  ├─ claimant_1 commits BLAKE3(proof || nonce || claimant_id) + stake
+  ├─ claimant_2 commits ...
+       │ T_commit closes
+       ▼
+[REVEAL]  (T_reveal window, default 1h)
+  ├─ claimants reveal (artifact, nonce); resolver verifies hash match
+       │
+       ▼
+[CHECK]   verifier daemons run pinned Lean checker; sign attestations
+       │
+       ├─[supermajority valid]──▶ [ACCEPT]
+       │     ├─ earliest-commit claimant wins bounty + stake refund
+       │     ├─ later valid claimants get stake refund only
+       │     ├─ invalid claimants' stakes forfeit to operator treasury
+       │     ├─ verifier daemons split 10% of escrow as fee pool
+       │     └─ proof artifact attached to atom proof/ manifest; new BMR
+       │
+       └─[no valid claims]────────▶ [REJECT]
+             ├─ all stakes forfeit to operator treasury
+             └─ bounty returns to requester (or rolls over)
+    </pre>
+  </section>
+
+  <section class="status">
+    <h2>Status — v0 launch</h2>
+    <ul class="status-list">
+      <li><strong>On main:</strong> L3 validator, registry schema v14, commit-reveal engine, verifier daemon, economics spec, reputation track, discovery integration, retraction (counter-proof) admission</li>
+      <li><strong>Verifier count:</strong> 1 (operator-run); counter-proof retraction is the safety net</li>
+      <li><strong>Stake unit:</strong> reputation credit; crypto track deferred to follow-up</li>
+      <li><strong>Seed bounties:</strong> ~5–10 against BLAKE3, base64, CRC32C, HMAC-SHA256 (in flight)</li>
+    </ul>
+  </section>
+
+  <section class="links">
+    <h2>Read more</h2>
+    <ul>
+      <li>
+        <a href="https://github.com/cneckar/yakcc/blob/main/docs/PROOFS.md">
+          docs/PROOFS.md
+        </a> — full user guide (three roles, walkthroughs, FAQ)
+      </li>
+      <li>
+        <a href="https://github.com/cneckar/yakcc/blob/main/docs/PROOF_BOUNTY_WALKTHROUGH.md">
+          docs/PROOF_BOUNTY_WALKTHROUGH.md
+        </a> — concrete end-to-end tutorial against <code>crc32c</code>
+      </li>
+      <li>
+        <a href="https://github.com/cneckar/yakcc/blob/main/docs/proof-incentive-economics.md">
+          docs/proof-incentive-economics.md
+        </a> — economic parameters (accrual, decay, slash, verifier fee)
+      </li>
+      <li>
+        <a href="https://github.com/cneckar/yakcc/blob/main/plans/proof-incentive-layer.md">
+          plans/proof-incentive-layer.md
+        </a> — architecture + adversary model + slice-by-slice plan
+      </li>
+      <li>
+        <a href="/benchmarks">/benchmarks</a> — yakcc's existing benchmarks
+        (the proof market adds a new dimension: proof-aware ranking)
+      </li>
+    </ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .proof-hero {
+    text-align: center;
+    padding: 4rem 1rem 2rem;
+  }
+  .proof-hero h1 {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+  }
+  .proof-hero .lead {
+    max-width: 36rem;
+    margin: 0.75rem auto;
+    color: var(--color-text-muted);
+    font-size: 1.05rem;
+    line-height: 1.6;
+  }
+  .three-roles {
+    padding: 2rem 1rem;
+    max-width: 64rem;
+    margin: 0 auto;
+  }
+  .three-roles h2,
+  .lifecycle h2,
+  .status h2,
+  .links h2 {
+    font-size: 1.5rem;
+    margin: 2rem 0 1rem;
+  }
+  .role-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1rem;
+  }
+  .role-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+  }
+  .role-card h3 {
+    margin: 0 0 0.5rem;
+    color: var(--color-accent);
+  }
+  .role-card p {
+    margin: 0;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+  .lifecycle {
+    padding: 1rem;
+    max-width: 64rem;
+    margin: 0 auto;
+  }
+  .diagram {
+    background: var(--color-code-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+  .status {
+    padding: 1rem;
+    max-width: 64rem;
+    margin: 0 auto;
+  }
+  .status-list {
+    list-style: none;
+    padding: 0;
+  }
+  .status-list li {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 0.375rem;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    color: var(--color-text-muted);
+  }
+  .links {
+    padding: 1rem 1rem 4rem;
+    max-width: 64rem;
+    margin: 0 auto;
+  }
+  .links ul {
+    list-style: none;
+    padding: 0;
+  }
+  .links li {
+    margin: 0.5rem 0;
+  }
+  .links a {
+    color: var(--color-accent);
+    text-decoration: none;
+  }
+  .links a:hover {
+    text-decoration: underline;
+  }
+  .links code {
+    background: var(--color-code-bg);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+</style>
