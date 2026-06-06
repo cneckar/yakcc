@@ -156,6 +156,14 @@ that asymmetry, fuzzing dominates and the L3 tier never populates. Private
 single-machine yakcc users (F0) carry no such pressure: they pay for L3 only
 on blocks where they personally need the guarantee.
 
+The numerical realization of that economic premium — concrete reputation
+accrual amounts, slashing destinations, verifier compensation, and
+sybil-resistance mechanics for the proof market — is specified in
+[`docs/proof-incentive-economics.md`](../../proof-incentive-economics.md)
+under `DEC-PROOF-STAKE-ECONOMICS-001`. That document is the authority for
+implementer slices `wi-proof-stake-reputation-track` (#1085) and
+`wi-proof-stake-crypto-track` (#1086).
+
 @decision: DEC-VERIFY-001 — Verification levels L0..L3 declared in spec, enforced
 by registry. The level hierarchy is a strict partial order; a higher level
 strictly refines a lower one. Levels are opt-in per block; L0 is the v0
