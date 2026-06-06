@@ -1,0 +1,39 @@
+{
+  "name": "@yakcc/proof-market",
+  "version": "0.1.0-alpha.0",
+  "description": "Commit-reveal proof lifecycle state machine for the yakcc proof incentive marketplace.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/proof-market"
+  },
+  "scripts": {
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "lint": "echo \"no lint yet\""
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@yakcc/registry": "workspace:*",
+    "better-sqlite3": "^12.9.0",
+    "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "vitest": "^4.1.5"
+  }
+}
