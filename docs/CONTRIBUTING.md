@@ -33,6 +33,15 @@ The original root-level paths (`MASTER_PLAN.md`, `DESIGN.md`, etc.) are now 3-li
 - PR description: include the `Closes #<N>` trailer so the issue auto-closes on merge.
 - CI must pass: `pnpm -r build && pnpm -r test` should be green before requesting review.
 
+## Proof submission
+
+Beyond atom shaving, the highest-leverage contribution path is **proof submission** against atoms in the registry. The proof market funds machine-checked Lean (or Coq) refinement proofs against atom specs; accepted proofs accrue +50 RC of reputation per accept and unlock the atom for security-critical use via `proof_requirement: "required"` in `yakcc_resolve`.
+
+- Browse open bounties: `gh issue list --label proof-layer --search "is:issue is:open bounty"` (or via the proof market CLI when #1095 ships)
+- Tutorial: [`docs/PROOF_BOUNTY_WALKTHROUGH.md`](./PROOF_BOUNTY_WALKTHROUGH.md)
+- Full guide (three roles — Requester, Claimant, Verifier): [`docs/PROOFS.md`](./PROOFS.md)
+- Economic parameters (accrual rates, decay, slash rules): [`docs/proof-incentive-economics.md`](./proof-incentive-economics.md)
+
 ## Questions
 
 File a GitHub issue or leave a comment on the relevant open issue. The team triages within 72 hours for substantive contributions.
