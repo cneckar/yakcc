@@ -3,8 +3,10 @@
 // raise-function.test.ts -- unit tests for the IR render layer (WI-868 slice 1).
 
 import { describe, expect, it } from "vitest";
+import { RustIoSideEffectError, RustMutableBorrowError } from "./errors.js";
 import type { FunctionSignature } from "./parse-fn-signature.js";
 import { renderFunctionDeclaration, renderSignatureType } from "./raise-function.js";
+import type { RustAstBodyNode } from "./rust-ast-parser.js";
 
 function sig(overrides: Partial<FunctionSignature> = {}): FunctionSignature {
   return {
@@ -86,5 +88,65 @@ describe("renderSignatureType", () => {
   it("renders void arrow type", () => {
     const out = renderSignatureType(sig({ params: [], returnType: "void", rustReturnType: "" }));
     expect(out).toBe("() => void");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Purity gate in renderFunctionDeclaration (slice 3)
+//
+// checkPurity fires BEFORE renderBody so impure functions never produce IR.
+// ---------------------------------------------------------------------------
+
+describe("renderFunctionDeclaration — purity gate", () => {
+  it("throws RustMutableBorrowError for &mut T param before any body render", () => {
+    const s = sig({
+      params: [{ name: "x", tsType: "number", rustType: "&mut i32" }],
+    });
+    expect(() => renderFunctionDeclaration(s)).toThrow(RustMutableBorrowError);
+  });
+
+  it("throws RustIoSideEffectError for println! in body", () => {
+    const printlnBody: RustAstBodyNode = {
+      stmts: [
+        {
+          type: "UnsupportedStmt",
+          reason: "Expr::Macro (println!)",
+          line: 2,
+          col: 3,
+        },
+      ],
+    };
+    const s = sig({
+      params: [],
+      returnType: "void",
+      rustReturnType: "",
+      body: printlnBody,
+    });
+    expect(() => renderFunctionDeclaration(s)).toThrow(RustIoSideEffectError);
+  });
+
+  it("passes a pure fn add(a: i32, b: i32)->i32 through the purity gate", () => {
+    const pureBody: RustAstBodyNode = {
+      stmts: [
+        {
+          type: "ExprStmt",
+          isTail: true,
+          line: 2,
+          col: 3,
+          x: {
+            type: "BinaryExpr",
+            op: "+",
+            line: 2,
+            col: 3,
+            x: { type: "Ident", name: "a", line: 2, col: 3 },
+            y: { type: "Ident", name: "b", line: 2, col: 7 },
+          },
+        },
+      ],
+    };
+    const s = sig({ body: pureBody });
+    const out = renderFunctionDeclaration(s);
+    // Pure fn passes the gate and produces correct IR.
+    expect(out).toBe("export function add(a: number, b: number): number {\n  return (a + b);\n}");
   });
 });

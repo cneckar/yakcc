@@ -39,7 +39,14 @@
 //   Rust applies them to integers while TS coerces to 32-bit signed — silently wrong).
 
 import type { SourceLocation } from "@yakcc/contracts";
-import { RustUnsupportedConstructError } from "./errors.js";
+import {
+  RustAsyncError,
+  RustClosureCaptureError,
+  RustDynTraitError,
+  RustRawPointerError,
+  RustUnsafeError,
+  RustUnsupportedConstructError,
+} from "./errors.js";
 import { normalizeRustName } from "./name-normalize.js";
 import type {
   RustAstBodyNode,
@@ -48,6 +55,69 @@ import type {
   RustAstIfExpr,
   RustAstStmt,
 } from "./rust-ast-parser.js";
+
+// ---------------------------------------------------------------------------
+// Reason → taxonomy class map
+//
+// The syn helper emits UnsupportedExpr / UnsupportedStmt nodes with reason
+// strings that identify the deferred construct.  This map routes each known
+// reason prefix to the dedicated errors.ts taxonomy class so callers get
+// typed instanceof checks (RustUnsafeError, RustAsyncError, etc.) rather than
+// the generic RustUnsupportedConstructError.
+//
+// @decision DEC-POLYGLOT-RUST-TAXONOMY-WIRED-001 (WI-868 slice 3)
+// @title reason→class map wires UnsupportedExpr/Stmt to named taxonomy errors
+// @status accepted (WI-868 slice 3)
+// @rationale
+//   DEC-POLYGLOT-RUST-BODY-RAISE-001 deferred this map to slice 3.  The syn helper
+//   already emits distinct reason strings per construct (slice 2); this map
+//   promotes each to its named class so the full error taxonomy is reachable
+//   from real Rust source.  RustUnsupportedConstructError remains the fallback
+//   for any reason string not covered by the known set.  The map is a pure
+//   data-driven dispatch: no new error classes, no parallel hierarchy.
+// ---------------------------------------------------------------------------
+
+type TaxonomyConstructor = (location: SourceLocation) => Error;
+
+/**
+ * Build the typed error for a known deferred-construct reason string.
+ * Returns null if the reason is not in the known taxonomy set.
+ *
+ * Reason strings emitted by rust-ast-parse/src/main.rs (verbatim):
+ *   "Expr::Unsafe (unsafe block)"      → RustUnsafeError
+ *   "Expr::Await (async/await)"        → RustAsyncError
+ *   "Expr::Async (async block)"        → RustAsyncError
+ *   "Expr::Closure (closure)"          → RustClosureCaptureError
+ *   "Expr::RawAddr"                    → RustRawPointerError
+ *   "Expr::Unary (Deref or ...)"       → RustRawPointerError  (raw deref)
+ */
+const REASON_TO_TAXONOMY: ReadonlyArray<[string, TaxonomyConstructor]> = [
+  ["Expr::Unsafe", (loc) => new RustUnsafeError(loc)],
+  ["Expr::Await", (loc) => new RustAsyncError(loc)],
+  ["Expr::Async", (loc) => new RustAsyncError(loc)],
+  ["Expr::Closure", (loc) => new RustClosureCaptureError(loc)],
+  ["Expr::RawAddr", (loc) => new RustRawPointerError(loc)],
+  // Raw pointer deref emitted by syn helper as "Expr::Unary (Deref or unsupported op)"
+  ["Expr::Unary (Deref", (loc) => new RustRawPointerError(loc)],
+  // dyn Trait: emitted as "Expr::..." from a dyn-typed expression context.
+  // The syn helper does not yet emit a dedicated dyn-trait node; route if added later.
+  // "dyn " prefix covers future reason strings like "dyn Trait".
+  ["dyn ", (loc) => new RustDynTraitError(loc)],
+];
+
+/**
+ * Map a reason string from an UnsupportedExpr / UnsupportedStmt node to the
+ * appropriate taxonomy error.  Falls back to RustUnsupportedConstructError
+ * for unknown reasons.
+ */
+function taxonomyErrorForReason(reason: string, location: SourceLocation): Error {
+  for (const [prefix, ctor] of REASON_TO_TAXONOMY) {
+    if (reason.startsWith(prefix) || reason.includes(prefix)) {
+      return ctor(location);
+    }
+  }
+  return new RustUnsupportedConstructError(reason, location);
+}
 
 // ---------------------------------------------------------------------------
 // Location helpers
@@ -175,7 +245,7 @@ export function renderExpr(expr: RustAstExpr, file = "stdin.rs", indent = "  "):
     }
 
     case "UnsupportedExpr":
-      throw new RustUnsupportedConstructError(expr.reason, loc(expr, file));
+      throw taxonomyErrorForReason(expr.reason, loc(expr, file));
 
     default: {
       const _exhaustive: never = expr;
@@ -298,7 +368,7 @@ export function renderStmt(stmt: RustAstStmt, indent = "  ", file = "stdin.rs"):
     }
 
     case "UnsupportedStmt":
-      throw new RustUnsupportedConstructError(stmt.reason, loc(stmt, file));
+      throw taxonomyErrorForReason(stmt.reason, loc(stmt, file));
 
     default: {
       const _exhaustive: never = stmt;
