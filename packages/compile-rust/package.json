@@ -26,6 +26,7 @@
     "@types/node": "^22.0.0",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/registry": "workspace:*",
+    "@yakcc/shave-rust": "workspace:*",
     "vitest": "^4.1.5"
   }
 }
