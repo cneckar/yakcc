@@ -1529,6 +1529,144 @@ dispatching the implementer, write this manifest to runtime via
 - **Envelope version bump back-compat if 3A taken (LOW, decided):** single-version validator only (`version: 3`), NO dual v2/v3 path (Sacred Practice #12, mirrors DEC-POLYGLOT-RUST-BODY-AST-V2-001). Default is to SKIP 3A and keep v2.
 - **Full-workspace build masking (MEDIUM — MEMORY):** scoped vitest/typecheck can pass while `pnpm -r build` (composite `tsc`, the CI authority) goes red on a missing `workspace:*` dep or tsconfig reference. Mitigation: the Evaluation Contract requires FULL `pnpm -r build` + `pnpm lint` + `pnpm typecheck` green, and biome-clean new `.ts`/`.json` (no `!` non-null, no bare `then` object keys) before any landing.
 
+### Initiative: #869 — `@yakcc/compile-rust` Rust lower adapter (polyglot MVP, inverse of #868)
+
+Status: **planning (2026-06-06).** Read-only planner pass on worktree
+`feature/869-compile-rust` @ current `main` (includes the merged #868
+shave-rust). New workspace package `packages/compile-rust/`. Template is
+`packages/compile-go` (WI-973 — the proven IR→target lower adapter: a
+`canLowerTo()` static gate + a `lower()` emitter + `compileToX()` entry +
+`names.ts`); `packages/compile-python` is the secondary cross-reference for the
+error-taxonomy / loud-failure cadence. This is the **inverse** of #868
+shave-rust (`.rs → TS-subset IR text`); compile-rust does `TS-subset IR text →
+.rs`. The round-trip `.rs → shave-rust → IR → compile-rust → .rs` (rustfmt-equiv)
+is the headline #869 acceptance, deferred to Slice 2.
+
+**Problem / why this is the right thing:** the polyglot story is only complete
+per-language when BOTH directions ship: raise (`shave-X`) AND lower
+(`compile-X`). Go ships both (shave-go #870 + compile-go #973); Python ships both
+(#864 + #783/#943); Rust shipped raise only (#868). #869 closes the Rust lower
+direction so a Rust function absorbed into the registry can be re-emitted as
+idiomatic Rust — the precondition for "yakcc as a Rust code universalizer."
+
+**THE INPUT CONTRACT DECISION (most load-bearing — settled by file evidence):**
+compile-rust consumes the **TS-subset IR _text_** (`BlockTripletRow.implSource`),
+NOT shave-rust's intermediate Rust-AST JSON envelope. Evidence:
+- `packages/compile-go/src/can-lower-to.ts` and `lower.ts` both take
+  `atom: BlockTripletRow` and operate on `atom.implSource` (a TS-subset source
+  string) via a ts-morph `Project`. `compile-go.ts` is
+  `compileToGo(atom: BlockTripletRow)`.
+- shave-rust's pipeline (`acceptance.test.ts` `runPipeline`) terminates in
+  `renderFunctionDeclaration(sig)` which returns exactly that TS-subset IR text,
+  e.g. `export function add(a: number, b: number): number {\n  return (a + b);\n}`.
+  The Rust-AST JSON (`__fixtures__/add-i32.json`) is shave-rust's INTERNAL wire
+  envelope, never the cross-package contract.
+- Therefore compile-rust mirrors compile-go exactly: parse `implSource` with
+  ts-morph, walk the typed AST, emit Rust. It does NOT depend on shave-rust at
+  runtime for Slice 1; the round-trip composition (Slice 2) calls shave-rust's
+  PUBLIC API (`extractFunctionSignatures`/`renderFunctionDeclaration`) only in
+  the integration test, never importing its internals.
+
+**State-Authority Map (integration surfaces this initiative touches):**
+
+| State domain | Canonical authority | compile-rust relationship |
+|---|---|---|
+| TS-subset IR text (the input) | `@yakcc/registry` `BlockTripletRow.implSource` (string) — parsed by ts-morph | **Consumes only** (mirror compile-go). compile-rust takes `atom.implSource`; the IR-AST is ts-morph's, shared with the strict-subset validator. No new IR type. |
+| Polyglot loud-failure error surface | `@yakcc/contracts` `polyglot-errors.ts` (`CannotLowerToGoError`, `CannotLowerToPythonError`, `CannotRaiseToIRError`) | **The one tension.** The canonical pattern is a `CannotLowerToRustError` in contracts. `packages/contracts/**` is FORBIDDEN by this initiative's scope. **Resolution (DEC-POLYGLOT-RUST-COMPILE-ERR-001):** Slice 1 defines a LOCAL `CannotLowerToRustError` in `packages/compile-rust/src/errors.ts` (precedent: shave-rust shipped local `UnsupportedTypeError`/`AdapterSubprocessError` in Slice 1 before the contracts-wrap landed in its Slice 2). Promoting the error into `@yakcc/contracts` is a re-scoped follow-up (Slice 2 or a contracts-owning WI) — NOT a parallel hierarchy, a deliberate slice-ordered migration. |
+| `.rs` formatting / pretty-print | `rustfmt` subprocess behind an injectable `spawnImpl` (mirror shave-rust's `parseRustSource` seam) | compile-rust **owns** a new `rustfmt.ts` seam. Default `spawnImpl = node:child_process.spawn`; every pure-Node test injects a mock. Real-rustfmt runs ONLY in the gated workflow. Mirrors DEC-POLYGLOT-GO-SUBPROCESS-001 lineage. |
+| Per-language adapter CI | DEC-POLYGLOT-CI-OPTIONAL-001: `pr-ci.yml` stays TS-only (full `pnpm -r build` + filtered vitest, auto-picks up new package); real-toolchain tests live in a dedicated workflow | compile-rust adds `compile-rust` job. **Decision (DEC-POLYGLOT-CI-RUST-COMPILE-001):** EXTEND the existing `polyglot-rust.yml` (already provisions Rust toolchain, already triggers on rust paths) with a `compile-rust` job that adds `packages/compile-rust/**` to its `paths` and installs `rustfmt` (`rustup component add rustfmt`), rather than minting a third workflow. Pure-Node mock-spawn tests ride `pr-ci.yml` with zero `pr-ci.yml` edits. |
+| Workspace + composite build | `pnpm-workspace.yaml` glob `packages/*`; root build is `turbo run build`; full-workspace authority is `pnpm -r build` (composite tsc) | New package auto-included by glob; no root-config edit. |
+| Extension → target inference / `yakcc compile` wiring | `packages/cli/src/commands/lang-target.ts` (`.rs → rust`) | **OUT OF SCOPE for #869** (mirror compile-go: the CLI `yakcc compile --target rust` wiring is a separate WI). #869 ships the package + round-trip proof only. |
+
+**Module list for `packages/compile-rust/src/` (mirrors compile-go exactly):**
+- `can-lower-to.ts` — `canLowerTo(atom, "rust"): CanLowerResult` static gate (pure, never throws; `true`/`false`/`"unknown"`). Walks `atom.implSource` ts-morph AST; returns `false` for the ≥5 Rust-blocker classes (see error taxonomy), `"unknown"` for non-rust targets. Mirror `compile-go/can-lower-to.ts` structure + `TargetLanguage`/`CanLowerResult` re-export.
+- `lower.ts` — `lowerSource(implSource): LowerResult` — the IR→Rust emitter. ts-morph AST walk; emits fn decls, params, return, `let`/`const`→`let`, if/else, binary/unary, calls, identifiers. Throws the local `CannotLowerToRustError` on any unhandled node (loud failure, mirror DEC-WI973-003 / DEC-COMPILE-PYTHON-LOUD-001 — NO silent TS-syntax leak).
+- `types.ts` (or inline in lower) — the type emitter: `number→i32` (default; see RISK), `boolean→bool`, `string→String` (owned) / `&str` (borrowed param — Slice-1 default `String`, document the choice), `T[]→Vec<T>`, `T | null`/optional→`Option<T>`, `void→()`. Inverse of shave-rust `type-map.ts` (READ as the authority for the mapping table).
+- `names.ts` — `toRustName`/`toRustLocalName`: camelCase→snake_case (the REAL inverse of shave-rust `name-normalize.ts`'s snake→camel; mirror compile-python `names.ts` `toSnakeCase` — preserve ALL_CAPS).
+- `rustfmt.ts` — injectable-spawn rustfmt seam: `formatRust(source, { spawnImpl?, rustfmtExecutable? }): Promise<string>`; `RustfmtError`; default spawn = `node:child_process.spawn`; mock in all pure-Node tests. Mirror shave-rust `rust-ast-parser.ts` spawn lifecycle (stdin→stdout, non-zero exit→error).
+- `errors.ts` — local `CannotLowerToRustError` (Slice 1) + the ≥5-class taxonomy doc (Slice 2 formalizes the classes). Mirror `CannotLowerToGoError` shape: `(nodeKind, {line,column}, snippet, fnName)`.
+- `compile-rust.ts` — `compileToRust(atom: BlockTripletRow, opts?): Promise<RustCompileResult>` entry: `lowerSource` → assemble → `formatRust`. Mirror `compile-go.ts`.
+- `index.ts` — public barrel + `@decision DEC-POLYGLOT-RUST-COMPILE-001`.
+- Test siblings (`*.test.ts`) per module + `lower.props.test.ts` (every atom lowers OR throws `CannotLowerToRustError` — no third outcome, mirror compile-go) + `__fixtures__/` for Slice-2 round-trip goldens.
+
+#### Slice 1 — scaffold + canLowerTo + IR→Rust emitter + type/name emitters + rustfmt seam (the first PR, implementable now)
+
+| ID | Title | Description | Deps | Weight | Gate | State |
+|---|---|---|---|---|---|---|
+| WI-869-1A | Package scaffold | `packages/compile-rust/package.json` (`private: true`, `@yakcc/compile-rust`, dep `ts-morph`, peer+dev `@yakcc/contracts`/`@yakcc/registry` `workspace:*`, scripts build/typecheck/test/lint mirroring compile-go), `tsconfig.json` (extends `../../tsconfig.base.json`, `composite`, references contracts+registry), `vitest.config.ts`, `biome.json`. Verify `pnpm -r build` includes it. | — | S | review | [ ] planned |
+| WI-869-1B | names.ts + type emitter | `names.ts` (camelCase→snake_case, ALL_CAPS preserved) + tests; the type emitter (`number→i32`, `boolean→bool`, `string→String`, `T[]→Vec<T>`, optional→`Option<T>`, `void→()`) + tests. Inverse of shave-rust `type-map.ts`/`name-normalize.ts`. | WI-869-1A | M | review | [ ] planned |
+| WI-869-1C | errors.ts + can-lower-to.ts | Local `CannotLowerToRustError` (mirror `CannotLowerToGoError` ctor shape); `canLowerTo(atom,"rust")` static ts-morph walk + tests covering ≥5 blocker classes returning `false` and `"unknown"` for non-rust. Pure, never-throws. | WI-869-1A | M | review | [ ] planned |
+| WI-869-1D | lower.ts emitter | `lowerSource(implSource)`: ts-morph walk emitting fn sig + params + return + `let`/`const` + if/else + binary/unary + calls + identifiers for the core construct set; throws `CannotLowerToRustError` on any unhandled node (loud). `lower.test.ts` + `lower.props.test.ts` (lower-or-throw invariant). | WI-869-1B, WI-869-1C | L | review | [ ] planned |
+| WI-869-1E | rustfmt.ts seam | `formatRust(source, {spawnImpl?})` injectable-spawn rustfmt wrapper; `RustfmtError`; mock-spawn tests (success, non-zero exit, spawn-throws=rustfmt-missing). NO real rustfmt in this suite. | WI-869-1A | M | review | [ ] planned |
+| WI-869-1F | compile-rust.ts + fixtures + index | `compileToRust(atom)` entry composing lower→format; 3–5 `__fixtures__` (`add-i32`, `greet-string`, `is-even-bool`, `multiply-floats`, `noop-void` — paralleling shave-rust's corpus) driven through mock-rustfmt; `index.ts` barrel + `@decision DEC-POLYGLOT-RUST-COMPILE-001`. | WI-869-1D, WI-869-1E | M | review | [ ] planned |
+| WI-869-1G | compile-rust CI job | Extend `.github/workflows/polyglot-rust.yml`: add `packages/compile-rust/**` to `paths`, add a `compile-rust` job that `rustup component add rustfmt` and runs the gated real-rustfmt e2e (`YAKCC_RUST_E2E=1`). `pr-ci.yml` NOT edited. | WI-869-1F | S | review | [ ] planned |
+
+Waves: W1 = {1A} → W2 = {1B, 1C, 1E} (all dep only 1A; mutually independent) →
+W3 = {1D} (dep 1B+1C) → W4 = {1F} (dep 1D+1E) → W5 = {1G} (dep 1F). Critical path
+1A→1C→1D→1F→1G (or 1A→1B→1D→1F→1G). Max width 3 (W2). 1E (rustfmt seam) lands in
+parallel with the name/type/can-lower work since its mock-spawn tests are
+self-contained.
+
+#### Slice 1 — Evaluation Contract (guardian-bound; applies to every WI in Slice 1)
+
+- **Required tests (must pass, pure-Node, NO Rust toolchain):**
+  - `pnpm --filter @yakcc/compile-rust test` is green. Every test that exercises `formatRust`/`compileToRust` injects a mock `spawnImpl`; ZERO tests invoke real `rustfmt` in this suite.
+  - `can-lower-to.test.ts`: each of the ≥5 Rust-blocker classes returns `false`; a non-rust target returns `"unknown"`; the core supported set returns `true`; the function NEVER throws (malformed input → `"unknown"`). Mirror compile-go's coverage set.
+  - `names.test.ts`: `isEven → is_even`, `parseIntList → parse_int_list`, ALL_CAPS preserved (`MAX_VALUE → MAX_VALUE`), single-word unchanged.
+  - `lower.test.ts`: the core construct set (fn sig, params, return, let/const, if/else, binary/unary, call, ident) emits the expected Rust text for each fixture.
+  - `lower.props.test.ts`: EVERY atom either lowers to a string OR throws `CannotLowerToRustError` — no other error type, no silent TS-syntax leak (mirror compile-go DEC-WI973-003).
+  - `rustfmt.test.ts`: mock-spawn success returns formatted stdout; non-zero exit → `RustfmtError`; spawn-throws (rustfmt missing) → `RustfmtError` with a remediation hint.
+- **Required evidence (pasted in the reviewer hand-off):**
+  - Raw `pnpm --filter @yakcc/compile-rust test` output showing pass count and the ABSENCE of any real-`rustfmt`/skipped-toolchain line.
+  - Raw **full-workspace** `pnpm -r build` output proving the new package compiles in the composite-tsc workspace build (CI merge-gate authority — MEMORY: scoped vitest/typecheck masks missing `workspace:*` dep / tsconfig reference; WI-953 cost a round-trip). Scoped typecheck alone is NOT sufficient.
+  - Raw `pnpm lint` + `pnpm typecheck` green.
+- **Required real-path checks:**
+  - At least ONE real-`rustfmt` test exists and is **gated** (`describe.skipIf`/`it.skipIf` keyed off `YAKCC_RUST_E2E` or a rustfmt-availability probe, mirroring shave-rust's `YAKCC_RUST_E2E` gate in `e2e.test.ts`) so it runs ONLY in `polyglot-rust.yml`, never in `pr-ci.yml`. The reviewer confirms the gate exists and the default `pnpm test` run does NOT execute it.
+- **Required authority invariants:**
+  - compile-rust consumes `BlockTripletRow.implSource` (TS-subset IR text) and does NOT import shave-rust internals (Slice 1 has no shave-rust dependency at all). It does NOT define a parallel IR type.
+  - The loud-failure error is `CannotLowerToRustError` (local to `errors.ts` in Slice 1 — DEC-POLYGLOT-RUST-COMPILE-ERR-001). The lower emitter NEVER silently passes unhandled TS syntax into Rust output.
+  - `canLowerTo` is pure and never throws.
+- **Required integration points:**
+  - `pnpm -r build` (turbo/composite tsc) still green across the workspace.
+  - `pr-ci.yml` is NOT edited; the pure-Node suite rides the existing affected-package filter.
+- **Forbidden shortcuts:**
+  - No `eslint-disable`/`biome-ignore`/`@ts-ignore`/`!` non-null-assertion to silence the new code (MEMORY: biome-clean new `.ts`/`.json`, no unused imports — Copilot-schooling avoidance).
+  - No silent fallback that emits raw TS text when a node is unhandled — throw `CannotLowerToRustError`.
+  - No real `rustfmt` invocation in the pure-Node suite.
+  - No edit to `@yakcc/contracts`, `packages/compile-go/**`, `packages/compile-python/**`, `packages/shave-*/**`, `pr-ci.yml`, or `self-shave.yml`.
+- **Ready-for-guardian when:** all required tests green pure-Node; the gated real-rustfmt test confirmed present-and-skipped under default `pnpm test`; full `pnpm -r build` + `pnpm lint` + `pnpm typecheck` green with raw output pasted; scope-compliant (only `packages/compile-rust/**` + `polyglot-rust.yml` touched); `@decision DEC-POLYGLOT-RUST-COMPILE-001` annotated in `index.ts`.
+
+#### Slice 1 — Scope Manifest
+
+Written to `tmp/869-slice1-scope.json` in the worktree (triad keys, `*`+`**/*`
+fnmatch companions per MEMORY on top-level-file glob coverage):
+- **allowed:** `packages/compile-rust/**`, `packages/compile-rust/*`, `packages/compile-rust/src/*`, `packages/compile-rust/src/**/*`, `packages/compile-rust/src/__fixtures__/*`, `packages/compile-rust/src/__fixtures__/**/*`, `.github/workflows/polyglot-rust.yml`, `tmp/**`.
+- **required:** `packages/compile-rust/package.json`, `packages/compile-rust/tsconfig.json`, `packages/compile-rust/src/index.ts`, `packages/compile-rust/src/can-lower-to.ts`, `packages/compile-rust/src/lower.ts`, `packages/compile-rust/src/names.ts`, `packages/compile-rust/src/errors.ts`, `packages/compile-rust/src/rustfmt.ts`, `packages/compile-rust/src/compile-rust.ts`.
+- **forbidden:** `packages/contracts/**`, `packages/compile-go/**`, `packages/compile-python/**`, `packages/shave-rust/**`, `packages/shave-go/**`, `packages/shave-python/**`, `packages/shave/**`, `.github/workflows/pr-ci.yml`, `.github/workflows/self-shave.yml`. (shave-rust's PUBLIC API may be READ for Slice 2 reference only; Slice 1 does not touch it.)
+- **authorities touched:** TS-subset IR text (`BlockTripletRow.implSource`, read-only); rustfmt subprocess (new owned seam); per-language CI (`polyglot-rust.yml`, extended).
+
+#### Slice 2 — round-trip integration + error taxonomy + final CI (roadmap; mapped to #869 acceptance checkboxes)
+
+| #869 acceptance checkbox | Slice | Work |
+|---|---|---|
+| canLowerTo gate for Rust | Slice 1 (WI-869-1C) | ✓ |
+| IR→Rust emitter (core construct set) | Slice 1 (WI-869-1D) | ✓ |
+| rustfmt pretty-print (injectable spawn) | Slice 1 (WI-869-1E) | ✓ |
+| type + name emitters | Slice 1 (WI-869-1B) | ✓ |
+| **Round-trip (.rs→IR→.rs) rustfmt-equivalent ≥8 fixtures** | **Slice 2** | `roundtrip.test.ts`: drive ≥8 `.rs` fixtures through shave-rust PUBLIC API (`parseRustSource` mock-spawn → `extractFunctionSignatures` → `renderFunctionDeclaration`) → compile-rust (`compileToRust`) → compare original vs round-tripped, BOTH normalized by `rustfmt` (gated real path) or by the canonical mock for pure-Node. Define "rustfmt-equivalent" = byte-identical after `rustfmt` normalization of BOTH sides. |
+| ≥5-class error taxonomy | Slice 2 | Formalize the ≥5 `CannotLowerToRustError` blocker classes (e.g. nullish-coalescing `??`, dynamic dispatch / `any`, async/Promise, higher-order closures, `bigint`) with per-class reject fixtures. Decide here whether to PROMOTE `CannotLowerToRustError` into `@yakcc/contracts` (re-scoped, contracts-owning WI) per DEC-POLYGLOT-RUST-COMPILE-ERR-001. |
+| real-rustfmt-gated e2e | Slice 2 (+ Slice 1 seed) | Full gated e2e exercising real `rustfmt` on the round-trip corpus in `polyglot-rust.yml`. |
+| `DEC-POLYGLOT-RUST-COMPILE-001` | Slice 1 (index.ts) + Slice 2 (taxonomy DEC) | ✓ seeded Slice 1; extended Slice 2. |
+
+**RISKS:**
+- **Input-contract mismatch with shave-rust IR (HIGH→mitigated):** if compile-rust assumed the Rust-AST JSON envelope it would build a parallel pipeline. Mitigated by the file-evidenced decision above — input is `implSource` TS-subset text, same as compile-go; the round-trip test consumes shave-rust's `renderFunctionDeclaration` OUTPUT (TS text), proving the contract end-to-end. This is the single most important thing the implementer must not get wrong.
+- **number→i32 vs f64 ambiguity (HIGH):** the TS-subset IR collapses ALL Rust numeric widths to `number` (shave-rust `type-map.ts` — `i32`/`f64`/`u64` all → `number`). The lower direction is therefore LOSSY-INVERSE: `number` has no single correct Rust type. **Mitigation/decision needed:** Slice 1 defaults `number → i32` (the most common integer case) and documents that float-bearing round-trips (`multiply-floats.rs` uses `f64`) will NOT round-trip byte-identically without a hint. The round-trip ≥8-fixture corpus (Slice 2) must either (a) restrict to i32-clean fixtures, or (b) carry a type-hint side-channel. **This is a real Slice-2 design boundary** — the operator may want float round-trip fidelity in the MVP.
+- **rustfmt-at-runtime in CI (MEDIUM):** pure-Node `pr-ci.yml` has no rustfmt. Mitigated by the injectable-spawn seam + `YAKCC_RUST_E2E` gate (mirror shave-rust); real rustfmt only in `polyglot-rust.yml` (which already provisions the Rust toolchain — `rustup component add rustfmt` is one line).
+- **Round-trip equivalence definition (MEDIUM):** "rustfmt-equivalent" must be defined precisely or the test is vacuous. Decision: byte-identical after `rustfmt` normalizes BOTH original and round-tripped (not a fuzzy diff). Comments/whitespace differences are erased by rustfmt; semantic differences survive and fail the test.
+- **`String` vs `&str` param ambiguity (MEDIUM):** shave-rust maps both `String` and `&str` → `string`; lowering `string` back has no unique answer. Slice 1 defaults owned `String`; document that `&str`-borrowed signatures won't round-trip byte-identically without a hint (same class as the numeric risk).
+- **contracts error-promotion deferral (LOW, decided):** local `CannotLowerToRustError` in Slice 1 is NOT a parallel hierarchy — it is the same slice-ordered migration shave-rust used (local errors Slice 1 → contracts-wrap Slice 2). DEC-POLYGLOT-RUST-COMPILE-ERR-001 records this; Slice 2 decides promotion.
+- **Full-workspace build masking (MEDIUM — MEMORY):** scoped vitest/typecheck can pass while `pnpm -r build` goes red on a missing `workspace:*` dep / tsconfig reference. The Evaluation Contract requires FULL `pnpm -r build` + `pnpm lint` + `pnpm typecheck` green before landing.
+
 ### Initiative: #1074 — Benchmark-honest website + live docs (B4-v5 economics)
 
 Status: **planning (2026-06-01).** Read-only planner pass on worktree
@@ -3465,6 +3603,9 @@ are added at the top; older entries are not edited.
 | DEC-AST-CANON-001 | `canonicalAstHash(source, sourceRange?)` uses ts-morph canonical print with comments stripped and identifiers locally renamed to `__vN` in declaration order. | Matches DEC-VERIFY-009 (constitutional canonicalizer). Comments do not change behavior; identifier names do not change behavior; therefore neither participates in structural identity. Local rename (not global) preserves shadowing and inner/outer distinction. Hash is BLAKE3 over the canonical print. |
 | DEC-REGISTRY-AST-HASH-002 | `schema_version` bumped 2→3 with a two-phase migration: phase A (`schema.ts`) issues the `ALTER TABLE blocks ADD COLUMN canonical_ast_hash`, the `CREATE INDEX idx_blocks_canonical_ast_hash`, and the backfill of existing rows; phase B (`storage.ts openRegistry`) bumps `schema_version` to 3 only after backfill completes successfully. ALTER TABLE is idempotent via try/catch on the SQLite duplicate-column error code. | A single-phase migration that bumps the version before backfill leaves the registry in a half-migrated state if the backfill crashes mid-flight; two-phase guarantees that schema_version=3 implies all rows have a canonical_ast_hash. |
 | DEC-ATOM-TEST-003 | `isAtom(node, source, registry, options)` returns an `AtomTestResult` discriminated by a `reason` field. | `true`/`false` is too thin for the reviewer gate at WI-012; the reviewer needs to see *why* a candidate is or is not an atom (single CF boundary, body trivial, registry match collapse, etc.). The result type makes "did not reach atoms" debuggable and lets the recursion driver decide between bottom-out vs. recurse-deeper based on the reason. |
+| DEC-POLYGLOT-RUST-COMPILE-001 | `@yakcc/compile-rust` is the IR→Rust lower adapter, mirroring compile-go (#973): `canLowerTo()` static gate + `lowerSource()` ts-morph emitter + `compileToRust()` entry (lower→rustfmt) + camelCase→snake_case `names.ts` + a `number→i32`/`boolean→bool`/`string→String`/`T[]→Vec<T>`/optional→`Option<T>`/`void→()` type emitter + an injectable-spawn `rustfmt` seam. Input is the TS-subset IR **text** (`BlockTripletRow.implSource`), NOT shave-rust's Rust-AST JSON envelope (file evidence: compile-go consumes `atom.implSource`; shave-rust's `renderFunctionDeclaration` OUTPUT is that same TS text). Sliced: Slice 1 = scaffold + gate + emitter + type/name + rustfmt seam + 3–5 fixtures (pure-Node); Slice 2 = ≥8-fixture round-trip (.rs→shave-rust→IR→compile-rust→.rs, rustfmt-equivalent) + ≥5-class error taxonomy + gated real-rustfmt e2e. | The polyglot story is per-language complete only when BOTH raise (shave-X) and lower (compile-X) ship; Rust had raise only (#868). compile-go is the proven lower-adapter template and the input contract is identical (TS-subset IR text via ts-morph), so mirroring it (rather than re-deriving) preserves single-source-of-truth across the three lower adapters and makes the round-trip composition mechanical. |
+| DEC-POLYGLOT-RUST-COMPILE-ERR-001 | The loud-failure error `CannotLowerToRustError` is defined LOCALLY in `packages/compile-rust/src/errors.ts` for Slice 1 (mirroring `CannotLowerToGoError`'s `(nodeKind,{line,column},snippet,fnName)` ctor shape), NOT in `@yakcc/contracts` — because `packages/contracts/**` is forbidden by #869's scope. Promotion into `@yakcc/contracts` `polyglot-errors.ts` (to sit beside `CannotLowerToGoError`/`CannotLowerToPythonError`) is a re-scoped Slice-2-or-later follow-up. | This is the SAME slice-ordered migration shave-rust used: it shipped local `UnsupportedTypeError`/`AdapterSubprocessError` in its Slice 1 and wrapped them into `@yakcc/contracts` in Slice 2. A local error in Slice 1 is not a parallel hierarchy (Sacred Practice #12) — it is a deliberate one-package-at-a-time migration with a recorded promotion path, keeping #869's scope inside `packages/compile-rust/**` without an unscoped contracts edit. |
+| DEC-POLYGLOT-CI-RUST-COMPILE-001 | compile-rust's real-toolchain CI is added as a `compile-rust` job INSIDE the existing `.github/workflows/polyglot-rust.yml` (add `packages/compile-rust/**` to its `paths`, `rustup component add rustfmt`, run the `YAKCC_RUST_E2E=1`-gated tests), rather than minting a third polyglot workflow. `pr-ci.yml` is NOT edited; pure-Node mock-spawn tests ride the existing affected-package filter. | `polyglot-rust.yml` already provisions the Rust toolchain and already triggers on Rust-adapter paths (DEC-POLYGLOT-CI-RUST-001); adding rustfmt + a sibling job is the minimal-surface change and keeps all Rust real-toolchain CI in one workflow. A third workflow would duplicate the toolchain-provisioning boilerplate and split the Rust CI authority. Mirrors DEC-POLYGLOT-CI-OPTIONAL-001 (pr-ci.yml stays TS-only). |
 | DEC-RECURSION-005 | `decompose(source, registry, options): RecursionTree` throws `DidNotReachAtomError` and `RecursionDepthExceededError` rather than returning a partial tree. **Supplement (DEC-RECURSION-005-SUPPLEMENT):** the recursion driver invokes a supplemental `childMatchesRegistry()` check before declaring a child atomic, to catch the self-recognition guard misfire where `isAtom` declares a `SourceFile` containing a single statement atomic even though the registry would have matched the inner statement. Implemented in `recursion.ts` rather than modifying the frozen `atom-test.ts` to keep the atom test's contract narrow. | The v0.7 reviewer gate requires every leaf to be an atom; a partial tree is a silent acceptance of "did not reach atoms," which DEC-DECOMPOSE-STAGE-015-CORRECTION explicitly forbids. Throwing forces the caller (slicer, CLI, hook) to confront the failure rather than emit a mis-shaped block. The supplement closes the self-recognition guard misfire without widening the frozen `atom-test.ts` contract. |
 | DEC-SLICER-NOVEL-GLUE-004 | The DFG slicer (WI-012-05) emits a `SlicePlan` whose entries are tagged-union `PointerEntry \| NovelGlueEntry`. Pointer entries record `merkleRoot` + `canonicalAstHash` + `matchedBy: "canonical_ast_hash"`; novel-glue entries record `source` + `canonicalAstHash` + optional `intentCard`. The plan also exposes `matchedPrimitives` (for provenance) and `sourceBytesByKind` (for the reviewer's "novel glue ≪ original source" check). | This is the suggestions.txt ask #2 mechanism made concrete — the network synthesizes only the novel glue, never re-ingests an existing primitive. Reviewer gate per DEC-CONTINUOUS-SHAVE-022: "re-synthesized an existing primitive" is a hard failure; the slicer's job is to make that impossible by construction. |
 | DEC-UNIVERSALIZE-WIRING-001 | `universalize(candidate, registry)` runs its sub-engines in fixed order: **license gate → intent extraction → decompose → slice**. The license gate runs first; on a refusal no LLM call is made and no source bytes leave the process. Intent extraction runs second, producing the `IntentCard` that the recursion driver consumes. Decomposition recursion runs third, bottoming out at atoms or throwing `DidNotReachAtomError` per DEC-RECURSION-005. The DFG slicer runs fourth, returning a `SlicePlan` per DEC-SLICER-NOVEL-GLUE-004. **Why:** the order is "fail-fast cheapest first" — the license gate is a regex pass (microseconds), intent extraction is a single Haiku call (cheap), decomposition is a multi-call recursion (expensive), and slicing is a registry-bound pure pass (cheap-but-AST-heavy). Putting the license gate last would leak third-party source bytes to Anthropic before refusing them; putting decomposition before slicing is the only ordering where the slicer has atoms to query the registry against. **How to apply:** any future entry point added to `@yakcc/shave` (e.g. a streaming variant for very large files) must preserve this gate ordering; the gate-first invariant is part of the package's public contract, not an implementation detail. |

@@ -5,6 +5,15 @@
 # that provisions the Rust toolchain and runs only when the adapter package paths
 # change (or on nightly). Same pattern as polyglot-py.yml. TS-only contributors
 # and TS-only CI runs are unaffected.
+#
+# @decision DEC-POLYGLOT-CI-RUST-COMPILE-001
+# Title: compile-rust job added to polyglot-rust.yml; runs pure-Node tests + gated real-rustfmt e2e
+# Status: accepted (WI-869 Slice 1)
+# Rationale: compile-rust follows the same posture as shave-rust: pure-Node mock-spawn
+# tests run in both the shave-rust job and the compile-rust job without a Rust toolchain.
+# A gated YAKCC_RUST_E2E=1 step activates the real-rustfmt e2e suite in the compile-rust
+# job once rustfmt is provisioned (same cargo toolchain step). pr-ci.yml is NOT edited
+# (forbidden scope, DEC-POLYGLOT-CI-OPTIONAL-001).
 
 name: polyglot-rust
 
@@ -12,13 +21,15 @@ on:
   pull_request:
     paths:
       - "packages/shave-rust/**"
+      - "packages/compile-rust/**"
       - ".github/workflows/polyglot-rust.yml"
   push:
     branches: [main]
     paths:
       - "packages/shave-rust/**"
+      - "packages/compile-rust/**"
   schedule:
-    # Nightly at 03:41 UTC — staggers with other nightly jobs
+    # Nightly at 03:41 UTC -- staggers with other nightly jobs
     - cron: "41 3 * * *"
   workflow_dispatch:
 
@@ -28,7 +39,7 @@ concurrency:
 
 jobs:
   shave-rust:
-    name: "@yakcc/shave-rust — Rust ${{ matrix.rust-version }}"
+    name: "@yakcc/shave-rust -- Rust ${{ matrix.rust-version }}"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -75,13 +86,13 @@ jobs:
       - name: Build rust-ast-parse cargo helper (pre-warms debug build cache)
         run: cargo build --manifest-path packages/shave-rust/rust-ast-parse/Cargo.toml
 
-      - name: test @yakcc/shave-rust (unit — pure-Node, no cargo)
+      - name: test @yakcc/shave-rust (unit -- pure-Node, no cargo)
         # Runs 162 mock-subprocess tests. YAKCC_RUST_E2E is intentionally absent
         # so the e2e suite (e2e.test.ts) skips cleanly. This matches pr-ci.yml
         # behavior: no Rust toolchain required.
         run: pnpm --filter @yakcc/shave-rust test
 
-      - name: test @yakcc/shave-rust (real cargo e2e — YAKCC_RUST_E2E=1)
+      - name: test @yakcc/shave-rust (real cargo e2e -- YAKCC_RUST_E2E=1)
         # Activates the gated e2e.test.ts suite (describe.skipIf gate lifted).
         # Runs the full pipeline: parseRustSource (real cargo run) ->
         # extractFunctionSignatures -> renderFunctionDeclaration.
@@ -90,3 +101,53 @@ jobs:
         env:
           YAKCC_RUST_E2E: "1"
           YAKCC_CARGO: cargo
+
+  compile-rust:
+    name: "@yakcc/compile-rust -- Rust ${{ matrix.rust-version }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        rust-version: ["stable"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Rust ${{ matrix.rust-version }} (for rustfmt)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust-version }}
+          components: rustfmt
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dependency chain
+        run: pnpm -r --filter @yakcc/compile-rust... build
+
+      - name: typecheck @yakcc/compile-rust
+        run: pnpm --filter @yakcc/compile-rust typecheck
+
+      - name: lint @yakcc/compile-rust
+        run: pnpm --filter @yakcc/compile-rust lint
+
+      - name: test @yakcc/compile-rust (unit -- pure-Node, identity rustfmt mock)
+        # Runs pure-Node mock-spawn tests. YAKCC_RUST_E2E is intentionally absent
+        # so the real-rustfmt gated suite skips cleanly.
+        run: pnpm --filter @yakcc/compile-rust test
+
+      - name: test @yakcc/compile-rust (real rustfmt e2e -- YAKCC_RUST_E2E=1)
+        # Activates the gated real-rustfmt suite in rustfmt.test.ts.
+        # rustfmt is already on PATH from the Rust toolchain step above.
+        run: pnpm --filter @yakcc/compile-rust test
+        env:
+          YAKCC_RUST_E2E: "1"
