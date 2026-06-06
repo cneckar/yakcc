@@ -124,7 +124,8 @@ describe("acceptance: successful Rust -> TS-subset IR raises (#868 slice 1)", ()
     expect(out).toMatch(/^export function add\(a: number, b: number\): number \{/);
     expect(out).toContain("a: number, b: number");
     expect(out).toContain(": number {");
-    expect(out).toContain("// TODO: body raise (slice 2)");
+    // Slice 2: body is raised from the structured AST — `a + b` tail expr -> return
+    expect(out).toContain("return");
   });
 
   it("greet-string: pub fn, String param, String return -> string types", async () => {
@@ -187,11 +188,12 @@ describe("acceptance: successful Rust -> TS-subset IR raises (#868 slice 1)", ()
 // ---------------------------------------------------------------------------
 
 describe("raised IR proof: pub fn add(a: i32, b: i32) -> i32", () => {
-  it("produces correct TS-subset IR export declaration", async () => {
+  it("produces correct TS-subset IR export declaration (slice 2: real body)", async () => {
     const out = await runPipeline("add-i32");
-    // Full expected output (slice 1 — body is a stub comment):
-    const expected =
-      "export function add(a: number, b: number): number {\n  // TODO: body raise (slice 2)\n}";
+    // Full expected output (slice 2 — body is raised from `a + b` tail expr):
+    // add-i32.json: ExprStmt(isTail=true, x=BinaryExpr(+, Ident(a), Ident(b)))
+    // -> `return (a + b);`
+    const expected = "export function add(a: number, b: number): number {\n  return (a + b);\n}";
     expect(out).toBe(expected);
   });
 });

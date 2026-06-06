@@ -72,13 +72,20 @@ jobs:
       - name: typecheck @yakcc/shave-rust
         run: pnpm --filter @yakcc/shave-rust typecheck
 
-      - name: Build rust-ast-parse cargo helper
+      - name: Build rust-ast-parse cargo helper (pre-warms debug build cache)
         run: cargo build --manifest-path packages/shave-rust/rust-ast-parse/Cargo.toml
 
       - name: test @yakcc/shave-rust (unit — pure-Node, no cargo)
+        # Runs 162 mock-subprocess tests. YAKCC_RUST_E2E is intentionally absent
+        # so the e2e suite (e2e.test.ts) skips cleanly. This matches pr-ci.yml
+        # behavior: no Rust toolchain required.
         run: pnpm --filter @yakcc/shave-rust test
 
-      - name: test @yakcc/shave-rust (real cargo end-to-end)
+      - name: test @yakcc/shave-rust (real cargo e2e — YAKCC_RUST_E2E=1)
+        # Activates the gated e2e.test.ts suite (describe.skipIf gate lifted).
+        # Runs the full pipeline: parseRustSource (real cargo run) ->
+        # extractFunctionSignatures -> renderFunctionDeclaration.
+        # cargo run --quiet uses the debug binary warmed by the build step above.
         run: pnpm --filter @yakcc/shave-rust test
         env:
           YAKCC_RUST_E2E: "1"

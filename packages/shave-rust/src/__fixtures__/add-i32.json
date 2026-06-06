@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crateName": "stdin.rs",
   "functions": [
     {
@@ -16,7 +16,25 @@
         }
       ],
       "returnType": "i32",
-      "bodySource": "a + b"
+      "bodySource": "a + b",
+      "body": {
+        "stmts": [
+          {
+            "type": "ExprStmt",
+            "line": 1,
+            "col": 1,
+            "x": {
+              "type": "BinaryExpr",
+              "line": 1,
+              "col": 1,
+              "op": "+",
+              "x": { "type": "Ident", "line": 1, "col": 1, "name": "a" },
+              "y": { "type": "Ident", "line": 1, "col": 5, "name": "b" }
+            },
+            "isTail": true
+          }
+        ]
+      }
     }
   ]
 }
