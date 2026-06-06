@@ -161,6 +161,13 @@ by registry. The level hierarchy is a strict partial order; a higher level
 strictly refines a lower one. Levels are opt-in per block; L0 is the v0
 floor and remains the default.
 
+**L3 status update (2026-06):** L3 validator is now **in-progress** (was deferred).
+Activated via `validateProofManifestL3` in `@yakcc/contracts` (#1080 / `DEC-PROOF-L3-VALIDATOR-001`).
+The L0-only gate (`DEC-TRIPLET-L0-ONLY-019`) is preserved for the L0 path; the L3
+path is a parallel validator function and doesn't loosen L0 safety. Economic layer
+on top of L3 is planned at `plans/proof-incentive-layer.md` (Slices A–G, issues
+#1080–#1090).
+
 ---
 
 ## Block as cryptographic triplet
