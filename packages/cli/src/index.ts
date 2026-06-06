@@ -50,6 +50,7 @@ import { hooksCursorInstall } from "./commands/hooks-cursor-install.js";
 import { hooksClaudeCodeInstall } from "./commands/hooks-install.js";
 import { hooksWindsurfInstall } from "./commands/hooks-windsurf-install.js";
 import { init } from "./commands/init.js";
+import { proof } from "./commands/proof.js";
 import { propose } from "./commands/propose.js";
 import { query } from "./commands/query.js";
 import { registryExport } from "./commands/registry-export.js";
@@ -326,6 +327,15 @@ export async function runCli(
       // subcommand and rest are unused in A1 (the stub ignores all args).
       const compileSelfArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return compileSelf(compileSelfArgv, logger);
+    }
+
+    case "proof": {
+      // `yakcc proof bounty post <atom_bmr> ...`
+      // `yakcc proof claim commit <bounty_id> ...`
+      // `yakcc proof claim reveal <claim_id>`
+      // See proof.ts (DEC-PROOF-CLI-001) for the full dispatch and arg schema.
+      const proofArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return proof(proofArgv, logger);
     }
 
     case "propose": {
