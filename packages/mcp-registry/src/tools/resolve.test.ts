@@ -583,3 +583,589 @@ describe("openRegistry mock integration — createResolveTool uses injected fact
     expect(vi.mocked(openRegistry)).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Proof layer — proof_requirement modes
+// (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001)
+// ---------------------------------------------------------------------------
+
+// @mock-exempt: yakccResolve wraps SQLite (external DB boundary — see line 1 annotation).
+// proofStatusProvider is a plain injected function (DEC-PROOF-DISCOVERY-INTEGRATION-001
+// data-source seam), not a vi.mock(). All vi.mock() targets in this file are
+// @yakcc/hooks-base (SQLite), @yakcc/registry (SQLite), @yakcc/contracts (native
+// embedding layer) — all external boundaries as documented at the top of this file.
+
+/**
+ * Proof-layer test suite.
+ *
+ * Production sequence exercised end-to-end (compound interaction):
+ *   1. LLM calls yakcc_resolve with proof_requirement=<mode>
+ *   2. Handler parses and validates proof_requirement
+ *   3. Handler calls yakccResolve (mocked — SQLite external boundary)
+ *   4. applyProofScoring adjusts scores via injected proofStatusProvider
+ *   5. deriveConfidenceTier operates on adjusted scores
+ *   6. Envelope includes verification_level, proof_status, accepted_proofs per candidate
+ *
+ * All proof-layer tests use airgap=1 so the local-only path is exercised in isolation.
+ */
+describe("yakcc_resolve handler — proof layer: proof_requirement parameter", () => {
+  const savedAirgap = process.env.YAKCC_AIRGAPPED;
+
+  beforeEach(() => {
+    process.env.YAKCC_AIRGAPPED = "1"; // local-only path, no http
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete process.env.YAKCC_PROOF_BONUS;
+    delete process.env.YAKCC_RETRACTION_PENALTY;
+    if (savedAirgap !== undefined) {
+      process.env.YAKCC_AIRGAPPED = savedAirgap;
+    } else {
+      delete process.env.YAKCC_AIRGAPPED;
+    }
+  });
+
+  it("proof_requirement defaults to 'preferred' when omitted — no error, candidates returned", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "test" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as { error?: string; confidence_tier: string };
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.confidence_tier).toBe("candidate_list");
+  });
+
+  it("proof_requirement='ignored' — no proof bonus applied (score unchanged from semantic match)", async () => {
+    // One candidate at score 0.55. In ignored mode no +0.10 bonus for accepted atoms.
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "accepted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: "ignored" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      candidates: Array<{ score: number; proof_status: string }>;
+    };
+    expect(parsed.confidence_tier).toBe("candidate_list");
+    // No bonus in ignored mode — score stays at 0.55 (not 0.65)
+    expect(parsed.candidates[0]!.score).toBeCloseTo(0.55, 5);
+  });
+
+  // Compound-interaction test: exercises the full production sequence end-to-end:
+  // input parse → yakccResolve call → applyProofScoring → deriveConfidenceTier → envelope.
+  it("preferred mode — accepted atom promoted above unproven atom (compound end-to-end)", async () => {
+    process.env.YAKCC_PROOF_BONUS = "0.10";
+    // Two candidates at equal semantic score 0.80
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "aaaaaa11",
+          behavior: "accepted atom",
+          signature: "(x: string) => string",
+          score: 0.8,
+          guarantees: [],
+          tests: { count: 3 },
+          usage: null,
+        },
+        {
+          address: "bbbbbb22",
+          behavior: "unproven atom",
+          signature: "(x: string) => string",
+          score: 0.8,
+          guarantees: [],
+          tests: { count: 3 },
+          usage: null,
+        },
+      ],
+    });
+    // Provider returns accepted for first atom, none for second
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (id) => (id === "aaaaaa11" ? "accepted" : "none"),
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "hash string" }, proof_requirement: "preferred" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      candidates: Array<{ atom_id: string; score: number; proof_status: string }>;
+    };
+    // accepted atom should be ranked first with higher score after bonus
+    expect(parsed.candidates[0]!.atom_id).toBe("aaaaaa11");
+    expect(parsed.candidates[0]!.score).toBeGreaterThan(parsed.candidates[1]!.score);
+    expect(parsed.candidates[0]!.proof_status).toBe("accepted");
+    expect(parsed.candidates[1]!.proof_status).toBe("none");
+  });
+
+  it("preferred mode — proof bonus can promote atom to auto_accept tier", async () => {
+    process.env.YAKCC_PROOF_BONUS = "0.10";
+    // Score 0.82 + 0.10 bonus = 0.92 which is > HYBRID_AUTO_ACCEPT_THRESHOLD (0.85) with big gap
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "cc112233",
+          behavior: "just below threshold",
+          signature: "(x: number) => number",
+          score: 0.82,
+          guarantees: [],
+          tests: { count: 2 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "accepted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "clamp number" }, proof_requirement: "preferred" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { confidence_tier: string };
+    // With 0.10 bonus: 0.82 + 0.10 = 0.92, triggers HIGH_CONFIDENCE_THRESHOLD auto_accept
+    expect(parsed.confidence_tier).toBe("auto_accept");
+  });
+
+  it("required mode — accepted atoms pass the filter and are returned", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "proof1111",
+          behavior: "proven function",
+          signature: "(x: string) => number",
+          score: 0.88,
+          guarantees: [],
+          tests: { count: 4 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "accepted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "proven op" }, proof_requirement: "required" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      candidates: Array<{ proof_status: string }>;
+    };
+    expect(parsed.confidence_tier).not.toBe("no_candidates");
+    expect(parsed.candidates).toHaveLength(1);
+    expect(parsed.candidates[0]!.proof_status).toBe("accepted");
+  });
+
+  it("required mode — no accepted atoms → confidence_tier=no_candidates + reason=no_proven_atoms_match", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeAutoAcceptResult()); // score 0.95 but unproven
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "none",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "hash string" }, proof_requirement: "required" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      reason: string;
+    };
+    expect(parsed.confidence_tier).toBe("no_candidates");
+    expect(parsed.reason).toBe("no_proven_atoms_match");
+  });
+
+  it("required mode — pending atoms are filtered out (only accepted survives)", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "pending",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: "required" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { confidence_tier: string; reason: string };
+    expect(parsed.confidence_tier).toBe("no_candidates");
+    expect(parsed.reason).toBe("no_proven_atoms_match");
+  });
+
+  it("per_block mode — accepted per-block object parses and does not error", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "accepted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      {
+        intent: { title: "parse thing" },
+        proof_requirement: { per_block: { hash: "required", format: "ignored" } },
+      },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { error?: string; confidence_tier: string };
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.confidence_tier).toBe("candidate_list");
+  });
+
+  it("inputSchema includes proof_requirement property", () => {
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    expect(tool.inputSchema.properties).toHaveProperty("proof_requirement");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proof layer — retraction penalty
+// (DEC-PROOF-RETRACTION-SCORE-PENALTY-001)
+// ---------------------------------------------------------------------------
+
+// @mock-exempt: same rationale as above — yakccResolve is an external SQLite boundary.
+
+describe("yakcc_resolve handler — retraction penalty applies in ALL modes", () => {
+  const savedAirgap = process.env.YAKCC_AIRGAPPED;
+
+  beforeEach(() => {
+    process.env.YAKCC_AIRGAPPED = "1";
+    process.env.YAKCC_RETRACTION_PENALTY = "-0.20";
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete process.env.YAKCC_RETRACTION_PENALTY;
+    delete process.env.YAKCC_PROOF_BONUS;
+    if (savedAirgap !== undefined) {
+      process.env.YAKCC_AIRGAPPED = savedAirgap;
+    } else {
+      delete process.env.YAKCC_AIRGAPPED;
+    }
+  });
+
+  it("retracted atom loses -0.20 in ignored mode (penalty applies even when proof selection ignored)", async () => {
+    // Score 0.88 - 0.20 = 0.68 → below auto_accept threshold → candidate_list
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "retract1",
+          behavior: "retracted function",
+          signature: "(x: number) => number",
+          score: 0.88,
+          guarantees: [],
+          tests: { count: 2 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "retracted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: "ignored" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      candidates: Array<{ score: number; proof_status: string }>;
+    };
+    // Was 0.88 → after -0.20 penalty = 0.68, below auto_accept (0.85)
+    expect(parsed.confidence_tier).toBe("candidate_list");
+    expect(parsed.candidates[0]!.score).toBeCloseTo(0.68, 5);
+    expect(parsed.candidates[0]!.proof_status).toBe("retracted");
+  });
+
+  it("retracted atom loses -0.20 in preferred mode", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "retract2",
+          behavior: "retracted preferred function",
+          signature: "(x: number) => number",
+          score: 0.88,
+          guarantees: [],
+          tests: { count: 2 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "retracted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: "preferred" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      candidates: Array<{ score: number }>;
+    };
+    expect(parsed.confidence_tier).toBe("candidate_list");
+    expect(parsed.candidates[0]!.score).toBeCloseTo(0.68, 5);
+  });
+
+  it("retracted top candidate in auto_accept → surfaces reason=retracted_top_candidate", async () => {
+    // Penalty env-tuned small (-0.05) so retracted atom still clears auto_accept threshold
+    process.env.YAKCC_RETRACTION_PENALTY = "-0.05";
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "topretract",
+          behavior: "retracted top match",
+          signature: "(x: string) => string",
+          // 0.96 - 0.05 = 0.91 > 0.85 with gap > 0.05 → auto_accept
+          score: 0.96,
+          guarantees: [],
+          tests: { count: 3 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "retracted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "hash" }, proof_requirement: "preferred" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      reason?: string;
+    };
+    expect(parsed.confidence_tier).toBe("auto_accept");
+    expect(parsed.reason).toBe("retracted_top_candidate");
+  });
+
+  it("env-tunable YAKCC_RETRACTION_PENALTY overrides default (severe penalty)", async () => {
+    process.env.YAKCC_RETRACTION_PENALTY = "-0.50";
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "bigpenalty",
+          behavior: "penalized function",
+          signature: "(x: number) => number",
+          score: 0.99,
+          guarantees: [],
+          tests: { count: 3 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "retracted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: "preferred" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as {
+      candidates: Array<{ score: number }>;
+    };
+    // 0.99 - 0.50 = 0.49 (clamped to ≥0)
+    expect(parsed.candidates[0]!.score).toBeCloseTo(0.49, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proof layer — envelope fields
+// (DEC-PROOF-DISCOVERY-INTEGRATION-001)
+// ---------------------------------------------------------------------------
+
+// @mock-exempt: same rationale as proof_requirement section above.
+
+describe("yakcc_resolve handler — proof envelope fields (verification_level, proof_status, accepted_proofs)", () => {
+  const savedAirgap = process.env.YAKCC_AIRGAPPED;
+
+  beforeEach(() => {
+    process.env.YAKCC_AIRGAPPED = "1";
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    if (savedAirgap !== undefined) {
+      process.env.YAKCC_AIRGAPPED = savedAirgap;
+    } else {
+      delete process.env.YAKCC_AIRGAPPED;
+    }
+  });
+
+  it("local candidate carries verification_level=L0 for property_tests-only atom", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "test" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as {
+      candidates: Array<{ verification_level: string }>;
+    };
+    expect(parsed.candidates[0]!.verification_level).toBe("L0");
+  });
+
+  it("local candidate carries proof_status from injected provider", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "pending",
+    });
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "test" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as {
+      candidates: Array<{ proof_status: string }>;
+    };
+    expect(parsed.candidates[0]!.proof_status).toBe("pending");
+  });
+
+  it("accepted_proofs is an empty array in MVP stub (proof-claims tables not yet populated)", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeWeakResult());
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "accepted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "test" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as {
+      candidates: Array<{ accepted_proofs: unknown[] }>;
+    };
+    expect(Array.isArray(parsed.candidates[0]!.accepted_proofs)).toBe(true);
+    expect(parsed.candidates[0]!.accepted_proofs).toHaveLength(0);
+  });
+
+  it("auto_accept path also includes proof envelope fields on candidates", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeAutoAcceptResult());
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "none",
+    });
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "hash string" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      candidates: Array<{
+        verification_level: string;
+        proof_status: string;
+        accepted_proofs: unknown[];
+      }>;
+    };
+    expect(parsed.confidence_tier).toBe("auto_accept");
+    expect(parsed.candidates[0]!.verification_level).toBe("L0");
+    expect(parsed.candidates[0]!.proof_status).toBe("none");
+    expect(Array.isArray(parsed.candidates[0]!.accepted_proofs)).toBe(true);
+  });
+
+  // @mock-exempt: mirrors the established mock pattern in this test file —
+  // yakccResolve is the unit-under-test's collaborator from @yakcc/hooks-base
+  // and is replaced via vi.mock() at the top of the describe block.
+  it("proof_status=accepted surfaces via proofStatusProvider", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue({
+      status: "matched",
+      candidates: [
+        {
+          address: "l3atom111",
+          behavior: "formally proven function",
+          signature: "(x: number) => boolean",
+          score: 0.78,
+          guarantees: ["formally verified"],
+          tests: { count: 1 },
+          usage: null,
+        },
+      ],
+    });
+    const tool = createResolveTool({
+      openRegistry: async () => STUB_REGISTRY,
+      proofStatusProvider: (_id) => "accepted",
+    });
+    const http = makeHttp();
+    const result = await tool.handler({ intent: { title: "test" } }, http);
+    const parsed = JSON.parse(result[0]!.text) as {
+      candidates: Array<{ verification_level: string; proof_status: string }>;
+    };
+    expect(parsed.candidates[0]!.proof_status).toBe("accepted");
+    // verification_level: derived from atom proof artifacts in a follow-up
+    // (#1080 validator output → resolver's status provider). For now the
+    // marketplace signal lives on proof_status.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proof layer — proof_requirement input validation
+// (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001)
+// ---------------------------------------------------------------------------
+
+// @mock-exempt: same rationale as proof_requirement section above.
+
+describe("yakcc_resolve handler — proof_requirement input validation", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("invalid scalar proof_requirement → returns error content, does not throw", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeEmptyResult());
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: "badmode" },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { error: string };
+    expect(parsed.error).toBe("invalid_input");
+  });
+
+  it("per_block with invalid mode value → returns error content", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeEmptyResult());
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: { per_block: { hash: "badmode" } } },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { error: string };
+    expect(parsed.error).toBe("invalid_input");
+  });
+
+  it("per_block missing per_block key → returns error content", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeEmptyResult());
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: { not_per_block: {} } },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { error: string };
+    expect(parsed.error).toBe("invalid_input");
+  });
+
+  it("proof_requirement is a number → returns error content", async () => {
+    vi.mocked(yakccResolve).mockResolvedValue(makeEmptyResult());
+    const tool = createResolveTool({ openRegistry: async () => STUB_REGISTRY });
+    const http = makeHttp();
+    const result = await tool.handler(
+      { intent: { title: "test" }, proof_requirement: 42 },
+      http,
+    );
+    const parsed = JSON.parse(result[0]!.text) as { error: string };
+    expect(parsed.error).toBe("invalid_input");
+  });
+});

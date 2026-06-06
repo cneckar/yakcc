@@ -9,6 +9,56 @@
  *   path: LLM emits an IntentCard before writing code, this tool returns
  *   candidates structured by D4 ADR Q5 confidence bands.
  *
+ * @decision DEC-PROOF-DISCOVERY-INTEGRATION-001
+ * @title yakcc_resolve — proof layer integration: verification_level + proof_status in envelope
+ * @status decided (wi-1088-discovery-integration)
+ * @rationale
+ *   Slice G of the proof incentive layer converts proof infrastructure from
+ *   "interesting capability" into "load-bearing for substrate trust". The MCP
+ *   adapter is the right place to surface proof status because:
+ *   (1) EvidenceProjection is a D4 ADR Q2 contract with a locked field order —
+ *       adding proof fields there would require a D4 revision and re-audit of all
+ *       callers. The MCP adapter wraps EvidenceProjection and can add envelope
+ *       fields without touching the inner contract.
+ *   (2) Proof state (proof_claims, proof_bounties tables) is a marketplace concern
+ *       that belongs in the outer MCP adapter's enrichment pass, not in the core
+ *       query pipeline.
+ *   MVP stub: verification_level is derived from the proof manifest artifact kinds
+ *   available in EvidenceProjection.tests. proof_status defaults to "none" until
+ *   Slice A/B/F land the proof_claims/bounties tables. The response shape is final;
+ *   the data population improves as upstream slices ship.
+ *
+ * @decision DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001
+ * @title yakcc_resolve — four-mode proof_requirement parameter
+ * @status decided (wi-1088-discovery-integration)
+ * @rationale
+ *   The four modes (required/preferred/ignored/per_block) let the LLM express
+ *   task-appropriate trust requirements without requiring a separate query:
+ *   - "required":  hard filter — proves the atom before using it. Zero survivors
+ *     surfaces confidence_tier="no_candidates" + reason="no_proven_atoms_match".
+ *   - "preferred": soft boost — proven atoms score += YAKCC_PROOF_BONUS (default 0.10).
+ *     Low-relevance L3 atoms do NOT beat high-relevance L0 atoms; the bonus
+ *     is intentionally small (B4 measurement will set final defaults).
+ *   - "ignored":   no effect — proof status doesn't affect ranking.
+ *   - per_block:   compound intent map from intent dimension → mode.
+ *   The default is "preferred" to nudge toward proven atoms without blocking.
+ *   The four modes are rank-orthogonal to semantic matching — the proof bonus is
+ *   additive and bounded, not multiplicative, so semantic relevance still dominates.
+ *
+ * @decision DEC-PROOF-RETRACTION-SCORE-PENALTY-001
+ * @title yakcc_resolve — retracted atoms penalized in all proof_requirement modes
+ * @status decided (wi-1088-discovery-integration)
+ * @rationale
+ *   A retracted atom is one whose proof was accepted and then invalidated (theorem
+ *   was wrong, proof was buggy, or the implementation was updated after the proof
+ *   was locked). Using a retracted atom is worse than using an unproven one: the
+ *   LLM has reason to believe the atom is correct when it is not. The penalty
+ *   (-0.20 via YAKCC_RETRACTION_PENALTY) applies in ALL modes, including "ignored",
+ *   because "ignored" means "ignore proof status for SELECTION preference", not
+ *   "ignore proof validity entirely". Env-tunable so B4 measurement can calibrate.
+ *   The penalty is applied before deriveConfidenceTier so retracted atoms can fall
+ *   below auto_accept threshold even when they would otherwise be the top match.
+ *
  *   Architecture:
  *   (1) LOCAL-FIRST (D-HOOK-6, Cornerstone B6):
  *       yakccResolve() from @yakcc/hooks-base is the sole local-query authority
@@ -90,6 +140,31 @@ import type { HttpClient } from "../http-client.js";
 import type { MCPContent, ToolModule } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Proof-layer constants (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001,
+//                       DEC-PROOF-RETRACTION-SCORE-PENALTY-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Default score bonus applied to proven (accepted) atoms when
+ * proof_requirement="preferred". Env-tunable: YAKCC_PROOF_BONUS.
+ *
+ * Intentionally small (+0.10) so low-relevance L3 atoms do NOT beat
+ * high-relevance L0 atoms — semantic relevance dominates ranking.
+ * B4 measurement will calibrate the final default.
+ */
+const DEFAULT_PROOF_BONUS = 0.1;
+
+/**
+ * Default score penalty applied to retracted atoms in ALL proof_requirement
+ * modes (DEC-PROOF-RETRACTION-SCORE-PENALTY-001).
+ *
+ * -0.20 applied pre-tier so retracted atoms can fall below auto_accept.
+ * "ignored" mode suppresses bonus/required logic, not the retraction penalty.
+ * Env-tunable: YAKCC_RETRACTION_PENALTY.
+ */
+const DEFAULT_RETRACTION_PENALTY = -0.2;
+
+// ---------------------------------------------------------------------------
 // D4 ADR Q5 hybrid-mode thresholds (local copy)
 // ---------------------------------------------------------------------------
 
@@ -132,6 +207,85 @@ const AUTO_ACCEPT_GAP_THRESHOLD = 0.05;
 const HIGH_CONFIDENCE_THRESHOLD = 0.92;
 
 // ---------------------------------------------------------------------------
+// Proof envelope types (G.1 — per-candidate verification fields)
+// ---------------------------------------------------------------------------
+
+/**
+ * Verification level per the proof layer specification.
+ *
+ * - L0: property_tests only (fast-check corpus).
+ * - L1: SMT certificate present (deferred; schema-valid but validator not yet shipped).
+ * - L2: bounded fuzzing + SMT (deferred).
+ * - L3: formal proof (lean_proof or coq_proof artifact accepted).
+ *
+ * MVP: all atoms in the current registry are L0. L3 will surface when Slice A/B
+ * land the proof_claims tables that record accepted lean_proof/coq_proof artifacts.
+ */
+export type VerificationLevel = "L0" | "L1" | "L2" | "L3";
+
+/**
+ * Proof status for a candidate atom.
+ *
+ * - none:      no proof artifact beyond property_tests (L0 atoms).
+ * - pending:   a proof claim exists but is still in its review window.
+ * - accepted:  proof was verified and the retraction window has closed.
+ * - retracted: proof was accepted then invalidated.
+ *
+ * MVP: defaults to "none" for all atoms (proof_claims/bounties tables not yet
+ * populated — Slice A/B/F). Shape is final; data population improves as those
+ * slices ship.
+ */
+export type ProofStatus = "none" | "pending" | "accepted" | "retracted";
+
+/**
+ * A single accepted proof entry in the candidate's accepted_proofs array.
+ * Populated when proof_status="accepted".
+ */
+export interface AcceptedProofEntry {
+  /** BLAKE3 hash of the theorem statement (the claim being proved). */
+  readonly theorem_statement_hash: string;
+  /** ISO-8601 timestamp when the proof was accepted. */
+  readonly accepted_at: string;
+  /** ISO-8601 timestamp when the retraction window closes (after which retraction is impossible). */
+  readonly retraction_window_closes_at: string;
+  /** Checker identifier, e.g. "lean4@4.7.0" or "coq@8.18.0". */
+  readonly checker: string;
+  /** Number of independent attestations for this proof. */
+  readonly attestation_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// proof_requirement modes (G.2 — four-mode parameter)
+// ---------------------------------------------------------------------------
+
+/**
+ * Scalar proof_requirement modes.
+ *
+ * - "required":  hard filter — only atoms with proof_status="accepted" survive.
+ *   Zero survivors → confidence_tier="no_candidates" + reason="no_proven_atoms_match".
+ * - "preferred": soft boost — accepted atoms gain YAKCC_PROOF_BONUS on their score.
+ * - "ignored":   no effect on ranking from proof status (retraction penalty still applies).
+ */
+export type ProofRequirementMode = "required" | "preferred" | "ignored";
+
+/**
+ * Per-block mode map for compound intents.
+ * Keys are intent dimensions (e.g. "parse", "hash", "format").
+ * Values are scalar ProofRequirementMode values.
+ *
+ * Example: { per_block: { parse: "ignored", hash: "required" } }
+ */
+export interface PerBlockProofRequirement {
+  readonly per_block: Readonly<Record<string, ProofRequirementMode>>;
+}
+
+/**
+ * The full proof_requirement parameter type.
+ * Either a scalar mode or a per-block dimension map.
+ */
+export type ProofRequirement = ProofRequirementMode | PerBlockProofRequirement;
+
+// ---------------------------------------------------------------------------
 // Public IntentCard input shape (minimal subset for MCP surface)
 // ---------------------------------------------------------------------------
 
@@ -142,6 +296,10 @@ const HIGH_CONFIDENCE_THRESHOLD = 0.92;
  * pulling the full contracts dep chain into the inputSchema definition.
  *
  * The handler maps this to yakccResolve's input format.
+ *
+ * proof_requirement (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001):
+ *   Controls how proof status affects candidate scoring and filtering.
+ *   Defaults to "preferred" when omitted.
  */
 export interface ResolveInput {
   readonly intent: {
@@ -151,6 +309,8 @@ export interface ResolveInput {
     readonly examples?: string[]; // example usages
   };
   readonly limit?: number; // candidates returned (default 10)
+  /** Four-mode proof_requirement parameter. Defaults to "preferred". */
+  readonly proof_requirement?: ProofRequirement;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +405,49 @@ function parseArgs(args: unknown): ParsedInput {
     }
   }
 
+  // Validate proof_requirement (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001)
+  const VALID_MODES = new Set<string>(["required", "preferred", "ignored"]);
+  let proofRequirement: ProofRequirement | undefined;
+  if (obj.proof_requirement !== undefined) {
+    const pr = obj.proof_requirement;
+    if (typeof pr === "string") {
+      if (!VALID_MODES.has(pr)) {
+        return {
+          ok: false,
+          message: `proof_requirement must be "required", "preferred", "ignored", or a per_block object`,
+        };
+      }
+      proofRequirement = pr as ProofRequirementMode;
+    } else if (pr !== null && typeof pr === "object" && !Array.isArray(pr)) {
+      const prObj = pr as Record<string, unknown>;
+      if (
+        typeof prObj.per_block !== "object" ||
+        prObj.per_block === null ||
+        Array.isArray(prObj.per_block)
+      ) {
+        return {
+          ok: false,
+          message: `proof_requirement.per_block must be an object mapping intent dimensions to modes`,
+        };
+      }
+      const perBlockObj = prObj.per_block as Record<string, unknown>;
+      for (const [dim, mode] of Object.entries(perBlockObj)) {
+        if (typeof mode !== "string" || !VALID_MODES.has(mode)) {
+          return {
+            ok: false,
+            message: `proof_requirement.per_block["${dim}"] must be "required", "preferred", or "ignored"`,
+          };
+        }
+      }
+      proofRequirement = { per_block: perBlockObj as Record<string, ProofRequirementMode> };
+    } else {
+      return {
+        ok: false,
+        message: `proof_requirement must be a string mode or per_block object`,
+      };
+    }
+  }
+
   const intent: ResolveInput["intent"] = {
     title: intentObj.title as string,
     ...(typeof intentObj.description === "string" ? { description: intentObj.description } : {}),
@@ -255,9 +458,131 @@ function parseArgs(args: unknown): ParsedInput {
   const value: ResolveInput = {
     intent,
     ...(typeof obj.limit === "number" ? { limit: obj.limit } : {}),
+    ...(proofRequirement !== undefined ? { proof_requirement: proofRequirement } : {}),
   };
 
   return { ok: true, value };
+}
+
+// ---------------------------------------------------------------------------
+// Proof scoring helpers (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001,
+//                       DEC-PROOF-RETRACTION-SCORE-PENALTY-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the effective proof requirement mode for a candidate given the
+ * proof_requirement parameter and an optional per-block dimension key.
+ *
+ * For scalar modes, the key is ignored.
+ * For per_block modes, the key is looked up in the map; if not found,
+ * falls back to "preferred" (the default).
+ */
+function resolveProofMode(
+  req: ProofRequirement,
+  dimensionKey?: string,
+): ProofRequirementMode {
+  if (typeof req === "string") return req;
+  // per_block
+  const mode = dimensionKey !== undefined ? req.per_block[dimensionKey] : undefined;
+  return mode ?? "preferred";
+}
+
+/**
+ * Apply proof-layer score adjustments to a list of candidates.
+ *
+ * The candidates array is sorted by descending score on entry.
+ * Returns a new array with adjusted scores — original objects are not mutated.
+ *
+ * Scoring rules (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001,
+ *                DEC-PROOF-RETRACTION-SCORE-PENALTY-001):
+ *
+ * 1. RETRACTION PENALTY (all modes):
+ *    retracted atoms lose YAKCC_RETRACTION_PENALTY (default −0.20).
+ *    Applied regardless of mode — "ignored" suppresses bonus/filter, not penalty.
+ *
+ * 2. BONUS (mode=preferred):
+ *    accepted atoms gain YAKCC_PROOF_BONUS (default +0.10).
+ *
+ * 3. FILTER (mode=required):
+ *    non-accepted atoms are removed from the list.
+ *    The caller checks length===0 and surfaces "no_proven_atoms_match".
+ *
+ * 4. IGNORED mode:
+ *    only the retraction penalty applies; no bonus, no filter.
+ *
+ * The adjusted scores are re-sorted after adjustment so tier derivation
+ * operates on the final ranking, not the pre-proof ranking.
+ */
+function applyProofScoring(
+  candidates: EvidenceProjection[],
+  proofReq: ProofRequirement,
+  getProofStatus: ProofStatusProvider,
+): { adjusted: Array<EvidenceProjection & { _proofStatus: ProofStatus }>; filtered: boolean } {
+  const proofBonus = Number(process.env.YAKCC_PROOF_BONUS ?? DEFAULT_PROOF_BONUS);
+  const retractionPenalty = Number(
+    process.env.YAKCC_RETRACTION_PENALTY ?? DEFAULT_RETRACTION_PENALTY,
+  );
+
+  // Enrich each candidate with proof status
+  const enriched = candidates.map((c) => {
+    const status = getProofStatus(c.address);
+    const mode = resolveProofMode(proofReq);
+    let scoreAdj = c.score;
+
+    // Step 1: retraction penalty (all modes)
+    if (status === "retracted") {
+      scoreAdj += retractionPenalty; // negative delta
+    }
+
+    // Step 2/4: bonus (preferred mode only) and filter (required mode only)
+    if (mode === "preferred" && status === "accepted") {
+      scoreAdj += proofBonus;
+    }
+    // Clamp to [0, 1] — scores are fractions
+    scoreAdj = Math.max(0, Math.min(1, scoreAdj));
+
+    return { ...c, score: scoreAdj, _proofStatus: status };
+  });
+
+  // Step 3: filter for required mode
+  const mode = resolveProofMode(proofReq);
+  const filtered = mode === "required";
+  const result = filtered
+    ? enriched.filter((c) => c._proofStatus === "accepted")
+    : enriched;
+
+  // Re-sort by adjusted score descending
+  result.sort((a, b) => b.score - a.score);
+
+  return { adjusted: result, filtered: filtered && result.length === 0 };
+}
+
+/**
+ * Derive the VerificationLevel for a candidate from its EvidenceProjection.
+ *
+ * MVP derivation: checks tests.artifacts array (if present) for proof artifact kinds.
+ * - lean_proof or coq_proof → L3
+ * - smt_cert                → L1
+ * - default                 → L0 (property_tests only)
+ *
+ * L2 (bounded fuzzing + SMT) is deferred — no current artifact kind maps to it.
+ * This will be upgraded when Slice A/B land the proof_claims tables.
+ */
+function deriveVerificationLevel(candidate: EvidenceProjection): VerificationLevel {
+  const tests = candidate.tests as unknown;
+  if (tests !== null && typeof tests === "object") {
+    const artifacts = (tests as Record<string, unknown>).artifacts;
+    if (Array.isArray(artifacts)) {
+      for (const artifact of artifacts as unknown[]) {
+        if (artifact !== null && typeof artifact === "object") {
+          const kind = (artifact as Record<string, unknown>).kind;
+          if (kind === "lean_proof" || kind === "coq_proof") return "L3";
+          if (kind === "smt_cert") return "L1";
+        }
+      }
+    }
+  }
+  return "L0";
 }
 
 // ---------------------------------------------------------------------------
@@ -285,12 +610,23 @@ function globalRootToCandidate(root: string): {
 
 /**
  * Shape a local EvidenceProjection as a candidate for the response envelope.
+ *
+ * Proof envelope fields (DEC-PROOF-DISCOVERY-INTEGRATION-001):
+ *   - verification_level: derived from candidate's test artifact kinds (L0/L1/L3).
+ *   - proof_status: from the injected ProofStatusProvider (MVP: "none" for all).
+ *   - accepted_proofs: populated when proof_status="accepted" (MVP: always []).
  */
-function localCandidateToResponse(p: EvidenceProjection): {
+function localCandidateToResponse(
+  p: EvidenceProjection,
+  proofStatus: ProofStatus,
+): {
   atom_id: string;
   score: number;
   summary: string;
   source: "local";
+  verification_level: VerificationLevel;
+  proof_status: ProofStatus;
+  accepted_proofs: AcceptedProofEntry[];
   evidence: EvidenceProjection;
 } {
   return {
@@ -298,6 +634,9 @@ function localCandidateToResponse(p: EvidenceProjection): {
     score: p.score,
     summary: p.behavior,
     source: "local",
+    verification_level: deriveVerificationLevel(p),
+    proof_status: proofStatus,
+    accepted_proofs: [],
     evidence: p,
   };
 }
@@ -312,6 +651,22 @@ function localCandidateToResponse(p: EvidenceProjection): {
  * Tests inject openRegistry to avoid real SQLite access.
  * Production uses the default factory (lazy open via openRegistry from @yakcc/registry).
  */
+/**
+ * Proof status provider callback.
+ *
+ * Given a candidate's atom_id (address prefix), returns the current ProofStatus
+ * for that atom. The default implementation returns "none" for all atoms until
+ * Slice A/B/F land the proof_claims/bounties tables.
+ *
+ * The seam is intentional: once the proof-market slices ship, a real provider
+ * can be injected here without changing the scoring or envelope logic.
+ * (DEC-PROOF-DISCOVERY-INTEGRATION-001 — data-source seam)
+ */
+export type ProofStatusProvider = (atom_id: string) => ProofStatus;
+
+/** Default stub: all atoms have proof_status="none" until proof-market slices ship. */
+const defaultProofStatusProvider: ProofStatusProvider = (_atom_id) => "none";
+
 export interface CreateResolveToolOptions {
   /**
    * Factory for the local registry. Called lazily on the first handler invocation
@@ -319,6 +674,13 @@ export interface CreateResolveToolOptions {
    * @yakcc/registry with createOfflineEmbeddingProvider() from @yakcc/contracts.
    */
   readonly openRegistry?: (() => Promise<Registry>) | undefined;
+
+  /**
+   * Proof status provider. Given an atom_id, returns its ProofStatus.
+   * Defaults to the stub that returns "none" for all atoms.
+   * (DEC-PROOF-DISCOVERY-INTEGRATION-001 — data-source seam)
+   */
+  readonly proofStatusProvider?: ProofStatusProvider | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +775,15 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
           default: 10,
           description: "Maximum number of candidates to return (1–100, default 10).",
         },
+        proof_requirement: {
+          description: [
+            "Controls how proof status affects candidate scoring and filtering.",
+            'Scalar modes: "required" (hard filter — only accepted atoms), "preferred" (soft +0.10 bonus for accepted atoms, default), "ignored" (no effect except retraction penalty).',
+            'Per-block: { "per_block": { "<dimension>": "<mode>" } } maps intent dimensions to individual modes.',
+            "Retracted atoms are penalized −0.20 in ALL modes.",
+            "Defaults to \"preferred\" when omitted.",
+          ].join(" "),
+        },
       },
     },
 
@@ -428,8 +799,9 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
         ];
       }
 
-      const { intent, limit = 10 } = parsed.value;
+      const { intent, limit = 10, proof_requirement = "preferred" } = parsed.value;
       const airgapped = process.env.YAKCC_AIRGAPPED === "1";
+      const getProofStatus = opts?.proofStatusProvider ?? defaultProofStatusProvider;
 
       // --- Open the local registry (lazy, cached) ---
       let registry: Registry;
@@ -481,7 +853,44 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
         void err; // Swallow; degrade to no_match
       }
 
-      const localCandidates = [...resolveResult.candidates].slice(0, limit);
+      const rawLocalCandidates = [...resolveResult.candidates].slice(0, limit);
+
+      // --- Apply proof scoring (DEC-PROOF-DISCOVERY-QUERY-REQUIREMENT-001,
+      //                          DEC-PROOF-RETRACTION-SCORE-PENALTY-001)
+      //
+      // Proof scoring adjusts candidate scores BEFORE tier derivation so that:
+      // - retracted atoms can fall below auto_accept even when top-ranked
+      // - accepted atoms get a soft bonus when mode="preferred"
+      // - mode="required" removes non-accepted atoms (zero survivors → no_proven_atoms_match)
+      //
+      // Applied here on the raw local candidates only. Global atoms are returned with
+      // proof_status="none" and verification_level="L0" (no proof metadata available
+      // from the catalog walk endpoint).
+      const { adjusted: localCandidates, filtered: allFilteredOut } = applyProofScoring(
+        rawLocalCandidates,
+        proof_requirement,
+        getProofStatus,
+      );
+
+      // mode=required with no survivors: surface reason="no_proven_atoms_match"
+      if (allFilteredOut) {
+        return [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                confidence_tier: "no_candidates",
+                reason: "no_proven_atoms_match",
+                source: "local_only",
+                candidates: [],
+                airgapped,
+              },
+              null,
+              2,
+            ),
+          },
+        ];
+      }
 
       // --- Auto-accept short-circuit: no global call needed ---
       const localTier = deriveConfidenceTier(localCandidates);
@@ -508,6 +917,13 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
             },
           ];
         }
+
+        // Surface retracted_top_candidate reason when the auto-accepted atom is retracted.
+        // This can happen when the retraction penalty is env-tuned to a value that doesn't
+        // drop the retracted atom below the auto-accept threshold.
+        const topReason =
+          top._proofStatus === "retracted" ? "retracted_top_candidate" : undefined;
+
         const atomBody = {
           behavior: top.behavior,
           signature: top.signature,
@@ -520,8 +936,11 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
             text: JSON.stringify(
               {
                 confidence_tier: "auto_accept",
+                ...(topReason !== undefined ? { reason: topReason } : {}),
                 source: "local_only",
-                candidates: localCandidates.map(localCandidateToResponse),
+                candidates: localCandidates.map((c) =>
+                  localCandidateToResponse(c, c._proofStatus),
+                ),
                 atom_body: atomBody,
                 airgapped,
               },
@@ -541,7 +960,9 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
               {
                 confidence_tier: localCandidates.length > 0 ? "candidate_list" : "no_candidates",
                 source: "local_only",
-                candidates: localCandidates.map(localCandidateToResponse),
+                candidates: localCandidates.map((c) =>
+                  localCandidateToResponse(c, c._proofStatus),
+                ),
                 airgapped: true,
               },
               null,
@@ -579,7 +1000,9 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
               {
                 confidence_tier: localCandidates.length > 0 ? "candidate_list" : "no_candidates",
                 source: "local_only",
-                candidates: localCandidates.map(localCandidateToResponse),
+                candidates: localCandidates.map((c) =>
+                  localCandidateToResponse(c, c._proofStatus),
+                ),
                 airgapped: false,
               },
               null,
@@ -599,7 +1022,10 @@ export function createResolveTool(opts?: CreateResolveToolOptions): ToolModule {
         .slice(0, Math.max(0, limit - localCandidates.length))
         .map(globalRootToCandidate);
 
-      const merged = [...localCandidates.map(localCandidateToResponse), ...freshGlobalCandidates];
+      const merged = [
+        ...localCandidates.map((c) => localCandidateToResponse(c, c._proofStatus)),
+        ...freshGlobalCandidates,
+      ];
 
       const mergedTier = deriveConfidenceTier(localCandidates);
       const finalTier: ConfidenceTier =
