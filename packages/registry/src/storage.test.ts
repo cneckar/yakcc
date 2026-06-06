@@ -169,7 +169,7 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(13);
+    expect(SCHEMA_VERSION).toBe(14);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
@@ -184,7 +184,7 @@ describe("schema migrations", () => {
     // Migration 11 bumps schema_version to 11 (registry_meta table).
     // Migration 12 bumps schema_version to 12 (submitted_at column on blocks; PR #818).
     // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
-    expect(row?.version).toBe(13);
+    expect(row?.version).toBe(14);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -271,7 +271,7 @@ describe("schema migrations", () => {
       | { version: number }
       | undefined;
     // Second application is a no-op; version stays at 10 (all migrations already ran).
-    expect(row?.version).toBe(13);
+    expect(row?.version).toBe(14);
 
     db.close();
   });
@@ -337,7 +337,7 @@ describe("schema migrations", () => {
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(13);
+    expect(vRow?.version).toBe(14);
 
     db.close();
   });
@@ -899,7 +899,7 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const versionAfterBackfill = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionAfterBackfill).toBe(13);
+    expect(versionAfterBackfill).toBe(14);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -1006,7 +1006,7 @@ describe("migration 3 → 4: parent_block_root column", () => {
     const ver = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(ver).toBe(13);
+    expect(ver).toBe(14);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
@@ -1919,7 +1919,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vPost = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vPost).toBe(13);
+    expect(vPost).toBe(14);
 
     // kind column now present.
     const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -1980,15 +1980,15 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vAfterFirst = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterFirst).toBe(13);
-    expect(SCHEMA_VERSION).toBe(13);
+    expect(vAfterFirst).toBe(14);
+    expect(SCHEMA_VERSION).toBe(14);
 
     // Second run — must be a complete no-op; no throws; version stays at 10.
     expect(() => applyMigrations(db)).not.toThrow();
     const vAfterSecond = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterSecond).toBe(13);
+    expect(vAfterSecond).toBe(14);
 
     // Verify column count is stable (no duplicate columns created).
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3715,7 +3715,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {
       version: number;
     };
-    expect(versionRow.version).toBe(13);
+    expect(versionRow.version).toBe(14);
 
     // blocks table has the three new provenance columns.
     const blockCols = (
@@ -3798,15 +3798,15 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const v1 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v1).toBe(13);
-    expect(SCHEMA_VERSION).toBe(13);
+    expect(v1).toBe(14);
+    expect(SCHEMA_VERSION).toBe(14);
 
     // Second run — must be a complete no-op.
     expect(() => applyMigrations(db)).not.toThrow();
     const v2 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v2).toBe(13);
+    expect(v2).toBe(14);
 
     // Column count is stable — no duplicate columns.
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3844,7 +3844,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionPost = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionPost).toBe(13);
+    expect(versionPost).toBe(14);
 
     // The workspace_plumbing table exists (P1 creates it empty).
     const tables = (

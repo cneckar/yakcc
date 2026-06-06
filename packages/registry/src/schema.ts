@@ -139,8 +139,44 @@
  *
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   all tables start empty. No backfill required. Closes #1081.
+ *
+ * @decision DEC-PROOF-RETRACTION-001
+ * @title SCHEMA_VERSION 13 → 14; additive migration adding proof_retractions table
+ * @status decided (WI-1087 / issue #1087 / plans/proof-incentive-layer.md §4 Slice F)
+ * @rationale
+ *   Counter-proof admission (Slice F) requires a new table to track retraction lifecycle
+ *   independently of the original proof_claims row. Retractions are a separate economic
+ *   event class: they have their own stake (≥2× the original), their own filing window
+ *   (T_RETRACTION_MS = 90 days), and their own slash/reward disbursement rules.
+ *
+ *   WHY a separate table (not a status on proof_claims):
+ *     1. A retraction is filed by a DIFFERENT actor than the original claimant, against
+ *        a claim that is already in terminal VALID/ACCEPT state. Adding retraction state
+ *        to proof_claims would create a dual-authority write on a row owned by a different actor.
+ *     2. Multiple concurrent retractions on the same claim are allowed (each independent;
+ *        first RETRACTED resolution is canonical). A column on proof_claims cannot represent
+ *        N concurrent retractions.
+ *     3. Retraction stake, retractor identity, and evidence artifact are distinct from the
+ *        original claim's stake and artifact — separate rows avoid nullable-column ambiguity.
+ *
+ *   CONCURRENT RETRACTION POLICY (DEC-PROOF-RETRACTION-001 sub-decision):
+ *     Multiple concurrent retractions on the same original_claim_id are permitted. Each
+ *     retraction is an independent economic bet. Resolution: when any retraction resolves
+ *     to RETRACTED, the original claim is annotated retracted; subsequent retractions on
+ *     the same claim remain in PENDING and will each resolve (RETRACTED or REJECTED)
+ *     independently — the first retractor to succeed receives the reward, later retractions
+ *     are REJECTED (retractor stake forfeited, since the proof is already retracted).
+ *
+ *   SLASH DECAY:
+ *     Slash fraction = exp(-ln(2) * elapsed_ms / RETRACTION_SLASH_HALF_LIFE_MS).
+ *     At elapsed=0: full slash (fraction≈1.0). At elapsed=HALF_LIFE (30 days): slash fraction≈0.5.
+ *     Retractor reward = slash_amount × RETRACTION_REWARD_FRACTION (default 0.5 of slashed).
+ *     The remaining (1-RETRACTION_REWARD_FRACTION) of slashed amount goes to operator treasury.
+ *
+ *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
+ *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1055,6 +1091,60 @@ const MIGRATION_13_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 13 → 14: add proof_retractions table
+// (DEC-PROOF-RETRACTION-001 / WI-1087 / plans/proof-incentive-layer.md §4 Slice F)
+// ---------------------------------------------------------------------------
+
+/**
+ * SQL statements for migration 14.
+ *
+ * Creates the `proof_retractions` table — tracks counter-proof admission events
+ * that challenge an already-ACCEPTED proof claim. Each retraction is an independent
+ * economic bet by a retractor who believes the original proof is unsound.
+ *
+ * See @decision DEC-PROOF-RETRACTION-001 (top-of-file) for the full rationale.
+ *
+ * Pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS); naturally
+ * idempotent. Table starts empty. No backfill required. Closes #1087.
+ *
+ * No ownership columns — DEC-NO-OWNERSHIP-011.
+ */
+const MIGRATION_14_DDL: readonly string[] = [
+  // ---------------------------------------------------------------------------
+  // proof_retractions — one row per retraction attempt against an accepted claim.
+  //
+  // retraction_id:         PRIMARY KEY (opaque TEXT; application supplies e.g. BLAKE3-based ID).
+  // original_claim_id:     FK → proof_claims.claim_id. The accepted claim being challenged.
+  //                        Indexed for "which retractions exist for this claim?" queries.
+  // retractor_id:          Account that filed the retraction. NOT the original claimant.
+  // stake_amount:          Integer stake locked by this retraction (must be >= 2× original stake).
+  // stake_unit:            Denomination (TEXT; same enum space as proof_claims.stake_unit).
+  // evidence_artifact_hash: BLAKE3 of the counter-proof artifact (counterexample, proof-of-falshood).
+  //                         NULL if the retraction was filed without an evidence hash (pre-reveal).
+  // status:                TEXT enum — 'PENDING' | 'RETRACTED' | 'REJECTED'.
+  //                         'PENDING'   = retraction filed, awaiting verifier resolution.
+  //                         'RETRACTED' = counter-proof accepted; original claim overturned.
+  //                         'REJECTED'  = counter-proof rejected; retractor stake forfeited.
+  // filed_at:              Unix epoch milliseconds when the retraction was filed.
+  // resolved_at:           Unix epoch milliseconds when the retraction was resolved (NULL until resolved).
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS proof_retractions (
+    retraction_id          TEXT    PRIMARY KEY,
+    original_claim_id      TEXT    NOT NULL REFERENCES proof_claims(claim_id),
+    retractor_id           TEXT    NOT NULL,
+    stake_amount           INTEGER NOT NULL,
+    stake_unit             TEXT    NOT NULL,
+    evidence_artifact_hash TEXT,
+    status                 TEXT    NOT NULL,
+    filed_at               INTEGER NOT NULL,
+    resolved_at            INTEGER
+  )`,
+
+  // Index for "which retractions exist for this claim?" — retraction status queries.
+  "CREATE INDEX IF NOT EXISTS idx_proof_retractions_claim ON proof_retractions(original_claim_id)",
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -1104,6 +1194,8 @@ export interface MigrationsDb {
  *   12 → 13: add proof incentive marketplace tables: proof_bounties, proof_claims,
  *            stake_ledger, verifier_attestations, reputation_ledger
  *            (DEC-PROOF-REGISTRY-TABLES-001 / WI-1081 / issue #1081).
+ *   13 → 14: add proof_retractions table for counter-proof admission (Slice F)
+ *            (DEC-PROOF-RETRACTION-001 / WI-1087 / issue #1087).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -1415,5 +1507,22 @@ export function applyMigrations(db: MigrationsDb): void {
       db.exec(sql);
     }
     db.prepare("UPDATE schema_version SET version = ?").run(13);
+  }
+
+  // Migration 13 → 14: add proof_retractions table
+  // (DEC-PROOF-RETRACTION-001 / WI-1087 / plans/proof-incentive-layer.md §4 Slice F).
+  //
+  // Pure DDL — CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS are both
+  // naturally idempotent. No ADD COLUMN statements, no try/catch needed.
+  // No backfill required: table starts empty; retraction.ts populates it.
+  //
+  // A crash between any DDL statement and the version bump leaves the table
+  // present at version=13; re-entry runs CREATE TABLE/INDEX IF NOT EXISTS as
+  // no-ops and bumps to 14 normally.
+  if (currentVersion < 14) {
+    for (const sql of MIGRATION_14_DDL) {
+      db.exec(sql);
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(14);
   }
 }
