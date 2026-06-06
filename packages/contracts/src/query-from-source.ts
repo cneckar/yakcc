@@ -135,10 +135,23 @@ export function queryIntentCardFromSource(
   const jsdoc = extractJsDoc(declarationNode);
 
   // Behavior field: JSDoc summary → signature string → fragment fallback.
-  const behavior: string =
+  // @decision DEC-INTENT-BEHAVIOR-CAP-001
+  // @title behavior field truncated to ≤200 chars at the producer (#1109)
+  // @status accepted
+  // @rationale
+  //   packages/shave/src/intent/validate-intent-card.ts:146 enforces behavior.length ≤ 200.
+  //   The JSDoc-summary path is already bounded by extractFirstSentence (slice 197 + "...").
+  //   The signature-string and fragment-fallback paths are unbounded — a file with no JSDoc
+  //   and a long function signature (e.g. packages/mcp-registry/src/tools/resolve.ts at 257
+  //   chars) causes an IntentCardSchemaError and breaks self-shave CI.  The schema is the
+  //   contract; the producer must respect it.  Truncation follows the same 197-char-slice +
+  //   "..." pattern as extractFirstSentence.  See: #1109.
+  const rawBehavior: string =
     jsdoc.summary ??
     sig.signatureString ??
     buildFragmentFallback(sourceFile.getStatements().length, source.length);
+  const behavior: string =
+    rawBehavior.length <= 200 ? rawBehavior : `${rawBehavior.slice(0, 197)}...`;
 
   // Build the QueryIntentCard, omitting absent dimensions (D1 rule).
   // behavior dimension — always present (has at least a fragment fallback).
