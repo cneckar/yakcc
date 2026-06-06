@@ -1,67 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// errors.ts -- local error taxonomy for @yakcc/compile-rust (Slice 1).
+// errors.ts -- error taxonomy for @yakcc/compile-rust (Slice 2).
 //
-// @decision DEC-POLYGLOT-RUST-COMPILE-001
-// @title CannotLowerToRustError is defined locally in Slice 1; promoted to
-//   @yakcc/contracts in Slice 2 once the full taxonomy is validated.
-// @status decided (Slice 1)
+// @decision DEC-POLYGLOT-RUST-COMPILE-ERR-001
+// @title CannotLowerToRustError base promoted to @yakcc/contracts in Slice 2
+// @status accepted (WI-869-s2)
 // @rationale
-//   Mirrors DEC-POLYGLOT-GO-ERROR-TAXONOMY-001 / DEC-POLYGLOT-COMPILE-PY-001.
-//   The local definition avoids a contracts PR dependency for Slice 1 while the
-//   taxonomy stabilises.  Slice 2 will import from @yakcc/contracts and remove
-//   this file (Sacred Practice #12 -- no dual authorities).
+//   Slice 1 defined CannotLowerToRustError locally pending taxonomy validation.
+//   Slice 2 promotes the base to @yakcc/contracts/polyglot-errors.ts (mirroring
+//   CannotLowerToPythonError / CannotLowerToGoError) and re-exports it from here
+//   so existing importers of @yakcc/compile-rust remain unchanged. Subclasses
+//   continue to live here as they are compile-rust-specific blocker details.
+//   Sacred Practice #12: single authority -- no dual definition.
 //
 // @taxonomy
-//   CannotLowerToRustError (base)     -- any IR construct the Rust emitter cannot handle.
+//   CannotLowerToRustError (base, @yakcc/contracts) -- any IR construct the Rust emitter cannot handle.
 //   RustUnsupportedTypeError          -- TS type has no Rust MVP equivalent.
 //   RustUnsupportedExprError          -- IR expression construct not in MVP surface.
 //   RustUnsupportedStmtError          -- IR statement construct not in MVP surface.
 //   RustAsyncError                    -- async/Promise/await found in IR; no Rust MVP equivalent.
 //   RustGenericError                  -- complex generics beyond the MVP surface.
 
-/**
- * Base error: an IR construct cannot be lowered to Rust using the Slice-1 MVP
- * emitter surface.
- *
- * Subclasses map to specific blocker categories (>=5 classes, satisfying the
- * Slice-1 Evaluation Contract).
- *
- * Blocker taxonomy (Slice 1 seed):
- *
- *   BLOCKER-RUST-001 (async/Promise/await)
- *     Rust async and futures are out of scope for the MVP lower surface.
- *     Example: `export async function fetchNum(): Promise<number> { return 42; }`
- *
- *   BLOCKER-RUST-002 (complex generics)
- *     Generic type parameters with non-trivial constraints are beyond MVP.
- *     Example: `export function id<T extends Comparable>(x: T): T { return x; }`
- *
- *   BLOCKER-RUST-003 (unsupported TS type)
- *     TS types without a Rust MVP equivalent (bigint, symbol, etc.).
- *     Example: `export function bigNum(x: bigint): bigint { return x; }`
- *
- *   BLOCKER-RUST-004 (unsupported expression)
- *     IR expression constructs not in the Rust MVP emit surface.
- *     Example: tagged template literals, spread expressions.
- *
- *   BLOCKER-RUST-005 (unsupported statement)
- *     IR statement constructs the Rust emitter cannot produce.
- *     Example: for-of loops over iterables with complex patterns.
- */
-export class CannotLowerToRustError extends Error {
-  constructor(
-    public readonly constructKind: string,
-    public readonly location: { line: number; column: number },
-    public readonly snippet: string,
-    public readonly fnName?: string | undefined,
-  ) {
-    const loc = `${location.line}:${location.column}`;
-    const fn_ = fnName ? ` in '${fnName}'` : "";
-    super(`Cannot lower ${constructKind}${fn_} at ${loc}: ${snippet}`);
-    this.name = "CannotLowerToRustError";
-  }
-}
+export { CannotLowerToRustError } from "@yakcc/contracts";
+import { CannotLowerToRustError } from "@yakcc/contracts";
 
 /**
  * BLOCKER-RUST-003: A TypeScript type has no Rust MVP equivalent.
