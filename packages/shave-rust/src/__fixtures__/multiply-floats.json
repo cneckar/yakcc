@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crateName": "stdin.rs",
   "functions": [
     {
@@ -16,7 +16,25 @@
         }
       ],
       "returnType": "f64",
-      "bodySource": "x * y"
+      "bodySource": "x * y",
+      "body": {
+        "stmts": [
+          {
+            "type": "ExprStmt",
+            "line": 1,
+            "col": 1,
+            "x": {
+              "type": "BinaryExpr",
+              "line": 1,
+              "col": 1,
+              "op": "*",
+              "x": { "type": "Ident", "line": 1, "col": 1, "name": "x" },
+              "y": { "type": "Ident", "line": 1, "col": 5, "name": "y" }
+            },
+            "isTail": true
+          }
+        ]
+      }
     }
   ]
 }

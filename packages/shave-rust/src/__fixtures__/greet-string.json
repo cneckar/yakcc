@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crateName": "stdin.rs",
   "functions": [
     {
@@ -12,7 +12,27 @@
         }
       ],
       "returnType": "String",
-      "bodySource": "format ! (\"Hello, {}\" , name)"
+      "bodySource": "format!(\"Hello, {}\", name)",
+      "body": {
+        "stmts": [
+          {
+            "type": "ExprStmt",
+            "line": 1,
+            "col": 1,
+            "x": {
+              "type": "CallExpr",
+              "line": 1,
+              "col": 1,
+              "fun": { "type": "Ident", "line": 1, "col": 1, "name": "format" },
+              "args": [
+                { "type": "Lit", "line": 1, "col": 8, "kind": "STR", "value": "Hello, {}" },
+                { "type": "Ident", "line": 1, "col": 22, "name": "name" }
+              ]
+            },
+            "isTail": true
+          }
+        ]
+      }
     }
   ]
 }

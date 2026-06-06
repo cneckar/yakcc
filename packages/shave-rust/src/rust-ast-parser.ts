@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // rust-ast-parser.ts -- subprocess wrapper around the syn-based Rust helper
-// (rust-ast-parse/src/main.rs, WI-868 slice 1).
+// (rust-ast-parse/src/main.rs, WI-868 slice 1+2).
 //
 // Invokes `cargo run --manifest-path <path>/Cargo.toml` (or a pre-built binary
 // at `rust-ast-parse/target/release/rust-ast-parse`) as a child process, feeds
 // Rust source over stdin, and reads a JSON AST envelope from stdout.
 //
-// The wire shape is intentionally minimal — only enough to prove the subprocess
-// plumbing and let the signature parser consume real function declarations.
-// Slice 2 will add structured body AST wire types.
+// Slice 2 (WI-868-2B) adds the structured body AST wire types (RustExpr,
+// RustStmt, RustBodyNode, RustIfExpr, RustElseBody) and bumps the validator
+// to require version === 2.  raise-body.ts consumes these types.
 //
 // All Rust toolchain concerns (cargo install, version pinning, performance
 // tuning) are gated behind this single seam.  Tests inject a mock interpreter
@@ -28,6 +28,17 @@
 //   native-addon build step in CI, keeping the Node side purely JS/TS.
 //   Daemonizing the Rust worker is a perf optimisation for a later slice once
 //   real corpus measurements show it is needed.
+//
+// @decision DEC-POLYGLOT-RUST-BODY-AST-V2-001 (WI-868-2B, 2026-06-02)
+// @title Version-2 wire types: discriminated-union body AST, single-version validator
+// @status accepted
+// @rationale
+//   Mirrors DEC-POLYGLOT-GO-BODY-RAISE-001 / go-ast-parser.ts v1->v2 bump.
+//   The TS validator flips from `version !== 1` to `version !== 2` with no
+//   dual-version fallback (Single-Source-of-Truth, Sacred Practice #12).
+//   Slice 1 and Slice 2 ship in lockstep within the same package; v1 is retired.
+//   RustExpr/RustStmt/RustBodyNode interfaces mirror the Go equivalents in naming
+//   and structure so the raise-body.ts pattern is transferable.
 
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
@@ -35,7 +46,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Thrown when the syn subprocess fails for any reason — Rust/cargo not on PATH,
+ * Thrown when the syn subprocess fails for any reason -- Rust/cargo not on PATH,
  * parse failure, non-zero exit, or stdout that cannot be parsed as JSON.
  * The .message carries an actionable remediation hint where possible
  * (e.g. "install the Rust toolchain from https://rustup.rs/").
@@ -65,11 +76,196 @@ export interface RustAstParam {
   readonly rustType: string;
 }
 
+// ---------------------------------------------------------------------------
+// Slice-2 structured body AST wire types
+//
+// These mirror the Rust-side serde-tagged-union output of
+// rust-ast-parse/src/main.rs.  Each node carries line/col from syn::Spanned
+// so raise-body.ts can populate SourceLocation for error reporting.
+// ---------------------------------------------------------------------------
+
+/** Source location embedded in every body AST node (1-based line and col). */
+export interface RustAstLocation {
+  readonly line: number;
+  readonly col: number;
+}
+
+/** Bare identifier: a single-segment path with no qualifier. */
+export interface RustAstIdentExpr extends RustAstLocation {
+  readonly type: "Ident";
+  readonly name: string;
+}
+
 /**
- * A single function declaration from the Rust AST envelope (version 1).
+ * Integer, float, string, or bool literal.
+ * kind is "INT" | "FLOAT" | "STR" | "BOOL".
+ * value is the decoded literal text (for STR: unescaped string; for INT/FLOAT:
+ * base-10 digits; for BOOL: "true" or "false").
+ */
+export interface RustAstLitExpr extends RustAstLocation {
+  readonly type: "Lit";
+  readonly kind: "INT" | "FLOAT" | "STR" | "BOOL";
+  readonly value: string;
+}
+
+/** Binary expression: x op y. */
+export interface RustAstBinaryExpr extends RustAstLocation {
+  readonly type: "BinaryExpr";
+  /** Operator string from syn::BinOp, e.g. "+", "-", "==", "&&". */
+  readonly op: string;
+  readonly x: RustAstExpr;
+  readonly y: RustAstExpr;
+}
+
+/**
+ * Unary expression: -x or !x.
+ * Only "-" and "!" are emitted; Deref (*x) is routed to UnsupportedExpr.
+ */
+export interface RustAstUnaryExpr extends RustAstLocation {
+  readonly type: "UnaryExpr";
+  readonly op: "-" | "!";
+  readonly x: RustAstExpr;
+}
+
+/** Function call: fun(args...). */
+export interface RustAstCallExpr extends RustAstLocation {
+  readonly type: "CallExpr";
+  readonly fun: RustAstExpr;
+  readonly args: readonly RustAstExpr[];
+}
+
+/** Method call: receiver.method(args...). */
+export interface RustAstMethodCallExpr extends RustAstLocation {
+  readonly type: "MethodCallExpr";
+  readonly receiver: RustAstExpr;
+  readonly method: string;
+  readonly args: readonly RustAstExpr[];
+}
+
+/**
+ * Field access: x.field (named fields only).
+ * Tuple-index field access (x.0, x.1) is routed to UnsupportedExpr.
+ */
+export interface RustAstFieldExpr extends RustAstLocation {
+  readonly type: "FieldExpr";
+  readonly x: RustAstExpr;
+  readonly field: string;
+}
+
+/** Index expression: x[index]. */
+export interface RustAstIndexExpr extends RustAstLocation {
+  readonly type: "IndexExpr";
+  readonly x: RustAstExpr;
+  readonly index: RustAstExpr;
+}
+
+/**
+ * If expression / if-else-if chain.
+ * orelse is:
+ *   null                     -- no else
+ *   { type: "IfExpr", ... }  -- else-if chain (another RustAstIfExpr)
+ *   { type: "BlockNode", body: RustAstBodyNode } -- plain else block
+ */
+export interface RustAstIfExpr extends RustAstLocation {
+  readonly type: "IfExpr";
+  readonly cond: RustAstExpr;
+  readonly thenBranch: RustAstBodyNode;
+  readonly orelse: RustAstIfExpr | RustAstElseBody | null;
+}
+
+/** A plain else block (not an else-if chain). */
+export interface RustAstElseBody {
+  readonly type: "BlockNode";
+  readonly body: RustAstBodyNode;
+}
+
+/** Explicit `return expr` expression. */
+export interface RustAstReturnExpr extends RustAstLocation {
+  readonly type: "ReturnExpr";
+  readonly value: RustAstExpr | null;
+}
+
+/**
+ * Deferred/unsupported expression.
+ * reason is the syn node kind string, e.g. "Expr::Match", "Expr::Closure (closure)".
+ * raise-body.ts maps the reason to the appropriate errors.ts taxonomy class.
+ */
+export interface RustAstUnsupportedExpr extends RustAstLocation {
+  readonly type: "UnsupportedExpr";
+  readonly reason: string;
+}
+
+/** Discriminated union of all expression node types in the v2 wire AST. */
+export type RustAstExpr =
+  | RustAstIdentExpr
+  | RustAstLitExpr
+  | RustAstBinaryExpr
+  | RustAstUnaryExpr
+  | RustAstCallExpr
+  | RustAstMethodCallExpr
+  | RustAstFieldExpr
+  | RustAstIndexExpr
+  | RustAstIfExpr
+  | RustAstReturnExpr
+  | RustAstUnsupportedExpr;
+
+/**
+ * let name = value;  (simple Pat::Ident bindings only).
+ * Complex patterns (tuple/struct destructuring) are routed to UnsupportedStmt.
+ */
+export interface RustAstLetStmt extends RustAstLocation {
+  readonly type: "LetStmt";
+  readonly name: string;
+  readonly value: RustAstExpr | null;
+}
+
+/**
+ * Expression used as a statement.
+ * isTail=true for the trailing block expression (no semicolon -> implicit return).
+ * raise-body.ts renders a tail ExprStmt as `return <expr>;` at function-body top level.
+ */
+export interface RustAstExprStmt extends RustAstLocation {
+  readonly type: "ExprStmt";
+  readonly x: RustAstExpr;
+  readonly isTail: boolean;
+}
+
+/** Explicit `return expr;` statement (unwrapped from Expr::Return for clean rendering). */
+export interface RustAstReturnStmt extends RustAstLocation {
+  readonly type: "ReturnStmt";
+  readonly value: RustAstExpr | null;
+}
+
+/**
+ * Deferred/unsupported statement.
+ * reason is the syn node kind, e.g. "Stmt::Item", "Stmt::Macro".
+ */
+export interface RustAstUnsupportedStmt extends RustAstLocation {
+  readonly type: "UnsupportedStmt";
+  readonly reason: string;
+}
+
+/** Discriminated union of all statement node types in the v2 wire AST. */
+export type RustAstStmt =
+  | RustAstLetStmt
+  | RustAstExprStmt
+  | RustAstReturnStmt
+  | RustAstUnsupportedStmt;
+
+/**
+ * Structured body AST for a single function: a list of statements.
+ * The final element may be an ExprStmt with isTail=true (implicit return).
+ */
+export interface RustAstBodyNode {
+  readonly stmts: readonly RustAstStmt[];
+}
+
+/**
+ * A single function declaration from the Rust AST envelope (version 2).
  *
  * This is the wire shape produced by rust-ast-parse/src/main.rs.
- * Slice 2 will add the structured body AST wire types.
+ * `body` carries the structured body AST; `bodySource` is retained for
+ * diagnostics only -- raise-body.ts consumes `body`, never `bodySource`.
  */
 export interface RustAstFunction {
   /** Function name as written in Rust source. */
@@ -84,18 +280,29 @@ export interface RustAstFunction {
    */
   readonly returnType: string;
   /**
-   * Verbatim function body source text (for diagnostic and future body raise).
+   * Verbatim function body source text (diagnostics only).
+   * raise-body.ts consumes the structured `body` field, not this string.
    * May be null if the function has no body (trait method declaration).
    */
   readonly bodySource: string | null;
+  /**
+   * Structured body AST emitted by rust-ast-parse/src/main.rs (slice 2).
+   * Null when the function has no block body (extern/trait method).
+   */
+  readonly body: RustAstBodyNode | null;
 }
 
 /**
  * Top-level shape of the JSON envelope emitted by rust-ast-parse/src/main.rs.
+ *
+ * @decision DEC-POLYGLOT-RUST-BODY-AST-V2-001 (WI-868-2B)
+ * Single-version validator: accepts ONLY version === 2.  No v1 fallback.
+ * A v1 envelope reaching this validator is a lockstep-violation bug that
+ * must fail loudly (Single-Source-of-Truth, DEC-POLYGLOT-RUST-BODY-AST-V2-001).
  */
 export interface RustAstParseResult {
-  /** Schema version of the envelope.  Slice 1 ships v=1. */
-  readonly version: 1;
+  /** Schema version of the envelope.  Slice 2 ships v=2. */
+  readonly version: 2;
   /** Crate / file name derived from the input (always "stdin.rs" for stdin). */
   readonly crateName: string;
   /** Top-level function declarations. */
@@ -103,7 +310,7 @@ export interface RustAstParseResult {
 }
 
 /**
- * Injectable subprocess constructor — defaults to `node:child_process.spawn`.
+ * Injectable subprocess constructor -- defaults to `node:child_process.spawn`.
  * Tests pass a fake that emits a known stdout/stderr/exit-code triple so the
  * suite does not require Rust/cargo to be installed.
  *
@@ -152,10 +359,7 @@ const DEFAULT_CARGO = "cargo";
 function defaultManifestPath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   // Built layout:  packages/shave-rust/dist/rust-ast-parser.js
-  //   dist/       → [1] packages/shave-rust/
-  //   dist/../..  → [2] packages/  (one more up)
-  // But rust-ast-parse/ is a sibling of dist/ inside shave-rust/, so:
-  //   dist/..     → packages/shave-rust/
+  //   dist/..     -> packages/shave-rust/
   return resolve(here, "..", "rust-ast-parse", "Cargo.toml");
 }
 
@@ -251,8 +455,7 @@ export async function parseRustSource(
     // stream.  Without this handler the event is unhandled and crashes the host
     // process.  The non-zero exit code is surfaced through the 'close' handler.
     child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EPIPE") return; // subprocess exited early — handled by exit-code path
-      // Non-EPIPE stdin errors: let the existing 'error' handler on `child` surface them.
+      if (err.code === "EPIPE") return;
     });
 
     child.stdin?.end(source, "utf-8");
@@ -262,14 +465,17 @@ export async function parseRustSource(
 /**
  * Lightweight runtime shape check.  Returns null if `value` matches
  * `RustAstParseResult`, else a descriptive error string.
+ *
+ * Single-version guard: accepts ONLY version === 2.
+ * A v1 envelope failing here is a lockstep bug (DEC-POLYGLOT-RUST-BODY-AST-V2-001).
  */
 function validateParseResult(value: unknown): string | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return "rust-ast-parse output: expected a non-null object";
   }
   const obj = value as Record<string, unknown>;
-  if (obj.version !== 1) {
-    return `rust-ast-parse output: schema version must be 1, got ${String(obj.version)}`;
+  if (obj.version !== 2) {
+    return `rust-ast-parse output: schema version must be 2, got ${String(obj.version)}`;
   }
   if (typeof obj.crateName !== "string") {
     return 'rust-ast-parse output: "crateName" must be a string';

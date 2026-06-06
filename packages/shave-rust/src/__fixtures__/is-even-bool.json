@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crateName": "stdin.rs",
   "functions": [
     {
@@ -12,7 +12,32 @@
         }
       ],
       "returnType": "bool",
-      "bodySource": "n % 2 == 0"
+      "bodySource": "n % 2 == 0",
+      "body": {
+        "stmts": [
+          {
+            "type": "ExprStmt",
+            "line": 1,
+            "col": 1,
+            "x": {
+              "type": "BinaryExpr",
+              "line": 1,
+              "col": 1,
+              "op": "==",
+              "x": {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 1,
+                "op": "%",
+                "x": { "type": "Ident", "line": 1, "col": 1, "name": "n" },
+                "y": { "type": "Lit", "line": 1, "col": 5, "kind": "INT", "value": "2" }
+              },
+              "y": { "type": "Lit", "line": 1, "col": 10, "kind": "INT", "value": "0" }
+            },
+            "isTail": true
+          }
+        ]
+      }
     }
   ]
 }

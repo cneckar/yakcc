@@ -18,6 +18,9 @@ function sig(overrides: Partial<FunctionSignature> = {}): FunctionSignature {
     returnType: "number",
     rustReturnType: "i32",
     bodySource: "a + b",
+    // Slice 2: default to null body (void-body placeholder path) for existing
+    // signature-only tests that don't care about the body raise output.
+    body: null,
     ...overrides,
   };
 }
@@ -30,9 +33,10 @@ describe("renderFunctionDeclaration", () => {
     expect(out).toContain(": number {");
   });
 
-  it("includes a body placeholder comment (slice 1)", () => {
-    const out = renderFunctionDeclaration(sig());
-    expect(out).toContain("// TODO: body raise (slice 2)");
+  it("uses void-body placeholder for null-body functions (extern/trait methods)", () => {
+    // body: null -> no block body -> emit `void 0;` placeholder
+    const out = renderFunctionDeclaration(sig({ body: null }));
+    expect(out).toContain("void 0;");
   });
 
   it("renders void return for a function with no return", () => {

@@ -24,7 +24,7 @@
 //   of each concern.
 
 import { InvalidIdentifierError, normalizeRustName } from "./name-normalize.js";
-import type { RustAstParseResult } from "./rust-ast-parser.js";
+import type { RustAstBodyNode, RustAstParseResult } from "./rust-ast-parser.js";
 import { UnsupportedTypeError, mapRustType } from "./type-map.js";
 
 export interface RaisedParam {
@@ -52,8 +52,13 @@ export interface FunctionSignature {
   readonly returnType: string;
   /** Raw Rust return type string (for diagnostics).  Empty string means `()`. */
   readonly rustReturnType: string;
-  /** Verbatim Rust body text (for slice 2 body raiser).  May be null. */
+  /** Verbatim Rust body text (for diagnostics).  May be null. */
   readonly bodySource: string | null;
+  /**
+   * Structured body AST (slice 2+).  Null for extern/trait method declarations.
+   * raise-function.ts consumes this field; bodySource is retained for diagnostics only.
+   */
+  readonly body: RustAstBodyNode | null;
 }
 
 /**
@@ -152,6 +157,7 @@ export function extractFunctionSignatures(envelope: RustAstParseResult): Functio
       returnType,
       rustReturnType,
       bodySource: fn.bodySource,
+      body: fn.body,
     };
   });
 }

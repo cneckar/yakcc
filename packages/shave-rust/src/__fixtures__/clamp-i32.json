@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crateName": "stdin.rs",
   "functions": [
     {
@@ -20,7 +20,79 @@
         }
       ],
       "returnType": "i32",
-      "bodySource": "if value < min_val { min_val } else if value > max_val { max_val } else { value }"
+      "bodySource": "if value < min_val { min_val } else if value > max_val { max_val } else { value }",
+      "body": {
+        "stmts": [
+          {
+            "type": "ExprStmt",
+            "line": 1,
+            "col": 1,
+            "x": {
+              "type": "IfExpr",
+              "line": 1,
+              "col": 1,
+              "cond": {
+                "type": "BinaryExpr",
+                "line": 1,
+                "col": 4,
+                "op": "<",
+                "x": { "type": "Ident", "line": 1, "col": 4, "name": "value" },
+                "y": { "type": "Ident", "line": 1, "col": 12, "name": "min_val" }
+              },
+              "thenBranch": {
+                "stmts": [
+                  {
+                    "type": "ExprStmt",
+                    "line": 1,
+                    "col": 22,
+                    "x": { "type": "Ident", "line": 1, "col": 22, "name": "min_val" },
+                    "isTail": true
+                  }
+                ]
+              },
+              "orelse": {
+                "type": "IfExpr",
+                "line": 1,
+                "col": 35,
+                "cond": {
+                  "type": "BinaryExpr",
+                  "line": 1,
+                  "col": 38,
+                  "op": ">",
+                  "x": { "type": "Ident", "line": 1, "col": 38, "name": "value" },
+                  "y": { "type": "Ident", "line": 1, "col": 46, "name": "max_val" }
+                },
+                "thenBranch": {
+                  "stmts": [
+                    {
+                      "type": "ExprStmt",
+                      "line": 1,
+                      "col": 56,
+                      "x": { "type": "Ident", "line": 1, "col": 56, "name": "max_val" },
+                      "isTail": true
+                    }
+                  ]
+                },
+                "orelse": {
+                  "type": "BlockNode",
+                  "body": {
+                    "stmts": [
+                      {
+                        "type": "ExprStmt",
+                        "line": 1,
+                        "col": 72,
+                        "x": { "type": "Ident", "line": 1, "col": 72, "name": "value" },
+                        "isTail": true
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "isTail": true
+          }
+        ]
+      }
     }
   ]
 }

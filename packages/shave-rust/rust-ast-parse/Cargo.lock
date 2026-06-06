@@ -36,6 +36,7 @@ dependencies = [
 name = "rust-ast-parse"
 version = "0.1.0"
 dependencies = [
+ "proc-macro2",
  "serde",
  "serde_json",
  "syn",

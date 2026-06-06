@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crateName": "stdin.rs",
   "functions": [
     {
@@ -12,7 +12,32 @@
         }
       ],
       "returnType": "i32",
-      "bodySource": "xs . iter () . sum ()"
+      "bodySource": "xs.iter().sum()",
+      "body": {
+        "stmts": [
+          {
+            "type": "ExprStmt",
+            "line": 1,
+            "col": 1,
+            "x": {
+              "type": "MethodCallExpr",
+              "line": 1,
+              "col": 1,
+              "receiver": {
+                "type": "MethodCallExpr",
+                "line": 1,
+                "col": 1,
+                "receiver": { "type": "Ident", "line": 1, "col": 1, "name": "xs" },
+                "method": "iter",
+                "args": []
+              },
+              "method": "sum",
+              "args": []
+            },
+            "isTail": true
+          }
+        ]
+      }
     }
   ]
 }

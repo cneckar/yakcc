@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// parse-fn-signature.test.ts -- unit tests for extractFunctionSignatures (WI-868 slice 1).
+// parse-fn-signature.test.ts -- unit tests for extractFunctionSignatures (WI-868 slice 1+2).
+// Updated to v2 envelope shape (WI-868-2B): version: 2, body: null on all fixtures.
+// The signature-extraction logic under test is unchanged; body is not consumed here.
 
 import { describe, expect, it } from "vitest";
 import { SignatureRaiseError, extractFunctionSignatures } from "./parse-fn-signature.js";
 import type { RustAstParseResult } from "./rust-ast-parser.js";
 
 function envelope(fns: RustAstParseResult["functions"]): RustAstParseResult {
-  return { version: 1, crateName: "stdin.rs", functions: fns };
+  return { version: 2, crateName: "stdin.rs", functions: fns };
 }
 
 describe("extractFunctionSignatures", () => {
@@ -23,6 +25,7 @@ describe("extractFunctionSignatures", () => {
           ],
           returnType: "i32",
           bodySource: "a + b",
+          body: null,
         },
       ]),
     );
@@ -48,6 +51,7 @@ describe("extractFunctionSignatures", () => {
           params: [{ name: "user_name", rustType: "String" }],
           returnType: "i32",
           bodySource: "0",
+          body: null,
         },
       ]),
     );
@@ -65,6 +69,7 @@ describe("extractFunctionSignatures", () => {
           params: [],
           returnType: "",
           bodySource: "",
+          body: null,
         },
       ]),
     );
@@ -81,6 +86,7 @@ describe("extractFunctionSignatures", () => {
           params: [],
           returnType: "()",
           bodySource: "",
+          body: null,
         },
       ]),
     );
@@ -99,6 +105,7 @@ describe("extractFunctionSignatures", () => {
           ],
           returnType: "i32",
           bodySource: "a + b",
+          body: null,
         },
       ]),
     );
@@ -115,6 +122,7 @@ describe("extractFunctionSignatures", () => {
           params: [{ name: "xs", rustType: "Vec<i32>" }],
           returnType: "i32",
           bodySource: "0",
+          body: null,
         },
       ]),
     );
@@ -130,6 +138,7 @@ describe("extractFunctionSignatures", () => {
           params: [{ name: "xs", rustType: "Vec<String>" }],
           returnType: "Option<String>",
           bodySource: "None",
+          body: null,
         },
       ]),
     );
@@ -151,6 +160,7 @@ describe("extractFunctionSignatures", () => {
             params: [{ name: "x", rustType: "HashMap<String, i32>" }],
             returnType: "i32",
             bodySource: "0",
+            body: null,
           },
         ]),
       ),
@@ -167,6 +177,7 @@ describe("extractFunctionSignatures", () => {
             params: [],
             returnType: "HashMap<String, i32>",
             bodySource: "todo!()",
+            body: null,
           },
         ]),
       ),
