@@ -238,6 +238,9 @@ importers:
       '@yakcc/shave-python':
         specifier: workspace:*
         version: link:../shave-python
+      '@yakcc/shave-rust':
+        specifier: workspace:*
+        version: link:../shave-rust
       '@yakcc/variance':
         specifier: workspace:*
         version: link:../variance

@@ -65,6 +65,7 @@
     "@yakcc/compile-python": "workspace:*",
     "@yakcc/compile": "workspace:*",
     "@yakcc/shave-python": "workspace:*",
+    "@yakcc/shave-rust": "workspace:*",
     "@yakcc/contracts": "workspace:*",
     "@yakcc/federation": "workspace:*",
     "@yakcc/hooks-base": "workspace:*",

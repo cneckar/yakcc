@@ -18,6 +18,7 @@
     { "path": "../hooks-claude-code" },
     { "path": "../seeds" },
     { "path": "../shave" },
-    { "path": "../shave-python" }
+    { "path": "../shave-python" },
+    { "path": "../shave-rust" }
   ]
 }

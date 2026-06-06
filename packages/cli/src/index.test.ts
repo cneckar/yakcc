@@ -229,12 +229,20 @@ describe("WI-877: shave polyglot dispatch (DEC-WI877-001)", () => {
     expect(out).toContain("python");
   });
 
-  it("shave --target rust exits 1 with #868 tracking pointer", async () => {
-    // --target rust short-circuits before opening a registry (DEC-WI877-005).
+  it("shave --target rust routes to shave-rust (file read error — no cargo needed)", async () => {
+    // --target rust now routes to runShaveRust (shave/raise is live, #868).
+    // We pass a nonexistent file so it short-circuits at readFileSync → exit 1 + "error:".
+    // The important assertion is that it does NOT emit a "#868 tracking pointer" (no longer stubbed).
     const logger = new CollectingLogger();
-    const code = await runCli(["shave", "--target", "rust", "foo.rs"], logger);
-    expect(code).toBe(1);
-    expect(logger.errLines.join("\n")).toContain("868");
+    const code = await runCli(
+      ["shave", "--target", "rust", "/nonexistent-path-that-cannot-exist.rs"],
+      logger,
+    );
+    expect(code).not.toBe(0);
+    // Must produce a structured error, NOT a stub tracking pointer.
+    expect(logger.errLines.join("\n")).toContain("error:");
+    // Must NOT emit the old stub "#868 not yet wired" message.
+    expect(logger.errLines.join("\n")).not.toContain("not yet wired");
   });
 
   it("shave --target go exits 1 with #870 tracking pointer", async () => {
@@ -274,11 +282,11 @@ describe("WI-877: compile polyglot dispatch (DEC-WI877-002)", () => {
     expect(logger.errLines.join("\n")).toContain("compile requires");
   });
 
-  it("compile --target rust exits 1 with #868 tracking pointer", async () => {
+  it("compile --target rust exits 1 with #869 tracking pointer (compile/lower tracked at #869)", async () => {
     const logger = new CollectingLogger();
     const code = await runCli(["compile", "a".repeat(64), "--target", "rust"], logger);
     expect(code).toBe(1);
-    expect(logger.errLines.join("\n")).toContain("868");
+    expect(logger.errLines.join("\n")).toContain("869");
   });
 
   it("compile --target go exits 1 with #870 tracking pointer", async () => {
@@ -324,11 +332,11 @@ describe("WI-877: roundtrip dispatch (DEC-WI877-003)", () => {
     expect(logger.errLines.join("\n")).toContain("877");
   });
 
-  it("roundtrip --target rust exits 2 with #868 pointer", async () => {
+  it("roundtrip --target rust exits 2 with #869 pointer (compile/lower tracked at #869)", async () => {
     const logger = new CollectingLogger();
     const code = await runCli(["roundtrip", "foo.rs", "--target", "rust"], logger);
     expect(code).toBe(2);
-    expect(logger.errLines.join("\n")).toContain("868");
+    expect(logger.errLines.join("\n")).toContain("869");
   });
 
   it("roundtrip --target go exits 2 with #870 pointer", async () => {

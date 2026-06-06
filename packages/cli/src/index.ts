@@ -173,16 +173,16 @@ COMMANDS
   shave <path> [--registry <p>]       Shave a source file into atoms (TS pipeline, default)
         [--offline]                   .py extension or --target python → Python pipeline (WI-877)
         [--target <ts|python|         Override language inference from file extension
-                  rust|go>]          rust/go: exits 1 with tracking-issue pointer (#868/#870)
-        [--out <path>]                Python target: stdout when omitted, file/dir with --out
-        [--function <name>]           Python target: process only one named function
+                  rust|go>]          rust: live (#868); go: exits 1 with pointer (#870)
+        [--out <path>]                Python/Rust target: stdout when omitted, file/dir with --out
+        [--function <name>]           Python/Rust target: process only one named function
         [--foreign-policy             TS target only: how to handle foreign-block deps
-              <allow|reject|tag>]     (ignored with warning for --target python)
+              <allow|reject|tag>]     (ignored with warning for --target python/rust)
   build [--registry <p>] [<dir>]      Materialize .yakcc/manifest.json atom references into .yakcc/atoms/
   compile <entry> [--registry <p>]   Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
                [--target <ts|python|  Language target (default: ts); python writes module.py
-                         rust|go>]    rust/go: exits 1 with tracking-issue pointer (#868/#870)
+                         rust|go>]    rust compile/lower: tracked at #869; go: #870
                [--function <name>]    Python target: compile one named function
   roundtrip <file>                   Chain shave → compile → diff; emit per-function status table
             [--target <ts|python|     Language target (auto-detected from extension)
