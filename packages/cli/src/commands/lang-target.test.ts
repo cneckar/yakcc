@@ -119,8 +119,8 @@ describe("lang-target — isSupportedTarget", () => {
 });
 
 describe("lang-target — TARGETS_TRACKED", () => {
-  it("TARGETS_TRACKED.rust === 868", () => {
-    expect(TARGETS_TRACKED.rust).toBe(868);
+  it("TARGETS_TRACKED.rust === 869 (compile/lower adapter; shave/raise is live at #868)", () => {
+    expect(TARGETS_TRACKED.rust).toBe(869);
   });
 
   it("TARGETS_TRACKED.go === 870", () => {

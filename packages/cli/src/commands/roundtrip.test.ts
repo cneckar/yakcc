@@ -274,13 +274,13 @@ describe("roundtrip — no args → exit 1 + usage", () => {
   });
 });
 
-describe("roundtrip — --target rust → exit 2 with #868 pointer", () => {
-  it("returns 2 and mentions #868", async () => {
+describe("roundtrip — --target rust → exit 2 with #869 pointer (compile/lower tracked at #869)", () => {
+  it("returns 2 and mentions #869", async () => {
     const file = fixture("foo.py");
     const logger = new CollectingLogger();
     const code = await roundtrip([file, "--target", "rust"], logger);
     expect(code).toBe(2);
-    expect(logger.errLines.join("\n")).toContain("868");
+    expect(logger.errLines.join("\n")).toContain("869");
   });
 });
 

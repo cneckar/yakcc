@@ -53,6 +53,7 @@ import { makeCommonsBinding } from "../lib/commons-submit.js";
 import { readRc } from "../lib/yakccrc.js";
 import { TARGETS_TRACKED, inferTarget } from "./lang-target.js";
 import { runShavePython } from "./shave-python.js";
+import { runShaveRust } from "./shave-rust.js";
 
 /** Valid values for --foreign-policy. */
 const VALID_FOREIGN_POLICIES: readonly ForeignPolicy[] = ["allow", "reject", "tag"];
@@ -126,7 +127,19 @@ export async function shave(argv: ReadonlyArray<string>, logger: Logger): Promis
       );
     }
 
-    if (target === "rust" || target === "go") {
+    if (target === "rust") {
+      return runShaveRust(
+        {
+          filePath: positional ?? "",
+          functionFilter: parsed.values.function as string | undefined,
+          out: parsed.values.out as string | undefined,
+          ignoredForeignPolicy: parsed.values["foreign-policy"] !== undefined,
+        },
+        logger,
+      );
+    }
+
+    if (target === "go") {
       const issue = TARGETS_TRACKED[target];
       logger.error(`error: --target ${target} is not yet wired; tracked at #${issue}`);
       return 1;

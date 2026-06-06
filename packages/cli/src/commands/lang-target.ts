@@ -3,16 +3,17 @@
 // lang-target.ts — single authority for file-extension → target-language inference.
 //
 // @decision DEC-WI877-005
-// @title Four-slot polyglot enum (ts | python | rust | go); rust/go stubbed with issue pointers
-// @status accepted (WI-877)
+// @title Four-slot polyglot enum (ts | python | rust | go); rust shave live; rust compile/roundtrip + go stubbed
+// @status updated (WI-868 slice 4)
 // @rationale
 //   All CLI verbs that perform language dispatch (shave, compile, roundtrip) must
 //   import from this module. No verb does its own `.endsWith(".py")` or --target
 //   string matching. This is the single-source authority for the polyglot enum.
-//   rust/go are registered but unimplemented in this MVP — each exits 1 with a
-//   tracking-issue pointer (#868 / #870). Slots open for future wiring without
-//   any CLI re-wiring beyond a new switch arm.
-//   Cross-reference: PLAN.md §4 / #877
+//   rust shave (raise) is now live via @yakcc/shave-rust (WI-868).
+//   rust compile/roundtrip (lower) is tracked at #869.
+//   go shave/compile/roundtrip is tracked at #870.
+//   Slots open for future wiring without any CLI re-wiring beyond a new switch arm.
+//   Cross-reference: PLAN.md §4 / #877 / #868 / #869
 //
 // @decision DEC-WI877-001 (partial)
 // @title Extension-driven language inference lives here, not in each verb
@@ -31,7 +32,8 @@ export type TargetLang = "ts" | "python" | "rust" | "go";
  * When a verb receives one of these targets it emits the pointer and exits 1.
  */
 export const TARGETS_TRACKED = {
-  rust: 868,
+  /** rust shave/raise is live (#868). TARGETS_TRACKED.rust now points to #869 (compile/lower). */
+  rust: 869,
   go: 870,
 } as const;
 
