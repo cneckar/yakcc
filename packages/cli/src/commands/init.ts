@@ -364,6 +364,24 @@ export interface InitOptions {
    * so the user's actual provider configuration applies.
    */
   embeddings?: import("@yakcc/contracts").EmbeddingProvider;
+  /**
+   * Injectable predicate for polyglot adapter detection (DEC-CLI-HERMETIC-INIT-001).
+   *
+   * When omitted, the real `isAdapterInstalled` function is used (require.resolve).
+   * Tests inject a deterministic stub to prevent hint self-suppression when the
+   * adapter packages happen to be resolvable from the linked workspace:
+   *
+   *   // Simulate not-installed → hint emits deterministically
+   *   isInstalled: () => false
+   *   // Simulate installed → hint is suppressed (tests the no-hint path)
+   *   isInstalled: () => true
+   *
+   * Production callers omit this; the real resolver is used by default.
+   * This seam is the only mechanism that makes polyglot-hint tests hermetic
+   * across local linked-workspace and CI environments where adapter packages
+   * have different resolvability.
+   */
+  isInstalled?: (marker: string) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -865,8 +883,11 @@ export async function init(
   //   Mirrors the IDE-hint pattern (DEC-CLI-INIT-NO-IDE-HINT-001): non-interactive,
   //   exits 0, no stdin, suppressible via --skip-polyglot-hints or YAKCC_POLYGLOT_HINTS=0,
   //   and self-suppressing when the adapter is already installed (require.resolve).
+  //   DEC-CLI-HERMETIC-INIT-001: the isAdapterInstalled check is injectable via
+  //   opts.isInstalled so tests can force deterministic hint emission regardless
+  //   of whether adapter packages happen to be resolvable in the local workspace.
   if (!skipPolyglotHints) {
-    emitPolyglotHints(targetDir, logger);
+    emitPolyglotHints(targetDir, logger, opts?.isInstalled);
   }
 
   return 0;
@@ -916,15 +937,25 @@ const POLYGLOT_ECOSYSTEMS: readonly PolyglotEcosystem[] = [
 /**
  * Scan `targetDir` for polyglot ecosystem markers and emit install hints to
  * the logger. Self-suppressing per-ecosystem when the adapter is already
- * resolvable via require.resolve.
+ * resolvable via the `installedCheck` predicate (defaults to `isAdapterInstalled`).
  *
  * Pure detection (no install, no stdin, no network).
+ *
+ * @param installedCheck - Injectable predicate for tests (DEC-CLI-HERMETIC-INIT-001).
+ *   When omitted, the real `isAdapterInstalled` (require.resolve) is used.
+ *   Tests inject `() => false` to force hint emission deterministically regardless
+ *   of whether adapter packages are resolvable in the local linked workspace.
  */
-function emitPolyglotHints(targetDir: string, logger: Logger): void {
+function emitPolyglotHints(
+  targetDir: string,
+  logger: Logger,
+  installedCheck?: (marker: string) => boolean,
+): void {
+  const checkInstalled = installedCheck ?? isAdapterInstalled;
   for (const eco of POLYGLOT_ECOSYSTEMS) {
     const matchedConfig = eco.configFiles.find((f) => existsSync(join(targetDir, f)));
     if (matchedConfig === undefined) continue;
-    if (isAdapterInstalled(eco.installedMarker)) continue;
+    if (checkInstalled(eco.installedMarker)) continue;
     logger.log("");
     logger.log(`  hint: ${eco.name} project detected (${matchedConfig})`);
     if (eco.notYetPublished) {
