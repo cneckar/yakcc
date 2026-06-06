@@ -185,6 +185,21 @@ export class ProofMarket {
   }
 
   /**
+   * Test-only: wrap an externally-managed Database instance. Used by
+   * retraction.test.ts to share one in-memory DB across helper functions
+   * while still going through the ProofMarket API surface. The provided DB
+   * must already have sqlite-vec loaded and migrations applied.
+   */
+  static fromDbForTest(db: Database.Database): ProofMarket {
+    return new ProofMarket(db);
+  }
+
+  /** Test-only: expose the underlying Database for shared-DB scenarios. */
+  getDbForTest(): Database.Database {
+    return this.db;
+  }
+
+  /**
    * Close the underlying SQLite connection. After close(), no other methods may be called.
    */
   close(): void {
