@@ -57,12 +57,14 @@ const RESULTS_DIR = join(BENCH_ROOT, "results");
 // CLI args
 // ---------------------------------------------------------------------------
 
+// parseArgs does not accept null as a string default (Node.js v22 TypeError).
+// Use empty string as the sentinel for "not set".
 const { values: args } = parseArgs({
   options: {
     "dry-run": { type: "boolean", default: false },
     smoke: { type: "boolean", default: false },
-    mode: { type: "string", default: null },
-    task: { type: "string", default: null },
+    mode: { type: "string", default: "" },
+    task: { type: "string", default: "" },
     "cap-usd": { type: "string", default: "30" },
   },
   strict: false,
@@ -70,9 +72,9 @@ const { values: args } = parseArgs({
 
 const DRY_RUN = args["dry-run"] || !process.env.ANTHROPIC_API_KEY;
 const SMOKE = args["smoke"] ?? false;
-const MODE_FILTER = args["mode"] ?? null;
-const TASK_FILTER = args["task"] ?? null;
-const CAP_USD = parseFloat(args["cap-usd"] ?? "30");
+const MODE_FILTER = args["mode"] || null;
+const TASK_FILTER = args["task"] || null;
+const CAP_USD = parseFloat(args["cap-usd"] || "30");
 
 // ---------------------------------------------------------------------------
 // Proof requirement modes (#1088 G.2)
