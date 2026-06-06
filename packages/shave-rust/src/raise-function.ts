@@ -24,6 +24,7 @@
 //   methods) use a void-body placeholder consistent with downstream tooling.
 
 import type { FunctionSignature } from "./parse-fn-signature.js";
+import { checkPurity } from "./purity-check.js";
 import { renderBody } from "./raise-body.js";
 
 /**
@@ -53,6 +54,11 @@ import { renderBody } from "./raise-body.js";
 export function renderFunctionDeclaration(signature: FunctionSignature, file = "stdin.rs"): string {
   const paramList = signature.params.map((p) => `${p.name}: ${p.tsType}`).join(", ");
   const returnAnnotation = signature.returnType;
+
+  // Slice 3: purity gate fires BEFORE body raise.
+  // Throws RustMutableBorrowError / RustIoSideEffectError / RustAmbiguousPurityError
+  // on impure functions so they never produce IR.
+  checkPurity(signature, file);
 
   // Slice 2: consume structured body AST when present.
   // null body = extern/trait method without a block — emit void-body placeholder.

@@ -652,3 +652,95 @@ describe("renderBody — compound round-trips (production sequence)", () => {
     expect(renderBody(b)).toBe("  return true;");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Taxonomy wiring tests (DEC-POLYGLOT-RUST-TAXONOMY-WIRED-001)
+//
+// Verify that UnsupportedExpr/UnsupportedStmt reason strings are routed to
+// the named taxonomy classes rather than the generic RustUnsupportedConstructError.
+// Each test uses the exact reason string emitted by rust-ast-parse/src/main.rs.
+// ---------------------------------------------------------------------------
+
+import {
+  RustAsyncError,
+  RustClosureCaptureError,
+  RustRawPointerError,
+  RustUnsafeError,
+} from "./errors.js";
+
+describe("taxonomy wiring — UnsupportedExpr reason → named error class", () => {
+  function unsupportedExpr(reason: string): RustAstExpr {
+    return { type: "UnsupportedExpr", reason, line: 5, col: 3 };
+  }
+
+  it("Expr::Unsafe → RustUnsafeError (instanceof CannotRaiseToIRError)", () => {
+    const expr = unsupportedExpr("Expr::Unsafe (unsafe block)");
+    expect(() => renderExpr(expr, FILE)).toThrow(RustUnsafeError);
+    try {
+      renderExpr(expr, FILE);
+    } catch (err) {
+      expect(err).toBeInstanceOf(CannotRaiseToIRError);
+    }
+  });
+
+  it("Expr::Await → RustAsyncError", () => {
+    expect(() => renderExpr(unsupportedExpr("Expr::Await (async/await)"), FILE)).toThrow(
+      RustAsyncError,
+    );
+  });
+
+  it("Expr::Async → RustAsyncError", () => {
+    expect(() => renderExpr(unsupportedExpr("Expr::Async (async block)"), FILE)).toThrow(
+      RustAsyncError,
+    );
+  });
+
+  it("Expr::Closure → RustClosureCaptureError", () => {
+    expect(() => renderExpr(unsupportedExpr("Expr::Closure (closure)"), FILE)).toThrow(
+      RustClosureCaptureError,
+    );
+  });
+
+  it("Expr::RawAddr → RustRawPointerError", () => {
+    expect(() => renderExpr(unsupportedExpr("Expr::RawAddr"), FILE)).toThrow(RustRawPointerError);
+  });
+
+  it("Expr::Unary (Deref ...) → RustRawPointerError", () => {
+    expect(() =>
+      renderExpr(unsupportedExpr("Expr::Unary (Deref or unsupported op)"), FILE),
+    ).toThrow(RustRawPointerError);
+  });
+
+  it("Expr::Match → RustUnsupportedConstructError (fallback)", () => {
+    // Expr::Match is not in the named taxonomy — falls through to generic error.
+    expect(() => renderExpr(unsupportedExpr("Expr::Match"), FILE)).toThrow(
+      RustUnsupportedConstructError,
+    );
+  });
+
+  it("Expr::Loop → RustUnsupportedConstructError (fallback)", () => {
+    expect(() => renderExpr(unsupportedExpr("Expr::Loop"), FILE)).toThrow(
+      RustUnsupportedConstructError,
+    );
+  });
+});
+
+describe("taxonomy wiring — UnsupportedStmt reason → named error class", () => {
+  function unsupportedStmt(reason: string): RustAstStmt {
+    return { type: "UnsupportedStmt", reason, line: 7, col: 1 };
+  }
+
+  it("Stmt::Item (unknown) → RustUnsupportedConstructError (fallback)", () => {
+    expect(() => renderStmt(unsupportedStmt("Stmt::Item"), "  ", FILE)).toThrow(
+      RustUnsupportedConstructError,
+    );
+  });
+
+  it("Expr::Unsafe in stmt → RustUnsafeError", () => {
+    // A stmt whose reason starts with Expr::Unsafe (possible when an unsafe block
+    // appears as a statement-level expression).
+    expect(() => renderStmt(unsupportedStmt("Expr::Unsafe (unsafe block)"), "  ", FILE)).toThrow(
+      RustUnsafeError,
+    );
+  });
+});

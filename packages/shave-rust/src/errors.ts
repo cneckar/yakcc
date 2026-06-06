@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// errors.ts -- Rust raise adapter error taxonomy (WI-868 slice 1).
+// errors.ts -- Rust raise adapter error taxonomy (WI-868 slice 1–3).
 //
 // This module defines the >=5 documented unsupported-construct error classes
 // for the Rust raise adapter.  Every class wraps `CannotRaiseToIRError` (or
@@ -8,12 +8,13 @@
 // parallel error hierarchy.
 //
 // Slice 1: stub taxonomy (class stubs with clear names + rationale).
-// Slice 2 will add body-raise integration and emit these errors from the body
-// traversal.
+// Slice 2: body-raise integration — errors emitted from raise-body.ts traversal.
+// Slice 3: purity gate — RustMutableBorrowError / RustIoSideEffectError wired
+//          into checkPurity (purity-check.ts) + @taxonomy summary block.
 //
-// @decision DEC-POLYGLOT-RUST-ERROR-TAXONOMY-001 (WI-868 slice 1)
+// @decision DEC-POLYGLOT-RUST-ERROR-TAXONOMY-001 (WI-868 slice 1–3)
 // @title Rust raise adapter errors wrap @yakcc/contracts, never shadow them
-// @status accepted (WI-868 slice 1)
+// @status accepted (WI-868 slice 1–3)
 // @rationale
 //   Mirrors DEC-POLYGLOT-GO-ERROR-TAXONOMY-001 exactly.  The IR envelope is
 //   held at strict-subset TS per DEC-POLYGLOT-IR-ENVELOPE-001.  For banned
@@ -25,6 +26,26 @@
 //   here is a thin named constructor that sets `construct` + `location` on
 //   the base class so callers can do `instanceof CannotRaiseToIRError` for
 //   any adapter error.
+//
+// ---------------------------------------------------------------------------
+// @taxonomy  Rust raise adapter — unsupported-construct error classes
+// ---------------------------------------------------------------------------
+//
+//  Class                      | Trigger construct              | Rust source example
+//  ---------------------------|--------------------------------|------------------------------------
+//  RustUnsafeError            | unsafe block or call           | unsafe { *ptr }
+//  RustAsyncError             | async fn / .await              | async fn f() -> i32 { fut.await }
+//  RustRawPointerError        | *const T / *mut T deref        | let v = unsafe { *raw_ptr };
+//  RustDynTraitError          | dyn Trait usage                | fn f(x: &dyn Trait) -> i32 { ... }
+//  RustClosureCaptureError    | closure capturing env variable | let n = 1; let c = |x| x + n;
+//  RustMutableBorrowError     | &mut T parameter               | fn bump(x: &mut i32) { *x += 1; }
+//  RustIoSideEffectError      | println!/print!/std::io etc.  | fn greet(s: &str) { println!("{}", s); }
+//  RustUnsupportedConstructError | construct outside raise surface | fn f() -> i32 { loop { break 1; } }
+//  RustAmbiguousPurityError   | purity cannot be inferred      | fn f() -> i32 { external_call() }
+//
+// All classes extend CannotRaiseToIRError (or AmbiguousPurityError) from
+// @yakcc/contracts so callers can use `instanceof CannotRaiseToIRError` uniformly.
+// ---------------------------------------------------------------------------
 
 import { AmbiguousPurityError, CannotRaiseToIRError, type SourceLocation } from "@yakcc/contracts";
 
@@ -41,6 +62,13 @@ export { AmbiguousPurityError, CannotRaiseToIRError, type SourceLocation };
  * `unsafe` operations (raw pointer dereference, FFI calls, etc.) cannot be
  * expressed in the TS-subset IR envelope.  The function must be refactored to
  * remove unsafe operations before it can be raised.
+ *
+ * Rust source that triggers this error:
+ * ```rust
+ * fn deref_raw(ptr: *const i32) -> i32 {
+ *     unsafe { *ptr }   // <-- unsafe block rejected
+ * }
+ * ```
  */
 export class RustUnsafeError extends CannotRaiseToIRError {
   constructor(location: SourceLocation) {
@@ -62,6 +90,13 @@ export class RustUnsafeError extends CannotRaiseToIRError {
  *
  * Note: TS has async/await too, but the IR currently targets only synchronous
  * pure-function atoms (DEC-POLYGLOT-IR-ENVELOPE-001).
+ *
+ * Rust source that triggers this error:
+ * ```rust
+ * async fn fetch_value(id: u32) -> String {
+ *     lookup(id).await   // <-- .await expression rejected
+ * }
+ * ```
  */
 export class RustAsyncError extends CannotRaiseToIRError {
   constructor(location: SourceLocation) {
@@ -80,6 +115,13 @@ export class RustAsyncError extends CannotRaiseToIRError {
  *
  * Raw pointer operations are `unsafe` by nature and have no TS equivalent.
  * Refactor to use safe Rust references or slices.
+ *
+ * Rust source that triggers this error:
+ * ```rust
+ * fn read_raw(ptr: *const i32) -> i32 {
+ *     unsafe { *ptr }   // <-- *const T dereference rejected
+ * }
+ * ```
  */
 export class RustRawPointerError extends CannotRaiseToIRError {
   constructor(location: SourceLocation) {
@@ -99,6 +141,13 @@ export class RustRawPointerError extends CannotRaiseToIRError {
  * Dynamic dispatch through trait objects may call impure code at runtime.
  * The function must be refactored to use static dispatch (generics/impl Trait)
  * or the purity must be explicitly annotated.
+ *
+ * Rust source that triggers this error:
+ * ```rust
+ * fn compute(op: &dyn Fn(i32) -> i32, x: i32) -> i32 {
+ *     op(x)   // <-- dyn Trait dynamic dispatch rejected
+ * }
+ * ```
  */
 export class RustDynTraitError extends CannotRaiseToIRError {
   constructor(location: SourceLocation) {
@@ -119,6 +168,13 @@ export class RustDynTraitError extends CannotRaiseToIRError {
  * function contract of the TS-subset IR.  Closures that capture only immutable
  * references to constants may be expressible; full capture analysis is deferred
  * to slice 3.
+ *
+ * Rust source that triggers this error:
+ * ```rust
+ * fn make_adder(n: i32) -> impl Fn(i32) -> i32 {
+ *     |x| x + n   // <-- closure captures `n` from outer scope — rejected
+ * }
+ * ```
  */
 export class RustClosureCaptureError extends CannotRaiseToIRError {
   constructor(location: SourceLocation) {
@@ -139,6 +195,13 @@ export class RustClosureCaptureError extends CannotRaiseToIRError {
  * This is NOT the same as a banned purity-boundary construct — the construct
  * may be pure in principle but is outside the current raise surface.  Later
  * slices will progressively expand the supported set.
+ *
+ * Rust source that triggers this error:
+ * ```rust
+ * fn first_positive(xs: &[i32]) -> i32 {
+ *     loop { break xs[0]; }   // <-- loop-with-break-value outside current surface
+ * }
+ * ```
  */
 export class RustUnsupportedConstructError extends CannotRaiseToIRError {
   constructor(construct: string, location: SourceLocation) {
@@ -148,6 +211,86 @@ export class RustUnsupportedConstructError extends CannotRaiseToIRError {
       `Cannot raise to IR: unsupported Rust construct '${construct}' at ${location.file}:${location.line}:${location.col}. This construct is outside the current raise surface; it may be supported in a future slice.`,
     );
     this.name = "RustUnsupportedConstructError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Purity-boundary errors (extend CannotRaiseToIRError; mutability + I/O)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a Rust function has a `&mut T` parameter.
+ *
+ * `&mut T` parameters signal in-place mutation of the caller's data.
+ * Mutable borrows cannot be modelled as pure TS-subset IR functions:
+ * the TS IR targets pure-function atoms with no observable side effects.
+ * Refactor to return a new value instead of mutating the argument.
+ *
+ * Example:
+ *   // Rejected — mutates caller's binding:
+ *   fn increment(x: &mut i32) { *x += 1; }
+ *
+ *   // Accepted — returns new value:
+ *   fn incremented(x: i32) -> i32 { x + 1 }
+ *
+ * @decision DEC-POLYGLOT-RUST-PURITY-001 (WI-868 slice 3)
+ * @title RustMutableBorrowError rejects &mut T params before IR raise
+ * @status accepted (WI-868 slice 3)
+ * @rationale
+ *   &mut T is the primary impurity signal for Rust function signatures:
+ *   any fn that takes a mutable reference is observable side-effecting from
+ *   the caller's perspective.  Rejecting at signature inspection (before body
+ *   raise) gives a clear, early error with the param name.  The class extends
+ *   CannotRaiseToIRError so callers can use instanceof CannotRaiseToIRError
+ *   uniformly across all adapter errors.  Interior mutability (Cell/RefCell)
+ *   and static mut are deferred — they require body analysis and are rare in
+ *   the pure-function corpus.
+ */
+export class RustMutableBorrowError extends CannotRaiseToIRError {
+  constructor(
+    /** Name of the parameter that carries the mutable borrow. */
+    readonly paramName: string,
+    /** Raw Rust type string, e.g. "&mut i32". */
+    readonly rustType: string,
+    location: SourceLocation,
+  ) {
+    super(
+      `&mut param '${paramName}'`,
+      location,
+      `Cannot raise to IR: parameter '${paramName}' has type '${rustType}' (mutable borrow) at ${location.file}:${location.line}:${location.col}. Use an immutable reference or return a new value instead of mutating.`,
+    );
+    this.name = "RustMutableBorrowError";
+  }
+}
+
+/**
+ * Thrown when a Rust function body contains a known I/O macro invocation
+ * (println!, print!, eprintln!, eprint!) or a call to a known I/O function
+ * (std::fs, std::io, std::net, std::process::exit).
+ *
+ * These constructs perform observable side effects (stdout/stderr/filesystem/
+ * network) that have no TS-subset IR equivalent.  Refactor the function to
+ * return a value rather than printing/writing directly.
+ *
+ * Example:
+ *   // Rejected — I/O side effect:
+ *   fn greet(name: &str) { println!("Hello, {}!", name); }
+ *
+ *   // Accepted — returns the string:
+ *   fn greet(name: &str) -> String { format!("Hello, {}!", name) }
+ */
+export class RustIoSideEffectError extends CannotRaiseToIRError {
+  constructor(
+    /** The offending call target name, e.g. "println!" or "std::fs::write". */
+    readonly callTarget: string,
+    location: SourceLocation,
+  ) {
+    super(
+      `I/O side effect '${callTarget}'`,
+      location,
+      `Cannot raise to IR: I/O side effect '${callTarget}' at ${location.file}:${location.line}:${location.col}. Pure functions must not perform I/O; return a value instead.`,
+    );
+    this.name = "RustIoSideEffectError";
   }
 }
 

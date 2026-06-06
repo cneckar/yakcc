@@ -1334,6 +1334,201 @@ write this manifest to runtime via
 - Package typecheck: `pnpm --filter @yakcc/shave-rust typecheck`.
 - Real-toolchain (gated, `polyglot-rust.yml` / local): `YAKCC_RUST=1 pnpm --filter @yakcc/shave-rust test` (or cargo-availability probe).
 
+#### Slice 3 — purity inference (`purity-check.ts`) + wired error taxonomy + taxonomy doc (DETAILED)
+
+Status: **planning (2026-06-06).** Read-only planner pass on worktree
+`feature/868-shave-rust-s3` @ `9c0573e` (Slices 1+2 merged on `main`). Workflow
+`868-shave-rust`, goal `g-868-rust`, work item `wi-868-s3`. This is the purity
+half originally roadmapped under "Slice 2 — purity inference + error taxonomy";
+the body raiser shipped as the detailed Slice 2, so purity is the next real
+slice. The Slice-1 `errors.ts` already defines 7 taxonomy classes; the gap is
+(a) a purity gate that does not yet exist, and (b) ensuring ≥5 classes are
+DOCUMENTED-with-examples and WIRED (raised on the right input).
+
+**Problem (challenged):** Today `type-map.ts` SILENTLY flattens `&mut T → T`
+(verified: `mapRustType("&mut i32") === "number"`, `type-map.test.ts:71`). A
+`pub fn push_one(v: &mut Vec<u8>, x: u8)` raises cleanly to a pure-looking TS
+function — a **silent mis-raise of a mutable borrow**. That is the exact bug
+#868's purity line ("`&` immut params only, no `&mut`, no I/O, no globals")
+exists to close. The root problem is not "add a feature" — it is "stop emitting
+a pure atom for an impure function." So the purity gate must reject BEFORE any
+IR text is produced (pre-render, mirroring shave-python's pre-mapping
+`checkPurity`).
+
+**Template (authority):** `packages/shave-python/src/purity-check.ts` +
+`purity-check.test.ts` + the wiring in `shave-python/src/raise-function.ts`
+(`raiseFunctionWith…` calls `checkModuleImports` then per-function purity BEFORE
+mapping). shave-go has NO purity-check — Python is the sole template. Mirror its
+shape: a static reject-list over the EXISTING wire envelope (no new subprocess),
+throwing a typed `@yakcc/contracts` error on the first violation.
+
+**State-Authority Map (Slice 3 additions to the initiative map above):**
+
+| State domain | Canonical authority | Slice-3 relationship |
+|---|---|---|
+| Function purity verdict | NEW: `packages/shave-rust/src/purity-check.ts` (`checkRustFunctionPurity`) | shave-rust **owns** this. The verdict gate runs in `raise-function.ts` BEFORE `renderBody`. Mirrors shave-python `checkPurity`/`checkFunctionPurity`. No purity logic may live in `raise-body.ts` or `parse-fn-signature.ts` — single owner. |
+| Param mutability / by-ref signal | EXISTING: `RustAstParam.rustType` string (`"&mut T"`, `"&'a mut T"`, `"&T"`) emitted by `main.rs` | **Consumed as-is.** `&mut` is detectable by string-prefix inspection of `rustType` (the same shape `type-map.ts:stripRefPrefix` already parses). **No `main.rs` change needed for param mutation.** |
+| I/O macro signal | EXISTING (lossy): `println!`/`write!`/etc. arrive as `UnsupportedExpr{reason:"Expr::Macro (macro invocation)"}` | The macro NAME is NOT on the wire today (generic reason string). Decision DEC-POLYGLOT-RUST-PURITY-001 below: keep MVP I/O detection on the **known-impure free-function/method call set** (`Ident`/`MethodCall` targets) that the wire DOES carry; generic macros already reject via `RustUnsupportedConstructError` (correct rejection, coarse class). Emitting the macro path for fine-grained I/O taxonomy is a deferred parser extension (3A), only taken if the Evaluation Contract's I/O fixture demands the specific class. |
+| `static` / global-read signal | NOT on the wire: a `static` read is an `Ident{name}`, indistinguishable from a local; `main.rs` parses only `Item::Fn` (no `Item::Static`/`Item::Const`/`Item::Impl`) | **Conservative deferral, documented.** Arbitrary static reads cannot be reliably detected from the current envelope. MVP uses a known-impure-call reject-list (the calls that read/mutate globals are themselves impure calls) and documents static-read detection as deferred — a false-NEGATIVE here is acceptable ONLY because the body raiser still rejects most global-bearing constructs, but the RISKS section flags it explicitly. |
+| `&mut self` receiver | DROPPED: `main.rs` `FnArg::Receiver(_) => None`; and only `Item::Fn` is walked (no impl methods) | **Currently unreachable** — a free `fn` has no `self` receiver, and impl methods never enter the pipeline. Gating `&mut self` is forward-looking. Decision: defer receiver-kind emission; document the deferral. When impl-method support lands (post-MVP), `main.rs` emits a `receiver: "none"|"ref"|"refMut"|"value"` field and purity-check rejects `refMut`. |
+
+**Parser-extension verdict (the key Slice-3 question):** For the MVP impurity
+set (`&mut` params, known-I/O calls, conservative globals), **the existing v2
+envelope is sufficient — `main.rs` and the wire types need NO change.** The
+`&mut` signal is in `rustType`; I/O calls are in `CallExpr`/`MethodCallExpr`
+targets. Sub-slice 3A (parser purity-signal extension) is therefore **OPTIONAL
+and gated**: it is only taken if the Evaluation Contract's I/O-specific fixture
+proves a generic-`UnsupportedExpr` rejection is insufficient to satisfy "raise
+the RIGHT typed error." If 3A is taken, it is an ADDITIVE field bump (envelope
+`version: 2 → 3`, single-version validator, NO dual-version — mirror
+DEC-POLYGLOT-RUST-BODY-AST-V2-001). Recommended: **defer 3A**; start with the
+string/call-target reject-list, and only bump the envelope if a fixture forces it.
+
+**MVP purity scope (frozen):**
+- IN: `&mut`/`&'a mut` param (mutation) → `RustAmbiguousPurityError`? **No** —
+  `&mut` is a definite mutation, not ambiguous → `CannotRaiseToIRError` via a
+  named class. DEC below adds **`RustMutableBorrowError extends CannotRaiseToIRError`**
+  (8th class) so the reject reason is unambiguous (not folded into the generic
+  unsupported-construct class). This is the construct #868 names explicitly.
+- IN: known-I/O/side-effecting free-fn + method calls (a conservative reject-set,
+  e.g. `print`/`println`/`eprintln`/`read`/`write`/`spawn` method names and the
+  std-io/fs/net call idioms the wire carries) → impure → existing
+  `RustUnsupportedConstructError` or a new dedicated reason. MVP keeps the set
+  SMALL and conservative.
+- IN: calls/methods whose purity cannot be decided statically (opaque external
+  fn, trait method) → `RustAmbiguousPurityError` (raise rather than wrongly
+  raise-as-pure) — the hold-the-line stance.
+- DEFERRED (documented, conservative — each raises rather than mis-raises):
+  arbitrary `static`/global reads (no wire signal), interior mutability
+  (`Cell`/`RefCell`/`Mutex` — detectable only by type-name heuristic, deferred to
+  avoid false-positives on pure uses), `&mut self` receivers (unreachable until
+  impl-method support), deep alias/escape analysis.
+
+**Error-taxonomy wiring audit (current state, verified):**
+- `errors.ts` defines 7 classes: `RustUnsafeError`, `RustAsyncError`,
+  `RustRawPointerError`, `RustDynTraitError`, `RustClosureCaptureError`,
+  `RustUnsupportedConstructError`, `RustAmbiguousPurityError`. Only
+  `RustUnsupportedConstructError` is WIRED today (thrown by `raise-body.ts` for
+  every `UnsupportedExpr`/`UnsupportedStmt`). The other named classes exist but
+  `raise-body.ts` does NOT map specific `reason` strings to them yet (it throws
+  the generic `RustUnsupportedConstructError(reason)` for `unsafe`/`async`/
+  `closure`/etc.). So #868's "≥5 classes WIRED with examples" is **not yet met**
+  — only 1 class is reachable on a real input.
+- Slice 3 must wire ≥5 by adding a **reason→class map** in `raise-body.ts` (or a
+  thin dispatcher): `"Expr::Unsafe (unsafe block)" → RustUnsafeError`,
+  `"Expr::Await (async/await)"`/`"Expr::Async (async block)" → RustAsyncError`,
+  `"Expr::Closure (closure)" → RustClosureCaptureError`, raw-pointer/`RawAddr`/
+  Deref → `RustRawPointerError`, `dyn`-trait signal → `RustDynTraitError`. Plus
+  the purity gate raises `RustMutableBorrowError` + `RustAmbiguousPurityError`.
+  That makes ≥5 distinct classes reachable on real inputs, each with a fixture.
+- **Taxonomy doc location decision:** shave-go/python do NOT ship a standalone
+  taxonomy markdown (only shave-python has a package `README.md`). Mirror that:
+  document the taxonomy as a structured `@taxonomy` doc-comment block at the top
+  of `errors.ts` — one entry per class with a minimal Rust example + the
+  triggering construct — and cross-link it from `index.ts`. This keeps "code is
+  truth": the doc lives beside the classes it describes. (No separate `.md` so it
+  cannot drift from the classes.)
+
+**Ordered edit list (sub-sliced small to bound dispatch length — MEMORY: >30min
+implementer dispatches lose their final summary; keep each WI tight):**
+
+| WI | Title | Deliverable | Deps | Wt | Gate | #868 acceptance mapped |
+|---|---|---|---|---|---|---|
+| WI-868-3A | (OPTIONAL/GATED) parser purity signals | Only if 3B proves the wire is insufficient for a required I/O fixture: extend `main.rs` to emit the macro path on `Expr::Macro` (and/or a `receiver` kind), bump envelope `version: 2 → 3` (single-version validator), update `rust-ast-parser.ts` wire types + `rust-ast-parser.test.ts` mocks. **Default: SKIP** — start from the existing v2 signals. | — | M | review | (enabler for purity I/O class) |
+| WI-868-3B | `purity-check.ts` + tests | New `purity-check.ts` mirroring shave-python: `checkRustFunctionPurity(signature)` (and/or envelope-level entry) — inspect each `RaisedParam.rustType` for `&mut`/`&'a mut` prefix → throw `RustMutableBorrowError`; walk the body wire AST for known-impure `CallExpr`/`MethodCallExpr` targets → impure/ambiguous; pass `&T`/`&`-immut and value params. `purity-check.test.ts` (pure-Node, synthetic v2 nodes): a `&mut`-param fn REJECTS with the right class; a pure `&T`/value fn PASSES; an ambiguous external call → `RustAmbiguousPurityError`. | (WI-868-3A if taken) | L | review | "purity (`&` immut only, no `&mut`, no I/O, no globals)" |
+| WI-868-3C | wire purity gate + taxonomy classes into pipeline | In `raise-function.ts`: call `checkRustFunctionPurity` BEFORE `renderBody` (pre-render gate; on impure → throw the typed error, no IR emitted). In `raise-body.ts` (or a small `reason-to-error.ts`): add the reason→class map so `unsafe`/`async`/`closure`/raw-pointer/`dyn` each throw their dedicated class (≥5 wired). Add `RustMutableBorrowError` to `errors.ts` (extends `CannotRaiseToIRError`) + export from `index.ts`. Update `raise-function.test.ts`. | WI-868-3B | L | review | "Error taxonomy ≥5 classes WIRED + raised on right input" |
+| WI-868-3D | taxonomy doc + acceptance fixtures | Add the `@taxonomy` doc-comment block to `errors.ts` (≥5 classes, each: minimal Rust example + triggering construct) + cross-link from `index.ts`. Add `__fixtures__/*.json` reject envelopes: `mut-borrow-param` (→ `RustMutableBorrowError`), `unsafe-block`, `async-fn`, `closure-capture`, an ambiguous external call (→ `RustAmbiguousPurityError`), plus a `&T`-immut PASS fixture. Extend `acceptance.test.ts` to assert each reject throws its exact class and the immut fixture raises clean. | WI-868-3C | M | review | "≥5 classes documented WITH EXAMPLES"; round-trip reject corpus |
+| WI-868-3E | (if 3A taken) real-cargo e2e purity case | Add one `YAKCC_RUST_E2E`-gated `e2e.test.ts` case: real cargo parses a `&mut`-param fn; assert the pipeline throws `RustMutableBorrowError`. Skipped in pure-Node `pr-ci.yml`; runs in `polyglot-rust.yml`. **Skip if 3A skipped and the existing e2e suite stays green.** | WI-868-3C | S | review | real-path purity proof |
+
+#### Slice 3 — Evaluation Contract (guardian-bound; applies to every WI in Slice 3)
+
+- **Required tests (pure-Node, MUST pass in default `pnpm --filter @yakcc/shave-rust test`, ZERO real cargo):**
+  - `purity-check.test.ts`: a `&mut`/`&'a mut` param fn throws `RustMutableBorrowError` (instanceof `CannotRaiseToIRError`); a `&T`-immut param fn AND a value-param fn PASS the gate; an opaque external call → `RustAmbiguousPurityError` (instanceof `AmbiguousPurityError`).
+  - `raise-function.test.ts`: the purity gate runs BEFORE `renderBody` — an impure fn produces NO IR text (the throw precedes any render); a pure fn renders unchanged from Slice 2 (no regression).
+  - `acceptance.test.ts`: ≥5 distinct taxonomy classes are each raised by a dedicated reject fixture (`RustMutableBorrowError`, `RustUnsafeError`, `RustAsyncError`, `RustClosureCaptureError`, `RustAmbiguousPurityError` at minimum), AND the existing Slice-1/2 success fixtures still raise byte-identical IR text (no regression).
+  - The full existing shave-rust suite stays green (no Slice-2 body/e2e assertion regresses).
+- **Required real-path checks:** the gated real-cargo `e2e.test.ts` suite stays green under `YAKCC_RUST_E2E=1` in `polyglot-rust.yml`. If WI-868-3E is taken, the real binary must throw `RustMutableBorrowError` for a `&mut`-param source.
+- **Required authority invariants:**
+  - shave-rust purity-check throws ONLY `@yakcc/contracts`-derived classes (via `errors.ts` wrappers); it defines NO parallel error base. `RustMutableBorrowError extends CannotRaiseToIRError`; ambiguity uses `AmbiguousPurityError`. (DEC-POLYGLOT-RUST-ERROR-TAXONOMY-001.)
+  - The purity verdict has ONE owner: `purity-check.ts`. No purity decision logic in `raise-body.ts`, `parse-fn-signature.ts`, or `type-map.ts`. `type-map.ts` continues to flatten `&mut T → T` for the TYPE string (its job), but the purity GATE — owned by `purity-check.ts` — rejects the function before that flattened type is ever rendered. (Single-Source-of-Truth.)
+  - If the envelope is bumped (3A), the validator is single-version (`version: 3` only); NO dual v2/v3 acceptance (DEC-POLYGLOT-RUST-BODY-AST-V2-001 pattern).
+  - `lang-target.ts`, `shave.ts`, `roundtrip.ts`, `init.ts` UNMODIFIED (unstub is Slice 4); `TARGETS_TRACKED.rust` still points at #868.
+- **Required integration points:**
+  - `raise-function.ts` is the single insertion point for the pre-render gate (matches shave-python's `raiseFunctionWith…` ordering). The reviewer confirms the gate precedes `renderBody`.
+  - `index.ts` re-exports `checkRustFunctionPurity` + `RustMutableBorrowError` so external callers (Slice 4 CLI) get a stable surface.
+- **Forbidden shortcuts:**
+  - NO silent pass for `&mut` (the bug being closed) — `type-map.ts` flattening must NOT be the only handling; the gate MUST reject.
+  - NO dual-version envelope if 3A is taken.
+  - NO importing from `@yakcc/shave-go`/`@yakcc/shave-python` (forbidden scope) — purity-check is ported by reading, not by cross-package import.
+  - NO standalone taxonomy `.md` that can drift — the doc lives in `errors.ts` beside the classes.
+  - NO `packages/contracts/**` edit — consume the existing `CannotRaiseToIRError`/`AmbiguousPurityError`.
+- **Ready-for-guardian definition:** all Slice-3 WIs (3B/3C/3D, plus 3A/3E only if taken) merged into the branch; `pnpm --filter @yakcc/shave-rust test` green with ZERO real-cargo execution and the purity/taxonomy cases passing; `pnpm -r build` + `pnpm lint` + `pnpm typecheck` (FULL workspace — composite `tsc` is the CI authority, MEMORY) all green; ≥5 taxonomy classes documented-with-examples in `errors.ts` AND reachable via a reject fixture; the reviewer has pasted the raw `pnpm --filter @yakcc/shave-rust test` output showing the purity reject cases and confirmed the four authority invariants. Reviewer emits `REVIEW_VERDICT=ready_for_guardian` (and explicitly `cc-policy evaluation set ready_for_guardian` per MEMORY — Agent-tool chains do not auto-project).
+
+#### Slice 3 — Scope Manifest (JSON; triad keys only — scope-sync accepts this)
+
+Authoritative file: `tmp/868-slice3-scope.json` in the worktree. Reproduced here:
+
+```json
+{
+  "allowed_paths": [
+    "packages/shave-rust/*",
+    "packages/shave-rust/**/*",
+    "packages/shave-rust/src/*",
+    "packages/shave-rust/src/**/*",
+    "packages/shave-rust/src/__fixtures__/*",
+    "packages/shave-rust/src/__fixtures__/**/*",
+    "packages/shave-rust/rust-ast-parse/*",
+    "packages/shave-rust/rust-ast-parse/**/*",
+    "packages/shave-rust/rust-ast-parse/src/*",
+    "packages/shave-rust/rust-ast-parse/src/**/*",
+    ".github/workflows/polyglot-rust.yml"
+  ],
+  "required_paths": [
+    "packages/shave-rust/src/purity-check.ts",
+    "packages/shave-rust/src/purity-check.test.ts",
+    "packages/shave-rust/src/raise-function.ts",
+    "packages/shave-rust/src/raise-function.test.ts",
+    "packages/shave-rust/src/errors.ts",
+    "packages/shave-rust/src/index.ts",
+    "packages/shave-rust/src/acceptance.test.ts"
+  ],
+  "forbidden_paths": [
+    "packages/contracts/*",
+    "packages/contracts/**/*",
+    "packages/cli/*",
+    "packages/cli/**/*",
+    "packages/shave-go/*",
+    "packages/shave-go/**/*",
+    "packages/shave-python/*",
+    "packages/shave-python/**/*",
+    ".github/workflows/pr-ci.yml",
+    ".github/workflows/self-shave.yml",
+    "pnpm-workspace.yaml",
+    "tsconfig.base.json",
+    "docs/archive/developer/MASTER_PLAN.md"
+  ],
+  "expected_state_authorities_touched": [
+    "Rust AST wire schema (packages/shave-rust/rust-ast-parse/src/main.rs + rust-ast-parser.ts wire types) — purity-signal fields are additive; envelope version bumped 2->3 only if main.rs gains fields",
+    "Polyglot IR error/location surface (@yakcc/contracts polyglot-errors.ts) — CONSUMED ONLY via packages/shave-rust/src/errors.ts; no parallel hierarchy",
+    "Per-language adapter CI (DEC-POLYGLOT-CI-OPTIONAL-001) — polyglot-rust.yml additive edits only"
+  ]
+}
+```
+
+Note (fnmatch companion globs — MEMORY): top-level files in
+`packages/shave-rust/src/` and `rust-ast-parse/src/` need BOTH the `*` and the
+`**/*` glob (fnmatch `**` does not match the zero-segment case). Before
+dispatching the implementer, write this manifest to runtime via
+`cc-policy workflow scope-sync 868-shave-rust --work-item-id wi-868-s3 --scope-file tmp/868-slice3-scope.json`.
+
+**Slice 3 — RISKS:**
+- **Purity false-NEGATIVE is worse than false-POSITIVE (HIGH→mitigated):** a missed impurity emits a pure-looking atom that is WRONG (the `&mut` silent-flatten bug). Mitigation: the gate is conservative — anything undecidable (opaque calls, deferred static/interior-mutability cases) raises `RustAmbiguousPurityError` rather than passing. The Evaluation Contract requires a PASS fixture for `&T`-immut/value AND reject fixtures for the impure cases, so both directions are pinned. We accept some false-POSITIVES (a genuinely-pure fn that uses an undetectable-as-pure call gets rejected) as the safe failure mode.
+- **`&mut` signal lives in a type STRING, not a structured flag (MEDIUM):** `purity-check.ts` parses the `&mut`/`&'a mut` prefix from `rustType` text. Mitigation: reuse the exact prefix logic `type-map.ts:stripRefPrefix` already uses (lifetime then `mut `), and unit-test `&mut T`, `&'a mut T`, `& mut T` (syn normalizes to `&mut T`), and the non-mut `&T`/`&'a T` PASS cases. A future 3A field bump can replace the string-parse with a structured `isMut` flag if it proves brittle.
+- **I/O-macro detection completeness (MEDIUM):** `println!`/`write!` arrive as generic `UnsupportedExpr` (macro name not on the wire), so a "specific I/O class" is not achievable without 3A. Mitigation: MVP relies on (a) the body raiser already rejecting all macros (coarse but correct — no impure macro raises), and (b) the call-target reject-set for non-macro I/O. The taxonomy doc states this boundary honestly; 3A is the gated escape hatch only if a fixture demands the fine-grained class.
+- **`static`/global reads undetectable from the current envelope (MEDIUM, documented):** a bare `static` read is an `Ident`. Mitigation: documented conservative deferral; most global-bearing real functions also use an impure call or `unsafe` (for `static mut`) that the gate/raiser DOES catch. The RISKS + taxonomy doc state plainly that pure-looking reads of an immutable `static` are NOT rejected in the MVP — a known, bounded gap, not a silent one.
+- **Envelope version bump back-compat if 3A taken (LOW, decided):** single-version validator only (`version: 3`), NO dual v2/v3 path (Sacred Practice #12, mirrors DEC-POLYGLOT-RUST-BODY-AST-V2-001). Default is to SKIP 3A and keep v2.
+- **Full-workspace build masking (MEDIUM — MEMORY):** scoped vitest/typecheck can pass while `pnpm -r build` (composite `tsc`, the CI authority) goes red on a missing `workspace:*` dep or tsconfig reference. Mitigation: the Evaluation Contract requires FULL `pnpm -r build` + `pnpm lint` + `pnpm typecheck` green, and biome-clean new `.ts`/`.json` (no `!` non-null, no bare `then` object keys) before any landing.
+
 ### Initiative: #1074 — Benchmark-honest website + live docs (B4-v5 economics)
 
 Status: **planning (2026-06-01).** Read-only planner pass on worktree
@@ -3561,3 +3756,5 @@ PLAN_VERDICT placeholder — see trailer at end of orchestrator response.
 | DEC-CLI-STATS-TIER-2-001 | **WI-CLI-STATS-TIER-2 / #768 (planning 2026-05-29).** `yakcc stats` ships Tier-2 atom-reuse headline metrics + Tier-3 LoC-saved fold-in via a single additive top-level `--json` key (`atoms`) and a sibling `ATOM REUSE` block in the human-readable overview. Tier-1 schema (`version`, `summary`, `outcomeBreakdown`, `perToolBreakdown`, `matchQuality`, `sessions`) and human output are unchanged byte-for-byte when no Phase-2 substituted events exist (additive-forward invariant). **Tier-3 (LoC-saved) folded in** because it is mechanically trivial once distinct atom hashes are resolved to `BlockTripletRow.implSource` via `getBlock()`: total LoC-saved = `Σ (lines(implSource) × hitCount)`. **Tier-4 (registry coverage) explicitly deferred** to a future slice — non-trivial pagination over `Registry.listCatalogPage()`. **Unblock confirmed:** WI-831 (PR 2026-05-28) wires `hook-intercept.ts` to `executeRegistryQueryWithSubstitution`, which calls `captureTelemetry` with the **full** `BlockMerkleRoot` in `substitutedAtomHash` (not the `[:8]` prefix that the stale JSDoc on `telemetry.ts:74` implies; the planner traced `index.ts:648` → `substitute.ts:187` → `best.block.blockMerkleRoot` to confirm). WI-792 Slice F shipped `Registry.listCatalogPage()` + the pre-existing `getBlock(merkleRoot)` lookup the slice consumes. **Tier-2 metric set:** (i) `top` — top-N atoms by hit count, lex-tiebreak; (ii) `hitRateP50` / `hitRateP90` — percentiles over per-atom hit counts; (iii) `grainHistogram` — atom level (L0/L1/L2/L3/unknown) distribution via `getBlock().level`; (iv) `locSaved` — Tier-3 fold-in (`total` + `byAtom` top-N). **Degraded mode:** registry-missing → `atoms.degraded: true, atoms.degradedReason: "registry-not-found"`, top emitted without grain enrichment, exit 0. **Outcome filter:** counts `outcome === "registry-hit" && substituted === true && substitutedAtomHash !== null` only (excludes `passthrough`, `intent-too-broad`, `result-set-too-large`, `atom-size-too-large`, `shave-on-miss-*`, `atomized`, `drift-alert`). **Code-of-record:** `@decision` header amendment in `packages/cli/src/commands/stats.ts`; tests in `stats.test.ts` (T-TIER2-1..T-TIER2-8). **Scope boundaries (Scope Manifest):** allowed = `packages/cli/src/commands/stats{,.test,-atoms,-atoms.test}.ts` + this MASTER_PLAN amendment; forbidden = `hook-intercept.ts`, `packages/hooks-base/**` (read-only; one optional JSDoc fix on `telemetry.ts:74` permitted as the single allowed exception), `packages/registry/**`, `packages/cli/src/index.ts`, all CI/Docker/release config. **Single reader seam invariant preserved (DEC-CLI-STATS-READER-SEAM-001):** Tier-2 aggregator is a SECOND pure reducer over `TelemetryEvent[]` produced by `readTelemetrySessions()` — no new JSONL parser. **Single block-reader invariant:** Tier-2 opens the registry exactly once via `openRegistry(DEFAULT_REGISTRY_PATH, …)` and reads atom metadata via `Registry.getBlock()` only — no direct SQLite reads. | The deferral recorded in DEC-CLI-STATS-SCOPE-001 ("Tier 2/3/4 tracked as separate follow-up") was data-availability-bound, not design-bound. With WI-831 + WI-792-F landed, the original Tier-2 metric set is computable today against the same `readTelemetrySessions()` + `getBlock()` read paths that already exist — no new substrate, no schema bump, no new dependency. The Tier-3 fold-in is the operator-mandated "if mechanically trivial, do it now" path: once distinct atom hashes are resolved via `getBlock`, `implSource.split("\n").length × hitCount` is a one-line reduction. The Tier-4 deferral is principled: `listCatalogPage` is cursor-paginated, and "cold vs hit" requires materialising the full catalog set before joining against telemetry — a different cost model that earns its own slice. The single-reader-seam and single-block-reader invariants are the load-bearing future-proofing: future Tier-4 will reuse exactly these read paths. The degraded-mode contract (`registry-not-found` → emit Tier-2 without grain, exit 0) preserves the Tier-1 graceful-empty-state philosophy on machines that have telemetry but no local registry yet. Cross-refs: #768; DEC-CLI-STATS-SCOPE-001 (this row supersedes the Tier-2-deferred posture for the metric set listed above; Tier-4 remains deferred under that row); DEC-CLI-STATS-COMMAND-001 (additive-forward `--json` contract this slice exercises for the first time); DEC-CLI-STATS-READER-SEAM-001 (extended in spirit — Tier-2 aggregator is a sibling reducer over the same seam); DEC-WI831-WIRE-001 (the upstream unblock); DEC-792-METHOD-NAME / DEC-792-CURSOR-LOOKAHEAD (`listCatalogPage` — consumed in spirit, deferred for Tier-4); DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001 (`BlockTripletRow.implSource` is the LoC source). |
 | DEC-HOOK-PROACTIVE-PRIMARY-001 | **Initiative #950 (design-phase 2026-05-30).** Realigns the hook flow so **proactive intent-time interception via MCP tools is the canonical path** and the existing `PreToolUse` substitution hook becomes the v1 fallback / safety net. Two paths coexist: (1) **canonical (MCP, intent-time)** — LLM in an MCP-aware IDE builds an IntentCard from its plan, calls `yakcc_resolve` BEFORE emitting code, which queries local registry then global via `@yakcc/mcp-registry` (#944/#951 shipped), returns candidates with the D4 ADR Q5 confidence bands as structured MCP content (`{ confidence_tier, candidates: [...] }`), the LLM picks the band and emits `yakcc compile <atom-id>` for an accept OR a fully-formed atom triplet (`spec.yak` + impl + LLM-authored property tests) for a no-fit; (2) **fallback (PreToolUse, post-emission)** — current `hook-intercept` substitution decision catches what it can; `@yakcc/variance` machine-generates synthetic property tests post-hoc. The fallback is intentionally NOT retired — agents that don't know about yakcc still grow the commons. The canonical path delivers HIGHER-QUALITY growth (LLM-authored contracts/property tests vs synthetic). Implementation lives in three sub-WIs: Gap A = #953 (`yakcc_resolve` wiring + system-prompt delivery into LLM context), Gap B = #944/#951 already shipped (`@yakcc/mcp-registry`), Gap C = #954 (LLM atom-triplet emission format + CLI parser). Cornerstones preserved: air-gap (B6 — local query stays offline; global gated by network availability and disabled by `--airgapped`); no identity (DEC-COMMONS-NO-AUTH-001 — MCP query payload is the content-derived IntentCard, no per-user tracking). D4 ADR (`docs/archive/developer/adr/discovery-llm-interaction.md`) updated with a "Two-path model" section reflecting this commitment. **Design phase only — no source code changes in this slice.** | The substrate components for the canonical path have existed since the original D4 work (yakccResolve library, system-prompt markdown, `@yakcc/hooks-claude-code/yakcc-resolve-tool.ts`), but two wiring gaps blocked end-to-end reach: no global query path (closed by #944/#951's `@yakcc/mcp-registry`) and no delivery of the system prompt into actual LLM runtime context (sub-WI #953). Production traffic data from yakforge W-141 (3000+ commons writes/day, all from the post-hoc atomize path) validates that the fallback works for unrelated agents but the canonical path's higher-quality emissions are absent. The decision to keep both paths is principled: the fallback grows the commons from any agent at all (the unknown-LLM-unknown-IDE case); the canonical path grows it from agents that DO know yakcc, with LLM-authored property tests that beat the synthetic variance-generated ones. The two paths coexist for the same reason `--airgapped` coexists with default global mirror: optionality at the deployment boundary, single architecture at the substrate. Cross-refs: #950 (umbrella); #953 (Gap A); #954 (Gap C); #944/#951 (Gap B shipped); D4 ADR Q1-Q8 (band semantics, evidence template, ranking inputs, system-prompt content — authoritative for BOTH paths); DEC-COMMONS-ALWAYS-ON-001 (commonsSubmit auto-push at storeBlock seam — both paths use this); DEC-COMMONS-NO-AUTH-001 (no per-user identity in either path); the yakforge W-141 envelope fix (#47) is what made `yakcc_submit_atom` actually reachable from the canonical path. |
 | DEC-WEBSITE-B4V5-HONEST-001 | **Initiative #1074 (planning 2026-06-01, docs/website-only).** The public website and live docs adopt the B4-v5 economics dossier under a "lead with proven, caveat the rest" mandate. The B4 website headline metric becomes a **tier-conditioned** honest figure — `auto_accept` oracle pass **91% (58/64)** OR prompt-cache saving **36–53%** — sourced from `bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.json` via the `generate-benchmark-svgs.mjs` manifest (the single benchmark-headline authority, DEC-WEBSITE-BENCH-SVG-001). The prior `b4-tokens` extractor read a **raw aggregate `mean_token_reduction_pct`** (`-15.6% token delta (haiku)`) from the superseded `bench/B4-tokens/results-min-darwin-2026-05-14.json`; that raw aggregate is FORBIDDEN as a headline because the raw hooked arm *reduces* oracle pass (Opus 100%→72%, Sonnet 94%→50%, Haiku 67%→56%) and the naive Haiku-rescue is −11pt. The unconditional "cheap model can just as easily look it up" claim (`benchmarks.astro` token-cost `yakccClaim` + `05-token-cost.svg` third bar) and the unconditional "fewer output tokens at equal-or-better quality" claim (`docs/ALPHA.md` L17) are qualified to the `auto_accept`/followed path. Output collapse (17–100×) is framed as a SIZE fact, not end-to-end success. The 3 archive ADRs (`compose-by-reference-default`, `discovery-llm-interaction`, `benchmark-suite-methodology`) receive a one-line forward pointer to the dossier; their dated bodies are unchanged. The canonical dossier under `bench/B4-tokens-v5/**` is left as-is. **Planning-only row — no source code changes in this slice; implementation tracked across WI-1074-A..E.** | Operator decision 2026-06-01: the v5 matrix landed honest and must be surfaced without overclaiming. The single load-bearing constraint is "no number on the site exceeds the dossier." `benchmarks.json` is a build-time GENERATED projection of the manifest, so the authority is the manifest's `extractMetric`/`jsonPath`, never the JSON file — repointing must happen at the manifest and flow through `npm run build`. The honest win to lead with is dual: behavioral (91% oracle pass *under auto_accept*) and economic (36–53% cache saving, no quality change); the ceiling to caveat is `auto_accept` coverage (56–72% against the 6-atom corpus). Keeping the caveats (raw-aggregate regression, conditional Haiku rescue) on the page is what makes the lead-claim credible to a skeptical external/enterprise reader. Cross-refs: #1074; DEC-WEBSITE-BENCH-SVG-001 (headline-metric authority); DEC-WEBSITE-BENCH-PAGE-NARRATIVE-001 (problem-framed sections); DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001 (no synthetic numbers); the dossier `bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.md`. |
+| DEC-POLYGLOT-RUST-PURITY-001 | **#868 Slice 3 (planning 2026-06-06).** shave-rust gains a static purity gate `purity-check.ts` (`checkRustFunctionPurity`), mirroring shave-python's `checkPurity`/`checkFunctionPurity`, run in `raise-function.ts` BEFORE `renderBody` (pre-render reject). MVP impurity set: (a) `&mut`/`&'a mut` params detected by string-prefix on `RaisedParam.rustType` → `RustMutableBorrowError`; (b) known-impure free-fn/method call targets carried by the v2 `CallExpr`/`MethodCallExpr` wire → impure; (c) undecidable calls (opaque external fn, trait method) → `RustAmbiguousPurityError` (hold-the-line: raise rather than mis-raise as pure). The existing v2 envelope is SUFFICIENT for this set — **no `main.rs`/wire change** (the `&mut` signal is already in `rustType`; I/O calls are in the call-target nodes). A parser purity-signal extension (emit the `Expr::Macro` path and/or a receiver kind, envelope `version: 2 → 3` single-version, mirroring DEC-POLYGLOT-RUST-BODY-AST-V2-001) is GATED behind a fixture that proves the wire is insufficient — default SKIP. **Rationale:** the load-bearing bug is that `type-map.ts` silently flattens `&mut T → T` (`mapRustType("&mut i32") === "number"`), so a mutable-borrow function raises as a pure atom — exactly what #868's purity line ("`&` immut params only, no `&mut`, no I/O, no globals") forbids. The fix is a single-owner gate that rejects pre-render; `type-map.ts` keeps flattening the type STRING (its job) but the function never reaches render. Conservative deferrals (documented, each rejects rather than mis-raises): arbitrary `static`/global reads (no wire signal — a `static` read is an indistinguishable `Ident`), interior mutability (`Cell`/`RefCell`/`Mutex` — type-name heuristic deferred to avoid false-positives), and `&mut self` receivers (unreachable until impl-method support, since `main.rs` walks only `Item::Fn` and drops `FnArg::Receiver`). A purity false-negative (mis-raise) is strictly worse than a false-positive (over-reject), so undecidable cases raise. Annotated at point of implementation in `purity-check.ts`. |
+| DEC-POLYGLOT-RUST-TAXONOMY-WIRED-001 | **#868 Slice 3 (planning 2026-06-06).** The Slice-1 `errors.ts` 7 classes are made REACHABLE and DOCUMENTED to satisfy #868's "≥5 unsupported-construct classes documented with examples." Audit (verified): today only `RustUnsupportedConstructError` is wired — `raise-body.ts` throws it generically for every `UnsupportedExpr`/`UnsupportedStmt`, so the named `RustUnsafeError`/`RustAsyncError`/`RustClosureCaptureError`/`RustRawPointerError`/`RustDynTraitError` are defined-but-unreachable. Slice 3 adds a reason→class map in `raise-body.ts` (or a thin `reason-to-error` dispatcher) so `unsafe`/`async`/`.await`/`closure`/raw-pointer/`dyn` each throw their dedicated class, plus the purity gate adds `RustMutableBorrowError` (new, `extends CannotRaiseToIRError`) and `RustAmbiguousPurityError` — ≥5 distinct classes reachable on real inputs, each with a reject fixture. The taxonomy is documented as a structured `@taxonomy` doc-comment block at the top of `errors.ts` (one entry per class: minimal Rust example + triggering construct), cross-linked from `index.ts` — NOT a standalone `.md`. **Rationale:** shave-go/python ship no standalone taxonomy markdown (only shave-python has a package README); keeping the doc beside the classes upholds "code is truth" so the doc cannot drift from the class set. "Documented" is interpreted as "reachable + exemplified," not merely "class exists" — a class no input can trigger is dead documentation. All classes wrap `@yakcc/contracts` (`CannotRaiseToIRError`/`AmbiguousPurityError`); NO parallel hierarchy (parity with DEC-POLYGLOT-RUST-ERROR-TAXONOMY-001 / DEC-POLYGLOT-GO-ERROR-TAXONOMY-001). |
