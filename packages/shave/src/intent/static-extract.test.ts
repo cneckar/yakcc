@@ -396,12 +396,106 @@ function weird(x: number) { return x; }
     }
   });
 
-  it("behavior is at most 200 characters", () => {
+  it("behavior is at most 200 characters (JSDoc path)", () => {
     // A very long JSDoc description should be truncated
     const longDesc = "A ".repeat(120); // 240 chars
     const source = `/** ${longDesc}. */ export function f(): void {}`;
     const card = extract(source);
     expect(card.behavior.length).toBeLessThanOrEqual(200);
+  });
+
+  // -------------------------------------------------------------------------
+  // DEC-INTENT-BEHAVIOR-CAP-001: behavior ≤ 200 chars — signature-string path
+  // The fix lives in static-extract.ts (sibling: query-from-source.ts).
+  // Regression for #1109: mcp-registry/src/tools/resolve.ts had a 257-char
+  // signature that caused IntentCardSchemaError on self-shave CI.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Source with a long function signature and no JSDoc. The rendered
+   * signatureString format is "function <name>(<paramNames>) -> <ret>".
+   * With the names below the string exceeds 200 chars — it must be capped.
+   */
+  const LONG_SIGNATURE_SOURCE = `
+export function processComplexDataTransformationWithValidation(
+  inputDataSourceConfigurationSpec: string,
+  outputTransformationPipelineOptionsMap: string,
+  validationAndErrorHandlingStrategyConfig: string,
+  metadataEnrichmentAndTaggingPolicyRules: string
+): string {
+  return inputDataSourceConfigurationSpec;
+}
+`.trim();
+
+  /**
+   * Source that mimics the resolve.ts shape: file-level JSDoc block, no
+   * per-export JSDoc on the factory function, long param/return types.
+   * This is the regression fixture for #1109.
+   */
+  const RESOLVE_LIKE_SOURCE = `
+/**
+ * Tool: yakcc_resolve
+ *
+ * @decision DEC-SOME-DECISION-001
+ * @title some decision title for this tool
+ * @status accepted
+ * @rationale
+ *   This file has a very long file-level JSDoc and no per-export JSDoc on the
+ *   factory function below.
+ */
+
+export type ProofStatus = "none" | "pending" | "accepted" | "retracted";
+
+export interface CreateResolveToolOptions {
+  readonly openRegistry?: (() => Promise<{ close(): void }>) | undefined;
+  readonly proofStatusProvider?: ((atom_id: string) => ProofStatus) | undefined;
+}
+
+export function createResolveTool(opts?: CreateResolveToolOptions): { name: string; handler: () => Promise<void> } {
+  return { name: "yakcc_resolve", handler: async () => {} };
+}
+`.trim();
+
+  it("Test A (DEC-INTENT-BEHAVIOR-CAP-001): no-JSDoc + long signature → capped to ≤200 chars ending '...'", () => {
+    const card = extract(LONG_SIGNATURE_SOURCE);
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+    expect(card.behavior.endsWith("...")).toBe(true);
+    // Function name is preserved at the start
+    expect(card.behavior.startsWith("function processComplexDataTransformationWithValidation")).toBe(true);
+  });
+
+  it("Test A (length invariant): truncated behavior is exactly 200 chars (197 content + '...')", () => {
+    const card = extract(LONG_SIGNATURE_SOURCE);
+    expect(card.behavior.length).toBe(200);
+  });
+
+  it("Test B (DEC-INTENT-BEHAVIOR-CAP-001): JSDoc summary ≤200 chars → not truncated, no '...' appended", () => {
+    // JSDoc summary of exactly 200 chars — must NOT be truncated
+    const summary = "A".repeat(195) + " foo."; // 200 chars
+    const source = `/** ${summary} */ export function f(): void {}`;
+    const card = extract(source);
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+    expect(card.behavior.endsWith("...")).toBe(false);
+    expect(card.behavior.endsWith("foo.")).toBe(true);
+  });
+
+  it("Test C (DEC-INTENT-BEHAVIOR-CAP-001): resolve.ts-shaped source → behavior ≤200 chars (regression #1109)", () => {
+    const card = extract(RESOLVE_LIKE_SOURCE);
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+  });
+
+  it("Test C (compound / end-to-end): full staticExtract + validateIntentCard on resolve-like fixture", () => {
+    // Production sequence: staticExtract() → pickPrimaryDeclaration (no per-export JSDoc found)
+    // → extractSignatureFromNode → rawBehavior cap → validateIntentCard passes.
+    // Previously: unbounded signatureString caused IntentCardSchemaError.
+    const card = extract(RESOLVE_LIKE_SOURCE);
+    expect(typeof card).toBe("object");
+    expect(card).not.toBeNull();
+    expect(typeof card.behavior).toBe("string");
+    // Schema constraint: behavior ≤ 200.
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+    // createResolveTool was resolved — card is non-empty.
+    expect(card.behavior.length).toBeGreaterThan(0);
   });
 
   // -------------------------------------------------------------------------
