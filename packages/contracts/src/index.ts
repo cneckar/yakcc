@@ -304,6 +304,7 @@ export {
   AmbiguousPurityError,
   CannotLowerToGoError,
   CannotLowerToPythonError,
+  CannotLowerToRustError,
   CannotRaiseToIRError,
   type SourceLocation,
 } from "./polyglot-errors.js";

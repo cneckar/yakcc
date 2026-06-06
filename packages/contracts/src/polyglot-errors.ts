@@ -132,3 +132,57 @@ export class CannotLowerToGoError extends Error {
     this.name = "CannotLowerToGoError";
   }
 }
+
+/**
+ * Base error: a TS-subset IR construct cannot be lowered to Rust using the
+ * compile-rust MVP emitter surface.
+ *
+ * Subclasses map to specific blocker categories (≥5 classes).
+ *
+ * @decision DEC-POLYGLOT-RUST-COMPILE-ERR-001
+ * @title CannotLowerToRustError promoted from compile-rust/errors.ts to contracts (Slice 2)
+ * @status accepted (WI-869-s2)
+ * @rationale
+ *   Mirrors the promotion pattern for CannotLowerToPythonError (WI-943) and
+ *   CannotLowerToGoError (WI-973). The local definition in compile-rust/errors.ts
+ *   was explicitly annotated as a Slice-1 placeholder pending taxonomy validation.
+ *   Promoting to @yakcc/contracts makes the base class available for any future
+ *   lower adapter or cross-package error handling. compile-rust/errors.ts now
+ *   imports from here and extends this class, eliminating the dual-authority.
+ *   Sacred Practice #12: single source of truth per state domain.
+ *
+ * Blocker taxonomy (Slice 1 seed):
+ *
+ *   BLOCKER-RUST-001 (async/Promise/await)
+ *     Rust async and futures are out of scope for the MVP lower surface.
+ *     Example: `export async function fetchNum(): Promise<number> { return 42; }`
+ *
+ *   BLOCKER-RUST-002 (complex generics)
+ *     Generic type parameters with non-trivial constraints are beyond MVP.
+ *     Example: `export function id<T extends Comparable>(x: T): T { return x; }`
+ *
+ *   BLOCKER-RUST-003 (unsupported TS type)
+ *     TS types without a Rust MVP equivalent (bigint, symbol, etc.).
+ *     Example: `export function bigNum(x: bigint): bigint { return x; }`
+ *
+ *   BLOCKER-RUST-004 (unsupported expression)
+ *     IR expression constructs not in the Rust MVP emit surface.
+ *     Example: tagged template literals, spread expressions.
+ *
+ *   BLOCKER-RUST-005 (unsupported statement)
+ *     IR statement constructs the Rust emitter cannot produce.
+ *     Example: for-of loops over iterables with complex patterns.
+ */
+export class CannotLowerToRustError extends Error {
+  constructor(
+    public readonly constructKind: string,
+    public readonly location: { line: number; column: number },
+    public readonly snippet: string,
+    public readonly fnName?: string | undefined,
+  ) {
+    const loc = `${location.line}:${location.column}`;
+    const fn_ = fnName ? ` in '${fnName}'` : "";
+    super(`Cannot lower ${constructKind}${fn_} at ${loc}: ${snippet}`);
+    this.name = "CannotLowerToRustError";
+  }
+}
