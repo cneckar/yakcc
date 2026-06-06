@@ -191,9 +191,11 @@ jobs:
           # Self-shave's intent is FRESH bootstrap pass-1, then verify pass-2
           # produces a byte-identical result. The committed sqlite from PR #852
           # exists for the release workflow's ensure-bootstrap-corpus.mjs
-          # speed-up — it would conflict with self-shave's pass-1 model
-          # (DEC-V2-BOOTSTRAP-EMBEDDING-001: bootstrap/null-zero). Delete
-          # before pass-1 so `yakcc bootstrap` produces registry A fresh.
+          # speed-up. We delete it here so `yakcc bootstrap` produces registry A
+          # fresh (clean pass-1). This delete is for clean-slate correctness, NOT
+          # for provider equivalence — since #1031 (DEC-V2-BOOTSTRAP-EMBEDDING-002),
+          # bootstrap always writes the sqlite with Xenova/bge-small-en-v1.5 so
+          # the committed sqlite and bootstrap output agree on the provider.
           rm -f bootstrap/yakcc.registry.sqlite bootstrap/report.json
           ls -la bootstrap/ || true  # confirm only expected-roots.json remains tracked
 

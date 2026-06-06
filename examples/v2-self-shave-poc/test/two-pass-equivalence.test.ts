@@ -89,6 +89,7 @@ import {
   statSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { createLocalEmbeddingProvider } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -224,14 +225,21 @@ const MANIFEST_B_PATH = join(TWO_PASS_DIR, "expected-roots-B.json");
 // The built CLI binary in the canonical workspace (source of truth for the CLI).
 const CLI_BIN_PATH = join(REPO_ROOT, "packages", "cli", "dist", "bin.js");
 
-// Null-zero embedding opts (bootstrap uses zero vectors for determinism).
-const NULL_EMBEDDING_OPTS = {
-  embeddings: {
-    dimension: 384,
-    modelId: "two-pass/null-zero",
-    embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
-  },
-} as const;
+// Embedding opts for opening the bootstrap-produced registries (A and B).
+//
+// @decision DEC-V2-BOOTSTRAP-EMBEDDING-002 (harness alignment)
+// Both registries are produced by `yakcc bootstrap` which now uses
+// createLocalEmbeddingProvider() (Xenova/bge-small-en-v1.5) on the on-disk path.
+// The harness only reads manifest data (blockMerkleRoot, specHash) via exportManifest()
+// and listOccurrencesByMerkleRoot(). It never calls findCandidatesByQuery, so the
+// provider's embed() function is never invoked here. The key requirement is that
+// the modelId matches what bootstrap wrote — otherwise the cross-provider gate at
+// storage.ts:2342 (callerSetExplicitProvider=true, embCount>0) would throw.
+// Supersedes the prior NULL_EMBEDDING_OPTS constant which used "two-pass/null-zero"
+// and would now mismatch the BGE-written registries.
+const REGISTRY_OPEN_OPTS = {
+  embeddings: createLocalEmbeddingProvider(),
+};
 
 // ---------------------------------------------------------------------------
 // Suite state
@@ -516,7 +524,7 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
       //
       // Registry A is opened READ-ONLY (no write paths from this harness, IS-1).
 
-      const regA = await openRegistry(REGISTRY_A_PATH, NULL_EMBEDDING_OPTS);
+      const regA = await openRegistry(REGISTRY_A_PATH, REGISTRY_OPEN_OPTS);
       try {
         const manifestA = await regA.exportManifest();
         rootsA = new Set(manifestA.map((e) => e.blockMerkleRoot));
@@ -525,7 +533,7 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
         await regA.close();
       }
 
-      const regB = await openRegistry(REGISTRY_B_PATH, NULL_EMBEDDING_OPTS);
+      const regB = await openRegistry(REGISTRY_B_PATH, REGISTRY_OPEN_OPTS);
       try {
         const manifestB = await regB.exportManifest();
         rootsB = new Set(manifestB.map((e) => e.blockMerkleRoot));
@@ -551,7 +559,7 @@ describe.skipIf(process.env.YAKCC_TWO_PASS !== "1")(
       );
 
       if (missingInB.length > 0) {
-        const regA2 = await openRegistry(REGISTRY_A_PATH, NULL_EMBEDDING_OPTS);
+        const regA2 = await openRegistry(REGISTRY_A_PATH, REGISTRY_OPEN_OPTS);
         try {
           for (const root of missingInB) {
             const occurrences = await regA2.listOccurrencesByMerkleRoot(root);
