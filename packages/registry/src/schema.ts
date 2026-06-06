@@ -111,8 +111,36 @@
  *
  *   ALTER TABLE ADD COLUMN is NOT idempotent under "IF NOT EXISTS" syntax (SQLite has no
  *   such clause for ADD COLUMN). The migration guards by checking PRAGMA table_info first.
+ *
+ * @decision DEC-PROOF-REGISTRY-TABLES-001
+ * @title SCHEMA_VERSION 12 → 13; additive migration adding proof incentive marketplace tables
+ * @status decided (WI-1081 / issue #1081 / plans/proof-incentive-layer.md §4 Slice B)
+ * @rationale
+ *   The proof incentive layer (§3 of plans/proof-incentive-layer.md) separates atom identity
+ *   (immutable, content-addressed by BlockMerkleRoot) from bounty/stake/attestation state
+ *   (mutable, keyed by BlockMerkleRoot). Putting mutable marketplace state inside the atom
+ *   triplet would change the atom's BMR on every bounty event — a correctness violation.
+ *   Five new tables hold the off-chain marketplace shell:
+ *
+ *   proof_bounties       — requester posts reward for a formal proof of a theorem against an atom.
+ *   proof_claims         — claimant commits then reveals a proof artifact via commit-reveal.
+ *   stake_ledger         — per-(account, unit) balance + locked amount for open claims.
+ *   verifier_attestations — signed checker results from verifier daemons (Ed25519).
+ *   reputation_ledger    — non-transferable per-account score (reputation-track default unit).
+ *
+ *   All atom-side FKs use atom_bmr (BlockMerkleRoot, TEXT) rather than an integer surrogate,
+ *   so superseded atom versions can still resolve their open bounties via BMR history.
+ *   Status fields are TEXT enums documented in column comments (not SQL CHECK constraints —
+ *   consistent with existing tables in this schema per DEC-STORAGE-009 SQLite style).
+ *   stake_ledger uses a composite PRIMARY KEY (account_id, unit) because an account can hold
+ *   multiple stake denominations simultaneously.
+ *   verifier_attestations.signature stores a base64-encoded Ed25519 signature as TEXT;
+ *   signature verification is application-layer (proof-verifier daemon, Slice D).
+ *
+ *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
+ *   all tables start empty. No backfill required. Closes #1081.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -841,6 +869,192 @@ const MIGRATION_11_DDL: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Migration 11 → 12: add submitted_at column to blocks
+// (DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 / WI-794 slice 1 / issue #794)
+// ---------------------------------------------------------------------------
+// (DDL is inline in applyMigrations — this migration is a single ALTER TABLE
+//  ADD COLUMN statement with no CREATE TABLE. See migration driver below.)
+
+// ---------------------------------------------------------------------------
+// Migration 12 → 13: add proof incentive marketplace tables
+// (DEC-PROOF-REGISTRY-TABLES-001 / WI-1081 / plans/proof-incentive-layer.md §4 Slice B)
+// ---------------------------------------------------------------------------
+
+/**
+ * SQL statements for migration 13.
+ *
+ * Creates five new tables for the off-chain proof incentive marketplace.
+ * All are pure CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS.
+ * No backfill required — all tables start empty; application logic populates them.
+ *
+ * Tables:
+ *   proof_bounties       — requester posts a reward against (atom_bmr, theorem_statement_hash).
+ *   proof_claims         — claimant commit-reveal cycle for a specific bounty.
+ *   stake_ledger         — per-(account, unit) balance + locked amount.
+ *   verifier_attestations — signed checker results from verifier daemons.
+ *   reputation_ledger    — non-transferable per-account reputation score.
+ *
+ * No ownership columns — DEC-NO-OWNERSHIP-011.
+ * Status fields are TEXT (not CHECK constraints) — consistent with existing tables.
+ */
+const MIGRATION_13_DDL: readonly string[] = [
+  // ---------------------------------------------------------------------------
+  // proof_bounties — a requester's offer: prove theorem T about atom A, earn reward R.
+  //
+  // bounty_id:              PRIMARY KEY (opaque TEXT; application supplies e.g. UUIDv4 or BLAKE3).
+  // atom_bmr:               BlockMerkleRoot of the target atom (TEXT, indexed).
+  //                         Keyed by BMR so superseded atom versions can still resolve bounties.
+  // theorem_statement_hash: BLAKE3 of the formal theorem statement (identifies WHAT to prove).
+  // reward_amount:          Integer amount of the reward (denomination in reward_unit).
+  // reward_unit:            TEXT enum — 'reputation_credit' | 'erc20_<addr>' | 'native_eth' | ...
+  //                         (open-ended; application validates; no SQL CHECK per schema style).
+  // requester_id:           Account that posted the bounty.
+  // status:                 TEXT enum — 'OPEN' | 'COMMIT' | 'REVEAL' | 'CHECK' | 'ACCEPT' | 'REJECT'.
+  //                         'OPEN'   = bounty posted, no commits yet.
+  //                         'COMMIT' = T_commit window open; accepting commits.
+  //                         'REVEAL' = T_commit closed; reveal window open.
+  //                         'CHECK'  = verifier daemons running.
+  //                         'ACCEPT' = at least one valid proof accepted; reward distributed.
+  //                         'REJECT' = no valid proofs; reward returned.
+  // created_at:             Unix epoch milliseconds of bounty creation.
+  // t_commit_close:         Unix epoch milliseconds when the COMMIT window closes (nullable until set).
+  // t_reveal_close:         Unix epoch milliseconds when the REVEAL window closes (nullable until set).
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS proof_bounties (
+    bounty_id              TEXT    PRIMARY KEY,
+    atom_bmr               TEXT    NOT NULL,
+    theorem_statement_hash TEXT    NOT NULL,
+    reward_amount          INTEGER NOT NULL,
+    reward_unit            TEXT    NOT NULL,
+    requester_id           TEXT    NOT NULL,
+    status                 TEXT    NOT NULL,
+    created_at             INTEGER NOT NULL,
+    t_commit_close         INTEGER,
+    t_reveal_close         INTEGER
+  )`,
+
+  // Index for lookup-by-atom: "which bounties exist for this atom?"
+  "CREATE INDEX IF NOT EXISTS idx_proof_bounties_atom_bmr ON proof_bounties(atom_bmr)",
+
+  // Index for status scans: "which bounties are currently OPEN?"
+  "CREATE INDEX IF NOT EXISTS idx_proof_bounties_status ON proof_bounties(status)",
+
+  // ---------------------------------------------------------------------------
+  // proof_claims — a claimant's commit-reveal entry for a specific bounty.
+  //
+  // claim_id:               PRIMARY KEY (opaque TEXT; application supplies).
+  // bounty_id:              FK → proof_bounties.bounty_id.
+  // claimant_id:            Account that submitted this claim.
+  // commit_hash:            BLAKE3(artifact_hash || nonce || claimant_id) — commitment.
+  //                         Reveal must match this hash; prevents front-running.
+  // stake_amount:           Integer stake locked by this claim.
+  // stake_unit:             Denomination of the stake (TEXT, same enum space as reward_unit).
+  // revealed_artifact_hash: BLAKE3 of the actual proof artifact (NULL until reveal phase).
+  // status:                 TEXT enum — 'COMMITTED' | 'REVEALED' | 'VALID' | 'INVALID' | 'LAPSED'.
+  //                         'COMMITTED' = commit hash submitted, artifact not yet revealed.
+  //                         'REVEALED'  = artifact revealed and hash verified.
+  //                         'VALID'     = verifier attestations confirm correctness.
+  //                         'INVALID'   = verifier attestations reject the proof.
+  //                         'LAPSED'    = claimant did not reveal within T_reveal; stake forfeited.
+  // committed_at:           Unix epoch milliseconds of the commit submission.
+  // revealed_at:            Unix epoch milliseconds of the reveal (NULL until revealed).
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS proof_claims (
+    claim_id               TEXT    PRIMARY KEY,
+    bounty_id              TEXT    NOT NULL REFERENCES proof_bounties(bounty_id),
+    claimant_id            TEXT    NOT NULL,
+    commit_hash            TEXT    NOT NULL,
+    stake_amount           INTEGER NOT NULL,
+    stake_unit             TEXT    NOT NULL,
+    revealed_artifact_hash TEXT,
+    status                 TEXT    NOT NULL,
+    committed_at           INTEGER NOT NULL,
+    revealed_at            INTEGER
+  )`,
+
+  // Index for claims-for-bounty: "which claims exist for this bounty?"
+  "CREATE INDEX IF NOT EXISTS idx_proof_claims_bounty_id ON proof_claims(bounty_id)",
+
+  // Index for claims-by-claimant: "which claims has this account submitted?"
+  "CREATE INDEX IF NOT EXISTS idx_proof_claims_claimant_id ON proof_claims(claimant_id)",
+
+  // ---------------------------------------------------------------------------
+  // stake_ledger — per-(account, unit) balance tracking.
+  //
+  // account_id:    Account identifier (TEXT). Composite PRIMARY KEY part.
+  // unit:          Stake denomination (TEXT; same enum space as reward_unit). Composite PK part.
+  // balance:       Total balance held by this account in this unit (INTEGER).
+  // locked_amount: Amount currently locked in open claims (INTEGER; <= balance).
+  // updated_at:    Unix epoch milliseconds of the last balance update.
+  //
+  // Composite PRIMARY KEY (account_id, unit) because one account can hold multiple
+  // stake denominations simultaneously (e.g. reputation_credit + native_eth).
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS stake_ledger (
+    account_id    TEXT    NOT NULL,
+    unit          TEXT    NOT NULL,
+    balance       INTEGER NOT NULL DEFAULT 0,
+    locked_amount INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (account_id, unit)
+  )`,
+
+  // Index on account_id for "show me all balances for this account" queries.
+  // The composite PK already covers exact (account_id, unit) lookups; this
+  // index covers prefix scans on account_id alone.
+  "CREATE INDEX IF NOT EXISTS idx_stake_ledger_account_id ON stake_ledger(account_id)",
+
+  // ---------------------------------------------------------------------------
+  // verifier_attestations — signed checker results from verifier daemons.
+  //
+  // attestation_id:        PRIMARY KEY (opaque TEXT).
+  // claim_id:              FK → proof_claims.claim_id.
+  // verifier_id:           Identity of the verifier daemon that produced this attestation.
+  // result:                TEXT enum — 'valid' | 'invalid'.
+  //                        'valid'   = checker accepted the proof artifact.
+  //                        'invalid' = checker rejected the proof artifact.
+  // toolchain_version_hash: BLAKE3 of the pinned checker toolchain spec string
+  //                        (e.g. BLAKE3("lean4@4.7.0")). Part of the signed statement
+  //                        so a verifier cannot claim validity without committing to
+  //                        the exact checker version it ran.
+  // signature:             Base64-encoded Ed25519 signature over
+  //                        (claim_id || result || attested_at || toolchain_version_hash).
+  //                        Signature verification is application-layer (proof-verifier daemon,
+  //                        Slice D). Stored here as TEXT for audit / supermajority aggregation.
+  // attested_at:           Unix epoch milliseconds of attestation emission.
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS verifier_attestations (
+    attestation_id         TEXT    PRIMARY KEY,
+    claim_id               TEXT    NOT NULL REFERENCES proof_claims(claim_id),
+    verifier_id            TEXT    NOT NULL,
+    result                 TEXT    NOT NULL,
+    toolchain_version_hash TEXT    NOT NULL,
+    signature              TEXT    NOT NULL,
+    attested_at            INTEGER NOT NULL
+  )`,
+
+  // Index for "which attestations exist for this claim?" — supermajority aggregation.
+  "CREATE INDEX IF NOT EXISTS idx_verifier_attestations_claim_id ON verifier_attestations(claim_id)",
+
+  // ---------------------------------------------------------------------------
+  // reputation_ledger — non-transferable per-account reputation score.
+  //
+  // account_id:    Account identifier (TEXT), PRIMARY KEY.
+  // score:         Current reputation score (INTEGER; accumulates from accepted work).
+  //                Non-transferable: slashed reputation is deleted, not transferred.
+  // last_event_at: Unix epoch milliseconds of the last score-changing event (accrual or slash).
+  //                Used by decay rules (Slice E) and for audit trails.
+  // ---------------------------------------------------------------------------
+  `CREATE TABLE IF NOT EXISTS reputation_ledger (
+    account_id    TEXT    PRIMARY KEY,
+    score         INTEGER NOT NULL DEFAULT 0,
+    last_event_at INTEGER NOT NULL
+  )`,
+  // reputation_ledger has no extra index — account_id is the PRIMARY KEY and
+  // all common access patterns are by account_id lookup.
+];
+
+// ---------------------------------------------------------------------------
 // Migration driver
 // ---------------------------------------------------------------------------
 
@@ -885,6 +1099,11 @@ export interface MigrationsDb {
  *            (DEC-V2-SHAVE-CACHE-STORAGE-001 / DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / issue #363).
  *   10 → 11: add registry_meta key-value table for embedding model metadata
  *            (DEC-EMBED-REGISTRY-META-001 / WI-778-BYO-EMBEDDING / issue #778).
+ *   11 → 12: add submitted_at column to blocks table for the commons-push local queue
+ *            (DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 / WI-794 slice 1 / issue #794).
+ *   12 → 13: add proof incentive marketplace tables: proof_bounties, proof_claims,
+ *            stake_ledger, verifier_attestations, reputation_ledger
+ *            (DEC-PROOF-REGISTRY-TABLES-001 / WI-1081 / issue #1081).
  *
  * TWO-PHASE INVARIANT FOR MIGRATION 2 → 3:
  *   `applyMigrations` (this function, in schema.ts) owns the DDL phase only:
@@ -1177,5 +1396,24 @@ export function applyMigrations(db: MigrationsDb): void {
       }
     }
     db.prepare("UPDATE schema_version SET version = ?").run(12);
+  }
+
+  // Migration 12 → 13: add proof incentive marketplace tables
+  // (DEC-PROOF-REGISTRY-TABLES-001 / WI-1081 / plans/proof-incentive-layer.md §4 Slice B).
+  //
+  // Pure DDL — all statements are CREATE TABLE IF NOT EXISTS or
+  // CREATE INDEX IF NOT EXISTS, which are naturally idempotent.
+  // No ADD COLUMN statements, no try/catch needed.
+  // No backfill required: all five tables start empty and are populated by
+  // application logic in subsequent slices (C-G of the proof incentive plan).
+  //
+  // A crash between any DDL statement and the version bump leaves one or more
+  // tables present at version=12; re-entry runs CREATE TABLE/INDEX IF NOT EXISTS
+  // as no-ops and bumps the version normally.
+  if (currentVersion < 13) {
+    for (const sql of MIGRATION_13_DDL) {
+      db.exec(sql);
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(13);
   }
 }

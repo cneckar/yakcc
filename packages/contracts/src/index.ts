@@ -266,6 +266,7 @@ export {
   type ProofManifest,
   type ArtifactKind,
   validateProofManifestL0,
+  validateProofManifestL3,
 } from "./proof-manifest.js";
 export {
   type BlockTriplet,
