@@ -45,11 +45,20 @@ export {
   RustAsyncError,
   RustClosureCaptureError,
   RustDynTraitError,
+  RustIoSideEffectError,
+  RustMutableBorrowError,
   RustRawPointerError,
   RustUnsafeError,
   RustUnsupportedConstructError,
   type SourceLocation,
 } from "./errors.js";
+export {
+  checkPurity,
+  checkAllPurity,
+  hasMutableBorrow,
+  KNOWN_IO_MACROS,
+  KNOWN_IO_PATHS,
+} from "./purity-check.js";
 export {
   renderFunctionDeclaration,
   renderSignatureType,

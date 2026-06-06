@@ -44,6 +44,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { RustMutableBorrowError } from "./errors.js";
 import { extractFunctionSignatures } from "./parse-fn-signature.js";
 import { renderFunctionDeclaration } from "./raise-function.js";
 import { parseRustSource } from "./rust-ast-parser.js";
@@ -103,6 +104,16 @@ const ADD_SOURCE = "pub fn add(a: i32, b: i32) -> i32 { a + b }";
 // return injection from renderIfExprAsTailStmt in raise-body.ts.
 const CHECK_SIGN_SOURCE = "pub fn check_sign(n: i32) -> bool { if n > 0 { true } else { false } }";
 
+// Fixture 3: impure fn with &mut T param — used to verify the purity gate fires
+// against the REAL syn binary (RustMutableBorrowError thrown end-to-end).
+//
+// `pub fn bump(x: &mut i32) -> i32 { *x }` is the minimal raiseable source:
+//   - syn can parse it without panicking
+//   - the param type "&mut i32" is detected by hasMutableBorrow in purity-check.ts
+//   - renderFunctionDeclaration calls checkPurity BEFORE body raise, so the error
+//     is thrown inside runRealPipeline (async) and propagates as a rejected Promise
+const BUMP_IMPURE_SOURCE = "pub fn bump(x: &mut i32) -> i32 { *x }";
+
 // ---------------------------------------------------------------------------
 // Suite: real-cargo end-to-end (skipped without YAKCC_RUST_E2E)
 // ---------------------------------------------------------------------------
@@ -126,6 +137,17 @@ describe.skipIf(!process.env.YAKCC_RUST_E2E)(
       // Full IR proof — exact expected text (end-to-end canonical form):
       const expected = "export function add(a: number, b: number): number {\n  return (a + b);\n}";
       expect(out).toBe(expected);
+    }, 120_000);
+
+    it("bump: purity gate rejects &mut i32 param via real syn binary (RustMutableBorrowError e2e)", async () => {
+      // Production sequence (compound-interaction):
+      //   parseRustSource (REAL cargo spawn) ->
+      //   extractFunctionSignatures ->
+      //   renderFunctionDeclaration ->
+      //   checkPurity (throws RustMutableBorrowError for &mut T param)
+      //
+      // This proves the purity gate fires against the real syn binary, not a mock.
+      await expect(runRealPipeline(BUMP_IMPURE_SOURCE)).rejects.toThrow(RustMutableBorrowError);
     }, 120_000);
 
     it("check_sign: if/else body raises to branching returns via real syn binary (v2 IfExpr envelope)", async () => {
