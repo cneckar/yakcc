@@ -461,7 +461,9 @@ export function createResolveTool(opts?: CreateResolveToolOptions): { name: stri
     expect(card.behavior.length).toBeLessThanOrEqual(200);
     expect(card.behavior.endsWith("...")).toBe(true);
     // Function name is preserved at the start
-    expect(card.behavior.startsWith("function processComplexDataTransformationWithValidation")).toBe(true);
+    expect(
+      card.behavior.startsWith("function processComplexDataTransformationWithValidation"),
+    ).toBe(true);
   });
 
   it("Test A (length invariant): truncated behavior is exactly 200 chars (197 content + '...')", () => {
@@ -471,7 +473,7 @@ export function createResolveTool(opts?: CreateResolveToolOptions): { name: stri
 
   it("Test B (DEC-INTENT-BEHAVIOR-CAP-001): JSDoc summary ≤200 chars → not truncated, no '...' appended", () => {
     // JSDoc summary of exactly 200 chars — must NOT be truncated
-    const summary = "A".repeat(195) + " foo."; // 200 chars
+    const summary = `${"A".repeat(195)} foo.`; // 200 chars
     const source = `/** ${summary} */ export function f(): void {}`;
     const card = extract(source);
     expect(card.behavior.length).toBeLessThanOrEqual(200);
