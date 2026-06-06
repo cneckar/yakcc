@@ -9,6 +9,12 @@
 //       fresh DB (version 0) issues DDL that bumps the version.
 // The mock DB approach is the same pattern used in schema.test.ts; it avoids
 // the sqlite-vec native module dependency at test time.
+//
+// v13 additions (DEC-PROOF-REGISTRY-TABLES-001 / WI-1081):
+//   (3) The five new proof incentive tables (proof_bounties, proof_claims,
+//       stake_ledger, verifier_attestations, reputation_ledger) appear in
+//       the migration 12→13 DDL when starting from a v12 DB.
+//   (4) No new tables are created when called on a DB already at v13 (idempotency).
 
 // ---------------------------------------------------------------------------
 // Property-test corpus for schema.ts
@@ -73,6 +79,18 @@ function makeMockDb(currentVersion: number): {
 
   return { db, execLog, runLog };
 }
+
+// ---------------------------------------------------------------------------
+// Expected proof incentive table names created by migration 12 → 13
+// ---------------------------------------------------------------------------
+
+const PROOF_INCENTIVE_TABLES = [
+  "proof_bounties",
+  "proof_claims",
+  "stake_ledger",
+  "verifier_attestations",
+  "reputation_ledger",
+] as const;
 
 // ---------------------------------------------------------------------------
 // SC1: SCHEMA_VERSION is a positive integer
@@ -151,6 +169,72 @@ export const prop_applyMigrations_fresh_db_bumps_version = fc.property(
     for (const bump of versionBumps) {
       const v = bump.args[0];
       if (typeof v !== "number" || v < 1 || v > SCHEMA_VERSION) return false;
+    }
+    return true;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// SC4: migration 12 → 13 creates all five proof incentive tables
+// ---------------------------------------------------------------------------
+
+/**
+ * prop_migration_13_creates_proof_incentive_tables
+ *
+ * When called on a DB already at version 12, applyMigrations() executes
+ * CREATE TABLE statements for all five proof incentive tables:
+ *   proof_bounties, proof_claims, stake_ledger,
+ *   verifier_attestations, reputation_ledger.
+ *
+ * Invariant (DEC-PROOF-REGISTRY-TABLES-001): migration 13 is additive only —
+ * all five tables must be created in a single forward pass starting at v12.
+ */
+export const prop_migration_13_creates_proof_incentive_tables = fc.property(
+  fc.constant(12),
+  (startVersion) => {
+    const { db, execLog } = makeMockDb(startVersion);
+    applyMigrations(db);
+
+    // Each expected table must appear in a CREATE TABLE statement in execLog.
+    for (const table of PROOF_INCENTIVE_TABLES) {
+      const created = execLog.some(
+        (sql) =>
+          sql.includes("CREATE TABLE") &&
+          sql.toLowerCase().includes(table.toLowerCase()),
+      );
+      if (!created) return false;
+    }
+    return true;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// SC5: migration 12 → 13 is idempotent (no tables re-created at v13)
+// ---------------------------------------------------------------------------
+
+/**
+ * prop_migration_13_idempotent_at_v13
+ *
+ * When called on a DB already at version 13 (SCHEMA_VERSION), applyMigrations()
+ * issues no CREATE TABLE statements for the proof incentive tables (no-op path).
+ *
+ * Invariant: the `if (currentVersion < 13)` guard means the migration DDL
+ * block is skipped entirely when the DB is already at v13.
+ */
+export const prop_migration_13_idempotent_at_v13 = fc.property(
+  fc.constant(SCHEMA_VERSION), // 13
+  (version) => {
+    const { db, execLog } = makeMockDb(version);
+    applyMigrations(db);
+
+    // None of the proof incentive table names should appear in exec log.
+    for (const table of PROOF_INCENTIVE_TABLES) {
+      const attempted = execLog.some(
+        (sql) =>
+          sql.includes("CREATE TABLE") &&
+          sql.toLowerCase().includes(table.toLowerCase()),
+      );
+      if (attempted) return false;
     }
     return true;
   },

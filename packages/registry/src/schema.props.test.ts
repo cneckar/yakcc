@@ -8,6 +8,8 @@ import { it } from "vitest";
 import {
   prop_applyMigrations_fresh_db_bumps_version,
   prop_applyMigrations_idempotent_at_current_version,
+  prop_migration_13_creates_proof_incentive_tables,
+  prop_migration_13_idempotent_at_v13,
   prop_schema_version_is_positive_integer,
 } from "./schema.props.js";
 
@@ -25,4 +27,12 @@ it("property: prop_applyMigrations_idempotent_at_current_version", () => {
 
 it("property: prop_applyMigrations_fresh_db_bumps_version", () => {
   fc.assert(prop_applyMigrations_fresh_db_bumps_version, opts);
+});
+
+it("property: prop_migration_13_creates_proof_incentive_tables", () => {
+  fc.assert(prop_migration_13_creates_proof_incentive_tables, opts);
+});
+
+it("property: prop_migration_13_idempotent_at_v13", () => {
+  fc.assert(prop_migration_13_idempotent_at_v13, opts);
 });
