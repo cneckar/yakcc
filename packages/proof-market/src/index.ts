@@ -24,3 +24,23 @@ export type {
   ClaimRow,
   PostBountyOptions,
 } from "./proof-market.js";
+
+// Reputation track (#1085 / Slice E impl)
+export {
+  RC_ATOM_ACCEPTED,
+  RC_PROOF_CLAIM_ACCEPTED,
+  RC_VERIFIER_ATTESTATION_CORRECT,
+  RC_CLAIM_SLASHED,
+  RC_VERIFIER_DISSENT,
+  RC_BOOTSTRAP_GRANT,
+  RC_HALF_LIFE_MS,
+  SYBIL_MAX_ACTIVE_CLAIMS,
+  accrueReputation,
+  applyDecay,
+  bootstrapGrantIfNeeded,
+  checkSybilLimit,
+  getReputation,
+  reputationDeltaForEvent,
+  slashReputation,
+} from "./reputation.js";
+export type { ReputationClock, ReputationEvent } from "./reputation.js";
