@@ -53,6 +53,43 @@ import type { Logger } from "../index.js";
 // Internal types
 // ---------------------------------------------------------------------------
 
+// @decision DEC-CLI-INIT-SEED-LOUD-001
+// @title Split seedYakccCorpus failure into absent (quiet) vs present-throwing (loud)
+// @status accepted (WI-1111 / issue #1111)
+// @rationale
+//   PROBLEM: the previous implementation threw for BOTH "corpus file not found"
+//   and "corpus exists but is broken". init.ts caught all throws with a single
+//   non-fatal warning, silently leaving new users with an empty registry when a
+//   broken corpus file was present.
+//
+//   SPLIT: introduce SeedResult discriminated union so the caller can distinguish:
+//     - { status: "absent" }  → corpus file was not found on disk (deliberate
+//       fallback, e.g. binary dist without bundled corpus). init stays quiet, exits 0.
+//     - { status: "seeded" }  → success path; count is atoms processed.
+//   Any throw from seedYakccCorpus now unambiguously means "corpus file EXISTS
+//   but the seed operation failed" — a correctness failure that init must surface
+//   loudly (non-zero exit, stderr banner).
+//
+//   CALLER CONTRACT: init.ts branches on SeedResult. Absent → warning only.
+//   Seeded → existing count handling. Caught throw → loud banner + exit 1.
+//
+//   BACKWARD COMPAT: callers that only use seedYakccCorpus directly (e.g. the
+//   `seed --yakcc` command handler) must be updated to handle the new return type.
+//   seed.ts already checks the returned count, so it receives { status: "seeded",
+//   count: N } and uses count — no behavior change for that path.
+
+/**
+ * Discriminated result returned by seedYakccCorpus.
+ *
+ * `absent` — the bootstrap corpus sqlite was not found on disk. This is a
+ *   deliberate fallback (e.g. binary distribution without bundled corpus).
+ *   The caller should emit a quiet warning and continue without error.
+ *
+ * `seeded` — corpus was found and imported successfully. `count` is the number
+ *   of atoms processed (INSERT OR IGNORE; existing atoms count as 0 new imports).
+ */
+export type SeedResult = { status: "absent"; reason: string } | { status: "seeded"; count: number };
+
 /**
  * Options for seedYakccCorpus. Mirrors SeedOptions in seed.ts for consistency.
  */
@@ -148,27 +185,47 @@ function makeZeroEmbeddingProvider(): RegistryOptions["embeddings"] {
  * The target registry MUST already be open (initialized) — this function does
  * not open or close it; the caller owns the registry lifecycle.
  *
+ * Return contract (DEC-CLI-INIT-SEED-LOUD-001):
+ *   - `{ status: "absent" }` — corpus sqlite was NOT found on disk. The caller
+ *     MUST treat this as a quiet fallback (exit 0, warning only). This is NOT
+ *     an error — binary distributions intentionally ship without a bundled corpus.
+ *   - `{ status: "seeded", count }` — corpus found and imported successfully.
+ *   - throws — corpus sqlite EXISTS but the seed operation failed (e.g. schema
+ *     mismatch, IO error, BMR integrity failure). The caller MUST surface this
+ *     loudly: non-zero exit + stderr banner.
+ *
  * @param registry - Open, initialized target registry.
  * @param opts     - Options (embedding provider for the source bootstrap db).
  * @param logger   - Output sink.
- * @returns Number of newly imported atoms (INSERT OR IGNORE; existing atoms
- *   are counted as 0 new imports).
+ * @returns SeedResult discriminated union (see above).
  */
 export async function seedYakccCorpus(
   registry: Registry,
   opts: SeedYakccOptions,
   logger: Logger,
-): Promise<number> {
+): Promise<SeedResult> {
   // Locate the bootstrap sqlite.
   // opts.corpusPath overrides automatic resolution (used by tests in git worktrees
   // where the bootstrap/ dir lives in the main checkout, not the worktree root).
+  //
+  // "Absent" means: no path could be resolved OR the resolved path does not exist
+  // on disk. Both cases are treated as the quiet fallback (DEC-CLI-INIT-SEED-LOUD-001).
+  // We check existsSync on the resolved path so that an explicit corpusPath pointing
+  // at a non-existent file is treated as "absent" rather than silently creating a
+  // new empty SQLite file (SQLite's default open-creates-new behavior).
   const resolvedPath = opts.corpusPath ?? findBootstrapSqlite();
-  if (resolvedPath === null) {
-    throw new Error(
-      "yakcc seed --yakcc: bootstrap corpus not found. Expected bootstrap/yakcc.registry.sqlite relative to the repo root. " +
+  if (resolvedPath === null || !existsSync(resolvedPath)) {
+    // Corpus file is absent — deliberate fallback (e.g. binary dist without
+    // bundled corpus). Return discriminated "absent" rather than throwing so the
+    // caller can stay quiet (exit 0, warning only). This is NOT an error path.
+    // (DEC-CLI-INIT-SEED-LOUD-001)
+    return {
+      status: "absent",
+      reason:
+        "bootstrap corpus not found. Expected bootstrap/yakcc.registry.sqlite relative to the repo root. " +
         "For monorepo-clone alpha installs, ensure you are running from within the yakcc repo. " +
         "Binary distribution follow-up: issue #361.",
-    );
+    };
   }
   const sqlitePath = resolvedPath;
 
@@ -260,5 +317,7 @@ export async function seedYakccCorpus(
   logger.log(
     `yakcc seed --yakcc: imported ${imported} atoms from bootstrap corpus (${skipped} skipped)`,
   );
-  return imported;
+  // Return discriminated "seeded" result. Any throw above means the corpus EXISTS
+  // but is broken — the caller handles that loudly. (DEC-CLI-INIT-SEED-LOUD-001)
+  return { status: "seeded", count: imported };
 }
