@@ -38,14 +38,16 @@
 //   are imported.
 //
 //   EMBEDDING: each imported block is re-embedded using the user's configured
-//   embedding provider. The bootstrap sqlite was stored with a zero-vector provider
-//   (DEC-V2-BOOTSTRAP-EMBEDDING-001). The user's registry gets real embeddings,
-//   enabling semantic `yakcc query` to work correctly after import.
+//   embedding provider. The bootstrap sqlite was re-embedded with bge-small-en-v1.5
+//   as part of issue #1017 (DEC-1123-SEED-BGE-NATIVE-001, supersedes the old
+//   DEC-V2-BOOTSTRAP-EMBEDDING-001 zero-vector scheme). The user's registry gets
+//   real bge-small embeddings, enabling semantic `yakcc query` to work correctly.
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
+import { createLocalEmbeddingProvider } from "@yakcc/contracts";
 import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 
@@ -150,25 +152,21 @@ function findBootstrapSqlite(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Zero-vector embedding provider — bootstrap source DB uses these
+// Bootstrap provider selection
+//
+// @decision DEC-1123-SEED-BGE-NATIVE-001 (supersedes DEC-V2-BOOTSTRAP-EMBEDDING-001)
+// The bootstrap corpus (bootstrap/yakcc.registry.sqlite) was re-embedded with
+// bge-small-en-v1.5 as part of issue #1017. registry_meta.embedding_model_id is
+// 'Xenova/bge-small-en-v1.5'. Opening with a null-zero provider triggers the
+// DEC-EMBED-REGISTRY-META-001 mismatch guard. The bootstrap read path uses
+// createLocalEmbeddingProvider() (imported above) so modelId matches.
+//
+// The old makeZeroEmbeddingProvider() function has been removed — it was the
+// single caller of the mismatching null-zero path. Deletion-first: no parallel
+// authorities. Tests that need offline isolation inject createOfflineEmbeddingProvider()
+// via opts.embeddings (which has a modelId that matches an offline/test registry,
+// not the real bootstrap db).
 // ---------------------------------------------------------------------------
-
-/**
- * Returns the embedding provider used when the bootstrap corpus was created.
- *
- * The bootstrap process stores atoms with a zero-vector embedding
- * (DEC-V2-BOOTSTRAP-EMBEDDING-001). When we open the bootstrap sqlite to READ
- * blocks from it, we must use the same zero provider so the registry's
- * embedding model ID matches the stored embeddings. The user's registry
- * receives real embeddings via the injected provider in storeBlock.
- */
-function makeZeroEmbeddingProvider(): RegistryOptions["embeddings"] {
-  return {
-    dimension: 384,
-    modelId: "bootstrap/null-zero",
-    embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // seedYakccCorpus — public command handler
@@ -231,13 +229,26 @@ export async function seedYakccCorpus(
 
   logger.log(`yakcc seed --yakcc: loading corpus from ${sqlitePath}`);
 
-  // Open the bootstrap sqlite as a READ source. Use the zero-vector provider —
-  // the bootstrap db was stored with that provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
-  // We only READ from this db; the user's registry is the write target.
+  // Open the bootstrap sqlite as a READ source.
+  //
+  // @decision DEC-1123-SEED-BGE-NATIVE-001 (supersedes DEC-V2-BOOTSTRAP-EMBEDDING-001)
+  // The bootstrap corpus was re-embedded with bge-small-en-v1.5 as part of issue #1017.
+  // registry_meta.embedding_model_id is 'Xenova/bge-small-en-v1.5' with embCount > 0.
+  // Opening with the old zero provider (modelId='bootstrap/null-zero') triggers the
+  // DEC-EMBED-REGISTRY-META-001/002 mismatch guard and throws embedding_model_mismatch.
+  // Fix: open with createLocalEmbeddingProvider() so modelId matches the stored value.
+  // null-zero is retained ONLY for :memory:/verify paths where no real embeddings exist.
+  //
+  // If the caller passed an explicit embeddings override (test injection seam), use it —
+  // tests that need offline isolation inject createOfflineEmbeddingProvider() via opts.embeddings.
+  // Production uses the real bge provider (may load model from cache on first call).
+  const bootstrapProvider: RegistryOptions["embeddings"] =
+    opts.embeddings ?? createLocalEmbeddingProvider();
+
   let sourceRegistry: Registry;
   try {
     sourceRegistry = await openRegistry(sqlitePath, {
-      embeddings: makeZeroEmbeddingProvider(),
+      embeddings: bootstrapProvider,
     });
   } catch (err) {
     throw new Error(

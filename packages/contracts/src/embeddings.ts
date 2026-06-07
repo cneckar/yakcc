@@ -49,6 +49,24 @@ export interface EmbeddingProvider {
 // Local provider (transformers.js)
 // ---------------------------------------------------------------------------
 
+// @decision DEC-1123-CONDITIONAL-OFFLINE-PIN-001
+// @title Conditional allowRemoteModels=false for the shared embedder in air-gap mode
+// @status accepted (WI-1123)
+// @rationale The shared embedder is used by both online dev (legitimate first-run fetch)
+//   and air-gap scenarios (B6a). Pinning allowRemoteModels=false globally would break
+//   online dev; pinning conditionally behind YAKCC_AIRGAPPED=1 (existing env signal,
+//   also readable via an explicit `airgapped` option for programmatic callers) matches
+//   the DEC-MCP-RESOLVE-OFFLINE-GUARANTEE-001 pattern in resolve.ts without importing
+//   its unconditional semantics. The env var propagates to all spawned child CLI
+//   processes (the B6a harness sets it in spawnEnv), so every step is covered uniformly.
+//   Fail-loud on cache miss: when pinned and the model is absent, @xenova throws — we
+//   annotate the error message with "bge model not cached; provision it for air-gap"
+//   so operators understand the required provisioning step.
+//   Singleton caveat: the pin sets process-global env state; once a pipeline loads under
+//   air-gap mode the env stays pinned for the process lifetime (correct for an air-gap run).
+//   For mixed in-process tests, use the explicit airgapped option + a per-instance loader
+//   (see embeddings.test.ts restore pattern) to avoid cross-contamination.
+
 // @decision DEC-EMBED-MODEL-SELECTION-001
 // @title DISCOVERY_EMBED_MODEL env-var for D5 embedding-model experiment (#326)
 // @status accepted
@@ -124,26 +142,67 @@ export const LOCAL_KNOWN_MODELS: ReadonlyMap<string, number> = new Map([
 // module-level singleton to preserve DEC-EMBED-SINGLETON-CLOSURE-001 semantics for production.
 
 /**
+ * Returns true when the process is running in air-gap mode.
+ *
+ * Air-gap mode is signalled by `YAKCC_AIRGAPPED=1` — the same env var read by
+ * `resolve.ts` (`DEC-MCP-RESOLVE-OFFLINE-GUARANTEE-001`). This is the canonical
+ * single authority for the offline signal; we add a second reader here rather
+ * than introduce a new env var.
+ *
+ * @internal — used by makePipelineLoader and exposed as an option seam for tests.
+ */
+function isAirgapMode(): boolean {
+  return typeof process !== "undefined" && process.env.YAKCC_AIRGAPPED === "1";
+}
+
+/**
  * Create a lazy pipeline loader closure for the given model.
+ *
+ * When air-gap mode is active (YAKCC_AIRGAPPED=1 or the explicit `airgapped`
+ * option), sets `env.allowRemoteModels = false` and asserts
+ * `env.allowLocalModels = true` on the @xenova/transformers env before calling
+ * `pipeline()`. This mirrors DEC-MCP-RESOLVE-OFFLINE-GUARANTEE-001 in resolve.ts
+ * but conditionally, so online dev is unaffected.
+ *
+ * On cache miss with the pin active, @xenova throws — we surface a clear message
+ * containing "bge model not cached; provision it for air-gap" so operators know
+ * they need to provision the model before running air-gapped.
  *
  * @decision DEC-EMBED-LAZY-001: Dynamic import for lazy pipeline init.
  * Status: decided (WI-002)
  * Rationale: Static import triggers ONNX runtime at module load; dynamic defers to first use.
  */
-function makePipelineLoader(modelId: string): () => Promise<unknown> {
+function makePipelineLoader(modelId: string, airgapped?: boolean): () => Promise<unknown> {
   let pipelinePromise: Promise<unknown> | null = null;
   return (): Promise<unknown> => {
     if (pipelinePromise === null) {
-      pipelinePromise = import("@xenova/transformers").then((mod) =>
-        mod.pipeline("feature-extraction", modelId),
-      );
+      pipelinePromise = import("@xenova/transformers").then((mod) => {
+        // DEC-1123-CONDITIONAL-OFFLINE-PIN-001: apply offline pin only in air-gap mode.
+        const useAirgap = airgapped ?? isAirgapMode();
+        if (useAirgap) {
+          // Pin: no remote fetch allowed. allowLocalModels must be true (default, but assert).
+          mod.env.allowRemoteModels = false;
+          mod.env.allowLocalModels = true;
+        }
+        return mod.pipeline("feature-extraction", modelId).catch((err: unknown) => {
+          if (useAirgap) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(
+              `bge model not cached; provision it for air-gap operation. Original error: ${msg}`,
+            );
+          }
+          throw err;
+        });
+      });
     }
     return pipelinePromise;
   };
 }
 
-/** Module-level singleton pipeline for the default model (DEC-EMBED-SINGLETON-CLOSURE-001). */
-const getPipeline: () => Promise<unknown> = makePipelineLoader(LOCAL_MODEL_ID);
+/** Module-level singleton pipeline for the default model in online mode (DEC-EMBED-SINGLETON-CLOSURE-001).
+ * Air-gap mode gets a per-instance loader (see createLocalEmbeddingProvider) to avoid
+ * pinning process-global env for the online singleton. */
+const getPipeline: () => Promise<unknown> = makePipelineLoader(LOCAL_MODEL_ID, false);
 
 /**
  * The output shape from transformers.js feature-extraction pipeline.
@@ -171,7 +230,13 @@ interface TransformerOutput {
  *
  * Model selection when `modelId` is omitted (in priority order):
  *   1. `DISCOVERY_EMBED_MODEL` env var (experiment use)
- *   2. LOCAL_MODEL_ID default (`Xenova/all-MiniLM-L6-v2`)
+ *   2. LOCAL_MODEL_ID default (`Xenova/bge-small-en-v1.5`)
+ *
+ * Air-gap mode (DEC-1123-CONDITIONAL-OFFLINE-PIN-001):
+ *   Pass `options.airgapped = true` to force offline pin, or rely on the
+ *   `YAKCC_AIRGAPPED=1` env var. When pinned and the model is not cached,
+ *   the returned provider throws on the first embed() call with a message
+ *   containing "bge model not cached; provision it for air-gap".
  */
 export function createLocalEmbeddingProvider(
   modelId: string = (typeof process !== "undefined"
@@ -182,11 +247,18 @@ export function createLocalEmbeddingProvider(
       ? (process.env.DISCOVERY_EMBED_MODEL ?? LOCAL_MODEL_ID)
       : LOCAL_MODEL_ID,
   ) ?? LOCAL_DIMENSION,
+  options?: { airgapped?: boolean },
 ): EmbeddingProvider {
-  // Default model reuses the module-level singleton (DEC-EMBED-SINGLETON-CLOSURE-001).
-  // Custom models get a fresh per-instance closure so they don't share pipeline state.
+  // Effective air-gap mode: explicit option takes precedence over env var.
+  const useAirgap = options?.airgapped ?? isAirgapMode();
+
+  // Default model in online mode reuses the module-level singleton (DEC-EMBED-SINGLETON-CLOSURE-001).
+  // Air-gap mode always gets a per-instance loader so the pin does not contaminate
+  // the shared online singleton. Custom models also get per-instance loaders.
   const getLoader: () => Promise<unknown> =
-    modelId === LOCAL_MODEL_ID ? getPipeline : makePipelineLoader(modelId);
+    !useAirgap && modelId === LOCAL_MODEL_ID
+      ? getPipeline
+      : makePipelineLoader(modelId, useAirgap);
 
   return {
     dimension,
