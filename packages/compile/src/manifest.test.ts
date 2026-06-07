@@ -243,6 +243,15 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
       _blockMerkleRoot: BlockMerkleRoot,
       _submittedAt: number,
     ): Promise<void> {},
+    // DEC-1117-S2-VECREAD-001: new read-back surface; not used by this mock.
+    async exportAllEmbeddings(): Promise<
+      ReadonlyArray<{
+        readonly specHash: import("@yakcc/contracts").SpecHash;
+        readonly vector: number[];
+      }>
+    > {
+      return [];
+    },
     async close(): Promise<void> {},
   };
 }

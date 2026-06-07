@@ -384,6 +384,9 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
       recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
       listUnsubmittedBlocks: registry.listUnsubmittedBlocks.bind(registry),
       markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
+      // Added: exportAllEmbeddings() added to Registry interface in WI-1117 Slice 2.
+      // Delegate to the real registry so the mock remains valid as the interface grows.
+      exportAllEmbeddings: registry.exportAllEmbeddings.bind(registry),
     };
 
     const ctx: EmissionContext = { intent: "some emission intent" };

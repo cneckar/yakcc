@@ -289,6 +289,8 @@ describe("onCodeEmissionIntent — passthrough (error) path", () => {
       recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
       listUnsubmittedBlocks: registry.listUnsubmittedBlocks.bind(registry),
       markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
+      // Added: exportAllEmbeddings() added to Registry interface in WI-1117 Slice 2.
+      exportAllEmbeddings: registry.exportAllEmbeddings.bind(registry),
     };
 
     const hook = createHook(brokenRegistry);

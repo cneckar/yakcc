@@ -41,6 +41,7 @@ import { build } from "./commands/build.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
 import { emitAtom } from "./commands/emit-atom.js";
+import { exportAtomIndex } from "./commands/export-atom-index.js";
 import { runFederation } from "./commands/federation.js";
 import { hookIntercept } from "./commands/hook-intercept.js";
 import { hooksAiderInstall } from "./commands/hooks-aider-install.js";
@@ -341,6 +342,15 @@ export async function runCli(
     case "propose": {
       const proposeArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
       return propose(proposeArgv, logger, { embeddings: opts?.embeddings });
+    }
+
+    case "export-atom-index": {
+      // `yakcc export-atom-index [--out <dir>] [--corpus <path>]`
+      // Emits atoms.json + embeddings.json from the bootstrap corpus.
+      // Consumer: yakforge atom-explorer frontend (separate repo).
+      // DEC-1117-S2-EXPORTER-001: CLI command for vitest-testability + corpus-path reuse.
+      const exportArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      return exportAtomIndex(exportArgv, logger, { embeddings: opts?.embeddings });
     }
 
     case "emit-atom": {
