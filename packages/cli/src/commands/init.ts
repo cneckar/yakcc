@@ -634,6 +634,24 @@ export async function init(
   // clause of DEC-CLI-INIT-001). --no-seed restores quiet-init behavior.
   // -------------------------------------------------------------------------
 
+  // @decision DEC-CLI-INIT-SEED-LOUD-001
+  // @title Split seed failure into absent (quiet) vs present-throwing (loud)
+  // @status accepted (WI-1111 / issue #1111)
+  // @rationale
+  //   Previously, ALL seedYakccCorpus throws were caught as non-fatal warnings,
+  //   silently leaving new users with an empty registry when a broken corpus file
+  //   was present. This was the bug that went undetected for a week (#1031).
+  //
+  //   NEW POLICY (three branches):
+  //   1. `{ status: "absent" }` — corpus sqlite not found on disk. Quiet warning,
+  //      exit 0. Legitimate: binary dist without bundled corpus.
+  //   2. `{ status: "seeded" }` — success. Extract count and continue.
+  //   3. Caught throw — corpus EXISTS but seed failed. Surface loudly:
+  //      stderr banner + non-zero exit. This is a correctness failure.
+  //
+  //   The "present-but-throwing" path now makes init exit 1 so CI/scripts detect
+  //   the failure instead of silently continuing with an empty registry.
+
   let seedCount = 0;
   if (!noSeed) {
     let registry: Registry | null = null;
@@ -648,14 +666,30 @@ export async function init(
 
     if (registry !== null) {
       try {
-        seedCount = await seedYakccCorpus(
+        const seedResult = await seedYakccCorpus(
           registry,
           { ...(opts?.corpusPath !== undefined ? { corpusPath: opts.corpusPath } : {}) },
           logger,
         );
+        if (seedResult.status === "absent") {
+          // Corpus not present — deliberate fallback (e.g. binary dist). Stay quiet.
+          logger.error(`warning: ${seedResult.reason} — continuing without seed`);
+        } else {
+          // Successfully seeded.
+          seedCount = seedResult.count;
+        }
       } catch (err) {
-        // Seed failure is non-fatal — the registry is still initialized.
-        logger.error(`warning: seed failed: ${String(err)} — continuing`);
+        // Corpus EXISTS but seed operation failed — this is a correctness failure.
+        // Surface loudly: stderr banner + non-zero exit. (DEC-CLI-INIT-SEED-LOUD-001)
+        logger.error(
+          `error: bootstrap corpus exists but seed failed: ${String(err)}. Registry left empty. Run \`yakcc init --no-seed\` to skip seeding, or fix the underlying error.`,
+        );
+        try {
+          await registry.close();
+        } catch {
+          // ignore close error
+        }
+        return 1;
       } finally {
         try {
           await registry.close();

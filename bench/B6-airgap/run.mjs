@@ -131,16 +131,40 @@ function step(n, desc) {
 // IMPORTANT (Windows): ESM dynamic imports require file:// URLs — bare Windows
 // paths like "C:/..." are rejected with ERR_UNSUPPORTED_ESM_URL_SCHEME.
 // pathToFileURL() converts platform paths to proper file:// URLs.
+//
+// @decision DEC-B6A-PROVIDER-DEFAULT-001
+// @title B6a no longer injects createOfflineEmbeddingProvider() into runCli children
+// @status accepted (WI-1123 / issue #1123)
+// @rationale
+//   The original harness injected createOfflineEmbeddingProvider() (blake3-stub,
+//   modelId "yakcc/offline-blake3-stub") into every runCli child. Step 1 (yakcc init
+//   --airgapped) seeds the user registry using createLocalEmbeddingProvider() (bge-small,
+//   "Xenova/bge-small-en-v1.5"), which writes that modelId to registry_meta. When
+//   subsequent steps (seed, compile, query) then open the SAME registry with the
+//   injected blake3-stub, the cross-provider consistency gate
+//   (DEC-EMBED-REGISTRY-META-002, callerSetExplicitProvider=true) fires and throws,
+//   causing Steps 4/5/7 to exit 1.
+//
+//   The fix is subtraction: omit the embeddings injection entirely. runCli uses its
+//   default provider resolution (createLocalEmbeddingProvider via openRegistry's
+//   fallback path), which matches the "Xenova/bge-small-en-v1.5" written by init.
+//   The bge model is loaded from the local @xenova/transformers disk cache — no
+//   network fetch occurs (zero-outbound assertion is preserved).
+//
+//   Backward note: createOfflineEmbeddingProvider() remains the correct provider for
+//   :memory: / unit-test registries where no stored modelId exists. The B6a registry
+//   is an on-disk registry seeded with bge-small; the stub is wrong for it.
 function runYakcc(args, { cwd, interceptOut, env = {} } = {}) {
   // Build the inline ESM wrapper that imports runCli and calls it.
   // We resolve to the dist/index.js of @yakcc/cli in the workspace.
+  // No embeddings injection: let runCli use its default provider (bge-small,
+  // matching the bootstrap registry's stored embedding_model_id).
+  // (DEC-B6A-PROVIDER-DEFAULT-001)
   const cliDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/cli/dist/index.js")).href;
-  const contractsDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/contracts/dist/embeddings.js")).href;
   const argsJson = JSON.stringify(args);
   const esmWrapper = `
 import { runCli } from ${JSON.stringify(cliDistUrl)};
-import { createOfflineEmbeddingProvider } from ${JSON.stringify(contractsDistUrl)};
-const code = await runCli(${argsJson}, undefined, { embeddings: createOfflineEmbeddingProvider() });
+const code = await runCli(${argsJson});
 process.exit(code);
 `;
 
@@ -221,14 +245,9 @@ Environment:
 // ---------------------------------------------------------------------------
 
 const cliDist = resolve(REPO_ROOT, "packages/cli/dist/index.js");
-const contractsDist = resolve(REPO_ROOT, "packages/contracts/dist/embeddings.js");
 
 if (!existsSync(cliDist)) {
   process.stderr.write(`ERROR: CLI not built. Run 'pnpm build' first.\n  Missing: ${cliDist}\n`);
-  process.exit(1);
-}
-if (!existsSync(contractsDist)) {
-  process.stderr.write(`ERROR: @yakcc/contracts not built. Run 'pnpm build' first.\n  Missing: ${contractsDist}\n`);
   process.exit(1);
 }
 

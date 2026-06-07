@@ -38,14 +38,15 @@
 //   are imported.
 //
 //   EMBEDDING: each imported block is re-embedded using the user's configured
-//   embedding provider. The bootstrap sqlite was stored with a zero-vector provider
-//   (DEC-V2-BOOTSTRAP-EMBEDDING-001). The user's registry gets real embeddings,
+//   embedding provider. The bootstrap sqlite was stored with bge-small
+//   (DEC-V2-BOOTSTRAP-EMBEDDING-002). The user's registry gets real embeddings,
 //   enabling semantic `yakcc query` to work correctly after import.
 
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
+import { createLocalEmbeddingProvider } from "@yakcc/contracts";
 import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
 
@@ -53,11 +54,60 @@ import type { Logger } from "../index.js";
 // Internal types
 // ---------------------------------------------------------------------------
 
+// @decision DEC-CLI-INIT-SEED-LOUD-001
+// @title Split seedYakccCorpus failure into absent (quiet) vs present-throwing (loud)
+// @status accepted (WI-1111 / issue #1111)
+// @rationale
+//   PROBLEM: the previous implementation threw for BOTH "corpus file not found"
+//   and "corpus exists but is broken". init.ts caught all throws with a single
+//   non-fatal warning, silently leaving new users with an empty registry when a
+//   broken corpus file was present.
+//
+//   SPLIT: introduce SeedResult discriminated union so the caller can distinguish:
+//     - { status: "absent" }  → corpus file was not found on disk (deliberate
+//       fallback, e.g. binary dist without bundled corpus). init stays quiet, exits 0.
+//     - { status: "seeded" }  → success path; count is atoms processed.
+//   Any throw from seedYakccCorpus now unambiguously means "corpus file EXISTS
+//   but the seed operation failed" — a correctness failure that init must surface
+//   loudly (non-zero exit, stderr banner).
+//
+//   CALLER CONTRACT: init.ts branches on SeedResult. Absent → warning only.
+//   Seeded → existing count handling. Caught throw → loud banner + exit 1.
+//
+//   BACKWARD COMPAT: callers that only use seedYakccCorpus directly (e.g. the
+//   `seed --yakcc` command handler) must be updated to handle the new return type.
+//   seed.ts already checks the returned count, so it receives { status: "seeded",
+//   count: N } and uses count — no behavior change for that path.
+
+/**
+ * Discriminated result returned by seedYakccCorpus.
+ *
+ * `absent` — the bootstrap corpus sqlite was not found on disk. This is a
+ *   deliberate fallback (e.g. binary distribution without bundled corpus).
+ *   The caller should emit a quiet warning and continue without error.
+ *
+ * `seeded` — corpus was found and imported successfully. `count` is the number
+ *   of atoms processed (INSERT OR IGNORE; existing atoms count as 0 new imports).
+ */
+export type SeedResult = { status: "absent"; reason: string } | { status: "seeded"; count: number };
+
 /**
  * Options for seedYakccCorpus. Mirrors SeedOptions in seed.ts for consistency.
  */
 export interface SeedYakccOptions {
-  /** Embedding provider forwarded to openRegistry. Tests inject offline provider. */
+  /**
+   * Embedding provider used to OPEN the source bootstrap sqlite.
+   *
+   * Must match the provider whose modelId was used when the bootstrap was
+   * produced (currently Xenova/bge-small-en-v1.5, since #1017).
+   *
+   * Production: omit — the on-disk path uses createLocalEmbeddingProvider()
+   *   (bge-small, offline-cached, zero outbound — DEC-V2-BOOTSTRAP-EMBEDDING-002).
+   * Tests: inject an offline provider (e.g. createOfflineEmbeddingProvider())
+   *   to avoid the multi-second BGE cold-start and remain network-free.
+   *
+   * @decision DEC-V2-BOOTSTRAP-EMBEDDING-002 (on-disk path, seed-yakcc seam)
+   */
   embeddings?: RegistryOptions["embeddings"];
   /**
    * Override the path to the bootstrap corpus sqlite.
@@ -113,24 +163,62 @@ function findBootstrapSqlite(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Zero-vector embedding provider — bootstrap source DB uses these
+// Bootstrap source embedding provider
+//
+// @decision DEC-V2-BOOTSTRAP-EMBEDDING-001
+// @title Bootstrap uses a zero-vector EmbeddingProvider to avoid network deps
+// @status superseded-by DEC-V2-BOOTSTRAP-EMBEDDING-002
+// @rationale (Historical) Bootstrap was originally stored with a zero-vector
+//   provider. Since #1017 re-embedded bootstrap/yakcc.registry.sqlite with
+//   Xenova/bge-small-en-v1.5, using null-zero on the on-disk read path creates
+//   a cross-provider mismatch that triggers the registry's provider-consistency
+//   guard (#1111 made this a LOUD failure). This decision is narrowed to the
+//   :memory: verify path in bootstrap.ts only; the on-disk seed path uses
+//   createLocalEmbeddingProvider() per DEC-V2-BOOTSTRAP-EMBEDDING-002.
+//
+// @decision DEC-V2-BOOTSTRAP-EMBEDDING-002
+// @title seed-yakcc on-disk source read uses the local BGE provider (not null-zero)
+// @status accepted (WI-1123 / issue #1123)
+// @rationale The committed bootstrap/yakcc.registry.sqlite was re-embedded with
+//   Xenova/bge-small-en-v1.5 in #1017. Opening it with the old null-zero provider
+//   ("bootstrap/null-zero" modelId) triggers the cross-provider consistency gate
+//   added in #1111, causing `yakcc init --airgapped` to exit 1 and the B6a
+//   air-gap benchmark to fail. The fix mirrors what #1031/#1113 did for bootstrap.ts:
+//   use createLocalEmbeddingProvider() on the on-disk source open so the modelId
+//   matches the stored embedding_model_id. The BGE model is cached offline by
+//   Xenova/transformers.js; no remote model download occurs when the model is
+//   already in the local cache (env.allowRemoteModels=false guards the air-gap path).
+//   Tests inject opts.embeddings (offline provider) to avoid the BGE cold-start
+//   and remain network-free. Production callers leave opts.embeddings undefined,
+//   falling back to createLocalEmbeddingProvider().
+//   Supersedes DEC-V2-BOOTSTRAP-EMBEDDING-001 on the seed-yakcc on-disk path.
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the embedding provider used when the bootstrap corpus was created.
+ * Returns the embedding provider for opening the source bootstrap registry.
  *
- * The bootstrap process stores atoms with a zero-vector embedding
- * (DEC-V2-BOOTSTRAP-EMBEDDING-001). When we open the bootstrap sqlite to READ
- * blocks from it, we must use the same zero provider so the registry's
- * embedding model ID matches the stored embeddings. The user's registry
- * receives real embeddings via the injected provider in storeBlock.
+ * On-disk production path: uses createLocalEmbeddingProvider() (bge-small,
+ * offline-cached) so the modelId matches the bootstrap sqlite's stored
+ * embedding_model_id ("Xenova/bge-small-en-v1.5"). Zero outbound — the model
+ * is loaded from the local Xenova/transformers.js cache.
+ *
+ * When opts.embeddings is provided (test injection seam), that provider is used
+ * directly instead, allowing tests to use an offline deterministic provider
+ * (e.g. createOfflineEmbeddingProvider()) without the BGE cold-start penalty.
+ *
+ * @decision DEC-V2-BOOTSTRAP-EMBEDDING-002 (on-disk path, seed-yakcc seam)
  */
-function makeZeroEmbeddingProvider(): RegistryOptions["embeddings"] {
-  return {
-    dimension: 384,
-    modelId: "bootstrap/null-zero",
-    embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
-  };
+function getSourceEmbeddingProvider(
+  injected: RegistryOptions["embeddings"] | undefined,
+): RegistryOptions["embeddings"] {
+  if (injected !== undefined) {
+    // Test injection seam: use the provided offline/stub provider.
+    return injected;
+  }
+  // Production: use the local BGE provider that matches the bootstrap sqlite's
+  // stored embedding_model_id ("Xenova/bge-small-en-v1.5").
+  // Loaded lazily from the offline-cached transformers.js model — no network.
+  return createLocalEmbeddingProvider();
 }
 
 // ---------------------------------------------------------------------------
@@ -148,39 +236,68 @@ function makeZeroEmbeddingProvider(): RegistryOptions["embeddings"] {
  * The target registry MUST already be open (initialized) — this function does
  * not open or close it; the caller owns the registry lifecycle.
  *
+ * Return contract (DEC-CLI-INIT-SEED-LOUD-001):
+ *   - `{ status: "absent" }` — corpus sqlite was NOT found on disk. The caller
+ *     MUST treat this as a quiet fallback (exit 0, warning only). This is NOT
+ *     an error — binary distributions intentionally ship without a bundled corpus.
+ *   - `{ status: "seeded", count }` — corpus found and imported successfully.
+ *   - throws — corpus sqlite EXISTS but the seed operation failed (e.g. schema
+ *     mismatch, IO error, BMR integrity failure). The caller MUST surface this
+ *     loudly: non-zero exit + stderr banner.
+ *
  * @param registry - Open, initialized target registry.
  * @param opts     - Options (embedding provider for the source bootstrap db).
  * @param logger   - Output sink.
- * @returns Number of newly imported atoms (INSERT OR IGNORE; existing atoms
- *   are counted as 0 new imports).
+ * @returns SeedResult discriminated union (see above).
  */
 export async function seedYakccCorpus(
   registry: Registry,
   opts: SeedYakccOptions,
   logger: Logger,
-): Promise<number> {
+): Promise<SeedResult> {
   // Locate the bootstrap sqlite.
   // opts.corpusPath overrides automatic resolution (used by tests in git worktrees
   // where the bootstrap/ dir lives in the main checkout, not the worktree root).
+  //
+  // "Absent" means: no path could be resolved OR the resolved path does not exist
+  // on disk. Both cases are treated as the quiet fallback (DEC-CLI-INIT-SEED-LOUD-001).
+  // We check existsSync on the resolved path so that an explicit corpusPath pointing
+  // at a non-existent file is treated as "absent" rather than silently creating a
+  // new empty SQLite file (SQLite's default open-creates-new behavior).
   const resolvedPath = opts.corpusPath ?? findBootstrapSqlite();
-  if (resolvedPath === null) {
-    throw new Error(
-      "yakcc seed --yakcc: bootstrap corpus not found. Expected bootstrap/yakcc.registry.sqlite relative to the repo root. " +
+  if (resolvedPath === null || !existsSync(resolvedPath)) {
+    // Corpus file is absent — deliberate fallback (e.g. binary dist without
+    // bundled corpus). Return discriminated "absent" rather than throwing so the
+    // caller can stay quiet (exit 0, warning only). This is NOT an error path.
+    // (DEC-CLI-INIT-SEED-LOUD-001)
+    return {
+      status: "absent",
+      reason:
+        "bootstrap corpus not found. Expected bootstrap/yakcc.registry.sqlite relative to the repo root. " +
         "For monorepo-clone alpha installs, ensure you are running from within the yakcc repo. " +
         "Binary distribution follow-up: issue #361.",
-    );
+    };
   }
   const sqlitePath = resolvedPath;
 
   logger.log(`yakcc seed --yakcc: loading corpus from ${sqlitePath}`);
 
-  // Open the bootstrap sqlite as a READ source. Use the zero-vector provider —
-  // the bootstrap db was stored with that provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
+  // Open the bootstrap sqlite as a READ source.
+  //
+  // Use the provider matching the bootstrap sqlite's stored embedding_model_id
+  // (Xenova/bge-small-en-v1.5, since #1017). Using null-zero here triggers the
+  // cross-provider consistency gate (#1111) and kills the seed path.
+  //
+  // getSourceEmbeddingProvider() uses the test-injected opts.embeddings when
+  // provided (offline stub, no network), or createLocalEmbeddingProvider() for
+  // production (bge-small, offline-cached, zero outbound).
+  //
+  // @decision DEC-V2-BOOTSTRAP-EMBEDDING-002 (seed-yakcc on-disk path)
   // We only READ from this db; the user's registry is the write target.
   let sourceRegistry: Registry;
   try {
     sourceRegistry = await openRegistry(sqlitePath, {
-      embeddings: makeZeroEmbeddingProvider(),
+      embeddings: getSourceEmbeddingProvider(opts.embeddings),
     });
   } catch (err) {
     throw new Error(
@@ -260,5 +377,7 @@ export async function seedYakccCorpus(
   logger.log(
     `yakcc seed --yakcc: imported ${imported} atoms from bootstrap corpus (${skipped} skipped)`,
   );
-  return imported;
+  // Return discriminated "seeded" result. Any throw above means the corpus EXISTS
+  // but is broken — the caller handles that loudly. (DEC-CLI-INIT-SEED-LOUD-001)
+  return { status: "seeded", count: imported };
 }
