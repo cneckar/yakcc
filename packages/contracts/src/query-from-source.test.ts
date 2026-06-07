@@ -300,7 +300,7 @@ describe("queryIntentCardFromSource — absent JSDoc, D1 fallback", () => {
 
     // Behavior falls back to the signature string (e.g. "function add(a, b) -> number").
     expect(typeof card.behavior).toBe("string");
-    expect(card.behavior!.length).toBeGreaterThan(0);
+    expect(card.behavior?.length).toBeGreaterThan(0);
     // Should include the function name "add" in the fallback.
     expect(card.behavior).toMatch(/add/);
   });
@@ -389,6 +389,118 @@ describe("queryIntentCardFromSource — compound end-to-end (arrayMedian fixture
         }
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 9: behavior field always ≤ 200 chars (DEC-INTENT-BEHAVIOR-CAP-001, #1109)
+//
+// Production sequence: queryIntentCardFromSource is called on a TS source file that
+// has no per-export JSDoc (so the JSDoc-summary path is skipped) and a function
+// signature that, when rendered as a string, exceeds 200 chars.  Without the cap
+// the card.behavior violates validate-intent-card.ts:146 and self-shave goes RED.
+// ---------------------------------------------------------------------------
+
+/**
+ * Source with a long signature string — no JSDoc, params have long names.
+ * The rendered signatureString format is "function <name>(<paramNames>) -> <ret>",
+ * which for the names chosen here produces a 222-char string that exceeds 200.
+ * (buildSignatureString uses param names only, not types.)
+ */
+const LONG_SIGNATURE_SOURCE = `
+export function processComplexDataTransformationWithValidation(
+  inputDataSourceConfigurationSpec: string,
+  outputTransformationPipelineOptionsMap: string,
+  validationAndErrorHandlingStrategyConfig: string,
+  metadataEnrichmentAndTaggingPolicyRules: string
+): string {
+  return inputDataSourceConfigurationSpec;
+}
+`.trim();
+
+/**
+ * Source with a JSDoc summary of exactly 200 chars — must NOT be truncated.
+ * "A".repeat(195) + " foo." = 200 chars total.
+ */
+const JSDOC_EXACTLY_200_CHARS = `
+/**
+ * ${"A".repeat(195)} foo.
+ */
+export function f(): void {}
+`.trim();
+
+/**
+ * Source that mimics the resolve.ts shape: file-level JSDoc block, no per-export JSDoc
+ * on the factory function, long param/return types.  This is the regression fixture for #1109.
+ */
+const RESOLVE_LIKE_SOURCE = `
+/**
+ * Tool: yakcc_resolve
+ *
+ * @decision DEC-SOME-DECISION-001
+ * @title some decision title for this tool
+ * @status accepted
+ * @rationale
+ *   This file has a very long file-level JSDoc and no per-export JSDoc on the
+ *   factory function below.
+ */
+
+export type ProofStatus = "none" | "pending" | "accepted" | "retracted";
+
+export interface CreateResolveToolOptions {
+  readonly openRegistry?: (() => Promise<{ close(): void }>) | undefined;
+  readonly proofStatusProvider?: ((atom_id: string) => ProofStatus) | undefined;
+}
+
+export function createResolveTool(opts?: CreateResolveToolOptions): { name: string; handler: () => Promise<void> } {
+  return { name: "yakcc_resolve", handler: async () => {} };
+}
+`.trim();
+
+describe("queryIntentCardFromSource — behavior ≤ 200 chars cap (DEC-INTENT-BEHAVIOR-CAP-001, #1109)", () => {
+  // Test A: no-JSDoc source with a long signature → behavior must be capped to ≤200.
+  it("Test A: caps behavior to ≤200 chars and appends '...' when signature exceeds 200 chars", () => {
+    const card = queryIntentCardFromSource(LONG_SIGNATURE_SOURCE);
+
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+    expect(card.behavior.endsWith("...")).toBe(true);
+    // Starts with the original signature prefix so the function name is preserved.
+    expect(card.behavior.startsWith("function processComplexDataTransformationWithValidation")).toBe(true);
+  });
+
+  it("Test A (length invariant): truncated behavior is exactly 200 chars (197 content + '...')", () => {
+    const card = queryIntentCardFromSource(LONG_SIGNATURE_SOURCE);
+    expect(card.behavior.length).toBe(200);
+  });
+
+  // Test B: JSDoc summary of exactly 200 chars → no truncation, no "..." appended.
+  it("Test B: does NOT append '...' when JSDoc summary is exactly 200 chars", () => {
+    const card = queryIntentCardFromSource(JSDOC_EXACTLY_200_CHARS);
+
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+    expect(card.behavior.endsWith("...")).toBe(false);
+    expect(card.behavior.endsWith("foo.")).toBe(true);
+  });
+
+  // Test C: resolve.ts-shaped source (file-level JSDoc, no per-export JSDoc, long sig).
+  it("Test C: resolve.ts-shaped source — behavior is ≤200 chars (regression for #1109)", () => {
+    const card = queryIntentCardFromSource(RESOLVE_LIKE_SOURCE);
+
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+  });
+
+  it("Test C (compound / end-to-end): full production sequence on resolve-like fixture", () => {
+    // Crosses all boundaries: ts-morph parse → pickPrimaryDeclaration (no per-export JSDoc)
+    // → extractSignatureFromNode → behavior cap → QueryIntentCard assembly.
+    const card = queryIntentCardFromSource(RESOLVE_LIKE_SOURCE);
+
+    expect(typeof card).toBe("object");
+    expect(card).not.toBeNull();
+    expect(typeof card.behavior).toBe("string");
+    // Schema constraint: behavior ≤ 200.
+    expect(card.behavior.length).toBeLessThanOrEqual(200);
+    // createResolveTool was resolved (exports found, card is non-empty).
+    expect(card.behavior.length).toBeGreaterThan(0);
   });
 });
 

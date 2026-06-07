@@ -97,8 +97,16 @@ export async function seed(
       const yakccOpts: import("./seed-yakcc.js").SeedYakccOptions = {};
       if (opts?.embeddings !== undefined) yakccOpts.embeddings = opts.embeddings;
       if (opts?.corpusPath !== undefined) yakccOpts.corpusPath = opts.corpusPath;
-      const imported = await seedYakccCorpus(registry, yakccOpts, logger);
-      logger.log(`yakcc seed --yakcc: done — ${imported} atoms processed from bootstrap corpus`);
+      const result = await seedYakccCorpus(registry, yakccOpts, logger);
+      if (result.status === "absent") {
+        // User explicitly invoked `seed --yakcc` but no corpus is present.
+        // For the explicit seed command, this is an error — the user asked for it.
+        logger.error(`error: yakcc seed --yakcc: ${result.reason}`);
+        return 1;
+      }
+      logger.log(
+        `yakcc seed --yakcc: done — ${result.count} atoms processed from bootstrap corpus`,
+      );
       return 0;
     }
 

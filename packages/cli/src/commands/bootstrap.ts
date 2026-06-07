@@ -70,7 +70,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { contractIdFromBytes } from "@yakcc/contracts";
+import { contractIdFromBytes, createLocalEmbeddingProvider } from "@yakcc/contracts";
 import type {
   BootstrapManifestEntry,
   Registry,
@@ -246,11 +246,11 @@ function findRepoRoot(startDir: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Bootstrap-mode embedding provider — deterministic zeros, no network access
+// Bootstrap-mode embedding provider
 //
 // @decision DEC-V2-BOOTSTRAP-EMBEDDING-001
 // @title Bootstrap uses a zero-vector EmbeddingProvider to avoid network deps
-// @status accepted
+// @status superseded-by DEC-V2-BOOTSTRAP-EMBEDDING-002
 // @rationale exportManifest() does not read the embeddings table — the manifest
 //   only contains content-addressed fields (blockMerkleRoot, specHash, etc).
 //   Using the real local embedding provider (Xenova/all-MiniLM-L6-v2) would
@@ -259,15 +259,64 @@ function findRepoRoot(startDir: string): string {
 //   version ever changes. A deterministic zero vector is correct for bootstrap:
 //   it satisfies the registry's embedding column constraint, cannot affect the
 //   content-address invariant, and makes bootstrap fully reproducible everywhere.
+//   (Historical: this was the operative authority before #1017 re-embedded
+//   bootstrap/yakcc.registry.sqlite with Xenova/bge-small-en-v1.5, making the
+//   null-zero model-id a dual-authority bug. Narrowed to the :memory: verify
+//   path only; see DEC-V2-BOOTSTRAP-EMBEDDING-002.)
+//
+// @decision DEC-V2-BOOTSTRAP-EMBEDDING-002
+// @title Bootstrap uses the local BGE provider on disk; zero provider only on :memory: verify
+// @status accepted
+// @rationale The shipped bootstrap/yakcc.registry.sqlite was re-embedded with
+//   Xenova/bge-small-en-v1.5 in #1017. Using null-zero on the on-disk path made
+//   the stored embedding_model_id ("Xenova/bge-small-en-v1.5") disagree with the
+//   provider passed to openRegistry ("bootstrap/null-zero"), triggering the
+//   cross-provider gate in storage.ts:2337-2369 and killing `yakcc bootstrap`,
+//   bootstrap-accumulate CI, and `yakcc init` seed silently. The dual-authority
+//   is eliminated by always using createLocalEmbeddingProvider() on the on-disk
+//   path. The :memory: verify path is exempt (an ephemeral artifact; nothing reads
+//   its vectors after the test exits) and keeps the zero provider for performance.
+//   Key facts neutralizing the risks:
+//   - BMR = BLAKE3(spec || impl || proof_root); embeddings never enter the hash.
+//   - CI matrix is ubuntu-latest only; no cross-OS embedding byte-identity needed.
+//   - DEC-EMBED-SINGLETON-CLOSURE-001 guarantees bge-small loads at most once.
+//   Supersedes DEC-V2-BOOTSTRAP-EMBEDDING-001 on the on-disk path. -001 remains
+//   valid for the :memory: verify carve-out.
 // ---------------------------------------------------------------------------
 
-const BOOTSTRAP_EMBEDDING_OPTS: Pick<RegistryOptions, "embeddings"> = {
-  embeddings: {
-    dimension: 384,
-    modelId: "bootstrap/null-zero",
-    embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
-  },
-};
+/**
+ * Returns the embedding options for the on-disk bootstrap registry path.
+ * Uses the local BGE provider (Xenova/bge-small-en-v1.5) so the produced
+ * sqlite's embedding_model_id matches the provider that wrote it — eliminating
+ * the cross-provider gate mismatch introduced by #1017.
+ *
+ * Loaded lazily; the singleton closure in @yakcc/contracts ensures the ONNX
+ * model loads exactly once per process (DEC-EMBED-SINGLETON-CLOSURE-001).
+ *
+ * @decision DEC-V2-BOOTSTRAP-EMBEDDING-002 (on-disk path)
+ */
+function getBootstrapEmbeddingOpts(): Pick<RegistryOptions, "embeddings"> {
+  return { embeddings: createLocalEmbeddingProvider() };
+}
+
+/**
+ * Returns the embedding options for the :memory: verify path.
+ * The verify path opens an ephemeral in-memory registry; its vectors are never
+ * read after the test exits, so the zero provider is correct and avoids the
+ * ~3-5s BGE cold-start penalty on every `yakcc bootstrap --verify` invocation.
+ *
+ * @decision DEC-V2-BOOTSTRAP-EMBEDDING-002 (:memory: carve-out)
+ * @decision DEC-V2-BOOTSTRAP-EMBEDDING-001 (narrowed to this path only)
+ */
+function getVerifyEmbeddingOpts(): Pick<RegistryOptions, "embeddings"> {
+  return {
+    embeddings: {
+      dimension: 384,
+      modelId: "bootstrap/null-zero",
+      embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Per-file outcome types
@@ -436,10 +485,10 @@ async function runVerify(
     return 1;
   }
 
-  // Open a fresh :memory: registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
+  // Open a fresh :memory: registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-002 :memory: carve-out).
   let registry: Registry;
   try {
-    registry = await openRegistry(":memory:", BOOTSTRAP_EMBEDDING_OPTS);
+    registry = await openRegistry(":memory:", getVerifyEmbeddingOpts());
   } catch (err) {
     logger.error(`error: failed to open in-memory registry: ${(err as Error).message}`);
     return 1;
@@ -1017,10 +1066,10 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
   const airgapped = rc?.mode === "airgapped";
   const commonsBinding = makeCommonsBinding({ registryPath, airgapped });
 
-  // Open registry with zero-embedding provider (DEC-V2-BOOTSTRAP-EMBEDDING-001).
+  // Open registry with the local BGE provider (DEC-V2-BOOTSTRAP-EMBEDDING-002 on-disk path).
   let registry: Registry;
   try {
-    const openOpts: RegistryOptions = { ...BOOTSTRAP_EMBEDDING_OPTS };
+    const openOpts: RegistryOptions = { ...getBootstrapEmbeddingOpts() };
     if (commonsBinding.commonsSubmit !== undefined) {
       openOpts.commonsSubmit = commonsBinding.commonsSubmit;
     }

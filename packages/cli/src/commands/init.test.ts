@@ -1879,3 +1879,68 @@ describe("init — .yakcc/manifest.json scaffold (DEC-COMPOSE-BY-REF-DEFAULT-001
     expect(existsSync(join(tmpDir, ".yakcc", "registry.sqlite"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 29: seed failure split — absent corpus (quiet) vs present-but-throwing (loud)
+//
+// Covers DEC-CLI-INIT-SEED-LOUD-001 (WI-1111 / issue #1111).
+//
+// Production sequences:
+//   A. Absent corpus: binary dist without bundled corpus → exit 0 + warning only
+//   B. Present-but-throwing corpus: corpus exists but is broken → exit 1 + banner
+// ---------------------------------------------------------------------------
+
+describe("init — absent corpus stays quiet (DEC-CLI-INIT-SEED-LOUD-001)", () => {
+  it("exits 0 with a warning when corpusPath points to a non-existent file", async () => {
+    // Simulate the binary-distribution case: the corpus sqlite does not exist.
+    // init must NOT exit non-zero and must NOT print the loud banner.
+    const logger = new CollectingLogger();
+    const nonExistentCorpus = join(tmpDir, "does-not-exist.sqlite");
+
+    const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
+      overrideHome: tmpDir,
+      runFederation: noOpMirror,
+      embeddings: createOfflineEmbeddingProvider(),
+      corpusPath: nonExistentCorpus,
+    });
+
+    // Must exit 0 — absent corpus is a deliberate fallback, not an error.
+    expect(code).toBe(0);
+
+    // Must NOT contain the loud banner.
+    const errOutput = logger.errLines.join("\n");
+    expect(errOutput).not.toContain("bootstrap corpus exists but seed failed");
+
+    // Registry is still initialized.
+    expect(existsSync(join(tmpDir, ".yakcc", "registry.sqlite"))).toBe(true);
+  });
+});
+
+describe("init — present-but-throwing corpus exits non-zero with banner (DEC-CLI-INIT-SEED-LOUD-001)", () => {
+  it("exits 1 and prints loud banner when corpus file exists but is corrupt", async () => {
+    // Simulate the broken-corpus case: the corpus sqlite EXISTS on disk but
+    // is not a valid SQLite database, so openRegistry will throw.
+    // init MUST exit non-zero and MUST print the loud stderr banner.
+    const { writeFileSync: wf } = await import("node:fs");
+    const badCorpusPath = join(tmpDir, "bad-corpus.sqlite");
+    // Write garbage bytes — sqlite3 will reject this as "not a database".
+    wf(badCorpusPath, "THIS IS NOT A SQLITE DATABASE\n");
+
+    const logger = new CollectingLogger();
+    const code = await init(["--target", tmpDir, "--skip-hooks"], logger, {
+      overrideHome: tmpDir,
+      runFederation: noOpMirror,
+      embeddings: createOfflineEmbeddingProvider(),
+      corpusPath: badCorpusPath,
+    });
+
+    // Must exit non-zero — present-but-throwing corpus is a correctness failure.
+    expect(code).toBe(1);
+
+    // Must contain the loud banner on stderr.
+    const errOutput = logger.errLines.join("\n");
+    expect(errOutput).toContain("bootstrap corpus exists but seed failed");
+    // Banner must also include the recovery hint.
+    expect(errOutput).toContain("yakcc init --no-seed");
+  });
+});

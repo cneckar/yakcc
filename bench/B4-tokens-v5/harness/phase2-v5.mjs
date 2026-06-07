@@ -121,6 +121,10 @@ const { values: flags } = parseArgs({
     smoke: { type: "boolean", default: false },
     // --tier=full makes dry-run show all 9 cells
     tier: { type: "string", default: "full" },
+    // --tasks-file selects the task corpus (default tasks.json). #1049's
+    // hard-atom matrix lives at tasks-hard.json; PROTOCOL.md methodology is
+    // unchanged — this is a runner-convenience selector only (#1059).
+    "tasks-file": { type: "string", default: "tasks.json" },
   },
   strict: false,
 });
@@ -130,6 +134,7 @@ const SMOKE = flags.smoke ?? false;
 const N_REPS = SMOKE ? 1 : Number.parseInt(flags["n-reps"] ?? "3", 10);
 const TASK_ID = SMOKE ? "crc32c" : (flags.task ?? "all");
 const CELL_ID = SMOKE ? "E" : (flags.cell ?? "all");
+const TASKS_FILE = flags["tasks-file"] ?? "tasks.json";
 
 const PHASE2_CAP_USD = V5_CAP_USD;
 const MAX_TOOL_CYCLES = 5;
@@ -369,7 +374,7 @@ async function main() {
   console.log("Hooked arm: reference-emit (DEC-BENCH-B4-V5-REFEMIT-ARM-001)");
   console.log("");
 
-  const manifest = JSON.parse(readFileSync(join(BENCH_ROOT, "tasks.json"), "utf8"));
+  const manifest = JSON.parse(readFileSync(join(BENCH_ROOT, TASKS_FILE), "utf8"));
   const tasks = manifest.tasks.filter((t) => TASK_ID === "all" || t.id === TASK_ID);
   const cells = PHASE2_CELLS.filter(
     (c) => CELL_ID === "all" || c.cell_id === CELL_ID.toUpperCase(),
