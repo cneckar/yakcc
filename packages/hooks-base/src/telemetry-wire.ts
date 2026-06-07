@@ -34,8 +34,16 @@ import type { TelemetryEvent } from "./telemetry.js";
  * Bumped when the envelope shape changes incompatibly (e.g. field rename,
  * required field added). Additive optional fields do NOT require a bump.
  * The receiver uses this to route to the correct deserialization path.
+ *
+ * History:
+ *   v1 — initial envelope shape (Slice 1, WI-546).
+ *   v2 — TelemetryEvent gains `candidateAtomHashes` (WI-1116, #1116).
+ *        The field is additive/optional on the event; the version bump signals
+ *        to receivers that candidate-hash data may be present in this batch.
+ *        Receivers that only know v1 should accept v2 by ignoring unknown fields
+ *        on TelemetryEvent (per DEC-WI508-S2-TELEMETRY-OUTCOME-ADDITIVE-001).
  */
-export const SCHEMA_VERSION = 1 as const;
+export const SCHEMA_VERSION = 2 as const;
 
 // ---------------------------------------------------------------------------
 // Source block
@@ -63,10 +71,10 @@ export type TelemetrySource = {
  *
  * @decision DEC-TELEMETRY-EXPORT-ENVELOPE-003
  * Immutable once constructed by `buildEnvelope`. The receiver expects
- * this exact shape at `schemaVersion === 1`.
+ * this exact shape at `schemaVersion === 2` (bumped from 1 in WI-1116).
  */
 export type TelemetryEnvelope = {
-  /** Always === SCHEMA_VERSION (1). Receiver uses this to route deserialization. */
+  /** Always === SCHEMA_VERSION (2 as of WI-1116). Receiver uses this to route deserialization. */
   readonly schemaVersion: typeof SCHEMA_VERSION;
   /** Session identifier (CLAUDE_SESSION_ID or process-scoped UUID fallback). */
   readonly sessionId: string;

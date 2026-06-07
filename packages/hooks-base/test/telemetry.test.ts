@@ -596,6 +596,103 @@ describe("full production sequence — registry-hit + telemetry", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WI-1116 — candidateAtomHashes: populated from real candidates
+//
+// Production sequence:
+//   store 3 atoms → executeRegistryQueryWithTelemetry (threshold=2.0 so all hit)
+//   → read JSONL → assert candidateAtomHashes non-empty, 8-char hex each
+//   → assert NO plaintext intent in serialized JSONL
+// ---------------------------------------------------------------------------
+
+describe("WI-1116 — candidateAtomHashes populated from real candidates", () => {
+  it("candidateAtomHashes is non-empty and each entry is 8 lowercase hex chars", async () => {
+    const SESSION = "wi1116-candidate-hashes-test";
+    // Store 3 atoms so candidates list has entries.
+    const spec1 = makeSpecYak("parse-int", "Parse an integer from string");
+    const spec2 = makeSpecYak("stringify-int", "Convert an integer to string");
+    const spec3 = makeSpecYak("clamp-number", "Clamp a number to a range");
+    await registry.storeBlock(makeBlockRow(spec1));
+    await registry.storeBlock(makeBlockRow(spec2));
+    await registry.storeBlock(makeBlockRow(spec3));
+
+    const ctx: EmissionContext = { intent: "Parse an integer from string" };
+
+    await executeRegistryQueryWithTelemetry(registry, ctx, "Edit", {
+      threshold: 2.0, // very permissive — all candidates qualify
+      telemetryDir,
+      sessionId: SESSION,
+    });
+
+    const filePath = join(telemetryDir, `${SESSION}.jsonl`);
+    expect(existsSync(filePath)).toBe(true);
+    const lines = readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+    // Take the first (non-drift) line.
+    const parsed = JSON.parse(lines[0] ?? "{}") as TelemetryEvent;
+
+    // Must have at least 1 candidate hash.
+    expect(Array.isArray(parsed.candidateAtomHashes)).toBe(true);
+    expect((parsed.candidateAtomHashes ?? []).length).toBeGreaterThanOrEqual(1);
+
+    // Each entry must be exactly 8 lowercase hex chars (BMR[:8]).
+    for (const h of parsed.candidateAtomHashes ?? []) {
+      expect(h).toMatch(/^[0-9a-f]{8}$/);
+    }
+  }, 15_000);
+
+  it("candidateAtomHashes is [] when registry returns no candidates (empty registry)", async () => {
+    const SESSION = "wi1116-empty-candidates-test";
+    // Empty registry — no blocks stored.
+    const ctx: EmissionContext = { intent: "Some obscure query with no matches" };
+
+    await executeRegistryQueryWithTelemetry(registry, ctx, "Write", {
+      threshold: 0.01, // very strict — no candidate will beat threshold
+      telemetryDir,
+      sessionId: SESSION,
+    });
+
+    const filePath = join(telemetryDir, `${SESSION}.jsonl`);
+    const lines = readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+    const parsed = JSON.parse(lines[0] ?? "{}") as TelemetryEvent;
+
+    // candidateAtomHashes is present and empty when candidateCount === 0.
+    expect(parsed.candidateCount).toBe(0);
+    expect(parsed.candidateAtomHashes).toStrictEqual([]);
+  }, 15_000);
+
+  it("privacy invariant: serialized JSONL with candidateAtomHashes contains no plaintext intent", async () => {
+    const SESSION = "wi1116-privacy-invariant-test";
+    const SENSITIVE_INTENT =
+      "User wants to implement a proprietary billing algorithm with confidential logic";
+    const spec = makeSpecYak("some-util", "Some utility function");
+    await registry.storeBlock(makeBlockRow(spec));
+
+    const ctx: EmissionContext = { intent: SENSITIVE_INTENT };
+
+    await executeRegistryQueryWithTelemetry(registry, ctx, "MultiEdit", {
+      threshold: 2.0,
+      telemetryDir,
+      sessionId: SESSION,
+    });
+
+    const filePath = join(telemetryDir, `${SESSION}.jsonl`);
+    const raw = readFileSync(filePath, "utf-8");
+
+    // The plaintext intent must NEVER appear in the file.
+    expect(raw).not.toContain(SENSITIVE_INTENT);
+    // Spot-check a recognizable fragment of the sensitive intent.
+    expect(raw).not.toContain("billing algorithm");
+    expect(raw).not.toContain("confidential");
+
+    // Confirm candidateAtomHashes entries are hex-only (no PII can sneak in).
+    const lines = raw.split("\n").filter(Boolean);
+    const parsed = JSON.parse(lines[0] ?? "{}") as TelemetryEvent;
+    for (const h of parsed.candidateAtomHashes ?? []) {
+      expect(h).toMatch(/^[0-9a-f]{8}$/);
+    }
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
 // WI-546 Slice 1 — Integration test: composed File + HTTPS sinks fire on captureTelemetry
 //
 // @mock-exempt: fetch is the external HTTP boundary. All other collaborators use
@@ -695,7 +792,7 @@ describe("WI-546 Slice 1 — integration: composed sink fires on captureTelemetr
       emittedAt: number;
       source: { cliVersion: string; platform: string; nodeVersion: string };
     };
-    expect(envelope.schemaVersion).toBe(1);
+    expect(envelope.schemaVersion).toBe(2);
     expect(envelope.sessionId).toBe("integration-session");
     expect(Array.isArray(envelope.events)).toBe(true);
     expect(envelope.events.length).toBeGreaterThanOrEqual(1);
