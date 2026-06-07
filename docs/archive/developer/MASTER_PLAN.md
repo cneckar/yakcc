@@ -968,6 +968,265 @@ The residual hard problems v0 still defers:
 
 ## Active Initiatives
 
+### Initiative: #1117 — browser-safe semantic-search kit + atom-index/embeddings exporter
+
+Status: **planning (2026-06-06).** Read-only planner pass on worktree
+`feature/1117-search-kit` @ `bccfa35`. New workspace package
+`@yakcc/discovery-search` (browser-safe) + a Node-only exporter CLI. No edits to
+the existing node embedder, registry storage, or MCP resolve logic — those are
+READ and re-exposed, not refactored in place (Sacred Practice #12: we expose the
+ONE canonical authority, we do not fork it). Part of the **Atom Explorer for
+registry.yakcc.com** initiative (umbrella `cneckar/yakforge`). The explorer's
+in-browser search must be the SAME semantic search the LLM uses.
+
+**Problem (challenged & accepted as scoped):** The yakforge atom-explorer needs
+to run the LLM's exact resolve search client-side: embed a query with
+`Xenova/bge-small-en-v1.5` (384-dim, mean-pool + L2-normalize), cosine-rank
+against a shipped atom-embedding index, and apply the same auto-accept tiering.
+Re-deriving any of that in the frontend would create a second authority that
+silently diverges from the server (wrong scores, wrong tiers, wrong model →
+non-byte-identical vectors → search that disagrees with the LLM). The right
+build is therefore a thin browser-importable re-export of the existing pure
+logic, NOT a reimplementation, plus a build-time exporter that snapshots the
+corpus into static assets the static frontend can ship.
+
+**Goals (measurable):**
+1. A browser-importable module exposes (a) the bge-small client embedder
+   (transformers.js, mean-pool + normalize), (b) `cosineDistanceToCombinedScore`,
+   (c) the auto-accept thresholds (0.85 top / 0.05 gap / 0.92 override) +
+   `assignScoreBand` + a `deriveConfidenceTier` equivalent — with ZERO node-only
+   imports on any path reachable from its browser entry. Proven by a bundle that
+   excludes `better-sqlite3`, `sqlite-vec`, `ts-morph`, and `node:*`.
+2. The browser embedder produces **byte-identical** Float32 vectors to the node
+   `createLocalEmbeddingProvider` for the same input text and model id, proven by
+   a parity test that runs both providers in Node and asserts exact equality.
+3. An exporter reads a registry sqlite corpus → `atoms.json` (per-atom card
+   fields) + a 384-dim embeddings index + a model-id/dimension stamp, tested on
+   `bootstrap/yakcc.registry.sqlite` (~4,904 atoms).
+
+**Non-goals (explicit):**
+- Server-side semantic search over HTTP (the global cascade catalog-walk in
+  resolve.ts is unchanged; out of scope).
+- Editing/forking the node embedder, registry storage, or resolve tier logic.
+  We re-export the canonical logic; we do not duplicate it (DEC-1117-AUTHORITY-001).
+- Shipping the explorer frontend itself (that lives in `cneckar/yakforge`).
+- 768-dim model support / schema migration (corpus is FLOAT[384]).
+
+**Dominant constraints:**
+- Browser path must be tree-shakeable and node-dep-free. `@yakcc/contracts`'s
+  BARREL (`index.ts`) transitively pulls `ts-morph` (via source-extract /
+  source-pick / canonical-ast), so the browser kit must NOT import the contracts
+  barrel — it imports only the isolated embedder logic + pure scoring.
+- B6 air-gap: the kit must default to NOT auto-fetching models from HuggingFace
+  in a way that surprises a consumer; the browser consumer controls model
+  loading (transformers.js `env`), so the kit exposes the pipeline factory and
+  documents that the caller pins `env.allowLocalModels`/`allowRemoteModels`.
+- Byte-parity hinges on identical pooling (`pooling:"mean"`, `normalize:true`)
+  and identical model id (`Xenova/bge-small-en-v1.5`).
+
+#### Architecture decision — package placement (DEC-1117-PLACEMENT-001)
+
+Three options considered:
+
+- **(A) New package `@yakcc/discovery-search` with a clean browser entry.**
+  Self-contained; its `package.json` declares only browser-safe deps
+  (`@xenova/transformers`); imports the pure embedder/scoring logic. No risk of a
+  consumer accidentally pulling the `ts-morph`-contaminated contracts barrel.
+  Tree-shakeable by construction. **RECOMMENDED.**
+- (B) A `./browser` subpath export on `@yakcc/contracts`. Rejected: the contracts
+  package's own dependency closure includes `ts-morph`; even with a clean subpath
+  entry, the package install graph drags `ts-morph` into a consumer's
+  node_modules and naive bundlers can still resolve it. The package's identity is
+  "node-side contract vocabulary", and adding a browser entry muddies its
+  authority boundary.
+- (C) A `./client` entry on `@yakcc/registry`. Rejected outright: registry
+  depends on `better-sqlite3` + `sqlite-vec` (hard node-native); no browser entry
+  is safe there.
+
+**Import-graph evidence (the load-bearing fact):**
+- `packages/contracts/src/embeddings.ts` imports ONLY `@noble/hashes/blake3.js`
+  (pure JS, browser-safe), `./canonicalize.js`, and a `type` import from
+  `./index.js` (types erase at compile). The local provider's only runtime dep is
+  a DYNAMIC `import("@xenova/transformers")` — browser-safe. `process` is read
+  behind `typeof process !== "undefined"` guards.
+- `cosineDistanceToCombinedScore` + `assignScoreBand` +
+  `M1_HIT_THRESHOLD`/`BAND_MIDPOINTS` (`discovery-eval-helpers.ts`) are pure; the
+  only non-type import in that module is `type { QueryIntentCard, Registry }`
+  (erased). Pure-extractable verbatim.
+- The thresholds (`0.85`/`0.05`/`0.92`) + `deriveConfidenceTier`
+  (`mcp-registry/src/tools/resolve.ts`) are pure ~20 lines over an
+  `EvidenceProjection`-shaped `{score}[]`. Pure-extractable.
+- Contamination source: `@yakcc/contracts` barrel re-exports modules that import
+  `ts-morph` (`source-extract.ts`, `source-pick.ts`, `canonical-ast.ts`). So the
+  kit MUST import the embedder + canonicalize logic via NARROW per-file paths
+  WITHOUT importing the contracts barrel. Two valid sub-approaches:
+  (i) `@yakcc/contracts` adds narrow per-file exports (`./embeddings.js`,
+  `./canonicalize.js`) that the kit imports directly (no barrel) — leanest, keeps
+  ONE authority; (ii) the kit vendors the ~40-line pooling/normalize + canonicalize
+  logic. **Chosen: (i)** — add the narrow contracts subpath exports and import
+  them directly, so the kit re-exposes the canonical authority rather than
+  forking it (DEC-1117-AUTHORITY-001). The pooling/normalize lives in
+  transformers.js (`pooling:"mean", normalize:true`), so the kit's embedder is a
+  thin wrapper around the same pipeline call the node path makes.
+
+#### State-Authority Map (integration surfaces)
+
+| Domain | Canonical authority | Kit relationship |
+|---|---|---|
+| bge-small embedder (model id, pooling, normalize) | `createLocalEmbeddingProvider` in `packages/contracts/src/embeddings.ts` (`LOCAL_MODEL_ID`, `pooling:"mean"`, `normalize:true`) | Kit re-exposes the SAME pipeline call; byte-parity test pins equality. No fork. |
+| cosine→score mapping | `cosineDistanceToCombinedScore` (`packages/registry/src/discovery-eval-helpers.ts`, DEC-V3-DISCOVERY-CALIBRATION-FIX-002) | Re-exported via narrow path or re-implemented byte-identically + parity-asserted against the source constant. |
+| auto-accept thresholds + tier | `resolve.ts` constants (0.85/0.05/0.92) + `deriveConfidenceTier` (DEC-1009-THRESHOLD-RETUNE-001, DEC-1029-HIGH-CONF-OVERRIDE-001) | Kit exports the same constants + a pure tier fn over `{score}[]`. |
+| embeddings storage | `contract_embeddings` vec0 table keyed by `spec_hash` (FLOAT[384]) | Exporter READS only; never writes the registry. |
+| card fields | `blocks` (level, spec_canonical_bytes→SpecYak behavior/signature/nonFunctional), `block_occurrences` (reuse-count), `registry_meta` (`embedding_model_id`,`embedding_dimension`) | Exporter READS; stamps model id from `registry_meta` (DEC-V3-IMPL-QUERY-002 consistency). |
+
+#### Slices (each < ~30 min implementer dispatch)
+
+| ID | Title | Acceptance checkbox | Deps | Weight | Gate | State |
+|---|---|---|---|---|---|---|
+| WI-1117-S1 | Browser-safe search KIT: new `@yakcc/discovery-search` pkg — bge-small client embedder + `cosineDistanceToCombinedScore` + thresholds/`assignScoreBand`/`deriveConfidenceTier`; narrow contracts subpath exports (`./embeddings.js`,`./canonicalize.js`); byte-parity test + pure-Node unit tests. | Acceptance #1 + #3 (pure-node tests green) + #4 (DEC annotation) | — | review | [ ] planned |
+| WI-1117-S2 | Atom-index/embeddings EXPORTER: Node-only CLI/helper reading a registry sqlite → `atoms.json` (card fields) + 384-dim embeddings index (Float32 blob + gzip) + model-id/dimension stamp; tested on `bootstrap/yakcc.registry.sqlite`; documents output format. | Acceptance #2 + #4 (model-id/provider-consistency documented) | WI-1117-S1 (reuses the kit's index/atom types) | review | [ ] planned |
+
+Waves: W1 = {S1}; W2 = {S2} (S2 imports the kit's shared index/atom record
+types from S1 so client + exporter agree on the on-disk shape). Critical path
+S1→S2. Max width 1.
+
+#### Evaluation Contract — WI-1117-S1 (guardian-bound)
+
+- **Required tests:**
+  - `packages/discovery-search/src/embedder.parity.test.ts` — **byte-parity**:
+    constructs the kit embedder and the node `createLocalEmbeddingProvider()`
+    (same default model id `Xenova/bge-small-en-v1.5`), embeds the same fixed
+    input strings, asserts the two `Float32Array`s are EXACTLY equal element-wise
+    (not approx). This is the load-bearing acceptance. Test is network-gated/
+    skipped when the ONNX model is uncached (mirror existing CI-offline pattern:
+    guard on cache presence and skip with a loud reason, never silently pass).
+  - `packages/discovery-search/src/scoring.test.ts` — asserts the kit's
+    `cosineDistanceToCombinedScore` is byte-identical to the registry source
+    across a table of distances incl. boundaries (0, √2, 2); asserts
+    `assignScoreBand` band boundaries (0.85/0.70/0.50).
+  - `packages/discovery-search/src/tier.test.ts` — asserts `deriveConfidenceTier`
+    matches resolve.ts semantics: top>0.92 ⇒ auto_accept (gap waived); top>0.85 &
+    gap>0.05 ⇒ auto_accept; empty ⇒ no_candidates; else candidate_list.
+  - A node-dep-isolation assertion: a test (or a build-step grep) proving the
+    package's browser entry's transitive `import` set contains no `node:*`,
+    `better-sqlite3`, `sqlite-vec`, or `ts-morph` specifier.
+- **Required real-path checks:**
+  - FULL workspace build is the CI authority: `pnpm -r build` (composite tsc)
+    green — the new package's `tsconfig.json` MUST declare `references` to any
+    `workspace:*` dep it consumes (mirror how `packages/registry` references
+    `packages/contracts`), or composite build fails red even when scoped
+    typecheck passes (MEMORY: WI-953 round-trip).
+  - `pnpm lint` green (biome-clean): no unused imports, no non-null `!`
+    assertions, no `console.*` outside an intentional biome-ignore.
+  - `pnpm typecheck` green workspace-wide.
+- **Required authority invariants:**
+  - The kit does NOT fork the embedder/scoring/tier logic into a divergent copy:
+    the embedder calls the same transformers.js pipeline with
+    `pooling:"mean", normalize:true` and model id `Xenova/bge-small-en-v1.5`; the
+    scoring/tier values equal the registry/resolve source constants (asserted).
+    (DEC-1117-AUTHORITY-001, Sacred Practice #12.)
+  - If contracts gains narrow subpath exports, the contracts BARREL and existing
+    `./source-extract`/`./source-pick` exports are unchanged (additive only).
+- **Required integration points:**
+  - `@yakcc/contracts` still builds and its existing consumers
+    (`@yakcc/registry`, `@yakcc/mcp-registry`, hooks-base) still typecheck after
+    any additive subpath-export change.
+- **Forbidden shortcuts:**
+  - No approximate/tolerance-based parity assertion (must be exact equality).
+  - No re-deriving thresholds with different literals "close enough" to the
+    source — must equal the source constants.
+  - No importing the `@yakcc/contracts` barrel from the browser entry.
+  - No vendoring a SECOND copy of the model-id/pooling constants that can drift.
+- **Ready-for-guardian when:** all four test files above pass (parity test either
+  passes or skips with a loud cache-miss reason), the node-dep-isolation check is
+  green, and `pnpm -r build && pnpm lint && pnpm typecheck` are all green at the
+  evaluated HEAD with a matching `head_sha`.
+
+#### Scope Manifest — WI-1117-S1
+
+Written to `tmp/1117-slice1-scope.json` in this worktree. Triad keys:
+- **allowed**: the new `packages/discovery-search/**` tree, additive edits to
+  `packages/contracts/package.json` + `packages/contracts/tsconfig.json` (narrow
+  subpath exports only) + the root `pnpm-lock.yaml` if a new package must be
+  registered (workspace glob `packages/*` already covers it).
+- **required**: `packages/discovery-search/package.json`,
+  `packages/discovery-search/tsconfig.json`,
+  `packages/discovery-search/src/index.ts` + embedder/scoring/tier modules + the
+  parity/scoring/tier/isolation tests.
+- **forbidden**: `packages/registry/src/**` (read-only authority),
+  `packages/mcp-registry/src/**`, `packages/contracts/src/embeddings.ts` and all
+  other contracts `src/**` (re-export, do not edit), runtime/**, hooks/**,
+  settings.json, any other package's source.
+- **authorities touched**: none at runtime (this is a build-time/library slice;
+  no proof-state, event-log, lease, or registry writes).
+
+#### Slice 2 roadmap — WI-1117-S2 (exporter) mapped to acceptance
+
+Maps to **Acceptance #2** (exporter produces atoms.json + embeddings index,
+documented + tested on bootstrap) and **Acceptance #4** (model-id/provider
+consistency documented). Roadmap (full Evaluation Contract + Scope Manifest
+authored at S2 provisioning, after S1 lands and the shared on-disk types exist):
+
+- Node-only entry (NOT in the browser kit; lives either in
+  `packages/discovery-search/scripts/` as a Node CLI guarded out of the browser
+  entry, or a small sibling — decide at S2 to keep the browser entry clean). It
+  imports `better-sqlite3` + `sqlite-vec` directly (the exporter is a build tool,
+  not shipped to the browser), mirroring the `generate-benchmark-svgs.mjs`
+  build-time-data-gen precedent (read data → emit JSON/asset).
+- **Input**: a registry sqlite path (default `bootstrap/yakcc.registry.sqlite`).
+  Read `blocks` (block_merkle_root, spec_hash, level, spec_canonical_bytes→parse
+  SpecYak for behavior/signature/nonFunctional purity/threadSafety/time/space),
+  `block_occurrences` (GROUP BY block_merkle_root for reuse-count), and
+  `contract_embeddings` (spec_hash → 384-dim vector; read raw via `vec_to_json()`
+  or the raw float32 blob column — confirm sqlite-vec read path at S2). Stamp
+  from `registry_meta` (`embedding_model_id`, `embedding_dimension`).
+- **Embedding-sharing nuance (must handle):** `contract_embeddings` is keyed by
+  `spec_hash`, and multiple `blocks` can share one `spec_hash` (same spec, diff
+  impl). So the embeddings index is keyed by `spec_hash` (deduped), and
+  `atoms.json` records each atom's `spec_hash` so the client joins atom→vector.
+  The exporter must NOT emit a duplicate 384-float row per block.
+- **Output format + size (DEC-1117-INDEX-FORMAT-001, decided at S2):** ~4,904
+  atoms but FEWER unique spec_hash vectors × 384 × 4 bytes ≈ ≤7.5MB raw.
+  RECOMMENDED: a compact little-endian Float32 binary blob (`embeddings.f32`) +
+  a parallel `spec_hash` order manifest, gzipped (cosine on unit vectors → the
+  client reads the typed array directly; JSON-of-numbers would ~3× the size and
+  cost parse time). `atoms.json` stays human-readable JSON. Final format pinned
+  with a measured size at S2.
+- **Tests**: run the exporter against `bootstrap/yakcc.registry.sqlite`, assert
+  atom count > 0, every atom's `spec_hash` resolves to exactly one vector of
+  length = stamped dimension, the stamped model id == `registry_meta`
+  embedding_model_id, and a deterministic re-run is byte-stable.
+- **Acceptance mapping checkboxes:**
+  - #1 (browser kit + parity) → **WI-1117-S1**
+  - #2 (exporter atoms.json + index, documented + tested on bootstrap) →
+    **WI-1117-S2**
+  - #3 (pure-node tests green, no regression to registry/contracts) → both
+    slices; S1 enforces no-contracts-regression, S2 enforces read-only registry.
+  - #4 (DEC annotation + model-id/provider-consistency documented) → S1 adds the
+    kit DECs; S2 documents the model-id stamp + consistency.
+
+#### RISKS
+
+- **transformers.js bundling / node-deps leak (HIGH).** A bundler may pull a
+  node-only transitive path from transformers.js or accidentally resolve the
+  contracts barrel. Mitigation: the node-dep-isolation test + keeping the browser
+  entry's imports to `@xenova/transformers` + narrow contracts subpaths only.
+- **Byte-parity flakiness (MED).** transformers.js is deterministic for a fixed
+  model + backend, but a quantized-vs-fp32 model variant or a different ONNX
+  backend could break exact equality. Mitigation: pin the exact model id; run
+  both providers in the SAME Node process/backend in the parity test; skip-loud
+  on cache miss rather than soft-pass.
+- **Embedding-index size (MED).** ~7.5MB raw before dedup; the spec_hash-sharing
+  dedup and gzip should bring it well down, but a static frontend shipping a
+  multi-MB blob has UX cost. Mitigation: measure post-dedup + gzip size at S2;
+  binary Float32 + gzip over JSON.
+- **Spec-shared-embedding nuance (MED).** Forgetting that one vector serves many
+  atoms would either bloat the index 1.5–2× or mis-key the client join.
+  Mitigation: index keyed by spec_hash; atoms reference spec_hash; tested.
+- **registry_meta absent on older corpora (LOW).** If `embedding_model_id` is
+  missing, the stamp can't be trusted. Mitigation: fail loud if the meta key is
+  absent rather than defaulting silently.
+
 ### Initiative: #868 — `@yakcc/shave-rust` Rust raise adapter (polyglot MVP)
 
 Status: **planning (2026-06-02).** Read-only planner pass on worktree
@@ -3899,3 +4158,6 @@ PLAN_VERDICT placeholder — see trailer at end of orchestrator response.
 | DEC-WEBSITE-B4V5-HONEST-001 | **Initiative #1074 (planning 2026-06-01, docs/website-only).** The public website and live docs adopt the B4-v5 economics dossier under a "lead with proven, caveat the rest" mandate. The B4 website headline metric becomes a **tier-conditioned** honest figure — `auto_accept` oracle pass **91% (58/64)** OR prompt-cache saving **36–53%** — sourced from `bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.json` via the `generate-benchmark-svgs.mjs` manifest (the single benchmark-headline authority, DEC-WEBSITE-BENCH-SVG-001). The prior `b4-tokens` extractor read a **raw aggregate `mean_token_reduction_pct`** (`-15.6% token delta (haiku)`) from the superseded `bench/B4-tokens/results-min-darwin-2026-05-14.json`; that raw aggregate is FORBIDDEN as a headline because the raw hooked arm *reduces* oracle pass (Opus 100%→72%, Sonnet 94%→50%, Haiku 67%→56%) and the naive Haiku-rescue is −11pt. The unconditional "cheap model can just as easily look it up" claim (`benchmarks.astro` token-cost `yakccClaim` + `05-token-cost.svg` third bar) and the unconditional "fewer output tokens at equal-or-better quality" claim (`docs/ALPHA.md` L17) are qualified to the `auto_accept`/followed path. Output collapse (17–100×) is framed as a SIZE fact, not end-to-end success. The 3 archive ADRs (`compose-by-reference-default`, `discovery-llm-interaction`, `benchmark-suite-methodology`) receive a one-line forward pointer to the dossier; their dated bodies are unchanged. The canonical dossier under `bench/B4-tokens-v5/**` is left as-is. **Planning-only row — no source code changes in this slice; implementation tracked across WI-1074-A..E.** | Operator decision 2026-06-01: the v5 matrix landed honest and must be surfaced without overclaiming. The single load-bearing constraint is "no number on the site exceeds the dossier." `benchmarks.json` is a build-time GENERATED projection of the manifest, so the authority is the manifest's `extractMetric`/`jsonPath`, never the JSON file — repointing must happen at the manifest and flow through `npm run build`. The honest win to lead with is dual: behavioral (91% oracle pass *under auto_accept*) and economic (36–53% cache saving, no quality change); the ceiling to caveat is `auto_accept` coverage (56–72% against the 6-atom corpus). Keeping the caveats (raw-aggregate regression, conditional Haiku rescue) on the page is what makes the lead-claim credible to a skeptical external/enterprise reader. Cross-refs: #1074; DEC-WEBSITE-BENCH-SVG-001 (headline-metric authority); DEC-WEBSITE-BENCH-PAGE-NARRATIVE-001 (problem-framed sections); DEC-BENCH-METHODOLOGY-NEVER-SYNTHETIC-001 (no synthetic numbers); the dossier `bench/B4-tokens-v5/results/DOSSIER-compose-by-reference-economics.md`. |
 | DEC-POLYGLOT-RUST-PURITY-001 | **#868 Slice 3 (planning 2026-06-06).** shave-rust gains a static purity gate `purity-check.ts` (`checkRustFunctionPurity`), mirroring shave-python's `checkPurity`/`checkFunctionPurity`, run in `raise-function.ts` BEFORE `renderBody` (pre-render reject). MVP impurity set: (a) `&mut`/`&'a mut` params detected by string-prefix on `RaisedParam.rustType` → `RustMutableBorrowError`; (b) known-impure free-fn/method call targets carried by the v2 `CallExpr`/`MethodCallExpr` wire → impure; (c) undecidable calls (opaque external fn, trait method) → `RustAmbiguousPurityError` (hold-the-line: raise rather than mis-raise as pure). The existing v2 envelope is SUFFICIENT for this set — **no `main.rs`/wire change** (the `&mut` signal is already in `rustType`; I/O calls are in the call-target nodes). A parser purity-signal extension (emit the `Expr::Macro` path and/or a receiver kind, envelope `version: 2 → 3` single-version, mirroring DEC-POLYGLOT-RUST-BODY-AST-V2-001) is GATED behind a fixture that proves the wire is insufficient — default SKIP. **Rationale:** the load-bearing bug is that `type-map.ts` silently flattens `&mut T → T` (`mapRustType("&mut i32") === "number"`), so a mutable-borrow function raises as a pure atom — exactly what #868's purity line ("`&` immut params only, no `&mut`, no I/O, no globals") forbids. The fix is a single-owner gate that rejects pre-render; `type-map.ts` keeps flattening the type STRING (its job) but the function never reaches render. Conservative deferrals (documented, each rejects rather than mis-raises): arbitrary `static`/global reads (no wire signal — a `static` read is an indistinguishable `Ident`), interior mutability (`Cell`/`RefCell`/`Mutex` — type-name heuristic deferred to avoid false-positives), and `&mut self` receivers (unreachable until impl-method support, since `main.rs` walks only `Item::Fn` and drops `FnArg::Receiver`). A purity false-negative (mis-raise) is strictly worse than a false-positive (over-reject), so undecidable cases raise. Annotated at point of implementation in `purity-check.ts`. |
 | DEC-POLYGLOT-RUST-TAXONOMY-WIRED-001 | **#868 Slice 3 (planning 2026-06-06).** The Slice-1 `errors.ts` 7 classes are made REACHABLE and DOCUMENTED to satisfy #868's "≥5 unsupported-construct classes documented with examples." Audit (verified): today only `RustUnsupportedConstructError` is wired — `raise-body.ts` throws it generically for every `UnsupportedExpr`/`UnsupportedStmt`, so the named `RustUnsafeError`/`RustAsyncError`/`RustClosureCaptureError`/`RustRawPointerError`/`RustDynTraitError` are defined-but-unreachable. Slice 3 adds a reason→class map in `raise-body.ts` (or a thin `reason-to-error` dispatcher) so `unsafe`/`async`/`.await`/`closure`/raw-pointer/`dyn` each throw their dedicated class, plus the purity gate adds `RustMutableBorrowError` (new, `extends CannotRaiseToIRError`) and `RustAmbiguousPurityError` — ≥5 distinct classes reachable on real inputs, each with a reject fixture. The taxonomy is documented as a structured `@taxonomy` doc-comment block at the top of `errors.ts` (one entry per class: minimal Rust example + triggering construct), cross-linked from `index.ts` — NOT a standalone `.md`. **Rationale:** shave-go/python ship no standalone taxonomy markdown (only shave-python has a package README); keeping the doc beside the classes upholds "code is truth" so the doc cannot drift from the class set. "Documented" is interpreted as "reachable + exemplified," not merely "class exists" — a class no input can trigger is dead documentation. All classes wrap `@yakcc/contracts` (`CannotRaiseToIRError`/`AmbiguousPurityError`); NO parallel hierarchy (parity with DEC-POLYGLOT-RUST-ERROR-TAXONOMY-001 / DEC-POLYGLOT-GO-ERROR-TAXONOMY-001). |
+| DEC-1117-PLACEMENT-001 | **#1117 (planning 2026-06-06).** The browser-safe semantic-search kit ships as a NEW workspace package `@yakcc/discovery-search` with a clean browser entry, NOT as a `./browser` subpath on `@yakcc/contracts` and NOT on `@yakcc/registry`. | Import-graph evidence: `@yakcc/contracts`'s barrel transitively pulls `ts-morph` (via `source-extract.ts`/`source-pick.ts`/`canonical-ast.ts`), and `@yakcc/registry` is hard-bound to `better-sqlite3`+`sqlite-vec` — both would drag node-native deps into a browser bundle. A standalone package declares only `@xenova/transformers` (browser-safe, same package runs in-browser) and is tree-shakeable by construction, keeping the browser path provably node-dep-free (asserted by a node-dep-isolation test). |
+| DEC-1117-AUTHORITY-001 | **#1117 (planning 2026-06-06).** The kit RE-EXPOSES the canonical embedder/scoring/tier logic; it does not fork it. The embedder calls the same transformers.js pipeline with `pooling:"mean", normalize:true` + model id `Xenova/bge-small-en-v1.5`; `cosineDistanceToCombinedScore`/thresholds/`deriveConfidenceTier` equal the registry/resolve source constants (asserted by a byte-parity test + value-equality tests). `@yakcc/contracts` gains narrow per-file subpath exports (`./embeddings.js`, `./canonicalize.js`) so the kit imports the authority directly without the barrel. | Sacred Practice #12 (single source of truth): a second copy of the model id / pooling flags / scoring formula / thresholds would silently diverge from the server, producing client-side search that disagrees with the LLM (wrong vectors → wrong scores → wrong auto-accept tier). Re-export + parity-assert keeps ONE authority. The narrow subpath exports are additive (the contracts barrel and existing `./source-extract`/`./source-pick` exports are unchanged), so existing consumers are unaffected. |
+| DEC-1117-INDEX-FORMAT-001 | **#1117 Slice 2 (planning 2026-06-06; format pinned with a measured size at S2).** The exporter emits `atoms.json` (human-readable per-atom card fields, each carrying its `spec_hash`) + a compact little-endian Float32 binary embeddings blob keyed/ordered by **unique `spec_hash`** (deduped) + a `spec_hash` order manifest + a model-id/dimension stamp, gzipped. Vectors are NOT JSON-of-numbers and are NOT duplicated per block. | `contract_embeddings` is keyed by `spec_hash`, and multiple `blocks` share one `spec_hash` (same spec, different impl), so deduping the index by `spec_hash` and joining atom→vector via `spec_hash` avoids 1.5–2× index bloat. A Float32 typed-array blob lets the browser cosine-search the raw `Float32Array` directly (unit vectors → dot product), where JSON-of-numbers would ~3× the ~7.5MB raw size and add parse cost. The model-id stamp enforces provider consistency (DEC-V3-IMPL-QUERY-002): the client MUST embed queries with the same model the index was built with. |
