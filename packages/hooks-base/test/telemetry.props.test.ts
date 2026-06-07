@@ -5,6 +5,11 @@
 
 import { it } from "vitest";
 import {
+  prop_candidateAtomHashes_bounded_to_top_k,
+  prop_candidateAtomHashes_each_entry_is_8_hex_chars,
+  prop_candidateAtomHashes_empty_list_stored_as_empty_array,
+  prop_candidateAtomHashes_no_plaintext_intent_in_event,
+  prop_candidateHashesTopK_is_positive_int,
   prop_hashIntent_deterministic,
   prop_hashIntent_format_64_lowercase_hex,
   prop_hashIntent_injectivity_sampled,
@@ -67,4 +72,28 @@ it("property: prop_outcomeFromResponse_passthrough", () => {
 
 it("property: prop_outcomeFromResponse_bijective", () => {
   if (!prop_outcomeFromResponse_bijective()) throw new Error("property failed");
+});
+
+// candidateAtomHashes properties — WI-1116 (DEC-WI1116-CANDIDATE-HASHES-001)
+it("property: prop_candidateHashesTopK_is_positive_int", () => {
+  if (!prop_candidateHashesTopK_is_positive_int()) throw new Error("property failed");
+});
+
+it("property: prop_candidateAtomHashes_bounded_to_top_k", async () => {
+  if (!(await prop_candidateAtomHashes_bounded_to_top_k())) throw new Error("property failed");
+});
+
+it("property: prop_candidateAtomHashes_each_entry_is_8_hex_chars", async () => {
+  if (!(await prop_candidateAtomHashes_each_entry_is_8_hex_chars()))
+    throw new Error("property failed");
+});
+
+it("property: prop_candidateAtomHashes_empty_list_stored_as_empty_array", async () => {
+  if (!(await prop_candidateAtomHashes_empty_list_stored_as_empty_array()))
+    throw new Error("property failed");
+});
+
+it("property: prop_candidateAtomHashes_no_plaintext_intent_in_event", async () => {
+  if (!(await prop_candidateAtomHashes_no_plaintext_intent_in_event()))
+    throw new Error("property failed");
 });

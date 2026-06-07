@@ -96,7 +96,7 @@ async function initBothClaudeAndCursor(dir: string, fakeHome: string): Promise<v
   mkdirSync(join(fakeHome, ".claude"), { recursive: true });
   mkdirSync(join(fakeHome, ".config", "Cursor"), { recursive: true });
   const code = await init(
-    ["--target", dir, "--ide", "claude-code,cursor", "--no-seed"],
+    ["--target", dir, "--ide", "claude-code,cursor", "--no-seed", "--local"],
     new CollectingLogger(),
     {
       overrideHome: fakeHome,
@@ -209,9 +209,13 @@ describe("uninstall --purge — removes .yakcc/ and .yakccrc.json (EC-S2-T3)", (
   it("purge removes .yakcc/ directory and .yakccrc.json", async () => {
     const fakeHome = join(tmpDir, "fakehome-t3");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     expect(existsSync(join(tmpDir, ".yakcc"))).toBe(true);
     expect(existsSync(join(tmpDir, ".yakccrc.json"))).toBe(true);
@@ -229,9 +233,13 @@ describe("uninstall --purge — removes .yakcc/ and .yakccrc.json (EC-S2-T3)", (
   it("purge: hook files are also removed (uninstall loop runs before purge)", async () => {
     const fakeHome = join(tmpDir, "fakehome-t3b");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     await uninstall(["--target", tmpDir, "--purge"], new CollectingLogger(), {
       overrideHome: fakeHome,
@@ -243,9 +251,13 @@ describe("uninstall --purge — removes .yakcc/ and .yakccrc.json (EC-S2-T3)", (
   it("purge: summary contains 'purged' (DEC-CLI-UNINSTALL-PURGE-001 / EC-S2-T8)", async () => {
     const fakeHome = join(tmpDir, "fakehome-t3c");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     const logger = new CollectingLogger();
     await uninstall(["--target", tmpDir, "--purge"], logger, { overrideHome: fakeHome });
@@ -295,7 +307,7 @@ describe("uninstall --ide claude-code,cline — removes both (EC-S2-T5)", () => 
 
     // Init all four IDEs
     const initCode = await init(
-      ["--target", tmpDir, "--ide", "claude-code,cursor,cline,continue", "--no-seed"],
+      ["--target", tmpDir, "--ide", "claude-code,cursor,cline,continue", "--no-seed", "--local"],
       new CollectingLogger(),
       { overrideHome: fakeHome },
     );
@@ -375,9 +387,13 @@ describe("uninstall — idempotent re-run (EC-S2-T7)", () => {
   it("calling uninstall twice after an init exits 0 both times", async () => {
     const fakeHome = join(tmpDir, "fakehome-t7");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     const code1 = await uninstall(["--target", tmpDir], new CollectingLogger(), {
       overrideHome: fakeHome,
@@ -399,9 +415,13 @@ describe("uninstall — concise summary output (EC-S2-T8)", () => {
   it("default uninstall: summary log is ≤6 non-empty lines", async () => {
     const fakeHome = join(tmpDir, "fakehome-t8a");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     const logger = new CollectingLogger();
     await uninstall(["--target", tmpDir], logger, { overrideHome: fakeHome });
@@ -413,9 +433,13 @@ describe("uninstall — concise summary output (EC-S2-T8)", () => {
   it("purge uninstall: summary contains 'purged' AND IDE removal info", async () => {
     const fakeHome = join(tmpDir, "fakehome-t8b");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     const logger = new CollectingLogger();
     await uninstall(["--target", tmpDir, "--purge"], logger, { overrideHome: fakeHome });
@@ -434,9 +458,13 @@ describe("uninstall — concise summary output (EC-S2-T8)", () => {
   it("default uninstall: summary mentions 'Registry preserved'", async () => {
     const fakeHome = join(tmpDir, "fakehome-t8c");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     const logger = new CollectingLogger();
     await uninstall(["--target", tmpDir], logger, { overrideHome: fakeHome });
@@ -461,9 +489,13 @@ describe("runCli dispatch — routes 'uninstall' to the uninstall handler (EC-S2
   it("runCli uninstall result matches direct uninstall() call", async () => {
     const fakeHome = join(tmpDir, "fakehome-t9");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     const loggerViaRunCli = new CollectingLogger();
     const codeViaRunCli = await runCli(["uninstall", "--target", tmpDir], loggerViaRunCli, {});
@@ -533,9 +565,13 @@ describe("uninstall — .yakccrc.json schema invariants (EC-S2-I3)", () => {
   it("version is still 1 after uninstall", async () => {
     const fakeHome = join(tmpDir, "fakehome-i3");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     await uninstall(["--target", tmpDir], new CollectingLogger(), { overrideHome: fakeHome });
 
@@ -546,9 +582,13 @@ describe("uninstall — .yakccrc.json schema invariants (EC-S2-I3)", () => {
   it("installedHooks is [] (not absent) after default uninstall", async () => {
     const fakeHome = join(tmpDir, "fakehome-i3b");
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    await init(["--target", tmpDir, "--ide", "claude-code", "--no-seed"], new CollectingLogger(), {
-      overrideHome: fakeHome,
-    });
+    await init(
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
+      new CollectingLogger(),
+      {
+        overrideHome: fakeHome,
+      },
+    );
 
     await uninstall(["--target", tmpDir], new CollectingLogger(), { overrideHome: fakeHome });
 
@@ -574,7 +614,7 @@ describe("compound interaction: init → uninstall end-to-end", () => {
 
     // Step 1: init with claude-code + cline
     const initCode = await init(
-      ["--target", tmpDir, "--ide", "claude-code,cline", "--no-seed"],
+      ["--target", tmpDir, "--ide", "claude-code,cline", "--no-seed", "--local"],
       new CollectingLogger(),
       { overrideHome: fakeHome },
     );
@@ -617,7 +657,7 @@ describe("compound interaction: init → uninstall end-to-end", () => {
     mkdirSync(join(fakeHome, ".claude"), { recursive: true });
 
     const initCode = await init(
-      ["--target", tmpDir, "--ide", "claude-code", "--no-seed"],
+      ["--target", tmpDir, "--ide", "claude-code", "--no-seed", "--local"],
       new CollectingLogger(),
       { overrideHome: fakeHome },
     );

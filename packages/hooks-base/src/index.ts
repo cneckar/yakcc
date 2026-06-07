@@ -130,7 +130,7 @@ export interface HookOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Shape returned by buildIntentCardQuery() â€” the IntentQuery card fields derived from an EmissionContext.
+ * Shape returned by buildIntentCardQuery() â€" the IntentQuery card fields derived from an EmissionContext.
  *
  * Named to give the return type a single-token representation; the static intent extractor uses the
  * function's return-type annotation as the behavior fallback when no JSDoc summary is present in the
@@ -163,13 +163,13 @@ export function buildIntentCardQuery(ctx: EmissionContext): IntentCardQuery {
  *   registry embedding ranks on comparable vectors to the stored ContractSpec.
  *
  *   Design decisions:
- *   (1) ctx.intent ALWAYS wins as the behavior dimension â€” user intent is canonical,
+ *   (1) ctx.intent ALWAYS wins as the behavior dimension â€" user intent is canonical,
  *       not the JSDoc summary extracted from potentially-stale emitted code.
- *   (2) topK=2 is hardcoded here (same as P1a) â€” structural filter needs the runner-up
+ *   (2) topK=2 is hardcoded here (same as P1a) â€" structural filter needs the runner-up
  *       for the D2 auto-accept gap check.
  *   (3) TypeError fallback: queryIntentCardFromSource throws TypeError on parse failure
  *       or when source has no function declarations. We catch ONLY TypeError and fall
- *       through to the fuzzy behavior-only path â€” other exception types propagate.
+ *       through to the fuzzy behavior-only path â€" other exception types propagate.
  *       This is intentional: unexpected errors (e.g. OOM) must NOT be silently swallowed.
  *   (4) Empty originalCode ("" or undefined) always takes the fuzzy path without calling
  *       the helper, keeping the hot path allocation-free when no code is available.
@@ -193,7 +193,7 @@ export function buildQueryCardFromEmission(
       // ctx.intent wins over JSDoc-derived behavior (design decision 1 above).
       return { ...derivedCard, behavior: ctx.intent, topK: 2 };
     } catch (err) {
-      // Only swallow TypeError â€” that's the documented failure mode for malformed source
+      // Only swallow TypeError â€" that's the documented failure mode for malformed source
       // or source with no function declarations. All other errors propagate.
       if (!(err instanceof TypeError)) {
         throw err;
@@ -210,7 +210,7 @@ export function buildQueryCardFromEmission(
  *
  * The skeleton carries the intent as the behavior field and empty collections
  * for all array fields. NonFunctional defaults to pure + safe as a conservative
- * starting point â€” the synthesiser will refine these. This helper was previously
+ * starting point â€" the synthesiser will refine these. This helper was previously
  * duplicated as an internal `buildSkeletonSpec` in all three consumer hooks.
  */
 export function buildSkeletonSpec(intent: string): ContractSpec {
@@ -252,7 +252,7 @@ export function writeMarkerCommand(markerDir: string, filename: string, payload:
  * Internal result shape returned by _executeRegistryQueryInternal().
  *
  * Carries both the public HookResponse and the candidate metadata needed by
- * the telemetry wrapper. Never exported â€” callers use executeRegistryQuery()
+ * the telemetry wrapper. Never exported â€" callers use executeRegistryQuery()
  * or executeRegistryQueryWithTelemetry().
  */
 type RegistryQueryInternalResult = {
@@ -326,7 +326,7 @@ async function _executeRegistryQueryInternal(
 }
 
 /**
- * Alias used by executeRegistryQueryWithSubstitution â€” same as the internal
+ * Alias used by executeRegistryQueryWithSubstitution â€" same as the internal
  * function but the name makes the Phase 2 usage intent explicit.
  */
 const _executeRegistryQueryInternalWithCandidates = _executeRegistryQueryInternal;
@@ -362,7 +362,7 @@ export async function executeRegistryQuery(
  * Execute the registry query and capture telemetry for the emission event.
  *
  * @decision DEC-HOOK-PHASE-1-001
- * @title Telemetry wrapper around executeRegistryQuery â€” observe-don't-mutate
+ * @title Telemetry wrapper around executeRegistryQuery â€" observe-don't-mutate
  * @status accepted
  * @rationale
  *   Phase 1 adds telemetry capture without altering the HookResponse shape.
@@ -371,8 +371,8 @@ export async function executeRegistryQuery(
  *   (2) calls _executeRegistryQueryInternal() to obtain both the response and
  *       candidate metadata needed by the D-HOOK-5 TelemetryEvent schema,
  *   (3) writes one TelemetryEvent to ~/.yakcc/telemetry/<session-id>.jsonl
- *       via captureTelemetry() (local-only, zero network I/O â€” B6 compliance),
- *   (4) returns the HookResponse UNCHANGED â€” the caller sees exactly what it
+ *       via captureTelemetry() (local-only, zero network I/O â€" B6 compliance),
+ *   (4) returns the HookResponse UNCHANGED â€" the caller sees exactly what it
  *       would have seen from executeRegistryQuery().
  *
  *   toolName is required here (not in executeRegistryQuery) because D-HOOK-5
@@ -401,7 +401,7 @@ export async function executeRegistryQueryWithTelemetry(
   },
 ): Promise<HookResponse> {
   const start = Date.now();
-  const { response, candidateCount, topScore } = await _executeRegistryQueryInternal(
+  const { response, candidateCount, topScore, candidates } = await _executeRegistryQueryInternal(
     registry,
     ctx,
     options,
@@ -410,8 +410,18 @@ export async function executeRegistryQueryWithTelemetry(
 
   try {
     // Import lazily to avoid circular references in tests that import only index.ts.
-    const { captureTelemetry } = await import("./telemetry.js");
-    // Spread only defined overrides â€” exactOptionalPropertyTypes rejects `key: undefined`
+    const { captureTelemetry, CANDIDATE_HASHES_TOP_K } = await import("./telemetry.js");
+
+    // WI-1116: compute top-K BMR[:8] prefixes ordered by score descending.
+    // candidates are already ordered by cosine distance ascending (lower = better),
+    // so the natural order gives highest-score-first when reversed. However,
+    // candidates from _executeRegistryQueryInternal are already ascending cosine
+    // distance, meaning index 0 is the best match — preserve that order (best first).
+    const candidateAtomHashes = candidates
+      .slice(0, CANDIDATE_HASHES_TOP_K)
+      .map((c) => (c.block.blockMerkleRoot as string).slice(0, 8));
+
+    // Spread only defined overrides â€" exactOptionalPropertyTypes rejects `key: undefined`
     // assignments to `key?: string` properties.
     captureTelemetry({
       intent: ctx.intent,
@@ -420,6 +430,7 @@ export async function executeRegistryQueryWithTelemetry(
       candidateCount,
       topScore,
       latencyMs,
+      candidateAtomHashes,
       ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
       ...(options.telemetryDir !== undefined ? { telemetryDir: options.telemetryDir } : {}),
     });
@@ -443,7 +454,7 @@ export async function executeRegistryQueryWithTelemetry(
 export const HOOK_LATENCY_BUDGET_MS = 200;
 
 // ---------------------------------------------------------------------------
-// executeRegistryQueryWithSubstitution (Phase 2 â€” L3)
+// executeRegistryQueryWithSubstitution (Phase 2 â€" L3)
 // ---------------------------------------------------------------------------
 
 /**
@@ -457,7 +468,7 @@ export const HOOK_LATENCY_BUDGET_MS = 200;
  *   (1) Substitution attempt when the registry returns a high-confidence candidate
  *       per D2 auto-accept rule (combinedScore > 0.85 AND gap > 0.15).
  *   (2) Extended telemetry fields: substitutionLatencyMs, top1Score, top1Gap,
- *       latencyBudgetExceeded â€” added to the Phase 1 TelemetryEvent schema
+ *       latencyBudgetExceeded â€" added to the Phase 1 TelemetryEvent schema
  *       (backwards-compatible; old consumers see them as optional).
  *   (3) YAKCC_HOOK_DISABLE_SUBSTITUTE=1 escape hatch: bypasses substitution,
  *       falls through to Phase 1 observe-only behaviour.
@@ -469,11 +480,11 @@ export const HOOK_LATENCY_BUDGET_MS = 200;
  *
  *   @decision DEC-HOOK-ATOM-CAPTURE-001 (Phase 3 atomize extension)
  *   When substitution is NOT fired, this wrapper now attempts atomization:
- *   (5) atomizeEmission(originalCode, registry) â€” shape filter â†’ shave pipeline
+ *   (5) atomizeEmission(originalCode, registry) â€" shape filter â†’ shave pipeline
  *       â†’ registry.storeBlock. B6-safe (static strategy, offline, no network).
- *   (6) If atomized: prepend `// @atom-new: <BMR[:8]> â€” yakcc:<name>` above the
+ *   (6) If atomized: prepend `// @atom-new: <BMR[:8]> â€" yakcc:<name>` above the
  *       original code in the returned result (same placement as D-HOOK-4 contract
- *       comment). The ORIGINAL code is still used unchanged â€” only the comment is
+ *       comment). The ORIGINAL code is still used unchanged â€" only the comment is
  *       prepended. No substitution occurs.
  *   (7) Telemetry captures outcome="atomized" + atomsCreated=[BMR prefixes].
  *
@@ -494,7 +505,7 @@ export const HOOK_LATENCY_BUDGET_MS = 200;
  * @param toolName     - Claude Code tool that triggered this intercept.
  * @param options      - threshold + optional sessionId / telemetryDir for tests.
  * @returns HookResponse (unchanged from Phase 1 shape) PLUS optional substitutedCode
- *          field when substitution occurred â€” callers must check for this field.
+ *          field when substitution occurred â€" callers must check for this field.
  */
 export async function executeRegistryQueryWithSubstitution(
   registry: Registry,
@@ -602,15 +613,15 @@ export async function executeRegistryQueryWithSubstitution(
   const latencyMs = Date.now() - start;
   const latencyBudgetExceeded = latencyMs > HOOK_LATENCY_BUDGET_MS;
 
-  // Build the output response â€” carry substituted bytes when substitution succeeded.
+  // Build the output response â€" carry substituted bytes when substitution succeeded.
   const substituted = substitutionResult?.substituted === true;
   const atomHash = substituted && substitutionResult?.substituted
     ? (substitutionResult as import("./substitute.js").SubstitutionResult & { substituted: true }).atomHash
     : null;
 
-  // â”€â”€ Phase 3 / D-HOOK-7: atomize path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Phase 3 / D-HOOK-7: atomize path â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   // When substitution did not fire, attempt to atomize the emission.
-  // The atomize path is ADDITIVE â€” it never changes the response when it fails.
+  // The atomize path is ADDITIVE â€" it never changes the response when it fails.
   // @decision DEC-HOOK-ATOM-CAPTURE-001
   let atomizeResult: import("./atomize.js").AtomizeResult | null = null;
   if (!substituted && originalCode.trim().length > 0 && process.env.YAKCC_HOOK_DISABLE_ATOMIZE !== "1") {
@@ -674,7 +685,7 @@ export async function executeRegistryQueryWithSubstitution(
   }
 
   // If atomization fired, prepend the @atom-new comment above the original code.
-  // The original code is unchanged â€” the comment is purely informational for the agent.
+  // The original code is unchanged â€" the comment is purely informational for the agent.
   // @decision DEC-HOOK-ATOM-CAPTURE-001 (@atom-new comment placement)
   if (atomizeResult?.atomized === true && atomizeResult.atomsCreated.length > 0) {
     try {
@@ -690,7 +701,7 @@ export async function executeRegistryQueryWithSubstitution(
         };
       }
     } catch {
-      // Comment rendering failure is non-fatal â€” fall through to plain passthrough.
+      // Comment rendering failure is non-fatal â€" fall through to plain passthrough.
     }
   }
 
@@ -727,7 +738,7 @@ export async function executeRegistryQueryWithSubstitution(
  * prepend the @atom-new comment to the written output.
  *
  * Callers check `result.substituted` first; if true, `result.substitutedCode` contains
- * the rendered substitution. If false, check `result.atomizedCode` â€” if defined, the
+ * the rendered substitution. If false, check `result.atomizedCode` â€" if defined, the
  * @atom-new comment has been prepended; if undefined, passthrough (original code unchanged).
  */
 export type HookResponseWithSubstitution = HookResponse & (
@@ -766,7 +777,7 @@ export type HookResponseWithSubstitution = HookResponse & (
 );
 
 // ---------------------------------------------------------------------------
-// Phase 3 L3 â€” yakccResolve MCP tool surface (D-HOOK-6 embedded library call)
+// Phase 3 L3 â€" yakccResolve MCP tool surface (D-HOOK-6 embedded library call)
 // ---------------------------------------------------------------------------
 
 export {

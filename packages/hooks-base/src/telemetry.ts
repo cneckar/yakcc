@@ -193,6 +193,40 @@ export type TelemetryEvent = {
    * can check outcome === "atomized" before reading atomsCreated.
    */
   readonly atomsCreated?: readonly string[];
+  // ---------------------------------------------------------------------------
+  // WI-1116 addition — candidate surfacing signal for atom-explorer ranking.
+  // ---------------------------------------------------------------------------
+  /**
+   * BlockMerkleRoot[:8] hex prefixes of the top-K candidates returned by the
+   * registry query, ordered by descending combined score (highest first).
+   * Bounded to at most CANDIDATE_HASHES_TOP_K (10) entries.
+   *
+   * @decision DEC-WI1116-CANDIDATE-HASHES-001
+   * @title candidateAtomHashes: top-K BMR[:8] prefixes for atom-explorer ranking
+   * @status accepted (WI-1116)
+   * @rationale
+   *   yakforge atom-explorer needs a "most commonly surfaced" signal distinct
+   *   from "most substituted". Today the registry records only the substituted
+   *   atom (one per event, often null), which only ranks actual use, not
+   *   candidate retrieval. candidateAtomHashes closes that gap by recording
+   *   every candidate that was returned by the discovery query.
+   *
+   *   Design decisions:
+   *   (1) BMR[:8] (8 hex chars, 32-bit prefix) — same form as substitutedAtomHash
+   *       and atomsCreated, so downstream dashboards can join across columns without
+   *       an extra truncation step.
+   *   (2) Ordered by score descending — allows consumers to reconstruct rank-1/rank-2
+   *       without a secondary sort.
+   *   (3) Bounded at CANDIDATE_HASHES_TOP_K=10 — caps telemetry event size. Discovery
+   *       already requests topK=2 via the QueryIntentCard, so in practice the list
+   *       is at most 2 entries; the 10-cap is a defensive upper bound for future
+   *       topK increases.
+   *   (4) Privacy invariant: BMR[:8] is a content address derived from the spec+impl
+   *       bytes, not from user intent or any PII. The field carries no plaintext.
+   *   (5) Additive field — old telemetry consumers see it as absent (undefined);
+   *       new consumers can rely on it being present when schemaVersion >= 2.
+   */
+  readonly candidateAtomHashes?: readonly string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -480,6 +514,20 @@ export function readTelemetrySessions(dir: string): readonly ParsedSessionFile[]
 }
 
 // ---------------------------------------------------------------------------
+// Candidate hash capture constant (WI-1116)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum number of candidate atom hashes recorded per telemetry event.
+ *
+ * @decision DEC-WI1116-CANDIDATE-HASHES-001
+ * Caps the candidateAtomHashes array length to keep JSONL event size bounded.
+ * Discovery currently requests topK=2, so in practice the cap is never hit;
+ * the constant is a defensive upper bound for future topK increases.
+ */
+export const CANDIDATE_HASHES_TOP_K = 10;
+
+// ---------------------------------------------------------------------------
 // High-level capture helper
 // ---------------------------------------------------------------------------
 
@@ -529,6 +577,12 @@ export function captureTelemetry(opts: {
   outcomeOverride?: "atomized" | "intent-too-broad" | "result-set-too-large" | "atom-size-too-large" | "descent-bypass-warning";
   /** BMR prefixes of atoms created. Non-empty only for outcome === "atomized". */
   atomsCreated?: readonly string[];
+  /**
+   * BMR[:8] hex prefixes of top-K candidates returned by the registry query,
+   * ordered by score descending. Bounded to CANDIDATE_HASHES_TOP_K entries.
+   * DEC-WI1116-CANDIDATE-HASHES-001.
+   */
+  candidateAtomHashes?: readonly string[];
   sessionId?: string;
   telemetryDir?: string;
 }): void {
@@ -557,6 +611,12 @@ export function captureTelemetry(opts: {
       : {}),
     // D-HOOK-7 / atomize fields — present only for outcome === "atomized".
     ...(opts.atomsCreated !== undefined ? { atomsCreated: opts.atomsCreated } : {}),
+    // WI-1116 — candidate surfacing signal (DEC-WI1116-CANDIDATE-HASHES-001).
+    // Spread only when defined; old callers that don't pass this field produce
+    // lean JSONL events without the key (schemaVersion-1 compatible).
+    ...(opts.candidateAtomHashes !== undefined
+      ? { candidateAtomHashes: opts.candidateAtomHashes.slice(0, CANDIDATE_HASHES_TOP_K) }
+      : {}),
   };
 
   // Write the primary event first (non-invasive: drift detection never delays this).

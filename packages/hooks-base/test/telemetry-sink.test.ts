@@ -269,7 +269,7 @@ describe("HttpsBatcherSink — size-based batch flush (DEC-TELEMETRY-EXPORT-BATC
       emittedAt: number;
       source: { cliVersion: string; platform: string; nodeVersion: string };
     };
-    expect(envelope.schemaVersion).toBe(1);
+    expect(envelope.schemaVersion).toBe(2);
     expect(envelope.sessionId).toBe("body-test");
     expect(Array.isArray(envelope.events)).toBe(true);
     expect(envelope.events.length).toBeGreaterThan(0);

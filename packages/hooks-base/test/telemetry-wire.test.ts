@@ -3,12 +3,14 @@
  * telemetry-wire.test.ts — Unit tests for TelemetryEnvelope / buildEnvelope.
  *
  * Covers:
- *   - SCHEMA_VERSION === 1 (DEC-TELEMETRY-EXPORT-ENVELOPE-003)
+ *   - SCHEMA_VERSION === 2 (bumped from 1 in WI-1116, DEC-TELEMETRY-EXPORT-ENVELOPE-003)
  *   - buildEnvelope shape: all required fields present with correct types
  *   - source block populated: cliVersion (string), platform, nodeVersion
  *   - emittedAt is injectable (now param) — deterministic in tests
  *   - events array is preserved verbatim
  *   - _resetSourceCache() clears the singleton so each test is isolated
+ *   - candidateAtomHashes round-trip: event with candidateAtomHashes serializes
+ *     and deserializes correctly through the envelope (WI-1116)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,8 +59,8 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("SCHEMA_VERSION", () => {
-  it("equals 1 (DEC-TELEMETRY-EXPORT-ENVELOPE-003)", () => {
-    expect(SCHEMA_VERSION).toBe(1);
+  it("equals 2 (bumped from 1 in WI-1116, DEC-TELEMETRY-EXPORT-ENVELOPE-003)", () => {
+    expect(SCHEMA_VERSION).toBe(2);
   });
 
   it("is a numeric literal (not a string)", () => {
@@ -86,9 +88,9 @@ describe("buildEnvelope — envelope shape", () => {
     expect(env.source).not.toBeNull();
   });
 
-  it("schemaVersion is always === SCHEMA_VERSION (1)", () => {
+  it("schemaVersion is always === SCHEMA_VERSION (2)", () => {
     const env = buildEnvelope([makeEvent()], SESSION, NOW);
-    expect(env.schemaVersion).toBe(1);
+    expect(env.schemaVersion).toBe(2);
   });
 
   it("emittedAt defaults to Date.now() when not injected", () => {
@@ -188,10 +190,38 @@ describe("buildEnvelope — JSON round-trip", () => {
     const json = JSON.stringify(env);
     const parsed = JSON.parse(json) as TelemetryEnvelope;
 
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(2);
     expect(parsed.sessionId).toBe("session-roundtrip");
     expect(parsed.emittedAt).toBe(1_700_000_002_500);
     expect(parsed.events[0]?.outcome).toBe("registry-hit");
     expect(parsed.source.platform).toBe(process.platform);
+  });
+
+  it("schemaVersion:2 envelope with candidateAtomHashes round-trips correctly (WI-1116)", () => {
+    // Build an event that carries candidateAtomHashes (new in WI-1116).
+    const hashA = "ab12cd34";
+    const hashB = "ef560123";
+    const event = makeEvent({
+      candidateCount: 2,
+      topScore: 0.15,
+      outcome: "registry-hit",
+      candidateAtomHashes: [hashA, hashB],
+    });
+    const env = buildEnvelope([event], "session-candidate-hashes", 1_700_000_003_000);
+
+    // Verify envelope schemaVersion is 2 before serialization.
+    expect(env.schemaVersion).toBe(2);
+
+    // Serialize → parse → verify field survives round-trip.
+    const json = JSON.stringify(env);
+    const parsed = JSON.parse(json) as TelemetryEnvelope;
+
+    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.events[0]?.candidateAtomHashes).toStrictEqual([hashA, hashB]);
+    expect(parsed.events[0]?.candidateCount).toBe(2);
+    // Privacy invariant: hash values are 8-char hex, not plaintext.
+    for (const h of parsed.events[0]?.candidateAtomHashes ?? []) {
+      expect(h).toMatch(/^[0-9a-f]{8}$/);
+    }
   });
 });
