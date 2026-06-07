@@ -131,16 +131,23 @@ function step(n, desc) {
 // IMPORTANT (Windows): ESM dynamic imports require file:// URLs — bare Windows
 // paths like "C:/..." are rejected with ERR_UNSUPPORTED_ESM_URL_SCHEME.
 // pathToFileURL() converts platform paths to proper file:// URLs.
+//
+// @decision DEC-1123-SEED-BGE-NATIVE-001 / DEC-1123-CACHE-WARM-IN-HARNESS-001:
+// B6a children now use the native bge provider (no offline provider injection).
+// YAKCC_AIRGAPPED=1 engages the conditional pin in createLocalEmbeddingProvider()
+// (DEC-1123-CONDITIONAL-OFFLINE-PIN-001), so the model is loaded from the pre-warmed
+// cache without any outbound fetch. The warm (done before this function is called,
+// outside the interceptor window) ensures the cache is populated.
 function runYakcc(args, { cwd, interceptOut, env = {} } = {}) {
   // Build the inline ESM wrapper that imports runCli and calls it.
   // We resolve to the dist/index.js of @yakcc/cli in the workspace.
   const cliDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/cli/dist/index.js")).href;
-  const contractsDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/contracts/dist/embeddings.js")).href;
   const argsJson = JSON.stringify(args);
+  // No longer inject createOfflineEmbeddingProvider() — children use the real bge
+  // provider, pinned offline by YAKCC_AIRGAPPED=1 in spawnEnv below.
   const esmWrapper = `
 import { runCli } from ${JSON.stringify(cliDistUrl)};
-import { createOfflineEmbeddingProvider } from ${JSON.stringify(contractsDistUrl)};
-const code = await runCli(${argsJson}, undefined, { embeddings: createOfflineEmbeddingProvider() });
+const code = await runCli(${argsJson});
 process.exit(code);
 `;
 
@@ -157,10 +164,17 @@ process.exit(code);
   // The existing network interceptor (network-interceptor.cjs) is the secondary defense —
   // belt-and-braces so either layer alone keeps B6a green.
   // DEC-TELEMETRY-EXPORT-B6A-AUTO-DISABLE-007 (plans/wi-546-telemetry-export.md §2.2)
+  //
+  // @decision DEC-1123-CONDITIONAL-OFFLINE-PIN-001: YAKCC_AIRGAPPED=1 engages the
+  // conditional allowRemoteModels=false pin in createLocalEmbeddingProvider(). The
+  // bge model must already be in the @xenova/transformers cache (warmed by warmBgeCache()
+  // before this function is ever called). If the cache is cold, the pin throws LOUD
+  // rather than fetching — which is the correct air-gap behavior.
   const spawnEnv = {
     ...process.env,
     ...env,
     YAKCC_TELEMETRY_DISABLED: "1",
+    YAKCC_AIRGAPPED: "1",
     YAKCC_BENCH_INTERCEPT_OUT: interceptOut,
   };
 
@@ -234,6 +248,69 @@ if (!existsSync(contractsDist)) {
 
 const allowlistPath = resolve(__dirname, "allowlist.json");
 const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8")).allowedDestinations;
+
+// ---------------------------------------------------------------------------
+// warmBgeCache — pre-warm the bge model BEFORE the network interceptor
+// ---------------------------------------------------------------------------
+//
+// @decision DEC-1123-CACHE-WARM-IN-HARNESS-001
+// @title Warm the bge model in the harness process before the interceptor window
+// @status accepted (WI-1123)
+// @rationale
+//   In CI the @xenova/transformers model cache is cold. The B6a children load
+//   the model from cache (via YAKCC_AIRGAPPED=1 + allowRemoteModels=false), but
+//   only if the cache is populated first. This function does a one-time warm
+//   in the harness process BEFORE the network interceptor machinery is engaged
+//   (the interceptor is loaded per-child via --require, not in this process).
+//   Harness-process network I/O is not recorded by the interceptor — it runs
+//   outside the monitored region. The warm writes to the deduped pnpm
+//   @xenova/transformers/.cache/ directory shared by all spawned children
+//   (Layer 3 in the WI-1123 root-cause map).
+//
+//   YAKCC_AIRGAPPED must NOT be set during the warm (pin off = online fetch allowed).
+//   The warm is the only legitimate outbound access during the entire benchmark run.
+//
+//   Real-air-gap-user implication (documented): a genuinely air-gapped user must
+//   provision the bge model offline once before running yakcc. The warm models that
+//   provisioning step. The conditional pin then guarantees no runtime fetch.
+
+async function warmBgeCache() {
+  info("Warming bge model cache (online, before interceptor window)...");
+
+  // Import createLocalEmbeddingProvider from the built contracts dist.
+  // This runs in the harness process (no interceptor), so a network fetch here
+  // is intentional and does NOT count as an outbound violation.
+  const contractsDistUrl = pathToFileURL(resolve(REPO_ROOT, "packages/contracts/dist/embeddings.js")).href;
+  let createLocalEmbeddingProvider;
+  try {
+    const mod = await import(contractsDistUrl);
+    createLocalEmbeddingProvider = mod.createLocalEmbeddingProvider;
+  } catch (err) {
+    process.stderr.write(`WARN: warmBgeCache: failed to import contracts dist: ${err.message}\n`);
+    process.stderr.write(`      B6a may fail if cache is cold and children cannot fetch.\n`);
+    return;
+  }
+
+  // Create a provider in ONLINE mode (airgapped: false) so the model can be
+  // downloaded if not yet cached, even when YAKCC_AIRGAPPED=1 is inherited from
+  // the parent shell (e.g. CI sets it before invoking the harness).
+  // The explicit false overrides isAirgapMode() — see DEC-1123-CONDITIONAL-OFFLINE-PIN-001.
+  const warmProvider = createLocalEmbeddingProvider(undefined, undefined, { airgapped: false });
+
+  const warmStart = Date.now();
+  try {
+    // One embed call is enough to trigger the model load and populate the cache.
+    await warmProvider.embed("warm");
+    const elapsed = Date.now() - warmStart;
+    info(`Bge cache warm complete (${elapsed}ms). Children will load from cache.`);
+  } catch (err) {
+    process.stderr.write(`WARN: warmBgeCache: embed("warm") FAILED: ${err.message}\n`);
+    process.stderr.write(`      REASON: The bge model is not in the @xenova cache.\n`);
+    process.stderr.write(`      B6a children run under YAKCC_AIRGAPPED=1 and CANNOT fetch.\n`);
+    process.stderr.write(`      They will fail with "bge model not cached" unless the cache\n`);
+    process.stderr.write(`      is populated by some other means before this run.\n`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // B6a — offline (air-gapped) benchmark
@@ -638,6 +715,11 @@ const mode = harnessArgs.mode;
 let exitCode = 0;
 
 if (mode === "b6a" || mode === "all") {
+  // @decision DEC-1123-CACHE-WARM-IN-HARNESS-001: warm BEFORE the interceptor window.
+  // The warm runs in this harness process (no per-child interceptor loaded here),
+  // so any model download does NOT register as an outbound violation in B6a.
+  // YAKCC_AIRGAPPED must NOT be set in the harness process during the warm.
+  await warmBgeCache();
   const b6aResult = await runB6a();
   if (b6aResult === false) exitCode = 1;
 }
