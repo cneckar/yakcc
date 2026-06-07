@@ -35,9 +35,28 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CollectingLogger } from "../index.js";
 import { seedYakccCorpus } from "./seed-yakcc.js";
 
-// Offline embedding provider — prevents any test from falling back to
-// createLocalEmbeddingProvider() (network-dependent, fails in sandbox).
+// Offline embedding provider — used for the TARGET registry (fresh temp-file
+// SQLite initialized with offline-blake3-stub model). Prevents any registry
+// open from falling back to createLocalEmbeddingProvider() (network-dependent).
 const offlineEmbeddings = createOfflineEmbeddingProvider();
+
+// BGE-matching stub provider — used when opening the BOOTSTRAP SOURCE registry.
+// The bootstrap sqlite (bootstrap/yakcc.registry.sqlite) was embedded with
+// Xenova/bge-small-en-v1.5 (DEC-1123-SEED-BGE-NATIVE-001). openRegistry()
+// checks the stored embedding_model_id against the provider's modelId and throws
+// embedding_model_mismatch when they differ and embeddings exist.
+// seedYakccCorpus uses opts.embeddings as the source db provider; the target
+// registry is separately opened by the caller with offlineEmbeddings.
+// This stub matches the bootstrap modelId without loading the real ONNX model
+// (embed() returns zeros — acceptable because seed IMPORTS stored embeddings
+// rather than recomputing them; embed() is never called on the source db).
+const bgeStubEmbeddings = {
+  modelId: "Xenova/bge-small-en-v1.5",
+  dimension: 384,
+  async embed(_text: string): Promise<Float32Array> {
+    return new Float32Array(384);
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Bootstrap corpus path resolution
@@ -105,9 +124,11 @@ beforeAll(async () => {
     // seedYakccCorpus now returns SeedResult (DEC-CLI-INIT-SEED-LOUD-001).
     // BOOTSTRAP_CORPUS_PATH is non-null here (guarded above), so the result is
     // either "seeded" (success) or a throw (present-but-broken corpus).
+    // bgeStubEmbeddings matches the bootstrap db's stored modelId (DEC-1123-SEED-BGE-NATIVE-001)
+    // without loading the real ONNX model — offline safe.
     const seedResult = await seedYakccCorpus(
       reg2,
-      { embeddings: offlineEmbeddings, corpusPath: BOOTSTRAP_CORPUS_PATH as string },
+      { embeddings: bgeStubEmbeddings, corpusPath: BOOTSTRAP_CORPUS_PATH as string },
       logger,
     );
     if (seedResult.status !== "seeded") {
@@ -161,7 +182,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)("seedYakccCorpus", () => {
     const reg = await openRegistry(registryPath, { embeddings: offlineEmbeddings });
     const secondResult = await seedYakccCorpus(
       reg,
-      { embeddings: offlineEmbeddings, corpusPath: BOOTSTRAP_CORPUS_PATH as string },
+      { embeddings: bgeStubEmbeddings, corpusPath: BOOTSTRAP_CORPUS_PATH as string },
       logger,
     );
     await reg.close();
@@ -219,7 +240,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)("seedYakccCorpus", () => {
     const reg = await openRegistry(registryPath, { embeddings: offlineEmbeddings });
     await seedYakccCorpus(
       reg,
-      { embeddings: offlineEmbeddings, corpusPath: BOOTSTRAP_CORPUS_PATH as string },
+      { embeddings: bgeStubEmbeddings, corpusPath: BOOTSTRAP_CORPUS_PATH as string },
       logger,
     );
     await reg.close();
@@ -400,7 +421,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)("seed command --yakcc flag integ
       const { seed } = await import("./seed.js");
       const logger = new CollectingLogger();
       const exitCode = await seed(["--yakcc", "--registry", freshRegistryPath], logger, {
-        embeddings: offlineEmbeddings,
+        embeddings: bgeStubEmbeddings,
         corpusPath: BOOTSTRAP_CORPUS_PATH as string,
       });
 
@@ -411,7 +432,10 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)("seed command --yakcc flag integ
       expect(output).toContain("yakcc seed --yakcc");
 
       // Verify atoms were actually imported.
-      const reg2 = await openRegistry(freshRegistryPath, { embeddings: offlineEmbeddings });
+      // seed() opened freshRegistryPath with bgeStubEmbeddings (same opts.embeddings),
+      // so the target registry now stores "Xenova/bge-small-en-v1.5" as its modelId.
+      // Re-open with bgeStubEmbeddings to avoid the embedding_model_mismatch guard.
+      const reg2 = await openRegistry(freshRegistryPath, { embeddings: bgeStubEmbeddings });
       const manifest = await reg2.exportManifest();
       await reg2.close();
       expect(manifest.length).toBeGreaterThanOrEqual(1);

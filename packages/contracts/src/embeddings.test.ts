@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createLocalEmbeddingProvider,
   createOfflineEmbeddingProvider,
@@ -457,5 +459,80 @@ describe("resolveEmbeddingProviderFromEnv", () => {
       if (prev !== undefined) process.env.YAKCC_EMBEDDING_PROVIDER = prev;
       else delete process.env.YAKCC_EMBEDDING_PROVIDER;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createLocalEmbeddingProvider — conditional offline pin (DEC-1123-CONDITIONAL-OFFLINE-PIN-001)
+//
+// These tests verify the air-gap mode behavior WITHOUT making a real 25MB download.
+// Strategy:
+//   1. Pin-blocks-fetch test: redirects env.cacheDir to a fresh empty tmpdir so the
+//      model is guaranteed absent, then creates an airgapped provider and calls embed().
+//      Expects a throw containing "bge model not cached".
+//   2. Online-path-unaffected test: creates a provider with airgapped:false and asserts
+//      that env.allowRemoteModels is NOT forcibly set to false, proving the online dev
+//      first-run path is unaffected by the conditional pin.
+// ---------------------------------------------------------------------------
+
+describe("createLocalEmbeddingProvider — conditional offline pin (DEC-1123-CONDITIONAL-OFFLINE-PIN-001)", () => {
+  // Restore env after each test to avoid cross-contamination.
+  let savedCacheDir: string | undefined;
+  let savedAllowRemoteModels: boolean | undefined;
+  let tempDir: string | undefined;
+
+  afterEach(async () => {
+    // Restore @xenova/transformers env state modified by these tests.
+    const mod = await import("@xenova/transformers");
+    if (savedCacheDir !== undefined) {
+      mod.env.cacheDir = savedCacheDir;
+      savedCacheDir = undefined;
+    }
+    if (savedAllowRemoteModels !== undefined) {
+      mod.env.allowRemoteModels = savedAllowRemoteModels;
+      savedAllowRemoteModels = undefined;
+    }
+    if (tempDir !== undefined) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = undefined;
+    }
+  });
+
+  it(
+    "pin blocks fetch + fails loud: airgapped:true with empty cache dir throws 'bge model not cached'",
+    { timeout: 15_000 },
+    async () => {
+      // Redirect the xenova cache to a fresh empty directory so the model is absent.
+      const mod = await import("@xenova/transformers");
+      savedCacheDir = mod.env.cacheDir as string | undefined;
+      savedAllowRemoteModels = mod.env.allowRemoteModels as boolean | undefined;
+      tempDir = mkdtempSync(`${tmpdir()}/yakcc-test-airgap-`);
+      mod.env.cacheDir = tempDir;
+
+      // Create a provider with explicit airgapped:true.
+      // This uses a per-instance loader (NOT the module singleton) so the env pin
+      // is applied fresh inside this loader's pipeline call.
+      const provider = createLocalEmbeddingProvider(undefined, undefined, { airgapped: true });
+
+      // embed() must throw — model is absent under the pin.
+      await expect(provider.embed("test air-gap pin")).rejects.toThrow("bge model not cached");
+    },
+  );
+
+  it("online path unaffected: airgapped:false does NOT set allowRemoteModels=false", async () => {
+    const mod = await import("@xenova/transformers");
+    savedAllowRemoteModels = mod.env.allowRemoteModels as boolean | undefined;
+
+    // Reset to default (true) before the test.
+    mod.env.allowRemoteModels = true;
+
+    // Construct an online provider (airgapped:false). This should NOT touch
+    // allowRemoteModels. Note: the pipeline is lazy — it only fires on embed().
+    // We do NOT call embed() here (that would download the model in CI).
+    // Instead we assert that construction alone does not pin env.
+    createLocalEmbeddingProvider(undefined, undefined, { airgapped: false });
+
+    // allowRemoteModels should still be true — the pin was NOT applied.
+    expect(mod.env.allowRemoteModels).toBe(true);
   });
 });
