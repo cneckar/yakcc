@@ -1214,6 +1214,41 @@ export interface Registry {
    * @decision DEC-COMMONS-SUBMIT-LOCAL-QUEUE-001 (issue #794)
    */
   markBlockSubmitted(blockMerkleRoot: BlockMerkleRoot, submittedAt: number): Promise<void>;
+
+  // @decision DEC-1117-S2-VECREAD-001
+  // title: exportAllEmbeddings() via vec_to_json — registry-owned read-back, not a CLI-side second sqlite handle
+  // status: decided (WI-1117 Slice 2)
+  // rationale:
+  //   serializeEmbedding (the write-side vector codec) already lives in storage.ts;
+  //   its read-side inverse belongs in the same authority — Single Source of Truth
+  //   (Sacred Practice #12). A second better-sqlite3/sqlite-vec handle in the CLI
+  //   would create a parallel embedding-read authority that can silently diverge from
+  //   the registry's open path (model-stamp guard, vec0 load order). The raw db handle
+  //   + loaded sqlite-vec already exist inside RegistryImpl; exposing a typed accessor
+  //   is the minimal, encapsulated surface. The exporter needs zero direct sqlite/vec0
+  //   knowledge.
+  /**
+   * Export all stored embedding vectors ordered strictly ASC by spec_hash.
+   *
+   * Returns one entry per spec_hash present in `contract_embeddings`.
+   * Row count MUST equal `SELECT COUNT(*) FROM contract_embeddings` — every
+   * spec that has a stored embedding is included; none are silently dropped.
+   * Every vector length MUST equal the stored embedding dimension (384 for
+   * the bootstrap corpus with bge-small-en-v1.5).
+   *
+   * Primary consumer: `yakcc export-atom-index` (Slice 2), which emits a
+   * static embeddings.json bundle consumable by the browser-side
+   * `@yakcc/discovery-search` kit.
+   *
+   * Fail loud on corruption: if any vector's length does not match the
+   * dimension stored in `registry_meta.embedding_dimension`, throws
+   * immediately with a descriptive error (no silent truncation/drop).
+   *
+   * @decision DEC-1117-S2-VECREAD-001 — vec_to_json read-back; registry-owned.
+   */
+  exportAllEmbeddings(): Promise<
+    ReadonlyArray<{ readonly specHash: SpecHash; readonly vector: number[] }>
+  >;
 }
 
 // ---------------------------------------------------------------------------

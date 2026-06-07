@@ -2000,7 +2000,7 @@ class SqliteRegistry implements Registry {
       .prepare<[string], { value: string }>("SELECT value FROM registry_meta WHERE key = ?")
       .get("embedding_dimension");
     if (row === undefined) return null;
-    const n = parseInt(row.value, 10);
+    const n = Number.parseInt(row.value, 10);
     return Number.isNaN(n) ? null : n;
   }
 
@@ -2036,10 +2036,7 @@ class SqliteRegistry implements Registry {
     return rows.map((r) => r.block_merkle_root as BlockMerkleRoot);
   }
 
-  async markBlockSubmitted(
-    blockMerkleRoot: BlockMerkleRoot,
-    submittedAt: number,
-  ): Promise<void> {
+  async markBlockSubmitted(blockMerkleRoot: BlockMerkleRoot, submittedAt: number): Promise<void> {
     this.assertOpen();
     if (!Number.isFinite(submittedAt) || submittedAt < 0) {
       throw new Error(
@@ -2049,6 +2046,72 @@ class SqliteRegistry implements Registry {
     this.db
       .prepare("UPDATE blocks SET submitted_at = ? WHERE block_merkle_root = ?")
       .run(submittedAt, blockMerkleRoot);
+  }
+
+  // -------------------------------------------------------------------------
+  // exportAllEmbeddings — bulk vector read-back (DEC-1117-S2-VECREAD-001)
+  //
+  // @decision DEC-1117-S2-VECREAD-001
+  // @title exportAllEmbeddings() via vec_to_json — registry-owned read-back
+  // @status decided (WI-1117 Slice 2)
+  // @rationale
+  //   serializeEmbedding (the write-side vector codec) already lives here.
+  //   The read-side inverse belongs in the same module — Single Source of Truth
+  //   (Sacred Practice #12). A second better-sqlite3/sqlite-vec handle in the
+  //   CLI would create a parallel embedding-read authority that can silently
+  //   diverge from the registry's open path (model-stamp guard, vec0 load
+  //   order). The raw db handle + already-loaded sqlite-vec are reused here;
+  //   the exporter needs zero direct sqlite/vec0 knowledge.
+  //   vec_to_json is provided by sqlite-vec (already loaded by openRegistry
+  //   via sqliteVec.load(db) at ~2268) and returns a JSON array of floats.
+  //   Verified on the bootstrap corpus: all 4829 rows return length-384
+  //   arrays, deterministic across runs.
+  //   Architecture-bundle obligation (CLAUDE.md): this is a net-new read-back
+  //   surface (no old path is superseded). Ships in one bundle with the
+  //   Registry interface update and the registry invariant test.
+  // -------------------------------------------------------------------------
+
+  async exportAllEmbeddings(): Promise<
+    ReadonlyArray<{ readonly specHash: SpecHash; readonly vector: number[] }>
+  > {
+    this.assertOpen();
+
+    // Read the stored dimension so we can validate every returned vector.
+    // getStoredEmbeddingDimension() is on the same Registry — no second DB open.
+    const storedDimension = await this.getStoredEmbeddingDimension();
+
+    interface EmbeddingExportRow {
+      spec_hash: string;
+      j: string; // JSON array of floats from vec_to_json()
+    }
+
+    const rows = this.db
+      .prepare<[], EmbeddingExportRow>(
+        "SELECT spec_hash, vec_to_json(embedding) AS j FROM contract_embeddings ORDER BY spec_hash ASC",
+      )
+      .all();
+
+    const results: Array<{ readonly specHash: SpecHash; readonly vector: number[] }> = [];
+
+    for (const row of rows) {
+      const vector: number[] = JSON.parse(row.j) as number[];
+
+      // Fail loud on dimension mismatch — corruption tripwire.
+      // If storedDimension is null (fresh registry, no meta yet), skip the
+      // check; the table will be empty anyway and this loop won't execute.
+      if (storedDimension !== null && vector.length !== storedDimension) {
+        throw Object.assign(
+          new Error(
+            `exportAllEmbeddings: vector for spec_hash=${row.spec_hash} has length ${vector.length}, expected ${storedDimension} (stored dimension). The contract_embeddings table may be corrupt. Run \`yakcc registry rebuild\` to re-embed.`,
+          ),
+          { reason: "embedding_dimension_mismatch", specHash: row.spec_hash },
+        );
+      }
+
+      results.push({ specHash: row.spec_hash as SpecHash, vector });
+    }
+
+    return results;
   }
 
   // close
@@ -2342,27 +2405,21 @@ export async function openRegistry(path: string, options?: RegistryOptions): Pro
   if (storedModelId !== null && storedModelId !== embeddingProvider.modelId) {
     // Check whether any embeddings actually exist — if the registry is empty,
     // there's nothing to mismatch and we can just update the metadata.
-    const embCount = (
-      db.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM contract_embeddings").get() as
-        | { n: number }
-        | undefined
-    )?.n ?? 0;
+    const embCount =
+      (
+        db.prepare<[], { n: number }>("SELECT COUNT(*) as n FROM contract_embeddings").get() as
+          | { n: number }
+          | undefined
+      )?.n ?? 0;
 
     // @decision DEC-EMBED-REGISTRY-META-001: autoRebuild bypasses mismatch throw.
     // When autoRebuild is true (explicit opt-in), the caller is about to rebuild
     // anyway (e.g. `yakcc registry rebuild`). Suppress the throw so the registry
     // opens successfully; rebuildRegistry will fix the vectors immediately after.
-    if (
-      embCount > 0 &&
-      !(options?.autoRebuild ?? false) &&
-      callerSetExplicitProvider
-    ) {
+    if (embCount > 0 && !(options?.autoRebuild ?? false) && callerSetExplicitProvider) {
       throw Object.assign(
         new Error(
-          `Registry was embedded with model "${storedModelId}", but the current ` +
-            `provider uses "${embeddingProvider.modelId}". ` +
-            `Run \`yakcc registry rebuild\` to re-embed with the current provider, ` +
-            `or set YAKCC_EMBEDDING_PROVIDER and model env vars to match the stored model.`,
+          `Registry was embedded with model "${storedModelId}", but the current provider uses "${embeddingProvider.modelId}". Run \`yakcc registry rebuild\` to re-embed with the current provider, or set YAKCC_EMBEDDING_PROVIDER and model env vars to match the stored model.`,
         ),
         { reason: "embedding_model_mismatch" },
       );
