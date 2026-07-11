@@ -176,7 +176,7 @@
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1524,5 +1524,31 @@ export function applyMigrations(db: MigrationsDb): void {
       db.exec(sql);
     }
     db.prepare("UPDATE schema_version SET version = ?").run(14);
+  }
+
+  // Migration 14 → 15: add duc_usupp column to blocks
+  // (DEC-DUC-USUPP-PROVENANCE-001 / WI-DUC-02 / GH #1163).
+  //
+  // SQLite has no ADD COLUMN IF NOT EXISTS. Wrap the ALTER in try/catch so the
+  // migration is recoverable: a crash between ADD COLUMN and the version bump
+  // leaves the column present at version=14; re-entry catches the
+  // "duplicate column name" SQLite error, treats it as a no-op, and proceeds
+  // to bump the version normally. Matches the MIGRATION_12 (submitted_at) pattern.
+  //
+  // No backfill: NULL is the correct sentinel for all pre-v15 rows (the DUC
+  // conservation gate had not run when they were shaved). duc_usupp is
+  // provenance metadata only — NOT folded into blockMerkleRoot.
+  if (currentVersion < 15) {
+    try {
+      db.exec("ALTER TABLE blocks ADD COLUMN duc_usupp TEXT NULL");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // SQLite emits "duplicate column name: duc_usupp" when the column already
+      // exists. Any other error is a real failure and must propagate.
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(15);
   }
 }

@@ -10,6 +10,8 @@ import {
   prop_applyMigrations_idempotent_at_current_version,
   prop_migration_13_creates_proof_incentive_tables,
   prop_migration_13_idempotent_at_v13,
+  prop_migration_15_adds_duc_usupp_column,
+  prop_migration_15_idempotent_at_current_version,
   prop_schema_version_is_positive_integer,
 } from "./schema.props.js";
 
@@ -35,4 +37,12 @@ it("property: prop_migration_13_creates_proof_incentive_tables", () => {
 
 it("property: prop_migration_13_idempotent_at_v13", () => {
   fc.assert(prop_migration_13_idempotent_at_v13, opts);
+});
+
+it("property: prop_migration_15_adds_duc_usupp_column", () => {
+  fc.assert(prop_migration_15_adds_duc_usupp_column, opts);
+});
+
+it("property: prop_migration_15_idempotent_at_current_version", () => {
+  fc.assert(prop_migration_15_idempotent_at_current_version, opts);
 });

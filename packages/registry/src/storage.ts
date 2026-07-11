@@ -136,6 +136,13 @@ interface BlockRow {
    * NOT folded into blockMerkleRoot — provenance is metadata only.
    */
   source_offset: number | null;
+
+  /**
+   * Migration-15 (DEC-DUC-USUPP-PROVENANCE-001). JSON-serialized DUC
+   * conservation-gate result (unknown-support). NULL for closed atoms and all
+   * pre-v15 rows.
+   */
+  duc_usupp: string | null;
 }
 
 interface TestHistoryRow {
@@ -340,9 +347,10 @@ class SqliteRegistry implements Registry {
         string | null,
         string | null,
         number | null,
+        string | null,
       ]
     >(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset, duc_usupp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -397,6 +405,9 @@ class SqliteRegistry implements Registry {
         row.sourcePkg ?? null,
         row.sourceFile ?? null,
         row.sourceOffset ?? null,
+        // Migration-15 column (DEC-DUC-USUPP-PROVENANCE-001). Serialized DUC
+        // unknown-support; null for closed atoms. First-observed-wins.
+        row.ducUsupp ?? null,
       );
       insertChanges = Number(r.changes ?? 0);
       // Only write the embedding if the spec_hash doesn't already have one.
@@ -2180,6 +2191,8 @@ function hydrateBlock(row: BlockRow, artifactRows: readonly BlockArtifactRow[]):
     sourcePkg: row.source_pkg ?? null,
     sourceFile: row.source_file ?? null,
     sourceOffset: row.source_offset ?? null,
+    // Migration-15 field (DEC-DUC-USUPP-PROVENANCE-001). Pre-v15 rows return null.
+    ducUsupp: row.duc_usupp ?? null,
   };
 }
 

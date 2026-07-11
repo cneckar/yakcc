@@ -182,6 +182,26 @@ export interface BlockTripletRow {
    * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
    */
   readonly sourceOffset?: number | null;
+
+  // ---------------------------------------------------------------------------
+  // Migration-15 field (DEC-DUC-USUPP-PROVENANCE-001 / GH #1163)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The DUC conservation-gate result for this atom, serialized as JSON — the
+   * atom's *unknown-support* (`usupp`): the declared unknowns (`♦`-sources) its
+   * observations depend on, each carrying `symbol`, `reason`, and optional
+   * `module`, plus a `liftError` when the fragment could not be lifted. This is
+   * the computed provenance fact that replaces shave's informal "candidate
+   * pending audit" status (`@yakcc/duc`).
+   *
+   * Null / absent when the atom has no unknowns and lifted cleanly (a fully
+   * closed graph), and for every pre-v15 row. NOT folded into blockMerkleRoot —
+   * provenance metadata only; first-observed-wins via INSERT OR IGNORE.
+   *
+   * @decision DEC-DUC-USUPP-PROVENANCE-001
+   */
+  readonly ducUsupp?: string | null;
 }
 
 /**

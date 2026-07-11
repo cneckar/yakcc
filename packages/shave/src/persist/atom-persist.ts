@@ -35,6 +35,7 @@ import { extractCorpus } from "../corpus/index.js";
 import type { CorpusAtomSpec, CorpusExtractionOptions } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
+import { type DucGateMode, ducGateModeFromEnv, enforceDucGate } from "./duc-gate.js";
 import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,16 @@ export interface PersistOptions {
    * Default: 0.80. Range [0, 1].
    */
   readonly mutationKillRateThreshold?: number | undefined;
+
+  // @decision DEC-DUC-CONSERVATION-GATE-001
+  /**
+   * DUC conservation-gate mode. `warn` (default) records unknown-support and
+   * warns on unexplained free references but still admits the atom; `reject`
+   * throws {@link DucGateRejection} on such an atom. When omitted, resolved from
+   * `YAKCC_DUC_GATE` (default warn). The gate always runs and always records
+   * `ducUsupp` provenance regardless of mode.
+   */
+  readonly ducGateMode?: DucGateMode | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +224,17 @@ export async function persistNovelGlueAtom(
   // for interactive shaves and non-bootstrap runners. INSERT OR IGNORE in storeBlock
   // ensures first-observed-wins: a second store with null does not clobber existing
   // non-null provenance.
+  // DUC conservation gate (DEC-DUC-CONSERVATION-GATE-001): lift the atom, compute
+  // its unknown-support, and enforce the warn/reject policy. In `reject` mode an
+  // atom with an unexplained free reference throws DucGateRejection here, before
+  // any registry write; in `warn` mode (default) it is recorded and admitted. The
+  // gate never throws for lift failures — those degrade to a recorded liftError.
+  const gate = enforceDucGate(
+    entry.source,
+    intentCard.behavior.slice(0, 60),
+    options?.ducGateMode ?? ducGateModeFromEnv(),
+  );
+
   const sc = options?.sourceContext;
   const row: BlockTripletRow = {
     blockMerkleRoot: triplet.merkleRoot,
@@ -229,6 +251,8 @@ export async function persistNovelGlueAtom(
     sourcePkg: sc?.sourcePkg ?? null,
     sourceFile: sc?.sourceFile ?? null,
     sourceOffset: sc?.sourceOffset ?? null,
+    // DUC unknown-support provenance (DEC-DUC-USUPP-PROVENANCE-001).
+    ducUsupp: gate.ducUsupp,
   };
 
   // Mutation-testing gate: verify corpus tests kill a minimum fraction of

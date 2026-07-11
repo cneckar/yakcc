@@ -198,9 +198,7 @@ export const prop_migration_13_creates_proof_incentive_tables = fc.property(
     // Each expected table must appear in a CREATE TABLE statement in execLog.
     for (const table of PROOF_INCENTIVE_TABLES) {
       const created = execLog.some(
-        (sql) =>
-          sql.includes("CREATE TABLE") &&
-          sql.toLowerCase().includes(table.toLowerCase()),
+        (sql) => sql.includes("CREATE TABLE") && sql.toLowerCase().includes(table.toLowerCase()),
       );
       if (!created) return false;
     }
@@ -222,7 +220,10 @@ export const prop_migration_13_creates_proof_incentive_tables = fc.property(
  * block is skipped entirely when the DB is already at v13.
  */
 export const prop_migration_13_idempotent_at_v13 = fc.property(
-  fc.constant(SCHEMA_VERSION), // 13
+  // At SCHEMA_VERSION no migration >= 13 runs, so none of the incentive tables
+  // are (re)created. NB: cannot use a literal 13 here — at v13, migration 14's
+  // proof_retractions DDL references proof_claims and trips the name check.
+  fc.constant(SCHEMA_VERSION),
   (version) => {
     const { db, execLog } = makeMockDb(version);
     applyMigrations(db);
@@ -230,12 +231,57 @@ export const prop_migration_13_idempotent_at_v13 = fc.property(
     // None of the proof incentive table names should appear in exec log.
     for (const table of PROOF_INCENTIVE_TABLES) {
       const attempted = execLog.some(
-        (sql) =>
-          sql.includes("CREATE TABLE") &&
-          sql.toLowerCase().includes(table.toLowerCase()),
+        (sql) => sql.includes("CREATE TABLE") && sql.toLowerCase().includes(table.toLowerCase()),
       );
       if (attempted) return false;
     }
     return true;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// SC6: migration 14 → 15 adds the duc_usupp column (DEC-DUC-USUPP-PROVENANCE-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * prop_migration_15_adds_duc_usupp_column
+ *
+ * When called on a DB at version 14, applyMigrations() issues an
+ * `ALTER TABLE blocks ADD COLUMN duc_usupp` and bumps the version to 15.
+ *
+ * Invariant (DEC-DUC-USUPP-PROVENANCE-001): migration 15 is additive only — a
+ * single nullable column on `blocks`, following the MIGRATION_12 (submitted_at)
+ * ALTER pattern with duplicate-column-name recovery.
+ */
+export const prop_migration_15_adds_duc_usupp_column = fc.property(
+  fc.constant(14),
+  (startVersion) => {
+    const { db, execLog, runLog } = makeMockDb(startVersion);
+    applyMigrations(db);
+    const altered = execLog.some((sql) => /ALTER TABLE blocks ADD COLUMN duc_usupp/i.test(sql));
+    const bumpedTo15 = runLog.some(
+      (r) => r.sql.includes("UPDATE schema_version") && r.args[0] === 15,
+    );
+    return altered && bumpedTo15;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// SC7: migration 15 is idempotent at SCHEMA_VERSION (no duc_usupp ALTER)
+// ---------------------------------------------------------------------------
+
+/**
+ * prop_migration_15_idempotent_at_current_version
+ *
+ * When called on a DB already at SCHEMA_VERSION, applyMigrations() issues no
+ * `ALTER TABLE ... duc_usupp` statement (the `if (currentVersion < 15)` guard
+ * skips the block).
+ */
+export const prop_migration_15_idempotent_at_current_version = fc.property(
+  fc.constant(SCHEMA_VERSION),
+  (version) => {
+    const { db, execLog } = makeMockDb(version);
+    applyMigrations(db);
+    return !execLog.some((sql) => /duc_usupp/i.test(sql));
   },
 );

@@ -758,6 +758,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
       '@yakcc/ir':
         specifier: workspace:*
         version: link:../ir
