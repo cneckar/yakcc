@@ -62,13 +62,15 @@ export function boundaryType(graph: DucGraph): BoundaryType {
 export function paramSummaryMatrix(graph: DucGraph): readonly (readonly boolean[])[] {
   const params = paramSources(graph);
   const index = influenceIndex(graph);
+  // Each observation's backward cone is computed once, not once per parameter.
+  const conePerObs = graph.obs.map((observed) => ({
+    observed,
+    cone: influenceCone(graph, observed, index),
+  }));
   return params.map((param) => {
     // A parameter-source has exactly one output port by construction.
     const source = param.outputs[0] as ValueId;
-    return graph.obs.map((observed) => {
-      if (source === observed) return true;
-      return influenceCone(graph, observed, index).has(source);
-    });
+    return conePerObs.map(({ observed, cone }) => source === observed || cone.has(source));
   });
 }
 

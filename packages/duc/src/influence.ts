@@ -15,7 +15,7 @@
 // materializes the full relation (for leastness tests / compose summaries) and is
 // O(|V| * |edges|) in the worst case.
 
-import type { DiamondLabel, DucGraph, ValueId } from "./types.js";
+import type { DiamondLabel, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
 import { defMap, nodeIndex } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -111,20 +111,27 @@ export interface DiamondSupport {
  * computed fact that replaces shave's informal "candidate pending audit" status.
  * Computable by one reachability query.
  */
+/** Pre-built lookups shared across many usupp queries over the same graph. */
+export interface UsuppMaps {
+  readonly nodes: ReadonlyMap<NodeId, DucNode>;
+  readonly def: ReadonlyMap<ValueId, NodeId>;
+}
+
 export function usupp(
   graph: DucGraph,
   value: ValueId,
   index: InfluenceIndex = influenceIndex(graph),
+  maps?: UsuppMaps,
 ): readonly DiamondSupport[] {
   const cone = influenceCone(graph, value, index);
-  const nodes = nodeIndex(graph);
-  const def = defMap(graph);
+  const nodes = maps?.nodes ?? nodeIndex(graph);
+  const def = maps?.def ?? defMap(graph);
   const support: DiamondSupport[] = [];
   const consider = (candidate: ValueId): void => {
     const definer = def.get(candidate);
     if (definer === undefined) return;
     // `definer` is a node id drawn from the same graph, so it always indexes.
-    const node = nodes.get(definer) as (typeof graph.nodes)[number];
+    const node = nodes.get(definer) as DucNode;
     if (node.diamond !== undefined) {
       support.push({ value: candidate, label: node.diamond });
     }
@@ -139,8 +146,10 @@ export function usuppOfObservations(
   graph: DucGraph,
 ): ReadonlyMap<ValueId, readonly DiamondSupport[]> {
   const index = influenceIndex(graph);
+  // Build the node/def indices once and thread them through every query.
+  const maps: UsuppMaps = { nodes: nodeIndex(graph), def: defMap(graph) };
   const out = new Map<ValueId, readonly DiamondSupport[]>();
-  for (const observed of graph.obs) out.set(observed, usupp(graph, observed, index));
+  for (const observed of graph.obs) out.set(observed, usupp(graph, observed, index, maps));
   return out;
 }
 

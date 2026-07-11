@@ -149,6 +149,22 @@ describe("loops summarize to one opaque node (DEC-DUC-SCOPE-001)", () => {
     }
   });
 
+  it("does not mint spurious diamond-sources for loop-local or closure-local names", () => {
+    // `x` is the for-of loop variable and `acc` is body-local; neither is an
+    // external unknown, so neither should appear as a diamond-source.
+    const loop = lift(
+      "export function f(xs: number[]): number { let s = 0; for (const x of xs) { const acc = x + 1; s = s + acc; } return s; }",
+    );
+    expect(diamondSymbols(loop)).not.toContain("x");
+    expect(diamondSymbols(loop)).not.toContain("acc");
+
+    // a nested closure's own parameter `y` is local, not a free unknown.
+    const closure = lift(
+      "export function f(x: number): (y: number) => number { return (y) => x + y; }",
+    );
+    expect(diamondSymbols(closure)).not.toContain("y");
+  });
+
   it("a loop that increments an outer variable rebinds it through the loop node", () => {
     const g = lift(
       "export function f(x: number): number { for (let i = 0; i < 3; i++) { x++; } return x; }",
@@ -227,11 +243,22 @@ describe("assignments to members and destructuring lvalues", () => {
     expect(mayInfluence(g, paramValue(g, 1), onlyObs(g))).toBe(true); // n -> o
   });
 
-  it("an element assignment flows the rhs into the mutated array", () => {
+  it("an element assignment flows both the rhs AND the index into the mutated array", () => {
     const g = lift(
       "export function f(arr: number[], i: number, v: number): number[] { arr[i] = v; return arr; }",
     );
     expect(mayInfluence(g, paramValue(g, 2), onlyObs(g))).toBe(true); // v -> arr
+    // the index chooses which slot is written, so it influences the object too
+    expect(mayInfluence(g, paramValue(g, 1), onlyObs(g))).toBe(true); // i -> arr
+  });
+
+  it("a member write inside a loop re-defines the mutated object (influence not lost)", () => {
+    const g = lift(
+      "export function f(o: { v: number }, secret: number): { v: number } { for (let i = 0; i < 3; i++) { o.v = secret; } return o; }",
+    );
+    expect(kinds(g)).toContain("loop");
+    // secret is written into o inside the loop; the loop node must re-define o
+    expect(mayInfluence(g, paramValue(g, 1), onlyObs(g))).toBe(true); // secret -> o
   });
 
   it("a destructuring-assignment lvalue does not crash the lifter", () => {

@@ -349,13 +349,21 @@ class Lifter {
     }
   }
 
-  /** Every value a subtree reads: resolve each free identifier read to a value. */
+  /**
+   * Every value a subtree reads. Identifiers bound *inside* the subtree (loop
+   * variables, body-local `const`/`let`, a nested closure's own parameters) are
+   * internal to the opaque region and are skipped — resolving them would mint a
+   * spurious diamond-source for a name that is not actually an external unknown.
+   */
   private collectReads(node: Node): ValueId[] {
+    const locals = collectRegionLocals(node);
     const values: ValueId[] = [];
     const seen = new Set<ValueId>();
     for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
       if (!isValueRead(id)) continue;
-      const value = this.resolveIdentifier(id.getText());
+      const name = id.getText();
+      if (locals.has(name)) continue; // declared inside this region — not a read of outer scope
+      const value = this.resolveIdentifier(name);
       if (!seen.has(value)) {
         seen.add(value);
         values.push(value);
@@ -364,26 +372,28 @@ class Lifter {
     return values;
   }
 
-  /** Outer names a subtree may assign (simple-identifier assignment targets). */
+  /**
+   * Outer names a subtree may assign. Covers identifier targets (`x = …`, `x +=
+   * …`, `x++`) and member/element targets whose base is an outer identifier
+   * (`o.v = …`, `arr[i] = …`) — the latter mutate the object the name refers to,
+   * so the loop summary must re-define that name or the mutation's influence is
+   * lost.
+   */
   private collectAssignedOuterNames(node: Node): string[] {
     const names = new Set<string>();
+    const consider = (target: Node | undefined): void => {
+      const base = baseIdentifierOfTarget(target);
+      if (base !== undefined && this.env.has(base)) names.add(base);
+    };
     for (const bin of node.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
       const op = bin.getOperatorToken().getKind();
-      if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) {
-        const lhs = bin.getLeft();
-        if (Node.isIdentifier(lhs) && this.env.has(lhs.getText())) names.add(lhs.getText());
-      }
+      if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) consider(bin.getLeft());
     }
     const unaries = [
       ...node.getDescendantsOfKind(SyntaxKind.PostfixUnaryExpression),
       ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
     ];
-    for (const un of unaries) {
-      const operand = un.getOperand();
-      if (Node.isIdentifier(operand) && this.env.has(operand.getText())) {
-        names.add(operand.getText());
-      }
-    }
+    for (const un of unaries) consider(un.getOperand());
     return [...names];
   }
 
@@ -511,8 +521,14 @@ class Lifter {
     }
     if (Node.isPropertyAccessExpression(lhs) || Node.isElementAccessExpression(lhs)) {
       const base = lhs.getExpression();
-      const baseValue = this.liftExpr(base);
-      const [mutated] = this.emit("op", [baseValue, value], 1, { origin: { kind: "Write" } });
+      const inputs = [this.liftExpr(base)];
+      // For `arr[i] = v`, the index chooses which slot is written, so it
+      // influences the mutated object; include it as an input.
+      if (Node.isElementAccessExpression(lhs)) {
+        inputs.push(this.liftExpr(lhs.getArgumentExpressionOrThrow()));
+      }
+      inputs.push(value);
+      const [mutated] = this.emit("op", inputs, 1, { origin: { kind: "Write" } });
       if (Node.isIdentifier(base) && this.env.has(base.getText())) {
         this.env.set(base.getText(), mutated as ValueId);
       }
@@ -628,6 +644,40 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Names bound *inside* a region: variable declarations (including `for`-header
+ * and `for-of`/`for-in` loop variables) and parameters of nested functions. Used
+ * to tell an opaque region's genuine external reads from its own internal names.
+ */
+function collectRegionLocals(node: Node): Set<string> {
+  const locals = new Set<string>();
+  for (const decl of node.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    for (const name of patternNames(decl.getNameNode())) locals.add(name);
+  }
+  for (const param of node.getDescendantsOfKind(SyntaxKind.Parameter)) {
+    for (const name of patternNames(param.getNameNode())) locals.add(name);
+  }
+  return locals;
+}
+
+/**
+ * The root identifier name of an assignment target: `x` for `x`, `o` for `o.v`
+ * or `o.a.b`, `arr` for `arr[i]`. Returns undefined for any other lvalue shape
+ * (e.g. a destructuring pattern), which the caller handles conservatively.
+ */
+function baseIdentifierOfTarget(target: Node | undefined): string | undefined {
+  let current = target;
+  while (current !== undefined) {
+    if (Node.isIdentifier(current)) return current.getText();
+    if (Node.isPropertyAccessExpression(current) || Node.isElementAccessExpression(current)) {
+      current = current.getExpression();
+      continue;
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 /** All identifier names bound by a (possibly destructuring) binding-name node. */
