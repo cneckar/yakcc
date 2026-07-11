@@ -1,0 +1,54 @@
+{
+  "name": "@yakcc/duc",
+  "version": "0.6.0-alpha.0",
+  "description": "Def-Use Calculus (DUC): a semantics-free def-use graph over an atom, with sound may-influence, graph non-interference, and monotone composition.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "private": true,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/duc"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/duc#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": [
+    "yakcc",
+    "def-use",
+    "influence",
+    "non-interference",
+    "typescript"
+  ],
+  "scripts": {
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check src/"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "ts-morph": "^28.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "fast-check": "^4.7.0",
+    "vitest": "^4.1.5"
+  }
+}
