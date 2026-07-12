@@ -9,7 +9,9 @@ import {
   refinementIsMonotone,
   refinesInfluence,
 } from "./compose.js";
+import { influenceCone, influenceIndexWithSummaries } from "./influence.js";
 import { N, V, mkGraph } from "./testkit.js";
+import type { NodeId } from "./types.js";
 import { isWellFormed } from "./wellformed.js";
 
 // host: params a,b feed an opaque node -> c ; obs c
@@ -164,6 +166,33 @@ describe("refine", () => {
       ["p"],
     );
     expect(() => refine(host, N("n2"), passthrough)).toThrow(/pass-through/);
+  });
+});
+
+describe("influence with summaries (DUC Thm 6.2(2): closure over summaries == inlining)", () => {
+  it("a summarized node propagates only the allowed port pairs", () => {
+    // n2 opaque over [a,b] -> c. Summarize it to pass only input 0 (a) -> output 0 (c).
+    const summaries = new Map<NodeId, ReadonlySet<string>>([[N("n2"), new Set(["0->0"])]]);
+    const cone = influenceCone(host, V("c"), influenceIndexWithSummaries(host, summaries));
+    expect([...cone].sort()).toEqual(["a"]); // b no longer reaches c
+  });
+
+  it("an un-summarized node keeps the complete (opaque) relation", () => {
+    const cone = influenceCone(host, V("c"), influenceIndexWithSummaries(host, new Map()));
+    expect([...cone].sort()).toEqual(["a", "b"]);
+  });
+
+  it("equals inlining the callee: summary composition == refine-then-cone", () => {
+    // `sub` uses only its first parameter, so its param->obs summary is [[true],[false]].
+    // Applying that summary to n2 must give the same influence as refining n2 with sub.
+    const viaSummary = influenceCone(
+      host,
+      V("c"),
+      influenceIndexWithSummaries(host, new Map([[N("n2"), new Set(["0->0"])]])),
+    );
+    const refined = refine(host, N("n2"), sub);
+    const viaInlining = influenceCone(refined, V("c"));
+    expect([...viaSummary].sort()).toEqual([...viaInlining].sort());
   });
 });
 

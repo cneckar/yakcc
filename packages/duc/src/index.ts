@@ -32,10 +32,11 @@ export { isWellFormed } from "./wellformed.js";
 export type { LiftOptions } from "./lift.js";
 export { DucLiftError, liftAtom } from "./lift.js";
 
-export type { DiamondSupport, InfluenceIndex, WitnessTerm } from "./influence.js";
+export type { DiamondSupport, InfluenceIndex, NodeSummary, WitnessTerm } from "./influence.js";
 export {
   influenceCone,
   influenceIndex,
+  influenceIndexWithSummaries,
   mayInfluence,
   mayInfluencePairs,
   renderWitness,

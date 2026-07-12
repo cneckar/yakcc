@@ -271,6 +271,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
       '@yakcc/hooks-base':
         specifier: workspace:*
         version: link:../hooks-base

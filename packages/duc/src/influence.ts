@@ -51,6 +51,43 @@ function setDefault(map: Map<ValueId, ValueId[]>, key: ValueId): ValueId[] {
   return list;
 }
 
+/**
+ * A per-node influence summary: the set of `` `${inputIndex}->${outputIndex}` ``
+ * port pairs the node may propagate. A node *absent* from a summaries map keeps
+ * the complete (opaque) input→output relation — the coarsest sound assumption.
+ */
+export type NodeSummary = ReadonlySet<string>;
+
+/**
+ * Build the one-step influence adjacency with per-node summaries applied: a
+ * summarized node contributes only the input→output port pairs its summary
+ * allows, instead of the complete relation. This is the operational core of DUC
+ * Thm 6.2(2): influence over a graph with an opaque node's step replaced by a
+ * callee's `Summ(·)` equals influence over the refined graph, *without
+ * re-traversing the callee's body*. It is what lets a program's influence be
+ * assembled from atom summaries.
+ */
+export function influenceIndexWithSummaries(
+  graph: DucGraph,
+  summaries: ReadonlyMap<NodeId, NodeSummary>,
+): InfluenceIndex {
+  const forward = new Map<ValueId, ValueId[]>();
+  const backward = new Map<ValueId, ValueId[]>();
+  for (const node of graph.nodes) {
+    const summ = summaries.get(node.id);
+    for (let i = 0; i < node.inputs.length; i++) {
+      const input = node.inputs[i] as ValueId;
+      for (let j = 0; j < node.outputs.length; j++) {
+        if (summ !== undefined && !summ.has(`${i}->${j}`)) continue;
+        const output = node.outputs[j] as ValueId;
+        (forward.get(input) ?? setDefault(forward, input)).push(output);
+        (backward.get(output) ?? setDefault(backward, output)).push(input);
+      }
+    }
+  }
+  return { forward, backward };
+}
+
 // ---------------------------------------------------------------------------
 // Reachability
 // ---------------------------------------------------------------------------

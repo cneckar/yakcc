@@ -41,6 +41,11 @@ export { resolveComposition } from "./resolve.js";
 // buildManifest is exported for callers who build manifests from external ResolutionResults
 export { buildManifest } from "./manifest.js";
 
+// Whole-program DUC influence (S5, #1166, DEC-DUC-COMPOSITION-MONOTONE-001):
+// assemble a program's influence from per-atom summaries + the strictness falsifier.
+export type { BlockInfluence, ProgramInfluence, ProgramUnknown } from "./program-influence.js";
+export { analyzeProgramInfluence, checkStrictnessRefinement } from "./program-influence.js";
+
 // Slice-plan compilation path (WI-V2-GLUE-LEAF-CONTRACT)
 // compileToTypeScript: SlicePlan → TS source (handles GlueLeafEntry verbatim)
 // assertNoGlueLeaf: validate no glue before WASM compilation (DEC-V2-GLUE-LEAF-WASM-001)
