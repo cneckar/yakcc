@@ -1,0 +1,38 @@
+# @decision DEC-DUC-MECHANIZATION-001 — CI gate for the DUC Coq proof harness (S6).
+# Title: duc-coq — machine-check the mechanized builder-run core on every change.
+# Status: accepted (wi-duc-influence-layer S6, GH #1167)
+# Rationale: The influence facet's I1 trust anchor is a Coq development that must
+# stay admit-free and axiom-free. This workflow provisions Coq (Ubuntu universe,
+# the toolchain the harness is developed against) and runs `make verify`, which
+# fails on any proof hole (coqchk whole-module axiom check). Scoped by `paths` so
+# it only runs when the proof sources change — it does not gate unrelated PRs.
+name: duc-coq
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/duc/coq/**"
+      - ".github/workflows/duc-coq.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/duc/coq/**"
+      - ".github/workflows/duc-coq.yml"
+
+concurrency:
+  group: duc-coq-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: duc coq — make verify (admit-free, axiom-free)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Coq
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends coq
+      - name: Machine-check the DUC core
+        working-directory: packages/duc/coq
+        run: make verify
