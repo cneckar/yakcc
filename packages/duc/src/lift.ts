@@ -696,20 +696,52 @@ function patternNames(nameNode: Node): string[] {
   return names.length > 0 ? names : [nameNode.getText()];
 }
 
-/** The single exported function-like declaration, if there is exactly one. */
+/**
+ * The atom's primary function-like, if it has one. A shaved atom is typically a
+ * single factored function; that function's parameters are the atom's boundary
+ * (parameter-sources) and its returns are the observations.
+ *
+ * Selection order:
+ *   1. If exactly one top-level function-like is *exported*, it is primary
+ *      (an entry point among helpers). More than one exported → ambiguous, none.
+ *   2. Otherwise, if the file has exactly one top-level function-like at all
+ *      (whether or not it is exported), that lone function is primary. This is
+ *      the common shave-atom shape: a bare `function f(...) {…}` fragment. Without
+ *      this clause such an atom falls to the top-level-statement path, where the
+ *      declaration is summarized as one opaque region and its `return`s are
+ *      re-lifted in the empty outer scope — so the function's own parameters and
+ *      `var` locals surface as spurious `free-identifier` diamonds and the
+ *      observations disconnect from the body.
+ *
+ * Only genuine top-level bindings are considered (nested closures are not
+ * candidates); imports are irrelevant here (handled by `collectImports`).
+ */
 function findPrimaryFunction(file: Node): FunctionLike | undefined {
-  const candidates: FunctionLike[] = [];
-  for (const fn of (file as import("ts-morph").SourceFile).getFunctions()) {
-    if (fn.isExported()) candidates.push(fn);
+  const sourceFile = file as import("ts-morph").SourceFile;
+  const exported: FunctionLike[] = [];
+  const all: FunctionLike[] = [];
+
+  for (const fn of sourceFile.getFunctions()) {
+    all.push(fn);
+    if (fn.isExported()) exported.push(fn);
   }
-  for (const decl of (file as import("ts-morph").SourceFile).getVariableDeclarations()) {
-    if (!decl.isExported()) continue;
-    const init = decl.getInitializer();
-    if (init !== undefined && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) {
-      candidates.push(init);
+  // Only top-level variable statements bind module-scope names; iterating
+  // statements (not getVariableDeclarations, which can reach into nested scopes)
+  // keeps a nested arrow from being mistaken for a top-level function-like.
+  for (const stmt of sourceFile.getVariableStatements()) {
+    for (const decl of stmt.getDeclarations()) {
+      const init = decl.getInitializer();
+      if (init === undefined) continue;
+      if (!Node.isArrowFunction(init) && !Node.isFunctionExpression(init)) continue;
+      all.push(init);
+      if (stmt.isExported()) exported.push(init);
     }
   }
-  return candidates.length === 1 ? candidates[0] : undefined;
+
+  if (exported.length === 1) return exported[0];
+  if (exported.length > 1) return undefined; // ambiguous entry point — top-level path
+  // No exported function-like: a lone bare function declaration is the atom.
+  return all.length === 1 ? all[0] : undefined;
 }
 
 /** Names of all exported top-level bindings (for the no-primary-function case). */

@@ -329,6 +329,67 @@ describe("no single exported function: top-level fallback", () => {
   });
 });
 
+describe("a lone bare (non-exported) function is the primary atom (WI-EXPLAIN-01)", () => {
+  // Shave persists an atom as its raw factored fragment — a bare `function f(…)`
+  // with no `export`. Its parameters are the atom boundary and its returns are the
+  // observations, exactly as for an exported function. Without primary-recognition
+  // the declaration is summarized as one opaque region and its returns are re-lifted
+  // in the empty outer scope, so params and `var` locals surface as spurious
+  // free-identifier diamonds and observations disconnect from the body.
+
+  it("binds a bare function's parameters (they are param-sources, not free-ids)", () => {
+    const g = lift("function f(a, b) { return a + b; }");
+    expect(g.nodes.filter((n) => n.kind === "param-source")).toHaveLength(2);
+    expect(diamondSymbols(g)).not.toContain("a");
+    expect(diamondSymbols(g)).not.toContain("b");
+    expect(mayInfluence(g, paramValue(g, 0), onlyObs(g))).toBe(true);
+    expect(mayInfluence(g, paramValue(g, 1), onlyObs(g))).toBe(true);
+  });
+
+  it("does not mint free-id diamonds for a bare function's own var locals", () => {
+    // `validLen`/`placeHoldersLen` are `var` locals; only the genuine capture is unknown.
+    const g = lift(
+      "function getLens(b64) { var validLen = b64.indexOf('='); var placeHoldersLen = validLen; return cap(validLen, placeHoldersLen); }",
+    );
+    expect(diamondSymbols(g)).not.toContain("validLen");
+    expect(diamondSymbols(g)).not.toContain("placeHoldersLen");
+    expect(diamondSymbols(g)).not.toContain("b64");
+    expect(diamondSymbols(g)).toContain("cap"); // genuine free reference survives
+  });
+
+  it("a reassigned parameter stays bound, not a free-identifier", () => {
+    // `pointer = pointer.split('/')` reassigns the param; the read must still resolve.
+    const g = lift(
+      "function compilePointer(pointer) { if (typeof pointer === 'string') { pointer = pointer.split('/'); } return pointer; }",
+    );
+    expect(diamondSymbols(g)).not.toContain("pointer");
+    expect(usupp(g, onlyObs(g))).toHaveLength(0);
+  });
+
+  it("surfaces only the genuine sibling reference, with params bound", () => {
+    // `byteLength(b64)` calls sibling `getLens`; b64 and the locals are bound.
+    const g = lift(
+      "function byteLength(b64) { var lens = getLens(b64); var v = lens[0]; return v * 3; }",
+    );
+    expect(diamondSymbols(g)).toEqual(["getLens"]);
+  });
+
+  it("an exported entry point still wins over bare helpers", () => {
+    // With exactly one exported function-like among bare helpers, the export is primary.
+    const g = lift("function helper(z) { return z; }\nexport function main(x) { return use(x); }");
+    // `main`'s param x is bound; the export's boundary — not helper's — is the atom.
+    expect(diamondSymbols(g)).toContain("use");
+    expect(diamondSymbols(g)).not.toContain("x");
+  });
+
+  it("two bare functions remain ambiguous → top-level fallback (unchanged)", () => {
+    const g = lift("function a() { return one(); }\nfunction b() { return two(); }");
+    expect(isWellFormed(g).wellFormed).toBe(true);
+    expect(diamondSymbols(g)).toContain("one");
+    expect(diamondSymbols(g)).toContain("two");
+  });
+});
+
 describe("errors", () => {
   it("throws DucLiftError on a syntax error", () => {
     expect(() => liftAtom("export function f( {")).toThrow(DucLiftError);
