@@ -127,3 +127,84 @@ Proof.
   intros ns Hrun. apply wf_run_preserves_conservation; [| exact Hrun].
   unfold conservation. intros n [] .
 Qed.
+
+(* ------------------------------------------------------------------ *)
+(* WF-A half: single assignment — every value is an output of at most   *)
+(* one node, i.e. the concatenation of all output ports has no dup.      *)
+(* ------------------------------------------------------------------ *)
+
+Definition outputs (g : Graph) : list Value := flat_map outs g.
+Definition single_assignment (g : Graph) : Prop := NoDup (outputs g).
+
+Lemma NoDup_app_intro :
+  forall (l l' : list nat),
+    NoDup l -> NoDup l' -> (forall x, In x l -> ~ In x l') -> NoDup (l ++ l').
+Proof.
+  induction l as [| a l IHl]; intros l' Hl Hl' Hdisj; simpl.
+  - exact Hl'.
+  - inversion Hl as [| x xs Hna Hnd Heq]; subst.
+    constructor.
+    + rewrite in_app_iff. intros [Hin | Hin].
+      * exact (Hna Hin).
+      * apply (Hdisj a); [ now left | exact Hin ].
+    + apply IHl; auto. intros x Hx. apply Hdisj. now right.
+Qed.
+
+Lemma outputs_app : forall g h, outputs (g ++ h) = outputs g ++ outputs h.
+Proof. intros; unfold outputs; apply flat_map_app. Qed.
+
+(* push_op preserves single-assignment when the new node emits distinct outputs
+   that are fresh (not already defined). *)
+Theorem push_preserves_single_assignment :
+  forall g m,
+    single_assignment g ->
+    NoDup (outs m) ->
+    (forall v, In v (outs m) -> ~ In v (outputs g)) ->
+    single_assignment (push_op g m).
+Proof.
+  intros g m Hsa Hnd Hfresh. unfold single_assignment, push_op.
+  rewrite outputs_app. simpl. rewrite app_nil_r.
+  apply NoDup_app_intro.
+  - exact Hsa.
+  - exact Hnd.
+  - intros x Hx Hx'. exact (Hfresh x Hx' Hx).
+Qed.
+
+(* The conservative builder: at each step the node's inputs are already defined
+   (WF-C) AND its outputs are distinct and fresh (WF-A / single-assignment). *)
+Inductive builder : Graph -> list Node -> Prop :=
+  | builder_nil  : forall g, builder g []
+  | builder_cons : forall g m rest,
+      (forall v, In v (ins m) -> defined g v) ->
+      NoDup (outs m) ->
+      (forall v, In v (outs m) -> ~ In v (outputs g)) ->
+      builder (push_op g m) rest ->
+      builder g (m :: rest).
+
+(* Full WF-preservation across an arbitrary builder run — both clauses
+   (the mechanized `wf_preserved_run` of §3, §10). *)
+Theorem builder_preserves_wf :
+  forall ns g,
+    conservation g -> single_assignment g -> builder g ns ->
+    conservation (builder_run g ns) /\ single_assignment (builder_run g ns).
+Proof.
+  induction ns as [| m rest IH]; intros g Hc Hsa Hb; simpl.
+  - split; assumption.
+  - inversion Hb as [| g0 m0 rest0 Hins Hnd Hfresh Hrest]; subst.
+    apply IH.
+    + now apply push_preserves_conservation.
+    + now apply push_preserves_single_assignment.
+    + exact Hrest.
+Qed.
+
+(* Every builder run from the empty graph yields a well-formed graph:
+   conservation (no dangling use) AND single-assignment. This is the builder
+   direction of the representation theorem (DUC Thm 3.1 (ii) => (i)). *)
+Corollary builder_from_empty_wf :
+  forall ns, builder [] ns ->
+    conservation (builder_run [] ns) /\ single_assignment (builder_run [] ns).
+Proof.
+  intros ns Hb. apply builder_preserves_wf; try exact Hb.
+  - unfold conservation. intros n [].
+  - unfold single_assignment, outputs. simpl. constructor.
+Qed.

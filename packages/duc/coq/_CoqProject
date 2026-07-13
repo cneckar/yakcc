@@ -1,2 +1,3 @@
 -Q . DUC
 DUC_Core.v
+DUC_Soundness.v

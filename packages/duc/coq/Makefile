@@ -11,12 +11,20 @@
 
 COQC      ?= coqc
 COQ_FLAGS := -Q . DUC
-SOURCES   := DUC_Core.v
+SOURCES   := DUC_Core.v DUC_Soundness.v
+MODULES   := DUC.DUC_Core DUC.DUC_Soundness
 
 # Theorems whose admit-free / axiom-free status `verify` asserts.
 CLAIMED := push_preserves_conservation \
            wf_run_preserves_conservation \
-           builder_from_empty_conserves
+           builder_from_empty_conserves \
+           push_preserves_single_assignment \
+           builder_preserves_wf \
+           builder_from_empty_wf \
+           influence_soundness \
+           non_influence \
+           graph_NI_sound \
+           depmap_only_sources
 
 .PHONY: all verify clean
 
@@ -29,14 +37,14 @@ verify: all
 	@# 1. Authoritative whole-module check: coqchk re-checks every .vo and prints a
 	@#    CONTEXT SUMMARY. Any Admitted/admit anywhere in the development surfaces as
 	@#    an axiom in the "* Axioms:" section — we fail if any of OUR constants do.
-	@coqchk -o $(COQ_FLAGS) DUC.DUC_Core > _chk.out 2>&1 || { cat _chk.out; rm -f _chk.out; exit 1; }
+	@coqchk -o $(COQ_FLAGS) $(MODULES) > _chk.out 2>&1 || { cat _chk.out; rm -f _chk.out; exit 1; }
 	@if awk '/\* Axioms:/{f=1} /type-in-type/{f=0} f' _chk.out | grep -q 'DUC\.'; then \
 	  echo "verify: FAILED — the development relies on an axiom (proof hole):"; \
 	  awk '/\* Axioms:/{f=1} /type-in-type/{f=0} f' _chk.out | grep 'DUC\.'; \
 	  rm -f _chk.out; exit 1; fi
 	@rm -f _chk.out
 	@# 2. Document the headline claims: each named theorem must be axiom-free.
-	@printf 'Require Import DUC.DUC_Core.\n' > _assum.v
+	@printf 'Require Import DUC.DUC_Core DUC.DUC_Soundness.\n' > _assum.v
 	@for t in $(CLAIMED); do printf 'Print Assumptions %s.\n' $$t >> _assum.v; done
 	@$(COQC) $(COQ_FLAGS) _assum.v > _assum.out 2>&1 || { cat _assum.out; rm -f _assum.*; exit 1; }
 	@closed=$$(grep -c 'Closed under the global context' _assum.out); \

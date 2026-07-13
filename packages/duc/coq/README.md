@@ -40,28 +40,37 @@ CI runs this on every change under `packages/duc/coq/**` via
 
 ## What is mechanized (the "Table 2" boundary)
 
-Being honest about the machine-checked frontier, exactly as the paper is:
+Being honest about the machine-checked frontier, exactly as the paper is. Every
+row marked *mechanized* is compiled by `coqc` and confirmed axiom-free by
+`make verify` (`coqchk` whole-module + `Print Assumptions`).
 
 | Result | Status |
 |---|---|
 | Graph base: values, opaque nodes, def/use, `defined`, `conservation` (WF-C) | **mechanized** (`DUC_Core.v`) |
 | `push_op` conservative builder step | **mechanized** |
-| `push_preserves_conservation` (WF-C preserved by one builder step) | **mechanized, axiom-free** |
-| `wf_run_preserves_conservation` (WF-C across an arbitrary builder run) | **mechanized, axiom-free** |
-| `builder_from_empty_conserves` (every lift is closed under WF-C) | **mechanized, axiom-free** |
-| Acyclicity (WF-A) via the emission index; `happens-before` order | *next* (`DUC_Core.v`, in progress) |
-| Influence soundness — builder source form (Thm 4.5a) | *next* (`DUC_Transfer.v`) |
-| Ranking-renaming transfer to every WF graph (`influence_soundness_WF`) | *next* (`DUC_Transfer.v`) |
-| Term-model realization (Thm 4.6), least-sound (Cor 4.7), graph-NI ⇒ | **paper-proved**, not mechanized (as in the paper) |
+| `push_preserves_conservation` / `wf_run_preserves_conservation` (WF-C across an arbitrary builder run) | **mechanized, axiom-free** |
+| Single-assignment (WF-A half) + `push_preserves_single_assignment` | **mechanized, axiom-free** |
+| `builder_preserves_wf` / `builder_from_empty_wf` — builder ⇒ WF, both clauses (Thm 3.1 (ii)⇒(i)) | **mechanized, axiom-free** |
+| **Influence soundness — source form (Thm 4.5a)**: the induced valuation of `F` is a function of `d` over `F`'s source-dependency set | **mechanized, axiom-free** (`DUC_Soundness.v`) |
+| `non_influence` — a source outside the dependency set never changes `F` (Thm 4.5b face) | **mechanized, axiom-free** |
+| `graph_NI_sound` — graph non-interference, sound direction (Thm 5.2 ⇐) | **mechanized, axiom-free** |
+| `depmap_only_sources` — every dependency is a declared source (usupp ⊆ sources, Cor 4.10 face) | **mechanized, axiom-free** |
+| Happens-before strict partial order (Thm 3.2); descent measure (Thm 3.3); ranking-renaming transfer to every WF graph (`influence_soundness_WF`) | *next* (order theory / `DUC_Transfer.v`) |
+| Term-model realization (Thm 4.6), least-sound (Cor 4.7), graph-NI ⇒ | **paper-proved**, not mechanized (exactly as in the source artifact) |
 
-The current commit establishes the harness and the conservation core; the
-influence-soundness proofs are the S6 continuation. Nothing here claims more than
-`coqc`/`coqchk` actually check — a theorem is listed *mechanized* only if
-`make verify` passes with it axiom-free.
+The soundness development models a builder-constructed graph in its emission
+order as a straight-line, single-output program (multi-output nodes are WLOG a
+family of single-output ones); evaluation and the source-dependency set are two
+folds of the same shape, so `influence_soundness` is one joint induction — no
+well-founded recursion, and the may-influence set is computed exactly. Nothing
+is listed *mechanized* unless `make verify` passes it axiom-free.
 
 ## Files
 
-- `DUC_Core.v` — the graph base, `push_op`, and the conservation theorems.
+- `DUC_Core.v` — the graph base, `push_op`, conservation + single-assignment, and
+  the builder ⇒ WF theorems.
+- `DUC_Soundness.v` — the induced valuation `eval`, the dependency set `depmap`,
+  and influence soundness / non-influence / graph-NI(⇐) / usupp-⊆-sources.
 - `_CoqProject` — logical mapping (`-Q . DUC`) + source list.
 - `Makefile` — `all` (compile), `verify` (the I1 gate), `clean`.
 - `flake.nix` — reproducible Nix toolchain (paper-parity; see note in the file).
