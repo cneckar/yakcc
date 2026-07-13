@@ -154,6 +154,19 @@ export interface PersistOptions {
    * `ducUsupp` provenance regardless of mode.
    */
   readonly ducGateMode?: DucGateMode | undefined;
+
+  // @decision DEC-DUC-COMPOSITION-EDGE-001 (WI-EXPLAIN-01, GH #1170)
+  /**
+   * The recursion forest's internal-symbol set — the names of every sibling/child
+   * atom in the same shave. A `free-identifier` reference matching one of these is
+   * an internal composition edge, not an external unknown: the gate records it as
+   * `composition` and excludes it from `unexplained` (so it never trips reject
+   * mode). Metadata-only — the atom's bytes and content address are untouched.
+   *
+   * Computed once per forest via `collectInternalSymbols(...)` and forwarded here.
+   * When omitted, no free-identifier is treated as internal (pre-#1170 behavior).
+   */
+  readonly internalSymbols?: ReadonlySet<string> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +246,8 @@ export async function persistNovelGlueAtom(
     entry.source,
     intentCard.behavior.slice(0, 60),
     options?.ducGateMode ?? ducGateModeFromEnv(),
+    undefined, // warn — default console.warn
+    options?.internalSymbols, // sibling/child atom names → composition edges (#1170)
   );
 
   const sc = options?.sourceContext;

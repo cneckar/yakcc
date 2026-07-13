@@ -362,6 +362,7 @@ import { extractIntent } from "./intent/extract.js";
 import type { IntentCard } from "./intent/types.js";
 import { locateProjectRoot } from "./locate-root.js";
 import { maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
+import { collectInternalSymbols } from "./persist/duc-gate.js";
 import { FOREIGN_POLICY_DEFAULT } from "./types.js";
 import type {
   CandidateBlock,
@@ -591,6 +592,15 @@ export async function universalize(
       throw new PersistRequestedButNotSupportedError();
     }
 
+    // DEC-DUC-COMPOSITION-EDGE-001 (#1170): the forest's internal-symbol set — the
+    // names every novel-glue atom in this plan defines. A free-identifier reference
+    // matching one of these is a sibling/child composition edge, not an external
+    // unknown, so the DUC gate records it as `composition` rather than `unexplained`.
+    // Computed once over the whole plan and forwarded to every persist call.
+    const internalSymbols = collectInternalSymbols(
+      slicePlan.flatMap((e) => (e.kind === "novel-glue" ? [e.source] : [])),
+    );
+
     // Postorder lineage loop — lifted verbatim from shave()'s index.ts:741-779.
     // Each NovelGlueEntry is persisted in DFS order; the preceding novel-glue
     // entry's merkleRoot becomes the current entry's parentBlockRoot.
@@ -618,6 +628,7 @@ export async function universalize(
           // DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001.
           sourceFilePath: options?.sourceFilePath,
           sourceContext: perAtomSourceContext,
+          internalSymbols,
         });
         // Surface the merkleRoot on the entry (may be undefined if intentCard absent).
         // exactOptionalPropertyTypes: spread only when defined to satisfy

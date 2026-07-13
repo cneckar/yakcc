@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   DucGateRejection,
   type DucGateResult,
+  atomDefinedNames,
+  collectInternalSymbols,
   ducGateModeFromEnv,
   enforceDucGate,
   runDucConservationGate,
@@ -116,6 +118,79 @@ describe("enforceDucGate — reject mode", () => {
 
   it("admits a foreign-only atom (declared unknowns are not rejected)", () => {
     expect(() => enforceDucGate(FOREIGN, "read a file", "reject")).not.toThrow();
+  });
+});
+
+describe("composition-edge resolution (WI-EXPLAIN-01, #1170)", () => {
+  it("atomDefinedNames extracts top-level function/const/class names (bare or exported)", () => {
+    expect(atomDefinedNames("function getLens(b64) { return b64; }")).toEqual(["getLens"]);
+    expect(atomDefinedNames("export const lookup = [];")).toEqual(["lookup"]);
+    expect(atomDefinedNames("export async function f() {}\nclass C {}")).toEqual(["f", "C"]);
+    // a nested declaration is not a top-level binding
+    expect(atomDefinedNames("function outer() { function inner() {} return inner; }")).toEqual([
+      "outer",
+    ]);
+  });
+
+  it("collectInternalSymbols unions every atom's defined names across the forest", () => {
+    const forest = [
+      "function getLens(b64) { return b64; }",
+      "function byteLength(b64) { return getLens(b64); }",
+    ];
+    expect([...collectInternalSymbols(forest)].sort()).toEqual(["byteLength", "getLens"]);
+  });
+
+  it("classifies a sibling reference as a composition edge, not unexplained", () => {
+    // `byteLength` calls sibling `getLens` — with getLens in the internal set it is
+    // an internal composition edge, so unexplained is empty.
+    const src = "export function byteLength(b64: string): number { return getLens(b64); }";
+    const result = runDucConservationGate(src, new Set(["getLens"]));
+    expect(result.unexplained).toEqual([]);
+    expect(result.composition.map((u) => u.symbol)).toEqual(["getLens"]);
+    // still recorded in the full unknown-support, flagged as composition
+    expect(result.unknowns).toContainEqual({
+      symbol: "getLens",
+      reason: "free-identifier",
+      composition: true,
+    });
+  });
+
+  it("without an internal set, the same reference stays unexplained (pre-#1170 behavior)", () => {
+    const src = "export function byteLength(b64: string): number { return getLens(b64); }";
+    const result = runDucConservationGate(src);
+    expect(result.unexplained.map((u) => u.symbol)).toEqual(["getLens"]);
+    expect(result.composition).toEqual([]);
+  });
+
+  it("splits mixed references: sibling → composition, genuine free-id → unexplained", () => {
+    // `getLens` is a sibling; `Arr` is a genuine external capture.
+    const src =
+      "export function toByteArray(b64: string): unknown { return new Arr(getLens(b64)); }";
+    const result = runDucConservationGate(src, new Set(["getLens"]));
+    expect(result.composition.map((u) => u.symbol)).toEqual(["getLens"]);
+    expect(result.unexplained.map((u) => u.symbol)).toEqual(["Arr"]);
+  });
+
+  it("reject mode admits an atom whose only free references are composition edges", () => {
+    const src = "export function byteLength(b64: string): number { return getLens(b64); }";
+    expect(() =>
+      enforceDucGate(src, "byte length", "reject", undefined, new Set(["getLens"])),
+    ).not.toThrow();
+  });
+
+  it("reject mode still throws when a genuine free-id remains alongside a composition edge", () => {
+    const src =
+      "export function toByteArray(b64: string): unknown { return new Arr(getLens(b64)); }";
+    expect(() =>
+      enforceDucGate(src, "to byte array", "reject", undefined, new Set(["getLens"])),
+    ).toThrow(DucGateRejection);
+  });
+
+  it("records the composition flag in serialized usupp provenance", () => {
+    const src = "export function byteLength(b64: string): number { return getLens(b64); }";
+    const { ducUsupp } = enforceDucGate(src, "byte length", "warn", () => {}, new Set(["getLens"]));
+    const parsed = JSON.parse(ducUsupp as string) as { unknowns: { composition?: boolean }[] };
+    expect(parsed.unknowns[0]?.composition).toBe(true);
   });
 });
 

@@ -37,6 +37,15 @@ export interface DucUnknown {
   readonly symbol: string;
   readonly reason: DiamondReason;
   readonly module?: string;
+  /**
+   * True when this `free-identifier` resolves to a *sibling/child atom* defined
+   * elsewhere in the same recursion forest — i.e. an internal **composition
+   * edge**, not an external unknown. Set by the gate when the symbol is in the
+   * forest's internal-symbol set (WI-EXPLAIN-01, DEC-DUC-COMPOSITION-EDGE-001).
+   * It reclassifies the reference without touching the lifter's `reason` (which
+   * stays `free-identifier` — the atom's own bytes genuinely have no local def).
+   */
+  readonly composition?: boolean;
 }
 
 /** The result of running the conservation gate over an atom's source. */
@@ -45,8 +54,16 @@ export interface DucGateResult {
   readonly wellFormed: boolean;
   /** The full unknown-support, de-duplicated by symbol. */
   readonly unknowns: readonly DucUnknown[];
-  /** The subset with reason `free-identifier` — unexplained provenance. */
+  /**
+   * `free-identifier` unknowns that are NOT internal composition edges — the
+   * genuinely unexplained provenance the reject gate acts on.
+   */
   readonly unexplained: readonly DucUnknown[];
+  /**
+   * `free-identifier` unknowns resolved to a sibling/child atom — internal
+   * composition edges (recorded, never a gate problem).
+   */
+  readonly composition: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
 }
@@ -67,12 +84,23 @@ export function ducGateModeFromEnv(env: NodeJS.ProcessEnv = process.env): DucGat
   return env.YAKCC_DUC_GATE === "reject" ? "reject" : "warn";
 }
 
+const NO_INTERNAL_SYMBOLS: ReadonlySet<string> = new Set();
+
 /**
  * Lift an atom's source to a DUC graph and compute its unknown-support. Never
  * throws: a lift/analysis failure is recorded as `liftError` so the gate can
  * degrade gracefully in warn mode.
+ *
+ * `internalSymbols` are the names of sibling/child atoms in the same recursion
+ * forest (see {@link collectInternalSymbols}). A `free-identifier` whose symbol
+ * is in that set is an internal composition edge — recorded on `composition`
+ * and excluded from `unexplained` — rather than a genuine external unknown. This
+ * is metadata-only: the atom's bytes and content address are untouched.
  */
-export function runDucConservationGate(source: string): DucGateResult {
+export function runDucConservationGate(
+  source: string,
+  internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
+): DucGateResult {
   let unknowns: DucUnknown[];
   let wellFormed: boolean;
   try {
@@ -83,17 +111,26 @@ export function runDucConservationGate(source: string): DucGateResult {
       for (const support of supports) {
         const { symbol, reason, module } = support.label;
         if (!seen.has(symbol)) {
-          seen.set(symbol, { symbol, reason, ...(module !== undefined ? { module } : {}) });
+          const isComposition = reason === "free-identifier" && internalSymbols.has(symbol);
+          seen.set(symbol, {
+            symbol,
+            reason,
+            ...(module !== undefined ? { module } : {}),
+            ...(isComposition ? { composition: true } : {}),
+          });
         }
       }
     }
     unknowns = [...seen.values()];
   } catch (err) {
     const liftError = err instanceof DucLiftError ? err.message : String(err);
-    return { wellFormed: false, unknowns: [], unexplained: [], liftError };
+    return { wellFormed: false, unknowns: [], unexplained: [], composition: [], liftError };
   }
-  const unexplained = unknowns.filter((u) => u.reason === "free-identifier");
-  return { wellFormed, unknowns, unexplained };
+  const unexplained = unknowns.filter(
+    (u) => u.reason === "free-identifier" && u.composition !== true,
+  );
+  const composition = unknowns.filter((u) => u.composition === true);
+  return { wellFormed, unknowns, unexplained, composition };
 }
 
 /** The outcome of enforcing the gate: what to persist plus the raw result. */
@@ -118,8 +155,9 @@ export function enforceDucGate(
   atomName: string,
   mode: DucGateMode,
   warn: (message: string) => void = (m) => console.warn(m),
+  internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
 ): EnforceDucGateResult {
-  const result = runDucConservationGate(source);
+  const result = runDucConservationGate(source, internalSymbols);
   const ducUsupp =
     result.unknowns.length > 0 || result.liftError !== undefined
       ? JSON.stringify({
@@ -142,4 +180,42 @@ export function enforceDucGate(
     warn(`${message} — admitted (warn mode; set YAKCC_DUC_GATE=reject to enforce)`);
   }
   return { ducUsupp, result };
+}
+
+// ---------------------------------------------------------------------------
+// Internal-symbol collection (composition-edge resolution)
+// ---------------------------------------------------------------------------
+
+// Top-level declaration names an atom fragment defines. Line-anchored so it only
+// matches module-scope declarations, not nested ones — within one source module
+// top-level names are unique by JS scoping, so cross-atom collisions cannot occur.
+const TOP_LEVEL_DECL_RE =
+  /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)/;
+
+/**
+ * The top-level binding names a single atom fragment declares (functions, consts,
+ * classes). These are the identifiers a *sibling* atom would reference when it
+ * calls into this one — i.e. the composition-edge targets this atom provides.
+ */
+export function atomDefinedNames(source: string): string[] {
+  const names: string[] = [];
+  for (const line of source.split("\n")) {
+    const match = TOP_LEVEL_DECL_RE.exec(line);
+    if (match?.[1] !== undefined) names.push(match[1]);
+  }
+  return names;
+}
+
+/**
+ * The union of every atom-defined name across a recursion forest's atom sources —
+ * the set of symbols a `free-identifier` reference may resolve to *internally*
+ * (a sibling/child composition edge) rather than externally. Pass to
+ * {@link runDucConservationGate} / {@link enforceDucGate}.
+ */
+export function collectInternalSymbols(sources: Iterable<string>): Set<string> {
+  const symbols = new Set<string>();
+  for (const source of sources) {
+    for (const name of atomDefinedNames(source)) symbols.add(name);
+  }
+  return symbols;
 }
