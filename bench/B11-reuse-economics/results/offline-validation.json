@@ -1,0 +1,146 @@
+{
+  "client": "offline",
+  "tasks": 3,
+  "rows": [
+    {
+      "arm": "scratch",
+      "task": "chunk",
+      "pass": true,
+      "error": null,
+      "inputTokens": 62,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "chunk",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "chunk",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "clamp",
+      "pass": true,
+      "error": null,
+      "inputTokens": 57,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "clamp",
+      "pass": true,
+      "error": null,
+      "inputTokens": 93,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "clamp",
+      "pass": true,
+      "error": null,
+      "inputTokens": 93,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "safe-filename",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "safe-filename",
+      "pass": true,
+      "error": null,
+      "inputTokens": 103,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "safe-filename",
+      "pass": true,
+      "error": null,
+      "inputTokens": 103,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 1
+    }
+  ],
+  "decisions": [
+    {
+      "task": "chunk",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "clamp",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    },
+    {
+      "task": "safe-filename",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    }
+  ],
+  "summary": {
+    "scratch": {
+      "n": 3,
+      "passes": 3,
+      "inputTokens": 183,
+      "outputTokens": 164,
+      "ms": 0,
+      "passRate": 1,
+      "meanTokens": 115.66666666666667,
+      "meanMs": 0
+    },
+    "slice": {
+      "n": 3,
+      "passes": 3,
+      "inputTokens": 312,
+      "outputTokens": 164,
+      "ms": 0,
+      "passRate": 1,
+      "meanTokens": 158.66666666666666,
+      "meanMs": 0
+    },
+    "fallback": {
+      "n": 3,
+      "passes": 3,
+      "inputTokens": 312,
+      "outputTokens": 164,
+      "ms": 1,
+      "passRate": 1,
+      "meanTokens": 158.66666666666666,
+      "meanMs": 0.3333333333333333
+    }
+  }
+}

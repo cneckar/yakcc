@@ -1,0 +1,10 @@
+{
+  "id": "chunk",
+  "spec": "Write `export function chunk<T>(items: readonly T[], size: number): T[][]` that splits items into consecutive groups of at most `size`. Throw a RangeError if size is not a positive integer.",
+  "reference": "export function chunk<T>(items: readonly T[], size: number): T[][] {\n  if (!Number.isInteger(size) || size < 1) throw new RangeError('size must be a positive integer');\n  const out: T[][] = [];\n  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));\n  return out;\n}",
+  "slice": [
+    { "id": "arr-window", "score": 0.82, "sourcePkg": "shadow-utils", "text": "function windows(xs, n) { /* sliding windows of length n */ }", "citation": { "merkleRoot": "fixture-arr-window", "sourceFile": "shadow-utils/arrays.ts", "lineStart": 10, "lineEnd": 14 } },
+    { "id": "unrelated-date", "score": 0.31, "sourcePkg": "shadow-dates", "text": "function addDays(d, n) { /* ... */ }", "citation": { "merkleRoot": "fixture-add-days", "sourceFile": "shadow-dates/index.ts", "lineStart": 3, "lineEnd": 6 } }
+  ],
+  "heldOut": "const cases = [[[1,2,3,4,5],2,[[1,2],[3,4],[5]]],[[],3,[]],[['a'],1,[['a']]]];\nfor (const [xs, n, want] of cases) { const got = fn(xs, n); if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('chunk(' + JSON.stringify(xs) + ',' + n + ') = ' + JSON.stringify(got)); }\nlet threw = false; try { fn([1], 0); } catch (e) { threw = e instanceof RangeError; } if (!threw) throw new Error('size 0 must throw RangeError');"
+}
