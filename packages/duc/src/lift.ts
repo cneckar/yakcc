@@ -20,7 +20,7 @@
 // node (mirrors shave's loop-is-the-atom bottoming-out); recursion-as-fixpoint
 // is out of scope.
 
-import { Node, Project, ScriptKind, SyntaxKind } from "ts-morph";
+import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
 import type { DiamondReason, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
@@ -102,25 +102,44 @@ interface MutableNode {
  *   diamond-source — and never throw).
  */
 export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
-  // noLib + syntactic-only diagnostics: we never type-check (an unresolved name
-  // is a diamond-source, not an error), so we skip loading lib.d.ts and the
-  // semantic pass entirely. This is the difference between a fast lift and a
-  // multi-second one under coverage instrumentation.
-  const project = new Project({
-    useInMemoryFileSystem: true,
-    compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
-  });
-  const file = project.createSourceFile("atom.ts", source, { scriptKind: ScriptKind.TS });
-
-  const syntaxDiagnostics = project.getProgram().getSyntacticDiagnostics(file);
-  if (syntaxDiagnostics.length > 0) {
-    const messages = syntaxDiagnostics.map((d) => {
-      const msg = d.getMessageText();
-      return typeof msg === "string" ? msg : msg.getMessageText();
+  // A shaved fragment is not always a standalone statement: it may be an anonymous
+  // function expression (`function (a, b) {…}`) or a bare function body (`{ … return }`).
+  // We try the source as written first. Only when it does not parse do we try the
+  // analysis forms in order (a named function, then a function body, then an
+  // expression). Each form keeps the fragment's parameters as parameter-sources and
+  // its returns as observations, so no influence edge is lost. The first form that
+  // parses wins. If none parses, the error reported is for the source as written.
+  const forms = [source, ...wrapForms(source)];
+  let file: SourceFile | undefined;
+  let firstError: string[] = [];
+  let project: Project | undefined;
+  for (const [index, candidate] of forms.entries()) {
+    // noLib + syntactic-only diagnostics: we never type-check (an unresolved name
+    // is a diamond-source, not an error), so we skip loading lib.d.ts and the
+    // semantic pass entirely. This is the difference between a fast lift and a
+    // multi-second one under coverage instrumentation.
+    const attempt = new Project({
+      useInMemoryFileSystem: true,
+      compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
     });
+    const sf = attempt.createSourceFile("atom.ts", candidate, { scriptKind: ScriptKind.TS });
+    const diagnostics = attempt.getProgram().getSyntacticDiagnostics(sf);
+    if (diagnostics.length === 0) {
+      project = attempt;
+      file = sf;
+      break;
+    }
+    if (index === 0) {
+      firstError = diagnostics.map((d) => {
+        const msg = d.getMessageText();
+        return typeof msg === "string" ? msg : msg.getMessageText();
+      });
+    }
+  }
+  if (project === undefined || file === undefined) {
     throw new DucLiftError(
-      `TypeScript syntax error(s) in atom source: ${messages[0] ?? "unknown"}`,
-      messages,
+      `TypeScript syntax error(s) in atom source: ${firstError[0] ?? "unknown"}`,
+      firstError,
     );
   }
 
@@ -129,6 +148,27 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
   builder.collectImports(file);
   builder.run(file);
   return builder.finish();
+}
+
+/**
+ * Analysis forms for a fragment that is not a standalone statement, tried in order.
+ * An anonymous `function (…) {…}` becomes a named declaration, so its parameters bind
+ * as parameter-sources. A bare body becomes the body of a function, so its `return`s
+ * are observations and its free reads are unknowns. An expression is wrapped in
+ * parentheses as a last resort.
+ */
+function wrapForms(source: string): string[] {
+  const forms: string[] = [];
+  const anonymousFunction = /^\s*(async\s+)?function\s*(\*?)\s*\(/;
+  const match = anonymousFunction.exec(source);
+  if (match !== null) {
+    const async = match[1] !== undefined ? "async " : "";
+    const star = match[2] !== "" ? "*" : "";
+    forms.push(source.replace(anonymousFunction, `${async}function${star} __atom__(`));
+  }
+  forms.push(`function __atom__() {\n${source}\n}`);
+  forms.push(`(${source}\n)`);
+  return forms;
 }
 
 // ---------------------------------------------------------------------------

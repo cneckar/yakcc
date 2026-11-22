@@ -399,3 +399,40 @@ describe("errors", () => {
     expect(() => liftAtom("export function f(): number { return undeclaredName; }")).not.toThrow();
   });
 });
+
+describe("non-statement fragments lift through analysis forms (WI-EXPLAIN-04, #1173)", () => {
+  it("an anonymous function expression lifts with its parameters bound and influencing the result", () => {
+    const g = lift("function (a, b) { return a + b; }");
+    expect(g.nodes.filter((n) => n.kind === "param-source")).toHaveLength(2);
+    expect(mayInfluence(g, paramValue(g, 0), onlyObs(g))).toBe(true);
+    expect(mayInfluence(g, paramValue(g, 1), onlyObs(g))).toBe(true);
+  });
+
+  it("an async anonymous function expression lifts too", () => {
+    const g = lift("async function (a) { return await a; }");
+    expect(mayInfluence(g, paramValue(g), onlyObs(g))).toBe(true);
+  });
+
+  it("a bare function body lifts: its returns are observations and its free reads are unknowns", () => {
+    const g = lift("{ var x = read(y); return x; }");
+    expect(diamondSymbols(g).sort()).toEqual(["read", "y"]);
+    expect(g.obs.length).toBeGreaterThan(0);
+  });
+
+  it("a bare expression statement lifts (it records no observation, by design)", () => {
+    expect(() => liftAtom("[1, 2]")).not.toThrow();
+  });
+
+  it("a fragment that parses in no analysis form still throws DucLiftError", () => {
+    expect(() => liftAtom("export function f( {")).toThrow(DucLiftError);
+    expect(() => liftAtom("}}} {{{")).toThrow(DucLiftError);
+  });
+
+  it("a fragment that parses as written is not reshaped", () => {
+    // The as-written form wins: a named function's parameters are not renamed.
+    const g = lift("function named(a) { return a; }");
+    // The observation is the parameter itself (identity return). mayInfluence is
+    // irreflexive by definition, so we assert identity, not influence.
+    expect(onlyObs(g)).toBe(paramValue(g));
+  });
+});

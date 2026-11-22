@@ -35,7 +35,12 @@ import { extractCorpus } from "../corpus/index.js";
 import type { CorpusAtomSpec, CorpusExtractionOptions } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
-import { type DucGateMode, ducGateModeFromEnv, enforceDucGate } from "./duc-gate.js";
+import {
+  type DucGateMode,
+  type ModuleBindingInfo,
+  ducGateModeFromEnv,
+  enforceDucGate,
+} from "./duc-gate.js";
 import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
@@ -167,6 +172,15 @@ export interface PersistOptions {
    * When omitted, no free-identifier is treated as internal (pre-#1170 behavior).
    */
   readonly internalSymbols?: ReadonlySet<string> | undefined;
+
+  // @decision DEC-DUC-MODULE-CAPTURE-001 (WI-EXPLAIN, GH #1171)
+  /**
+   * The enclosing module's top-level bindings, classified `pure` (a literal const
+   * never mutated) or `mutable`. An atom's free reference to a `pure` binding is a
+   * recorded capture and does not trip reject mode. Computed once per module via
+   * `moduleBindingsOf(moduleSource)`. When omitted, no capture is recognised.
+   */
+  readonly moduleBindings?: ReadonlyMap<string, ModuleBindingInfo> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +262,7 @@ export async function persistNovelGlueAtom(
     options?.ducGateMode ?? ducGateModeFromEnv(),
     undefined, // warn — default console.warn
     options?.internalSymbols, // sibling/child atom names → composition edges (#1170)
+    options?.moduleBindings, // pure module constants → recorded captures (#1171)
   );
 
   const sc = options?.sourceContext;

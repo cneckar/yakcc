@@ -7,6 +7,8 @@ import {
   collectInternalSymbols,
   ducGateModeFromEnv,
   enforceDucGate,
+  externalSurfaceOf,
+  moduleBindingsOf,
   runDucConservationGate,
 } from "./duc-gate.js";
 
@@ -212,5 +214,221 @@ describe("ducGateModeFromEnv", () => {
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "warn" } as NodeJS.ProcessEnv)).toBe("warn");
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "reject" } as NodeJS.ProcessEnv)).toBe("reject");
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "nonsense" } as NodeJS.ProcessEnv)).toBe("warn");
+  });
+});
+
+describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
+  const MODULE = [
+    "const TABLE = [1, 2, 3];",
+    "var MUTABLE_TABLE = [];",
+    "let COUNTER = 1;",
+    "const COMPUTED = build();",
+    "const OBJ = { a: 1, b: [2] };",
+    "const WITH_METHOD = { f() { return 1; } };",
+    "MUTABLE_TABLE.push(4);",
+    "COUNTER++;",
+    "export function read(i: number): number { return TABLE[i]; }",
+  ].join("\n");
+
+  it("classifies const literals pure and everything else mutable", () => {
+    const b = moduleBindingsOf(MODULE);
+    expect(b.get("TABLE")?.binding).toBe("pure");
+    expect(b.get("OBJ")?.binding).toBe("pure");
+    expect(b.get("MUTABLE_TABLE")?.binding).toBe("mutable"); // var
+    expect(b.get("COUNTER")?.binding).toBe("mutable"); // let
+    expect(b.get("COMPUTED")?.binding).toBe("mutable"); // call initializer
+    expect(b.get("WITH_METHOD")?.binding).toBe("mutable"); // method, not a literal value
+  });
+
+  it("a var or let literal that is never mutated is pure (the rule is mutation, not the keyword)", () => {
+    expect(moduleBindingsOf("var T = [1, 2];").get("T")?.binding).toBe("pure");
+    expect(moduleBindingsOf("let T = 'x';").get("T")?.binding).toBe("pure");
+  });
+
+  it("a top-level function is pure when everything it reads is pure, and captured as such", () => {
+    const b = moduleBindingsOf("const T = [1];\nfunction lookup(i: number) { return T[i]; }");
+    expect(b.get("lookup")?.binding).toBe("pure");
+    expect(b.get("lookup")?.declHash).toMatch(/^[0-9a-f]{64}$/);
+    const result = runDucConservationGate(
+      "function f(i: number) { return lookup(i); }",
+      new Set(),
+      b,
+    );
+    expect(result.unexplained).toEqual([]);
+    expect(result.captures.map((c) => c.symbol)).toEqual(["lookup"]);
+  });
+
+  it("a function that reads a mutable binding is mutable, transitively", () => {
+    const b = moduleBindingsOf(
+      "let M = 0;\nM++;\nfunction a() { return b(); }\nfunction b() { return M; }",
+    );
+    expect(b.get("b")?.binding).toBe("mutable");
+    expect(b.get("a")?.binding).toBe("mutable"); // a reaches b, which reaches mutable M
+  });
+
+  it("mutually recursive functions with no impure read are pure", () => {
+    const b = moduleBindingsOf(
+      "function a(n: number): number { return n ? b(n - 1) : 0; }\nfunction b(n: number): number { return a(n); }",
+    );
+    expect(b.get("a")?.binding).toBe("pure");
+    expect(b.get("b")?.binding).toBe("pure");
+  });
+
+  it("a function that is mutated in its module is not pure", () => {
+    const b = moduleBindingsOf("function g() { return 1; }\ng = () => 2;");
+    expect(b.get("g")?.binding).toBe("mutable");
+  });
+
+  it("a function reading a foreign import is pure (the read is explained by the import)", () => {
+    const b = moduleBindingsOf(
+      'import { readFileSync } from "node:fs";\nfunction r(p: string) { return readFileSync(p); }',
+    );
+    expect(b.get("r")?.binding).toBe("pure");
+  });
+
+  it("records a dead unresolved use, not only ones that reach an observation", () => {
+    const result = runDucConservationGate("function f(a: number) { dead(); return a; }");
+    expect(result.unexplained.map((u) => u.symbol)).toContain("dead");
+  });
+
+  it("a non-global regex and a function passed as a callback stay pure; a global regex does not", () => {
+    const b = moduleBindingsOf(
+      [
+        "var hasTilde = /~/;",
+        "var escapeMatcher = /~[01]/g;",
+        "function replacer(m: string) { return m; }",
+        "export function untilde(s: string) {",
+        "  if (!hasTilde.test(s)) return s;",
+        "  return s.replace(escapeMatcher, replacer);",
+        "}",
+      ].join("\n"),
+    );
+    expect(b.get("hasTilde")?.binding).toBe("pure"); // .test() on a non-global regex is inert
+    expect(b.get("replacer")?.binding).toBe("pure"); // passed as a callback: a function is not mutated by that
+    expect(b.get("escapeMatcher")?.binding).toBe("mutable"); // a global regex carries lastIndex state
+  });
+
+  it("a const that is mutated, aliased, or handed off in its module is not pure", () => {
+    expect(moduleBindingsOf("const T = [];\nT[0] = 1;").get("T")?.binding).toBe("mutable");
+    expect(moduleBindingsOf("const T = [];\nT.push(1);").get("T")?.binding).toBe("mutable");
+    expect(moduleBindingsOf("const T = [];\nconst U = T;").get("T")?.binding).toBe("mutable");
+    expect(moduleBindingsOf("const T = [];\nf(T);").get("T")?.binding).toBe("mutable");
+    expect(moduleBindingsOf("const T = {a:1};\nT.a++;").get("T")?.binding).toBe("mutable");
+  });
+
+  it("plain reads do not disqualify a pure const", () => {
+    const b = moduleBindingsOf("const T = [1, 2];\nexport const x = T[0] + T.length;");
+    expect(b.get("T")?.binding).toBe("pure");
+  });
+
+  it("gives every binding a stable declaration hash", () => {
+    const a = moduleBindingsOf(MODULE).get("TABLE")?.declHash;
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(moduleBindingsOf(MODULE).get("TABLE")?.declHash).toBe(a);
+  });
+
+  it("a free read of a pure module constant is a recorded capture, not unexplained", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return TABLE[i]; }";
+    const result = runDucConservationGate(src, new Set(), bindings);
+    expect(result.unexplained).toEqual([]);
+    expect(result.captures.map((c) => c.symbol)).toEqual(["TABLE"]);
+    expect(result.captures[0]?.declHash).toBe(bindings.get("TABLE")?.declHash);
+  });
+
+  it("a free read of a mutable module binding stays unexplained", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return MUTABLE_TABLE[i]; }";
+    const result = runDucConservationGate(src, new Set(), bindings);
+    expect(result.unexplained.map((u) => u.symbol)).toEqual(["MUTABLE_TABLE"]);
+    expect(result.captures).toEqual([]);
+  });
+
+  it("reject mode admits an atom whose only free reference is a pure capture", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return TABLE[i]; }";
+    expect(() =>
+      enforceDucGate(src, "pick", "reject", undefined, new Set(), bindings),
+    ).not.toThrow();
+  });
+
+  it("reject mode still rejects an atom that captures a mutable binding", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return COUNTER + i; }";
+    expect(() => enforceDucGate(src, "pick", "reject", undefined, new Set(), bindings)).toThrow(
+      DucGateRejection,
+    );
+  });
+
+  it("records the capture and its declaration hash in the sidecar", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return TABLE[i]; }";
+    const { ducUsupp } = enforceDucGate(src, "pick", "warn", () => {}, new Set(), bindings);
+    const parsed = JSON.parse(ducUsupp as string) as {
+      captures: { symbol: string; declHash: string }[];
+    };
+    expect(parsed.captures).toEqual([
+      { symbol: "TABLE", declHash: bindings.get("TABLE")?.declHash },
+    ]);
+  });
+
+  it("a composition edge takes precedence over a module binding of the same name", () => {
+    const bindings = moduleBindingsOf("const sib = [1];");
+    const result = runDucConservationGate(
+      "function f(): number { return sib; }",
+      new Set(["sib"]),
+      bindings,
+    );
+    expect(result.composition.map((u) => u.symbol)).toEqual(["sib"]);
+    expect(result.captures).toEqual([]);
+  });
+});
+
+describe("external surface from the sidecar (WI-EXPLAIN-03, #1172)", () => {
+  it("lists the explained residual: foreign imports with their module, and ambient reads", () => {
+    const { ducUsupp } = enforceDucGate(
+      'import { readFileSync } from "node:fs";\nexport function f(p: string): string { return Math.max(0, readFileSync(p).length) + ""; }',
+      "read",
+      "warn",
+      () => {},
+    );
+    const surface = externalSurfaceOf(ducUsupp);
+    expect(surface?.foreign).toEqual([{ symbol: "readFileSync", module: "node:fs" }]);
+    expect(surface?.ambient).toEqual(["Math"]);
+    expect(surface?.unexplained).toEqual([]);
+  });
+
+  it("separates captures, compositions, and the unexplained remainder", () => {
+    const bindings = moduleBindingsOf("const TABLE = [1];");
+    const { ducUsupp } = enforceDucGate(
+      "function f(i: number) { return sib(TABLE[i]) + DANGLING; }",
+      "f",
+      "warn",
+      () => {},
+      new Set(["sib"]),
+      bindings,
+    );
+    const surface = externalSurfaceOf(ducUsupp);
+    expect(surface?.captures.map((c) => c.symbol)).toEqual(["TABLE"]);
+    expect(surface?.compositions).toEqual(["sib"]);
+    expect(surface?.unexplained).toEqual(["DANGLING"]);
+  });
+
+  it("an atom with no unknowns has an empty surface; a missing sidecar has none", () => {
+    const { ducUsupp } = enforceDucGate(
+      "export function f(a: number) { return a; }",
+      "f",
+      "warn",
+      () => {},
+    );
+    expect(externalSurfaceOf(ducUsupp)).toEqual({
+      foreign: [],
+      ambient: [],
+      captures: [],
+      compositions: [],
+      unexplained: [],
+    });
+    expect(externalSurfaceOf(null)).toBeNull();
+    expect(externalSurfaceOf("not json")).toBeNull();
   });
 });

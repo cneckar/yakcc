@@ -25,7 +25,21 @@
 //   Non-breaking by design: any failure to lift/analyze a fragment degrades to a
 //   recorded lift error (warn) rather than throwing — the gate must never break
 //   the existing shave pipeline in its default mode.
+//
+// @decision DEC-DUC-MODULE-CAPTURE-001 (wi-duc-influence-layer #1171)
+// title: A free identifier naming a pure module-scope constant is a recorded capture
+// status: decided
+// rationale:
+//   An atom is a factored function, so it may read a binding that lives at module
+//   scope in its source file (a lookup table, a constant). The atom's bytes do not
+//   contain that binding, so the lifter reports it as a `free-identifier`. Its value
+//   is fixed only if the binding is a `const` with a literal initializer and the
+//   module never mutates it. Such a capture is explained: it is recorded with a hash
+//   of its declaration, so a consumer can see exactly what the atom depends on. A
+//   mutable module binding stays unexplained. Like composition edges, this is
+//   classification only. The atom's bytes and content address are unchanged.
 
+import { createHash } from "node:crypto";
 import {
   type DiamondReason,
   type DucInfluenceAttestation,
@@ -33,8 +47,15 @@ import {
   influenceAttestation,
   isWellFormed,
   liftAtom,
-  usuppOfObservations,
 } from "@yakcc/duc";
+import {
+  Node,
+  Project,
+  ScriptKind,
+  type SourceFile,
+  SyntaxKind,
+  VariableDeclarationKind,
+} from "ts-morph";
 
 /** Gate enforcement mode. */
 export type DucGateMode = "warn" | "reject";
@@ -53,6 +74,26 @@ export interface DucUnknown {
    * stays `free-identifier` — the atom's own bytes genuinely have no local def).
    */
   readonly composition?: boolean;
+  /**
+   * True when this `free-identifier` names a pure module-scope constant the atom
+   * captures (DEC-DUC-MODULE-CAPTURE-001). `declHash` is the hash of its declaration.
+   */
+  readonly capture?: boolean;
+  readonly declHash?: string;
+}
+
+/**
+ * How a module-scope binding is classified (DEC-DUC-MODULE-CAPTURE-001). `pure`: its
+ * value is fixed by its declaration. That covers a literal `var`/`let`/`const` never
+ * mutated, a function that reads only pure bindings, and a declared value import.
+ * `mutable`: anything else.
+ */
+export type ModuleBinding = "pure" | "mutable";
+
+/** A module-scope binding's classification and the hash of its declaration. */
+export interface ModuleBindingInfo {
+  readonly binding: ModuleBinding;
+  readonly declHash: string;
 }
 
 /** The result of running the conservation gate over an atom's source. */
@@ -62,8 +103,8 @@ export interface DucGateResult {
   /** The full unknown-support, de-duplicated by symbol. */
   readonly unknowns: readonly DucUnknown[];
   /**
-   * `free-identifier` unknowns that are NOT internal composition edges — the
-   * genuinely unexplained provenance the reject gate acts on.
+   * `free-identifier` unknowns that are NOT internal composition edges or captured
+   * pure constants — the genuinely unexplained provenance the reject gate acts on.
    */
   readonly unexplained: readonly DucUnknown[];
   /**
@@ -71,6 +112,8 @@ export interface DucGateResult {
    * composition edges (recorded, never a gate problem).
    */
   readonly composition: readonly DucUnknown[];
+  /** Module-scope pure constants the atom captures (recorded, never a gate problem). */
+  readonly captures: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
   /**
@@ -97,6 +140,7 @@ export function ducGateModeFromEnv(env: NodeJS.ProcessEnv = process.env): DucGat
 }
 
 const NO_INTERNAL_SYMBOLS: ReadonlySet<string> = new Set();
+const NO_MODULE_BINDINGS: ReadonlyMap<string, ModuleBindingInfo> = new Map();
 
 /**
  * Lift an atom's source to a DUC graph and compute its unknown-support. Never
@@ -106,12 +150,18 @@ const NO_INTERNAL_SYMBOLS: ReadonlySet<string> = new Set();
  * `internalSymbols` are the names of sibling/child atoms in the same recursion
  * forest (see {@link collectInternalSymbols}). A `free-identifier` whose symbol
  * is in that set is an internal composition edge — recorded on `composition`
- * and excluded from `unexplained` — rather than a genuine external unknown. This
- * is metadata-only: the atom's bytes and content address are untouched.
+ * and excluded from `unexplained` — rather than a genuine external unknown.
+ *
+ * `moduleBindings` describes the enclosing module's top-level bindings (see
+ * {@link moduleBindingsOf}). A `free-identifier` naming a `pure` binding is a
+ * recorded capture (`captures`), excluded from `unexplained`. A `mutable` one stays
+ * unexplained. Both mechanisms are metadata-only: the atom's bytes and content
+ * address are untouched.
  */
 export function runDucConservationGate(
   source: string,
   internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
+  moduleBindings: ReadonlyMap<string, ModuleBindingInfo> = NO_MODULE_BINDINGS,
 ): DucGateResult {
   let unknowns: DucUnknown[];
   let wellFormed: boolean;
@@ -120,31 +170,42 @@ export function runDucConservationGate(
     const graph = liftAtom(source);
     wellFormed = isWellFormed(graph).wellFormed;
     influence = influenceAttestation(graph);
+    // Every ♦-source, not only those reaching an observation: an unresolved use is a
+    // defect even when it does not reach the result (it can still have effects).
     const seen = new Map<string, DucUnknown>();
-    for (const supports of usuppOfObservations(graph).values()) {
-      for (const support of supports) {
-        const { symbol, reason, module } = support.label;
-        if (!seen.has(symbol)) {
-          const isComposition = reason === "free-identifier" && internalSymbols.has(symbol);
-          seen.set(symbol, {
-            symbol,
-            reason,
-            ...(module !== undefined ? { module } : {}),
-            ...(isComposition ? { composition: true } : {}),
-          });
-        }
-      }
+    for (const node of graph.nodes) {
+      if (node.diamond === undefined) continue;
+      const { symbol, reason, module } = node.diamond;
+      if (seen.has(symbol)) continue;
+      const isFree = reason === "free-identifier";
+      const isComposition = isFree && internalSymbols.has(symbol);
+      const binding = isFree && !isComposition ? moduleBindings.get(symbol) : undefined;
+      const isCapture = binding?.binding === "pure";
+      seen.set(symbol, {
+        symbol,
+        reason,
+        ...(module !== undefined ? { module } : {}),
+        ...(isComposition ? { composition: true } : {}),
+        ...(isCapture ? { capture: true, declHash: binding.declHash } : {}),
+      });
     }
     unknowns = [...seen.values()];
   } catch (err) {
     const liftError = err instanceof DucLiftError ? err.message : String(err);
-    return { wellFormed: false, unknowns: [], unexplained: [], composition: [], liftError };
+    return {
+      wellFormed: false,
+      unknowns: [],
+      unexplained: [],
+      composition: [],
+      captures: [],
+      liftError,
+    };
   }
-  const unexplained = unknowns.filter(
-    (u) => u.reason === "free-identifier" && u.composition !== true,
-  );
+  const isExplained = (u: DucUnknown): boolean => u.composition === true || u.capture === true;
+  const unexplained = unknowns.filter((u) => u.reason === "free-identifier" && !isExplained(u));
   const composition = unknowns.filter((u) => u.composition === true);
-  return { wellFormed, unknowns, unexplained, composition, influence };
+  const captures = unknowns.filter((u) => u.capture === true);
+  return { wellFormed, unknowns, unexplained, composition, captures, influence };
 }
 
 /** The outcome of enforcing the gate: what to persist plus the raw result. */
@@ -174,14 +235,21 @@ export function enforceDucGate(
   mode: DucGateMode,
   warn: (message: string) => void = (m) => console.warn(m),
   internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
+  moduleBindings: ReadonlyMap<string, ModuleBindingInfo> = NO_MODULE_BINDINGS,
 ): EnforceDucGateResult {
-  const result = runDucConservationGate(source, internalSymbols);
+  const result = runDucConservationGate(source, internalSymbols, moduleBindings);
   // The sidecar always records the usupp and, when the atom lifted, the
-  // `duc_influence` attestation. It is not part of the block's content address.
+  // `duc_influence` attestation and the captured module constants with their
+  // declaration hashes. It is not part of the block's content address.
   const ducUsupp = JSON.stringify({
     wellFormed: result.wellFormed,
     ...(result.liftError !== undefined ? { liftError: result.liftError } : {}),
     unknowns: result.unknowns,
+    ...(result.captures.length > 0
+      ? {
+          captures: result.captures.map((c) => ({ symbol: c.symbol, declHash: c.declHash })),
+        }
+      : {}),
     ...(result.influence !== undefined
       ? { attestations: { duc_influence: result.influence } }
       : {}),
@@ -200,6 +268,291 @@ export function enforceDucGate(
     warn(`${message} — admitted (warn mode; set YAKCC_DUC_GATE=reject to enforce)`);
   }
   return { ducUsupp, result };
+}
+
+// ---------------------------------------------------------------------------
+// Module-scope bindings (captured pure constants, #1171)
+// ---------------------------------------------------------------------------
+
+const ASSIGN_OPS = new Set<SyntaxKind>([
+  SyntaxKind.EqualsToken,
+  SyntaxKind.PlusEqualsToken,
+  SyntaxKind.MinusEqualsToken,
+  SyntaxKind.AsteriskEqualsToken,
+  SyntaxKind.AsteriskAsteriskEqualsToken,
+  SyntaxKind.SlashEqualsToken,
+  SyntaxKind.PercentEqualsToken,
+  SyntaxKind.AmpersandEqualsToken,
+  SyntaxKind.BarEqualsToken,
+  SyntaxKind.CaretEqualsToken,
+  SyntaxKind.LessThanLessThanEqualsToken,
+  SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  SyntaxKind.AmpersandAmpersandEqualsToken,
+  SyntaxKind.BarBarEqualsToken,
+  SyntaxKind.QuestionQuestionEqualsToken,
+]);
+
+/** Whether an expression is a pure literal value: no calls, no identifiers, no mutation. */
+function isPureLiteral(node: Node): boolean {
+  if (
+    Node.isNumericLiteral(node) ||
+    Node.isStringLiteral(node) ||
+    Node.isNoSubstitutionTemplateLiteral(node) ||
+    Node.isBigIntLiteral(node) ||
+    Node.isRegularExpressionLiteral(node)
+  ) {
+    return true;
+  }
+  const kind = node.getKind();
+  if (
+    kind === SyntaxKind.TrueKeyword ||
+    kind === SyntaxKind.FalseKeyword ||
+    kind === SyntaxKind.NullKeyword
+  ) {
+    return true;
+  }
+  if (Node.isPrefixUnaryExpression(node)) {
+    const op = node.getOperatorToken();
+    return (
+      (op === SyntaxKind.MinusToken || op === SyntaxKind.PlusToken) &&
+      Node.isNumericLiteral(node.getOperand())
+    );
+  }
+  if (Node.isParenthesizedExpression(node)) return isPureLiteral(node.getExpression());
+  if (Node.isArrayLiteralExpression(node))
+    return node.getElements().every((el) => isPureLiteral(el));
+  if (Node.isObjectLiteralExpression(node)) {
+    return node.getProperties().every((prop) => {
+      if (!Node.isPropertyAssignment(prop)) return false;
+      const name = prop.getNameNode();
+      const keyOk =
+        Node.isIdentifier(name) || Node.isStringLiteral(name) || Node.isNumericLiteral(name);
+      const init = prop.getInitializer();
+      return keyOk && init !== undefined && isPureLiteral(init);
+    });
+  }
+  return false;
+}
+
+/**
+ * What a binding's value can do under a method call or a hand-off. A primitive, a
+ * non-global regex, and a function are inert: a method call on them does not change
+ * them, and passing them around copies or shares an immutable value. An object, an
+ * array, or a stateful (global or sticky) regex is opaque: a call or a hand-off may
+ * mutate it. Direct reassignment and member writes always count.
+ */
+interface MutationPolicy {
+  readonly callsMutate: boolean;
+  readonly handoffMutates: boolean;
+}
+const OPAQUE: MutationPolicy = { callsMutate: true, handoffMutates: true };
+const INERT: MutationPolicy = { callsMutate: false, handoffMutates: false };
+
+function policyForInit(init: Node | undefined): MutationPolicy {
+  if (init === undefined) return OPAQUE;
+  if (Node.isRegularExpressionLiteral(init)) {
+    const text = init.getText();
+    const flags = text.slice(text.lastIndexOf("/") + 1);
+    return /[gy]/.test(flags) ? OPAQUE : INERT;
+  }
+  if (
+    Node.isNumericLiteral(init) ||
+    Node.isStringLiteral(init) ||
+    Node.isNoSubstitutionTemplateLiteral(init) ||
+    Node.isBigIntLiteral(init) ||
+    init.getKind() === SyntaxKind.TrueKeyword ||
+    init.getKind() === SyntaxKind.FalseKeyword ||
+    init.getKind() === SyntaxKind.NullKeyword
+  ) {
+    return INERT;
+  }
+  return OPAQUE;
+}
+
+/**
+ * Whether a module-scope binding may be mutated anywhere in its module. Conservative
+ * and policy-driven (see {@link MutationPolicy}): direct reassignment, updates, and
+ * writes through a member always count. A method call or a hand-off (passing the
+ * name as an argument, or aliasing it) counts only when the value is opaque.
+ */
+function isMutatedIn(sf: SourceFile, name: string, policy: MutationPolicy): boolean {
+  for (const id of sf.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    if (id.getText() !== name) continue;
+    const parent = id.getParent();
+    if (parent === undefined) continue;
+    if (Node.isVariableDeclaration(parent) && parent.getNameNode() === id) continue;
+    // Direct reassignment or update of the binding itself.
+    if (
+      Node.isBinaryExpression(parent) &&
+      parent.getLeft() === id &&
+      ASSIGN_OPS.has(parent.getOperatorToken().getKind())
+    ) {
+      return true;
+    }
+    if (isUpdate(parent) && isOperandOf(parent, id)) return true;
+    // Alias: `const u = name`.
+    if (Node.isVariableDeclaration(parent) && parent.getInitializer() === id) {
+      if (policy.handoffMutates) return true;
+      continue;
+    }
+    // Hand-off: `f(name)`.
+    if (Node.isCallExpression(parent) && parent.getArguments().some((a) => a === id)) {
+      if (policy.handoffMutates) return true;
+      continue;
+    }
+    // Member access through the binding: writes always mutate; calls per policy.
+    if (Node.isElementAccessExpression(parent) || Node.isPropertyAccessExpression(parent)) {
+      if (parent.getExpression() !== id) continue;
+      const grand = parent.getParent();
+      if (grand === undefined) continue;
+      if (
+        Node.isBinaryExpression(grand) &&
+        grand.getLeft() === parent &&
+        ASSIGN_OPS.has(grand.getOperatorToken().getKind())
+      ) {
+        return true;
+      }
+      if (isUpdate(grand) && isOperandOf(grand, parent)) return true;
+      if (Node.isCallExpression(grand) && grand.getExpression() === parent) {
+        if (policy.callsMutate) return true;
+        continue;
+      }
+      if (Node.isCallExpression(grand) && grand.getArguments().some((a) => a === parent)) {
+        if (policy.handoffMutates) return true;
+        continue;
+      }
+    }
+  }
+  return false;
+}
+
+function isUpdate(node: Node): boolean {
+  if (Node.isPrefixUnaryExpression(node) || Node.isPostfixUnaryExpression(node)) {
+    const op = Node.isPrefixUnaryExpression(node)
+      ? node.getOperatorToken()
+      : node.getOperatorToken();
+    return op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken;
+  }
+  return false;
+}
+
+function isOperandOf(node: Node, operand: Node): boolean {
+  if (Node.isPrefixUnaryExpression(node) || Node.isPostfixUnaryExpression(node)) {
+    return node.getOperand() === operand;
+  }
+  return false;
+}
+
+/** The free reads of a lifted function: every ♦-source of its graph. */
+interface FunctionReads {
+  readonly reads: readonly { readonly symbol: string; readonly reason: DiamondReason }[] | null;
+  readonly declHash: string;
+}
+
+/**
+ * The classification of every top-level binding of a module, with the hash of its
+ * declaration.
+ *
+ * - A `var`/`let`/`const` whose initializer is a pure literal and that is never
+ *   mutated in the module is `pure`.
+ * - A top-level function is `pure` when it is never mutated and everything it reads,
+ *   transitively through the module's other functions, is itself a pure binding,
+ *   a foreign import, or an ambient global. Reachability is computed over the whole
+ *   function set, not by memoized recursion, which is unsound inside cycles.
+ * - Anything else is `mutable`. Destructured bindings are not recorded, so they are
+ *   treated as mutable (unexplained).
+ */
+export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindingInfo> {
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: false, noEmit: true },
+  });
+  const sf = project.createSourceFile("__module__.ts", moduleSource, { scriptKind: ScriptKind.TS });
+  const bindings = new Map<string, ModuleBindingInfo>();
+
+  // 0. Value imports: the binding's value is fixed by its declaration (an explained
+  //    external dependency, WI-EXPLAIN-03). Type-only imports carry no runtime value.
+  for (const decl of sf.getImportDeclarations()) {
+    if (decl.isTypeOnly()) continue;
+    const declHash = createHash("sha256").update(decl.getText()).digest("hex");
+    const locals: string[] = [];
+    const defaultImport = decl.getDefaultImport();
+    if (defaultImport !== undefined) locals.push(defaultImport.getText());
+    const namespaceImport = decl.getNamespaceImport();
+    if (namespaceImport !== undefined) locals.push(namespaceImport.getText());
+    for (const named of decl.getNamedImports()) {
+      if (named.isTypeOnly()) continue;
+      locals.push((named.getAliasNode() ?? named.getNameNode()).getText());
+    }
+    for (const local of locals) bindings.set(local, { binding: "pure", declHash });
+  }
+
+  // 1. Variable bindings: a pure literal that is never mutated.
+  for (const stmt of sf.getVariableStatements()) {
+    const declHash = createHash("sha256").update(stmt.getText()).digest("hex");
+    for (const decl of stmt.getDeclarations()) {
+      const nameNode = decl.getNameNode();
+      if (!Node.isIdentifier(nameNode)) continue;
+      const name = nameNode.getText();
+      const init = decl.getInitializer();
+      const pure =
+        init !== undefined && isPureLiteral(init) && !isMutatedIn(sf, name, policyForInit(init));
+      bindings.set(name, { binding: pure ? "pure" : "mutable", declHash });
+    }
+  }
+
+  // 2. Function bindings: pure iff the reachable function set is clean.
+  const fns = new Map<string, FunctionReads>();
+  for (const fn of sf.getFunctions()) {
+    const name = fn.getName();
+    if (name === undefined) continue;
+    const text = fn.getText();
+    const declHash = createHash("sha256").update(text).digest("hex");
+    let reads: FunctionReads["reads"];
+    try {
+      const graph = liftAtom(text);
+      reads = graph.nodes.flatMap((n) =>
+        n.diamond !== undefined ? [{ symbol: n.diamond.symbol, reason: n.diamond.reason }] : [],
+      );
+    } catch {
+      reads = null;
+    }
+    fns.set(name, { reads, declHash });
+  }
+
+  const pureFunction = (start: string): boolean => {
+    const seen = new Set<string>([start]);
+    const queue = [start];
+    while (queue.length > 0) {
+      const name = queue.pop() as string;
+      const info = fns.get(name);
+      if (info === undefined || info.reads === null || isMutatedIn(sf, name, INERT)) return false;
+      for (const read of info.reads) {
+        if (read.reason === "foreign-import" || read.reason === "ambient-read") continue;
+        const isFunction = fns.has(read.symbol) && !bindings.has(read.symbol);
+        if (isFunction) {
+          if (!seen.has(read.symbol)) {
+            seen.add(read.symbol);
+            queue.push(read.symbol);
+          }
+          continue;
+        }
+        if (bindings.get(read.symbol)?.binding === "pure") continue;
+        return false;
+      }
+    }
+    return true;
+  };
+
+  for (const [name, info] of fns) {
+    bindings.set(name, {
+      binding: pureFunction(name) ? "pure" : "mutable",
+      declHash: info.declHash,
+    });
+  }
+  return bindings;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,4 +591,60 @@ export function collectInternalSymbols(sources: Iterable<string>): Set<string> {
     for (const name of atomDefinedNames(source)) symbols.add(name);
   }
   return symbols;
+}
+
+// ---------------------------------------------------------------------------
+// External surface (WI-EXPLAIN-03, GH #1172)
+// ---------------------------------------------------------------------------
+
+/**
+ * An atom's declared external surface, derived from its `ducUsupp` sidecar without
+ * re-lifting. `foreign` and `ambient` are the explained residual. `captures` are the
+ * recorded module constants (with declaration hashes). `compositions` are sibling atoms.
+ * `unexplained` is what the reject gate acts on.
+ */
+export interface ExternalSurface {
+  readonly foreign: readonly { readonly symbol: string; readonly module?: string }[];
+  readonly ambient: readonly string[];
+  readonly captures: readonly { readonly symbol: string; readonly declHash?: string }[];
+  readonly compositions: readonly string[];
+  readonly unexplained: readonly string[];
+}
+
+/**
+ * Parse the external surface out of a stored `ducUsupp` sidecar. Returns null when
+ * there is no sidecar or it cannot be parsed. A sidecar with no unknowns yields an
+ * empty surface, not null.
+ */
+export function externalSurfaceOf(ducUsupp: string | null | undefined): ExternalSurface | null {
+  if (ducUsupp === null || ducUsupp === undefined) return null;
+  let parsed: { unknowns?: DucUnknown[] };
+  try {
+    parsed = JSON.parse(ducUsupp) as { unknowns?: DucUnknown[] };
+  } catch {
+    return null;
+  }
+  const unknowns = Array.isArray(parsed.unknowns) ? parsed.unknowns : [];
+  const foreign: { symbol: string; module?: string }[] = [];
+  const ambient: string[] = [];
+  const captures: { symbol: string; declHash?: string }[] = [];
+  const compositions: string[] = [];
+  const unexplained: string[] = [];
+  for (const u of unknowns) {
+    if (u.reason === "foreign-import") {
+      foreign.push({ symbol: u.symbol, ...(u.module !== undefined ? { module: u.module } : {}) });
+    } else if (u.reason === "ambient-read") {
+      ambient.push(u.symbol);
+    } else if (u.composition === true) {
+      compositions.push(u.symbol);
+    } else if (u.capture === true) {
+      captures.push({
+        symbol: u.symbol,
+        ...(u.declHash !== undefined ? { declHash: u.declHash } : {}),
+      });
+    } else if (u.reason === "free-identifier") {
+      unexplained.push(u.symbol);
+    }
+  }
+  return { foreign, ambient, captures, compositions, unexplained };
 }
