@@ -22,7 +22,7 @@
 
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
 import { canonicalizeGraph } from "./canonical.js";
-import type { DiamondReason, DucBranch, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
+import type { DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
 export class DucLiftError extends Error {
@@ -121,6 +121,7 @@ interface MutableNode {
   readonly id: NodeId;
   inputs: ValueId[];
   readonly outputs: ValueId[];
+  loop?: DucLoop;
   readonly kind: DucNode["kind"];
   readonly diamond?: DucNode["diamond"];
   readonly origin?: DucNode["origin"];
@@ -225,6 +226,11 @@ class Lifter {
   private branchCount = 0;
   /** The branch path the statement being lifted lies in, outermost first. */
   private readonly regionStack: string[] = [];
+  /** The loops being lifted, innermost last. */
+  private readonly loopFrames: LoopFrame[] = [];
+  private loopCount = 0;
+  /** Values made outside every region (free and ambient sources): visible to every loop body. */
+  private readonly topLevel = new Set<ValueId>();
   /** Return frames: a total side collects its returns; undefined is a flat frame (observations). */
   private readonly returnFrames: (ValueId[] | undefined)[] = [];
   /** Import bindings, name -> classification. */
@@ -251,6 +257,7 @@ class Lifter {
   ): ValueId[] {
     const outputs: ValueId[] = [];
     for (let i = 0; i < outCount; i++) outputs.push(this.freshValue());
+    if (this.regionStack.length === 0) for (const v of outputs) this.topLevel.add(v);
     const node: MutableNode = {
       id: this.freshNodeId(),
       inputs,
@@ -450,6 +457,7 @@ class Lifter {
       this.liftIf(node);
       return;
     }
+    if ((Node.isForStatement(node) || Node.isWhileStatement(node)) && this.liftLoop(node)) return;
     if (
       Node.isForStatement(node) ||
       Node.isForOfStatement(node) ||
@@ -594,6 +602,137 @@ class Lifter {
     }
   }
 
+  /**
+   * Lifts a `while` or a classic `for` loop as a `loop` node with a body region (#1275). The carried
+   * variables are the names the loop assigns; each starts from its value before the loop, and the
+   * loop's results are their values when it stops. The outer values the body reads are its
+   * invariants. Returns false for a loop it does not express (a jump, a return, or another kind of
+   * loop), and the caller keeps the opaque summary.
+   */
+  private liftLoop(node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement): boolean {
+    if (hasJump(node)) return false;
+    const isFor = Node.isForStatement(node);
+    const cond = Node.isForStatement(node) ? node.getCondition() : node.getExpression();
+    const incrementor = Node.isForStatement(node) ? node.getIncrementor() : undefined;
+    const body = node.getStatement();
+
+    // A `for` initializer runs once, before the loop.
+    if (Node.isForStatement(node)) {
+      const init = node.getInitializer();
+      if (init !== undefined && Node.isVariableDeclarationList(init)) this.liftDeclarations(init.getDeclarations());
+      else if (init !== undefined) this.liftExpr(init);
+    }
+
+    const assigned: string[] = [];
+    for (const part of [cond, body, incrementor]) {
+      if (part === undefined) continue;
+      for (const name of this.collectAssignedOuterNames(part)) {
+        if (!assigned.includes(name)) assigned.push(name);
+      }
+    }
+    const carried = assigned.filter((name) => this.env.has(name));
+    const inits = carried.map((name) => this.env.get(name) as ValueId);
+
+    // The body runs on a copy of the environment, and the original object is restored after it: an
+    // enclosing branch holds that object, so it must see the loop's results.
+    const saved = this.env;
+    this.env = new Map(saved);
+    const frame: LoopFrame = {
+      id: `L${this.loopCount++}`,
+      start: this.valueCounter,
+      depth: 0,
+      invariants: [],
+      invariantSources: [],
+      byOuter: new Map(),
+    };
+    const carrySources: ValueId[] = [];
+    const nexts: ValueId[] = [];
+    let condition: ValueId | undefined;
+    this.loopFrames.push(frame);
+    try {
+      this.inRegion(`${frame.id}.b`, () => {
+        frame.depth = this.regionStack.length;
+        carried.forEach((name, i) => {
+          const [value] = this.emit("carry-source", [], 1, {
+            label: `carry:${i}`,
+            origin: { kind: "LoopCarry", text: truncate(name) },
+          });
+          carrySources.push(value as ValueId);
+          this.env.set(name, value as ValueId);
+        });
+        condition =
+          cond !== undefined
+            ? this.liftExpr(cond)
+            : (this.emit("literal-source", [], 1, { origin: { kind: "TrueKeyword", text: "true" }, label: "true" })[0] as ValueId);
+        this.liftStatement(body);
+        if (incrementor !== undefined) this.liftExpr(incrementor);
+        for (const name of carried) nexts.push(this.env.get(name) as ValueId);
+      });
+    } finally {
+      this.loopFrames.pop();
+      this.env = saved;
+    }
+
+    const results = this.emit("loop", [...inits, ...frame.invariants], carried.length, {
+      origin: { kind: isFor ? "ForStatement" : "WhileStatement", text: truncate(node.getText()) },
+    });
+    const loopNode = this.nodes[this.nodes.length - 1] as MutableNode;
+    loopNode.loop = {
+      id: frame.id,
+      carry: carrySources,
+      invariant: frame.invariantSources,
+      next: nexts,
+      cond: condition as ValueId,
+    };
+    carried.forEach((name, i) => {
+      const out = results[i];
+      if (out !== undefined) this.env.set(name, out);
+    });
+    return true;
+  }
+
+  /**
+   * The value a loop body sees for `value`. A value made before the loop, or at top level, is outside
+   * the body: the body reads it as an invariant, a source inside the body, and the loop takes the
+   * outer value as an input. Other values are the body's own, and are returned as they are.
+   */
+  private throughLoop(value: ValueId, level = this.loopFrames.length - 1): ValueId {
+    const frame = this.loopFrames[level];
+    if (frame === undefined) return value;
+    if (valueIndex(value) >= frame.start && !this.topLevel.has(value)) return value;
+    const known = frame.byOuter.get(value);
+    if (known !== undefined) return known;
+    // The loop takes the value as the enclosing loop's body sees it: an enclosing invariant, when the
+    // value is outside that loop too, so every loop's inputs are what its body reads.
+    const outerInput = this.throughLoop(value, level - 1);
+    // The invariant sits at the body's own level, whatever nested region the read is in.
+    const saved = this.regionStack.splice(frame.depth);
+    let source: ValueId;
+    try {
+      [source] = this.emit("carry-source", [], 1, {
+        label: `invariant:${frame.invariants.length}`,
+        origin: { kind: "LoopInvariant", text: truncate(String(value)) },
+      }) as [ValueId];
+    } finally {
+      this.regionStack.push(...saved);
+    }
+    frame.invariants.push(outerInput);
+    frame.invariantSources.push(source);
+    frame.byOuter.set(value, source);
+    return source;
+  }
+
+  private liftDeclarations(decls: readonly import("ts-morph").VariableDeclaration[]): void {
+    for (const decl of decls) {
+      const init = decl.getInitializer();
+      const value =
+        init !== undefined
+          ? this.liftExpr(init)
+          : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" }, label: "Uninitialized" })[0];
+      for (const name of patternNames(decl.getNameNode())) this.env.set(name, value as ValueId);
+    }
+  }
+
   /** Run `body` with `segment` pushed onto the region path, then restore it. */
   private inRegion<T>(segment: string, body: () => T): T {
     this.regionStack.push(segment);
@@ -714,11 +853,17 @@ class Lifter {
       const base = baseIdentifierOfTarget(target);
       if (base !== undefined && this.env.has(base)) names.add(base);
     };
-    for (const bin of node.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    // The node itself counts too: a loop's incrementor is often a bare assignment (`i = i + 1`).
+    const bins = [
+      ...(Node.isBinaryExpression(node) ? [node] : []),
+      ...node.getDescendantsOfKind(SyntaxKind.BinaryExpression),
+    ];
+    for (const bin of bins) {
       const op = bin.getOperatorToken().getKind();
       if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) consider(bin.getLeft());
     }
     const unaries = [
+      ...(Node.isPostfixUnaryExpression(node) || Node.isPrefixUnaryExpression(node) ? [node] : []),
       ...node.getDescendantsOfKind(SyntaxKind.PostfixUnaryExpression),
       ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
     ];
@@ -876,6 +1021,10 @@ class Lifter {
 
   /** Resolve an identifier read to a value: bound name, import, ambient, or free. */
   private resolveIdentifier(name: string): ValueId {
+    return this.throughLoop(this.resolveName(name));
+  }
+
+  private resolveName(name: string): ValueId {
     const bound = this.env.get(name);
     if (bound !== undefined) return bound;
 
@@ -920,6 +1069,7 @@ class Lifter {
       ...(n.origin !== undefined ? { origin: n.origin } : {}),
       ...(n.label !== undefined ? { label: n.label } : {}),
       ...(n.region !== undefined ? { region: n.region } : {}),
+      ...(n.loop !== undefined ? { loop: n.loop } : {}),
     }));
     return canonicalizeGraph(nodes, dedupe(this.obs), this.branches);
   }
@@ -1139,6 +1289,33 @@ function truncate(text: string, max = 60): string {
 
 function dedupe(values: readonly ValueId[]): ValueId[] {
   return [...new Set(values)];
+}
+
+/** A loop being lifted (see `liftLoop`). */
+interface LoopFrame {
+  readonly id: string;
+  /** Values numbered below this were made before the loop, so they are outside its body. */
+  readonly start: number;
+  /** The depth of the body region in the region path. */
+  depth: number;
+  /** The outer values the body reads, and the body's own source for each, in order. */
+  readonly invariants: ValueId[];
+  readonly invariantSources: ValueId[];
+  readonly byOuter: Map<ValueId, ValueId>;
+}
+
+function valueIndex(value: ValueId): number {
+  return Number(String(value).slice(1));
+}
+
+/** True when the loop body has a break, a continue or a return that belongs to it (not to a nested function). */
+function hasJump(node: Node): boolean {
+  const jumps = [
+    ...node.getDescendantsOfKind(SyntaxKind.BreakStatement),
+    ...node.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+    ...node.getDescendantsOfKind(SyntaxKind.ReturnStatement),
+  ];
+  return jumps.some((jump) => !isInsideNestedFunction(jump, node));
 }
 
 /** Names of the return state (not valid source names, so they never clash with a binding). */

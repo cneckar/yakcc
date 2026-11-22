@@ -3,18 +3,19 @@
  * Canonical forms for DUC graphs (P1, #1275).
  *
  * A graph's identity must not depend on the order the lifter happened to visit the
- * source. The lifter numbers nodes, values and branches with counters, so the raw numbering
+ * source. The lifter numbers nodes, values, branches and loops with counters, so the raw numbering
  * reflects traversal order. `canonicalizeGraph` renumbers a graph by structure: each node gets a
  * signature from its kind, label, diamond label, the signatures of its inputs and the signatures of
- * the branches it lies in. Nodes are then numbered in signature order. Branches are numbered by the
- * signature of their condition. Origin text is an annotation, not structure (D6), so it does not
- * enter a signature. It is carried along, and it breaks ties so the annotated output is deterministic.
+ * the regions it lies in. Nodes are then numbered in signature order. Branches are numbered by the
+ * signature of their condition and location. A loop is numbered by the position of its node. Origin
+ * text is an annotation, not structure (D6), so it does not enter a signature. It is carried along,
+ * and it breaks ties so the annotated output is deterministic.
  *
  * `graphIdentity` hashes the structure alone. Renaming a local or changing a comment changes
  * annotations only, so the identity does not change.
  */
 import { createHash } from "node:crypto";
-import type { DucBranch, DucGraph, DucNode, ValueId } from "./types.js";
+import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 /** Stable JSON: object keys sorted, and undefined members dropped. */
 export function canonicalJson(value: unknown): string {
@@ -29,10 +30,11 @@ export function canonicalJson(value: unknown): string {
 
 /**
  * Renumber a graph into canonical form. Node ids become `n0, n1, ...` in signature order,
- * value ids become `v0, v1, ...` in the same order, and branch ids become `b0, b1, ...` in the
- * order of their condition signatures. Parameters keep their original order, and observations
- * keep their order. A cyclic graph has no canonical numbering; the lifter never produces one, and
- * for such a graph this returns the input numbering unchanged.
+ * value ids become `v0, v1, ...` in the same order, branch ids become `b0, b1, ...` in the
+ * order of their condition signatures, and loop ids become `L<i>`, where `i` is the loop node's
+ * canonical index. Parameters keep their original order, and observations keep their order.
+ * A cyclic graph has no canonical numbering; the lifter never produces one, and for such a graph
+ * this returns the input numbering unchanged.
  */
 export function canonicalizeGraph(
   nodes: readonly DucNode[],
@@ -57,13 +59,37 @@ export function canonicalizeGraph(
     const cond = condOf.get(id);
     return cond === undefined ? undefined : sigOfValue(cond);
   };
+
+  // A loop is identified by its node. That node depends on what the loop reads from outside, never
+  // on its body, which depends on the loop; the body is summarized by the kinds and labels inside.
+  const loopNodeOf = new Map<string, DucNode>();
+  for (const node of nodes) if (node.loop !== undefined) loopNodeOf.set(node.loop.id, node);
+  const bodySummaries = new Map<string, string>();
+  const bodySummaryOf = (id: string): string => {
+    const cached = bodySummaries.get(id);
+    if (cached !== undefined) return cached;
+    const body = nodes
+      .filter((n) => n.region !== undefined && n.region.split("/").includes(`${id}.b`))
+      .map((n) => `${n.kind}:${n.label ?? ""}:${n.diamond?.symbol ?? ""}`)
+      .sort();
+    const summary = canonicalJson(body);
+    bodySummaries.set(id, summary);
+    return summary;
+  };
+  const segmentSig = (id: string, side: string): string => {
+    if (id.startsWith("L")) {
+      const loopNode = loopNodeOf.get(id);
+      return `${loopNode === undefined ? "missing-loop" : sigOfNode(loopNode)}.${side}`;
+    }
+    return `${branchSigOf(id) ?? id}.${side}`;
+  };
   const regionSig = (region: string | undefined): string | null => {
     if (region === undefined) return null;
     return region
       .split("/")
       .map((seg) => {
         const [id = "", side = ""] = seg.split(".");
-        return `${branchSigOf(id) ?? id}.${side}`;
+        return segmentSig(id, side);
       })
       .join("/");
   };
@@ -78,18 +104,16 @@ export function canonicalizeGraph(
     onPath.add(node);
     const inputSigs = node.inputs.map(sigOfValue);
     onPath.delete(node);
-    const sig = createHash("sha256")
-      .update(
-        canonicalJson([
-          node.kind,
-          node.label ?? null,
-          node.diamond ?? null,
-          node.outputs.length,
-          inputSigs,
-          regionSig(node.region),
-        ]),
-      )
-      .digest("hex");
+    const fields: unknown[] = [
+      node.kind,
+      node.label ?? null,
+      node.diamond ?? null,
+      node.outputs.length,
+      inputSigs,
+      regionSig(node.region),
+    ];
+    if (node.loop !== undefined) fields.push(bodySummaryOf(node.loop.id));
+    const sig = createHash("sha256").update(canonicalJson(fields)).digest("hex");
     memo.set(node, sig);
     return sig;
   };
@@ -114,10 +138,10 @@ export function canonicalizeGraph(
     return { nodes: [...nodes], values: nodes.flatMap((n) => n.outputs), obs: [...obs], branches: [...branches] };
   }
 
-  // Branches: numbered by condition signature, ties broken by lifting id (equal conditions are
-  // the same structure, so the tie does not affect identity).
-  const branchRank = new Map<string, string>();
+  // Branches: numbered by condition signature and location, ties broken by lifting id (equal
+  // conditions in the same place are the same structure, so the tie does not affect identity).
   const branchKey = (b: DucBranch): string => `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
+  const branchRank = new Map<string, string>();
   [...branches]
     .sort((a, b) => {
       const ka = branchKey(a);
@@ -126,6 +150,13 @@ export function canonicalizeGraph(
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     })
     .forEach((b, i) => branchRank.set(b.id, `b${i}`));
+
+  // Loops: numbered by the position of their node.
+  const loopRank = new Map<string, string>();
+  ordered.forEach(({ node }, i) => {
+    if (node.loop !== undefined) loopRank.set(node.loop.id, `L${i}`);
+  });
+
   const canonicalRegion = (region: string | undefined): string | undefined =>
     region === undefined
       ? undefined
@@ -133,7 +164,8 @@ export function canonicalizeGraph(
           .split("/")
           .map((seg) => {
             const [id = "", side = ""] = seg.split(".");
-            return `${branchRank.get(id) ?? id}.${side}`;
+            const rank = id.startsWith("L") ? loopRank.get(id) : branchRank.get(id);
+            return `${rank ?? id}.${side}`;
           })
           .join("/");
 
@@ -148,28 +180,40 @@ export function canonicalizeGraph(
       return nv;
     }),
   );
+  const renameValue = (v: ValueId): ValueId => renamed.get(v) ?? v;
   const canonicalNodes: DucNode[] = ordered.map(({ node }, i) => {
     const region = canonicalRegion(node.region);
+    const loop: DucLoop | undefined =
+      node.loop === undefined
+        ? undefined
+        : {
+            id: loopRank.get(node.loop.id) ?? node.loop.id,
+            carry: node.loop.carry.map(renameValue),
+            invariant: node.loop.invariant.map(renameValue),
+            next: node.loop.next.map(renameValue),
+            cond: renameValue(node.loop.cond),
+          };
     return {
       id: `n${i}` as DucNode["id"],
-      inputs: node.inputs.map((v) => renamed.get(v) ?? v),
+      inputs: node.inputs.map(renameValue),
       outputs: outputsOf[i] ?? [],
       kind: node.kind,
       ...(node.label !== undefined ? { label: node.label } : {}),
       ...(node.diamond !== undefined ? { diamond: node.diamond } : {}),
       ...(node.origin !== undefined ? { origin: node.origin } : {}),
       ...(region !== undefined ? { region } : {}),
+      ...(loop !== undefined ? { loop } : {}),
     };
   });
 
   // Observations keep their order: it follows the return statements, which is semantic.
-  const canonicalObs = [...new Set(obs)].map((v) => renamed.get(v) ?? v);
+  const canonicalObs = [...new Set(obs)].map(renameValue);
   const canonicalBranches: DucBranch[] = [...branches]
     .map((b) => {
       const within = canonicalRegion(b.within);
       return {
         id: branchRank.get(b.id) ?? b.id,
-        cond: renamed.get(b.cond) ?? b.cond,
+        cond: renameValue(b.cond),
         ...(within !== undefined ? { within } : {}),
       };
     })
@@ -185,7 +229,7 @@ export function canonicalizeGraph(
 
 /**
  * The identity of a graph: a hash of its structure alone (D6, #1275). The graph is first
- * canonicalized, then node kinds, labels, inputs, outputs, diamond labels, branch membership,
+ * canonicalized, then node kinds, labels, inputs, outputs, diamond labels, regions, loop bodies,
  * branches and observations are hashed. Origin annotations are excluded.
  */
 export function graphIdentity(g: DucGraph): string {
@@ -198,6 +242,7 @@ export function graphIdentity(g: DucGraph): string {
       outputs: n.outputs,
       ...(n.diamond !== undefined ? { diamond: n.diamond } : {}),
       ...(n.region !== undefined ? { region: n.region } : {}),
+      ...(n.loop !== undefined ? { loop: n.loop } : {}),
     })),
     obs: canon.obs,
     ...(canon.branches !== undefined ? { branches: canon.branches } : {}),

@@ -68,7 +68,14 @@ export function nodeId(raw: string): NodeId {
  *   is not further decomposed (DEC-DUC-SCOPE-001; mirrors shave's
  *   "loop-is-the-atom" bottoming-out).
  */
-export type NodeKind = "param-source" | "literal-source" | "diamond-source" | "op" | "sel" | "loop";
+export type NodeKind =
+  | "param-source"
+  | "literal-source"
+  | "diamond-source"
+  | "op"
+  | "sel"
+  | "loop"
+  | "carry-source";
 
 /** Why a use could not be resolved to a def inside the lifted atom. */
 export type DiamondReason =
@@ -122,6 +129,13 @@ export interface DucNode {
    * (then-side) or `e` (else-side). Absent for a node outside every branch.
    */
   readonly region?: string;
+  /**
+   * Present on a `loop` node (#1275, loops). The loop's body is the region `<id>.b`. Inside the body,
+   * `carry` are the values of the carried variables at the start of an iteration (one per output), and
+   * `invariant` the values of the outer values the body reads (one per input after the carries). `cond`
+   * says whether to continue, and `next` gives the carried values for the next iteration.
+   */
+  readonly loop?: DucLoop;
   /** Present iff `kind === "diamond-source"`. */
   readonly diamond?: DiamondLabel;
   readonly origin?: NodeOrigin;
@@ -152,6 +166,15 @@ export interface DucGraph {
    * or empty when the atom has no branches.
    */
   readonly branches?: readonly DucBranch[];
+}
+
+/** The body of a `loop` node. See `DucNode.loop`. */
+export interface DucLoop {
+  readonly id: string;
+  readonly carry: readonly ValueId[];
+  readonly invariant: readonly ValueId[];
+  readonly next: readonly ValueId[];
+  readonly cond: ValueId;
 }
 
 /**

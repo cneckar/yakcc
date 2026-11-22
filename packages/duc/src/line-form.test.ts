@@ -48,8 +48,8 @@ describe("line form (#1275, item 2)", () => {
     expect(() => parseLineForm("param a\nparam a\n")).toThrow(/already defined/);
   });
 
-  it("a loop is refused by the printer: loops have no line form yet", () => {
-    const g = liftAtom("export function f(n: number, x: number): number { let s = 0; for (let i = 0; i < n; i++) { s += x; } return s; }");
+  it("a loop over an iterable is refused by the printer: only while and for loops have a line form", () => {
+    const g = liftAtom("export function f(xs: number[]): number { let s = 0; for (const x of xs) { s = s + x; } return s; }");
     expect(() => printLineForm(g)).toThrow(/loop/);
   });
 
@@ -61,7 +61,7 @@ describe("line form (#1275, item 2)", () => {
   });
 
   it("an unknown directive is rejected, with its line", () => {
-    expect(() => parseLineForm("param a\nwhile a\n")).toThrow(/line 2.*unknown directive "while"/);
+    expect(() => parseLineForm("param a\nfrobnicate a\n")).toThrow(/line 2.*unknown directive "frobnicate"/);
   });
 });
 
