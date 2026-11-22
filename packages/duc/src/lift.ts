@@ -1094,6 +1094,10 @@ class Lifter {
     }
     if (Node.isConditionalExpression(node)) {
       const cond = this.liftExpr(node.getCondition());
+      // An arm that could do more than produce a value runs only when it is chosen: a branch.
+      if (!isInert(node.getWhenTrue()) || !isInert(node.getWhenFalse())) {
+        return this.liftLazy(cond, () => this.liftExpr(node.getWhenTrue()), () => this.liftExpr(node.getWhenFalse()));
+      }
       const whenTrue = this.liftExpr(node.getWhenTrue());
       const whenFalse = this.liftExpr(node.getWhenFalse());
       return this.emit("sel", [cond, whenTrue, whenFalse], 1, {
@@ -1287,11 +1291,45 @@ class Lifter {
       return out as ValueId;
     }
     const l = this.liftExpr(left);
-    const r = this.liftExpr(node.getRight());
+    // A short-circuit operator evaluates its right side only on some paths: unless that side only
+    // produces a value, it is a branch, as the equivalent if is (#1276).
+    const right = node.getRight();
+    if ((op === SyntaxKind.AmpersandAmpersandToken || op === SyntaxKind.BarBarToken || op === SyntaxKind.QuestionQuestionToken) && !isInert(right)) {
+      if (op === SyntaxKind.AmpersandAmpersandToken) return this.liftLazy(l, () => this.liftExpr(right), () => l);
+      if (op === SyntaxKind.BarBarToken) return this.liftLazy(l, () => l, () => this.liftExpr(right));
+      const [nullValue] = this.emit("literal-source", [], 1, { origin: { kind: "NullKeyword", text: "null" }, label: "null" });
+      const [isNullish] = this.emit("op", [l, nullValue as ValueId], 1, { origin: { kind: "Binary", text: "==" }, label: "==" });
+      return this.liftLazy(isNullish as ValueId, () => this.liftExpr(right), () => l);
+    }
+    const r = this.liftExpr(right);
     return this.emit("op", [l, r], 1, {
       origin: { kind: "Binary", text: node.getOperatorToken().getText() },
       label: node.getOperatorToken().getText(),
     })[0] as ValueId;
+  }
+
+  /**
+   * A value chosen by a condition whose arms run only when chosen: a branch whose sides compute the
+   * arms, joined into one value. Names an arm assigns join as an if's do.
+   */
+  private liftLazy(cond: ValueId, whenTrue: () => ValueId, whenFalse: () => ValueId): ValueId {
+    const before = new Map(this.env);
+    const id = `b${this.branchCount++}`;
+    const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
+    this.branches.push({ id, cond, ...(within !== undefined ? { within } : {}) });
+    let thenValue = cond;
+    let elseValue = cond;
+    const thenEnv = this.inRegion(`${id}.t`, () => this.branch(before, () => { thenValue = whenTrue(); }));
+    const elseEnv = this.inRegion(`${id}.e`, () => this.branch(before, () => { elseValue = whenFalse(); }));
+    for (const [name, beforeValue] of before) {
+      const t = thenEnv.get(name) ?? beforeValue;
+      const e = elseEnv.get(name) ?? beforeValue;
+      if (t !== e || t !== beforeValue) {
+        const [joined] = this.emit("sel", [cond, t, e], 1, { origin: { kind: "IfJoin", text: name } });
+        this.env.set(name, joined as ValueId);
+      }
+    }
+    return this.emit("sel", [cond, thenValue, elseValue], 1, { origin: { kind: "Conditional" } })[0] as ValueId;
   }
 
   /** Reassign an lvalue. Identifier -> rebind; member/element -> mutate base object. */
@@ -1668,6 +1706,39 @@ function hasJump(node: Node): boolean {
     ...node.getDescendantsOfKind(SyntaxKind.ThrowStatement),
   ];
   return jumps.some((jump) => !isInsideNestedFunction(jump, node));
+}
+
+/**
+ * Whether evaluating an expression can only produce a value: no call or `new`, no member read (which
+ * can throw on null or run a getter), no assignment, step, delete, await or yield. Operators on
+ * values count as producing a value. Such an expression may be computed on every path, so a
+ * ternary of such arms is a select (D3); otherwise it is a branch.
+ */
+function isInert(node: Node): boolean {
+  const effect = (n: Node): boolean => {
+    if (Node.isArrowFunction(n) || Node.isFunctionExpression(n) || Node.isClassExpression(n)) return false;
+    if (
+      Node.isCallExpression(n) ||
+      Node.isNewExpression(n) ||
+      Node.isPropertyAccessExpression(n) ||
+      Node.isElementAccessExpression(n) ||
+      Node.isTaggedTemplateExpression(n) ||
+      Node.isDeleteExpression(n) ||
+      Node.isAwaitExpression(n) ||
+      Node.isYieldExpression(n)
+    ) {
+      return true;
+    }
+    if (Node.isBinaryExpression(n)) {
+      const k = n.getOperatorToken().getKind();
+      if (k === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(k)) return true;
+    }
+    if ((Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) && [SyntaxKind.PlusPlusToken, SyntaxKind.MinusMinusToken].includes(n.getOperatorToken())) {
+      return true;
+    }
+    return n.getChildren().some(effect);
+  };
+  return !effect(node);
 }
 
 /** Names of the return state (not valid source names, so they never clash with a binding). */

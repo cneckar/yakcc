@@ -71,3 +71,37 @@ describe("exits (#1276)", () => {
     );
   });
 });
+
+describe("arms that run only when chosen (#1276)", () => {
+  it("a call in a ternary arm runs only in its branch", () => {
+    expect(regionOfCall("export function f(c: boolean, x: number) { return c ? a(x) : b(x); }", "a")).toMatch(/^b\d+\.t$/);
+    expect(regionOfCall("export function f(c: boolean, x: number) { return c ? a(x) : b(x); }", "b")).toMatch(/^b\d+\.e$/);
+  });
+
+  it("the right side of && and || is evaluated only on its path", () => {
+    expect(regionOfCall("export function f(x: any) { return x && g(x); }", "g")).toMatch(/^b\d+\.t$/);
+    expect(regionOfCall("export function f(x: any) { return x || g(x); }", "g")).toMatch(/^b\d+\.e$/);
+    expect(regionOfCall("export function f(x: any) { return x ?? g(x); }", "g")).toMatch(/^b\d+\.t$/);
+  });
+
+  it("a member read guarded by && is not read when the guard fails", () => {
+    const g = liftAtom("export function f(s: any) { return s && s.length; }");
+    expect(g.nodes.find((n) => n.label === ".length")?.region).toMatch(/^b\d+\.t$/);
+  });
+
+  it("a ternary of values is still a select (D3)", () => {
+    const g = liftAtom("export function f(c: boolean, x: number) { return c ? x + 1 : x - 1; }");
+    expect(g.branches).toBeUndefined();
+  });
+
+  it("a lazy arm emits and lifts back to the same structure", () => {
+    for (const src of [
+      "export function f(c: boolean, x: number) { return c ? a(x) : b(x); }",
+      "export function f(x: any) { return x && x.length > 0; }",
+      "export function f(x: any, d: number) { return x ?? g(d); }",
+    ]) {
+      const g = liftAtom(src);
+      expect(graphIdentity(liftAtom(emitTypeScript(g))), src).toBe(graphIdentity(g));
+    }
+  });
+});
