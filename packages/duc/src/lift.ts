@@ -411,10 +411,45 @@ class Lifter {
       const out = outputs[i];
       if (out !== undefined) this.env.set(name, out);
     });
-    // Observations from returns inside the region (any return may be observed).
-    for (const ret of node.getDescendantsOfKind(SyntaxKind.ReturnStatement)) {
-      const expr = ret.getExpression();
-      if (expr !== undefined) this.obs.push(this.liftExpr(expr));
+    // Observations from returns that belong to this region's own scope. A return
+    // inside a nested function, method, or accessor returns from that closure, not
+    // from the atom, so it is not an observation here; the closure's captured reads
+    // are already in `reads`. A return's expression is lifted with the region's own
+    // bindings (loop variables, body-local declarations, parameters of nested
+    // closures) in scope, bound to the region's output, so they are not reported as
+    // free identifiers of the atom.
+    const returns = node
+      .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+      .filter((ret) => ret.getExpression() !== undefined && !isInsideNestedFunction(ret, node));
+    if (returns.length > 0) {
+      const locals = collectRegionLocals(node);
+      const scope =
+        locals.size > 0
+          ? (this.emit("op", reads, 1, { origin: { kind: "RegionScope" } })[0] as ValueId)
+          : undefined;
+      for (const ret of returns) {
+        const expr = ret.getExpression() as Node;
+        this.obs.push(
+          scope === undefined ? this.liftExpr(expr) : this.liftExprWithShadow(expr, locals, scope),
+        );
+      }
+    }
+  }
+
+  /** Lifts `expr` with each name in `shadowed` bound to `value`, then restores the environment. */
+  private liftExprWithShadow(expr: Node, shadowed: Set<string>, value: ValueId): ValueId {
+    const saved = new Map<string, ValueId | undefined>();
+    for (const name of shadowed) {
+      saved.set(name, this.env.get(name));
+      this.env.set(name, value);
+    }
+    try {
+      return this.liftExpr(expr);
+    } finally {
+      for (const [name, prev] of saved) {
+        if (prev === undefined) this.env.delete(name);
+        else this.env.set(name, prev);
+      }
     }
   }
 
@@ -713,6 +748,29 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Whether `node` sits inside a function-like scope nested within `boundary`
+ * (a function, arrow, method, constructor, or accessor). Such a node belongs to
+ * that closure, not to the enclosing region's own control flow.
+ */
+function isInsideNestedFunction(node: Node, boundary: Node): boolean {
+  for (let cur = node.getParent(); cur !== undefined; cur = cur.getParent()) {
+    if (cur.compilerNode === boundary.compilerNode) return false;
+    if (
+      Node.isFunctionDeclaration(cur) ||
+      Node.isFunctionExpression(cur) ||
+      Node.isArrowFunction(cur) ||
+      Node.isMethodDeclaration(cur) ||
+      Node.isConstructorDeclaration(cur) ||
+      Node.isGetAccessorDeclaration(cur) ||
+      Node.isSetAccessorDeclaration(cur)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

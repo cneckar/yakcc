@@ -465,3 +465,26 @@ describe("host globals: pure host data is explained, authority-bearing names are
     );
   });
 });
+
+describe("region-scoped returns: a return belongs to its own scope (class methods and loop variables)", () => {
+  it("a class method's return of its own parameter is not a free identifier", () => {
+    const g = lift("class A { m (y) { return y } }");
+    expect(diamondSymbols(g)).not.toContain("y");
+  });
+  it("a constructor that reassigns and returns its parameter does not report it free", () => {
+    const g = lift("class A { constructor (x) { x = x + 1; return x } }");
+    expect(diamondSymbols(g)).not.toContain("x");
+  });
+  it("a return of a loop variable inside the loop is not a free identifier", () => {
+    const g = lift("function f (xs) { for (const v of xs) { return v } }");
+    expect(diamondSymbols(g)).not.toContain("v");
+  });
+  it("a genuine free read inside a method is still reported", () => {
+    const g = lift("class A { m () { return g } }");
+    expect(g.nodes.find((n) => n.diamond?.symbol === "g")?.diamond?.reason).toBe("free-identifier");
+  });
+  it("a return inside a nested method is not an observation of the enclosing atom", () => {
+    const g = lift("class A { m (y) { return y } }");
+    expect(g.obs).toHaveLength(0);
+  });
+});
