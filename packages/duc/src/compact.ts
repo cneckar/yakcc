@@ -18,12 +18,15 @@ export interface CompactGraph {
   readonly n: readonly CompactNode[];
   /** Observations, as value indices. */
   readonly o: readonly number[];
-  /** Branches, as `[branchNumber, conditionValueIndex]`; branch ids are canonical `b<number>`. */
-  readonly b: readonly (readonly [number, number])[];
+  /**
+   * Branches, as `[branchNumber, conditionValueIndex, withinIndex]`; branch ids are canonical
+   * `b<number>`. `withinIndex` is the string index of the enclosing region, or -1 at the top level.
+   */
+  readonly b: readonly (readonly [number, number, number])[];
 }
 
 /**
- * `[kind, inputs, outputs, origin, diamond, label]`. `origin` is `[kindIndex, textIndex]` (textIndex
+ * `[kind, inputs, outputs, origin, diamond, label, region]`. `origin` is `[kindIndex, textIndex]` (textIndex
  * is -1 when absent), or null. `diamond` is `[reasonIndex, symbolIndex, moduleIndex]` (moduleIndex
  * is -1 when absent), or null. `label` is the structural label's string index, or -1 when absent.
  */
@@ -85,10 +88,10 @@ export function encodeGraph(g: DucGraph): CompactGraph {
       region,
     ];
   });
-  const branches = (g.branches ?? []).map((br): [number, number] => {
+  const branches = (g.branches ?? []).map((br): [number, number, number] => {
     const m = /^b(\d+)$/.exec(br.id);
     if (m === null) throw new Error(`encodeGraph: branch ${br.id} is not in canonical numbering`);
-    return [Number(m[1]), valueIndex(br.cond)];
+    return [Number(m[1]), valueIndex(br.cond), br.within === undefined ? -1 : intern(br.within)];
   });
   return { v: 1, s: table, n: nodes, o: g.obs.map(valueIndex), b: branches };
 }
@@ -136,6 +139,10 @@ export function decodeGraph(c: CompactGraph): DucGraph {
   });
   const values: ValueId[] = [];
   for (const node of nodes) for (const out of node.outputs) values.push(out);
-  const branches = c.b.map(([n, cond]) => ({ id: `b${n}`, cond: value(cond) }));
+  const branches = c.b.map(([n, cond, within]) => ({
+    id: `b${n}`,
+    cond: value(cond),
+    ...(within !== -1 ? { within: str(within) } : {}),
+  }));
   return { nodes, values, obs: c.o.map(value), ...(branches.length > 0 ? { branches } : {}) };
 }

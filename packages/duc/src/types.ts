@@ -154,10 +154,15 @@ export interface DucGraph {
   readonly branches?: readonly DucBranch[];
 }
 
-/** One `if` in the atom: its id, and the value of its condition. */
+/**
+ * One `if` in the atom: its id, the value of its condition, and the region it sits in (absent at
+ * the top level). The region is recorded even when a branch holds no nodes, for example an `if`
+ * whose only effect is a join, so the structure round-trips.
+ */
 export interface DucBranch {
   readonly id: string;
   readonly cond: ValueId;
+  readonly within?: string;
 }
 
 // ---------------------------------------------------------------------------

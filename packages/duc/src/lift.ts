@@ -462,7 +462,8 @@ class Lifter {
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
     const id = `b${this.branchCount++}`;
-    this.branches.push({ id, cond: condValue });
+    const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
+    this.branches.push({ id, cond: condValue, ...(within !== undefined ? { within } : {}) });
 
     const thenEnv = this.inRegion(`${id}.t`, () =>
       this.branch(before, () => this.liftStatement(node.getThenStatement())),
@@ -782,14 +783,22 @@ class Lifter {
         : this.ambient.has(name)
           ? "platform-primitive"
           : "free-identifier";
-    const [value] = this.emit("diamond-source", [], 1, {
-      diamond: {
-        reason,
-        symbol: name,
-        ...(imported !== undefined ? { module: imported.module } : {}),
-      },
-      origin: { kind: "DiamondSource", text: name },
-    });
+    // A source is one per symbol and is reused wherever the name is read, so it lives at the top
+    // level, not in the branch where it was first read.
+    const savedRegion = this.regionStack.splice(0);
+    let value: ValueId;
+    try {
+      [value] = this.emit("diamond-source", [], 1, {
+        diamond: {
+          reason,
+          symbol: name,
+          ...(imported !== undefined ? { module: imported.module } : {}),
+        },
+        origin: { kind: "DiamondSource", text: name },
+      }) as [ValueId];
+    } finally {
+      this.regionStack.push(...savedRegion);
+    }
     this.diamonds.set(name, value as ValueId);
     return value as ValueId;
   }

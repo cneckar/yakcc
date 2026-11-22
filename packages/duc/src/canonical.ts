@@ -117,11 +117,12 @@ export function canonicalizeGraph(
   // Branches: numbered by condition signature, ties broken by lifting id (equal conditions are
   // the same structure, so the tie does not affect identity).
   const branchRank = new Map<string, string>();
+  const branchKey = (b: DucBranch): string => `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
   [...branches]
     .sort((a, b) => {
-      const sa = branchSigOf(a.id) ?? "";
-      const sb = branchSigOf(b.id) ?? "";
-      if (sa !== sb) return sa < sb ? -1 : 1;
+      const ka = branchKey(a);
+      const kb = branchKey(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     })
     .forEach((b, i) => branchRank.set(b.id, `b${i}`));
@@ -164,7 +165,14 @@ export function canonicalizeGraph(
   // Observations keep their order: it follows the return statements, which is semantic.
   const canonicalObs = [...new Set(obs)].map((v) => renamed.get(v) ?? v);
   const canonicalBranches: DucBranch[] = [...branches]
-    .map((b) => ({ id: branchRank.get(b.id) ?? b.id, cond: renamed.get(b.cond) ?? b.cond }))
+    .map((b) => {
+      const within = canonicalRegion(b.within);
+      return {
+        id: branchRank.get(b.id) ?? b.id,
+        cond: renamed.get(b.cond) ?? b.cond,
+        ...(within !== undefined ? { within } : {}),
+      };
+    })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   return {

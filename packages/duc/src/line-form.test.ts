@@ -48,13 +48,18 @@ describe("line form (#1275, item 2)", () => {
     expect(() => parseLineForm("param a\nparam a\n")).toThrow(/already defined/);
   });
 
-  it("control flow is refused by the printer", () => {
+  it("a loop is refused by the printer: loops have no line form yet", () => {
+    const g = liftAtom("export function f(n: number, x: number): number { let s = 0; for (let i = 0; i < n; i++) { s += x; } return s; }");
+    expect(() => printLineForm(g)).toThrow(/loop/);
+  });
+
+  it("a ternary is refused by the printer: its join has no if block", () => {
     const g = liftAtom("export function f(c: boolean, x: number): number { return c ? x : 0; }");
-    expect(() => printLineForm(g)).toThrow(/control flow/);
+    expect(() => printLineForm(g)).toThrow(/join .* has no branch|does not belong/);
   });
 
   it("an unknown directive is rejected, with its line", () => {
-    expect(() => parseLineForm("param a\nif a\n")).toThrow(/line 2.*unknown directive "if"/);
+    expect(() => parseLineForm("param a\nwhile a\n")).toThrow(/line 2.*unknown directive "while"/);
   });
 });
 
