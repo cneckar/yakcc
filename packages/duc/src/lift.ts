@@ -266,9 +266,9 @@ class Lifter {
         origin: { kind: "Parameter", text: truncate(nameNode.getText()) },
         label: String(paramOffset + index),
       });
-      // Destructured params: bind every identifier inside the pattern to the one
-      // param-source value (conservative aliasing; sound).
-      for (const name of patternNames(nameNode)) this.env.set(name, value as ValueId);
+      // A default applies when the argument is undefined; a pattern reads each member (#1276).
+      const init = param.getInitializer();
+      this.bindPattern(nameNode, init !== undefined ? this.withDefault(value as ValueId, init) : (value as ValueId));
     }
     const body = fn.getBody();
     if (body === undefined) return;
@@ -325,7 +325,9 @@ class Lifter {
       this.hoisted.add(stmt.compilerNode);
       hoistedNames.add(name);
     }
-    for (const [i, stmt] of stmts.entries()) {
+    for (const [i, written] of stmts.entries()) {
+      // A switch whose clauses each end in an exit is the if chain it means (#1276).
+      const stmt = Node.isSwitchStatement(written) ? (this.lowerSwitch(written) ?? written) : written;
       const rest = stmts.slice(i + 1);
       const full = cont === undefined ? undefined : [...rest, ...cont];
       if (Node.isIfStatement(stmt) && full !== undefined && this.canTakeTail(stmt, full)) {
@@ -343,6 +345,31 @@ class Lifter {
       }
     }
     return false;
+  }
+
+  private switchCount = 0;
+
+  /**
+   * A switch as a block that evaluates the discriminant once and tests the cases in order with
+   * `===`: `{ const $s = d; if ($s === a || $s === b) { ... } else if (...) ... else { default } }`.
+   * Undefined when the switch is not that: a clause that falls into the next, a break that is not
+   * the clause's last statement, or a case expression that does more than produce a value.
+   */
+  private lowerSwitch(sw: import("ts-morph").SwitchStatement): Node | undefined {
+    const tmp = `$switch${this.switchCount++}`;
+    const arms = switchArms(sw);
+    if (arms === undefined) return undefined;
+    const test = (exprs: readonly string[]): string => exprs.map((e) => `${tmp} === (${e})`).join(" || ");
+    const fallback = arms.find((arm) => arm.isDefault);
+    const chained = arms.filter((arm) => !arm.isDefault || arm.tests.length > 0);
+    let text = fallback !== undefined ? `{\n${fallback.body}\n}` : "";
+    for (const arm of [...chained].reverse()) {
+      // An arm that is also the default runs when nothing else matches, so it is the else too.
+      text = `if (${arm.tests.length > 0 ? test(arm.tests) : "false"}) {\n${arm.body}\n}${text !== "" ? ` else ${text}` : ""}`;
+    }
+    const source = `function __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\n${text}\n}\n}`;
+    const file = sw.getSourceFile().getProject().createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
+    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
   }
 
   /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
@@ -515,9 +542,7 @@ class Lifter {
           init !== undefined
             ? this.liftExpr(init)
             : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" }, label: "Uninitialized" })[0];
-        for (const name of patternNames(decl.getNameNode())) {
-          this.env.set(name, value as ValueId);
-        }
+        this.bindPattern(decl.getNameNode(), value as ValueId);
       }
       return;
     }
@@ -840,7 +865,7 @@ class Lifter {
           label: "element",
           origin: { kind: "LoopElement", text: truncate(decl.getNameNode().getText()) },
         }) as [ValueId];
-        for (const name of declared) this.env.set(name, element);
+        this.bindPattern(decl.getNameNode(), element);
         this.liftStatement(body);
         for (const name of carried) nexts.push(this.env.get(name) as ValueId);
       });
@@ -906,8 +931,73 @@ class Lifter {
         init !== undefined
           ? this.liftExpr(init)
           : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" }, label: "Uninitialized" })[0];
-      for (const name of patternNames(decl.getNameNode())) this.env.set(name, value as ValueId);
+      this.bindPattern(decl.getNameNode(), value as ValueId);
     }
+  }
+
+  /**
+   * Bind a name or a destructuring pattern to a value: each element reads its member (`.key`, a
+   * computed key, or an index) and takes its default when that is undefined. An array pattern reads
+   * by index, which is what it means for arrays and strings; an object rest is an operation that
+   * names the keys it leaves out.
+   */
+  private bindPattern(nameNode: Node, value: ValueId): void {
+    if (Node.isIdentifier(nameNode)) {
+      this.env.set(nameNode.getText(), value);
+      return;
+    }
+    const read = (label: string, inputs: ValueId[], text: string): ValueId =>
+      this.emit("op", inputs, 1, { origin: { kind: "Destructure", text: truncate(text) }, label })[0] as ValueId;
+    const literal = (text: string): ValueId =>
+      this.emit("literal-source", [], 1, { origin: { kind: "Literal", text }, label: normalizeLiteral(text) })[0] as ValueId;
+    if (Node.isObjectBindingPattern(nameNode)) {
+      const taken: string[] = [];
+      for (const el of nameNode.getElements()) {
+        if (el.getDotDotDotToken() !== undefined) {
+          this.bindPattern(el.getNameNode(), read(`ObjectRest:${JSON.stringify(taken)}`, [value], el.getText()));
+          continue;
+        }
+        const key = el.getPropertyNameNode() ?? el.getNameNode();
+        let member: ValueId;
+        if (Node.isComputedPropertyName(key)) {
+          member = read("ElementAccess", [value, this.liftExpr(key.getExpression())], el.getText());
+        } else {
+          const name = Node.isStringLiteral(key) || Node.isNumericLiteral(key) ? key.getLiteralText() : key.getText();
+          taken.push(name);
+          member = /^[A-Za-z_$][\w$]*$/.test(name)
+            ? read(`.${name}`, [value], el.getText())
+            : read("ElementAccess", [value, literal(JSON.stringify(name))], el.getText());
+        }
+        const init = el.getInitializer();
+        this.bindPattern(el.getNameNode(), init !== undefined ? this.withDefault(member, init) : member);
+      }
+      return;
+    }
+    if (Node.isArrayBindingPattern(nameNode)) {
+      for (const [i, el] of nameNode.getElements().entries()) {
+        if (Node.isOmittedExpression(el)) continue;
+        if (el.getDotDotDotToken() !== undefined) {
+          const slice = read(".slice", [value], el.getText());
+          this.bindPattern(el.getNameNode(), read("CallExpression", [slice, literal(String(i))], el.getText()));
+          continue;
+        }
+        const member = read("ElementAccess", [value, literal(String(i))], el.getText());
+        const init = el.getInitializer();
+        this.bindPattern(el.getNameNode(), init !== undefined ? this.withDefault(member, init) : member);
+      }
+      return;
+    }
+    for (const name of patternNames(nameNode)) this.env.set(name, value);
+  }
+
+  /** `value`, or the default when value is undefined; the default runs only then. */
+  private withDefault(value: ValueId, init: Node): ValueId {
+    const missing = this.emit("op", [value, this.undefinedValue()], 1, { origin: { kind: "Binary", text: "===" }, label: "===" })[0] as ValueId;
+    if (isInert(init)) {
+      const d = this.liftExpr(init);
+      return this.emit("sel", [missing, d, value], 1, { origin: { kind: "Conditional" } })[0] as ValueId;
+    }
+    return this.liftLazy(missing, () => this.liftExpr(init), () => value);
   }
 
   /** Run `body` with `segment` pushed onto the region path, then restore it. */
@@ -1698,9 +1788,18 @@ function valueIndex(value: ValueId): number {
 
 /** True when the loop body has a break, a continue or a return that belongs to it (not to a nested function). */
 function hasJump(node: Node): boolean {
+  // A break or continue that belongs to an inner loop or switch stays inside this loop.
+  const leaves = (jump: import("ts-morph").BreakStatement | import("ts-morph").ContinueStatement): boolean => {
+    if (jump.getLabel() !== undefined) return true;
+    if (Node.isBreakStatement(jump)) return breakTarget(jump) === node;
+    for (let p: Node | undefined = jump.getParent(); p !== undefined; p = p.getParent()) {
+      if (Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p) || Node.isWhileStatement(p) || Node.isDoStatement(p)) return p === node;
+    }
+    return false;
+  };
   const jumps = [
-    ...node.getDescendantsOfKind(SyntaxKind.BreakStatement),
-    ...node.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+    ...node.getDescendantsOfKind(SyntaxKind.BreakStatement).filter(leaves),
+    ...node.getDescendantsOfKind(SyntaxKind.ContinueStatement).filter(leaves),
     ...node.getDescendantsOfKind(SyntaxKind.ReturnStatement),
     // A throw leaves the loop too: the rest of the body would run unguarded (#1276).
     ...node.getDescendantsOfKind(SyntaxKind.ThrowStatement),
@@ -1739,6 +1838,63 @@ function isInert(node: Node): boolean {
     return n.getChildren().some(effect);
   };
   return !effect(node);
+}
+
+interface SwitchArm {
+  /** The case expressions that select the arm, as source text. */
+  readonly tests: readonly string[];
+  readonly isDefault: boolean;
+  /** The arm's statements, as source text, without its closing break. */
+  readonly body: string;
+}
+
+/**
+ * The arms of a switch whose every clause ends in a break, a return or a throw (or is the last), with
+ * no other break of its own and only inert case expressions. Undefined for any other switch, which
+ * stays opaque.
+ */
+function switchArms(sw: import("ts-morph").SwitchStatement): SwitchArm[] | undefined {
+  const clauses = sw.getCaseBlock().getClauses();
+  const arms: SwitchArm[] = [];
+  let tests: string[] = [];
+  let isDefault = false;
+  for (const [i, clause] of clauses.entries()) {
+    if (Node.isCaseClause(clause)) {
+      const expr = clause.getExpression();
+      if (!isInert(expr)) return undefined;
+      tests.push(expr.getText());
+    } else {
+      isDefault = true;
+    }
+    let stmts: Node[] = clause.getStatements();
+    if (stmts.length === 0) continue;
+    if (stmts.length === 1 && Node.isBlock(stmts[0] as Node)) stmts = (stmts[0] as import("ts-morph").Block).getStatements();
+    const last = stmts[stmts.length - 1];
+    const ownBreaks = clause.getDescendantsOfKind(SyntaxKind.BreakStatement).filter((b) => b.getLabel() === undefined && breakTarget(b) === sw);
+    if (last !== undefined && Node.isBreakStatement(last) && last.getLabel() === undefined) {
+      if (ownBreaks.length !== 1) return undefined;
+      stmts = stmts.slice(0, -1);
+    } else if (ownBreaks.length > 0) {
+      return undefined;
+    } else if (!(last !== undefined && alwaysReturns(last)) && i !== clauses.length - 1) {
+      return undefined; // Falls into the next clause.
+    }
+    arms.push({ tests, isDefault, body: stmts.map((st) => st.getText()).join("\n") });
+    tests = [];
+    isDefault = false;
+  }
+  // Trailing labels with no body: a match runs nothing.
+  if (tests.length > 0 || isDefault) arms.push({ tests, isDefault, body: "" });
+  return arms;
+}
+
+/** The statement an unlabelled break leaves: its nearest enclosing loop or switch. */
+function breakTarget(node: Node): Node | undefined {
+  for (let p = node.getParent(); p !== undefined; p = p.getParent()) {
+    if (Node.isFunctionDeclaration(p) || Node.isFunctionExpression(p) || Node.isArrowFunction(p)) return undefined;
+    if (Node.isSwitchStatement(p) || Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p) || Node.isWhileStatement(p) || Node.isDoStatement(p)) return p;
+  }
+  return undefined;
 }
 
 /** Names of the return state (not valid source names, so they never clash with a binding). */
@@ -1788,7 +1944,7 @@ function insideOpaque(ret: Node, root: Node): boolean {
       Node.isForInStatement(p) ||
       Node.isWhileStatement(p) ||
       Node.isDoStatement(p) ||
-      Node.isSwitchStatement(p) ||
+      (Node.isSwitchStatement(p) && switchArms(p) === undefined) ||
       Node.isTryStatement(p)
     ) {
       return true;

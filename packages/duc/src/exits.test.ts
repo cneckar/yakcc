@@ -105,3 +105,60 @@ describe("arms that run only when chosen (#1276)", () => {
     }
   });
 });
+
+describe("switch (#1276)", () => {
+  const src = (body: string) => `export function f(k: string, x: number) { ${body} }`;
+
+  it("a switch whose clauses end in break, return or throw is its if chain", () => {
+    const sw = id(src("switch (k) { case 'a': return x + 1; case 'b': case 'c': return x - 1; default: throw new Error(k); }"));
+    const chain = id(src("const s = k; if (s === 'a') { return x + 1; } else if (s === 'b' || s === 'c') { return x - 1; } else { throw new Error(k); }"));
+    expect(sw).toBe(chain);
+  });
+
+  it("break ends a clause, and what follows the switch runs after it", () => {
+    const g = liftAtom(src("let r = 0; switch (k) { case 'a': r = x; break; default: r = 2; } return r * 3;"));
+    expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = (k: string, x: number): unknown => new Function(`${code.replace("export ", "")}; return f(${JSON.stringify(k)}, ${x});`)();
+    expect(run("a", 5)).toBe(15);
+    expect(run("z", 5)).toBe(6);
+  });
+
+  it("a clause that falls into the next stays opaque", () => {
+    const g = liftAtom(src("let r = 0; switch (k) { case 'a': r = 1; case 'b': r = r + 1; break; } return r;"));
+    expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(true);
+  });
+});
+
+describe("destructuring and defaults (#1276)", () => {
+  const run = (src: string, ...args: unknown[]): unknown => {
+    const code = emitTypeScript(liftAtom(src));
+    return new Function(`${code.replace("export ", "")}; return f(...${JSON.stringify(args)});`)();
+  };
+
+  it("each name of an object pattern reads its own member", () => {
+    const src = "export function f(o: any) { const { a, b: c, d = 7 } = o; return a !== c ? a + c + d : 0; }";
+    expect(run(src, { a: 1, b: 2 })).toBe(10);
+    expect(run(src, { a: 1, b: 1, d: 1 })).toBe(0);
+  });
+
+  it("an array pattern reads by index, with a rest", () => {
+    const src = "export function f(xs: number[]) { const [x, , y, ...more] = xs; return x + y + more.length; }";
+    expect(run(src, [1, 2, 3, 4, 5])).toBe(6);
+  });
+
+  it("a parameter default applies when the argument is undefined", () => {
+    const src = "export function f(a: number, offset = 10) { return a + offset; }";
+    expect(run(src, 1)).toBe(11);
+    expect(run(src, 1, 2)).toBe(3);
+  });
+
+  it("a default that calls runs only when it is needed", () => {
+    expect(regionOfCall("export function f(o: any) { const { a = make() } = o; return a; }", "make")).toMatch(/^b\d+\.t$/);
+  });
+
+  it("a pattern in a loop binds each element's members", () => {
+    const src = "export function f(o: any) { let s = 0; for (const [k, v] of Object.entries(o)) { s = s + v; } return s; }";
+    expect(run(src, { x: 2, y: 3 })).toBe(5);
+  });
+});
