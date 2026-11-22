@@ -97,7 +97,7 @@ type Frame = IfFrame | LoopFrame;
 const RESERVED = new Set(["with", "of", "in"]);
 
 /** The region path of a loop's body. */
-function bodyPathOf(node: DucNode): string {
+export function bodyPathOf(node: DucNode): string {
   const loop = node.loop as DucLoop;
   return `${node.region !== undefined ? `${node.region}/` : ""}${loop.id}.b`;
 }
@@ -456,15 +456,47 @@ export function parseLineForm(text: string): DucGraph {
 }
 
 /** `prefix` is a region path or the top level; `region` is a node's region. */
-function isPrefix(prefix: string | undefined, region: string | undefined): boolean {
+export function isPrefix(prefix: string | undefined, region: string | undefined): boolean {
   if (prefix === undefined) return true;
   if (region === undefined) return false;
   return region === prefix || region.startsWith(`${prefix}/`);
 }
 
 /** The region path of one side of a branch, e.g. `b0.t` or `b0.t/b1.e`. */
-function sidePath(b: DucBranch, side: "t" | "e"): string {
+export function sidePath(b: DucBranch, side: "t" | "e"): string {
   return `${b.within !== undefined ? `${b.within}/` : ""}${b.id}.${side}`;
+}
+
+/**
+ * The if each join belongs to: the if whose side produces one of the join's inputs. Values are
+ * single-assignment, so there is exactly one. A select with no such if is a plain node (a ternary,
+ * or a branch that only takes existing values, which is the same graph).
+ */
+export function joinOwners(g: DucGraph): Map<NodeId, DucBranch> {
+  const branches = g.branches ?? [];
+  const producer = new Map<ValueId, DucNode>();
+  for (const node of g.nodes) for (const v of node.outputs) producer.set(v, node);
+  const regionOf = (v: ValueId): string | undefined => {
+    const p = producer.get(v);
+    if (p === undefined) throw new Error(`value ${v} has no producer`);
+    return p.region;
+  };
+  const joinOwner = new Map<NodeId, DucBranch>();
+  for (const node of g.nodes) {
+    if (node.kind !== "sel") continue;
+    if (node.inputs.length !== 3) throw new Error(`select ${node.id} needs a condition and two values`);
+    const [cond, thenV, elseV] = node.inputs as [ValueId, ValueId, ValueId];
+    const owners = branches.filter(
+      (b) =>
+        b.cond === cond &&
+        b.within === node.region &&
+        (isPrefix(sidePath(b, "t"), regionOf(thenV)) || isPrefix(sidePath(b, "e"), regionOf(elseV))),
+    );
+    if (owners.length > 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
+    const owner = owners[0];
+    if (owner !== undefined) joinOwner.set(node.id, owner);
+  }
+  return joinOwner;
 }
 
 /** The loop whose body a node lies in, innermost, or undefined at the top level. */
@@ -494,25 +526,7 @@ export function printLineForm(g: DucGraph): string {
     return p;
   };
 
-  // A join belongs to the if whose side produces one of its inputs; values are single-assignment,
-  // so there is exactly one. A select with no such if is a plain node, printed as `select`. A
-  // branch that only takes existing values has a join of that kind too, and prints the same way:
-  // the graph is identical, since the branch record is printed by its own `if` block.
-  const joinOwner = new Map<NodeId, DucBranch>();
-  for (const node of g.nodes) {
-    if (node.kind !== "sel") continue;
-    if (node.inputs.length !== 3) throw new Error(`select ${node.id} needs a condition and two values`);
-    const [cond, thenV, elseV] = node.inputs as [ValueId, ValueId, ValueId];
-    const owners = branches.filter(
-      (b) =>
-        b.cond === cond &&
-        b.within === node.region &&
-        (isPrefix(sidePath(b, "t"), producerOf(thenV).region) || isPrefix(sidePath(b, "e"), producerOf(elseV).region)),
-    );
-    if (owners.length > 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
-    const owner = owners[0];
-    if (owner !== undefined) joinOwner.set(node.id, owner);
-  }
+  const joinOwner = joinOwners(g);
 
   // Loops: a loop's carried and invariant values are sources of its own body, and nothing else.
   const loopNodes = g.nodes.filter((n) => n.kind === "loop");

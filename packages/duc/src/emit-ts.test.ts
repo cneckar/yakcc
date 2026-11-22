@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: Apache-2.0
+// Lowering to TypeScript (#1275, decision 5A): the emitted code lifts back to the same identity, and
+// computes what the original source computes.
+import { describe, expect, it } from "vitest";
+import { graphIdentity } from "./canonical.js";
+import { EmitError, emitTypeScript } from "./emit-ts.js";
+import { liftAtom } from "./lift.js";
+
+interface Case {
+  readonly name: string;
+  readonly source: string;
+  readonly args: readonly unknown[][];
+}
+
+const CASES: Case[] = [
+  { name: "arithmetic", source: "export function f(a: number, b: number): number { return (a + b) * (a - b); }", args: [[3, 1], [0, 5]] },
+  { name: "member read and method call", source: "export function f(s: string): number { return s.trim().length + Math.abs(-2); }", args: [["  ab "], [""]] },
+  { name: "object, template and spread", source: "export function f(a: number, xs: number[]): string { const o = { k: a, ...{ z: 1 } }; return `v=${o.k} n=${[...xs, a].length}`; }", args: [[2, [1, 2]], [0, []]] },
+  { name: "write and compound assignment", source: "export function f(a: number): number { const o = { v: 0 }; o.v = a; let t = o.v; t += 3; t *= 2; return t; }", args: [[1], [5]] },
+  { name: "prefix and postfix steps", source: "export function f(a: number): number { let x = a; ++x; x++; return x; }", args: [[1]] },
+  { name: "branch with joins on both sides", source: "export function f(c: boolean, x: number, y: number): number { let r = 0; if (c) { r = x + 1; } else { r = y - 1; } return r; }", args: [[true, 1, 9], [false, 1, 9]] },
+  { name: "branch that takes existing values", source: "export function f(a: number, b: number): number { let r = a; if (b > a) { r = b; } return r; }", args: [[1, 2], [5, 2]] },
+  { name: "ternary", source: "export function f(c: boolean, x: number): number { return c ? x * 2 : -x; }", args: [[true, 3], [false, 3]] },
+  { name: "early return", source: "export function f(c: boolean, x: number): number { if (c) { return x + 1; } return x - 1; }", args: [[true, 3], [false, 3]] },
+  { name: "while loop", source: "export function f(n: number, x: number): number { let s = 0; let i = 0; while (i < n) { s = s + x; i = i + 1; } return s; }", args: [[0, 5], [4, -2]] },
+  { name: "for loop", source: "export function f(n: number): number { let s = 0; for (let i = 0; i < n; i = i + 1) { s = s + i; } return s; }", args: [[0], [5]] },
+  { name: "nested loops reading a parameter", source: "export function f(n: number, x: number): number { let s = 0; for (let i = 0; i < n; i = i + 1) { let j = 0; while (j < 2) { s = s + x; j = j + 1; } } return s; }", args: [[0, 3], [3, 5]] },
+  { name: "for...of with a branch", source: "export function f(xs: number[]): number { let s = 0; for (const x of xs) { if (x > 0) { s = s + x; } } return s; }", args: [[[]], [[1, -2, 3]]] },
+  { name: "for...in", source: "export function f(o: object): number { let n = 0; for (const k in o) { n = n + 1; } return n; }", args: [[{}], [{ a: 1, b: 2 }]] },
+];
+
+/** Runs emitted code: it is untyped, so it is valid JavaScript once the export is dropped. */
+function run(code: string, args: readonly unknown[]): unknown {
+  const fn = new Function(`${code.replace("export function f", "return function f")}`)() as (...a: unknown[]) => unknown;
+  return fn(...args);
+}
+
+function runSource(source: string, args: readonly unknown[]): unknown {
+  const js = source.replace(/: (number|string|boolean|object|number\[\])(?=[,)\s{;])/g, "");
+  return run(js, args);
+}
+
+describe("emitting TypeScript from the graph (5A)", () => {
+  for (const tc of CASES) {
+    it(`round-trips and computes the same: ${tc.name}`, () => {
+      const g = liftAtom(tc.source);
+      const code = emitTypeScript(g);
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+      for (const args of tc.args) expect(run(code, args), `${JSON.stringify(args)}\n${code}`).toEqual(runSource(tc.source, args));
+    });
+  }
+
+  it("refuses an opaque node: a closure has no structure to emit", () => {
+    const g = liftAtom("export function f(a: number): number { const g = () => a + 1; return g(); }");
+    expect(() => emitTypeScript(g)).toThrow(EmitError);
+  });
+});
