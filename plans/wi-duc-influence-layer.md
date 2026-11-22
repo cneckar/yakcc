@@ -155,7 +155,7 @@ Small, independently landable, reviewer-friendly, each revertible in one commit.
 | `DEC-DUC-INFLUENCE-FACET-I-AXIS-001` | may-influence / graph-NI form an orthogonal semantics-free facet (I-axis: I0 gate, I1 mechanized), parallel to `constant_time`, not conflated with L-level | different property (influence, not behavioral refinement) |
 | `DEC-DUC-NI-REACHABILITY-001` | graph-NI is decided as linear-time reachability with control-as-data; the witness term surfaces implicit flows | non-interference becomes an iff, not a one-way sufficient criterion |
 | `DEC-DUC-COMPOSITION-MONOTONE-001` | an opaque node is the coarsest sound summary; refinement only shrinks influence; used for interprocedural program influence and as a strictness-claim falsifier | composition-as-opacity; mechanizes one direction of "stricter contract wins" |
-| `DEC-DUC-ARTIFACT-KINDS-001` | new `ArtifactKind`s `duc_influence`, `duc_ni` + parallel manifest validators; sidecar registry column via `MIGRATION_15` | mirrors the L0/L3 parallel-validator pattern; not forked into the Merkle root |
+| `DEC-DUC-ARTIFACT-KINDS-001` | *(superseded by `DEC-DUC-ATTESTATION-SIDECAR-001`)* — was: new manifest `ArtifactKind`s `duc_influence`, `duc_ni` | a manifest entry changes the BlockMerkleRoot; analyses are sidecar |
 | `DEC-DUC-MECHANIZATION-001` | Rocq admit-free/axiom-free builder-run core is the I1 trust anchor; verifier-as-block issues influence/NI attestations | the top rung earned mechanically, TCB-honest (`Table 2` boundary) |
 | `DEC-DUC-SCOPE-001` | scope: finite acyclic per-atom graphs; loops as opaque node / bounded unroll; path-insensitive base; side-channel + path-sensitive refinement layers deferred | inherits shave's existing loop-as-atom bottoming-out; matches DUC §2 |
 | `DEC-DUC-PKG-NAME-001` | engine package is `@yakcc/duc` (alt considered: `@yakcc/influence`) | terse-compiler-name aesthetic; tracks the source paper |
@@ -200,3 +200,37 @@ Small, independently landable, reviewer-friendly, each revertible in one commit.
 Epic umbrella issue: **WI-DUC — DUC Influence & Provability Layer** (this document).
 
 *End of architecture plan — DUC influence layer for yakcc shave + verification.*
+
+---
+
+## 11. Status and roll-up (closing the epic)
+
+Recorded 2026-11-22, checked against the code. Commits are on `claude/tender-thompson-u2xrdh`.
+
+| Slice | Issue | Delivered | Open |
+|---|---|---|---|
+| S1 graph model + lifter | #1162 | `68550d1`, `c74dd94`, `1aa29cf` (bare-function primary) | — |
+| S2 conservation gate | #1163 | `bb23b97`; warn default | reject flip (#1173) |
+| S3 may-influence + witness + `duc_influence` | #1164 | `68550d1`, `d5cd2c3` | — |
+| S4 graph-NI + `duc_ni` | #1165 | `68550d1`, `d5cd2c3` (API + validator) | persistence of `duc_ni` waits on checker-spec labelings (#1256) |
+| S5 composition + strictness falsifier | #1166 | `3b30a2b` | — |
+| S6 Rocq mechanization | #1167 | `e794927`, `507cea1`, `53edfe6` (order theory, transfer) | independence of depmap from emission order: named open item, not claimed |
+| S7 closer | #1168 | this section, `VERIFICATION.md` I-axis, `DESIGN.md` | — |
+
+### Decision roll-up (changes from §7)
+
+- **Revised:** `DEC-DUC-ARTIFACT-KINDS-001` → `DEC-DUC-ATTESTATION-SIDECAR-001`. Analyses are sidecar attestations, not manifest kinds. The manifest is hashed into the `BlockMerkleRoot`. No migration is needed, because the sidecar JSON carries the attestation.
+- **Added in code:** `DEC-DUC-COMPOSITION-EDGE-001` (sibling references classified as composition edges at the gate, metadata-only).
+- **Added in code:** `DEC-DUC-ATTESTATION-SIDECAR-001` (above).
+
+### Deferred register (named, not forgotten)
+
+- Side-channel and timing analysis (discipline 3).
+- Path-sensitive guard layer (DUC §7). Partly addressed by guard labels in `WI-GUARD-A2` (#1255), as annotations only.
+- Def-use-graph isomorphism strengthening `canonical_ast_hash` (W7).
+- Behavioral-embedding cross-wire (`DEC-VERIFY-010`).
+- Independence of depmap / valuation from the choice of well-ordered emission order. Not mechanized, not claimed.
+- Pointer and alias analysis. Neither the lifter nor the GFP prototype resolves aliasing.
+- `duc_ni` persistence, pending checker-spec labelings (#1256).
+
+Acceptance sign-off: the per-slice Evaluation Contracts in §6 are met as stated in the rows above. Each open item is either tracked on a ticket or named in the register.

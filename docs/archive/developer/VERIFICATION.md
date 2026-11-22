@@ -660,6 +660,66 @@ property for crypto-sensitive blocks.
 
 ---
 
+## Influence facet (the I-axis)
+
+Influence is an orthogonal, semantics-free facet, parallel to `constant_time`.
+It is not a level on the L0–L3 ladder, and the ladder is unchanged by it.
+(`DEC-DUC-INFLUENCE-FACET-I-AXIS-001`; architecture in `plans/wi-duc-influence-layer.md`.)
+
+It asks a different question from the ladder. The ladder asks whether an
+implementation meets its contract. The I-axis asks which inputs can affect which
+outputs, and whether a secret can reach a public result.
+
+### I0 — the conservation gate (mandatory, every shave)
+
+Every atom is lifted to a DUC graph, and every unresolved reference becomes a
+declared `♦`-source. The gate records the atom's unknown-support (`usupp`) in
+the sidecar `ducUsupp` provenance. That sidecar is not part of the
+`BlockMerkleRoot`.
+
+- `warn` (default): a `free-identifier` unknown logs a warning, and the atom is admitted.
+- `reject` (`YAKCC_DUC_GATE=reject`): an atom with an unexplained unknown is refused.
+  The default flip waits on the corpus baseline (`WI-EXPLAIN-04`).
+
+Unknowns are classified by reason. `foreign-import` and `ambient-read` are
+explained by construction. A `free-identifier` that names a sibling atom in the
+same forest is a composition edge, not an unknown. The reason is never silently dropped.
+
+### Attestations
+
+Two analyses are issued as sidecar attestations, not manifest entries:
+
+- `duc_influence`: the block's may-influence matrix, parameters by observations.
+- `duc_ni`: the graph non-interference verdict for a declared high-symbol set, with a
+  rendered witness for each leak.
+
+Both are versioned and self-checking. `validateDucAttestation` re-derives their
+invariants without re-lifting. They are sidecar, not manifest, because the manifest
+is hashed into the `BlockMerkleRoot`: an analysis is a derived fact about a block,
+not part of its identity. The `duc_ni` attestation is produced by the API and is
+persisted once a checker spec declares its labels.
+
+### I1 — the mechanized trust anchor
+
+`packages/duc/coq/` is a Rocq development, admit-free and axiom-free, checked by
+`make verify` (whole-module `coqchk` plus `Print Assumptions`). It covers the builder
+run core, influence soundness (Thm 4.5a), graph non-interference (the sound
+direction), happens-before as a strict partial order under a ranking, and the
+ranking-renaming transfer to every well-formed graph (existential: a well-ordered
+emission order exists, and soundness holds for it).
+
+The boundary is stated in `packages/duc/coq/README.md`. Independence of the
+dependency set from the choice of emission order is not mechanized and is not claimed.
+The paper-proved results outside Coq are the term-model realization and the
+least-sound corollary.
+
+### What the I-axis does not claim
+
+- It is an over-approximation. Path-insensitivity means a flow can be reported
+  that a path-sensitive analysis would kill. That is the conscious cost of soundness.
+- "May influence" is structural. It is not a claim that a flow is feasible or exploitable.
+- It does not cover timing or other side channels. Those are discipline 3 and are deferred.
+
 ## Total functional programming
 
 L1 makes totality a registration requirement. A total block always returns a
