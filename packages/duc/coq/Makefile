@@ -11,8 +11,8 @@
 
 COQC      ?= coqc
 COQ_FLAGS := -Q . DUC
-SOURCES   := DUC_Core.v DUC_Soundness.v
-MODULES   := DUC.DUC_Core DUC.DUC_Soundness
+SOURCES   := DUC_Core.v DUC_Soundness.v DUC_Transfer.v
+MODULES   := DUC.DUC_Core DUC.DUC_Soundness DUC.DUC_Transfer
 
 # Theorems whose admit-free / axiom-free status `verify` asserts.
 CLAIMED := push_preserves_conservation \
@@ -24,7 +24,12 @@ CLAIMED := push_preserves_conservation \
            influence_soundness \
            non_influence \
            graph_NI_sound \
-           depmap_only_sources
+           depmap_only_sources \
+           hb_strict_partial_order \
+           hb_acyclic \
+           HB_descent \
+           linearize \
+           influence_soundness_WF
 
 .PHONY: all verify clean
 
@@ -44,7 +49,7 @@ verify: all
 	  rm -f _chk.out; exit 1; fi
 	@rm -f _chk.out
 	@# 2. Document the headline claims: each named theorem must be axiom-free.
-	@printf 'Require Import DUC.DUC_Core DUC.DUC_Soundness.\n' > _assum.v
+	@printf 'Require Import DUC.DUC_Core DUC.DUC_Soundness DUC.DUC_Transfer.\n' > _assum.v
 	@for t in $(CLAIMED); do printf 'Print Assumptions %s.\n' $$t >> _assum.v; done
 	@$(COQC) $(COQ_FLAGS) _assum.v > _assum.out 2>&1 || { cat _assum.out; rm -f _assum.*; exit 1; }
 	@closed=$$(grep -c 'Closed under the global context' _assum.out); \

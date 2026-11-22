@@ -55,7 +55,11 @@ row marked *mechanized* is compiled by `coqc` and confirmed axiom-free by
 | `non_influence` — a source outside the dependency set never changes `F` (Thm 4.5b face) | **mechanized, axiom-free** |
 | `graph_NI_sound` — graph non-interference, sound direction (Thm 5.2 ⇐) | **mechanized, axiom-free** |
 | `depmap_only_sources` — every dependency is a declared source (usupp ⊆ sources, Cor 4.10 face) | **mechanized, axiom-free** |
-| Happens-before strict partial order (Thm 3.2); descent measure (Thm 3.3); ranking-renaming transfer to every WF graph (`influence_soundness_WF`) | *next* (order theory / `DUC_Transfer.v`) |
+| Happens-before strict partial order under a ranking (Thm 3.2): `hb_strict_partial_order`, `hb_acyclic` | **mechanized, axiom-free** (`DUC_Transfer.v`) |
+| Descent (Thm 3.3, ranking face): `HB_descent` — the ranking strictly increases along happens-before | **mechanized, axiom-free** (`DUC_Transfer.v`) |
+| Ranking-renaming transfer (`influence_soundness_WF`): every WF graph has a well-ordered emission order (`linearize`) for which influence soundness holds | **mechanized, axiom-free** — *existential* (see below) |
+| Independence of depmap / valuation from the choice of well-ordered order | **not mechanized, not claimed** — named open item |
+| WF-A modelled as the *existence of a ranking*, not as a finiteness argument over arbitrary cycle-free graphs | **scope note** — acyclicity is taken in its ranking form |
 | Term-model realization (Thm 4.6), least-sound (Cor 4.7), graph-NI ⇒ | **paper-proved**, not mechanized (exactly as in the source artifact) |
 
 The soundness development models a builder-constructed graph in its emission
