@@ -21,7 +21,7 @@ on:
       - "packages/compile-python/**"
   schedule:
     # Nightly at 03:17 UTC — staggers with other nightly jobs
-    - cron: "17 3 * * *"
+    - cron: "17 3 * * 0"
   workflow_dispatch:
 
 concurrency:

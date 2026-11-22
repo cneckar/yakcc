@@ -40,7 +40,7 @@ name: bench-b1-latency
 
 on:
   schedule:
-    - cron: "0 9 * * *"   # 09:00 UTC daily — picks up prior day's merged commits
+    - cron: "0 9 * * 0"   # 09:00 UTC Sundays (weekly) — picks up prior week's merged commits
   workflow_dispatch:        # manual trigger for ad-hoc runs
 
 concurrency:

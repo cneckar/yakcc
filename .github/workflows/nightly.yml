@@ -18,7 +18,7 @@ name: nightly
 
 on:
   schedule:
-    - cron: '0 3 * * *'  # 03:00 UTC daily
+    - cron: '0 3 * * 0'  # 03:00 UTC Sundays (weekly)
   workflow_dispatch:
 
 # Never cancel a nightly run — let it finish and report.
