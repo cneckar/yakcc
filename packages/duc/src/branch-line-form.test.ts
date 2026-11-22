@@ -101,6 +101,19 @@ describe("structured if in the line form (#1275)", () => {
     expect(graphIdentity(back)).toBe(graphIdentity(g));
   });
 
+  it("a return on some paths joins into one observation, the return state, and prints", () => {
+    const src = "export function f(c: boolean, x: number): number { if (c) { if (x > 0) { return 1; } } return x; }";
+    const g = liftAtom(src);
+    expect(g.obs.length).toBe(1);
+    expect(g.nodes.some((n) => n.origin?.kind === "ReturnSelect")).toBe(true);
+    expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+  });
+
+  it("a return inside a loop is still an observation the form refuses", () => {
+    const g = liftAtom("export function f(xs: number[]): number { for (const x of xs) { if (x > 0) { return x; } } return 0; }");
+    expect(() => printLineForm(g)).toThrow(/loop|observation/);
+  });
+
   it("early returns on every path become one observation, the join of the returns", () => {
     const src = "export function f(c: boolean, x: number): number { if (c) { return x + 1; } return x - 1; }";
     const g = liftAtom(src);
@@ -174,9 +187,6 @@ describe("structured if in the line form (#1275)", () => {
       expect(() => parseLineForm('param c\nif c\nlit "1" -> k\nout k\nend\n')).toThrow(LineFormError);
     });
 
-    it("the printer refuses a return on only some paths, since the form has no such observation yet", () => {
-      const g = liftAtom("export function f(c: boolean, x: number): number { if (c) { if (x > 0) { return 1; } } return x; }");
-      expect(() => printLineForm(g)).toThrow(/observation inside an if/);
-    });
+
   });
 });

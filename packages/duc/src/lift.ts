@@ -323,6 +323,8 @@ class Lifter {
     if (body === undefined) return;
     if (Node.isBlock(body)) {
       this.liftStatements(body.getStatements());
+      // Returns on some paths: the observation is the value of the return state at the end.
+      if (this.env.has(RETURN_DONE)) this.obs.push(this.env.get(RETURN_VALUE) as ValueId);
     } else {
       // Arrow with expression body: the expression is the observation.
       this.obs.push(this.liftExpr(body));
@@ -441,6 +443,7 @@ class Lifter {
     if (Node.isReturnStatement(node)) {
       const expr = node.getExpression();
       if (expr !== undefined) this.reportReturn(this.liftExpr(expr));
+      else if (this.env.has(RETURN_DONE)) this.recordPartialReturn(this.undefinedValue());
       return;
     }
     if (Node.isIfStatement(node)) {
@@ -477,6 +480,8 @@ class Lifter {
    */
   private liftIf(node: import("ts-morph").IfStatement, sides?: IfSides): void {
     const condValue = this.liftExpr(node.getExpression());
+    // A return on some paths: the return state must exist before the branch, so the join carries it.
+    if (sides === undefined && containsDirectReturn(node)) this.ensureReturnState();
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
     const id = `b${this.branchCount++}`;
@@ -538,7 +543,45 @@ class Lifter {
   private reportReturn(value: ValueId): void {
     const frame = this.returnFrames[this.returnFrames.length - 1];
     if (frame !== undefined) frame.push(value);
+    else if (this.env.has(RETURN_DONE)) this.recordPartialReturn(value);
     else this.obs.push(value);
+  }
+
+  /**
+   * Return state: `RETURN_DONE` says whether a return has happened on the path, and `RETURN_VALUE` is
+   * the value of the first one. A later return keeps the value when the function has already returned,
+   * so the join of the branches carries the result, and the rest of the list needs no guard: the graph
+   * is data flow, and nothing after a return can change the result.
+   */
+  private recordPartialReturn(value: ValueId): void {
+    const done = this.env.get(RETURN_DONE) as ValueId;
+    const current = this.env.get(RETURN_VALUE) as ValueId;
+    const [kept] = this.emit("sel", [done, current, value], 1, { origin: { kind: "ReturnSelect" } });
+    const [flag] = this.emit("literal-source", [], 1, {
+      origin: { kind: "TrueKeyword", text: "true" },
+      label: "true",
+    });
+    this.env.set(RETURN_VALUE, kept as ValueId);
+    this.env.set(RETURN_DONE, flag as ValueId);
+  }
+
+  /** Starts the return state, as "not returned" with an undefined value, if it is not yet started. */
+  private ensureReturnState(): void {
+    if (this.env.has(RETURN_DONE)) return;
+    const [flag] = this.emit("literal-source", [], 1, {
+      origin: { kind: "FalseKeyword", text: "false" },
+      label: "false",
+    });
+    this.env.set(RETURN_DONE, flag as ValueId);
+    this.env.set(RETURN_VALUE, this.undefinedValue());
+  }
+
+  private undefinedValue(): ValueId {
+    const [value] = this.emit("literal-source", [], 1, {
+      origin: { kind: "Uninitialized" },
+      label: "undefined",
+    });
+    return value as ValueId;
   }
 
   /** Run `body` with a return frame pushed: `frame` collects the side's returns, or undefined for flat. */
@@ -1098,6 +1141,10 @@ function dedupe(values: readonly ValueId[]): ValueId[] {
   return [...new Set(values)];
 }
 
+/** Names of the return state (not valid source names, so they never clash with a binding). */
+const RETURN_DONE = "%returned";
+const RETURN_VALUE = "%returnValue";
+
 /** The statements of an `if`'s two sides, once the rest of its statement list is placed on a side. */
 interface IfSides {
   readonly then: readonly Node[];
@@ -1126,14 +1173,62 @@ function totalSides(node: import("ts-morph").IfStatement, tail: readonly Node[])
   const elseNode = node.getElseStatement();
   const thenReturns = alwaysReturns(thenNode);
   const elseReturns = elseNode !== undefined && alwaysReturns(elseNode);
-  if (thenReturns && elseReturns) return tail.length === 0 ? { then: [thenNode], else: [elseNode as Node] } : undefined;
-  if (thenReturns) {
+  let sides: IfSides | undefined;
+  if (thenReturns && elseReturns) {
+    if (tail.length === 0) sides = { then: [thenNode], else: [elseNode as Node] };
+  } else if (thenReturns) {
     const side = [...(elseNode !== undefined ? [elseNode] : []), ...tail];
-    return side.some(alwaysReturns) ? { then: [thenNode], else: side } : undefined;
-  }
-  if (elseReturns) {
+    if (side.some(alwaysReturns)) sides = { then: [thenNode], else: side };
+  } else if (elseReturns) {
     const side = [thenNode, ...tail];
-    return side.some(alwaysReturns) ? { then: side, else: [elseNode as Node] } : undefined;
+    if (side.some(alwaysReturns)) sides = { then: side, else: [elseNode as Node] };
   }
-  return undefined;
+  if (sides === undefined) return undefined;
+  // A side with a return on some paths only would leave its value to the return state, which the frame does not see.
+  return totalCover(sides.then) && totalCover(sides.else) ? sides : undefined;
+}
+
+/**
+ * True when every direct return in the list is inside a total `if` (or a block holding one): the
+ * returns then all reach a frame. A return on some paths, or inside a loop or a switch, is not covered.
+ */
+function totalCover(stmts: readonly Node[]): boolean {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i] as Node;
+    if (!containsDirectReturn(stmt)) continue;
+    if (Node.isBlock(stmt)) {
+      if (!totalCover(stmt.getStatements())) return false;
+      continue;
+    }
+    if (Node.isIfStatement(stmt)) return totalSides(stmt, stmts.slice(i + 1)) !== undefined;
+    return false;
+  }
+  return true;
+}
+
+/** True when the node has a return that is not inside a nested function, loop, switch or try. */
+function containsDirectReturn(node: Node): boolean {
+  return node
+    .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+    .some((ret) => !insideOpaque(ret, node));
+}
+
+function insideOpaque(ret: Node, root: Node): boolean {
+  for (let p = ret.getParent(); p !== undefined && p.compilerNode !== root.compilerNode; p = p.getParent()) {
+    if (
+      Node.isFunctionDeclaration(p) ||
+      Node.isFunctionExpression(p) ||
+      Node.isArrowFunction(p) ||
+      Node.isForStatement(p) ||
+      Node.isForOfStatement(p) ||
+      Node.isForInStatement(p) ||
+      Node.isWhileStatement(p) ||
+      Node.isDoStatement(p) ||
+      Node.isSwitchStatement(p) ||
+      Node.isTryStatement(p)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
