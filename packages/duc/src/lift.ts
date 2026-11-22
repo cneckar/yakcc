@@ -75,6 +75,32 @@ const DEFAULT_AMBIENT_GLOBALS: readonly string[] = [
   // Implicit per-call binding of a non-arrow function. It is a runtime input, not a
   // dangling name. The diamond still feeds the result, so influence is kept.
   "arguments",
+  // Pure host data: reading these carries no authority and schedules no code. Timers,
+  // process, require, module, exports, and the __dirname/__filename bindings are NOT here:
+  // they reach the environment or run code later, so they stay unexplained until a
+  // checker classifies them (DEC-DUC-HOST-GLOBALS-001).
+  // Pure ECMAScript builtins: typed arrays and buffers are data constructors.
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Uint16Array",
+  "Uint32Array",
+  "Int8Array",
+  "Int16Array",
+  "Int32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+  "ArrayBuffer",
+  "DataView",
+  "Buffer",
+  "TextEncoder",
+  "TextDecoder",
+  "URL",
+  "URLSearchParams",
+  "structuredClone",
+  "atob",
+  "btoa",
   "undefined",
   "NaN",
   "Infinity",

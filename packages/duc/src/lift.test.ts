@@ -445,3 +445,23 @@ describe("the implicit arguments binding is an explained ambient read (WI-EXPLAI
     expect(usupp(g, onlyObs(g)).map((s) => s.label.symbol)).toContain("arguments");
   });
 });
+
+describe("host globals: pure host data is explained, authority-bearing names are not (DEC-DUC-HOST-GLOBALS-001)", () => {
+  it("Buffer and TextEncoder are ambient reads", () => {
+    const g = lift(
+      "export function f(s: string) { return new TextEncoder().encode(Buffer.from(s)); }",
+    );
+    expect(diamondReasons(g)).toEqual(expect.arrayContaining(["ambient-read"]));
+    expect(diamondSymbols(g)).toEqual(expect.arrayContaining(["Buffer", "TextEncoder"]));
+  });
+  it("process, require, and the timers are not ambient reads", () => {
+    const g = lift("export function f() { return process.env.X; }");
+    expect(g.nodes.find((n) => n.diamond?.symbol === "process")?.diamond?.reason).toBe(
+      "free-identifier",
+    );
+    const t = lift("export function f(cb: () => void) { setTimeout(cb, 0); }");
+    expect(t.nodes.find((n) => n.diamond?.symbol === "setTimeout")?.diamond?.reason).toBe(
+      "free-identifier",
+    );
+  });
+});

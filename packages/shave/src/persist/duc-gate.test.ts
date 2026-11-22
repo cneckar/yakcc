@@ -225,8 +225,7 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     "const COMPUTED = build();",
     "const OBJ = { a: 1, b: [2] };",
     "const WITH_METHOD = { f() { return 1; } };",
-    "MUTABLE_TABLE.push(4);",
-    "COUNTER++;",
+    "export function grow() { MUTABLE_TABLE.push(4); COUNTER++; }",
     "export function read(i: number): number { return TABLE[i]; }",
   ].join("\n");
 
@@ -237,7 +236,7 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     expect(b.get("MUTABLE_TABLE")?.binding).toBe("mutable"); // var
     expect(b.get("COUNTER")?.binding).toBe("mutable"); // let
     expect(b.get("COMPUTED")?.binding).toBe("mutable"); // call initializer
-    expect(b.get("WITH_METHOD")?.binding).toBe("mutable"); // method, not a literal value
+    expect(b.get("WITH_METHOD")?.binding).toBe("pure"); // a method that reads nothing, with no call or hand-off site
   });
 
   it("a var or let literal that is never mutated is pure (the rule is mutation, not the keyword)", () => {
@@ -260,7 +259,7 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
 
   it("a function that reads a mutable binding is mutable, transitively", () => {
     const b = moduleBindingsOf(
-      "let M = 0;\nM++;\nfunction a() { return b(); }\nfunction b() { return M; }",
+      "let M = 0;\nfunction bump() { M++; }\nfunction a() { return b(); }\nfunction b() { return M; }",
     );
     expect(b.get("b")?.binding).toBe("mutable");
     expect(b.get("a")?.binding).toBe("mutable"); // a reaches b, which reaches mutable M
@@ -308,12 +307,45 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     expect(b.get("escapeMatcher")?.binding).toBe("mutable"); // a global regex carries lastIndex state
   });
 
-  it("a const that is mutated, aliased, or handed off in its module is not pure", () => {
-    expect(moduleBindingsOf("const T = [];\nT[0] = 1;").get("T")?.binding).toBe("mutable");
-    expect(moduleBindingsOf("const T = [];\nT.push(1);").get("T")?.binding).toBe("mutable");
-    expect(moduleBindingsOf("const T = [];\nconst U = T;").get("T")?.binding).toBe("mutable");
-    expect(moduleBindingsOf("const T = [];\nf(T);").get("T")?.binding).toBe("mutable");
-    expect(moduleBindingsOf("const T = {a:1};\nT.a++;").get("T")?.binding).toBe("mutable");
+  it("a binding mutated from inside a function, aliased, or handed off is not pure", () => {
+    expect(moduleBindingsOf("const T = [];\nfunction g() { T[0] = 1; }").get("T")?.binding).toBe(
+      "mutable",
+    );
+    expect(moduleBindingsOf("const T = [];\nfunction g() { T.push(1); }").get("T")?.binding).toBe(
+      "mutable",
+    );
+    expect(moduleBindingsOf("const T = [];\nconst U = T;").get("T")?.binding).toBe("mutable"); // alias
+    expect(moduleBindingsOf("const T = [];\nf(T);").get("T")?.binding).toBe("mutable"); // hand-off
+    expect(moduleBindingsOf("const T = {a:1};\nfunction g() { T.a++; }").get("T")?.binding).toBe(
+      "mutable",
+    );
+  });
+
+  it("a binding filled by top-level writes during module initialization is pure (init closure)", () => {
+    // base64-js shape: a table built by a loop at module top level, then read by functions.
+    const b = moduleBindingsOf(
+      [
+        "var lookup = [];",
+        "var code = 'ABCD';",
+        "for (var i = 0; i < code.length; i++) { lookup[i] = code[i]; }",
+        "lookup.push('z');",
+        "export function read(k) { return lookup[k]; }",
+      ].join("\n"),
+    );
+    expect(b.get("lookup")?.binding).toBe("pure");
+    expect(b.get("code")?.binding).toBe("pure");
+  });
+
+  it("a top-level write that reads an unexplained name does not make the binding pure", () => {
+    const b = moduleBindingsOf(
+      "var T = [];\nT[0] = secretFetch();\nexport function r(i) { return T[i]; }",
+    );
+    expect(b.get("T")?.binding).toBe("mutable");
+  });
+
+  it("a typed-array initializer is pure: its reads are ambient builtins", () => {
+    const b = moduleBindingsOf("var A = typeof Uint8Array !== 'undefined' ? Uint8Array : Array;");
+    expect(b.get("A")?.binding).toBe("pure");
   });
 
   it("plain reads do not disqualify a pure const", () => {
@@ -436,11 +468,8 @@ describe("external surface from the sidecar (WI-EXPLAIN-03, #1172)", () => {
 describe("report wording is structural, not feasibility (WI-GUARD A4, #1257)", () => {
   it("the gate warning states a structural finding and does not claim feasibility", () => {
     const messages: string[] = [];
-    enforceDucGate(
-      "export function f(x: number): number { return helper(x); }",
-      "f",
-      "warn",
-      (m) => messages.push(m),
+    enforceDucGate("export function f(x: number): number { return helper(x); }", "f", "warn", (m) =>
+      messages.push(m),
     );
     expect(messages).toHaveLength(1);
     expect(messages[0]).toContain("unresolved references with no declared source");
