@@ -477,3 +477,34 @@ describe("report wording is structural, not feasibility (WI-GUARD A4, #1257)", (
     expect(messages[0]).not.toMatch(/exploit|vulnerab|will be reached/i);
   });
 });
+
+// Pinned behaviour for two open items on the module-binding classifier. These record
+// what the classifier does today; they do not change it. See #1266 (mutable module
+// state has no capture policy) and #1267 (the initialization-closure window).
+describe("module-binding classification pins (#1266 mutable state, #1267 init window)", () => {
+  it("#1266: a binding written from a function after its initializer stays mutable", () => {
+    const b = moduleBindingsOf(
+      "const T = [];\nexport function grow() { T.push(1); }",
+    );
+    expect(b.get("T")?.binding).toBe("mutable");
+  });
+  it("#1266: a counter bumped inside a function stays mutable", () => {
+    const b = moduleBindingsOf("let C = 0;\nexport function bump() { C++; }");
+    expect(b.get("C")?.binding).toBe("mutable");
+  });
+  it("#1267: an initializer that reads a later-declared binding is conservatively mutable", () => {
+    const b = moduleBindingsOf("const A = B + 1;\nconst B = 2;\nexport const out = A;");
+    expect(b.get("A")?.binding).toBe("mutable"); // read before init within the module
+    expect(b.get("B")?.binding).toBe("pure");
+  });
+  it("#1267: an initializer that reads an imported name is conservatively mutable (cycle window)", () => {
+    const b = moduleBindingsOf(
+      "import { x } from './other.js';\nconst A = x + 1;\nexport const out = A;",
+    );
+    expect(b.get("A")?.binding).toBe("mutable");
+  });
+  it("#1267: a call to a module-local pure function in an initializer is pure", () => {
+    const b = moduleBindingsOf("function mk() { return 3; }\nconst A = mk();");
+    expect(b.get("A")?.binding).toBe("pure");
+  });
+});
