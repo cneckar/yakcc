@@ -22,6 +22,7 @@
 
 import { createHash } from "node:crypto";
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-morph";
+import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { normalizeLiteral } from "./literal.js";
 import type { DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
@@ -48,71 +49,8 @@ export interface LiftOptions {
   readonly ambientGlobals?: readonly string[];
 }
 
-const DEFAULT_AMBIENT_GLOBALS: readonly string[] = [
-  "Math",
-  "JSON",
-  "Object",
-  "Array",
-  "Number",
-  "String",
-  "Boolean",
-  "Symbol",
-  "BigInt",
-  "Date",
-  "RegExp",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Promise",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "encodeURIComponent",
-  "decodeURIComponent",
-  "encodeURI",
-  "decodeURI",
-  // Pure legacy string codecs. Like encodeURIComponent they are total functions of their argument.
-  "escape",
-  "unescape",
-  "globalThis",
-  // Implicit per-call binding of a non-arrow function. It is a runtime input, not a
-  // dangling name. The diamond still feeds the result, so influence is kept.
-  "arguments",
-  // Pure host data: reading these carries no authority and schedules no code. Timers,
-  // process, require, module, exports, and the __dirname/__filename bindings are NOT here:
-  // they reach the environment or run code later, so they stay unexplained until a
-  // checker classifies them (DEC-DUC-HOST-GLOBALS-001).
-  // Pure ECMAScript builtins: typed arrays and buffers are data constructors.
-  "Uint8Array",
-  "Uint8ClampedArray",
-  "Uint16Array",
-  "Uint32Array",
-  "Int8Array",
-  "Int16Array",
-  "Int32Array",
-  "Float32Array",
-  "Float64Array",
-  "BigInt64Array",
-  "BigUint64Array",
-  "ArrayBuffer",
-  "DataView",
-  "Buffer",
-  "TextEncoder",
-  "TextDecoder",
-  "URL",
-  "URLSearchParams",
-  "structuredClone",
-  "atob",
-  "btoa",
-  "undefined",
-  "NaN",
-  "Infinity",
-];
+// The platform primitives are the per-target base sets in base-set.ts (D5, #1282).
+
 
 interface ImportBinding {
   readonly reason: DiamondReason;
@@ -184,7 +122,8 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
     );
   }
 
-  const ambient = new Set(options.ambientGlobals ?? DEFAULT_AMBIENT_GLOBALS);
+  // Names a target provides are platform primitives (D5); which target is checked by the closure check.
+  const ambient = new Set(options.ambientGlobals ?? KNOWN_PRIMITIVES);
   const builder = new Lifter(ambient);
   builder.collectImports(file);
   builder.run(file);

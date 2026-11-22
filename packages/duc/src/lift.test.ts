@@ -454,15 +454,18 @@ describe("host globals: pure host data is explained, authority-bearing names are
     expect(diamondReasons(g)).toEqual(expect.arrayContaining(["platform-primitive"]));
     expect(diamondSymbols(g)).toEqual(expect.arrayContaining(["Buffer", "TextEncoder"]));
   });
-  it("process, require, and the timers are not ambient reads", () => {
+  it("process and the timers are platform primitives; require is not (D5, #1282)", () => {
+    // Authority is a label in the target's base set (base-set.ts), not an unexplained name.
     const g = lift("export function f() { return process.env.X; }");
     expect(g.nodes.find((n) => n.diamond?.symbol === "process")?.diamond?.reason).toBe(
-      "free-identifier",
+      "platform-primitive",
     );
     const t = lift("export function f(cb: () => void) { setTimeout(cb, 0); }");
     expect(t.nodes.find((n) => n.diamond?.symbol === "setTimeout")?.diamond?.reason).toBe(
-      "free-identifier",
+      "platform-primitive",
     );
+    const r = lift("export function f() { return require('m'); }");
+    expect(r.nodes.find((n) => n.diamond?.symbol === "require")?.diamond?.reason).toBe("free-identifier");
   });
 });
 

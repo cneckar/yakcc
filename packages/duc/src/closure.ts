@@ -7,6 +7,7 @@
  *
  * This is checked from the graph alone. It does not run the code.
  */
+import type { BaseSet } from "./base-set.js";
 import { graphIdentity } from "./canonical.js";
 import type { DiamondLabel, DucGraph } from "./types.js";
 
@@ -24,6 +25,8 @@ export interface ClosureReport {
 export interface ClosureOptions {
   /** Symbols linked to atoms in the corpus (composition references). */
   readonly linked?: ReadonlySet<string>;
+  /** The target's base set: a platform primitive it does not provide is a hole on that target. */
+  readonly baseSet?: BaseSet;
 }
 
 /** The closure of a graph, given the symbols linked to corpus atoms. */
@@ -35,7 +38,7 @@ export function closureOf(g: DucGraph, options: ClosureOptions = {}): ClosureRep
   for (const node of g.nodes) {
     const d = node.diamond;
     if (d === undefined) continue;
-    if (d.reason === "platform-primitive") {
+    if (d.reason === "platform-primitive" && (options.baseSet === undefined || d.symbol in options.baseSet.primitives)) {
       primitives.add(d.symbol);
     } else if (linked.has(d.symbol)) {
       linkedUsed.add(d.symbol);
@@ -89,6 +92,7 @@ export interface SubmissionReport {
 export function checkSubmission(
   batch: readonly SubmittedAtom[],
   storedContracts: ReadonlySet<string>,
+  baseSet?: BaseSet,
 ): SubmissionReport {
   const present = new Set<string>([...storedContracts, ...batch.map((a) => a.spec)]);
   const atoms = batch.map(({ spec, graph }): AtomSubmission => {
@@ -96,7 +100,11 @@ export function checkSubmission(
     const unresolved = new Set<string>();
     for (const node of graph.nodes) {
       const d = node.diamond;
-      if (d === undefined || d.reason === "platform-primitive") continue;
+      if (d === undefined) continue;
+      if (d.reason === "platform-primitive") {
+        if (baseSet !== undefined && !(d.symbol in baseSet.primitives)) holes.add(d.symbol);
+        continue;
+      }
       if (d.spec === undefined) holes.add(d.symbol);
       else if (!present.has(d.spec)) unresolved.add(d.spec);
     }
