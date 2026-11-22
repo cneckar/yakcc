@@ -19,6 +19,7 @@ import { liftAtom } from "../packages/duc/dist/lift.js";
 import { printLineForm, parseLineForm } from "../packages/duc/dist/line-form.js";
 import { retrievalSignature } from "../packages/duc/dist/retrieval-signature.js";
 import { graphIdentity } from "../packages/duc/dist/canonical.js";
+import { rankStructurally, structuralBag } from "../packages/duc/dist/similarity.js";
 import { shavePackage, collectForestSlicePlans } from "../packages/shave/dist/universalize/module-graph.js";
 import { slice } from "../packages/shave/dist/universalize/slicer.js";
 
@@ -146,11 +147,14 @@ for (const a of atoms) {
   a.sig = retrievalSignature(g);
   // Structurally identical atoms are one distinct structure (D1/D6): a hit is any member of the group.
   a.identity = graphIdentity(g);
-  index.push({ id: a.id, identity: a.identity, vec: await embed(a.sig) });
+  index.push({ id: a.id, identity: a.identity, bag: structuralBag(g), vec: await embed(a.sig) });
 }
 const dot = (x, y) => { let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * y[i]; return s; };
 
 // 5. Queries.
+// Selection (#1280): the vector search's top RERANK_K, reranked by identity and then structural
+// distance to the query. Reported beside the vector-only rank, as family "<fam>+select".
+const RERANK_K = Number(process.env.RERANK_K ?? 10);
 const families = {};
 const note = (fam, rank, id) => {
   const f = (families[fam] ??= { n: 0, top1: 0, top5: 0, top10: 0, ranks: [], misses: [] });
@@ -177,13 +181,26 @@ for (const a of atoms) {
     try { parseLineForm(text); queries[fam] = text; } catch { families.invalid ??= { n: 0 }; families.invalid.n++; }
   }
   for (const [fam, text] of Object.entries(queries)) {
-    const sig = retrievalSignature(parseLineForm(text));
+    const qGraph = parseLineForm(text);
+    const sig = retrievalSignature(qGraph);
     const q = await embed(sig);
-    const sims = index.map((e) => ({ id: e.id, identity: e.identity, s: dot(q, e.vec) })).sort((x, y) => y.s - x.s);
+    const sims = index.map((e) => ({ id: e.id, identity: e.identity, bag: e.bag, s: dot(q, e.vec) })).sort((x, y) => y.s - x.s);
     const hit = sims.findIndex((e) => e.identity === a.identity);
     if (hit === -1) throw new Error(`atom ${a.id} is not in the index`);
     const rank = hit + 1;
     note(fam, rank, a.id);
+    // Rerank the top k structurally; one candidate per identity, as the store holds one graph each.
+    const seenIds = new Set();
+    const top = [];
+    for (const e of sims) {
+      if (seenIds.has(e.identity)) continue;
+      seenIds.add(e.identity);
+      top.push({ item: e, identity: e.identity, bag: e.bag, score: e.s });
+      if (top.length === RERANK_K) break;
+    }
+    const reranked = rankStructurally(graphIdentity(qGraph), structuralBag(qGraph), top);
+    const at = reranked.findIndex((c) => c.identity === a.identity);
+    note(`${fam}+select`, at === -1 ? RERANK_K + 1 + hit : at + 1, a.id);
   }
 }
 
