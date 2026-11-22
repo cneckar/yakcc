@@ -53,9 +53,11 @@ describe("line form (#1275, item 2)", () => {
     expect(() => printLineForm(g)).toThrow(/loop/);
   });
 
-  it("a ternary is refused by the printer: its join has no if block", () => {
+  it("a ternary prints as select, and parses back to the same structure", () => {
     const g = liftAtom("export function f(c: boolean, x: number): number { return c ? x : 0; }");
-    expect(() => printLineForm(g)).toThrow(/join .* has no if at its level/);
+    const text = printLineForm(g);
+    expect(text).toMatch(/^select /m);
+    expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(g));
   });
 
   it("an unknown directive is rejected, with its line", () => {

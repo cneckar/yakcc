@@ -12,6 +12,7 @@ One directive per line:
 - `else` starts the part that runs when the named boolean is false. It is optional.
 - `end` closes the branch.
 - `join <out> <cond> <then> <else>` must come on the line directly after `end`. It gives `<out>` the value of `<then>` when `<cond>` is true, and the value of `<else>` otherwise. `<cond>` is the name given to `if`. `<then>` is a name defined in the then-part, or a name from before the `if`. `<else>` is a name defined in the else-part, or a name from before the `if`. If there is no `else`, use a name from before the `if` for `<else>`.
+- `select <out> <cond> <then> <else>` gives `<out>` the value of `<then>` when `<cond>` is true and of `<else>` otherwise. Use it for a conditional expression that is not a statement, with no `if` around it.
 - `out <name>` returns a value. It must be outside every branch.
 - Lines beginning with `#` are comments.
 

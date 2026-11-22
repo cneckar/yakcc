@@ -50,6 +50,24 @@ describe("structured if in the line form (#1275)", () => {
     expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom(SOURCES[1] as string)));
   });
 
+  it("a ternary inside a branch prints as select inside the branch, and round-trips", () => {
+    const src = "export function f(c: boolean, d: boolean, x: number): number { let r = x; if (c) { r = d ? x + 1 : x - 1; } return r; }";
+    const g = liftAtom(src);
+    const text = printLineForm(g);
+    expect(text).toMatch(/^select /m);
+    expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(g));
+  });
+
+  it("select takes a condition and two values, and defines its result", () => {
+    const g = parseLineForm("param c\nparam x\nlit \"0\" -> z\nselect r c x z\nout r\n");
+    expect(g.nodes.some((n) => n.kind === "sel")).toBe(true);
+    expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+  });
+
+  it("select with the wrong number of operands is an error", () => {
+    expect(() => parseLineForm("param c\nparam x\nselect r c x\n")).toThrow(/expected: select/);
+  });
+
   it("an if with an empty body keeps its branch through a round trip", () => {
     const text = "param c\nif c\nend\nout c\n";
     const g = parseLineForm(text);

@@ -17,6 +17,8 @@
  *   join <name> <cond> <then> <else>    the value of a branch after its end: <then> and <else> are
  *                                       the values on each side (a name from before the if, or one
  *                                       defined on that side). It must directly follow its end.
+ *   select <name> <cond> <then> <else>  a value chosen by a condition, with no branch around it (a
+ *                                       ternary). Both values are computed; the condition picks one.
  *   out <name>                          an observation, in order; top level only
  *   # ...                               a comment line
  *
@@ -220,6 +222,15 @@ export function parseLineForm(text: string): DucGraph {
       return;
     }
 
+    if (head === "select") {
+      if (rest.length !== 4) throw new LineFormError(line, "expected: select <name> <cond> <then> <else>");
+      const [outName, condName, thenName, elseName] = rest as [string, string, string, string];
+      const inputs = [use(condName, line), use(thenName, line), use(elseName, line)];
+      const out = define(outName, line);
+      add({ kind: "sel", inputs, outputs: [out] }, currentRegion());
+      return;
+    }
+
     if (head === "out") {
       if (open.length > 0) throw new LineFormError(line, "an observation cannot be inside an if yet");
       if (rest.length !== 1) throw new LineFormError(line, "expected: out <name>");
@@ -262,23 +273,24 @@ export function printLineForm(g: DucGraph): string {
     return p;
   };
 
-  // Each join belongs to an if at its level with the same condition. When one of the if's sides
-  // produces an input of the join, that if is the owner, and there is only one. When neither side
-  // does (the branch just takes existing values), the join could follow any such if: the graph is
-  // the same, since the join's region depends only on its level. The first is taken.
+  // A join belongs to the if whose side produces one of its inputs; values are single-assignment,
+  // so there is exactly one. A select with no such if is a plain node, printed as `select`. A
+  // branch that only takes existing values has a join of that kind too, and prints the same way:
+  // the graph is identical, since the branch record is printed by its own `if` block.
   const joinOwner = new Map<NodeId, DucBranch>();
   for (const node of g.nodes) {
     if (node.kind !== "sel") continue;
-    if (node.inputs.length !== 3) throw new Error(`join ${node.id} needs a condition and two values`);
+    if (node.inputs.length !== 3) throw new Error(`select ${node.id} needs a condition and two values`);
     const [cond, thenV, elseV] = node.inputs as [ValueId, ValueId, ValueId];
-    const sameSite = branches.filter((b) => b.cond === cond && b.within === node.region);
-    const strong = sameSite.filter(
-      (b) => isPrefix(sidePath(b, "t"), producerOf(thenV).region) || isPrefix(sidePath(b, "e"), producerOf(elseV).region),
+    const owners = branches.filter(
+      (b) =>
+        b.cond === cond &&
+        b.within === node.region &&
+        (isPrefix(sidePath(b, "t"), producerOf(thenV).region) || isPrefix(sidePath(b, "e"), producerOf(elseV).region)),
     );
-    if (strong.length > 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
-    const owner = strong[0] ?? sameSite[0];
-    if (owner === undefined) throw new Error(`join ${node.id} has no if at its level`);
-    joinOwner.set(node.id, owner);
+    if (owners.length > 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
+    const owner = owners[0];
+    if (owner !== undefined) joinOwner.set(node.id, owner);
   }
 
   // Visibility: a value is used only where its producer's scope encloses the use (D5 scope rules).
@@ -338,8 +350,11 @@ export function printLineForm(g: DucGraph): string {
         }
         return `${head} ${node.diamond.symbol} -> ${out}`;
       }
-      case "sel":
-        throw new Error(`join ${node.id} has no branch`);
+      case "sel": {
+        if (out === undefined || node.inputs.length !== 3) throw new Error(`select ${node.id} needs a value and two inputs`);
+        const [cond, thenV, elseV] = node.inputs;
+        return `select ${out} ${cond} ${thenV} ${elseV}`;
+      }
       default:
         throw new Error(`"${node.kind}" is a loop, which the line form does not express yet`);
     }
