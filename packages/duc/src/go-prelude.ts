@@ -824,5 +824,169 @@ var fnNumber any = func(a ...any) any {
 }
 var fnBoolean any = func(a ...any) any { return truthy(arg(a, 0)) }
 
+func hasKey(k any, o any) any {
+	key := str(k)
+	switch v := o.(type) {
+	case *Object:
+		_, ok := v.Vals[key]
+		return ok
+	case *Array:
+		if key == "length" {
+			return true
+		}
+		i, err := strconv.Atoi(key)
+		return err == nil && i >= 0 && i < len(v.Items) && strconv.Itoa(i) == key
+	}
+	return throw(&JsError{"TypeError", "Cannot use 'in' operator to search for '" + key + "' in " + str(o)})
+}
+
+func isArray(x any) any {
+	_, ok := x.(*Array)
+	return ok
+}
+
+func charAt(s any, i any) any {
+	r := []rune(strMethod(s))
+	k := 0
+	if i != Undefined {
+		f := math.Trunc(num(i))
+		if math.IsNaN(f) {
+			f = 0
+		}
+		if f < 0 || f >= float64(len(r)) {
+			return ""
+		}
+		k = int(f)
+	}
+	if k >= len(r) {
+		return ""
+	}
+	return string(r[k])
+}
+
+func charCodeAt(s any, i any) any {
+	c := charAt(s, i).(string)
+	if c == "" {
+		return math.NaN()
+	}
+	return float64([]rune(c)[0])
+}
+
+func at(s any, i any) any {
+	if v, ok := s.(string); ok {
+		r := []rune(v)
+		k := int(math.Trunc(num(i)))
+		if k < 0 {
+			k += len(r)
+		}
+		if k < 0 || k >= len(r) {
+			return Undefined
+		}
+		return string(r[k])
+	}
+	a := s.(*Array)
+	k := int(math.Trunc(num(i)))
+	if k < 0 {
+		k += len(a.Items)
+	}
+	if k < 0 || k >= len(a.Items) {
+		return Undefined
+	}
+	return a.Items[k]
+}
+
+func match(s any, r any) any {
+	v := str(s)
+	re, ok := r.(*RegExp)
+	if !ok {
+		re = &RegExp{Re: regexp.MustCompile(regexp.QuoteMeta(str(r)))}
+	}
+	if re.Global {
+		all := re.Re.FindAllString(v, -1)
+		if all == nil {
+			return nil
+		}
+		out := &Array{}
+		for _, m := range all {
+			out.Items = append(out.Items, m)
+		}
+		return out
+	}
+	loc := re.Re.FindStringSubmatchIndex(v)
+	if loc == nil {
+		return nil
+	}
+	out := &Array{}
+	for g := 0; g < len(loc)/2; g++ {
+		if loc[2*g] < 0 {
+			out.Items = append(out.Items, Undefined)
+		} else {
+			out.Items = append(out.Items, v[loc[2*g]:loc[2*g+1]])
+		}
+	}
+	return out
+}
+
+func pop(a any) any {
+	v := a.(*Array)
+	if len(v.Items) == 0 {
+		return Undefined
+	}
+	x := v.Items[len(v.Items)-1]
+	v.Items = v.Items[:len(v.Items)-1]
+	return x
+}
+
+func shift(a any) any {
+	v := a.(*Array)
+	if len(v.Items) == 0 {
+		return Undefined
+	}
+	x := v.Items[0]
+	v.Items = v.Items[1:]
+	return x
+}
+
+func reverse(a any) any {
+	v := a.(*Array)
+	for i, j := 0, len(v.Items)-1; i < j; i, j = i+1, j-1 {
+		v.Items[i], v.Items[j] = v.Items[j], v.Items[i]
+	}
+	return a
+}
+
+// toInt32 and toUint32 are JavaScript's ToInt32 and ToUint32.
+func toUint32(x any) uint32 {
+	f := num(x)
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0
+	}
+	f = math.Mod(math.Trunc(f), 4294967296)
+	if f < 0 {
+		f += 4294967296
+	}
+	return uint32(f)
+}
+
+func toInt32(x any) int32 { return int32(toUint32(x)) }
+
+func band(a any, b any) any { return float64(toInt32(a) & toInt32(b)) }
+func bor(a any, b any) any  { return float64(toInt32(a) | toInt32(b)) }
+func bxor(a any, b any) any { return float64(toInt32(a) ^ toInt32(b)) }
+func shl(a any, b any) any  { return float64(toInt32(a) << (toUint32(b) & 31)) }
+func shr(a any, b any) any  { return float64(toInt32(a) >> (toUint32(b) & 31)) }
+func ushr(a any, b any) any { return float64(toUint32(a) >> (toUint32(b) & 31)) }
+func bnot(a any) any        { return float64(^toInt32(a)) }
+
+func isFiniteNumber(x any) any {
+	f, ok := x.(float64)
+	return ok && !math.IsNaN(f) && !math.IsInf(f, 0)
+}
+
+func isIntegerNumber(x any) any {
+	f, ok := x.(float64)
+	return ok && !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f)
+}
+
 var _ = sort.Strings
 `;

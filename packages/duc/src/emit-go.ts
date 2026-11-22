@@ -48,6 +48,13 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
   forEach: (r, a) => `forEachArr(${r}, ${a[0]})`,
   find: (r, a) => `findArr(${r}, ${a[0]})`,
   findIndex: (r, a) => `findIndexArr(${r}, ${a[0]})`,
+  charAt: (r, a) => `charAt(${r}, ${a[0] ?? "Undefined"})`,
+  charCodeAt: (r, a) => `charCodeAt(${r}, ${a[0] ?? "Undefined"})`,
+  at: (r, a) => `at(${r}, ${a[0] ?? "Undefined"})`,
+  match: (r, a) => `match(${r}, ${a[0] ?? "Undefined"})`,
+  pop: (r) => `pop(${r})`,
+  shift: (r) => `shift(${r})`,
+  reverse: (r) => `reverse(${r})`,
 };
 
 const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) => string>> = {
@@ -62,7 +69,18 @@ const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) =
     min: (a) => `mathMin(${a.join(", ")})`,
     pow: (a) => `pow(${a[0]}, ${a[1]})`,
   },
-  Object: { keys: (a) => `arr(keys(${a[0]})...)` },
+  Object: {
+    keys: (a) => `arr(keys(${a[0]})...)`,
+    // Freezing changes nothing a lowered function can observe without a write to the frozen value.
+    freeze: (a) => a[0] ?? "Undefined",
+  },
+  Array: { isArray: (a) => `any(isArray(${a[0] ?? "Undefined"}))` },
+  Number: {
+    isFinite: (a) => `isFiniteNumber(${a[0] ?? "Undefined"})`,
+    isInteger: (a) => `isIntegerNumber(${a[0] ?? "Undefined"})`,
+    isNaN: (a) =>
+      `any(func(x any) bool { f, ok := x.(float64); return ok && math.IsNaN(f) }(${a[0] ?? "Undefined"}))`,
+  },
 };
 
 const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
@@ -70,6 +88,9 @@ const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
   Number: (a) => `any(num(${a[0] ?? "float64(0)"}))`,
   Boolean: (a) => `any(truthy(${a[0] ?? "Undefined"}))`,
   parseInt: (a) => `parseInt(${a[0] ?? "Undefined"}, ${a[1] ?? "Undefined"})`,
+  isNaN: (a) => `any(math.IsNaN(num(${a[0] ?? "Undefined"})))`,
+  isFinite: (a) =>
+    `any(func(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }(num(${a[0] ?? "Undefined"})))`,
 };
 
 const PLATFORM_VALUES: Record<string, string> = {
@@ -77,6 +98,8 @@ const PLATFORM_VALUES: Record<string, string> = {
   String: "fnString",
   Number: "fnNumber",
   Boolean: "fnBoolean",
+  Infinity: "any(math.Inf(1))",
+  NaN: "any(math.NaN())",
 };
 
 /** A regular expression literal as Go's RE2, where the two mean the same (see regexToPython). */
@@ -278,6 +301,13 @@ function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { bo
         "&&": "and",
         "||": "or",
         "??": "nullish",
+        "&": "band",
+        "|": "bor",
+        "^": "bxor",
+        "<<": "shl",
+        ">>": "shr",
+        ">>>": "ushr",
+        in: "hasKey",
       };
       const fn = binary[label];
       if (fn !== undefined) return `${fn}(${arg(0)}, ${arg(1)})`;
@@ -298,6 +328,7 @@ function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { bo
     }
     if (ins.length === 1) {
       if (label === "!") return `any(!truthy(${arg(0)}))`;
+      if (label === "~") return `bnot(${arg(0)})`;
       if (label === "-") return `neg(${arg(0)})`;
       if (label === "+") return `any(num(${arg(0)}))`;
       if (label === "TypeOfExpression") return `any(typeOf(${arg(0)}))`;

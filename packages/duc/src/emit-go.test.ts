@@ -262,6 +262,35 @@ describe.skipIf(!go)("lowering to Go: conformance (#1278)", () => {
       "export function f(xs: string[]) { return [xs.map(Number), xs.map(String), xs.filter(Boolean).length, xs.find((x) => x === '2'), xs.findIndex((x) => x === '9')]; }",
       [[["1", "2", ""]], [[]]],
     ],
+    [
+      "in, Array.isArray and Object.freeze",
+      "export function f(o: any) { return ['a' in o, Array.isArray(o), Object.freeze(o) === o]; }",
+      [[{ a: 1 }], [{ b: 1 }], [[1]]],
+    ],
+    [
+      "string positions and match",
+      "export function f(s: string) { return [s.charAt(1), s.charCodeAt(0), s.at(-1), s.match(/(a)(x)?/), s.match(/a/g)]; }",
+      [["banana"], [""], ["xyz"]],
+    ],
+    [
+      "array pop, shift and reverse",
+      "export function f(xs: number[]) { const a = xs.pop(); const b = xs.shift(); return [a, b, xs.reverse()]; }",
+      [[[1, 2, 3, 4]], [[]]],
+    ],
+    [
+      "bitwise operators",
+      "export function f(a: number, b: number) { return [a & b, a | b, a ^ b, a << b, a >> b, a >>> b, ~a]; }",
+      [
+        [5, 3],
+        [-9, 2],
+        [4294967297, 33],
+      ],
+    ],
+    [
+      "numeric checks and Infinity",
+      "export function f(x: any) { return [Number.isFinite(x), Number.isInteger(x), Number.isNaN(x), isNaN(x), isFinite(x), x < Infinity]; }",
+      [[1], [1.5], ["7"], [null], ["abc"]],
+    ],
   ];
   for (const [name, src, inputs] of more) {
     it(`computes what the source computes: ${name}`, { timeout: 120_000 }, () => {
