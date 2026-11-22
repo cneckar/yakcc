@@ -41,7 +41,7 @@ name: bench-b7-commit
 
 on:
   schedule:
-    - cron: "5 9 * * *"   # 09:05 UTC daily — offset from B1 to avoid runner queue collision
+    - cron: "5 9 * * 0"   # 09:05 UTC Sundays (weekly) — offset from B1 to avoid runner queue collision
   workflow_dispatch:        # manual trigger (ad-hoc runs + Slice 3 first-run)
   push:
     branches: [ main ]
