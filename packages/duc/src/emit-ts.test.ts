@@ -20,7 +20,8 @@ const CASES: Case[] = [
   { name: "prefix and postfix steps", source: "export function f(a: number): number { let x = a; ++x; x++; return x; }", args: [[1]] },
   { name: "branch with joins on both sides", source: "export function f(c: boolean, x: number, y: number): number { let r = 0; if (c) { r = x + 1; } else { r = y - 1; } return r; }", args: [[true, 1, 9], [false, 1, 9]] },
   { name: "branch that takes existing values", source: "export function f(a: number, b: number): number { let r = a; if (b > a) { r = b; } return r; }", args: [[1, 2], [5, 2]] },
-  { name: "ternary", source: "export function f(c: boolean, x: number): number { return c ? x * 2 : -x; }", args: [[true, 3], [false, 3]] },
+  { name: "typeof and void", source: "export function f(x: unknown): unknown { return typeof x === 'string' ? void 0 : typeof x; }", args: [["a"], [1]] },
+    { name: "ternary", source: "export function f(c: boolean, x: number): number { return c ? x * 2 : -x; }", args: [[true, 3], [false, 3]] },
   { name: "early return", source: "export function f(c: boolean, x: number): number { if (c) { return x + 1; } return x - 1; }", args: [[true, 3], [false, 3]] },
   { name: "while loop", source: "export function f(n: number, x: number): number { let s = 0; let i = 0; while (i < n) { s = s + x; i = i + 1; } return s; }", args: [[0, 5], [4, -2]] },
   { name: "for loop", source: "export function f(n: number): number { let s = 0; for (let i = 0; i < n; i = i + 1) { s = s + i; } return s; }", args: [[0], [5]] },
@@ -36,7 +37,7 @@ function run(code: string, args: readonly unknown[]): unknown {
 }
 
 function runSource(source: string, args: readonly unknown[]): unknown {
-  const js = source.replace(/: (number|string|boolean|object|number\[\])(?=[,)\s{;])/g, "");
+  const js = source.replace(/: (number|string|boolean|object|unknown|number\[\])(?=[,)\s{;])/g, "");
   return run(js, args);
 }
 
@@ -50,8 +51,8 @@ describe("emitting TypeScript from the graph (5A)", () => {
     });
   }
 
-  it("refuses an opaque node: a closure has no structure to emit", () => {
-    const g = liftAtom("export function f(a: number): number { const g = () => a + 1; return g(); }");
+  it("refuses an opaque node: a recursive function has no structure to emit", () => {
+    const g = liftAtom("export function f(n: number): number { function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1); } return fact(n); }");
     expect(() => emitTypeScript(g)).toThrow(EmitError);
   });
 });

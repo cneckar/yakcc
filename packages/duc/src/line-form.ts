@@ -33,6 +33,8 @@
  *                                       (not for an iterating loop, which runs once per element)
  *   next <name> ...                     the next value of each carried variable, in order
  *   end <name> ...                      close the loop; the names are its results, one per carry
+ *   function <name> [with <name> ...]   a closure: the lines up to its `end` are a program of their
+ *                                       own, whose first params are the captured names after `with`
  *   out <name>                          an observation, in order; top level only
  *   # ...                               a comment line
  *
@@ -145,7 +147,11 @@ export function parseLineForm(text: string): DucGraph {
     });
   };
 
-  text.split("\n").forEach((raw, i) => {
+  const lines = text.split("\n");
+  // A closure's lines are parsed as its own program, and skipped here.
+  let skipUntil = 0;
+  lines.forEach((raw, i) => {
+    if (i < skipUntil) return;
     const line = i + 1;
     const trimmed = raw.trim();
     if (trimmed === "" || trimmed.startsWith("#")) return;
@@ -438,6 +444,45 @@ export function parseLineForm(text: string): DucGraph {
       return;
     }
 
+    if (head === "function") {
+      const usage = "expected: function <name> [with <name> ...]";
+      const withAt = rest.indexOf("with");
+      if (rest.length === 0 || (withAt !== -1 && withAt !== 1) || (withAt === -1 && rest.length !== 1)) {
+        throw new LineFormError(line, usage);
+      }
+      const captures = withAt === -1 ? [] : rest.slice(2).map((n) => use(n, line));
+      // The closure's program runs to its own end, past the ends of the blocks inside it.
+      let depth = 0;
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const t = (lines[j] as string).trim();
+        if (t === "" || t.startsWith("#")) continue;
+        const h = t.split(/\s+/)[0];
+        if (h === "if" || h === "loop" || h === "function") depth++;
+        else if (h === "end") {
+          if (depth === 0) break;
+          depth--;
+        }
+      }
+      if (j >= lines.length) throw new LineFormError(line, "function is not closed by end");
+      if ((lines[j] as string).trim() !== "end") throw new LineFormError(j + 1, "expected: end");
+      let inner: DucGraph;
+      try {
+        inner = parseLineForm(lines.slice(i + 1, j).join("\n"));
+      } catch (e) {
+        if (e instanceof LineFormError) throw new LineFormError(line + e.line, e.message.replace(/^line \d+: /, ""));
+        throw e;
+      }
+      const params = inner.nodes.filter((n) => n.kind === "param-source").length;
+      if (params < captures.length) {
+        throw new LineFormError(line, `a function that captures ${captures.length} value(s) takes them as its first params`);
+      }
+      const out = define(rest[0] as string, line);
+      add({ kind: "op", inputs: captures, outputs: [out], label: "closure", closure: inner }, currentRegion());
+      skipUntil = j + 1;
+      return;
+    }
+
     if (head === "out") {
       if (open.length > 0) throw new LineFormError(line, "an observation cannot be inside an if or a loop yet");
       if (rest.length !== 1) throw new LineFormError(line, "expected: out <name>");
@@ -661,6 +706,14 @@ export function printLineForm(g: DucGraph): string {
     }
   };
 
+  /** The lines of a closure: its header, its own program, and its end. */
+  const printClosure = (node: DucNode): string[] => {
+    printed.add(node.id);
+    const header = ["function", node.outputs[0] as string, ...(node.inputs.length > 0 ? ["with", ...node.inputs] : [])];
+    const inner = printLineForm(node.closure as DucGraph).trimEnd().split("\n").map((l) => `  ${l}`);
+    return [header.join(" "), ...inner, "end"];
+  };
+
   /** The lines of one loop: its header, its sources, its body, its condition and next values, and its end. */
   const printLoop = (loop: DucNode): string[] => {
     const rec = loop.loop as DucLoop;
@@ -702,6 +755,7 @@ export function printLineForm(g: DucGraph): string {
         produces: node.outputs,
         requires: node.inputs,
         lines: () => {
+          if (node.closure !== undefined) return printClosure(node);
           printed.add(node.id);
           return [printNode(node)];
         },

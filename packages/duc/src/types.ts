@@ -142,6 +142,12 @@ export interface DucNode {
    * says whether to continue, and `next` gives the carried values for the next iteration.
    */
   readonly loop?: DucLoop;
+  /**
+   * Present on a `closure` node (#1275, closures): the closure's own graph. Its first parameters are
+   * the values it captures, which are this node's inputs, in order; then its own parameters. The
+   * closure is an atom of its own; this node makes it from the values it captures.
+   */
+  readonly closure?: DucGraph;
   /** Present iff `kind === "diamond-source"`. */
   readonly diamond?: DiamondLabel;
   readonly origin?: NodeOrigin;

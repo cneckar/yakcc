@@ -123,6 +123,7 @@ interface MutableNode {
   inputs: ValueId[];
   readonly outputs: ValueId[];
   loop?: DucLoop;
+  closure?: DucGraph;
   readonly kind: DucNode["kind"];
   readonly diamond?: DucNode["diamond"];
   readonly origin?: DucNode["origin"];
@@ -316,12 +317,12 @@ class Lifter {
     }
   }
 
-  private liftFunction(fn: FunctionLike): void {
+  private liftFunction(fn: FunctionLike, paramOffset = 0): void {
     for (const [index, param] of fn.getParameters().entries()) {
       const nameNode = param.getNameNode();
       const [value] = this.emit("param-source", [], 1, {
         origin: { kind: "Parameter", text: truncate(nameNode.getText()) },
-        label: String(index),
+        label: String(paramOffset + index),
       });
       // Destructured params: bind every identifier inside the pattern to the one
       // param-source value (conservative aliasing; sound).
@@ -394,11 +395,74 @@ class Lifter {
   ): void {
     // A function's own name inside its body is recursion, not an external read: the
     // recursive result is a value of the closure itself, not a new input to it.
-    const value = this.emit("op", this.collectReads(stmt, new Set([name])), 1, {
-      origin: { kind: "Closure", text: truncate(name) },
-      label: this.opaqueLabel("Closure", stmt, new Set([name])),
-    })[0] as ValueId;
+    const value =
+      this.liftClosure(stmt, name) ??
+      (this.emit("op", this.collectReads(stmt, new Set([name])), 1, {
+        origin: { kind: "Closure", text: truncate(name) },
+        label: this.opaqueLabel("Closure", stmt, new Set([name])),
+      })[0] as ValueId);
     this.env.set(name, value);
+  }
+
+  /**
+   * Lifts a closure as its own graph (#1275, closures), by lambda lifting: the names it reads from
+   * outside are its captures, and become its first parameters; the closure node takes their values
+   * as inputs. Returns undefined for a closure this does not express, which stays opaque: one that
+   * assigns to a name outside it, whose captured names are assigned elsewhere (a closure sees the
+   * latest value), that uses this, super or arguments, that is recursive, async or a generator.
+   */
+  private liftClosure(fn: FunctionLike, selfName?: string): ValueId | undefined {
+    if (fn.isAsync() || (!Node.isArrowFunction(fn) && fn.isGenerator())) return undefined;
+    if (fn.getDescendantsOfKind(SyntaxKind.ThisKeyword).length > 0) return undefined;
+    if (fn.getDescendantsOfKind(SyntaxKind.SuperKeyword).length > 0) return undefined;
+    const locals = closureLocals(fn);
+    const reads = fn.getDescendantsOfKind(SyntaxKind.Identifier);
+    if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments"))) return undefined;
+    if (assignmentTargets(fn).some((t) => {
+      const base = baseIdentifierOfTarget(t);
+      return base === undefined || !locals.has(base);
+    })) {
+      return undefined;
+    }
+    const captures: string[] = [];
+    for (const id of reads) {
+      if (!isValueRead(id)) continue;
+      const name = id.getText();
+      if (!locals.has(name) && !captures.includes(name)) captures.push(name);
+    }
+    if (selfName !== undefined && captures.includes(selfName)) return undefined;
+    // A captured name assigned anywhere outside the closure could change after it is made.
+    const outside = assignmentTargets(fn.getSourceFile()).filter(
+      (t) => !t.getAncestors().some((a) => a.compilerNode === fn.compilerNode),
+    );
+    if (outside.some((t) => captures.includes(baseIdentifierOfTarget(t) ?? ""))) return undefined;
+
+    let graph: DucGraph;
+    try {
+      graph = new Lifter(this.ambient).liftClosureBody(fn, captures);
+    } catch {
+      return undefined;
+    }
+    const inputs = captures.map((name) => this.resolveIdentifier(name));
+    const [value] = this.emit("op", inputs, 1, {
+      origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
+      label: "closure",
+    });
+    (this.nodes[this.nodes.length - 1] as MutableNode).closure = graph;
+    return value as ValueId;
+  }
+
+  /** The graph of a closure's body: its captures are its first parameters, then its own. */
+  liftClosureBody(fn: FunctionLike, captures: readonly string[]): DucGraph {
+    captures.forEach((name, i) => {
+      const [value] = this.emit("param-source", [], 1, {
+        origin: { kind: "Capture", text: truncate(name) },
+        label: String(i),
+      });
+      this.env.set(name, value as ValueId);
+    });
+    this.liftFunction(fn, captures.length);
+    return this.finish();
   }
 
   /** Names a subtree reads from an enclosing scope (identifiers not bound inside it). */
@@ -1078,13 +1142,22 @@ class Lifter {
         label: `tagged:${labelJson(parts)}`,
       })[0] as ValueId;
     }
+    if (Node.isTypeOfExpression(node) || Node.isVoidExpression(node)) {
+      // An operator on one value: its operand is the input.
+      return this.emit("op", [this.liftExpr(node.getExpression())], 1, {
+        origin: { kind: node.getKindName() },
+        label: node.getKindName(),
+      })[0] as ValueId;
+    }
     if (Node.isAwaitExpression(node) || Node.isYieldExpression(node)) {
       const inner = node.getExpression();
       const inputs = inner !== undefined ? [this.liftExpr(inner)] : [];
       return this.emit("op", inputs, 1, { origin: { kind: node.getKindName() } })[0] as ValueId;
     }
     if (Node.isArrowFunction(node) || Node.isFunctionExpression(node)) {
-      // A closure is a value that carries the free variables it captures.
+      const lifted = this.liftClosure(node);
+      if (lifted !== undefined) return lifted;
+      // A closure it cannot express is a value that carries the free variables it captures.
       return this.emit("op", this.collectReads(node), 1, {
         origin: { kind: "Closure" },
         label: this.opaqueLabel("Closure", node),
@@ -1277,6 +1350,7 @@ class Lifter {
       ...(n.label !== undefined ? { label: n.label } : {}),
       ...(n.region !== undefined ? { region: n.region } : {}),
       ...(n.loop !== undefined ? { loop: n.loop } : {}),
+      ...(n.closure !== undefined ? { closure: n.closure } : {}),
     }));
     return canonicalizeGraph(nodes, dedupe(this.obs), this.branches);
   }
@@ -1285,6 +1359,41 @@ class Lifter {
 // ---------------------------------------------------------------------------
 // ts-morph helpers
 // ---------------------------------------------------------------------------
+
+/** The names bound inside a closure: its declarations, parameters, inner functions and classes, and its own name. */
+function closureLocals(fn: Node): Set<string> {
+  const locals = collectRegionLocals(fn);
+  for (const decl of [
+    ...fn.getDescendantsOfKind(SyntaxKind.FunctionDeclaration),
+    ...fn.getDescendantsOfKind(SyntaxKind.ClassDeclaration),
+    ...fn.getDescendantsOfKind(SyntaxKind.FunctionExpression),
+  ]) {
+    const name = decl.getName();
+    if (name !== undefined) locals.add(name);
+  }
+  if (Node.isFunctionExpression(fn)) {
+    const name = fn.getName();
+    if (name !== undefined) locals.add(name);
+  }
+  return locals;
+}
+
+/** The targets of assignments, compound assignments and ++/-- in a subtree. */
+function assignmentTargets(node: Node): Node[] {
+  const targets: Node[] = [];
+  for (const bin of node.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    const op = bin.getOperatorToken().getKind();
+    if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) targets.push(bin.getLeft());
+  }
+  for (const un of [
+    ...node.getDescendantsOfKind(SyntaxKind.PostfixUnaryExpression),
+    ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
+  ]) {
+    const op = un.getOperatorToken();
+    if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken) targets.push(un.getOperand());
+  }
+  return targets;
+}
 
 type FunctionLike =
   | import("ts-morph").FunctionDeclaration

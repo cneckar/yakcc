@@ -38,12 +38,31 @@ const isMemberRead = (label: string): boolean =>
 
 /** Emits a graph as a TypeScript function. Throws EmitError for a graph it cannot express. */
 export function emitTypeScript(g: DucGraph): string {
-  // The structure must be expressible: the line form's checks hold here too.
+  // The structure must be expressible: the line form's checks hold here too, closures included.
   try {
     printLineForm(g);
   } catch (e) {
     throw new EmitError(e instanceof Error ? e.message : String(e));
   }
+  const imports = new Map<string, Set<string>>();
+  const { params, body } = emitFunction(g, "", [], imports);
+  const importLines = [...imports.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([module, symbols]) => `import { ${[...symbols].sort().join(", ")} } from ${JSON.stringify(module)};`);
+  return [...importLines, `export function f(${params.join(", ")}) {`, ...body.map((l) => `  ${l}`), "}", ""].join("\n");
+}
+
+/**
+ * The parameters and body of one function: the atom, or a closure inside it. A closure's captures
+ * are its first parameters; `bound` names them as the enclosing function's values. `prefix` keeps
+ * a closure's names apart from the names around it.
+ */
+function emitFunction(
+  g: DucGraph,
+  prefix: string,
+  bound: readonly string[],
+  imports: Map<string, Set<string>>,
+): { params: string[]; body: string[] } {
   if (g.obs.length > 1) throw new EmitError("more than one observation");
 
   const branches = g.branches ?? [];
@@ -64,11 +83,11 @@ export function emitTypeScript(g: DucGraph): string {
     rec.invariant.forEach((v, j) => invariantOuter.set(v, loop.inputs[offset + j] as ValueId));
   }
 
-  const imports = new Map<string, Set<string>>();
   const nameOf = (v: ValueId): string => {
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
+    if (p?.kind === "param-source" && Number(p.label) < bound.length) return bound[Number(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       if (p.diamond.reason === "unlinked-reference") {
         const module = p.diamond.module;
@@ -77,7 +96,7 @@ export function emitTypeScript(g: DucGraph): string {
       }
       return p.diamond.symbol;
     }
-    return `$${v}`;
+    return `$${prefix}${v}`;
   };
 
   // Nodes written inline, inside the expression that uses them, not as statements of their own.
@@ -200,13 +219,22 @@ export function emitTypeScript(g: DucGraph): string {
     if (label === "throw") return [`throw ${arg(0)};`];
     if (out === undefined) throw new EmitError(`the statement "${label}" has no TypeScript form`);
     const name = nameOf(out);
-    if (COMPOUND.has(label)) return [`let ${name} = ${arg(0)};`, `${name} ${label} ${arg(1)};`];
-    if (label === "++" || label === "--") return [`let ${name} = ${arg(0)};`, `${label}${name};`];
-    if (label === "post++" || label === "post--") return [`let ${name} = ${arg(0)};`, `${name}${label.slice(4)};`];
-    if (label.startsWith(".") && label.endsWith("=")) {
-      return [`let ${name} = ${arg(0)};`, `${name}${label.slice(0, -1)} = ${arg(1)};`];
+    if (node.closure !== undefined) {
+      const inner = emitFunction(node.closure, `${prefix}${node.id}_`, node.inputs.map((v) => ref(v)), imports);
+      return [`const ${name} = (${inner.params.join(", ")}) => {`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
-    if (label === "[]=") return [`let ${name} = ${arg(0)};`, `${name}[${arg(1)}] = ${arg(2)};`];
+    // A reassigned variable is a temporary, and the value's own name is a const: a closure that
+    // captures the value then captures a name that is never assigned again.
+    const t = `${name}$`;
+    if (COMPOUND.has(label)) return [`let ${t} = ${arg(0)};`, `${t} ${label} ${arg(1)};`, `const ${name} = ${t};`];
+    if (label === "++" || label === "--") return [`let ${t} = ${arg(0)};`, `${label}${t};`, `const ${name} = ${t};`];
+    if (label === "post++" || label === "post--") {
+      return [`let ${t} = ${arg(0)};`, `${t}${label.slice(4)};`, `const ${name} = ${t};`];
+    }
+    if (label.startsWith(".") && label.endsWith("=")) {
+      return [`let ${t} = ${arg(0)};`, `${t}${label.slice(0, -1)} = ${arg(1)};`, `const ${name} = ${t};`];
+    }
+    if (label === "[]=") return [`let ${t} = ${arg(0)};`, `${t}[${arg(1)}] = ${arg(2)};`, `const ${name} = ${t};`];
     return [`const ${name} = ${render(node)};`];
   };
 
@@ -231,14 +259,17 @@ export function emitTypeScript(g: DucGraph): string {
     const before: string[] = [];
     const thenAssign: string[] = [];
     const elseAssign: string[] = [];
+    const after: string[] = [];
     for (const j of joins) {
       const [cond, t, e] = j.inputs as [ValueId, ValueId, ValueId];
       // The join's variable starts from a value from before the if, so the binding adds no node.
       const start = !inside(e) ? e : !inside(t) ? t : cond;
       const name = nameOf(j.outputs[0] as ValueId);
-      before.push(`let ${name} = ${ref(start)};`);
-      if (t !== start) thenAssign.push(`${name} = ${ref(t)};`);
-      if (e !== start) elseAssign.push(`${name} = ${ref(e)};`);
+      const temp = `${name}$`;
+      before.push(`let ${temp} = ${ref(start)};`);
+      if (t !== start) thenAssign.push(`${temp} = ${ref(t)};`);
+      if (e !== start) elseAssign.push(`${temp} = ${ref(e)};`);
+      after.push(`const ${name} = ${temp};`);
     }
     const thenLines = [...emitScope(thenPath), ...thenAssign];
     const elseLines = [...emitScope(elsePath), ...elseAssign];
@@ -248,6 +279,7 @@ export function emitTypeScript(g: DucGraph): string {
       ...indent(thenLines),
       ...(elseLines.length > 0 ? ["} else {", ...indent(elseLines)] : []),
       "}",
+      ...after,
     ];
   };
 
@@ -343,14 +375,11 @@ export function emitTypeScript(g: DucGraph): string {
     .map((n) => `${nameOf(n.outputs[0] as ValueId)};`);
 
   const params = g.nodes
-    .filter((n) => n.kind === "param-source")
+    .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
     .sort((a, b) => Number(a.label) - Number(b.label))
     .map((n) => nameOf(n.outputs[0] as ValueId));
   const body = [...unread, ...emitScope(undefined)];
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)};`);
-  const importLines = [...imports.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([module, symbols]) => `import { ${[...symbols].sort().join(", ")} } from ${JSON.stringify(module)};`);
-  return [...importLines, `export function f(${params.join(", ")}) {`, ...indent(body), "}", ""].join("\n");
+  return { params, body };
 }

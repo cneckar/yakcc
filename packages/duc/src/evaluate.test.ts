@@ -55,6 +55,15 @@ function evalScope(g: DucGraph, scope: string | undefined, values: Map<ValueId, 
     if (node.kind === "literal-source") return [literal(node.label ?? "")];
     if (node.kind === "sel") return [input(0) ? input(1) : input(2)];
     if (node.kind === "op" && node.label === "-" && node.inputs.length === 1) return [-(input(0) as number)];
+    if (node.kind === "op" && node.closure !== undefined) {
+      const closure = node.closure;
+      const captured = node.inputs.map((v) => values.get(v));
+      return [(...args: unknown[]) => evaluate(closure, [...captured, ...args])[0]];
+    }
+    if (node.kind === "op" && node.label === "CallExpression") {
+      const fn = input(0) as (...a: unknown[]) => unknown;
+      return [fn(...node.inputs.slice(1).map((v) => values.get(v)))];
+    }
     if (node.kind === "op") {
       const fn = BINARY[node.label ?? ""];
       if (fn === undefined) throw new Error(`unsupported operation ${node.label}`);
@@ -200,6 +209,24 @@ const CASES: { name: string; source: string; args: unknown[][]; fn: (...a: any[]
     source: "export function f(xs: number[], ys: number[]): number { let s = 0; for (const x of xs) { for (const y of ys) { s = s + x * y; } } return s; }",
     args: [[[], [1]], [[1, 2], [3, 4]], [[2], [5, -5, 1]]],
     fn: (xs: number[], ys: number[]) => { let s = 0; for (const x of xs) { for (const y of ys) { s = s + x * y; } } return s; },
+  },
+  {
+    name: "a closure that captures a parameter",
+    source: "export function f(x: number): number { const g = (y: number) => y + x; return g(2) + g(3); }",
+    args: [[1], [10]],
+    fn: (x: number) => { const g = (y: number) => y + x; return g(2) + g(3); },
+  },
+  {
+    name: "a function declaration used twice",
+    source: "export function f(a: number, b: number): number { function sq(n: number): number { return n * n; } return sq(a) + sq(b); }",
+    args: [[2, 3], [-1, 4]],
+    fn: (a: number, b: number) => { function sq(n: number): number { return n * n; } return sq(a) + sq(b); },
+  },
+  {
+    name: "a closure with a branch, made inside a loop",
+    source: "export function f(xs: number[], k: number): number { let s = 0; for (const x of xs) { const g = (v: number) => { if (v > k) { return v; } return 0; }; s = s + g(x); } return s; }",
+    args: [[[], 1], [[1, 5, 3], 2]],
+    fn: (xs: number[], k: number) => { let s = 0; for (const x of xs) { const g = (v: number) => { if (v > k) { return v; } return 0; }; s = s + g(x); } return s; },
   },
 ];
 

@@ -23,6 +23,20 @@ import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } fro
  */
 const COMMUTATIVE = new Set(["===", "!=="]);
 
+/**
+ * A closure's graph with its captures renumbered: capture `order[k]` becomes capture k. The
+ * captures are the closure graph's first parameters, one per input of the closure node.
+ */
+function withCaptureOrder(closure: DucGraph, order: readonly number[]): DucGraph {
+  const position = new Map(order.map((old, pos) => [old, pos] as const));
+  const nodes = closure.nodes.map((n) => {
+    if (n.kind !== "param-source") return n;
+    const at = position.get(Number(n.label));
+    return at === undefined ? n : { ...n, label: String(at) };
+  });
+  return canonicalizeGraph(nodes, closure.obs, closure.branches ?? []);
+}
+
 /** Where a loop's invariants start among its inputs: after the carries' initial values and the iterable. */
 function invariantOffset(node: DucNode): number {
   const loop = node.loop as DucLoop;
@@ -128,6 +142,30 @@ export function canonicalizeGraph(
       .join("/");
   };
 
+  // A closure's captures are ordered by the structure of the values they capture, so the order its
+  // body happened to read them in does not matter; its graph is renumbered to match.
+  const captureOrders = new Map<DucNode, number[]>();
+  const captureOrderOf = (node: DucNode): number[] => {
+    const cached = captureOrders.get(node);
+    if (cached !== undefined) return cached;
+    const sigs = node.inputs.map(sigOfValue);
+    const order = sigs.map((_, i) => i).sort((a, b) => {
+      const sa = sigs[a] as string;
+      const sb = sigs[b] as string;
+      return sa < sb ? -1 : sa > sb ? 1 : a - b;
+    });
+    captureOrders.set(node, order);
+    return order;
+  };
+  const closures = new Map<DucNode, DucGraph>();
+  const closureOf = (node: DucNode): DucGraph => {
+    const cached = closures.get(node);
+    if (cached !== undefined) return cached;
+    const graph = withCaptureOrder(node.closure as DucGraph, captureOrderOf(node));
+    closures.set(node, graph);
+    return graph;
+  };
+
   const sigOfNode = (node: DucNode): string => {
     const cached = memo.get(node);
     if (cached !== undefined) return cached;
@@ -144,6 +182,7 @@ export function canonicalizeGraph(
       const offset = invariantOffset(node);
       inputSigs = [...inputSigs.slice(0, offset), ...inputSigs.slice(offset).sort()];
     }
+    if (node.closure !== undefined) inputSigs = [...inputSigs].sort();
     const outer = invariantOuterOf.get(node);
     const label = outer !== undefined ? `invariant@${sigOfValue(outer)}` : (node.label ?? null);
     onPath.delete(node);
@@ -156,6 +195,7 @@ export function canonicalizeGraph(
       regionSig(node.region),
     ];
     if (node.loop !== undefined) fields.push(bodySummaryOf(node.loop.id));
+    if (node.closure !== undefined) fields.push(graphIdentity(closureOf(node)));
     const sig = createHash("sha256").update(canonicalJson(fields)).digest("hex");
     memo.set(node, sig);
     return sig;
@@ -177,7 +217,10 @@ export function canonicalizeGraph(
     // A position that canonical form reorders (commutative operands, invariants) is one position.
     const commutative = node.kind === "op" && COMMUTATIVE.has(node.label ?? "") && node.inputs.length === 2;
     const invariantsFrom = node.loop !== undefined ? invariantOffset(node) : Number.POSITIVE_INFINITY;
-    node.inputs.forEach((v, i) => addUse(v, node, commutative ? "in*" : i >= invariantsFrom ? "inv" : `in${i}`));
+    const captures = node.closure !== undefined;
+    node.inputs.forEach((v, i) =>
+      addUse(v, node, captures ? "cap" : commutative ? "in*" : i >= invariantsFrom ? "inv" : `in${i}`),
+    );
     const loop = node.loop;
     if (loop !== undefined) {
       loop.next.forEach((v, i) => addUse(v, node, `next${i}`));
@@ -211,7 +254,13 @@ export function canonicalizeGraph(
       const aParam = a.node.kind === "param-source";
       const bParam = b.node.kind === "param-source";
       if (aParam !== bParam) return aParam ? -1 : 1;
-      if (aParam && bParam) return (originalIndex.get(a.node) ?? 0) - (originalIndex.get(b.node) ?? 0);
+      if (aParam && bParam) {
+        // A parameter's label is its index in the interface.
+        const la = Number(a.node.label);
+        const lb = Number(b.node.label);
+        if (!Number.isNaN(la) && !Number.isNaN(lb) && la !== lb) return la - lb;
+        return (originalIndex.get(a.node) ?? 0) - (originalIndex.get(b.node) ?? 0);
+      }
       if (a.sig !== b.sig) return a.sig < b.sig ? -1 : 1;
       // Structurally equal nodes are interchangeable for identity; break the tie by annotation.
       const aa = canonicalJson(a.node.origin ?? null);
@@ -294,6 +343,10 @@ export function canonicalizeGraph(
       const [a, b] = inputs as [ValueId, ValueId];
       if (sigOfValue(b) < sigOfValue(a)) inputs = [b, a];
     }
+    if (node.closure !== undefined) {
+      const captureOrder = captureOrderOf(node);
+      inputs = captureOrder.map((i) => inputs[i] as ValueId);
+    }
     const order = invariantOrder.get(node);
     if (order !== undefined) {
       const offset = invariantOffset(node);
@@ -325,6 +378,7 @@ export function canonicalizeGraph(
       ...(node.origin !== undefined ? { origin: node.origin } : {}),
       ...(region !== undefined ? { region } : {}),
       ...(loop !== undefined ? { loop } : {}),
+      ...(node.closure !== undefined ? { closure: closureOf(node) } : {}),
     };
   });
 
@@ -365,6 +419,7 @@ export function graphIdentity(g: DucGraph): string {
       ...(n.diamond !== undefined ? { diamond: structuralDiamond(n.diamond) } : {}),
       ...(n.region !== undefined ? { region: n.region } : {}),
       ...(n.loop !== undefined ? { loop: n.loop } : {}),
+      ...(n.closure !== undefined ? { closure: graphIdentity(n.closure) } : {}),
     })),
     obs: canon.obs,
     ...(canon.branches !== undefined ? { branches: canon.branches } : {}),

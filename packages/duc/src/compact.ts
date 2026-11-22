@@ -40,6 +40,8 @@ export type CompactNode = readonly [
   number,
   // Loop: [id, carry, invariant, next, cond (-1: none), element (-1: none), kind of iteration (-1, 0 values, 1 keys)]
   readonly [number, readonly number[], readonly number[], readonly number[], number, number, number] | null,
+  // Closure: its own graph, encoded the same way, or null.
+  CompactGraph | null,
 ];
 
 const NODE_ID = /^n(\d+)$/;
@@ -101,6 +103,7 @@ export function encodeGraph(g: DucGraph): CompactGraph {
       label,
       region,
       loop,
+      node.closure === undefined ? null : encodeGraph(node.closure),
     ];
   });
   const branches = (g.branches ?? []).map((br): [number, number, number] => {
@@ -119,7 +122,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     return s;
   };
   const value = (k: number): ValueId => `v${k}` as ValueId;
-  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond, label, region, loop], i) => {
+  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond, label, region, loop, closure], i) => {
     const node: {
       id: DucNode["id"];
       inputs: ValueId[];
@@ -130,6 +133,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
       label?: string;
       region?: string;
       loop?: DucLoop;
+      closure?: DucGraph;
     } = {
       id: `n${i}` as DucNode["id"],
       inputs: inputs.map(value),
@@ -144,6 +148,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     }
     if (label !== -1) node.label = str(label);
     if (region !== -1) node.region = str(region);
+    if (closure !== null && closure !== undefined) node.closure = decodeGraph(closure);
     if (loop !== null) {
       node.loop = {
         id: str(loop[0]),
