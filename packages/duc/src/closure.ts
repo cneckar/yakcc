@@ -38,7 +38,10 @@ export function closureOf(g: DucGraph, options: ClosureOptions = {}): ClosureRep
   for (const node of g.nodes) {
     const d = node.diamond;
     if (d === undefined) continue;
-    if (d.reason === "platform-primitive" && (options.baseSet === undefined || d.symbol in options.baseSet.primitives)) {
+    if (
+      d.reason === "platform-primitive" &&
+      (options.baseSet === undefined || d.symbol in options.baseSet.primitives)
+    ) {
       primitives.add(d.symbol);
     } else if (linked.has(d.symbol)) {
       linkedUsed.add(d.symbol);

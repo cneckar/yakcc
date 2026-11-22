@@ -6,7 +6,8 @@ import { graphIdentity } from "./canonical.js";
 import { decodeGraph, encodeGraph } from "./compact.js";
 import { liftAtom } from "./lift.js";
 
-const IF = "export function f(c: boolean, x: number, y: number): number { let r = 0; if (c) { r = x + 1; } else { r = y - 1; } return r; }";
+const IF =
+  "export function f(c: boolean, x: number, y: number): number { let r = 0; if (c) { r = x + 1; } else { r = y - 1; } return r; }";
 
 describe("structured if (option B, #1275)", () => {
   it("an if records one branch, whose condition is the test value", () => {
@@ -36,18 +37,22 @@ describe("structured if (option B, #1275)", () => {
   });
 
   it("renaming the condition and the locals does not change the identity", () => {
-    const renamed = "export function f(k: boolean, p: number, q: number): number { let s = 0; if (k) { s = p + 1; } else { s = q - 1; } return s; }";
+    const renamed =
+      "export function f(k: boolean, p: number, q: number): number { let s = 0; if (k) { s = p + 1; } else { s = q - 1; } return s; }";
     expect(graphIdentity(liftAtom(renamed))).toBe(graphIdentity(liftAtom(IF)));
   });
 
   it("a different branch structure gives a different identity", () => {
-    const flatter = "export function f(c: boolean, x: number, y: number): number { let r = 0; if (c) { r = x + 1; } return r; }";
+    const flatter =
+      "export function f(c: boolean, x: number, y: number): number { let r = 0; if (c) { r = x + 1; } return r; }";
     expect(graphIdentity(liftAtom(flatter))).not.toBe(graphIdentity(liftAtom(IF)));
   });
 
   it("two independent ifs written in either order have the same identity", () => {
-    const ab = "export function f(a: boolean, b: boolean, x: number, y: number): number { let p = 0; let q = 0; if (a) { p = x; } if (b) { q = y; } return p + q; }";
-    const ba = "export function f(a: boolean, b: boolean, x: number, y: number): number { let p = 0; let q = 0; if (b) { q = y; } if (a) { p = x; } return p + q; }";
+    const ab =
+      "export function f(a: boolean, b: boolean, x: number, y: number): number { let p = 0; let q = 0; if (a) { p = x; } if (b) { q = y; } return p + q; }";
+    const ba =
+      "export function f(a: boolean, b: boolean, x: number, y: number): number { let p = 0; let q = 0; if (b) { q = y; } if (a) { p = x; } return p + q; }";
     expect(graphIdentity(liftAtom(ba))).toBe(graphIdentity(liftAtom(ab)));
   });
 });

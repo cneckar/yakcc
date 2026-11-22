@@ -7,7 +7,17 @@
  */
 
 const SIMPLE_ESCAPES: Record<string, string> = {
-  n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", "0": "\0", "'": "'", '"': '"', "\\": "\\", "`": "`",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  f: "\f",
+  v: "\v",
+  "0": "\0",
+  "'": "'",
+  '"': '"',
+  "\\": "\\",
+  "`": "`",
 };
 
 /** The value of a JavaScript string literal body, or undefined when it uses an escape this does not know. */
@@ -44,12 +54,17 @@ function decodeStringBody(body: string): string | undefined {
   return out;
 }
 
-const NUMBER = /^(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)$/;
+const NUMBER =
+  /^(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)$/;
 
 /** The normal label of a literal written as `text` (JavaScript source text). */
 export function normalizeLiteral(text: string): string {
   const quote = text[0];
-  if ((quote === "'" || quote === '"' || quote === "`") && text.length >= 2 && text.endsWith(quote)) {
+  if (
+    (quote === "'" || quote === '"' || quote === "`") &&
+    text.length >= 2 &&
+    text.endsWith(quote)
+  ) {
     const body = text.slice(1, -1);
     if (quote === "`" && body.includes("${")) return text;
     const value = decodeStringBody(body);

@@ -28,7 +28,10 @@ function histogram(items: readonly string[]): string {
 }
 
 function sortedUnique(items: readonly string[]): string {
-  return [...new Set(items)].sort().map((s) => JSON.stringify(s)).join(" ");
+  return [...new Set(items)]
+    .sort()
+    .map((s) => JSON.stringify(s))
+    .join(" ");
 }
 
 export function retrievalSignature(g: DucGraph, options: RetrievalSignatureOptions = {}): string {
@@ -48,12 +51,14 @@ export function retrievalSignature(g: DucGraph, options: RetrievalSignatureOptio
   const ops = g.nodes
     .filter((n) => n.kind === "op")
     .map((n) => (n.label ?? n.origin?.kind ?? "op").replace(/#[0-9a-f]+$/, ""));
-  const literals = g.nodes
-    .filter((n) => n.kind === "literal-source")
-    .map((n) => n.label ?? "");
+  const literals = g.nodes.filter((n) => n.kind === "literal-source").map((n) => n.label ?? "");
   const diamonds = g.nodes.filter((n) => n.diamond !== undefined).map((n) => n.diamond);
-  const primitives = diamonds.filter((d) => d?.reason === "platform-primitive").map((d) => d?.symbol ?? "");
-  const unlinked = diamonds.filter((d) => d?.reason !== "platform-primitive").map((d) => d?.symbol ?? "");
+  const primitives = diamonds
+    .filter((d) => d?.reason === "platform-primitive")
+    .map((d) => d?.symbol ?? "");
+  const unlinked = diamonds
+    .filter((d) => d?.reason !== "platform-primitive")
+    .map((d) => d?.symbol ?? "");
   const sel = g.nodes.filter((n) => n.kind === "sel").length;
   const loop = g.nodes.filter((n) => n.kind === "loop").length;
 

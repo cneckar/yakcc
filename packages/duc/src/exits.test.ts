@@ -19,7 +19,12 @@ const regionOfCall = (src: string, callee: string): string | undefined => {
 describe("exits (#1276)", () => {
   it("what follows a throw on some paths runs only on the other paths", () => {
     // The call is inside the branch's else side, not at the top level where it would always run.
-    expect(regionOfCall("export function f(c: boolean, x: number) { if (c) throw new Error('no'); log(x); }", "log")).toMatch(/^b\d+\.e$/);
+    expect(
+      regionOfCall(
+        "export function f(c: boolean, x: number) { if (c) throw new Error('no'); log(x); }",
+        "log",
+      ),
+    ).toMatch(/^b\d+\.e$/);
   });
 
   it("a throw after two returns is only on the path neither return takes", () => {
@@ -37,11 +42,15 @@ describe("exits (#1276)", () => {
   });
 
   it("nothing after a return is lifted", () => {
-    expect(id("export function f(x: number) { return x; log(x); }")).toBe(id("export function f(x: number) { return x; }"));
+    expect(id("export function f(x: number) { return x; log(x); }")).toBe(
+      id("export function f(x: number) { return x; }"),
+    );
   });
 
   it("an exit inside a nested if takes the rest of the function onto every path", () => {
-    const g = liftAtom("export function f(c: boolean, x: number) { if (c) { if (x > 0) { return 1; } } log(x); return x; }");
+    const g = liftAtom(
+      "export function f(c: boolean, x: number) { if (c) { if (x > 0) { return 1; } } log(x); return x; }",
+    );
     // log runs on two paths (c false; c true and x <= 0), never at the top level.
     const calls = g.nodes.filter((n) => n.label === "CallExpression");
     expect(calls.length).toBe(2);
@@ -49,7 +58,9 @@ describe("exits (#1276)", () => {
   });
 
   it("a loop whose body throws stays opaque, so the rest of its body is not unguarded", () => {
-    const g = liftAtom("export function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) throw new Error('neg'); s = s + x; } return s; }");
+    const g = liftAtom(
+      "export function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) throw new Error('neg'); s = s + x; } return s; }",
+    );
     expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(false);
   });
 
@@ -65,23 +76,35 @@ describe("exits (#1276)", () => {
   });
 
   it("a select of one value on both sides is that value, and one inside its own condition takes its arm", () => {
-    expect(id("export function f(c: boolean, x: number) { return c ? x : x; }")).toBe(id("export function f(c: boolean, x: number) { return x; }"));
-    expect(id("export function f(c: boolean, x: number, y: number) { return c ? x : (c ? 0 : y); }")).toBe(
-      id("export function f(c: boolean, x: number, y: number) { return c ? x : y; }"),
+    expect(id("export function f(c: boolean, x: number) { return c ? x : x; }")).toBe(
+      id("export function f(c: boolean, x: number) { return x; }"),
     );
+    expect(
+      id("export function f(c: boolean, x: number, y: number) { return c ? x : (c ? 0 : y); }"),
+    ).toBe(id("export function f(c: boolean, x: number, y: number) { return c ? x : y; }"));
   });
 });
 
 describe("arms that run only when chosen (#1276)", () => {
   it("a call in a ternary arm runs only in its branch", () => {
-    expect(regionOfCall("export function f(c: boolean, x: number) { return c ? a(x) : b(x); }", "a")).toMatch(/^b\d+\.t$/);
-    expect(regionOfCall("export function f(c: boolean, x: number) { return c ? a(x) : b(x); }", "b")).toMatch(/^b\d+\.e$/);
+    expect(
+      regionOfCall("export function f(c: boolean, x: number) { return c ? a(x) : b(x); }", "a"),
+    ).toMatch(/^b\d+\.t$/);
+    expect(
+      regionOfCall("export function f(c: boolean, x: number) { return c ? a(x) : b(x); }", "b"),
+    ).toMatch(/^b\d+\.e$/);
   });
 
   it("the right side of && and || is evaluated only on its path", () => {
-    expect(regionOfCall("export function f(x: any) { return x && g(x); }", "g")).toMatch(/^b\d+\.t$/);
-    expect(regionOfCall("export function f(x: any) { return x || g(x); }", "g")).toMatch(/^b\d+\.e$/);
-    expect(regionOfCall("export function f(x: any) { return x ?? g(x); }", "g")).toMatch(/^b\d+\.t$/);
+    expect(regionOfCall("export function f(x: any) { return x && g(x); }", "g")).toMatch(
+      /^b\d+\.t$/,
+    );
+    expect(regionOfCall("export function f(x: any) { return x || g(x); }", "g")).toMatch(
+      /^b\d+\.e$/,
+    );
+    expect(regionOfCall("export function f(x: any) { return x ?? g(x); }", "g")).toMatch(
+      /^b\d+\.t$/,
+    );
   });
 
   it("a member read guarded by && is not read when the guard fails", () => {
@@ -110,22 +133,35 @@ describe("switch (#1276)", () => {
   const src = (body: string) => `export function f(k: string, x: number) { ${body} }`;
 
   it("a switch whose clauses end in break, return or throw is its if chain", () => {
-    const sw = id(src("switch (k) { case 'a': return x + 1; case 'b': case 'c': return x - 1; default: throw new Error(k); }"));
-    const chain = id(src("const s = k; if (s === 'a') { return x + 1; } else if (s === 'b' || s === 'c') { return x - 1; } else { throw new Error(k); }"));
+    const sw = id(
+      src(
+        "switch (k) { case 'a': return x + 1; case 'b': case 'c': return x - 1; default: throw new Error(k); }",
+      ),
+    );
+    const chain = id(
+      src(
+        "const s = k; if (s === 'a') { return x + 1; } else if (s === 'b' || s === 'c') { return x - 1; } else { throw new Error(k); }",
+      ),
+    );
     expect(sw).toBe(chain);
   });
 
   it("break ends a clause, and what follows the switch runs after it", () => {
-    const g = liftAtom(src("let r = 0; switch (k) { case 'a': r = x; break; default: r = 2; } return r * 3;"));
+    const g = liftAtom(
+      src("let r = 0; switch (k) { case 'a': r = x; break; default: r = 2; } return r * 3;"),
+    );
     expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(false);
     const code = emitTypeScript(g);
-    const run = (k: string, x: number): unknown => new Function(`${code.replace("export ", "")}; return f(${JSON.stringify(k)}, ${x});`)();
+    const run = (k: string, x: number): unknown =>
+      new Function(`${code.replace("export ", "")}; return f(${JSON.stringify(k)}, ${x});`)();
     expect(run("a", 5)).toBe(15);
     expect(run("z", 5)).toBe(6);
   });
 
   it("a clause that falls into the next stays opaque", () => {
-    const g = liftAtom(src("let r = 0; switch (k) { case 'a': r = 1; case 'b': r = r + 1; break; } return r;"));
+    const g = liftAtom(
+      src("let r = 0; switch (k) { case 'a': r = 1; case 'b': r = r + 1; break; } return r;"),
+    );
     expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(true);
   });
 });
@@ -137,13 +173,15 @@ describe("destructuring and defaults (#1276)", () => {
   };
 
   it("each name of an object pattern reads its own member", () => {
-    const src = "export function f(o: any) { const { a, b: c, d = 7 } = o; return a !== c ? a + c + d : 0; }";
+    const src =
+      "export function f(o: any) { const { a, b: c, d = 7 } = o; return a !== c ? a + c + d : 0; }";
     expect(run(src, { a: 1, b: 2 })).toBe(10);
     expect(run(src, { a: 1, b: 1, d: 1 })).toBe(0);
   });
 
   it("an array pattern reads by index, with a rest", () => {
-    const src = "export function f(xs: number[]) { const [x, , y, ...more] = xs; return x + y + more.length; }";
+    const src =
+      "export function f(xs: number[]) { const [x, , y, ...more] = xs; return x + y + more.length; }";
     expect(run(src, [1, 2, 3, 4, 5])).toBe(6);
   });
 
@@ -154,11 +192,65 @@ describe("destructuring and defaults (#1276)", () => {
   });
 
   it("a default that calls runs only when it is needed", () => {
-    expect(regionOfCall("export function f(o: any) { const { a = make() } = o; return a; }", "make")).toMatch(/^b\d+\.t$/);
+    expect(
+      regionOfCall("export function f(o: any) { const { a = make() } = o; return a; }", "make"),
+    ).toMatch(/^b\d+\.t$/);
   });
 
   it("a pattern in a loop binds each element's members", () => {
-    const src = "export function f(o: any) { let s = 0; for (const [k, v] of Object.entries(o)) { s = s + v; } return s; }";
+    const src =
+      "export function f(o: any) { let s = 0; for (const [k, v] of Object.entries(o)) { s = s + v; } return s; }";
     expect(run(src, { x: 2, y: 3 })).toBe(5);
   });
+});
+
+describe("loops that break, continue and return (#1276)", () => {
+  const run = (src: string, ...args: unknown[]): unknown => {
+    const code = emitTypeScript(liftAtom(src));
+    return new Function(`${code.replace("export ", "")}; return f(...${JSON.stringify(args)});`)();
+  };
+  const cases: [string, string, unknown[][]][] = [
+    [
+      "break",
+      "export function f(n: number) { let i = 0; let s = 0; while (i < n) { if (s > 10) break; s = s + i; i = i + 1; } return s * 100 + i; }",
+      [[0], [3], [20]],
+    ],
+    [
+      "continue",
+      "export function f(n: number) { let s = 0; for (let i = 0; i < n; i = i + 1) { if (i % 2 === 0) continue; s = s + i; } return s; }",
+      [[0], [7]],
+    ],
+    [
+      "break in a for keeps its counter",
+      "export function f(n: number) { let i = 0; for (i = 0; i < n; i = i + 1) { if (i * i > 20) break; } return i; }",
+      [[3], [10]],
+    ],
+    [
+      "return",
+      "export function f(xs: number[], k: number) { let i = 0; while (i < xs.length) { if (xs[i] === k) return i; i = i + 1; } return -1; }",
+      [
+        [[4, 5, 6], 5],
+        [[4, 5, 6], 9],
+        [[], 1],
+      ],
+    ],
+    [
+      "return and break",
+      "export function f(n: number) { let i = 0; while (true) { if (i === 3) return 'three'; if (i > n) break; i = i + 1; } return i; }",
+      [[1], [5]],
+    ],
+  ];
+  for (const [name, src, inputs] of cases) {
+    it(`${name}: lifts as a loop, and the emitted code computes the same and lifts back`, () => {
+      const g = liftAtom(src);
+      expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(true);
+      const code = emitTypeScript(g);
+      const original = new Function(
+        `${src.replace("export ", "").replace(/: [a-z\[\]]+/g, "")}; return f;`,
+      )() as (...a: unknown[]) => unknown;
+      for (const args of inputs)
+        expect(run(src, ...args), `${name} ${JSON.stringify(args)}`).toEqual(original(...args));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
 });

@@ -121,8 +121,14 @@ function hoistLiterals(
       if (keep.length === node.loop.invariant.length) return node;
       return {
         ...node,
-        inputs: [...node.inputs.slice(0, offset), ...keep.map((j) => node.inputs[offset + j] as ValueId)],
-        loop: { ...node.loop, invariant: keep.map((j) => (node.loop as DucLoop).invariant[j] as ValueId) },
+        inputs: [
+          ...node.inputs.slice(0, offset),
+          ...keep.map((j) => node.inputs[offset + j] as ValueId),
+        ],
+        loop: {
+          ...node.loop,
+          invariant: keep.map((j) => (node.loop as DucLoop).invariant[j] as ValueId),
+        },
       };
     });
   }
@@ -132,7 +138,8 @@ function hoistLiterals(
   out = out
     .filter((n) => !(n.kind === "carry-source" && dropped.has(n.outputs[0] as ValueId)))
     .map((n) => {
-      const pos = n.kind === "carry-source" ? invariantPosition.get(n.outputs[0] as ValueId) : undefined;
+      const pos =
+        n.kind === "carry-source" ? invariantPosition.get(n.outputs[0] as ValueId) : undefined;
       const relabelled = pos !== undefined ? { ...n, label: `invariant:${pos}` } : n;
       const loop = relabelled.loop;
       return {
@@ -162,7 +169,8 @@ function hoistLiterals(
     // A select on c inside an arm of a select on the same c takes the same arm: sel(c, a, sel(c, b, x))
     // is sel(c, a, x), and sel(c, sel(c, x, b), a) is sel(c, x, a).
     const selOf = new Map<ValueId, DucNode>();
-    for (const n of out) if (n.kind === "sel" && n.inputs.length === 3) selOf.set(n.outputs[0] as ValueId, n);
+    for (const n of out)
+      if (n.kind === "sel" && n.inputs.length === 3) selOf.set(n.outputs[0] as ValueId, n);
     out = out.map((n) => {
       if (n.kind !== "sel" || n.inputs.length !== 3) return n;
       const [c, t, e] = n.inputs as [ValueId, ValueId, ValueId];
@@ -174,7 +182,9 @@ function hoistLiterals(
       changed = true;
       return { ...n, inputs: [c, t2, e2] };
     });
-    const trivial = out.filter((n) => n.kind === "sel" && n.inputs.length === 3 && n.inputs[1] === n.inputs[2]);
+    const trivial = out.filter(
+      (n) => n.kind === "sel" && n.inputs.length === 3 && n.inputs[1] === n.inputs[2],
+    );
     if (trivial.length > 0) {
       for (const n of trivial) subst.set(n.outputs[0] as ValueId, n.inputs[1] as ValueId);
       const gone = new Set(trivial);
@@ -184,7 +194,13 @@ function hoistLiterals(
           ...n,
           inputs: n.inputs.map(sub),
           ...(n.loop !== undefined
-            ? { loop: { ...n.loop, next: n.loop.next.map(sub), ...(n.loop.cond !== undefined ? { cond: sub(n.loop.cond) } : {}) } }
+            ? {
+                loop: {
+                  ...n.loop,
+                  next: n.loop.next.map(sub),
+                  ...(n.loop.cond !== undefined ? { cond: sub(n.loop.cond) } : {}),
+                },
+              }
             : {}),
         }));
       observed = observed.map(sub);
@@ -197,16 +213,25 @@ function hoistLiterals(
     const read = new Set<ValueId>([...observed, ...kept2.map((b) => b.cond)]);
     for (const n of out) {
       for (const v of n.inputs) read.add(v);
-      if (n.loop !== undefined) for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])]) read.add(v);
+      if (n.loop !== undefined)
+        for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])])
+          read.add(v);
     }
-    const live = out.filter((n) => (n.kind !== "literal-source" && n.kind !== "sel") || n.outputs.some((v) => read.has(v)));
+    const live = out.filter(
+      (n) =>
+        (n.kind !== "literal-source" && n.kind !== "sel") || n.outputs.some((v) => read.has(v)),
+    );
     if (live.length !== out.length) changed = true;
     out = live;
     kept2 = kept2.filter((b) => {
       const prefix = `${b.within !== undefined ? `${b.within}/` : ""}${b.id}.`;
       const inside = (region: string | undefined): boolean =>
-        region !== undefined && [`${prefix}t`, `${prefix}e`].some((side) => region === side || region.startsWith(`${side}/`));
-      const used = out.some((n) => inside(n.region)) || kept2.some((o) => o !== b && inside(o.within));
+        region !== undefined &&
+        [`${prefix}t`, `${prefix}e`].some(
+          (side) => region === side || region.startsWith(`${side}/`),
+        );
+      const used =
+        out.some((n) => inside(n.region)) || kept2.some((o) => o !== b && inside(o.within));
       if (!used) changed = true;
       return used;
     });
@@ -268,8 +293,11 @@ export function canonicalizeGraph(
     const cached = bodySummaries.get(id);
     if (cached !== undefined) return cached;
     const body = nodes
-      .filter((n) => n.region !== undefined && n.region.split("/").includes(`${id}.b`))
-      .map((n) => `${n.kind}:${invariantOuterOf.has(n) ? "invariant" : (n.label ?? "")}:${n.diamond?.symbol ?? ""}`)
+      .filter((n) => n.region?.split("/").includes(`${id}.b`))
+      .map(
+        (n) =>
+          `${n.kind}:${invariantOuterOf.has(n) ? "invariant" : (n.label ?? "")}:${n.diamond?.symbol ?? ""}`,
+      )
       .sort();
     const summary = canonicalJson(body);
     bodySummaries.set(id, summary);
@@ -300,11 +328,13 @@ export function canonicalizeGraph(
     const cached = captureOrders.get(node);
     if (cached !== undefined) return cached;
     const sigs = node.inputs.map(sigOfValue);
-    const order = sigs.map((_, i) => i).sort((a, b) => {
-      const sa = sigs[a] as string;
-      const sb = sigs[b] as string;
-      return sa < sb ? -1 : sa > sb ? 1 : a - b;
-    });
+    const order = sigs
+      .map((_, i) => i)
+      .sort((a, b) => {
+        const sa = sigs[a] as string;
+        const sb = sigs[b] as string;
+        return sa < sb ? -1 : sa > sb ? 1 : a - b;
+      });
     captureOrders.set(node, order);
     return order;
   };
@@ -366,11 +396,17 @@ export function canonicalizeGraph(
   };
   for (const node of nodes) {
     // A position that canonical form reorders (commutative operands, invariants) is one position.
-    const commutative = node.kind === "op" && COMMUTATIVE.has(node.label ?? "") && node.inputs.length === 2;
-    const invariantsFrom = node.loop !== undefined ? invariantOffset(node) : Number.POSITIVE_INFINITY;
+    const commutative =
+      node.kind === "op" && COMMUTATIVE.has(node.label ?? "") && node.inputs.length === 2;
+    const invariantsFrom =
+      node.loop !== undefined ? invariantOffset(node) : Number.POSITIVE_INFINITY;
     const captures = node.closure !== undefined;
     node.inputs.forEach((v, i) =>
-      addUse(v, node, captures ? "cap" : commutative ? "in*" : i >= invariantsFrom ? "inv" : `in${i}`),
+      addUse(
+        v,
+        node,
+        captures ? "cap" : commutative ? "in*" : i >= invariantsFrom ? "inv" : `in${i}`,
+      ),
     );
     const loop = node.loop;
     if (loop !== undefined) {
@@ -379,7 +415,8 @@ export function canonicalizeGraph(
     }
   }
   obs.forEach((v, k) => addUse(v, "obs", `obs${k}`));
-  for (const b of branches) addUse(b.cond, "branch", `cond:${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`);
+  for (const b of branches)
+    addUse(b.cond, "branch", `cond:${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`);
   let key = new Map(nodes.map((node) => [node, sigOfNode(node)] as const));
   let classes = new Set(key.values()).size;
   for (let round = 0; round < nodes.length; round++) {
@@ -388,7 +425,12 @@ export function canonicalizeGraph(
       const used = (uses.get(node) ?? [])
         .map(({ by, tag }) => `${typeof by === "string" ? by : key.get(by)}:${tag}`)
         .sort();
-      refined.set(node, createHash("sha256").update(canonicalJson([key.get(node), used])).digest("hex"));
+      refined.set(
+        node,
+        createHash("sha256")
+          .update(canonicalJson([key.get(node), used]))
+          .digest("hex"),
+      );
     }
     const count = new Set(refined.values()).size;
     key = refined;
@@ -419,12 +461,18 @@ export function canonicalizeGraph(
       return aa < bb ? -1 : aa > bb ? 1 : 0;
     });
   if (cyclic) {
-    return { nodes: [...nodes], values: nodes.flatMap((n) => n.outputs), obs: [...obs], branches: [...branches] };
+    return {
+      nodes: [...nodes],
+      values: nodes.flatMap((n) => n.outputs),
+      obs: [...obs],
+      branches: [...branches],
+    };
   }
 
   // Branches: numbered by condition signature and location, ties broken by lifting id (equal
   // conditions in the same place are the same structure, so the tie does not affect identity).
-  const branchKey = (b: DucBranch): string => `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
+  const branchKey = (b: DucBranch): string =>
+    `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
   const branchRank = new Map<string, string>();
   [...branches]
     .sort((a, b) => {
@@ -515,7 +563,12 @@ export function canonicalizeGraph(
             next: node.loop.next.map(renameValue),
             ...(node.loop.cond !== undefined ? { cond: renameValue(node.loop.cond) } : {}),
             ...(node.loop.iterate !== undefined
-              ? { iterate: { element: renameValue(node.loop.iterate.element), of: node.loop.iterate.of } }
+              ? {
+                  iterate: {
+                    element: renameValue(node.loop.iterate.element),
+                    of: node.loop.iterate.of,
+                  },
+                }
               : {}),
           };
     const label = relabel.get(node) ?? node.label;

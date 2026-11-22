@@ -5,7 +5,8 @@ import { liftAtom } from "./lift.js";
 import { parseLineForm } from "./line-form.js";
 import { normalizeLiteral } from "./literal.js";
 
-const id = (body: string): string => graphIdentity(liftAtom(`export function f(): unknown { ${body} }`));
+const id = (body: string): string =>
+  graphIdentity(liftAtom(`export function f(): unknown { ${body} }`));
 
 describe("literal labels in normal form", () => {
   it("a string is the same literal whatever its quotes", () => {
@@ -21,7 +22,9 @@ describe("literal labels in normal form", () => {
     expect(id("return 1;")).not.toBe(id("return '1';"));
   });
   it("the line form accepts any quote style", () => {
-    expect(graphIdentity(parseLineForm("lit \"'a'\" -> x\nout x"))).toBe(graphIdentity(parseLineForm('lit "\\"a\\"" -> x\nout x')));
+    expect(graphIdentity(parseLineForm("lit \"'a'\" -> x\nout x"))).toBe(
+      graphIdentity(parseLineForm('lit "\\"a\\"" -> x\nout x')),
+    );
   });
   it("other literals keep their text", () => {
     expect(normalizeLiteral("true")).toBe("true");

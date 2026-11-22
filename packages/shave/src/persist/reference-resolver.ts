@@ -81,12 +81,18 @@ export type Resolution =
 
 const BUILTINS = new Set(builtinModules.flatMap((m) => [m, `node:${m}`]));
 
-const parse = (text: string): ts.SourceFile => ts.createSourceFile("m.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const parse = (text: string): ts.SourceFile =>
+  ts.createSourceFile("m.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
 /** A `require("<literal>")` call, or undefined. */
 function requireSpecifier(node: ts.Node | undefined): string | undefined {
   if (node === undefined || !ts.isCallExpression(node)) return undefined;
-  if (!ts.isIdentifier(node.expression) || node.expression.text !== "require" || node.arguments.length !== 1) return undefined;
+  if (
+    !ts.isIdentifier(node.expression) ||
+    node.expression.text !== "require" ||
+    node.arguments.length !== 1
+  )
+    return undefined;
   const arg = node.arguments[0] as ts.Expression;
   return ts.isStringLiteralLike(arg) ? arg.text : undefined;
 }
@@ -104,9 +110,15 @@ function requireBinding(init: ts.Expression | undefined): ImportBinding | undefi
   if (init === undefined) return undefined;
   const direct = requireSpecifier(init);
   if (direct !== undefined) return { specifier: direct, imported: "*" };
-  if (ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text in INTEROP && init.arguments.length === 1) {
+  if (
+    ts.isCallExpression(init) &&
+    ts.isIdentifier(init.expression) &&
+    init.expression.text in INTEROP &&
+    init.arguments.length === 1
+  ) {
     const spec = requireSpecifier(init.arguments[0]);
-    if (spec !== undefined) return { specifier: spec, imported: INTEROP[init.expression.text] as string };
+    if (spec !== undefined)
+      return { specifier: spec, imported: INTEROP[init.expression.text] as string };
   }
   if (ts.isPropertyAccessExpression(init)) {
     const spec = requireSpecifier(init.expression);
@@ -118,11 +130,15 @@ function requireBinding(init: ts.Expression | undefined): ImportBinding | undefi
 /** `exports.x`, `module.exports.x`, or `module.exports`: the export name (`*` for the whole). */
 function exportsTarget(node: ts.Expression): string | undefined {
   const isModuleExports = (e: ts.Expression): boolean =>
-    ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "module" && e.name.text === "exports";
+    ts.isPropertyAccessExpression(e) &&
+    ts.isIdentifier(e.expression) &&
+    e.expression.text === "module" &&
+    e.name.text === "exports";
   if (isModuleExports(node)) return "*";
   if (ts.isPropertyAccessExpression(node)) {
     const base = node.expression;
-    if ((ts.isIdentifier(base) && base.text === "exports") || isModuleExports(base)) return node.name.text;
+    if ((ts.isIdentifier(base) && base.text === "exports") || isModuleExports(base))
+      return node.name.text;
   }
   return undefined;
 }
@@ -138,9 +154,22 @@ function declaredBy(stmt: ts.Statement, imports: Map<string, ImportBinding>): st
     }
     for (const el of name.elements) {
       if (ts.isOmittedExpression(el)) continue;
-      if (ts.isObjectBindingPattern(name) && binding !== undefined && binding.imported === "*" && el.dotDotDotToken === undefined) {
-        const key = el.propertyName !== undefined && ts.isIdentifier(el.propertyName) ? el.propertyName.text : ts.isIdentifier(el.name) ? el.name.text : undefined;
-        bindName(el.name, key !== undefined ? { specifier: binding.specifier, imported: key } : undefined);
+      if (
+        ts.isObjectBindingPattern(name) &&
+        binding !== undefined &&
+        binding.imported === "*" &&
+        el.dotDotDotToken === undefined
+      ) {
+        const key =
+          el.propertyName !== undefined && ts.isIdentifier(el.propertyName)
+            ? el.propertyName.text
+            : ts.isIdentifier(el.name)
+              ? el.name.text
+              : undefined;
+        bindName(
+          el.name,
+          key !== undefined ? { specifier: binding.specifier, imported: key } : undefined,
+        );
       } else {
         bindName(el.name, undefined);
       }
@@ -149,10 +178,16 @@ function declaredBy(stmt: ts.Statement, imports: Map<string, ImportBinding>): st
   if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) {
     if (stmt.name !== undefined) names.push(stmt.name.text);
   } else if (ts.isVariableStatement(stmt)) {
-    for (const d of stmt.declarationList.declarations) bindName(d.name, requireBinding(d.initializer));
+    for (const d of stmt.declarationList.declarations)
+      bindName(d.name, requireBinding(d.initializer));
   } else if (ts.isEnumDeclaration(stmt)) {
     names.push(stmt.name.text);
-  } else if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier) && stmt.importClause !== undefined && !stmt.importClause.isTypeOnly) {
+  } else if (
+    ts.isImportDeclaration(stmt) &&
+    ts.isStringLiteral(stmt.moduleSpecifier) &&
+    stmt.importClause !== undefined &&
+    !stmt.importClause.isTypeOnly
+  ) {
     const specifier = stmt.moduleSpecifier.text;
     const clause = stmt.importClause;
     if (clause.name !== undefined) {
@@ -183,61 +218,112 @@ export function moduleScopeOf(mod: ModuleRecord): ModuleScope {
   const sf = parse(mod.source);
   for (const stmt of sf.statements) {
     for (const n of declaredBy(stmt, imports)) declared.add(n);
-    const exported = ts.canHaveModifiers(stmt) && (ts.getModifiers(stmt) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-    const isDefault = ts.canHaveModifiers(stmt) && (ts.getModifiers(stmt) ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+    const exported =
+      ts.canHaveModifiers(stmt) &&
+      (ts.getModifiers(stmt) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+    const isDefault =
+      ts.canHaveModifiers(stmt) &&
+      (ts.getModifiers(stmt) ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
     // `var x = exports.x = value`: a declaration that is also an export.
     if (ts.isVariableStatement(stmt)) {
       for (const d of stmt.declarationList.declarations) {
         const init = d.initializer;
-        if (ts.isIdentifier(d.name) && init !== undefined && ts.isBinaryExpression(init) && init.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (
+          ts.isIdentifier(d.name) &&
+          init !== undefined &&
+          ts.isBinaryExpression(init) &&
+          init.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ) {
           const target = exportsTarget(init.left);
-          if (target !== undefined && target !== "*") exports.set(target, { kind: "local", local: d.name.text });
+          if (target !== undefined && target !== "*")
+            exports.set(target, { kind: "local", local: d.name.text });
         }
       }
     }
     if (exported) {
-      if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name !== undefined) {
-        exports.set(isDefault ? "default" : stmt.name.text, { kind: "local", local: stmt.name.text });
+      if (
+        (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+        stmt.name !== undefined
+      ) {
+        exports.set(isDefault ? "default" : stmt.name.text, {
+          kind: "local",
+          local: stmt.name.text,
+        });
       } else if (ts.isVariableStatement(stmt)) {
-        for (const d of stmt.declarationList.declarations) if (ts.isIdentifier(d.name)) exports.set(d.name.text, { kind: "local", local: d.name.text });
+        for (const d of stmt.declarationList.declarations)
+          if (ts.isIdentifier(d.name))
+            exports.set(d.name.text, { kind: "local", local: d.name.text });
       }
     }
-    if (ts.isExportAssignment(stmt) && ts.isIdentifier(stmt.expression)) exports.set("default", { kind: "local", local: stmt.expression.text });
+    if (ts.isExportAssignment(stmt) && ts.isIdentifier(stmt.expression))
+      exports.set("default", { kind: "local", local: stmt.expression.text });
     if (ts.isExportDeclaration(stmt) && !stmt.isTypeOnly) {
-      const from = stmt.moduleSpecifier !== undefined && ts.isStringLiteral(stmt.moduleSpecifier) ? stmt.moduleSpecifier.text : undefined;
+      const from =
+        stmt.moduleSpecifier !== undefined && ts.isStringLiteral(stmt.moduleSpecifier)
+          ? stmt.moduleSpecifier.text
+          : undefined;
       const clause = stmt.exportClause;
       if (clause === undefined && from !== undefined) starExports.push(from);
       else if (clause !== undefined && ts.isNamedExports(clause)) {
         for (const el of clause.elements) {
           const local = (el.propertyName ?? el.name).text;
-          exports.set(el.name.text, from !== undefined ? { kind: "reexport", specifier: from, imported: local } : { kind: "local", local });
+          exports.set(
+            el.name.text,
+            from !== undefined
+              ? { kind: "reexport", specifier: from, imported: local }
+              : { kind: "local", local },
+          );
         }
       } else if (clause !== undefined && ts.isNamespaceExport(clause) && from !== undefined) {
         exports.set(clause.name.text, { kind: "reexport", specifier: from, imported: "*" });
       }
     }
     // CommonJS: `module.exports = X`, `exports.a = X`, `module.exports = { a, b: c }`.
-    if (ts.isExpressionStatement(stmt) && ts.isBinaryExpression(stmt.expression) && stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    if (
+      ts.isExpressionStatement(stmt) &&
+      ts.isBinaryExpression(stmt.expression) &&
+      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
       const target = exportsTarget(stmt.expression.left);
       const value = stmt.expression.right;
       if (target === undefined) continue;
       const spec = requireBinding(value);
       if (spec !== undefined) {
-        exports.set(target, { kind: "reexport", specifier: spec.specifier, imported: spec.imported });
+        exports.set(target, {
+          kind: "reexport",
+          specifier: spec.specifier,
+          imported: spec.imported,
+        });
       } else if (ts.isIdentifier(value)) {
         exports.set(target, { kind: "local", local: value.text });
       } else if (target === "*" && ts.isObjectLiteralExpression(value)) {
         for (const p of value.properties) {
-          if (ts.isShorthandPropertyAssignment(p)) exports.set(p.name.text, { kind: "local", local: p.name.text });
-          else if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.initializer) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) {
+          if (ts.isShorthandPropertyAssignment(p))
+            exports.set(p.name.text, { kind: "local", local: p.name.text });
+          else if (
+            ts.isPropertyAssignment(p) &&
+            ts.isIdentifier(p.initializer) &&
+            (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))
+          ) {
             exports.set(p.name.text, { kind: "local", local: p.initializer.text });
-          } else if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) {
+          } else if (
+            ts.isPropertyAssignment(p) &&
+            (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))
+          ) {
             const spec2 = requireBinding(p.initializer);
-            if (spec2 !== undefined) exports.set(p.name.text, { kind: "reexport", specifier: spec2.specifier, imported: spec2.imported });
+            if (spec2 !== undefined)
+              exports.set(p.name.text, {
+                kind: "reexport",
+                specifier: spec2.specifier,
+                imported: spec2.imported,
+              });
             else {
               // A value written in the export object itself: the statement's atom holds it.
               const atom = atomContaining(mod, stmt.getText(sf));
-              exports.set(p.name.text, atom !== undefined ? { kind: "atom", atom } : { kind: "unshaved" });
+              exports.set(
+                p.name.text,
+                atom !== undefined ? { kind: "atom", atom } : { kind: "unshaved" },
+              );
             }
           }
         }
@@ -252,13 +338,20 @@ export function moduleScopeOf(mod: ModuleRecord): ModuleScope {
   for (const n of declared) declarations.set(n, undefined);
   mod.atoms.forEach((atom, i) => {
     const scratch = new Map<string, ImportBinding>();
-    for (const stmt of parse(atom).statements) for (const n of declaredBy(stmt, scratch)) if (declarations.has(n) && declarations.get(n) === undefined) declarations.set(n, i);
+    for (const stmt of parse(atom).statements)
+      for (const n of declaredBy(stmt, scratch))
+        if (declarations.has(n) && declarations.get(n) === undefined) declarations.set(n, i);
   });
   // Every name declared anywhere in the module; one that is not a top-level declaration is inner.
   const innerNames = new Set<string>();
   const visit = (n: ts.Node): void => {
-    if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) && ts.isIdentifier(n.name)) innerNames.add(n.name.text);
-    if ((ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name !== undefined) innerNames.add(n.name.text);
+    if (
+      (ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) &&
+      ts.isIdentifier(n.name)
+    )
+      innerNames.add(n.name.text);
+    if ((ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name !== undefined)
+      innerNames.add(n.name.text);
     ts.forEachChild(n, visit);
   };
   visit(sf);
@@ -278,13 +371,17 @@ export function isImportBinding(atom: string): boolean {
   return statements.every(
     (s) =>
       ts.isImportDeclaration(s) ||
-      (ts.isVariableStatement(s) && s.declarationList.declarations.every((d) => requireBinding(d.initializer) !== undefined)),
+      (ts.isVariableStatement(s) &&
+        s.declarationList.declarations.every((d) => requireBinding(d.initializer) !== undefined)),
   );
 }
 
 /** The store: the packages shaved so far, indexed for resolution. */
 export class ReferenceResolver {
-  private readonly modules = new Map<string, { pkg: PackageRecord; mod: ModuleRecord; scope?: ModuleScope }>();
+  private readonly modules = new Map<
+    string,
+    { pkg: PackageRecord; mod: ModuleRecord; scope?: ModuleScope }
+  >();
   private readonly packages = new Map<string, PackageRecord>();
 
   constructor(packages: readonly PackageRecord[]) {
@@ -302,11 +399,21 @@ export class ReferenceResolver {
   }
 
   /** The file a specifier names from a module, or a platform module, or why neither. */
-  private resolveSpecifier(from: string, specifier: string): { file: string } | { platform: string } | { hole: HoleCause } {
+  private resolveSpecifier(
+    from: string,
+    specifier: string,
+  ): { file: string } | { platform: string } | { hole: HoleCause } {
     if (BUILTINS.has(specifier)) return { platform: specifier.replace(/^node:/, "") };
     const tryResolve = (base: string, spec: string): string | undefined => {
       const req = createRequire(base);
-      for (const s of [spec, `${spec}.js`, `${spec}.ts`, `${spec}/index.js`, `${spec}.cjs`, `${spec}.mjs`]) {
+      for (const s of [
+        spec,
+        `${spec}.js`,
+        `${spec}.ts`,
+        `${spec}/index.js`,
+        `${spec}.cjs`,
+        `${spec}.mjs`,
+      ]) {
         try {
           const file = req.resolve(s);
           if (this.modules.has(file)) return file;
@@ -326,7 +433,10 @@ export class ReferenceResolver {
     const sub = specifier.slice(name.length);
     const pkg = this.packages.get(name);
     if (pkg === undefined) return { hole: "external-package" };
-    if (sub === "") return this.modules.has(pkg.entryPath) ? { file: pkg.entryPath } : { hole: "unresolved-module" };
+    if (sub === "")
+      return this.modules.has(pkg.entryPath)
+        ? { file: pkg.entryPath }
+        : { hole: "unresolved-module" };
     const file = tryResolve(`${pkg.root}/package.json`, `.${sub}`);
     return file !== undefined ? { file } : { hole: "unresolved-module" };
   }
@@ -342,7 +452,8 @@ export class ReferenceResolver {
     if (target === undefined) {
       if (name === "*" || name === "default") {
         // A whole module: a namespace of its exports, or a CommonJS module with no single value.
-        if (name === "default" && scope.exports.has("*")) return this.resolveExport(file, "*", seen);
+        if (name === "default" && scope.exports.has("*"))
+          return this.resolveExport(file, "*", seen);
         return { kind: "module", filePath: file };
       }
       // A CommonJS module whose whole export is one value: the name is a member of that value.
@@ -358,9 +469,14 @@ export class ReferenceResolver {
       return { kind: "hole", cause: "missing-export", detail: `${name} in ${file}` };
     }
     if (target.kind === "atom") return { kind: "atom", filePath: file, atom: target.atom };
-    if (target.kind === "unshaved") return { kind: "hole", cause: "not-shaved", detail: `${name} in ${file}` };
+    if (target.kind === "unshaved")
+      return { kind: "hole", cause: "not-shaved", detail: `${name} in ${file}` };
     if (target.kind === "local") return this.resolveName(file, target.local, seen);
-    return this.resolveImport(file, { specifier: target.specifier, imported: target.imported }, seen);
+    return this.resolveImport(
+      file,
+      { specifier: target.specifier, imported: target.imported },
+      seen,
+    );
   }
 
   private resolveImport(file: string, binding: ImportBinding, seen: Set<string>): Resolution {
@@ -378,7 +494,11 @@ export class ReferenceResolver {
     const binding = scope.imports.get(name);
     if (binding !== undefined) return this.resolveImport(file, binding, seen);
     if (!scope.declarations.has(name)) {
-      return { kind: "hole", cause: scope.innerNames.has(name) ? "enclosing-scope" : "undeclared", detail: name };
+      return {
+        kind: "hole",
+        cause: scope.innerNames.has(name) ? "enclosing-scope" : "undeclared",
+        detail: name,
+      };
     }
     const atom = scope.declarations.get(name);
     if (atom === undefined) return { kind: "hole", cause: "not-shaved", detail: name };
@@ -393,11 +513,17 @@ export class ReferenceResolver {
     if (name === "require" && atomSource !== undefined) {
       const specs: (string | undefined)[] = [];
       const visit = (n: ts.Node): void => {
-        if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "require") specs.push(requireSpecifier(n));
+        if (
+          ts.isCallExpression(n) &&
+          ts.isIdentifier(n.expression) &&
+          n.expression.text === "require"
+        )
+          specs.push(requireSpecifier(n));
         ts.forEachChild(n, visit);
       };
       visit(parse(atomSource));
-      if (specs.length === 0 || specs.some((s) => s === undefined)) return { kind: "hole", cause: "dynamic-require", detail: "require" };
+      if (specs.length === 0 || specs.some((s) => s === undefined))
+        return { kind: "hole", cause: "dynamic-require", detail: "require" };
       for (const s of specs as string[]) {
         const at = this.resolveSpecifier(file, s);
         if ("hole" in at) return { kind: "hole", cause: at.hole, detail: s };

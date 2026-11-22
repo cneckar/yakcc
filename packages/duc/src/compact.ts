@@ -7,7 +7,7 @@
  * (kinds, origin texts, diamond symbols) are interned into one table. `decodeGraph` reverses
  * `encodeGraph` exactly, and `encodeGraph` refuses a graph that is not in canonical numbering.
  */
-import type { DiamondLabel, DucLoop, DucGraph, DucNode, NodeOrigin, ValueId } from "./types.js";
+import type { DiamondLabel, DucGraph, DucLoop, DucNode, NodeOrigin, ValueId } from "./types.js";
 
 export interface CompactGraph {
   /** Format version. */
@@ -39,7 +39,18 @@ export type CompactNode = readonly [
   number,
   number,
   // Loop: [id, carry, invariant, next, cond (-1: none), element (-1: none), kind of iteration (-1, 0 values, 1 keys)]
-  readonly [number, readonly number[], readonly number[], readonly number[], number, number, number] | null,
+  (
+    | readonly [
+        number,
+        readonly number[],
+        readonly number[],
+        readonly number[],
+        number,
+        number,
+        number,
+      ]
+    | null
+  ),
   // Closure: its own graph, encoded the same way, or null.
   CompactGraph | null,
 ];
@@ -68,7 +79,9 @@ export function encodeGraph(g: DucGraph): CompactGraph {
   const nodes: CompactNode[] = g.nodes.map((node, i) => {
     const m = NODE_ID.exec(node.id);
     if (m === null || Number(m[1]) !== i) {
-      throw new Error(`encodeGraph: node ${node.id} at position ${i} is not in canonical numbering`);
+      throw new Error(
+        `encodeGraph: node ${node.id} at position ${i} is not in canonical numbering`,
+      );
     }
     const origin: [number, number] | null = node.origin
       ? [intern(node.origin.kind), node.origin.text === undefined ? -1 : intern(node.origin.text)]
@@ -122,52 +135,56 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     return s;
   };
   const value = (k: number): ValueId => `v${k}` as ValueId;
-  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond, label, region, loop, closure], i) => {
-    const node: {
-      id: DucNode["id"];
-      inputs: ValueId[];
-      outputs: ValueId[];
-      kind: DucNode["kind"];
-      origin?: NodeOrigin;
-      diamond?: DiamondLabel;
-      label?: string;
-      region?: string;
-      loop?: DucLoop;
-      closure?: DucGraph;
-    } = {
-      id: `n${i}` as DucNode["id"],
-      inputs: inputs.map(value),
-      outputs: outputs.map(value),
-      kind: str(kind) as DucNode["kind"],
-    };
-    if (origin !== null) {
-      node.origin = {
-        kind: str(origin[0]),
-        ...(origin[1] !== -1 ? { text: str(origin[1]) } : {}),
+  const nodes: DucNode[] = c.n.map(
+    ([kind, inputs, outputs, origin, diamond, label, region, loop, closure], i) => {
+      const node: {
+        id: DucNode["id"];
+        inputs: ValueId[];
+        outputs: ValueId[];
+        kind: DucNode["kind"];
+        origin?: NodeOrigin;
+        diamond?: DiamondLabel;
+        label?: string;
+        region?: string;
+        loop?: DucLoop;
+        closure?: DucGraph;
+      } = {
+        id: `n${i}` as DucNode["id"],
+        inputs: inputs.map(value),
+        outputs: outputs.map(value),
+        kind: str(kind) as DucNode["kind"],
       };
-    }
-    if (label !== -1) node.label = str(label);
-    if (region !== -1) node.region = str(region);
-    if (closure !== null && closure !== undefined) node.closure = decodeGraph(closure);
-    if (loop !== null) {
-      node.loop = {
-        id: str(loop[0]),
-        carry: loop[1].map(value),
-        invariant: loop[2].map(value),
-        next: loop[3].map(value),
-        ...(loop[4] !== -1 ? { cond: value(loop[4]) } : {}),
-        ...(loop[5] !== -1 ? { iterate: { element: value(loop[5]), of: loop[6] === 0 ? "values" : "keys" } } : {}),
-      } as DucLoop;
-    }
-    if (diamond !== null) {
-      node.diamond = {
-        reason: str(diamond[0]) as DiamondLabel["reason"],
-        symbol: str(diamond[1]),
-        ...(diamond[2] !== -1 ? { module: str(diamond[2]) } : {}),
-      };
-    }
-    return node;
-  });
+      if (origin !== null) {
+        node.origin = {
+          kind: str(origin[0]),
+          ...(origin[1] !== -1 ? { text: str(origin[1]) } : {}),
+        };
+      }
+      if (label !== -1) node.label = str(label);
+      if (region !== -1) node.region = str(region);
+      if (closure !== null && closure !== undefined) node.closure = decodeGraph(closure);
+      if (loop !== null) {
+        node.loop = {
+          id: str(loop[0]),
+          carry: loop[1].map(value),
+          invariant: loop[2].map(value),
+          next: loop[3].map(value),
+          ...(loop[4] !== -1 ? { cond: value(loop[4]) } : {}),
+          ...(loop[5] !== -1
+            ? { iterate: { element: value(loop[5]), of: loop[6] === 0 ? "values" : "keys" } }
+            : {}),
+        } as DucLoop;
+      }
+      if (diamond !== null) {
+        node.diamond = {
+          reason: str(diamond[0]) as DiamondLabel["reason"],
+          symbol: str(diamond[1]),
+          ...(diamond[2] !== -1 ? { module: str(diamond[2]) } : {}),
+        };
+      }
+      return node;
+    },
+  );
   const values: ValueId[] = [];
   for (const node of nodes) for (const out of node.outputs) values.push(out);
   const branches = c.b.map(([n, cond, within]) => ({

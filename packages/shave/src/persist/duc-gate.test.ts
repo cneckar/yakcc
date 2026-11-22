@@ -483,9 +483,7 @@ describe("report wording is structural, not feasibility (WI-GUARD A4, #1257)", (
 // state has no capture policy) and #1267 (the initialization-closure window).
 describe("module-binding classification pins (#1266 mutable state, #1267 init window)", () => {
   it("#1266: a binding written from a function after its initializer stays mutable", () => {
-    const b = moduleBindingsOf(
-      "const T = [];\nexport function grow() { T.push(1); }",
-    );
+    const b = moduleBindingsOf("const T = [];\nexport function grow() { T.push(1); }");
     expect(b.get("T")?.binding).toBe("mutable");
   });
   it("#1266: a counter bumped inside a function stays mutable", () => {

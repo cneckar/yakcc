@@ -5,7 +5,9 @@ import { liftAtom } from "./lift.js";
 
 describe("closure (P7, #1275)", () => {
   it("an atom with no references is closed", () => {
-    expect(closureOf(liftAtom("export function f(a: number): number { return a + 1; }")).closed).toBe(true);
+    expect(
+      closureOf(liftAtom("export function f(a: number): number { return a + 1; }")).closed,
+    ).toBe(true);
   });
 
   it("a platform primitive keeps an atom closed and is reported as a primitive", () => {

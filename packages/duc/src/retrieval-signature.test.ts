@@ -8,15 +8,21 @@ const sig = (src: string) => retrievalSignature(liftAtom(src));
 describe("retrieval signature (#1275, item 3)", () => {
   it("renaming locals and changing formatting does not change the signature", () => {
     expect(sig("export function f(a: number): number { return a + 1; }")).toBe(
-      sig("export function f (x: number): number {\n  // add one\n  const y = x + 1;\n  return y;\n}"),
+      sig(
+        "export function f (x: number): number {\n  // add one\n  const y = x + 1;\n  return y;\n}",
+      ),
     );
   });
 
   it("reordering independent statements does not change the signature", () => {
     expect(
-      sig("export function f(a: number, b: number): number { const x = a * 2; const y = b * 3; return x + y; }"),
+      sig(
+        "export function f(a: number, b: number): number { const x = a * 2; const y = b * 3; return x + y; }",
+      ),
     ).toBe(
-      sig("export function f(a: number, b: number): number { const y = b * 3; const x = a * 2; return x + y; }"),
+      sig(
+        "export function f(a: number, b: number): number { const y = b * 3; const x = a * 2; return x + y; }",
+      ),
     );
   });
 

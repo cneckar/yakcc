@@ -6,11 +6,16 @@ import { graphIdentity } from "./canonical.js";
 import { liftAtom } from "./lift.js";
 import { parseLineForm, printLineForm } from "./line-form.js";
 
-const f = (body: string, params = "x: number"): string => `export function f(${params}): unknown { ${body} }`;
+const f = (body: string, params = "x: number"): string =>
+  `export function f(${params}): unknown { ${body} }`;
 
 const DIFFERENT: [string, string, string][] = [
   ["member name", f("return Math.abs(x);"), f("return Math.floor(x);")],
-  ["property read", f("return o.a;", "o: { a: number; b: number }"), f("return o.b;", "o: { a: number; b: number }")],
+  [
+    "property read",
+    f("return o.a;", "o: { a: number; b: number }"),
+    f("return o.b;", "o: { a: number; b: number }"),
+  ],
   ["object key", f("return { a: x };"), f("return { b: x };")],
   ["object spread", f("return { ...o };", "o: object"), f("return { o };", "o: object")],
   ["template text", f("return `a${x}`;"), f("return `b${x}`;")],
@@ -18,7 +23,11 @@ const DIFFERENT: [string, string, string][] = [
   ["prefix and postfix", f("let y = x; return ++y;"), f("let y = x; return y++;")],
   ["closure body", f("const g = () => 1; return g();"), f("const g = () => 2; return g();")],
   ["thrown value", f("throw new Error('a');"), f("throw new Error('b');")],
-  ["written member", f("const o = { a: 0, b: 0 }; o.a = x; return o;"), f("const o = { a: 0, b: 0 }; o.b = x; return o;")],
+  [
+    "written member",
+    f("const o = { a: 0, b: 0 }; o.a = x; return o;"),
+    f("const o = { a: 0, b: 0 }; o.b = x; return o;"),
+  ],
   ["optional chain", f("return o?.a;", "o: { a: number }"), f("return o.a;", "o: { a: number }")],
 ];
 
@@ -42,6 +51,8 @@ describe("identity tells apart programs that differ in a token (D6)", () => {
 
   it("a hand-written member read matches the lifted one", () => {
     const text = ["param s", "op .length s -> n", "out n"].join("\n");
-    expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom("export function f(s: string): number { return s.length; }")));
+    expect(graphIdentity(parseLineForm(text))).toBe(
+      graphIdentity(liftAtom("export function f(s: string): number { return s.length; }")),
+    );
   });
 });

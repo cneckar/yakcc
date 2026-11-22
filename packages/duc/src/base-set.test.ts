@@ -37,13 +37,20 @@ describe("per-target base sets (#1282)", () => {
   });
 
   it("a nondeterministic primitive that reaches an observation is reported (#1270)", () => {
-    expect(nondeterministicObservations(lift("return Math.random() + x;"), ECMASCRIPT)).toEqual([{ obs: 0, source: "Math.random" }]);
-    expect(nondeterministicObservations(lift("return Date.now() - x;"), ECMASCRIPT).map((r) => r.source)).toEqual(["Date"]);
+    expect(nondeterministicObservations(lift("return Math.random() + x;"), ECMASCRIPT)).toEqual([
+      { obs: 0, source: "Math.random" },
+    ]);
+    expect(
+      nondeterministicObservations(lift("return Date.now() - x;"), ECMASCRIPT).map((r) => r.source),
+    ).toEqual(["Date"]);
     expect(nondeterministicObservations(lift("return Math.floor(x);"), ECMASCRIPT)).toEqual([]);
   });
 
   it("primitives used inside a closure are reported", () => {
-    const report = primitiveReport(lift("const g = (y: number) => Math.random() + y; return g(x);"), ECMASCRIPT);
+    const report = primitiveReport(
+      lift("const g = (y: number) => Math.random() + y; return g(x);"),
+      ECMASCRIPT,
+    );
     expect(report.uses.map((u) => u.symbol)).toEqual(["Math"]);
   });
 });

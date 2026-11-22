@@ -29,7 +29,7 @@ describe("budgeted, source-spread, cited fill (WI-REUSE B4, #1261)", () => {
       cand("r1", "r", 0.4, 200), // 50
     ];
     const r = fill(cs, { tokenBudget: 400, maxPackageShare: 0.5 });
-    expect(r.byPackage["p"]).toBeLessThanOrEqual(200);
+    expect(r.byPackage.p).toBeLessThanOrEqual(200);
     expect(r.selected.some((c) => c.sourcePkg === "q")).toBe(true);
     expect(r.selected.some((c) => c.sourcePkg === "r")).toBe(true);
   });

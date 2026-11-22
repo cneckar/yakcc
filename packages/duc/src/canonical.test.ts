@@ -2,9 +2,9 @@
 // P1 (#1275): the canonical graph depends on the implementation, not on traversal order,
 // formatting, or the order of independent statements.
 import { describe, expect, it } from "vitest";
+import { canonicalJson, graphIdentity } from "./canonical.js";
 import { liftAtom } from "./lift.js";
 import { isWellFormed } from "./wellformed.js";
-import { canonicalJson, graphIdentity } from "./canonical.js";
 
 const canon = (src: string) => canonicalJson(liftAtom(src));
 
@@ -21,8 +21,10 @@ describe("P1 canonical form (#1275)", () => {
   });
 
   it("independent statements in a different order give the same canonical graph", () => {
-    const ab = "export function f(a: number, b: number): number { const x = a * 2; const y = b * 3; return x + y; }";
-    const ba = "export function f(a: number, b: number): number { const y = b * 3; const x = a * 2; return x + y; }";
+    const ab =
+      "export function f(a: number, b: number): number { const x = a * 2; const y = b * 3; return x + y; }";
+    const ba =
+      "export function f(a: number, b: number): number { const y = b * 3; const x = a * 2; return x + y; }";
     expect(canon(ba)).toBe(canon(ab));
   });
 
@@ -55,7 +57,8 @@ describe("P1 canonical form (#1275)", () => {
 describe("pure URI codecs are explained (validator residue)", () => {
   it("encodeURI and decodeURI are explained ambient reads", () => {
     const g = liftAtom("export function f (x: string) { return decodeURI(encodeURI(x)); }");
-    const reasonOf = (sym: string) => g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
+    const reasonOf = (sym: string) =>
+      g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
     expect(reasonOf("encodeURI")).toBe("platform-primitive");
     expect(reasonOf("decodeURI")).toBe("platform-primitive");
   });
@@ -70,14 +73,16 @@ describe("D6 identity is structure only (#1275)", () => {
 
   it("a comment or formatting does not change the identity", () => {
     expect(graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }"))).toBe(
-      graphIdentity(liftAtom("export function f (a: number): number {\n  // add one\n  return a + 1\n}")),
+      graphIdentity(
+        liftAtom("export function f (a: number): number {\n  // add one\n  return a + 1\n}"),
+      ),
     );
   });
 
   it("a real change in structure changes the identity", () => {
-    expect(graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }"))).not.toBe(
-      graphIdentity(liftAtom("export function f(a: number): number { return a * 1; }")),
-    );
+    expect(
+      graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }")),
+    ).not.toBe(graphIdentity(liftAtom("export function f(a: number): number { return a * 1; }")));
   });
 
   it("the annotations are still present and lossless after renaming", () => {

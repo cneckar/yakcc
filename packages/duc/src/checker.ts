@@ -74,7 +74,6 @@ export function checkerSpecHash(spec: CheckerSpec): string {
   return createHash("sha256").update(canonicalJson(spec)).digest("hex");
 }
 
-
 /** The callee symbol of a call node: the ♦-symbol its first input is defined by. */
 function calleeSymbolOf(
   node: DucNode,

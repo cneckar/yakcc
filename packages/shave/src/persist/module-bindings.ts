@@ -152,13 +152,21 @@ function isPrimitiveExpr(node: Node, primitive: ReadonlySet<string>): boolean {
   if (Node.isIdentifier(node)) return primitive.has(node.getText());
   if (Node.isPrefixUnaryExpression(node)) {
     const op = node.getOperatorToken();
-    if (op !== SyntaxKind.PlusToken && op !== SyntaxKind.MinusToken && op !== SyntaxKind.ExclamationToken && op !== SyntaxKind.TildeToken) return false;
+    if (
+      op !== SyntaxKind.PlusToken &&
+      op !== SyntaxKind.MinusToken &&
+      op !== SyntaxKind.ExclamationToken &&
+      op !== SyntaxKind.TildeToken
+    )
+      return false;
     return isPrimitiveExpr(node.getOperand(), primitive);
   }
   if (Node.isBinaryExpression(node)) {
     const op = node.getOperatorToken().getKind();
     if (!PRIMITIVE_BINARY_OPS.has(op)) return false;
-    return isPrimitiveExpr(node.getLeft(), primitive) && isPrimitiveExpr(node.getRight(), primitive);
+    return (
+      isPrimitiveExpr(node.getLeft(), primitive) && isPrimitiveExpr(node.getRight(), primitive)
+    );
   }
   return false;
 }
@@ -386,7 +394,7 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
   const initAllowed = (init: Node | undefined): boolean => {
     if (init === undefined) return false;
     const reads = readsOf(`(${init.getText()});`);
-    return reads !== undefined && reads.every((r) => allowedRead(r, pure));
+    return reads?.every((r) => allowedRead(r, pure)) === true;
   };
 
   let changed = true;
@@ -423,9 +431,7 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
         for (const site of varSites.get(name) ?? []) {
           const stmt = topLevelStatementOf(site.node, sf);
           const reads = stmt === undefined ? undefined : readsOf(stmt.getText());
-          const ok =
-            reads !== undefined &&
-            reads.every((r) => allowedRead(r, pure) || candidates.has(r.symbol));
+          const ok = reads?.every((r) => allowedRead(r, pure) || candidates.has(r.symbol));
           if (!ok) {
             candidates.delete(name);
             refined = true;

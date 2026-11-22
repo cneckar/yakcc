@@ -16,6 +16,7 @@
 import { refinesInfluence } from "./compose.js";
 import { renderWitness, witness } from "./influence.js";
 import { liftAtom } from "./lift.js";
+import type { DucGraph } from "./types.js";
 
 /** One authority edge the candidate adds over the reference. */
 export interface AuthorityEdge {
@@ -39,8 +40,8 @@ export type AuthorityDelta =
  * `addsAuthority` is true iff the candidate adds at least one param->obs edge.
  */
 export function authorityDelta(candidateSource: string, referenceSource: string): AuthorityDelta {
-  let candidate;
-  let reference;
+  let candidate: DucGraph;
+  let reference: DucGraph;
   try {
     candidate = liftAtom(candidateSource);
     reference = liftAtom(referenceSource);

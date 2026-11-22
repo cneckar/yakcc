@@ -28,8 +28,10 @@ describe("canonical order of operands and invariants (4A)", () => {
 
   it("the same program with its statements in another order has the same identity", () => {
     // Two reads of Buffer.from have the same structure behind them; their users tell them apart.
-    const a = "export function f(): unknown { const x = Buffer.from([1, 2]); const y = Buffer.from([3]); return [x, y]; }";
-    const b = "export function f(): unknown { const y = Buffer.from([3]); const x = Buffer.from([1, 2]); return [x, y]; }";
+    const a =
+      "export function f(): unknown { const x = Buffer.from([1, 2]); const y = Buffer.from([3]); return [x, y]; }";
+    const b =
+      "export function f(): unknown { const y = Buffer.from([3]); const x = Buffer.from([1, 2]); return [x, y]; }";
     expect(id(b)).toBe(id(a));
   });
 
@@ -52,6 +54,8 @@ describe("canonical order of operands and invariants (4A)", () => {
         "end r ii",
         "out r",
       ].join("\n");
-    expect(graphIdentity(parseLineForm(loop("x n", "xx nn")))).toBe(graphIdentity(parseLineForm(loop("n x", "nn xx"))));
+    expect(graphIdentity(parseLineForm(loop("x n", "xx nn")))).toBe(
+      graphIdentity(parseLineForm(loop("n x", "nn xx"))),
+    );
   });
 });

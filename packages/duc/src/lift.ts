@@ -25,7 +25,15 @@ import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-m
 import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { normalizeLiteral } from "./literal.js";
-import type { DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
+import type {
+  DiamondReason,
+  DucBranch,
+  DucGraph,
+  DucLoop,
+  DucNode,
+  NodeId,
+  ValueId,
+} from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
 export class DucLiftError extends Error {
@@ -50,7 +58,6 @@ export interface LiftOptions {
 }
 
 // The platform primitives are the per-target base sets in base-set.ts (D5, #1282).
-
 
 interface ImportBinding {
   readonly reason: DiamondReason;
@@ -175,6 +182,13 @@ class Lifter {
   private readonly topLevel = new Set<ValueId>();
   /** Return frames: a total side collects its returns; undefined is a flat frame (observations). */
   private readonly returnFrames: (ValueId[] | undefined)[] = [];
+  /**
+   * The lifted loop whose body is being lifted, when it has jumps: a break sets `brk`, a return sets
+   * `ret` and `retv`, and each ends its path, as a continue does (#1276).
+   */
+  private bodyExits:
+    | { readonly node: Node; readonly brk?: string; readonly ret?: string; readonly retv?: string }
+    | undefined;
   /** A function body exits by return or throw, and ends with `return undefined`; a file does not. */
   private exitMode: "function" | "file" = "file";
   /** Import bindings, name -> classification. */
@@ -268,7 +282,10 @@ class Lifter {
       });
       // A default applies when the argument is undefined; a pattern reads each member (#1276).
       const init = param.getInitializer();
-      this.bindPattern(nameNode, init !== undefined ? this.withDefault(value as ValueId, init) : (value as ValueId));
+      this.bindPattern(
+        nameNode,
+        init !== undefined ? this.withDefault(value as ValueId, init) : (value as ValueId),
+      );
     }
     const body = fn.getBody();
     if (body === undefined) return;
@@ -327,15 +344,58 @@ class Lifter {
     }
     for (const [i, written] of stmts.entries()) {
       // A switch whose clauses each end in an exit is the if chain it means (#1276).
-      const stmt = Node.isSwitchStatement(written) ? (this.lowerSwitch(written) ?? written) : written;
+      const stmt = Node.isSwitchStatement(written)
+        ? (this.lowerSwitch(written) ?? written)
+        : written;
       const rest = stmts.slice(i + 1);
       const full = cont === undefined ? undefined : [...rest, ...cont];
+      if (this.bodyExits !== undefined) {
+        if (
+          Node.isIfStatement(stmt) &&
+          full !== undefined &&
+          containsLoopJump(stmt, this.bodyExits.node)
+        ) {
+          const elseNode = stmt.getElseStatement();
+          this.liftIf(
+            stmt,
+            {
+              whenTrue: [stmt.getThenStatement(), ...full],
+              whenFalse: [...(elseNode !== undefined ? [elseNode] : []), ...full],
+            },
+            "join",
+          );
+          return true;
+        }
+        const blockCont = Node.isBlock(stmt) && full !== undefined ? full : undefined;
+        if (this.liftStatement(stmt, blockCont)) return true;
+        continue;
+      }
+      // A loop that returns: after it, the function returns its value when it returned, and runs the
+      // rest otherwise, as the two sides of a total if.
+      if (
+        full !== undefined &&
+        this.exitMode === "function" &&
+        isLoopStatement(stmt) &&
+        loopReturns(stmt)
+      ) {
+        const flags = this.liftLoopWithExits(stmt);
+        if (flags !== undefined) {
+          this.exitAfterLoop(flags.ret, flags.retv, full);
+          return true;
+        }
+      }
       if (Node.isIfStatement(stmt) && full !== undefined && this.canTakeTail(stmt, full)) {
         const elseNode = stmt.getElseStatement();
-        this.liftIf(stmt, { then: [stmt.getThenStatement(), ...full], else: [...(elseNode !== undefined ? [elseNode] : []), ...full] });
+        this.liftIf(stmt, {
+          whenTrue: [stmt.getThenStatement(), ...full],
+          whenFalse: [...(elseNode !== undefined ? [elseNode] : []), ...full],
+        });
         return true;
       }
-      const blockCont = Node.isBlock(stmt) && full !== undefined && this.blockMayTake(stmt, full) ? full : undefined;
+      const blockCont =
+        Node.isBlock(stmt) && full !== undefined && this.blockMayTake(stmt, full)
+          ? full
+          : undefined;
       if (this.liftStatement(stmt, blockCont)) return true;
       // An exit on some paths that no if could take the rest for: the rest runs only on the paths
       // that have not exited, under the return state (the fallback).
@@ -359,7 +419,8 @@ class Lifter {
     const tmp = `$switch${this.switchCount++}`;
     const arms = switchArms(sw);
     if (arms === undefined) return undefined;
-    const test = (exprs: readonly string[]): string => exprs.map((e) => `${tmp} === (${e})`).join(" || ");
+    const test = (exprs: readonly string[]): string =>
+      exprs.map((e) => `${tmp} === (${e})`).join(" || ");
     const fallback = arms.find((arm) => arm.isDefault);
     const chained = arms.filter((arm) => !arm.isDefault || arm.tests.length > 0);
     let text = fallback !== undefined ? `{\n${fallback.body}\n}` : "";
@@ -368,7 +429,10 @@ class Lifter {
       text = `if (${arm.tests.length > 0 ? test(arm.tests) : "false"}) {\n${arm.body}\n}${text !== "" ? ` else ${text}` : ""}`;
     }
     const source = `function __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\n${text}\n}\n}`;
-    const file = sw.getSourceFile().getProject().createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
+    const file = sw
+      .getSourceFile()
+      .getProject()
+      .createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
     return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
   }
 
@@ -379,7 +443,9 @@ class Lifter {
     if (tail.some((t) => Node.isFunctionDeclaration(t))) return false;
     // A tail that both sides continue into is lifted twice: bound its size outside a total side.
     const elseNode = stmt.getElseStatement();
-    const both = !alwaysReturns(stmt.getThenStatement()) && !(elseNode !== undefined && alwaysReturns(elseNode));
+    const both =
+      !alwaysReturns(stmt.getThenStatement()) &&
+      !(elseNode !== undefined && alwaysReturns(elseNode));
     const size = tail.reduce((n, t) => n + t.getText().length, 0);
     return !(both && this.returnFrames.length === 0 && size > 4000);
   }
@@ -389,8 +455,14 @@ class Lifter {
     if (!containsDirectExit(block)) return false;
     const lexical = new Set<string>();
     for (const st of block.getStatements()) {
-      if (Node.isVariableStatement(st)) for (const d of st.getDeclarations()) for (const n of patternNames(d.getNameNode())) lexical.add(n);
-      if ((Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) && st.getName() !== undefined) lexical.add(st.getName() as string);
+      if (Node.isVariableStatement(st))
+        for (const d of st.getDeclarations())
+          for (const n of patternNames(d.getNameNode())) lexical.add(n);
+      if (
+        (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) &&
+        st.getName() !== undefined
+      )
+        lexical.add(st.getName() as string);
     }
     return !tail.some((t) => this.readNamesOf(t).some((n) => lexical.has(n)));
   }
@@ -411,7 +483,9 @@ class Lifter {
     for (const [name, beforeValue] of before) {
       const elseValue = elseEnv.get(name) ?? beforeValue;
       if (elseValue !== beforeValue) {
-        const [joined] = this.emit("sel", [flag, beforeValue, elseValue], 1, { origin: { kind: "ExitGuard", text: name } });
+        const [joined] = this.emit("sel", [flag, beforeValue, elseValue], 1, {
+          origin: { kind: "ExitGuard", text: name },
+        });
         this.env.set(name, joined as ValueId);
       }
     }
@@ -446,7 +520,10 @@ class Lifter {
    */
   private thisValue(): ValueId {
     if (this.env.has(THIS)) return this.resolveIdentifier(THIS);
-    const [value] = this.emit("op", [], 1, { origin: { kind: "ThisKeyword", text: "this" }, label: "this" });
+    const [value] = this.emit("op", [], 1, {
+      origin: { kind: "ThisKeyword", text: "this" },
+      label: "this",
+    });
     this.env.set(THIS, value as ValueId);
     return value as ValueId;
   }
@@ -456,16 +533,25 @@ class Lifter {
     if (fn.getDescendantsOfKind(SyntaxKind.SuperKeyword).length > 0) return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
-    const thisUses = fn.getDescendantsOfKind(SyntaxKind.ThisKeyword).filter((t) => receiverOwner(t) === fn || (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)));
+    const thisUses = fn
+      .getDescendantsOfKind(SyntaxKind.ThisKeyword)
+      .filter(
+        (t) =>
+          receiverOwner(t) === fn ||
+          (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
+      );
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
     const dynamicThis = !Node.isArrowFunction(fn) && thisUses.length > 0;
     const locals = closureLocals(fn);
     const reads = fn.getDescendantsOfKind(SyntaxKind.Identifier);
-    if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments"))) return undefined;
-    if (assignmentTargets(fn).some((t) => {
-      const base = baseIdentifierOfTarget(t);
-      return base === undefined || !locals.has(base);
-    })) {
+    if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments")))
+      return undefined;
+    if (
+      assignmentTargets(fn).some((t) => {
+        const base = baseIdentifierOfTarget(t);
+        return base === undefined || !locals.has(base);
+      })
+    ) {
       return undefined;
     }
     const captures: string[] = [];
@@ -483,11 +569,19 @@ class Lifter {
     const outside = assignmentTargets(fn.getSourceFile()).filter(
       (t) => !t.getAncestors().some((a) => a.compilerNode === fn.compilerNode),
     );
-    const scopeOf = (n: Node): Node | undefined => n.getAncestors().find((a) => isFunctionLikeNode(a));
+    const scopeOf = (n: Node): Node | undefined =>
+      n.getAncestors().find((a) => isFunctionLikeNode(a));
     const inLoop = (n: Node, scope: Node | undefined): boolean => {
       for (const a of n.getAncestors()) {
         if (scope !== undefined && a.compilerNode === scope.compilerNode) return false;
-        if (Node.isForStatement(a) || Node.isForOfStatement(a) || Node.isForInStatement(a) || Node.isWhileStatement(a) || Node.isDoStatement(a)) return true;
+        if (
+          Node.isForStatement(a) ||
+          Node.isForOfStatement(a) ||
+          Node.isForInStatement(a) ||
+          Node.isWhileStatement(a) ||
+          Node.isDoStatement(a)
+        )
+          return true;
       }
       return false;
     };
@@ -495,7 +589,9 @@ class Lifter {
     const changesCapture = (t: Node): boolean => {
       // A destructuring assignment rebinds every name in it.
       if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t)) {
-        return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => captures.includes(id.getText()));
+        return t
+          .getDescendantsOfKind(SyntaxKind.Identifier)
+          .some((id) => captures.includes(id.getText()));
       }
       const base = baseIdentifierOfTarget(t);
       if (base === undefined || !captures.includes(base)) return false;
@@ -515,7 +611,9 @@ class Lifter {
     } catch {
       return undefined;
     }
-    const inputs = captures.map((name) => (name === THIS ? this.thisValue() : this.resolveIdentifier(name)));
+    const inputs = captures.map((name) =>
+      name === THIS ? this.thisValue() : this.resolveIdentifier(name),
+    );
     const [value] = this.emit("op", inputs, 1, {
       origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
       label: dynamicThis ? "function" : "closure",
@@ -551,6 +649,26 @@ class Lifter {
 
   /** Lifts one statement; true when every path through it exits. */
   private liftStatement(node: Node, cont?: readonly Node[]): boolean {
+    const exits = this.bodyExits;
+    if (
+      exits !== undefined &&
+      (Node.isBreakStatement(node) ||
+        Node.isContinueStatement(node) ||
+        Node.isReturnStatement(node))
+    ) {
+      const yes = (): ValueId =>
+        this.emit("literal-source", [], 1, {
+          origin: { kind: "TrueKeyword", text: "true" },
+          label: "true",
+        })[0] as ValueId;
+      if (Node.isBreakStatement(node) && exits.brk !== undefined) this.env.set(exits.brk, yes());
+      if (Node.isReturnStatement(node) && exits.ret !== undefined && exits.retv !== undefined) {
+        const expr = node.getExpression();
+        this.env.set(exits.retv, expr !== undefined ? this.liftExpr(expr) : this.undefinedValue());
+        this.env.set(exits.ret, yes());
+      }
+      return true;
+    }
     this.liftStatementInner(node, cont);
     if (Node.isReturnStatement(node) || Node.isThrowStatement(node)) return true;
     return Node.isBlock(node) ? this.lastBlockExited : false;
@@ -584,7 +702,10 @@ class Lifter {
         const value =
           init !== undefined
             ? this.liftExpr(init)
-            : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" }, label: "Uninitialized" })[0];
+            : this.emit("literal-source", [], 1, {
+                origin: { kind: "Uninitialized" },
+                label: "Uninitialized",
+              })[0];
         this.bindPattern(decl.getNameNode(), value as ValueId);
       }
       return;
@@ -603,7 +724,8 @@ class Lifter {
       return;
     }
     if ((Node.isForStatement(node) || Node.isWhileStatement(node)) && this.liftLoop(node)) return;
-    if ((Node.isForOfStatement(node) || Node.isForInStatement(node)) && this.liftIterate(node)) return;
+    if ((Node.isForOfStatement(node) || Node.isForInStatement(node)) && this.liftIterate(node))
+      return;
     if (
       Node.isForStatement(node) ||
       Node.isForOfStatement(node) ||
@@ -641,7 +763,11 @@ class Lifter {
    * every path exits, so the result is the join of the sides' returns, one observation under the
    * condition. Otherwise the sides are the statements written, and their values join as names.
    */
-  private liftIf(node: import("ts-morph").IfStatement, sides?: IfSides): void {
+  private liftIf(
+    node: import("ts-morph").IfStatement,
+    sides?: IfSides,
+    mode: "total" | "join" = "total",
+  ): void {
     const condValue = this.liftExpr(node.getExpression());
     // A return on some paths: the return state must exist before the branch, so the join carries it.
     if (sides === undefined && containsDirectExit(node)) this.ensureReturnState();
@@ -651,21 +777,27 @@ class Lifter {
     const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
     this.branches.push({ id, cond: condValue, ...(within !== undefined ? { within } : {}) });
 
-    const total = sides !== undefined;
+    const total = sides !== undefined && mode === "total";
     const elseNode = node.getElseStatement();
-    const thenStmts: readonly Node[] = sides?.then ?? [node.getThenStatement()];
-    const elseStmts: readonly Node[] = sides?.else ?? (elseNode !== undefined ? [elseNode] : []);
+    const thenStmts: readonly Node[] = sides?.whenTrue ?? [node.getThenStatement()];
+    const elseStmts: readonly Node[] =
+      sides?.whenFalse ?? (elseNode !== undefined ? [elseNode] : []);
     // A total side runs to the end of the function: falling off its end returns undefined.
     const side = (stmts: readonly Node[], returns: ValueId[]) => () =>
       this.branch(before, () => {
-        if (!this.liftStatements(stmts, total ? [] : undefined) && total) returns.push(this.undefinedValue());
+        const cont = total || sides !== undefined ? [] : undefined;
+        if (!this.liftStatements(stmts, cont) && total) returns.push(this.undefinedValue());
       });
     const thenReturns: ValueId[] = [];
-    const thenEnv = this.inRegion(`${id}.t`, () => this.inReturnFrame(total ? thenReturns : undefined, side(thenStmts, thenReturns)));
+    const thenEnv = this.inRegion(`${id}.t`, () =>
+      this.inReturnFrame(total ? thenReturns : undefined, side(thenStmts, thenReturns)),
+    );
     const elseReturns: ValueId[] = [];
     const elseEnv =
-      elseStmts.length > 0 || total
-        ? this.inRegion(`${id}.e`, () => this.inReturnFrame(total ? elseReturns : undefined, side(elseStmts, elseReturns)))
+      elseStmts.length > 0 || sides !== undefined
+        ? this.inRegion(`${id}.e`, () =>
+            this.inReturnFrame(total ? elseReturns : undefined, side(elseStmts, elseReturns)),
+          )
         : before;
 
     if (total) {
@@ -715,7 +847,10 @@ class Lifter {
     const frame = this.returnFrames[this.returnFrames.length - 1];
     if (frame !== undefined) frame.push(this.undefinedValue());
     else if (this.env.has(RETURN_DONE)) {
-      const [flag] = this.emit("literal-source", [], 1, { origin: { kind: "TrueKeyword", text: "true" }, label: "true" });
+      const [flag] = this.emit("literal-source", [], 1, {
+        origin: { kind: "TrueKeyword", text: "true" },
+        label: "true",
+      });
       this.env.set(RETURN_DONE, flag as ValueId);
     }
   }
@@ -729,7 +864,9 @@ class Lifter {
   private recordPartialReturn(value: ValueId): void {
     const done = this.env.get(RETURN_DONE) as ValueId;
     const current = this.env.get(RETURN_VALUE) as ValueId;
-    const [kept] = this.emit("sel", [done, current, value], 1, { origin: { kind: "ReturnSelect" } });
+    const [kept] = this.emit("sel", [done, current, value], 1, {
+      origin: { kind: "ReturnSelect" },
+    });
     const [flag] = this.emit("literal-source", [], 1, {
       origin: { kind: "TrueKeyword", text: "true" },
       label: "true",
@@ -774,8 +911,90 @@ class Lifter {
    * invariants. Returns false for a loop it does not express (a jump, a return, or another kind of
    * loop), and the caller keeps the opaque summary.
    */
-  private liftLoop(node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement): boolean {
-    if (hasJump(node)) return false;
+  private liftLoop(
+    node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement,
+  ): boolean {
+    if (hasJump(node)) {
+      // A loop that only breaks and continues lifts here; one that returns needs the rest of the
+      // function, and lifts from liftStatements.
+      if (loopReturns(node) || !jumpsSupported(node)) return false;
+      return this.liftLoopWithExits(node) !== undefined;
+    }
+    return this.liftLoopBody(node);
+  }
+
+  /**
+   * A while or for loop with breaks, continues and returns that belong to it. Its exits are carried
+   * flags: the loop continues while none is set, a for's incrementor runs only when none is, and
+   * the returned value is carried too. Returns the loop's results for the return flag and value.
+   */
+  private liftLoopWithExits(node: Node): { ret: ValueId; retv: ValueId } | undefined {
+    if (
+      !(Node.isWhileStatement(node) || Node.isForStatement(node)) ||
+      !jumpsSupported(node) ||
+      this.bodyExits !== undefined
+    )
+      return undefined;
+    const id = this.loopCount;
+    const breaks = hasOwnBreak(node);
+    const returns = loopReturns(node);
+    const no = (): ValueId =>
+      this.emit("literal-source", [], 1, {
+        origin: { kind: "FalseKeyword", text: "false" },
+        label: "false",
+      })[0] as ValueId;
+    const exits = {
+      node,
+      ...(breaks ? { brk: `%break${id}` } : {}),
+      ...(returns ? { ret: `%return${id}`, retv: `%returnValue${id}` } : {}),
+    };
+    if (exits.brk !== undefined) this.env.set(exits.brk, no());
+    if (exits.ret !== undefined && exits.retv !== undefined) {
+      this.env.set(exits.ret, no());
+      this.env.set(exits.retv, this.undefinedValue());
+    }
+    const outer = this.bodyExits;
+    this.bodyExits = exits;
+    try {
+      this.liftLoopBody(
+        node,
+        [exits.brk, exits.ret, exits.retv].filter((n): n is string => n !== undefined),
+      );
+    } finally {
+      this.bodyExits = outer;
+    }
+    const ret = exits.ret !== undefined ? this.env.get(exits.ret) : undefined;
+    const retv = exits.retv !== undefined ? this.env.get(exits.retv) : undefined;
+    return ret !== undefined && retv !== undefined
+      ? { ret, retv }
+      : { ret: no(), retv: this.undefinedValue() };
+  }
+
+  /** After a loop that returns: a total if on its return flag, the rest of the function on the other side. */
+  private exitAfterLoop(flag: ValueId, value: ValueId, tail: readonly Node[]): void {
+    const before = new Map(this.env);
+    const id = `b${this.branchCount++}`;
+    const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
+    this.branches.push({ id, cond: flag, ...(within !== undefined ? { within } : {}) });
+    const elseReturns: ValueId[] = [];
+    this.inRegion(`${id}.e`, () =>
+      this.inReturnFrame(elseReturns, () =>
+        this.branch(before, () => {
+          if (!this.liftStatements(tail, [])) elseReturns.push(this.undefinedValue());
+        }),
+      ),
+    );
+    const [returned] = this.emit("sel", [flag, value, elseReturns[0] as ValueId], 1, {
+      origin: { kind: "IfReturn" },
+    });
+    this.reportReturn(returned as ValueId);
+  }
+
+  private liftLoopBody(
+    node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement | Node,
+    exitNames: readonly string[] = [],
+  ): boolean {
+    if (!(Node.isWhileStatement(node) || Node.isForStatement(node))) return false;
     const isFor = Node.isForStatement(node);
     const cond = Node.isForStatement(node) ? node.getCondition() : node.getExpression();
     const incrementor = Node.isForStatement(node) ? node.getIncrementor() : undefined;
@@ -784,7 +1003,8 @@ class Lifter {
     // A `for` initializer runs once, before the loop.
     if (Node.isForStatement(node)) {
       const init = node.getInitializer();
-      if (init !== undefined && Node.isVariableDeclarationList(init)) this.liftDeclarations(init.getDeclarations());
+      if (init !== undefined && Node.isVariableDeclarationList(init))
+        this.liftDeclarations(init.getDeclarations());
       else if (init !== undefined) this.liftExpr(init);
     }
 
@@ -795,7 +1015,7 @@ class Lifter {
         if (!assigned.includes(name)) assigned.push(name);
       }
     }
-    const carried = assigned.filter((name) => this.env.has(name));
+    const carried = [...assigned.filter((name) => this.env.has(name)), ...exitNames];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
 
     // The body runs on a copy of the environment, and the original object is restored after it: an
@@ -825,12 +1045,64 @@ class Lifter {
           carrySources.push(value as ValueId);
           this.env.set(name, value as ValueId);
         });
+        // With exits: the loop continues while no exit is set, and then while its condition holds.
+        const stopped = (): ValueId | undefined => {
+          const flags = exitNames
+            .filter((n) => !n.startsWith("%returnValue"))
+            .map((n) => this.env.get(n) as ValueId);
+          if (flags.length === 0) return undefined;
+          return flags.slice(1).reduce(
+            (acc, f) =>
+              this.emit("op", [acc, f], 1, {
+                origin: { kind: "Binary", text: "||" },
+                label: "||",
+              })[0] as ValueId,
+            flags[0] as ValueId,
+          );
+        };
+        const stop = stopped();
+        const going =
+          stop !== undefined
+            ? (this.emit("op", [stop], 1, {
+                origin: { kind: "PrefixUnaryExpression" },
+                label: "!",
+              })[0] as ValueId)
+            : undefined;
+        const written =
+          cond !== undefined && going !== undefined && !isInert(cond)
+            ? this.liftLazy(
+                going,
+                () => this.liftExpr(cond),
+                () => going,
+              )
+            : cond !== undefined
+              ? this.liftExpr(cond)
+              : undefined;
         condition =
-          cond !== undefined
-            ? this.liftExpr(cond)
-            : (this.emit("literal-source", [], 1, { origin: { kind: "TrueKeyword", text: "true" }, label: "true" })[0] as ValueId);
-        this.liftStatement(body);
-        if (incrementor !== undefined) this.liftExpr(incrementor);
+          going !== undefined && written !== undefined && isInert(cond as Node)
+            ? (this.emit("op", [going, written], 1, {
+                origin: { kind: "Binary", text: "&&" },
+                label: "&&",
+              })[0] as ValueId)
+            : (written ??
+              going ??
+              (this.emit("literal-source", [], 1, {
+                origin: { kind: "TrueKeyword", text: "true" },
+                label: "true",
+              })[0] as ValueId));
+        // The body ends on every path, so a continue, a break or a return ends only its own path.
+        if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
+        else this.liftStatement(body, []);
+        if (incrementor !== undefined) {
+          const after = stopped();
+          if (after === undefined) this.liftExpr(incrementor);
+          else
+            this.liftLazy(
+              after,
+              () => after,
+              () => this.liftExpr(incrementor),
+            );
+        }
         for (const name of carried) nexts.push(this.env.get(name) as ValueId);
       });
     } finally {
@@ -863,7 +1135,9 @@ class Lifter {
    * this holds for any iterable. Returns false for a form it does not express (`for await`, a jump,
    * a loop variable that is not a single declaration).
    */
-  private liftIterate(node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement): boolean {
+  private liftIterate(
+    node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
+  ): boolean {
     if (hasJump(node)) return false;
     if (Node.isForOfStatement(node) && node.isAwaited()) return false;
     const init = node.getInitializer();
@@ -973,7 +1247,10 @@ class Lifter {
       const value =
         init !== undefined
           ? this.liftExpr(init)
-          : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" }, label: "Uninitialized" })[0];
+          : this.emit("literal-source", [], 1, {
+              origin: { kind: "Uninitialized" },
+              label: "Uninitialized",
+            })[0];
       this.bindPattern(decl.getNameNode(), value as ValueId);
     }
   }
@@ -990,14 +1267,23 @@ class Lifter {
       return;
     }
     const read = (label: string, inputs: ValueId[], text: string): ValueId =>
-      this.emit("op", inputs, 1, { origin: { kind: "Destructure", text: truncate(text) }, label })[0] as ValueId;
+      this.emit("op", inputs, 1, {
+        origin: { kind: "Destructure", text: truncate(text) },
+        label,
+      })[0] as ValueId;
     const literal = (text: string): ValueId =>
-      this.emit("literal-source", [], 1, { origin: { kind: "Literal", text }, label: normalizeLiteral(text) })[0] as ValueId;
+      this.emit("literal-source", [], 1, {
+        origin: { kind: "Literal", text },
+        label: normalizeLiteral(text),
+      })[0] as ValueId;
     if (Node.isObjectBindingPattern(nameNode)) {
       const taken: string[] = [];
       for (const el of nameNode.getElements()) {
         if (el.getDotDotDotToken() !== undefined) {
-          this.bindPattern(el.getNameNode(), read(`ObjectRest:${JSON.stringify(taken)}`, [value], el.getText()));
+          this.bindPattern(
+            el.getNameNode(),
+            read(`ObjectRest:${JSON.stringify(taken)}`, [value], el.getText()),
+          );
           continue;
         }
         const key = el.getPropertyNameNode() ?? el.getNameNode();
@@ -1005,14 +1291,20 @@ class Lifter {
         if (Node.isComputedPropertyName(key)) {
           member = read("ElementAccess", [value, this.liftExpr(key.getExpression())], el.getText());
         } else {
-          const name = Node.isStringLiteral(key) || Node.isNumericLiteral(key) ? key.getLiteralText() : key.getText();
+          const name =
+            Node.isStringLiteral(key) || Node.isNumericLiteral(key)
+              ? key.getLiteralText()
+              : key.getText();
           taken.push(name);
           member = /^[A-Za-z_$][\w$]*$/.test(name)
             ? read(`.${name}`, [value], el.getText())
             : read("ElementAccess", [value, literal(JSON.stringify(name))], el.getText());
         }
         const init = el.getInitializer();
-        this.bindPattern(el.getNameNode(), init !== undefined ? this.withDefault(member, init) : member);
+        this.bindPattern(
+          el.getNameNode(),
+          init !== undefined ? this.withDefault(member, init) : member,
+        );
       }
       return;
     }
@@ -1021,12 +1313,18 @@ class Lifter {
         if (Node.isOmittedExpression(el)) continue;
         if (el.getDotDotDotToken() !== undefined) {
           const slice = read(".slice", [value], el.getText());
-          this.bindPattern(el.getNameNode(), read("CallExpression", [slice, literal(String(i))], el.getText()));
+          this.bindPattern(
+            el.getNameNode(),
+            read("CallExpression", [slice, literal(String(i))], el.getText()),
+          );
           continue;
         }
         const member = read("ElementAccess", [value, literal(String(i))], el.getText());
         const init = el.getInitializer();
-        this.bindPattern(el.getNameNode(), init !== undefined ? this.withDefault(member, init) : member);
+        this.bindPattern(
+          el.getNameNode(),
+          init !== undefined ? this.withDefault(member, init) : member,
+        );
       }
       return;
     }
@@ -1035,12 +1333,21 @@ class Lifter {
 
   /** `value`, or the default when value is undefined; the default runs only then. */
   private withDefault(value: ValueId, init: Node): ValueId {
-    const missing = this.emit("op", [value, this.undefinedValue()], 1, { origin: { kind: "Binary", text: "===" }, label: "===" })[0] as ValueId;
+    const missing = this.emit("op", [value, this.undefinedValue()], 1, {
+      origin: { kind: "Binary", text: "===" },
+      label: "===",
+    })[0] as ValueId;
     if (isInert(init)) {
       const d = this.liftExpr(init);
-      return this.emit("sel", [missing, d, value], 1, { origin: { kind: "Conditional" } })[0] as ValueId;
+      return this.emit("sel", [missing, d, value], 1, {
+        origin: { kind: "Conditional" },
+      })[0] as ValueId;
     }
-    return this.liftLazy(missing, () => this.liftExpr(init), () => value);
+    return this.liftLazy(
+      missing,
+      () => this.liftExpr(init),
+      () => value,
+    );
   }
 
   /** Run `body` with `segment` pushed onto the region path, then restore it. */
@@ -1099,7 +1406,10 @@ class Lifter {
       const locals = collectRegionLocals(node);
       const scope =
         locals.size > 0
-          ? (this.emit("op", reads, 1, { origin: { kind: "RegionScope" }, label: this.opaqueLabel("RegionScope", node) })[0] as ValueId)
+          ? (this.emit("op", reads, 1, {
+              origin: { kind: "RegionScope" },
+              label: this.opaqueLabel("RegionScope", node),
+            })[0] as ValueId)
           : undefined;
       for (const ret of returns) {
         const expr = ret.getExpression() as Node;
@@ -1178,7 +1488,12 @@ class Lifter {
       ...node.getDescendantsOfKind(SyntaxKind.PostfixUnaryExpression),
       ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
     ];
-    for (const un of unaries) consider(un.getOperand());
+    // Only a step assigns its operand: `!x` and `-x` read it.
+    for (const un of unaries) {
+      const op = un.getOperatorToken();
+      if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken)
+        consider(un.getOperand());
+    }
     return [...names];
   }
 
@@ -1187,7 +1502,8 @@ class Lifter {
     if (node.getKind() === SyntaxKind.ThisKeyword) return this.thisValue();
     if (Node.isIdentifier(node)) {
       // `undefined`, unless a binding shadows it, is the literal: the same value a bare `return;` has.
-      if (node.getText() === "undefined" && !this.env.has("undefined")) return this.undefinedValue();
+      if (node.getText() === "undefined" && !this.env.has("undefined"))
+        return this.undefinedValue();
       return this.resolveIdentifier(node.getText());
     }
     if (isLiteralExpression(node)) {
@@ -1230,7 +1546,11 @@ class Lifter {
       const cond = this.liftExpr(node.getCondition());
       // An arm that could do more than produce a value runs only when it is chosen: a branch.
       if (!isInert(node.getWhenTrue()) || !isInert(node.getWhenFalse())) {
-        return this.liftLazy(cond, () => this.liftExpr(node.getWhenTrue()), () => this.liftExpr(node.getWhenFalse()));
+        return this.liftLazy(
+          cond,
+          () => this.liftExpr(node.getWhenTrue()),
+          () => this.liftExpr(node.getWhenFalse()),
+        );
       }
       const whenTrue = this.liftExpr(node.getWhenTrue());
       const whenFalse = this.liftExpr(node.getWhenFalse());
@@ -1281,7 +1601,10 @@ class Lifter {
     }
     if (Node.isTemplateExpression(node)) {
       // The literal parts are structure; the expressions between them are the inputs.
-      const parts = [rawTextOf(node.getHead()), ...node.getTemplateSpans().map((span) => rawTextOf(span.getLiteral()))];
+      const parts = [
+        rawTextOf(node.getHead()),
+        ...node.getTemplateSpans().map((span) => rawTextOf(span.getLiteral())),
+      ];
       const inputs = node.getTemplateSpans().map((span) => this.liftExpr(span.getExpression()));
       return this.emit("op", inputs, 1, {
         origin: { kind: "Template" },
@@ -1293,8 +1616,12 @@ class Lifter {
       const inputs = [this.liftExpr(node.getTag())];
       let parts: string[];
       if (Node.isTemplateExpression(template)) {
-        parts = [rawTextOf(template.getHead()), ...template.getTemplateSpans().map((span) => rawTextOf(span.getLiteral()))];
-        for (const span of template.getTemplateSpans()) inputs.push(this.liftExpr(span.getExpression()));
+        parts = [
+          rawTextOf(template.getHead()),
+          ...template.getTemplateSpans().map((span) => rawTextOf(span.getLiteral())),
+        ];
+        for (const span of template.getTemplateSpans())
+          inputs.push(this.liftExpr(span.getExpression()));
       } else {
         parts = [rawTextOf(template)];
       }
@@ -1344,7 +1671,8 @@ class Lifter {
         inputs.push(this.liftExpr(name.getExpression()));
         return 1;
       }
-      if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralValue();
+      if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name))
+        return name.getLiteralValue();
       if (Node.isNumericLiteral(name)) return String(name.getLiteralValue());
       return name.getText();
     };
@@ -1381,7 +1709,11 @@ class Lifter {
    * outside are replaced by their order of first use, so renaming an outer name keeps the label; the
    * rest of the text is the structure, since the node has no other.
    */
-  private opaqueLabel(kind: string, node: Node, extraLocals: ReadonlySet<string> = new Set()): string {
+  private opaqueLabel(
+    kind: string,
+    node: Node,
+    extraLocals: ReadonlySet<string> = new Set(),
+  ): string {
     const locals = collectRegionLocals(node);
     for (const name of extraLocals) locals.add(name);
     const start = node.getStart();
@@ -1428,12 +1760,37 @@ class Lifter {
     // A short-circuit operator evaluates its right side only on some paths: unless that side only
     // produces a value, it is a branch, as the equivalent if is (#1276).
     const right = node.getRight();
-    if ((op === SyntaxKind.AmpersandAmpersandToken || op === SyntaxKind.BarBarToken || op === SyntaxKind.QuestionQuestionToken) && !isInert(right)) {
-      if (op === SyntaxKind.AmpersandAmpersandToken) return this.liftLazy(l, () => this.liftExpr(right), () => l);
-      if (op === SyntaxKind.BarBarToken) return this.liftLazy(l, () => l, () => this.liftExpr(right));
-      const [nullValue] = this.emit("literal-source", [], 1, { origin: { kind: "NullKeyword", text: "null" }, label: "null" });
-      const [isNullish] = this.emit("op", [l, nullValue as ValueId], 1, { origin: { kind: "Binary", text: "==" }, label: "==" });
-      return this.liftLazy(isNullish as ValueId, () => this.liftExpr(right), () => l);
+    if (
+      (op === SyntaxKind.AmpersandAmpersandToken ||
+        op === SyntaxKind.BarBarToken ||
+        op === SyntaxKind.QuestionQuestionToken) &&
+      !isInert(right)
+    ) {
+      if (op === SyntaxKind.AmpersandAmpersandToken)
+        return this.liftLazy(
+          l,
+          () => this.liftExpr(right),
+          () => l,
+        );
+      if (op === SyntaxKind.BarBarToken)
+        return this.liftLazy(
+          l,
+          () => l,
+          () => this.liftExpr(right),
+        );
+      const [nullValue] = this.emit("literal-source", [], 1, {
+        origin: { kind: "NullKeyword", text: "null" },
+        label: "null",
+      });
+      const [isNullish] = this.emit("op", [l, nullValue as ValueId], 1, {
+        origin: { kind: "Binary", text: "==" },
+        label: "==",
+      });
+      return this.liftLazy(
+        isNullish as ValueId,
+        () => this.liftExpr(right),
+        () => l,
+      );
     }
     const r = this.liftExpr(right);
     return this.emit("op", [l, r], 1, {
@@ -1453,17 +1810,29 @@ class Lifter {
     this.branches.push({ id, cond, ...(within !== undefined ? { within } : {}) });
     let thenValue = cond;
     let elseValue = cond;
-    const thenEnv = this.inRegion(`${id}.t`, () => this.branch(before, () => { thenValue = whenTrue(); }));
-    const elseEnv = this.inRegion(`${id}.e`, () => this.branch(before, () => { elseValue = whenFalse(); }));
+    const thenEnv = this.inRegion(`${id}.t`, () =>
+      this.branch(before, () => {
+        thenValue = whenTrue();
+      }),
+    );
+    const elseEnv = this.inRegion(`${id}.e`, () =>
+      this.branch(before, () => {
+        elseValue = whenFalse();
+      }),
+    );
     for (const [name, beforeValue] of before) {
       const t = thenEnv.get(name) ?? beforeValue;
       const e = elseEnv.get(name) ?? beforeValue;
       if (t !== e || t !== beforeValue) {
-        const [joined] = this.emit("sel", [cond, t, e], 1, { origin: { kind: "IfJoin", text: name } });
+        const [joined] = this.emit("sel", [cond, t, e], 1, {
+          origin: { kind: "IfJoin", text: name },
+        });
         this.env.set(name, joined as ValueId);
       }
     }
-    return this.emit("sel", [cond, thenValue, elseValue], 1, { origin: { kind: "Conditional" } })[0] as ValueId;
+    return this.emit("sel", [cond, thenValue, elseValue], 1, {
+      origin: { kind: "Conditional" },
+    })[0] as ValueId;
   }
 
   /** Reassign an lvalue. Identifier -> rebind; member/element -> mutate base object. */
@@ -1585,7 +1954,8 @@ function assignmentTargets(node: Node): Node[] {
     ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
   ]) {
     const op = un.getOperatorToken();
-    if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken) targets.push(un.getOperand());
+    if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken)
+      targets.push(un.getOperand());
   }
   return targets;
 }
@@ -1804,7 +2174,10 @@ function dedupe(values: readonly ValueId[]): ValueId[] {
 
 /** JSON as one token: whitespace inside strings is escaped, so a label is one word of the line form. */
 function labelJson(value: unknown): string {
-  return JSON.stringify(value).replace(/\s/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return JSON.stringify(value).replace(
+    /\s/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 /** The raw text of a template part, exactly as written (escapes kept). */
@@ -1833,11 +2206,20 @@ function valueIndex(value: ValueId): number {
 /** True when the loop body has a break, a continue or a return that belongs to it (not to a nested function). */
 function hasJump(node: Node): boolean {
   // A break or continue that belongs to an inner loop or switch stays inside this loop.
-  const leaves = (jump: import("ts-morph").BreakStatement | import("ts-morph").ContinueStatement): boolean => {
+  const leaves = (
+    jump: import("ts-morph").BreakStatement | import("ts-morph").ContinueStatement,
+  ): boolean => {
     if (jump.getLabel() !== undefined) return true;
     if (Node.isBreakStatement(jump)) return breakTarget(jump) === node;
     for (let p: Node | undefined = jump.getParent(); p !== undefined; p = p.getParent()) {
-      if (Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p) || Node.isWhileStatement(p) || Node.isDoStatement(p)) return p === node;
+      if (
+        Node.isForStatement(p) ||
+        Node.isForOfStatement(p) ||
+        Node.isForInStatement(p) ||
+        Node.isWhileStatement(p) ||
+        Node.isDoStatement(p)
+      )
+        return p === node;
     }
     return false;
   };
@@ -1859,7 +2241,8 @@ function hasJump(node: Node): boolean {
  */
 function isInert(node: Node): boolean {
   const effect = (n: Node): boolean => {
-    if (Node.isArrowFunction(n) || Node.isFunctionExpression(n) || Node.isClassExpression(n)) return false;
+    if (Node.isArrowFunction(n) || Node.isFunctionExpression(n) || Node.isClassExpression(n))
+      return false;
     if (
       Node.isCallExpression(n) ||
       Node.isNewExpression(n) ||
@@ -1876,7 +2259,10 @@ function isInert(node: Node): boolean {
       const k = n.getOperatorToken().getKind();
       if (k === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(k)) return true;
     }
-    if ((Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) && [SyntaxKind.PlusPlusToken, SyntaxKind.MinusMinusToken].includes(n.getOperatorToken())) {
+    if (
+      (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
+      [SyntaxKind.PlusPlusToken, SyntaxKind.MinusMinusToken].includes(n.getOperatorToken())
+    ) {
       return true;
     }
     return n.getChildren().some(effect);
@@ -1912,9 +2298,12 @@ function switchArms(sw: import("ts-morph").SwitchStatement): SwitchArm[] | undef
     }
     let stmts: Node[] = clause.getStatements();
     if (stmts.length === 0) continue;
-    if (stmts.length === 1 && Node.isBlock(stmts[0] as Node)) stmts = (stmts[0] as import("ts-morph").Block).getStatements();
+    if (stmts.length === 1 && Node.isBlock(stmts[0] as Node))
+      stmts = (stmts[0] as import("ts-morph").Block).getStatements();
     const last = stmts[stmts.length - 1];
-    const ownBreaks = clause.getDescendantsOfKind(SyntaxKind.BreakStatement).filter((b) => b.getLabel() === undefined && breakTarget(b) === sw);
+    const ownBreaks = clause
+      .getDescendantsOfKind(SyntaxKind.BreakStatement)
+      .filter((b) => b.getLabel() === undefined && breakTarget(b) === sw);
     if (last !== undefined && Node.isBreakStatement(last) && last.getLabel() === undefined) {
       if (ownBreaks.length !== 1) return undefined;
       stmts = stmts.slice(0, -1);
@@ -1935,17 +2324,129 @@ function switchArms(sw: import("ts-morph").SwitchStatement): SwitchArm[] | undef
 /** The statement an unlabelled break leaves: its nearest enclosing loop or switch. */
 function breakTarget(node: Node): Node | undefined {
   for (let p = node.getParent(); p !== undefined; p = p.getParent()) {
-    if (Node.isFunctionDeclaration(p) || Node.isFunctionExpression(p) || Node.isArrowFunction(p)) return undefined;
-    if (Node.isSwitchStatement(p) || Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p) || Node.isWhileStatement(p) || Node.isDoStatement(p)) return p;
+    if (Node.isFunctionDeclaration(p) || Node.isFunctionExpression(p) || Node.isArrowFunction(p))
+      return undefined;
+    if (
+      Node.isSwitchStatement(p) ||
+      Node.isForStatement(p) ||
+      Node.isForOfStatement(p) ||
+      Node.isForInStatement(p) ||
+      Node.isWhileStatement(p) ||
+      Node.isDoStatement(p)
+    )
+      return p;
   }
   return undefined;
 }
 
 function isFunctionLikeNode(n: Node): boolean {
   return (
-    Node.isFunctionDeclaration(n) || Node.isFunctionExpression(n) || Node.isArrowFunction(n) || Node.isMethodDeclaration(n) ||
-    Node.isConstructorDeclaration(n) || Node.isGetAccessorDeclaration(n) || Node.isSetAccessorDeclaration(n)
+    Node.isFunctionDeclaration(n) ||
+    Node.isFunctionExpression(n) ||
+    Node.isArrowFunction(n) ||
+    Node.isMethodDeclaration(n) ||
+    Node.isConstructorDeclaration(n) ||
+    Node.isGetAccessorDeclaration(n) ||
+    Node.isSetAccessorDeclaration(n)
   );
+}
+
+function isLoopStatement(n: Node): boolean {
+  return (
+    Node.isForStatement(n) ||
+    Node.isForOfStatement(n) ||
+    Node.isForInStatement(n) ||
+    Node.isWhileStatement(n) ||
+    Node.isDoStatement(n)
+  );
+}
+
+/** The jumps of a loop that leave it or end its iteration: its own breaks and continues, and its returns. */
+function loopJumpsOf(loop: Node): Node[] {
+  const own = (
+    j: import("ts-morph").BreakStatement | import("ts-morph").ContinueStatement,
+  ): boolean => {
+    if (Node.isBreakStatement(j)) return breakTarget(j) === loop;
+    for (let p: Node | undefined = j.getParent(); p !== undefined; p = p.getParent())
+      if (isLoopStatement(p)) return p === loop;
+    return false;
+  };
+  return [
+    ...loop
+      .getDescendantsOfKind(SyntaxKind.BreakStatement)
+      .filter((b) => b.getLabel() === undefined && own(b)),
+    ...loop
+      .getDescendantsOfKind(SyntaxKind.ContinueStatement)
+      .filter((c) => c.getLabel() === undefined && own(c)),
+    ...loop
+      .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+      .filter((r) => !isInsideNestedFunction(r, loop)),
+  ];
+}
+
+function hasOwnBreak(loop: Node): boolean {
+  return loopJumpsOf(loop).some((j) => Node.isBreakStatement(j));
+}
+
+function loopReturns(loop: Node): boolean {
+  return loopJumpsOf(loop).some((j) => Node.isReturnStatement(j));
+}
+
+/** Whether a statement holds a jump of `loop` (outside nested functions). */
+function containsLoopJump(stmt: Node, loop: Node): boolean {
+  const jumps = new Set(loopJumpsOf(loop).map((j) => j.compilerNode));
+  return stmt.getDescendants().some((d) => jumps.has(d.compilerNode));
+}
+
+/**
+ * Whether a loop's jumps can be lifted as exits: none labelled, none inside a nested loop or a switch
+ * of the loop that could not take them, no throw, and a block holding a jump declares no name the
+ * rest of the body could read.
+ */
+function jumpsSupported(loop: Node): boolean {
+  if (!(Node.isWhileStatement(loop) || Node.isForStatement(loop))) return false;
+  if (
+    loop
+      .getDescendantsOfKind(SyntaxKind.ThrowStatement)
+      .some((t) => !isInsideNestedFunction(t, loop))
+  )
+    return false;
+  const labelled = [
+    ...loop.getDescendantsOfKind(SyntaxKind.BreakStatement),
+    ...loop.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+  ].some((j) => j.getLabel() !== undefined && !isInsideNestedFunction(j, loop));
+  if (labelled) return false;
+  const body = loop.getStatement();
+  for (const j of loopJumpsOf(loop)) {
+    for (
+      let p: Node | undefined = j.getParent();
+      p !== undefined && p.compilerNode !== body.compilerNode;
+      p = p.getParent()
+    ) {
+      // A jump inside an inner loop, or a switch, try or label of the body, is not one this lifts.
+      if (
+        isLoopStatement(p) ||
+        Node.isSwitchStatement(p) ||
+        Node.isTryStatement(p) ||
+        Node.isLabeledStatement(p)
+      )
+        return false;
+      if (Node.isBlock(p)) {
+        const lexical = p
+          .getStatements()
+          .flatMap((st) =>
+            Node.isVariableStatement(st)
+              ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
+              : [],
+          );
+        const outside = body
+          .getDescendantsOfKind(SyntaxKind.Identifier)
+          .filter((id) => !id.getAncestors().some((a) => a.compilerNode === p?.compilerNode));
+        if (lexical.some((n) => outside.some((id) => id.getText() === n))) return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** The env name of the receiver (not a valid source name). */
@@ -1954,7 +2455,16 @@ const THIS = "%this";
 /** The function whose `this` a node sees: its nearest enclosing function that is not an arrow. */
 function receiverOwner(node: Node): Node | undefined {
   for (let p = node.getParent(); p !== undefined; p = p.getParent()) {
-    if (Node.isFunctionDeclaration(p) || Node.isFunctionExpression(p) || Node.isMethodDeclaration(p) || Node.isConstructorDeclaration(p) || Node.isGetAccessorDeclaration(p) || Node.isSetAccessorDeclaration(p) || Node.isClassDeclaration(p) || Node.isClassExpression(p)) {
+    if (
+      Node.isFunctionDeclaration(p) ||
+      Node.isFunctionExpression(p) ||
+      Node.isMethodDeclaration(p) ||
+      Node.isConstructorDeclaration(p) ||
+      Node.isGetAccessorDeclaration(p) ||
+      Node.isSetAccessorDeclaration(p) ||
+      Node.isClassDeclaration(p) ||
+      Node.isClassExpression(p)
+    ) {
       return p;
     }
   }
@@ -1967,8 +2477,8 @@ const RETURN_VALUE = "%returnValue";
 
 /** The statements of an `if`'s two sides, once the rest of its statement list is placed on a side. */
 interface IfSides {
-  readonly then: readonly Node[];
-  readonly else: readonly Node[];
+  readonly whenTrue: readonly Node[];
+  readonly whenFalse: readonly Node[];
 }
 
 /** True when every path through the node reaches a return or a throw. Loops and switches are not followed. */
@@ -1977,7 +2487,9 @@ function alwaysReturns(node: Node): boolean {
   if (Node.isBlock(node)) return node.getStatements().some(alwaysReturns);
   if (Node.isIfStatement(node)) {
     const elseNode = node.getElseStatement();
-    return elseNode !== undefined && alwaysReturns(node.getThenStatement()) && alwaysReturns(elseNode);
+    return (
+      elseNode !== undefined && alwaysReturns(node.getThenStatement()) && alwaysReturns(elseNode)
+    );
   }
   return false;
 }
@@ -1998,7 +2510,11 @@ function containsDirectExit(node: Node): boolean {
 }
 
 function insideOpaque(ret: Node, root: Node): boolean {
-  for (let p = ret.getParent(); p !== undefined && p.compilerNode !== root.compilerNode; p = p.getParent()) {
+  for (
+    let p = ret.getParent();
+    p !== undefined && p.compilerNode !== root.compilerNode;
+    p = p.getParent()
+  ) {
     if (
       Node.isFunctionDeclaration(p) ||
       Node.isFunctionExpression(p) ||

@@ -54,7 +54,16 @@
  */
 import { canonicalizeGraph } from "./canonical.js";
 import { normalizeLiteral } from "./literal.js";
-import type { DiamondLabel, DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
+import type {
+  DiamondLabel,
+  DiamondReason,
+  DucBranch,
+  DucGraph,
+  DucLoop,
+  DucNode,
+  NodeId,
+  ValueId,
+} from "./types.js";
 
 export class LineFormError extends Error {
   constructor(
@@ -114,7 +123,8 @@ type Frame = IfFrame | LoopFrame;
 
 const RESERVED = new Set(["with", "of", "in"]);
 
-const NUMBER_TEXT = /^(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)n?$/;
+const NUMBER_TEXT =
+  /^(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)n?$/;
 const KEYWORD_LITERALS = new Set(["true", "false", "null", "undefined"]);
 
 /**
@@ -176,22 +186,35 @@ export function parseLineForm(text: string): DucGraph {
    * outside the loop, for the body only.
    */
   const define = (name: string, line: number, shadow = false): ValueId => {
-    if (!NAME.test(name) || RESERVED.has(name)) throw new LineFormError(line, `"${name}" is not a valid name`);
+    if (!NAME.test(name) || RESERVED.has(name))
+      throw new LineFormError(line, `"${name}" is not a valid name`);
     const existing = names.get(name);
-    if (existing !== undefined && !(shadow && (valueDepth.get(existing) ?? 0) < loopsOpen().length)) {
+    if (
+      existing !== undefined &&
+      !(shadow && (valueDepth.get(existing) ?? 0) < loopsOpen().length)
+    ) {
       throw new LineFormError(line, `"${name}" is already defined`);
     }
     const v = fresh(loopsOpen().length);
     names.set(name, v);
     return v;
   };
-  const bodyRegionOf = (frame: LoopFrame): string => `${frame.within !== undefined ? `${frame.within}/` : ""}${frame.id}.b`;
+  const bodyRegionOf = (frame: LoopFrame): string =>
+    `${frame.within !== undefined ? `${frame.within}/` : ""}${frame.id}.b`;
   /** The invariant of `frame` that stands for the outer value `v`, made on first use. */
   const invariantOf = (frame: LoopFrame, v: ValueId, depth: number): ValueId => {
     const at = frame.invariantOuter.indexOf(v);
     if (at !== -1) return frame.invariant[at] as ValueId;
     const inv = fresh(depth);
-    add({ kind: "carry-source", inputs: [], outputs: [inv], label: `invariant:${frame.invariant.length}` }, bodyRegionOf(frame));
+    add(
+      {
+        kind: "carry-source",
+        inputs: [],
+        outputs: [inv],
+        label: `invariant:${frame.invariant.length}`,
+      },
+      bodyRegionOf(frame),
+    );
     frame.invariantOuter.push(v);
     frame.invariant.push(inv);
     return inv;
@@ -200,7 +223,8 @@ export function parseLineForm(text: string): DucGraph {
   const visible = (v: ValueId): ValueId => {
     const loops = loopsOpen();
     let at = v;
-    for (let i = valueDepth.get(v) ?? 0; i < loops.length; i++) at = invariantOf(loops[i] as LoopFrame, at, i + 1);
+    for (let i = valueDepth.get(v) ?? 0; i < loops.length; i++)
+      at = invariantOf(loops[i] as LoopFrame, at, i + 1);
     return at;
   };
   const use = (name: string, line: number): ValueId => {
@@ -232,12 +256,15 @@ export function parseLineForm(text: string): DucGraph {
     const top = open[open.length - 1];
     const HEADER = new Set(["carry", "invariant", "element"]);
     if (top?.kind === "loop" && top.header && !HEADER.has(head)) {
-      if (top.inits.length > 0 && !top.seen.has("carry")) throw new LineFormError(line, "expected: carry <name> ... (one per start value)");
-      if (top.of !== undefined && !top.seen.has("element")) throw new LineFormError(line, "expected: element <name>");
+      if (top.inits.length > 0 && !top.seen.has("carry"))
+        throw new LineFormError(line, "expected: carry <name> ... (one per start value)");
+      if (top.of !== undefined && !top.seen.has("element"))
+        throw new LineFormError(line, "expected: element <name>");
       top.header = false;
     }
     if (HEADER.has(head)) {
-      if (top?.kind !== "loop" || !top.header) throw new LineFormError(line, `${head} must come right after the loop line`);
+      if (top?.kind !== "loop" || !top.header)
+        throw new LineFormError(line, `${head} must come right after the loop line`);
       if (top.seen.has(head)) throw new LineFormError(line, `a loop has one ${head} line`);
       top.seen.add(head);
     }
@@ -262,7 +289,10 @@ export function parseLineForm(text: string): DucGraph {
       if (open.length > 0) throw new LineFormError(line, "param must come before any if or loop");
       if (rest.length !== 1) throw new LineFormError(line, "expected: param <name>");
       const out = define(rest[0] as string, line);
-      add({ kind: "param-source", inputs: [], outputs: [out], label: String(paramCount++) }, undefined);
+      add(
+        { kind: "param-source", inputs: [], outputs: [out], label: String(paramCount++) },
+        undefined,
+      );
       return;
     }
 
@@ -288,16 +318,21 @@ export function parseLineForm(text: string): DucGraph {
       const before = arrow === -1 ? rest : rest.slice(0, arrow);
       const after = arrow === -1 ? [] : rest.slice(arrow + 1);
       const usage = `expected: ${head} <symbol>${head === "unlinked" ? " [from <module>]" : ""} -> <name> [link <key>]`;
-      if (arrow === -1 || after.length !== 1 && !(after.length === 3 && after[1] === "link")) {
+      if (arrow === -1 || (after.length !== 1 && !(after.length === 3 && after[1] === "link"))) {
         throw new LineFormError(line, usage);
       }
-      let symbol: string | undefined = before[0];
+      const symbol: string | undefined = before[0];
       let module: string | undefined;
       if (head === "unlinked" && before.length === 3 && before[1] === "from") module = before[2];
       else if (before.length !== 1) throw new LineFormError(line, usage);
-      if (symbol === undefined || !SYMBOL.test(symbol)) throw new LineFormError(line, `"${symbol ?? ""}" is not a valid symbol`);
+      if (symbol === undefined || !SYMBOL.test(symbol))
+        throw new LineFormError(line, `"${symbol ?? ""}" is not a valid symbol`);
       const reason: DiamondReason =
-        head === "free" ? "free-identifier" : head === "ambient" ? "platform-primitive" : "unlinked-reference";
+        head === "free"
+          ? "free-identifier"
+          : head === "ambient"
+            ? "platform-primitive"
+            : "unlinked-reference";
       const spec = after.length === 3 ? after[2] : undefined;
       const diamond: DiamondLabel = {
         reason,
@@ -311,7 +346,8 @@ export function parseLineForm(text: string): DucGraph {
       if (known !== undefined) {
         // The same unknown again: the name refers to the existing source, with no new node. Its
         // link is the one it was first given.
-        if (diamondSpecs.get(key) !== spec) throw new LineFormError(line, `"${symbol}" is linked to another key`);
+        if (diamondSpecs.get(key) !== spec)
+          throw new LineFormError(line, `"${symbol}" is linked to another key`);
         if (!NAME.test(name)) throw new LineFormError(line, `"${name}" is not a valid name`);
         if (names.has(name)) throw new LineFormError(line, `"${name}" is already defined`);
         names.set(name, known);
@@ -327,7 +363,10 @@ export function parseLineForm(text: string): DucGraph {
 
     if (head === "if") {
       if (rest.length !== 1) {
-        throw new LineFormError(line, "expected: if <name>, where <name> is a condition computed by an earlier op");
+        throw new LineFormError(
+          line,
+          "expected: if <name>, where <name> is a condition computed by an earlier op",
+        );
       }
       const cond = use(rest[0] as string, line);
       const within = currentRegion();
@@ -364,13 +403,21 @@ export function parseLineForm(text: string): DucGraph {
       const withAt = rest.indexOf("with");
       const head1 = withAt === -1 ? rest : rest.slice(0, withAt);
       const invNames = withAt === -1 ? [] : rest.slice(withAt + 1);
-      if (rest.filter((n) => n === "with").length > 1 || invNames.some((n) => n === "of" || n === "in")) {
+      if (
+        rest.filter((n) => n === "with").length > 1 ||
+        invNames.some((n) => n === "of" || n === "in")
+      ) {
         throw new LineFormError(line, usage);
       }
       const iterAt = head1.findIndex((n) => n === "of" || n === "in");
       const initNames = iterAt === -1 ? head1 : head1.slice(0, iterAt);
       if (iterAt !== -1 && head1.length !== iterAt + 2) throw new LineFormError(line, usage);
-      const of = iterAt === -1 ? undefined : head1[iterAt] === "of" ? ("values" as const) : ("keys" as const);
+      const of =
+        iterAt === -1
+          ? undefined
+          : head1[iterAt] === "of"
+            ? ("values" as const)
+            : ("keys" as const);
       const within = currentRegion();
       const frame: LoopFrame = {
         kind: "loop",
@@ -402,11 +449,17 @@ export function parseLineForm(text: string): DucGraph {
     if (head === "carry") {
       const frame = top as LoopFrame;
       if (rest.length !== frame.inits.length) {
-        throw new LineFormError(line, `expected ${frame.inits.length} name(s): carry <name> ... (one per start value)`);
+        throw new LineFormError(
+          line,
+          `expected ${frame.inits.length} name(s): carry <name> ... (one per start value)`,
+        );
       }
       frame.carry = rest.map((n, j) => {
         const v = define(n, line, true);
-        add({ kind: "carry-source", inputs: [], outputs: [v], label: `carry:${j}` }, bodyRegionOf(frame));
+        add(
+          { kind: "carry-source", inputs: [], outputs: [v], label: `carry:${j}` },
+          bodyRegionOf(frame),
+        );
         return v;
       });
       return;
@@ -417,19 +470,31 @@ export function parseLineForm(text: string): DucGraph {
       // With `with`, the line names its values in the body. Without it, each name is an outer name
       // that the body reads by that name.
       if (frame.withValues.length > 0 && rest.length !== frame.withValues.length) {
-        throw new LineFormError(line, `expected ${frame.withValues.length} name(s): invariant <name> ... (one per value after with)`);
+        throw new LineFormError(
+          line,
+          `expected ${frame.withValues.length} name(s): invariant <name> ... (one per value after with)`,
+        );
       }
-      const own = new Set<ValueId>([...frame.carry, ...(frame.element !== undefined ? [frame.element] : [])]);
+      const own = new Set<ValueId>([
+        ...frame.carry,
+        ...(frame.element !== undefined ? [frame.element] : []),
+      ]);
       const bound = new Set<string>();
       rest.forEach((n, j) => {
-        if (!NAME.test(n) || RESERVED.has(n)) throw new LineFormError(line, `"${n}" is not a valid name`);
+        if (!NAME.test(n) || RESERVED.has(n))
+          throw new LineFormError(line, `"${n}" is not a valid name`);
         const existing = names.get(n);
-        if (bound.has(n) || (existing !== undefined && own.has(existing))) throw new LineFormError(line, `"${n}" is already defined`);
+        if (bound.has(n) || (existing !== undefined && own.has(existing)))
+          throw new LineFormError(line, `"${n}" is already defined`);
         bound.add(n);
         if (frame.withValues.length > 0) {
           names.set(n, frame.withValues[j] as ValueId);
         } else {
-          if (existing === undefined) throw new LineFormError(line, `"${n}" is not an outside value: an invariant without with names one`);
+          if (existing === undefined)
+            throw new LineFormError(
+              line,
+              `"${n}" is not an outside value: an invariant without with names one`,
+            );
           names.set(n, visible(existing));
         }
       });
@@ -438,27 +503,36 @@ export function parseLineForm(text: string): DucGraph {
 
     if (head === "element") {
       const frame = top as LoopFrame;
-      if (frame.of === undefined) throw new LineFormError(line, "element is for a loop over a collection (of or in)");
+      if (frame.of === undefined)
+        throw new LineFormError(line, "element is for a loop over a collection (of or in)");
       if (rest.length !== 1) throw new LineFormError(line, "expected: element <name>");
       const value = define(rest[0] as string, line, true);
-      add({ kind: "carry-source", inputs: [], outputs: [value], label: "element" }, bodyRegionOf(frame));
+      add(
+        { kind: "carry-source", inputs: [], outputs: [value], label: "element" },
+        bodyRegionOf(frame),
+      );
       frame.element = value;
       return;
     }
 
     if (head === "while" || head === "next") {
       const frame = top;
-      if (frame === undefined || frame.kind !== "loop") throw new LineFormError(line, `${head} must be in the body of a loop`);
+      if (frame === undefined || frame.kind !== "loop")
+        throw new LineFormError(line, `${head} must be in the body of a loop`);
       if (frame.seen.has(head)) throw new LineFormError(line, `a loop has one ${head} line`);
       frame.seen.add(head);
       if (head === "while") {
-        if (frame.of !== undefined) throw new LineFormError(line, "an iterating loop has no while: it runs once per element");
+        if (frame.of !== undefined)
+          throw new LineFormError(line, "an iterating loop has no while: it runs once per element");
         if (rest.length !== 1) throw new LineFormError(line, "expected: while <name>");
         frame.cond = use(rest[0] as string, line);
         return;
       }
       if (rest.length !== frame.inits.length) {
-        throw new LineFormError(line, `expected ${frame.inits.length} name(s): next <name> ... (one per carried variable)`);
+        throw new LineFormError(
+          line,
+          `expected ${frame.inits.length} name(s): next <name> ... (one per carried variable)`,
+        );
       }
       frame.next = rest.map((n) => use(n, line));
       return;
@@ -468,10 +542,18 @@ export function parseLineForm(text: string): DucGraph {
       const frame = open[open.length - 1];
       if (frame !== undefined && frame.kind === "loop") {
         if (!frame.seen.has("next") || (frame.of === undefined && !frame.seen.has("while"))) {
-          throw new LineFormError(line, frame.of === undefined ? "a loop needs while and next before its end" : "a loop needs next before its end");
+          throw new LineFormError(
+            line,
+            frame.of === undefined
+              ? "a loop needs while and next before its end"
+              : "a loop needs next before its end",
+          );
         }
         if (rest.length !== frame.inits.length) {
-          throw new LineFormError(line, `expected ${frame.inits.length} result name(s): end <name> ...`);
+          throw new LineFormError(
+            line,
+            `expected ${frame.inits.length} result name(s): end <name> ...`,
+          );
         }
         open.pop();
         // The loop's names go out of scope; its results are defined in the scope of the loop line.
@@ -480,9 +562,15 @@ export function parseLineForm(text: string): DucGraph {
         add(
           {
             kind: "loop",
-            inputs: [...frame.inits, ...(frame.iterable !== undefined ? [frame.iterable] : []), ...frame.invariantOuter],
+            inputs: [
+              ...frame.inits,
+              ...(frame.iterable !== undefined ? [frame.iterable] : []),
+              ...frame.invariantOuter,
+            ],
             outputs,
-            ...(frame.of !== undefined ? { label: frame.of === "values" ? "for-of" : "for-in" } : {}),
+            ...(frame.of !== undefined
+              ? { label: frame.of === "values" ? "for-of" : "for-in" }
+              : {}),
             loop: {
               id: frame.id,
               carry: frame.carry,
@@ -499,7 +587,8 @@ export function parseLineForm(text: string): DucGraph {
       }
       if (rest.length !== 0) throw new LineFormError(line, "expected: end");
       const block = open.pop();
-      if (block === undefined || block.kind !== "if") throw new LineFormError(line, "end without an if or a loop");
+      if (block === undefined || block.kind !== "if")
+        throw new LineFormError(line, "end without an if or a loop");
       if (block.inElse) {
         block.elseNames = new Map(names);
       } else {
@@ -513,17 +602,22 @@ export function parseLineForm(text: string): DucGraph {
     }
 
     if (head === "join") {
-      if (follows === undefined) throw new LineFormError(line, "a join must directly follow the end of its if");
-      if (rest.length !== 4) throw new LineFormError(line, "expected: join <name> <cond> <then> <else>");
+      if (follows === undefined)
+        throw new LineFormError(line, "a join must directly follow the end of its if");
+      if (rest.length !== 4)
+        throw new LineFormError(line, "expected: join <name> <cond> <then> <else>");
       const [outName, condName, thenName, elseName] = rest as [string, string, string, string];
       const cond = use(condName, line);
-      if (cond !== follows.cond) throw new LineFormError(line, "a join uses the condition of its if");
+      if (cond !== follows.cond)
+        throw new LineFormError(line, "a join uses the condition of its if");
       const thenRaw = follows.thenNames.get(thenName);
       const thenValue = thenRaw === undefined ? undefined : visible(thenRaw);
-      if (thenValue === undefined) throw new LineFormError(line, `"${thenName}" is not visible on the then-side`);
+      if (thenValue === undefined)
+        throw new LineFormError(line, `"${thenName}" is not visible on the then-side`);
       const elseRaw = follows.elseNames.get(elseName);
       const elseValue = elseRaw === undefined ? undefined : visible(elseRaw);
-      if (elseValue === undefined) throw new LineFormError(line, `"${elseName}" is not visible on the else-side`);
+      if (elseValue === undefined)
+        throw new LineFormError(line, `"${elseName}" is not visible on the else-side`);
       const out = define(outName, line);
       add({ kind: "sel", inputs: [cond, thenValue, elseValue], outputs: [out] }, currentRegion());
       pendingJoin = follows;
@@ -531,7 +625,8 @@ export function parseLineForm(text: string): DucGraph {
     }
 
     if (head === "select") {
-      if (rest.length !== 4) throw new LineFormError(line, "expected: select <name> <cond> <then> <else>");
+      if (rest.length !== 4)
+        throw new LineFormError(line, "expected: select <name> <cond> <then> <else>");
       const [outName, condName, thenName, elseName] = rest as [string, string, string, string];
       const inputs = [use(condName, line), use(thenName, line), use(elseName, line)];
       const out = define(outName, line);
@@ -542,7 +637,11 @@ export function parseLineForm(text: string): DucGraph {
     if (head === "function" || head === "method") {
       const usage = `expected: ${head} <name> [with <name> ...]`;
       const withAt = rest.indexOf("with");
-      if (rest.length === 0 || (withAt !== -1 && withAt !== 1) || (withAt === -1 && rest.length !== 1)) {
+      if (
+        rest.length === 0 ||
+        (withAt !== -1 && withAt !== 1) ||
+        (withAt === -1 && rest.length !== 1)
+      ) {
         throw new LineFormError(line, usage);
       }
       const captures = withAt === -1 ? [] : rest.slice(2).map((n) => use(n, line));
@@ -565,21 +664,35 @@ export function parseLineForm(text: string): DucGraph {
       try {
         inner = parseLineForm(lines.slice(i + 1, j).join("\n"));
       } catch (e) {
-        if (e instanceof LineFormError) throw new LineFormError(line + e.line, e.message.replace(/^line \d+: /, ""));
+        if (e instanceof LineFormError)
+          throw new LineFormError(line + e.line, e.message.replace(/^line \d+: /, ""));
         throw e;
       }
       const params = inner.nodes.filter((n) => n.kind === "param-source").length;
       if (params < captures.length) {
-        throw new LineFormError(line, `a function that captures ${captures.length} value(s) takes them as its first params`);
+        throw new LineFormError(
+          line,
+          `a function that captures ${captures.length} value(s) takes them as its first params`,
+        );
       }
       const out = define(rest[0] as string, line);
-      add({ kind: "op", inputs: captures, outputs: [out], label: head === "method" ? "function" : "closure", closure: inner }, currentRegion());
+      add(
+        {
+          kind: "op",
+          inputs: captures,
+          outputs: [out],
+          label: head === "method" ? "function" : "closure",
+          closure: inner,
+        },
+        currentRegion(),
+      );
       skipUntil = j + 1;
       return;
     }
 
     if (head === "out") {
-      if (open.length > 0) throw new LineFormError(line, "an observation cannot be inside an if or a loop yet");
+      if (open.length > 0)
+        throw new LineFormError(line, "an observation cannot be inside an if or a loop yet");
       if (rest.length !== 1) throw new LineFormError(line, "expected: out <name>");
       obs.push(use(rest[0] as string, line));
       return;
@@ -590,7 +703,10 @@ export function parseLineForm(text: string): DucGraph {
 
   const unclosed = open[open.length - 1];
   if (unclosed !== undefined) {
-    throw new LineFormError(unclosed.line, unclosed.kind === "if" ? "if is not closed by end" : "loop is not closed by end");
+    throw new LineFormError(
+      unclosed.line,
+      unclosed.kind === "if" ? "if is not closed by end" : "loop is not closed by end",
+    );
   }
   return canonicalizeGraph(nodes, obs, branches);
 }
@@ -624,13 +740,15 @@ export function joinOwners(g: DucGraph): Map<NodeId, DucBranch> {
   const joinOwner = new Map<NodeId, DucBranch>();
   for (const node of g.nodes) {
     if (node.kind !== "sel") continue;
-    if (node.inputs.length !== 3) throw new Error(`select ${node.id} needs a condition and two values`);
+    if (node.inputs.length !== 3)
+      throw new Error(`select ${node.id} needs a condition and two values`);
     const [cond, thenV, elseV] = node.inputs as [ValueId, ValueId, ValueId];
     const owners = branches.filter(
       (b) =>
         b.cond === cond &&
         b.within === node.region &&
-        (isPrefix(sidePath(b, "t"), regionOf(thenV)) || isPrefix(sidePath(b, "e"), regionOf(elseV))),
+        (isPrefix(sidePath(b, "t"), regionOf(thenV)) ||
+          isPrefix(sidePath(b, "e"), regionOf(elseV))),
     );
     if (owners.length > 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
     const owner = owners[0];
@@ -685,7 +803,9 @@ export function printLineForm(g: DucGraph): string {
       loop.outputs.length !== rec.carry.length ||
       (rec.cond === undefined) === (rec.iterate === undefined)
     ) {
-      throw new Error(`loop ${loop.id} does not match its carried and invariant values, or its condition or iteration`);
+      throw new Error(
+        `loop ${loop.id} does not match its carried and invariant values, or its condition or iteration`,
+      );
     }
     if (rec.iterate !== undefined) {
       const p = producerOf(rec.iterate.element);
@@ -736,7 +856,9 @@ export function printLineForm(g: DucGraph): string {
     }
     for (const v of node.inputs) {
       if (!isPrefix(producerOf(v).region, node.region)) {
-        throw new Error(`node ${node.id} uses a value from another branch; only a join carries it out`);
+        throw new Error(
+          `node ${node.id} uses a value from another branch; only a join carries it out`,
+        );
       }
     }
     // A node in a loop body reads only values of that body: outside values arrive as invariants.
@@ -748,14 +870,17 @@ export function printLineForm(g: DucGraph): string {
         for (const v of node.inputs) {
           const p = producerOf(v);
           if (p.kind !== "literal-source" && !isPrefix(body, p.region)) {
-            throw new Error(`node ${node.id} reads a value from outside its loop; it must come in as an invariant`);
+            throw new Error(
+              `node ${node.id} reads a value from outside its loop; it must come in as an invariant`,
+            );
           }
         }
       }
     }
   }
   for (const v of g.obs) {
-    if (producerOf(v).region !== undefined) throw new Error("an observation inside an if or loop has no line form yet");
+    if (producerOf(v).region !== undefined)
+      throw new Error("an observation inside an if or loop has no line form yet");
   }
 
   const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i] as const));
@@ -770,30 +895,41 @@ export function printLineForm(g: DucGraph): string {
         return `param ${out}`;
       }
       case "literal-source": {
-        if (out === undefined || node.label === undefined) throw new Error("literal without a value");
+        if (out === undefined || node.label === undefined)
+          throw new Error("literal without a value");
         return `lit ${JSON.stringify(node.label)} -> ${out}`;
       }
       case "op": {
         if (node.label === undefined || !LABEL.test(node.label)) {
           throw new Error(`operation ${node.id} has no structural label`);
         }
-        if (node.outputs.length > 1) throw new Error(`operation ${node.id} has more than one result`);
+        if (node.outputs.length > 1)
+          throw new Error(`operation ${node.id} has more than one result`);
         const operands = node.inputs.join(" ");
         const result = node.outputs.length === 1 ? ` -> ${node.outputs[0]}` : "";
         return `op ${node.label}${operands ? ` ${operands}` : ""}${result}`;
       }
       case "diamond-source": {
-        if (out === undefined || node.diamond === undefined) throw new Error("unresolved name without a label");
+        if (out === undefined || node.diamond === undefined)
+          throw new Error("unresolved name without a label");
         const d = node.diamond;
         const head =
-          d.reason === "free-identifier" ? "free" : d.reason === "platform-primitive" ? "ambient" : d.reason === "unlinked-reference" ? "unlinked" : null;
-        if (head === null) throw new Error(`reason "${d.reason}" is not expressible in the line form (D5)`);
+          d.reason === "free-identifier"
+            ? "free"
+            : d.reason === "platform-primitive"
+              ? "ambient"
+              : d.reason === "unlinked-reference"
+                ? "unlinked"
+                : null;
+        if (head === null)
+          throw new Error(`reason "${d.reason}" is not expressible in the line form (D5)`);
         const from = head === "unlinked" && d.module !== undefined ? ` from ${d.module}` : "";
         const link = d.spec !== undefined ? ` link ${d.spec}` : "";
         return `${head} ${d.symbol}${from} -> ${out}${link}`;
       }
       case "sel": {
-        if (out === undefined || node.inputs.length !== 3) throw new Error(`select ${node.id} needs a value and two inputs`);
+        if (out === undefined || node.inputs.length !== 3)
+          throw new Error(`select ${node.id} needs a value and two inputs`);
         const [cond, thenV, elseV] = node.inputs;
         return `select ${out} ${cond} ${thenV} ${elseV}`;
       }
@@ -805,8 +941,15 @@ export function printLineForm(g: DucGraph): string {
   /** The lines of a closure: its header, its own program, and its end. */
   const printClosure = (node: DucNode): string[] => {
     printed.add(node.id);
-    const header = [node.label === "function" ? "method" : "function", node.outputs[0] as string, ...(node.inputs.length > 0 ? ["with", ...node.inputs] : [])];
-    const inner = printLineForm(node.closure as DucGraph).trimEnd().split("\n").map((l) => `  ${l}`);
+    const header = [
+      node.label === "function" ? "method" : "function",
+      node.outputs[0] as string,
+      ...(node.inputs.length > 0 ? ["with", ...node.inputs] : []),
+    ];
+    const inner = printLineForm(node.closure as DucGraph)
+      .trimEnd()
+      .split("\n")
+      .map((l) => `  ${l}`);
     return [header.join(" "), ...inner, "end"];
   };
 
@@ -819,7 +962,8 @@ export function printLineForm(g: DucGraph): string {
     for (const v of [...rec.carry, ...rec.invariant]) printed.add(producerOf(v).id);
     if (rec.iterate !== undefined) printed.add(producerOf(rec.iterate.element).id);
     const header = ["loop", ...loop.inputs.slice(0, count)];
-    if (rec.iterate !== undefined) header.push(rec.iterate.of === "values" ? "of" : "in", loop.inputs[count] as ValueId);
+    if (rec.iterate !== undefined)
+      header.push(rec.iterate.of === "values" ? "of" : "in", loop.inputs[count] as ValueId);
     if (rec.invariant.length > 0) header.push("with", ...loop.inputs.slice(offset));
     const body = printScope(bodyPathOf(loop));
     return [
@@ -876,12 +1020,21 @@ export function printLineForm(g: DucGraph): string {
       if (b.within !== scope) continue;
       const thenPath = sidePath(b, "t");
       const elsePath = sidePath(b, "e");
-      const subtree = g.nodes.filter((n) => isPrefix(thenPath, n.region) || isPrefix(elsePath, n.region));
+      const subtree = g.nodes.filter(
+        (n) => isPrefix(thenPath, n.region) || isPrefix(elsePath, n.region),
+      );
       const joins = g.nodes.filter((n) => joinOwner.get(n.id)?.id === b.id);
       const inner = new Set(subtree.flatMap((n) => n.outputs));
-      const requires = [b.cond, ...subtree.flatMap((n) => n.inputs), ...joins.flatMap((n) => n.inputs)];
+      const requires = [
+        b.cond,
+        ...subtree.flatMap((n) => n.inputs),
+        ...joins.flatMap((n) => n.inputs),
+      ];
       items.push({
-        first: Math.min(g.nodes.length, ...[...subtree, ...joins].map((n) => nodeIndex.get(n.id) as number)),
+        first: Math.min(
+          g.nodes.length,
+          ...[...subtree, ...joins].map((n) => nodeIndex.get(n.id) as number),
+        ),
         produces: joins.flatMap((n) => n.outputs),
         requires: [...new Set(requires)].filter((v) => !inner.has(v)),
         lines: () => {
@@ -902,7 +1055,7 @@ export function printLineForm(g: DucGraph): string {
 
     items.sort((a, b) => a.first - b.first);
     const producedBy = new Map<ValueId, number>();
-    items.forEach((item, i) => item.produces.forEach((v) => producedBy.set(v, i)));
+    for (const [i, item] of items.entries()) for (const v of item.produces) producedBy.set(v, i);
     const done = new Set<number>();
     const lines: string[] = [];
     while (done.size < items.length) {

@@ -36,14 +36,60 @@ export const ECMASCRIPT: BaseSet = {
   version: 1,
   primitives: {
     ...pure([
-      "JSON", "Object", "Array", "Number", "String", "Boolean", "Symbol", "BigInt", "RegExp",
-      "Map", "Set", "WeakMap", "WeakSet", "Promise", "Reflect", "Proxy",
-      "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError", "AggregateError",
-      "parseInt", "parseFloat", "isNaN", "isFinite",
-      "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI", "escape", "unescape",
-      "Uint8Array", "Uint8ClampedArray", "Uint16Array", "Uint32Array", "Int8Array", "Int16Array", "Int32Array",
-      "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array", "ArrayBuffer", "SharedArrayBuffer", "DataView",
-      "Intl", "undefined", "NaN", "Infinity", "arguments", "globalThis",
+      "JSON",
+      "Object",
+      "Array",
+      "Number",
+      "String",
+      "Boolean",
+      "Symbol",
+      "BigInt",
+      "RegExp",
+      "Map",
+      "Set",
+      "WeakMap",
+      "WeakSet",
+      "Promise",
+      "Reflect",
+      "Proxy",
+      "Error",
+      "TypeError",
+      "RangeError",
+      "SyntaxError",
+      "ReferenceError",
+      "EvalError",
+      "URIError",
+      "AggregateError",
+      "parseInt",
+      "parseFloat",
+      "isNaN",
+      "isFinite",
+      "encodeURIComponent",
+      "decodeURIComponent",
+      "encodeURI",
+      "decodeURI",
+      "escape",
+      "unescape",
+      "Uint8Array",
+      "Uint8ClampedArray",
+      "Uint16Array",
+      "Uint32Array",
+      "Int8Array",
+      "Int16Array",
+      "Int32Array",
+      "Float32Array",
+      "Float64Array",
+      "BigInt64Array",
+      "BigUint64Array",
+      "ArrayBuffer",
+      "SharedArrayBuffer",
+      "DataView",
+      "Intl",
+      "undefined",
+      "NaN",
+      "Infinity",
+      "arguments",
+      "globalThis",
     ]),
     Math: { members: { random: { nondeterministic: true } } },
     // `new Date()` and `Date.now()` read the clock.
@@ -61,7 +107,20 @@ export const NODE: BaseSet = {
   version: 1,
   primitives: {
     ...ECMASCRIPT.primitives,
-    ...pure(["Buffer", "TextEncoder", "TextDecoder", "URL", "URLSearchParams", "structuredClone", "atob", "btoa", "AbortController", "Event", "EventTarget", "Blob"]),
+    ...pure([
+      "Buffer",
+      "TextEncoder",
+      "TextDecoder",
+      "URL",
+      "URLSearchParams",
+      "structuredClone",
+      "atob",
+      "btoa",
+      "AbortController",
+      "Event",
+      "EventTarget",
+      "Blob",
+    ]),
     // `AbortSignal.timeout` arms a timer.
     AbortSignal: { members: { timeout: { capability: "timers" } } },
     process: { capability: "process" },
@@ -77,12 +136,19 @@ export const NODE: BaseSet = {
     __dirname: { capability: "module-location" },
     __filename: { capability: "module-location" },
     performance: { nondeterministic: true },
-    crypto: { members: { randomUUID: { nondeterministic: true }, getRandomValues: { nondeterministic: true } } },
+    crypto: {
+      members: {
+        randomUUID: { nondeterministic: true },
+        getRandomValues: { nondeterministic: true },
+      },
+    },
   },
 };
 
 /** Every name that is a primitive on some target: the lifter classifies these as platform primitives. */
-export const KNOWN_PRIMITIVES: readonly string[] = [...new Set([...Object.keys(ECMASCRIPT.primitives), ...Object.keys(NODE.primitives)])];
+export const KNOWN_PRIMITIVES: readonly string[] = [
+  ...new Set([...Object.keys(ECMASCRIPT.primitives), ...Object.keys(NODE.primitives)]),
+];
 
 export interface PrimitiveUse {
   readonly symbol: string;
@@ -100,7 +166,10 @@ export interface PrimitiveReport {
 
 /** The platform primitives a graph uses on a target, with their labels. Closures are included. */
 export function primitiveReport(g: DucGraph, base: BaseSet): PrimitiveReport {
-  const uses = new Map<string, { members: Set<string>; capabilities: Set<string>; nondeterministic: boolean }>();
+  const uses = new Map<
+    string,
+    { members: Set<string>; capabilities: Set<string>; nondeterministic: boolean }
+  >();
   const notOnTarget = new Set<string>();
   const visit = (graph: DucGraph): void => {
     const symbolOf = new Map<ValueId, string>();
@@ -115,7 +184,11 @@ export function primitiveReport(g: DucGraph, base: BaseSet): PrimitiveReport {
         notOnTarget.add(symbol);
         continue;
       }
-      const use = uses.get(symbol) ?? { members: new Set(), capabilities: new Set(), nondeterministic: false };
+      const use = uses.get(symbol) ?? {
+        members: new Set(),
+        capabilities: new Set(),
+        nondeterministic: false,
+      };
       if (labels.capability !== undefined) use.capabilities.add(labels.capability);
       if (labels.nondeterministic) use.nondeterministic = true;
       uses.set(symbol, use);
@@ -137,7 +210,12 @@ export function primitiveReport(g: DucGraph, base: BaseSet): PrimitiveReport {
   visit(g);
   return {
     uses: [...uses.entries()]
-      .map(([symbol, u]) => ({ symbol, members: [...u.members].sort(), capabilities: [...u.capabilities].sort(), nondeterministic: u.nondeterministic }))
+      .map(([symbol, u]) => ({
+        symbol,
+        members: [...u.members].sort(),
+        capabilities: [...u.capabilities].sort(),
+        nondeterministic: u.nondeterministic,
+      }))
       .sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0)),
     notOnTarget: [...notOnTarget].sort(),
   };
@@ -147,14 +225,18 @@ export function primitiveReport(g: DucGraph, base: BaseSet): PrimitiveReport {
  * The observations a nondeterministic primitive may reach (#1270): a result that can differ
  * between two runs with the same inputs. Reported by observation index, with the primitive.
  */
-export function nondeterministicObservations(g: DucGraph, base: BaseSet): { readonly obs: number; readonly source: string }[] {
+export function nondeterministicObservations(
+  g: DucGraph,
+  base: BaseSet,
+): { readonly obs: number; readonly source: string }[] {
   const sources: { value: ValueId; name: string }[] = [];
   const symbolOf = new Map<ValueId, string>();
   for (const node of g.nodes) {
     if (node.kind === "diamond-source" && node.diamond?.reason === "platform-primitive") {
       const symbol = node.diamond.symbol;
       symbolOf.set(node.outputs[0] as ValueId, symbol);
-      if (base.primitives[symbol]?.nondeterministic) sources.push({ value: node.outputs[0] as ValueId, name: symbol });
+      if (base.primitives[symbol]?.nondeterministic)
+        sources.push({ value: node.outputs[0] as ValueId, name: symbol });
     }
   }
   for (const node of g.nodes) {
@@ -168,7 +250,8 @@ export function nondeterministicObservations(g: DucGraph, base: BaseSet): { read
   }
   const found: { obs: number; source: string }[] = [];
   g.obs.forEach((o, k) => {
-    for (const s of sources) if (s.value === o || mayInfluence(g, s.value, o)) found.push({ obs: k, source: s.name });
+    for (const s of sources)
+      if (s.value === o || mayInfluence(g, s.value, o)) found.push({ obs: k, source: s.name });
   });
   return found;
 }

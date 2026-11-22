@@ -91,11 +91,14 @@ describe("loops in the line form (#1275)", () => {
         "end r",
         "out r",
       ].join("\n");
-      expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom(ITERATING[0] as string)));
+      expect(graphIdentity(parseLineForm(text))).toBe(
+        graphIdentity(liftAtom(ITERATING[0] as string)),
+      );
     });
 
     it("an iterating loop has no while", () => {
-      const text = 'param xs\nlit "0" -> s0\nloop s0 of xs\ncarry s\ninvariant\nelement x\nwhile x\n';
+      const text =
+        'param xs\nlit "0" -> s0\nloop s0 of xs\ncarry s\ninvariant\nelement x\nwhile x\n';
       expect(() => parseLineForm(text)).toThrow(/no while/);
     });
 
@@ -107,23 +110,32 @@ describe("loops in the line form (#1275)", () => {
 
   describe("errors", () => {
     it("a loop that is not closed is an error at its line", () => {
-      expect(() => parseLineForm("param n\nloop n\ncarry a\ninvariant\n")).toThrow(/line 2: loop is not closed by end/);
+      expect(() => parseLineForm("param n\nloop n\ncarry a\ninvariant\n")).toThrow(
+        /line 2: loop is not closed by end/,
+      );
     });
 
     it("a carry line must name each carried variable", () => {
-      expect(() => parseLineForm('param n\nlit "0" -> s0\nloop s0\ncarry a b\n')).toThrow(/expected 1 name/);
+      expect(() => parseLineForm('param n\nlit "0" -> s0\nloop s0\ncarry a b\n')).toThrow(
+        /expected 1 name/,
+      );
     });
 
     it("the loop's body must come after its carry and invariant lines", () => {
-      expect(() => parseLineForm('param n\nlit "0" -> s0\nloop s0\nlit "1" -> k\n')).toThrow(/expected: carry/);
+      expect(() => parseLineForm('param n\nlit "0" -> s0\nloop s0\nlit "1" -> k\n')).toThrow(
+        /expected: carry/,
+      );
     });
 
     it("a loop needs while and next before its end", () => {
-      expect(() => parseLineForm('param n\nlit "0" -> s0\nloop s0\ncarry a\ninvariant\nend r\n')).toThrow(/while and next/);
+      expect(() =>
+        parseLineForm('param n\nlit "0" -> s0\nloop s0\ncarry a\ninvariant\nend r\n'),
+      ).toThrow(/while and next/);
     });
 
     it("names defined in the body are not visible after the loop", () => {
-      const text = 'param n\nlit "0" -> s0\nloop s0\ncarry a\ninvariant\nlit "1" -> k\nwhile a\nnext a\nend r\nop + k r -> z\n';
+      const text =
+        'param n\nlit "0" -> s0\nloop s0\ncarry a\ninvariant\nlit "1" -> k\nwhile a\nnext a\nend r\nop + k r -> z\n';
       expect(() => parseLineForm(text)).toThrow(/line 10.*"k" is used before it is defined/);
     });
 
@@ -135,7 +147,11 @@ describe("loops in the line form (#1275)", () => {
         ...g,
         nodes: g.nodes.map((n) =>
           n.loop !== undefined
-            ? { ...n, loop: { ...n.loop, invariant: [] }, inputs: n.inputs.slice(0, n.loop.carry.length) }
+            ? {
+                ...n,
+                loop: { ...n.loop, invariant: [] },
+                inputs: n.inputs.slice(0, n.loop.carry.length),
+              }
             : n,
         ),
       };

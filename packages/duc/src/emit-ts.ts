@@ -24,10 +24,49 @@ export class EmitError extends Error {
 }
 
 const BINARY = new Set([
-  "+", "-", "*", "/", "%", "**", "<", ">", "<=", ">=", "==", "!=", "===", "!==",
-  "&", "|", "^", "<<", ">>", ">>>", "&&", "||", "??", "in", "instanceof",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "**",
+  "<",
+  ">",
+  "<=",
+  ">=",
+  "==",
+  "!=",
+  "===",
+  "!==",
+  "&",
+  "|",
+  "^",
+  "<<",
+  ">>",
+  ">>>",
+  "&&",
+  "||",
+  "??",
+  "in",
+  "instanceof",
 ]);
-const COMPOUND = new Set(["+=", "-=", "*=", "/=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", ">>>=", "&&=", "||=", "??="]);
+const COMPOUND = new Set([
+  "+=",
+  "-=",
+  "*=",
+  "/=",
+  "%=",
+  "**=",
+  "&=",
+  "|=",
+  "^=",
+  "<<=",
+  ">>=",
+  ">>>=",
+  "&&=",
+  "||=",
+  "??=",
+]);
 const PREFIX = new Set(["!", "-", "+", "~"]);
 const CALLS = new Set(["CallExpression", "CallExpression?.", "NewExpression"]);
 
@@ -48,8 +87,17 @@ export function emitTypeScript(g: DucGraph): string {
   const { params, body } = emitFunction(g, "", [], imports);
   const importLines = [...imports.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([module, symbols]) => `import { ${[...symbols].sort().join(", ")} } from ${JSON.stringify(module)};`);
-  return [...importLines, `export function f(${params.join(", ")}) {`, ...body.map((l) => `  ${l}`), "}", ""].join("\n");
+    .map(
+      ([module, symbols]) =>
+        `import { ${[...symbols].sort().join(", ")} } from ${JSON.stringify(module)};`,
+    );
+  return [
+    ...importLines,
+    `export function f(${params.join(", ")}) {`,
+    ...body.map((l) => `  ${l}`),
+    "}",
+    "",
+  ].join("\n");
 }
 
 /**
@@ -87,11 +135,13 @@ function emitFunction(
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
-    if (p?.kind === "param-source" && Number(p.label) < bound.length) return bound[Number(p.label)] as string;
+    if (p?.kind === "param-source" && Number(p.label) < bound.length)
+      return bound[Number(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       if (p.diamond.reason === "unlinked-reference") {
         const module = p.diamond.module;
-        if (module === undefined) throw new EmitError(`imported binding ${p.diamond.symbol} has no module`);
+        if (module === undefined)
+          throw new EmitError(`imported binding ${p.diamond.symbol} has no module`);
         imports.set(module, new Set([...(imports.get(module) ?? []), p.diamond.symbol]));
       }
       return p.diamond.symbol;
@@ -101,6 +151,8 @@ function emitFunction(
 
   // Nodes written inline, inside the expression that uses them, not as statements of their own.
   const inline = new Set<NodeId>();
+  // Branches written as the `&&`, `||` or `?:` of the select that joins them.
+  const lazyBranches = new Set<string>();
   for (const node of g.nodes) {
     // A literal is a constant, written where it is used.
     if (node.kind === "literal-source" && node.label !== "Uninitialized") inline.add(node.id);
@@ -111,28 +163,62 @@ function emitFunction(
       const out = node.outputs[0] as ValueId;
       const users = consumers.get(out) ?? [];
       const only = users[0];
-      if (users.length === 1 && only !== undefined && CALLS.has(only.label ?? "") && only.inputs[0] === out && only.inputs.indexOf(out, 1) === -1) {
+      if (
+        users.length === 1 &&
+        only !== undefined &&
+        CALLS.has(only.label ?? "") &&
+        only.inputs[0] === out &&
+        only.inputs.indexOf(out, 1) === -1
+      ) {
         inline.add(node.id);
       }
     }
   }
-  // A while condition is written in the loop's header, so its nodes are inline.
+  // A while condition is written in the loop's header, so its nodes are inline. A branch inside it
+  // that only computes an arm of `&&`, `||` or `?:` is written as that operator.
   for (const loop of loops) {
     const rec = loop.loop as DucLoop;
     if (rec.cond === undefined) continue;
     const body = bodyPathOf(loop);
-    const mark = (v: ValueId): void => {
+    const mark = (v: ValueId, region: string): void => {
       const p = producer.get(v);
-      if (p === undefined || p.kind === "carry-source" || p.kind === "diamond-source" || p.kind === "literal-source") return;
-      if (p.region !== body) throw new EmitError(`the condition of loop ${loop.id} is not computed at the top of its body`);
+      if (
+        p === undefined ||
+        p.kind === "carry-source" ||
+        p.kind === "diamond-source" ||
+        p.kind === "literal-source"
+      )
+        return;
+      if (p.region !== region)
+        throw new EmitError(
+          `the condition of loop ${loop.id} is not computed at the top of its body`,
+        );
       // The condition itself is used only by the loop; a value inside it only by the condition.
-      if ((consumers.get(v) ?? []).length > (v === rec.cond ? 0 : 1)) {
+      if (new Set(consumers.get(v) ?? []).size > (v === rec.cond ? 0 : 1)) {
         throw new EmitError(`the condition of loop ${loop.id} shares a value with the body`);
       }
       inline.add(p.id);
-      for (const input of p.inputs) mark(input);
+      const owner = owners.get(p.id);
+      if (p.kind === "sel" && owner !== undefined && owner.cond === p.inputs[0]) {
+        const joins = g.nodes.filter((n) => owners.get(n.id)?.id === owner.id);
+        if (joins.length !== 1)
+          throw new EmitError(`the condition of loop ${loop.id} assigns a name`);
+        lazyBranches.add(owner.id);
+        mark(p.inputs[0] as ValueId, region);
+        // An arm that is the condition itself (`c && t` keeps c when it is false) is already marked.
+        if (p.inputs[1] !== p.inputs[0]) mark(p.inputs[1] as ValueId, sidePath(owner, "t"));
+        if (p.inputs[2] !== p.inputs[0]) mark(p.inputs[2] as ValueId, sidePath(owner, "e"));
+        const inside = g.nodes.filter(
+          (n) =>
+            isPrefix(sidePath(owner, "t"), n.region) || isPrefix(sidePath(owner, "e"), n.region),
+        );
+        if (inside.some((n) => !inline.has(n.id)))
+          throw new EmitError(`the condition of loop ${loop.id} has a statement in a branch`);
+        return;
+      }
+      for (const input of p.inputs) mark(input, region);
     };
-    mark(rec.cond);
+    mark(rec.cond, body);
   }
 
   /** A value as an expression: its name, or its inline expression. */
@@ -142,7 +228,9 @@ function emitFunction(
     const label = p.label ?? "";
     const expr = render(p);
     if (p.kind === "literal-source") return /^[0-9.]/.test(expr) ? `(${expr})` : expr;
-    return label === "..." || label.startsWith("OmittedExpression#") || isMemberRead(label) ? expr : `(${expr})`;
+    return label === "..." || label.startsWith("OmittedExpression#") || isMemberRead(label)
+      ? expr
+      : `(${expr})`;
   };
 
   /** An operation, literal or select, as an expression. */
@@ -152,6 +240,10 @@ function emitFunction(
     }
     if (node.kind === "sel") {
       const [c, a, b] = node.inputs as [ValueId, ValueId, ValueId];
+      if (lazyBranches.has(owners.get(node.id)?.id ?? "")) {
+        if (b === c) return `${ref(c)} && ${ref(a)}`;
+        if (a === c) return `${ref(c)} || ${ref(b)}`;
+      }
       return `${ref(c)} ? ${ref(a)} : ${ref(b)}`;
     }
     if (node.kind !== "op") throw new EmitError(`a ${node.kind} is not an expression`);
@@ -170,7 +262,10 @@ function emitFunction(
     }
     if (CALLS.has(label)) {
       const callee = arg(0);
-      const args = ins.slice(1).map((v) => ref(v)).join(", ");
+      const args = ins
+        .slice(1)
+        .map((v) => ref(v))
+        .join(", ");
       if (label === "NewExpression") return `new ${callee}(${args})`;
       return label === "CallExpression?." ? `${callee}?.(${args})` : `${callee}(${args})`;
     }
@@ -195,7 +290,9 @@ function emitFunction(
     }
     if (label.startsWith("template:") || label.startsWith("tagged:")) {
       const tagged = label.startsWith("tagged:");
-      const parts = JSON.parse(label.slice(tagged ? "tagged:".length : "template:".length)) as string[];
+      const parts = JSON.parse(
+        label.slice(tagged ? "tagged:".length : "template:".length),
+      ) as string[];
       const exprs = tagged ? ins.slice(1) : ins;
       let text = `\`${parts[0] ?? ""}`;
       exprs.forEach((v, i) => {
@@ -222,23 +319,38 @@ function emitFunction(
     if (out === undefined) throw new EmitError(`the statement "${label}" has no TypeScript form`);
     const name = nameOf(out);
     if (node.closure !== undefined) {
-      const inner = emitFunction(node.closure, `${prefix}${node.id}_`, node.inputs.map((v) => ref(v)), imports);
+      const inner = emitFunction(
+        node.closure,
+        `${prefix}${node.id}_`,
+        node.inputs.map((v) => ref(v)),
+        imports,
+      );
       // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture.
-      const head = label === "function" ? `function (${inner.params.join(", ")}) {` : `(${inner.params.join(", ")}) => {`;
+      const head =
+        label === "function"
+          ? `function (${inner.params.join(", ")}) {`
+          : `(${inner.params.join(", ")}) => {`;
       return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that
     // captures the value then captures a name that is never assigned again.
     const t = `${name}$`;
-    if (COMPOUND.has(label)) return [`let ${t} = ${arg(0)};`, `${t} ${label} ${arg(1)};`, `const ${name} = ${t};`];
-    if (label === "++" || label === "--") return [`let ${t} = ${arg(0)};`, `${label}${t};`, `const ${name} = ${t};`];
+    if (COMPOUND.has(label))
+      return [`let ${t} = ${arg(0)};`, `${t} ${label} ${arg(1)};`, `const ${name} = ${t};`];
+    if (label === "++" || label === "--")
+      return [`let ${t} = ${arg(0)};`, `${label}${t};`, `const ${name} = ${t};`];
     if (label === "post++" || label === "post--") {
       return [`let ${t} = ${arg(0)};`, `${t}${label.slice(4)};`, `const ${name} = ${t};`];
     }
     if (label.startsWith(".") && label.endsWith("=")) {
-      return [`let ${t} = ${arg(0)};`, `${t}${label.slice(0, -1)} = ${arg(1)};`, `const ${name} = ${t};`];
+      return [
+        `let ${t} = ${arg(0)};`,
+        `${t}${label.slice(0, -1)} = ${arg(1)};`,
+        `const ${name} = ${t};`,
+      ];
     }
-    if (label === "[]=") return [`let ${t} = ${arg(0)};`, `${t}[${arg(1)}] = ${arg(2)};`, `const ${name} = ${t};`];
+    if (label === "[]=")
+      return [`let ${t} = ${arg(0)};`, `${t}[${arg(1)}] = ${arg(2)};`, `const ${name} = ${t};`];
     return [`const ${name} = ${render(node)};`];
   };
 
@@ -315,7 +427,13 @@ function emitFunction(
     const items: Item[] = [];
     for (const node of g.nodes) {
       if (node.region !== scope || owners.has(node.id) || inline.has(node.id)) continue;
-      if (node.kind === "param-source" || node.kind === "diamond-source" || node.kind === "carry-source" || node.kind === "loop") continue;
+      if (
+        node.kind === "param-source" ||
+        node.kind === "diamond-source" ||
+        node.kind === "carry-source" ||
+        node.kind === "loop"
+      )
+        continue;
       items.push({
         first: nodeIndex.get(node.id) as number,
         last: node.label === "throw" ? 2 : 0,
@@ -335,15 +453,24 @@ function emitFunction(
       });
     }
     for (const b of branches) {
-      if (b.within !== scope) continue;
+      if (b.within !== scope || lazyBranches.has(b.id)) continue;
       const thenPath = sidePath(b, "t");
       const elsePath = sidePath(b, "e");
-      const subtree = g.nodes.filter((n) => isPrefix(thenPath, n.region) || isPrefix(elsePath, n.region));
+      const subtree = g.nodes.filter(
+        (n) => isPrefix(thenPath, n.region) || isPrefix(elsePath, n.region),
+      );
       const joins = g.nodes.filter((n) => owners.get(n.id)?.id === b.id);
       const innerValues = new Set(subtree.flatMap((n) => n.outputs));
-      const requires = [b.cond, ...subtree.flatMap((n) => n.inputs), ...joins.flatMap((n) => n.inputs)];
+      const requires = [
+        b.cond,
+        ...subtree.flatMap((n) => n.inputs),
+        ...joins.flatMap((n) => n.inputs),
+      ];
       items.push({
-        first: Math.min(g.nodes.length, ...[...subtree, ...joins].map((n) => nodeIndex.get(n.id) as number)),
+        first: Math.min(
+          g.nodes.length,
+          ...[...subtree, ...joins].map((n) => nodeIndex.get(n.id) as number),
+        ),
         // A side that throws leaves the function: what does not depend on the branch comes first,
         // as it came before the if in the source (the rest of a function is inside its sides).
         last: subtree.some((n) => n.label === "throw") ? 1 : 0,
@@ -355,7 +482,7 @@ function emitFunction(
     // A throw ends its scope, so it comes after everything else there.
     items.sort((a, b) => (a.last === b.last ? a.first - b.first : a.last - b.last));
     const producedBy = new Map<ValueId, number>();
-    items.forEach((item, i) => item.produces.forEach((v) => producedBy.set(v, i)));
+    for (const [i, item] of items.entries()) for (const v of item.produces) producedBy.set(v, i);
     const done = new Set<number>();
     const lines: string[] = [];
     while (done.size < items.length) {

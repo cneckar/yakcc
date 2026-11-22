@@ -465,7 +465,9 @@ describe("host globals: pure host data is explained, authority-bearing names are
       "platform-primitive",
     );
     const r = lift("export function f() { return require('m'); }");
-    expect(r.nodes.find((n) => n.diamond?.symbol === "require")?.diamond?.reason).toBe("free-identifier");
+    expect(r.nodes.find((n) => n.diamond?.symbol === "require")?.diamond?.reason).toBe(
+      "free-identifier",
+    );
   });
 });
 
@@ -533,11 +535,15 @@ describe("nested function declarations and JSDoc (residue defects found in bcryp
 
 describe("labels, class self-reference, and pure legacy globals (residue defects)", () => {
   it("a statement label and its break target are not free identifiers", () => {
-    const g = lift("function f (xs) { loop1: for (const x of xs) { if (x) break loop1; } return xs }");
+    const g = lift(
+      "function f (xs) { loop1: for (const x of xs) { if (x) break loop1; } return xs }",
+    );
     expect(diamondSymbols(g)).not.toContain("loop1");
   });
   it("a continue to a label is not a free identifier", () => {
-    const g = lift("function f (xs) { outer: for (const x of xs) { for (const y of x) { continue outer; } } return xs }");
+    const g = lift(
+      "function f (xs) { outer: for (const x of xs) { for (const y of x) { continue outer; } } return xs }",
+    );
     expect(diamondSymbols(g)).not.toContain("outer");
   });
   it("a class's own name inside its method is a self-reference, not a free identifier", () => {
@@ -546,7 +552,8 @@ describe("labels, class self-reference, and pure legacy globals (residue defects
   });
   it("the pure legacy codecs escape and unescape are explained", () => {
     const g = lift("function f (x) { return unescape(escape(x)) }");
-    const reasonOf = (sym: string) => g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
+    const reasonOf = (sym: string) =>
+      g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
     expect(reasonOf("unescape")).toBe("platform-primitive");
     expect(reasonOf("escape")).toBe("platform-primitive");
   });

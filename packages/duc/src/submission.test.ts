@@ -2,8 +2,8 @@
 // Submission (#1275, P7): an atom is submitted only as closed. Its references are platform
 // primitives, or linked to atoms that are in the same batch or already in the store.
 import { describe, expect, it } from "vitest";
-import { checkSubmission, linkReferences } from "./closure.js";
 import { graphIdentity } from "./canonical.js";
+import { checkSubmission, linkReferences } from "./closure.js";
 import { liftAtom } from "./lift.js";
 
 const PURE = "export function f(x: number): number { return x * 2 + 1; }";
@@ -28,7 +28,9 @@ describe("submission: an atom is submitted only as closed (P7, #1275)", () => {
   });
 
   it("a reference linked to an atom already in the store closes the atom", () => {
-    const graph = linkReferences(liftAtom(CALLS_FOO), (d) => (d.symbol === "foo" ? "store-foo" : undefined));
+    const graph = linkReferences(liftAtom(CALLS_FOO), (d) =>
+      d.symbol === "foo" ? "store-foo" : undefined,
+    );
     const report = checkSubmission([{ spec: "caller", graph }], new Set(["store-foo"]));
     expect(report.accepted).toBe(true);
   });
@@ -41,7 +43,9 @@ describe("submission: an atom is submitted only as closed (P7, #1275)", () => {
   });
 
   it("atoms that depend on each other are accepted together, and not one at a time", () => {
-    const caller = linkReferences(liftAtom(CALLS_FOO), (d) => (d.symbol === "foo" ? "helper" : undefined));
+    const caller = linkReferences(liftAtom(CALLS_FOO), (d) =>
+      d.symbol === "foo" ? "helper" : undefined,
+    );
     const helper = liftAtom(PURE);
     const together = checkSubmission(
       [

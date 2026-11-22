@@ -30,7 +30,9 @@ const STRICT_SUM = [
 
 describe("loop leniency (#1283)", () => {
   it("an invariant may shadow the outer name it stands for", () => {
-    const shadowed = STRICT_SUM.map((l) => l.replace("invariant limit", "invariant n").replace("<= i limit", "<= i n"));
+    const shadowed = STRICT_SUM.map((l) =>
+      l.replace("invariant limit", "invariant n").replace("<= i limit", "<= i n"),
+    );
     expect(id(shadowed)).toBe(id(STRICT_SUM));
   });
 
@@ -42,24 +44,56 @@ describe("loop leniency (#1283)", () => {
   });
 
   it("an invariant line without with names outer values", () => {
-    const named = STRICT_SUM.map((l) => l.replace(" with n", "").replace("invariant limit", "invariant n").replace("<= i limit", "<= i n"));
+    const named = STRICT_SUM.map((l) =>
+      l
+        .replace(" with n", "")
+        .replace("invariant limit", "invariant n")
+        .replace("<= i limit", "<= i n"),
+    );
     expect(id(named)).toBe(id(STRICT_SUM));
   });
 
   it("next may come before while", () => {
-    const swapped = STRICT_SUM.map((l) => (l === "while go" ? "next sum2 i2" : l === "next sum2 i2" ? "while go" : l));
+    const swapped = STRICT_SUM.map((l) =>
+      l === "while go" ? "next sum2 i2" : l === "next sum2 i2" ? "while go" : l,
+    );
     expect(id(swapped)).toBe(id(STRICT_SUM));
   });
 
   it("the header lines may come in any order", () => {
     const iterate = (header: string[]): string =>
-      id(["param xs", "param k", 'lit "0" -> zero', "loop zero of xs with k", ...header, "op > x t -> gt", "op + c x -> c2", "select c3 gt c2 c", "next c3", "end r", "out r"]);
-    expect(iterate(["element x", "invariant t", "carry c"])).toBe(iterate(["carry c", "invariant t", "element x"]));
+      id([
+        "param xs",
+        "param k",
+        'lit "0" -> zero',
+        "loop zero of xs with k",
+        ...header,
+        "op > x t -> gt",
+        "op + c x -> c2",
+        "select c3 gt c2 c",
+        "next c3",
+        "end r",
+        "out r",
+      ]);
+    expect(iterate(["element x", "invariant t", "carry c"])).toBe(
+      iterate(["carry c", "invariant t", "element x"]),
+    );
   });
 
   it("carry and element names may shadow outer names", () => {
     const g = parseLineForm(
-      ["param x", "param xs", 'lit "0" -> s', "loop s of xs", "carry s", "element x", "op + s x -> s2", "next s2", "end r", "out r"].join("\n"),
+      [
+        "param x",
+        "param xs",
+        'lit "0" -> s',
+        "loop s of xs",
+        "carry s",
+        "element x",
+        "op + s x -> s2",
+        "next s2",
+        "end r",
+        "out r",
+      ].join("\n"),
     );
     expect(g.nodes.filter((n) => n.kind === "loop")).toHaveLength(1);
   });
@@ -97,27 +131,74 @@ describe("loop leniency (#1283)", () => {
   });
 
   it("a name defined in the body may not shadow", () => {
-    expect(() => parseLineForm(["param n", 'lit "0" -> z', "loop z", "carry s", "op + s n -> n", "while n", "next n", "end r", "out r"].join("\n"))).toThrow(
-      /already defined/,
-    );
+    expect(() =>
+      parseLineForm(
+        [
+          "param n",
+          'lit "0" -> z',
+          "loop z",
+          "carry s",
+          "op + s n -> n",
+          "while n",
+          "next n",
+          "end r",
+          "out r",
+        ].join("\n"),
+      ),
+    ).toThrow(/already defined/);
   });
 });
 
 describe("literals (#1283)", () => {
   it("one literal written twice is one literal", () => {
     const once = ["param x", 'lit "0" -> zero', "op < x zero -> neg", "op - zero x -> r", "out r"];
-    const twice = ["param x", 'lit "0" -> zero', "op < x zero -> neg", 'lit "0" -> z2', "op - z2 x -> r", "out r"];
+    const twice = [
+      "param x",
+      'lit "0" -> zero',
+      "op < x zero -> neg",
+      'lit "0" -> z2',
+      "op - z2 x -> r",
+      "out r",
+    ];
     expect(id(twice)).toBe(id(once));
   });
 
   it("a literal inside a branch is the same as one before it", () => {
-    const outside = ["param x", 'lit "0" -> zero', "op < x zero -> neg", "if neg", "op - zero x -> a", "end", "join r neg a x", "out r"];
-    const inside = ["param x", 'lit "0" -> zero', "op < x zero -> neg", "if neg", 'lit "0" -> z', "op - z x -> a", "end", "join r neg a x", "out r"];
+    const outside = [
+      "param x",
+      'lit "0" -> zero',
+      "op < x zero -> neg",
+      "if neg",
+      "op - zero x -> a",
+      "end",
+      "join r neg a x",
+      "out r",
+    ];
+    const inside = [
+      "param x",
+      'lit "0" -> zero',
+      "op < x zero -> neg",
+      "if neg",
+      'lit "0" -> z',
+      "op - z x -> a",
+      "end",
+      "join r neg a x",
+      "out r",
+    ];
     expect(id(inside)).toBe(id(outside));
   });
 
   it("a branch that only picks literals is a select", () => {
-    const branch = ["param c", "if c", 'lit "1" -> a', "else", 'lit "2" -> b', "end", "join r c a b", "out r"];
+    const branch = [
+      "param c",
+      "if c",
+      'lit "1" -> a',
+      "else",
+      'lit "2" -> b',
+      "end",
+      "join r c a b",
+      "out r",
+    ];
     const select = ["param c", 'lit "1" -> a', 'lit "2" -> b', "select r c a b", "out r"];
     expect(id(branch)).toBe(id(select));
   });
@@ -126,11 +207,32 @@ describe("literals (#1283)", () => {
     expect(id(["param x", 'lit "5" -> unused', "out x"])).toBe(id(["param x", "out x"]));
   });
 
-  it.each([['lit "" -> e'], ['lit "v" -> k'], ['lit "id-" -> p'], ['lit "a b" -> p']])("refuses %s", (line) => {
-    expect(() => parseLineForm(["param x", line, "out x"].join("\n"))).toThrow(/not a JavaScript literal/);
-  });
+  it.each([['lit "" -> e'], ['lit "v" -> k'], ['lit "id-" -> p'], ['lit "a b" -> p']])(
+    "refuses %s",
+    (line) => {
+      expect(() => parseLineForm(["param x", line, "out x"].join("\n"))).toThrow(
+        /not a JavaScript literal/,
+      );
+    },
+  );
 
-  it.each([["3"], ["0x1F"], ["1.5e3"], ["10n"], ["'abc'"], ['"abc"'], ["`abc`"], ["true"], ["null"], ["undefined"], ["/a+b/g"]])("accepts %s", (text) => {
-    expect(() => parseLineForm(["param x", `lit ${JSON.stringify(text)} -> l`, "op + x l -> r", "out r"].join("\n"))).not.toThrow();
+  it.each([
+    ["3"],
+    ["0x1F"],
+    ["1.5e3"],
+    ["10n"],
+    ["'abc'"],
+    ['"abc"'],
+    ["`abc`"],
+    ["true"],
+    ["null"],
+    ["undefined"],
+    ["/a+b/g"],
+  ])("accepts %s", (text) => {
+    expect(() =>
+      parseLineForm(
+        ["param x", `lit ${JSON.stringify(text)} -> l`, "op + x l -> r", "out r"].join("\n"),
+      ),
+    ).not.toThrow();
   });
 });
