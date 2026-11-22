@@ -13,6 +13,7 @@
  * that holds an opaque node (a closure, a class, a construct summarized by its text), or the return
  * state of returns on some paths, has no TypeScript form here: `emitTypeScript` throws EmitError.
  */
+import { parseType, typeToTypeScript } from "./infer-types.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -75,8 +76,18 @@ const isMemberRead = (label: string): boolean =>
   label === "ElementAccess" ||
   label === "ElementAccess?.";
 
-/** Emits a graph as a TypeScript function. Throws EmitError for a graph it cannot express. */
-export function emitTypeScript(g: DucGraph): string {
+/** The contract's interface types, as the contract writes them (T1, #1277). */
+export interface EmitSignature {
+  readonly inputs: readonly string[];
+  readonly output?: string;
+}
+
+/**
+ * Emits a graph as a TypeScript function. With a signature, the parameters and the result are
+ * annotated from the contract; the types inside are TypeScript's to infer. Throws EmitError for a
+ * graph it cannot express.
+ */
+export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
   // The structure must be expressible: the line form's checks hold here too, closures included.
   try {
     printLineForm(g);
@@ -91,9 +102,18 @@ export function emitTypeScript(g: DucGraph): string {
       ([module, symbols]) =>
         `import { ${[...symbols].sort().join(", ")} } from ${JSON.stringify(module)};`,
     );
+  const typed =
+    signature === undefined
+      ? params
+      : params.map((p, i) => {
+          const t = signature.inputs[i];
+          return t === undefined ? p : `${p}: ${typeToTypeScript(parseType(t))}`;
+        });
+  const result =
+    signature?.output !== undefined ? `: ${typeToTypeScript(parseType(signature.output))}` : "";
   return [
     ...importLines,
-    `export function f(${params.join(", ")}) {`,
+    `export function f(${typed.join(", ")})${result} {`,
     ...body.map((l) => `  ${l}`),
     "}",
     "",
@@ -379,10 +399,11 @@ function emitFunction(
     for (const j of joins) {
       const [cond, t, e] = j.inputs as [ValueId, ValueId, ValueId];
       // The join's variable starts from a value from before the if, so the binding adds no node.
-      const start = !inside(e) ? e : !inside(t) ? t : cond;
+      // When both sides compute theirs, it starts unassigned, and each side assigns it.
+      const start = !inside(e) ? e : !inside(t) ? t : undefined;
       const name = nameOf(j.outputs[0] as ValueId);
       const temp = `${name}$`;
-      before.push(`let ${temp} = ${ref(start)};`);
+      before.push(start !== undefined ? `let ${temp} = ${ref(start)};` : `let ${temp};`);
       if (t !== start) thenAssign.push(`${temp} = ${ref(t)};`);
       if (e !== start) elseAssign.push(`${temp} = ${ref(e)};`);
       after.push(`const ${name} = ${temp};`);
