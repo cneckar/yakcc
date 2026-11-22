@@ -316,12 +316,15 @@ export function canonicalAstHash(
   }
 
   // Phase 1: Parse the source in-memory with ts-morph.
+  // noLib: the gate below keeps only syntax and grammar errors (1xxx), which do not depend on the
+  // standard library, and loading lib.d.ts for every hash was most of the time a shave spent.
   const project = new Project({
     useInMemoryFileSystem: true,
     compilerOptions: {
       allowJs: false,
       noEmit: true,
       skipLibCheck: true,
+      noLib: true,
     },
   });
 
