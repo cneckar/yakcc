@@ -161,11 +161,52 @@ export function canonicalizeGraph(
     return sig;
   };
 
+  // A signature looks behind a node, at its inputs. Two nodes with the same structure behind them
+  // can still be used differently (two reads of `Buffer.from`, each called on different arrays), and
+  // then numbering them by lifting order would wire their users differently for the same program.
+  // So the key also looks ahead, at how a node is used, and is refined until it stops splitting.
+  const uses = new Map<DucNode, { by: DucNode | string; tag: string }[]>();
+  const addUse = (v: ValueId, by: DucNode | string, tag: string): void => {
+    const p = producer.get(v);
+    if (p === undefined) return;
+    const list = uses.get(p.node) ?? [];
+    list.push({ by, tag: `${tag}#${p.index}` });
+    uses.set(p.node, list);
+  };
+  for (const node of nodes) {
+    // A position that canonical form reorders (commutative operands, invariants) is one position.
+    const commutative = node.kind === "op" && COMMUTATIVE.has(node.label ?? "") && node.inputs.length === 2;
+    const invariantsFrom = node.loop !== undefined ? invariantOffset(node) : Number.POSITIVE_INFINITY;
+    node.inputs.forEach((v, i) => addUse(v, node, commutative ? "in*" : i >= invariantsFrom ? "inv" : `in${i}`));
+    const loop = node.loop;
+    if (loop !== undefined) {
+      loop.next.forEach((v, i) => addUse(v, node, `next${i}`));
+      if (loop.cond !== undefined) addUse(loop.cond, node, "cond");
+    }
+  }
+  obs.forEach((v, k) => addUse(v, "obs", `obs${k}`));
+  for (const b of branches) addUse(b.cond, "branch", `cond:${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`);
+  let key = new Map(nodes.map((node) => [node, sigOfNode(node)] as const));
+  let classes = new Set(key.values()).size;
+  for (let round = 0; round < nodes.length; round++) {
+    const refined = new Map<DucNode, string>();
+    for (const node of nodes) {
+      const used = (uses.get(node) ?? [])
+        .map(({ by, tag }) => `${typeof by === "string" ? by : key.get(by)}:${tag}`)
+        .sort();
+      refined.set(node, createHash("sha256").update(canonicalJson([key.get(node), used])).digest("hex"));
+    }
+    const count = new Set(refined.values()).size;
+    key = refined;
+    if (count === classes) break;
+    classes = count;
+  }
+
   // Parameters keep their original order: parameter index is part of the interface.
-  // Every other node is numbered by signature.
+  // Every other node is numbered by its key.
   const originalIndex = new Map(nodes.map((node, i) => [node, i] as const));
   const ordered = nodes
-    .map((node) => ({ node, sig: sigOfNode(node) }))
+    .map((node) => ({ node, sig: key.get(node) as string }))
     .sort((a, b) => {
       const aParam = a.node.kind === "param-source";
       const bParam = b.node.kind === "param-source";

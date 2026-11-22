@@ -26,6 +26,13 @@ describe("canonical order of operands and invariants (4A)", () => {
     expect(id(f("return a + b;"))).not.toBe(id(f("return b + a;")));
   });
 
+  it("the same program with its statements in another order has the same identity", () => {
+    // Two reads of Buffer.from have the same structure behind them; their users tell them apart.
+    const a = "export function f(): unknown { const x = Buffer.from([1, 2]); const y = Buffer.from([3]); return [x, y]; }";
+    const b = "export function f(): unknown { const y = Buffer.from([3]); const x = Buffer.from([1, 2]); return [x, y]; }";
+    expect(id(b)).toBe(id(a));
+  });
+
   it("a loop's invariants written in either order are the same structure", () => {
     const loop = (withNames: string, invNames: string): string =>
       [
