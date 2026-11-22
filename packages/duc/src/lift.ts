@@ -998,8 +998,9 @@ class Lifter {
         origin: { kind: node.getKindName() },
         label: Node.isPrefixUnaryExpression(node) ? token : `post${token}`,
       });
-      // ++/-- on a bound identifier reassigns it.
-      if (Node.isIdentifier(operand) && this.env.has(operand.getText())) {
+      // ++/-- on a bound identifier reassigns it. No other unary operator does: `-x` leaves x as it is.
+      const steps = token === "++" || token === "--";
+      if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
         this.env.set(operand.getText(), out as ValueId);
       }
       return out as ValueId;

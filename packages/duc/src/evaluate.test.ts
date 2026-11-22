@@ -54,6 +54,7 @@ function evalScope(g: DucGraph, scope: string | undefined, values: Map<ValueId, 
     if (node.kind === "param-source") return [undefined];
     if (node.kind === "literal-source") return [literal(node.label ?? "")];
     if (node.kind === "sel") return [input(0) ? input(1) : input(2)];
+    if (node.kind === "op" && node.label === "-" && node.inputs.length === 1) return [-(input(0) as number)];
     if (node.kind === "op") {
       const fn = BINARY[node.label ?? ""];
       if (fn === undefined) throw new Error(`unsupported operation ${node.label}`);
@@ -139,6 +140,12 @@ const CASES: { name: string; source: string; args: unknown[][]; fn: (...a: any[]
     source: "export function f(c: boolean, x: number): number { if (c) { if (x > 0) { return 1; } } if (x === 3) { return 2; } return x * 2; }",
     args: [[true, -1], [true, 3], [false, 3], [false, 4]],
     fn: (c: boolean, x: number) => { if (c) { if (x > 0) return 1; } if (x === 3) return 2; return x * 2; },
+  },
+  {
+    name: "a negation does not change the variable it negates",
+    source: "export function f(x: number): number { const y = -x; return y + x; }",
+    args: [[3], [-4]],
+    fn: (x: number) => { const y = -x; return y + x; },
   },
   {
     name: "while loop sums a term",
