@@ -15,7 +15,17 @@
  * annotations only, so the identity does not change.
  */
 import { createHash } from "node:crypto";
-import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
+import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
+
+/**
+ * The structural part of a reference label. A link (`spec`) is not structure (#1275, 2B): the same
+ * logic is the same atom whatever its dependencies are linked to. Links travel with the graph.
+ */
+function structuralDiamond(d: DiamondLabel | undefined): Omit<DiamondLabel, "spec"> | undefined {
+  if (d === undefined) return undefined;
+  const { spec: _link, ...structure } = d;
+  return structure;
+}
 
 /** Stable JSON: object keys sorted, and undefined members dropped. */
 export function canonicalJson(value: unknown): string {
@@ -107,7 +117,7 @@ export function canonicalizeGraph(
     const fields: unknown[] = [
       node.kind,
       node.label ?? null,
-      node.diamond ?? null,
+      structuralDiamond(node.diamond) ?? null,
       node.outputs.length,
       inputSigs,
       regionSig(node.region),
@@ -240,7 +250,7 @@ export function graphIdentity(g: DucGraph): string {
       ...(n.label !== undefined ? { label: n.label } : {}),
       inputs: n.inputs,
       outputs: n.outputs,
-      ...(n.diamond !== undefined ? { diamond: n.diamond } : {}),
+      ...(n.diamond !== undefined ? { diamond: structuralDiamond(n.diamond) } : {}),
       ...(n.region !== undefined ? { region: n.region } : {}),
       ...(n.loop !== undefined ? { loop: n.loop } : {}),
     })),

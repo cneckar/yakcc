@@ -12,7 +12,10 @@ describe("links in the line form", () => {
     const g = linkReferences(liftAtom("export function f(x: number): number { return foo(x) + 1; }"), () => "helper-key");
     const text = printLineForm(g);
     expect(text).toMatch(/^free foo -> \S+ link helper-key$/m);
-    expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(g));
+    const back = parseLineForm(text);
+    expect(graphIdentity(back)).toBe(graphIdentity(g));
+    // Identity does not see links, so check the link itself survives.
+    expect(back.nodes.find((n) => n.diamond?.symbol === "foo")?.diamond?.spec).toBe("helper-key");
   });
 
   it("an imported binding prints as unlinked, with its module", () => {
