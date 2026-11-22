@@ -46,7 +46,8 @@ const rows = [];
 for (const [n, t] of Object.entries(TASKS)) {
   const row = { task: Number(n), construct: t.construct, parses: false, structure: false, behaviour: false, detail: "" };
   const program = programs[Number(n)];
-  if (program === undefined) { rows.push({ ...row, detail: "missing" }); continue; }
+  // A rerun covers some of the tasks: grade the ones the reply has.
+  if (program === undefined) continue;
   let g;
   try { g = parseLineForm(program + "\n"); row.parses = true; } catch (e) { rows.push({ ...row, detail: e instanceof LineFormError ? e.message : String(e) }); continue; }
   const ref = liftAtom(t.ref);
@@ -61,7 +62,8 @@ for (const [n, t] of Object.entries(TASKS)) {
   rows.push(row);
 }
 const count = (k) => rows.filter((r) => r[k]).length;
-console.log(`${label}: parses ${count("parses")}/10, same structure ${count("structure")}/10, same behaviour ${count("behaviour")}/10`);
+const of = rows.length;
+console.log(`${label}: parses ${count("parses")}/${of}, same structure ${count("structure")}/${of}, same behaviour ${count("behaviour")}/${of}`);
 for (const r of rows) {
   const mark = (b) => (b ? "yes" : "no ");
   console.log(`  task ${String(r.task).padStart(2)} ${r.construct.padEnd(24)} parses ${mark(r.parses)} structure ${mark(r.structure)} behaviour ${mark(r.behaviour)}${r.detail ? "  — " + r.detail : ""}`);

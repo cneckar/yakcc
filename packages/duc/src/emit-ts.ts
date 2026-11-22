@@ -102,6 +102,8 @@ function emitFunction(
   // Nodes written inline, inside the expression that uses them, not as statements of their own.
   const inline = new Set<NodeId>();
   for (const node of g.nodes) {
+    // A literal is a constant, written where it is used.
+    if (node.kind === "literal-source" && node.label !== "Uninitialized") inline.add(node.id);
     if (node.kind !== "op") continue;
     const label = node.label ?? "";
     if (label === "..." || label.startsWith("OmittedExpression#")) inline.add(node.id);
@@ -121,7 +123,7 @@ function emitFunction(
     const body = bodyPathOf(loop);
     const mark = (v: ValueId): void => {
       const p = producer.get(v);
-      if (p === undefined || p.kind === "carry-source" || p.kind === "diamond-source") return;
+      if (p === undefined || p.kind === "carry-source" || p.kind === "diamond-source" || p.kind === "literal-source") return;
       if (p.region !== body) throw new EmitError(`the condition of loop ${loop.id} is not computed at the top of its body`);
       // The condition itself is used only by the loop; a value inside it only by the condition.
       if ((consumers.get(v) ?? []).length > (v === rec.cond ? 0 : 1)) {
@@ -139,6 +141,7 @@ function emitFunction(
     if (p === undefined || !inline.has(p.id)) return nameOf(v);
     const label = p.label ?? "";
     const expr = render(p);
+    if (p.kind === "literal-source") return /^[0-9.]/.test(expr) ? `(${expr})` : expr;
     return label === "..." || label.startsWith("OmittedExpression#") || isMemberRead(label) ? expr : `(${expr})`;
   };
 

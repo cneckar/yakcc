@@ -102,7 +102,8 @@ function evalScope(g: DucGraph, scope: string | undefined, values: Map<ValueId, 
     }
     throw new Error(`unsupported node ${node.kind}`);
   };
-  let remaining = pending;
+  // Sources first: a literal is a top-level constant that a loop body may read.
+  let remaining = [...pending.filter((n) => n.inputs.length === 0), ...pending.filter((n) => n.inputs.length > 0)];
   while (remaining.length > 0) {
     const before = remaining.length;
     remaining = remaining.filter((node) => {

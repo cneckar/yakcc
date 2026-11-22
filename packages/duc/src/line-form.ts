@@ -7,7 +7,10 @@
  * Grammar:
  *
  *   param <name>                        the next parameter (index = order of param lines); top level only
- *   lit "<text>" -> <name>              a literal; the JSON string is its structural label
+ *   lit "<text>" -> <name>              a literal: <text> is a JavaScript literal (a number, a quoted
+ *                                       string, true, false, null, undefined, a big integer or a
+ *                                       regular expression). Literals are constants: identical ones
+ *                                       are one value, visible everywhere
  *   op <label> [<name> ...] [-> <name>] an operation; the label is an operator or syntactic kind
  *   free <symbol> -> <name> [link <key>]     a name the graph does not define (free-identifier)
  *   ambient <symbol> -> <name> [link <key>]  a platform primitive (platform-primitive)
@@ -24,14 +27,19 @@
  *                                       ternary). Both values are computed; the condition picks one.
  *   loop <name> ... [of|in <name>] [with <name> ...]
  *                                       open a loop. The names first start the carried variables;
- *                                       `of <x>` iterates the values of x, `in <x>` its keys; the
- *                                       names after `with` are the outer values the body reads.
+ *                                       `of <x>` iterates the values of x, `in <x>` its keys. The
+ *                                       body may read any outer name: each outer value it reads is
+ *                                       an invariant of the loop. `with` names some explicitly.
  *   carry <name> ...                    the body's names for the carried variables, in order
- *   invariant <name> ...                the body's names for the invariants, in order
+ *   invariant <name> ...                the body's names for the values after `with`, in order; with
+ *                                       no `with`, outer names the body reads by those names
  *   element <name>                      an iterating loop's name for the current element
+ *                                       (carry, invariant and element come first, in any order, and
+ *                                       their names may shadow outer names inside the body)
  *   while <name>                        the body's condition: the loop continues while it is true
  *                                       (not for an iterating loop, which runs once per element)
- *   next <name> ...                     the next value of each carried variable, in order
+ *   next <name> ...                     the next value of each carried variable, in order (while
+ *                                       and next come once each, in either order)
  *   end <name> ...                      close the loop; the names are its results, one per carry
  *   function <name> [with <name> ...]   a closure: the lines up to its `end` are a program of their
  *                                       own, whose first params are the captured names after `with`
@@ -82,15 +90,20 @@ interface LoopFrame {
   readonly line: number;
   readonly before: ReadonlyMap<string, ValueId>;
   readonly inits: readonly ValueId[];
-  readonly invariantOuter: readonly ValueId[];
+  /** The outer value of each invariant, in order: those after `with`, then those the body reads. */
+  readonly invariantOuter: ValueId[];
+  /** The invariants the `with` names became, in their order, for the `invariant` line to name. */
+  withValues: ValueId[];
   /** An iterating loop: what it iterates, and whether over values (`of`) or keys (`in`). */
   readonly iterable: ValueId | undefined;
   readonly of: "values" | "keys" | undefined;
-  /** The next directive that the loop accepts, in order. */
-  stage: "carry" | "invariant" | "element" | "body" | "next" | "end";
+  /** Still on the header lines (carry, invariant, element), before the first line of the body. */
+  header: boolean;
+  /** The header and closing directives already written: each comes at most once. */
+  readonly seen: Set<string>;
   element: ValueId | undefined;
   carry: ValueId[];
-  invariant: ValueId[];
+  readonly invariant: ValueId[];
   cond: ValueId | undefined;
   next: ValueId[];
 }
@@ -98,6 +111,25 @@ interface LoopFrame {
 type Frame = IfFrame | LoopFrame;
 
 const RESERVED = new Set(["with", "of", "in"]);
+
+const NUMBER_TEXT = /^(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?)n?$/;
+const KEYWORD_LITERALS = new Set(["true", "false", "null", "undefined"]);
+
+/**
+ * Whether `text` is a JavaScript literal: a number or big integer, a quoted string, a template with
+ * no substitutions, a regular expression, or true, false, null or undefined. `Uninitialized` is the
+ * value of a declared variable before any assignment, as the lifter writes it.
+ */
+export function isLiteralText(text: string): boolean {
+  if (KEYWORD_LITERALS.has(text) || text === "Uninitialized" || NUMBER_TEXT.test(text)) return true;
+  const q = text[0];
+  if ((q === "'" || q === '"' || q === "`") && text.length >= 2 && text.endsWith(q)) {
+    const body = text.slice(1, -1);
+    if (q === "`") return !body.includes("${");
+    return !new RegExp(`(^|[^\\\\])${q}`).test(body) && !body.includes("\n");
+  }
+  return /^\/(?![*/]).+\/[dgimsuvy]*$/.test(text);
+}
 
 /** The region path of a loop's body. */
 export function bodyPathOf(node: DucNode): string {
@@ -128,17 +160,51 @@ export function parseLineForm(text: string): DucGraph {
       .map((f) => (f.kind === "if" ? `${f.id}.${f.inElse ? "e" : "t"}` : `${f.id}.b`))
       .join("/");
   };
-  const define = (name: string, line: number): ValueId => {
-    if (!NAME.test(name) || RESERVED.has(name)) throw new LineFormError(line, `"${name}" is not a valid name`);
-    if (names.has(name)) throw new LineFormError(line, `"${name}" is already defined`);
+  // How many loops were open where each value was defined. A body that reads a value from outside
+  // its loop reads it through an invariant of each loop in between.
+  const valueDepth = new Map<ValueId, number>();
+  const loopsOpen = (): LoopFrame[] => open.filter((f): f is LoopFrame => f.kind === "loop");
+  const fresh = (depth: number): ValueId => {
     const v = `v${valueCount++}` as ValueId;
+    valueDepth.set(v, depth);
+    return v;
+  };
+  /**
+   * Define a name. A name on a loop's carry, invariant or element line may shadow a name from
+   * outside the loop, for the body only.
+   */
+  const define = (name: string, line: number, shadow = false): ValueId => {
+    if (!NAME.test(name) || RESERVED.has(name)) throw new LineFormError(line, `"${name}" is not a valid name`);
+    const existing = names.get(name);
+    if (existing !== undefined && !(shadow && (valueDepth.get(existing) ?? 0) < loopsOpen().length)) {
+      throw new LineFormError(line, `"${name}" is already defined`);
+    }
+    const v = fresh(loopsOpen().length);
     names.set(name, v);
     return v;
+  };
+  const bodyRegionOf = (frame: LoopFrame): string => `${frame.within !== undefined ? `${frame.within}/` : ""}${frame.id}.b`;
+  /** The invariant of `frame` that stands for the outer value `v`, made on first use. */
+  const invariantOf = (frame: LoopFrame, v: ValueId, depth: number): ValueId => {
+    const at = frame.invariantOuter.indexOf(v);
+    if (at !== -1) return frame.invariant[at] as ValueId;
+    const inv = fresh(depth);
+    add({ kind: "carry-source", inputs: [], outputs: [inv], label: `invariant:${frame.invariant.length}` }, bodyRegionOf(frame));
+    frame.invariantOuter.push(v);
+    frame.invariant.push(inv);
+    return inv;
+  };
+  /** A value as seen from the current scope: through an invariant of each loop it was defined outside. */
+  const visible = (v: ValueId): ValueId => {
+    const loops = loopsOpen();
+    let at = v;
+    for (let i = valueDepth.get(v) ?? 0; i < loops.length; i++) at = invariantOf(loops[i] as LoopFrame, at, i + 1);
+    return at;
   };
   const use = (name: string, line: number): ValueId => {
     const v = names.get(name);
     if (v === undefined) throw new LineFormError(line, `"${name}" is used before it is defined`);
-    return v;
+    return visible(v);
   };
   const add = (node: Omit<DucNode, "id">, region: string | undefined): void => {
     nodes.push({
@@ -160,23 +226,31 @@ export function parseLineForm(text: string): DucGraph {
     pendingJoin = undefined;
     const [head = "", ...rest] = trimmed.split(/\s+/);
 
-    // A loop takes its header parts in order, and nothing else until they are all written.
+    // A loop's header lines (carry, invariant, element) come first, in any order; the body follows.
     const top = open[open.length - 1];
-    if (top?.kind === "loop" && top.stage !== "body") {
-      const expected: Record<string, string> = {
-        carry: "carry <name> ...",
-        invariant: "invariant <name> ...",
-        element: "element <name>",
-        next: "next <name> ...",
-        end: "end <name> ...",
-      };
-      if (head !== top.stage) throw new LineFormError(line, `expected: ${expected[top.stage]}`);
+    const HEADER = new Set(["carry", "invariant", "element"]);
+    if (top?.kind === "loop" && top.header && !HEADER.has(head)) {
+      if (top.inits.length > 0 && !top.seen.has("carry")) throw new LineFormError(line, "expected: carry <name> ... (one per start value)");
+      if (top.of !== undefined && !top.seen.has("element")) throw new LineFormError(line, "expected: element <name>");
+      top.header = false;
+    }
+    if (HEADER.has(head)) {
+      if (top?.kind !== "loop" || !top.header) throw new LineFormError(line, `${head} must come right after the loop line`);
+      if (top.seen.has(head)) throw new LineFormError(line, `a loop has one ${head} line`);
+      top.seen.add(head);
     }
 
-    if (trimmed.startsWith("lit")) {
+    if (head === "lit") {
       const m = LIT.exec(trimmed);
       if (m === null) throw new LineFormError(line, 'expected: lit "<text>" -> <name>');
-      const label = normalizeLiteral(JSON.parse(m[1] as string) as string);
+      const text = JSON.parse(m[1] as string) as string;
+      if (!isLiteralText(text)) {
+        throw new LineFormError(
+          line,
+          `"${text}" is not a JavaScript literal: write a number (lit "3"), a quoted string (lit "'abc'"), true, false, null or undefined`,
+        );
+      }
+      const label = normalizeLiteral(text);
       const out = define(m[2] as string, line);
       add({ kind: "literal-source", inputs: [], outputs: [out], label }, currentRegion());
       return;
@@ -242,6 +316,7 @@ export function parseLineForm(text: string): DucGraph {
         return;
       }
       const out = define(name, line);
+      valueDepth.set(out, 0);
       diamondValues.set(key, out);
       diamondSpecs.set(key, spec);
       add({ kind: "diamond-source", inputs: [], outputs: [out], diamond }, undefined);
@@ -249,7 +324,9 @@ export function parseLineForm(text: string): DucGraph {
     }
 
     if (head === "if") {
-      if (rest.length !== 1) throw new LineFormError(line, "expected: if <name>");
+      if (rest.length !== 1) {
+        throw new LineFormError(line, "expected: if <name>, where <name> is a condition computed by an earlier op");
+      }
       const cond = use(rest[0] as string, line);
       const within = currentRegion();
       const frame: IfFrame = {
@@ -300,84 +377,97 @@ export function parseLineForm(text: string): DucGraph {
         line,
         before: new Map(names),
         inits: initNames.map((n) => use(n, line)),
-        invariantOuter: invNames.map((n) => use(n, line)),
+        invariantOuter: [],
+        withValues: [],
         iterable: iterAt === -1 ? undefined : use(head1[iterAt + 1] as string, line),
         of,
         element: undefined,
-        stage: "carry",
+        header: true,
+        seen: new Set(),
         carry: [],
         invariant: [],
         cond: undefined,
         next: [],
       };
+      const outer = invNames.map((n) => use(n, line));
       open.push(frame);
+      // In the body, a name after `with` is its invariant, unless the invariant line names it again.
+      frame.withValues = outer.map((v) => visible(v));
+      invNames.forEach((n, j) => names.set(n, frame.withValues[j] as ValueId));
       return;
     }
 
-    if (head === "carry" || head === "invariant") {
-      if (top?.kind !== "loop" || top.stage !== head) {
-        throw new LineFormError(line, `${head} must follow the loop header${head === "invariant" ? " and the carry line" : ""}`);
+    if (head === "carry") {
+      const frame = top as LoopFrame;
+      if (rest.length !== frame.inits.length) {
+        throw new LineFormError(line, `expected ${frame.inits.length} name(s): carry <name> ... (one per start value)`);
       }
-      const frame = top;
-      const want = head === "carry" ? frame.inits.length : frame.invariantOuter.length;
-      if (rest.length !== want) {
-        throw new LineFormError(line, `expected ${want} name(s): ${head} <name> ... (one per ${head === "carry" ? "carried variable" : "invariant"})`);
-      }
-      const values = rest.map((n) => define(n, line));
-      values.forEach((v, j) => {
-        add(
-          { kind: "carry-source", inputs: [], outputs: [v], label: `${head === "carry" ? "carry" : "invariant"}:${j}` },
-          currentRegion(),
-        );
+      frame.carry = rest.map((n, j) => {
+        const v = define(n, line, true);
+        add({ kind: "carry-source", inputs: [], outputs: [v], label: `carry:${j}` }, bodyRegionOf(frame));
+        return v;
       });
-      if (head === "carry") {
-        frame.carry = values;
-        frame.stage = "invariant";
-      } else {
-        frame.invariant = values;
-        frame.stage = frame.of !== undefined ? "element" : "body";
+      return;
+    }
+
+    if (head === "invariant") {
+      const frame = top as LoopFrame;
+      // With `with`, the line names its values in the body. Without it, each name is an outer name
+      // that the body reads by that name.
+      if (frame.withValues.length > 0 && rest.length !== frame.withValues.length) {
+        throw new LineFormError(line, `expected ${frame.withValues.length} name(s): invariant <name> ... (one per value after with)`);
       }
+      const own = new Set<ValueId>([...frame.carry, ...(frame.element !== undefined ? [frame.element] : [])]);
+      const bound = new Set<string>();
+      rest.forEach((n, j) => {
+        if (!NAME.test(n) || RESERVED.has(n)) throw new LineFormError(line, `"${n}" is not a valid name`);
+        const existing = names.get(n);
+        if (bound.has(n) || (existing !== undefined && own.has(existing))) throw new LineFormError(line, `"${n}" is already defined`);
+        bound.add(n);
+        if (frame.withValues.length > 0) {
+          names.set(n, frame.withValues[j] as ValueId);
+        } else {
+          if (existing === undefined) throw new LineFormError(line, `"${n}" is not an outside value: an invariant without with names one`);
+          names.set(n, visible(existing));
+        }
+      });
       return;
     }
 
     if (head === "element") {
-      if (top?.kind !== "loop" || top.stage !== "element") throw new LineFormError(line, "element must follow the invariant line of an iterating loop");
+      const frame = top as LoopFrame;
+      if (frame.of === undefined) throw new LineFormError(line, "element is for a loop over a collection (of or in)");
       if (rest.length !== 1) throw new LineFormError(line, "expected: element <name>");
-      const value = define(rest[0] as string, line);
-      add({ kind: "carry-source", inputs: [], outputs: [value], label: "element" }, currentRegion());
-      top.element = value;
-      top.stage = "body";
+      const value = define(rest[0] as string, line, true);
+      add({ kind: "carry-source", inputs: [], outputs: [value], label: "element" }, bodyRegionOf(frame));
+      frame.element = value;
       return;
     }
 
-    if (head === "while") {
+    if (head === "while" || head === "next") {
       const frame = top;
-      if (frame === undefined || frame.kind !== "loop" || frame.stage !== "body") {
-        throw new LineFormError(line, "while must follow the body of a loop, and come once");
+      if (frame === undefined || frame.kind !== "loop") throw new LineFormError(line, `${head} must be in the body of a loop`);
+      if (frame.seen.has(head)) throw new LineFormError(line, `a loop has one ${head} line`);
+      frame.seen.add(head);
+      if (head === "while") {
+        if (frame.of !== undefined) throw new LineFormError(line, "an iterating loop has no while: it runs once per element");
+        if (rest.length !== 1) throw new LineFormError(line, "expected: while <name>");
+        frame.cond = use(rest[0] as string, line);
+        return;
       }
-      if (frame.of !== undefined) throw new LineFormError(line, "an iterating loop has no while: it runs once per element");
-      if (rest.length !== 1) throw new LineFormError(line, "expected: while <name>");
-      frame.cond = use(rest[0] as string, line);
-      frame.stage = "next";
-      return;
-    }
-
-    if (head === "next") {
-      const ready = top?.kind === "loop" && (top.stage === "next" || (top.stage === "body" && top.of !== undefined));
-      if (!ready || top?.kind !== "loop") throw new LineFormError(line, "next must follow while, or the body of an iterating loop");
-      const frame = top;
       if (rest.length !== frame.inits.length) {
         throw new LineFormError(line, `expected ${frame.inits.length} name(s): next <name> ... (one per carried variable)`);
       }
       frame.next = rest.map((n) => use(n, line));
-      frame.stage = "end";
       return;
     }
 
     if (head === "end") {
       const frame = open[open.length - 1];
       if (frame !== undefined && frame.kind === "loop") {
-        if (frame.stage !== "end") throw new LineFormError(line, "a loop needs while and next before its end");
+        if (!frame.seen.has("next") || (frame.of === undefined && !frame.seen.has("while"))) {
+          throw new LineFormError(line, frame.of === undefined ? "a loop needs while and next before its end" : "a loop needs next before its end");
+        }
         if (rest.length !== frame.inits.length) {
           throw new LineFormError(line, `expected ${frame.inits.length} result name(s): end <name> ...`);
         }
@@ -426,9 +516,11 @@ export function parseLineForm(text: string): DucGraph {
       const [outName, condName, thenName, elseName] = rest as [string, string, string, string];
       const cond = use(condName, line);
       if (cond !== follows.cond) throw new LineFormError(line, "a join uses the condition of its if");
-      const thenValue = follows.thenNames.get(thenName);
+      const thenRaw = follows.thenNames.get(thenName);
+      const thenValue = thenRaw === undefined ? undefined : visible(thenRaw);
       if (thenValue === undefined) throw new LineFormError(line, `"${thenName}" is not visible on the then-side`);
-      const elseValue = follows.elseNames.get(elseName);
+      const elseRaw = follows.elseNames.get(elseName);
+      const elseValue = elseRaw === undefined ? undefined : visible(elseRaw);
       if (elseValue === undefined) throw new LineFormError(line, `"${elseName}" is not visible on the else-side`);
       const out = define(outName, line);
       add({ kind: "sel", inputs: [cond, thenValue, elseValue], outputs: [out] }, currentRegion());
@@ -652,7 +744,8 @@ export function printLineForm(g: DucGraph): string {
       if (loop !== undefined) {
         const body = bodyPathOf(loop);
         for (const v of node.inputs) {
-          if (!isPrefix(body, producerOf(v).region)) {
+          const p = producerOf(v);
+          if (p.kind !== "literal-source" && !isPrefix(body, p.region)) {
             throw new Error(`node ${node.id} reads a value from outside its loop; it must come in as an invariant`);
           }
         }
@@ -764,10 +857,16 @@ export function printLineForm(g: DucGraph): string {
     }
     for (const loop of loopNodes) {
       if (loop.region !== scope) continue;
+      // The body reads literals directly, so they come before the loop too.
+      const body = bodyPathOf(loop);
+      const literals = g.nodes
+        .filter((n) => isPrefix(body, n.region))
+        .flatMap((n) => n.inputs)
+        .filter((v) => producerOf(v).kind === "literal-source");
       items.push({
         first: nodeIndex.get(loop.id) as number,
         produces: loop.outputs,
-        requires: loop.inputs,
+        requires: [...loop.inputs, ...literals],
         lines: () => printLoop(loop),
       });
     }

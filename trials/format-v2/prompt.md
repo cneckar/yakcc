@@ -6,7 +6,7 @@ One directive per line. Every value has a name, defined once, before it is used.
 
 **Values**
 - `param <name>` declares the next parameter. Declare all parameters first, in order.
-- `lit "<literal>" -> <name>` is a literal, written as in JavaScript inside a JSON string: `lit "3" -> three`, `lit "'abc'" -> s`, `lit "true" -> yes`.
+- `lit "<literal>" -> <name>` is a literal, written as in JavaScript inside a JSON string: `lit "3" -> three`, `lit "'abc'" -> s`, `lit "true" -> yes`. Text needs its JavaScript quotes inside the JSON string: `lit "'id-'" -> prefix`. A name or a key is not a literal.
 - `op <label> <operands...> -> <name>` applies one operation to named values. Operands come after the label, the result after `->`.
 - `ambient <symbol> -> <name>` is a built-in global, such as `Math` or `JSON`.
 - `out <name>` returns a value.
@@ -25,6 +25,8 @@ One directive per line. Every value has a name, defined once, before it is used.
 - `select <name> <cond> <then> <else>` is `cond ? then : else`. Both values are computed first.
 
 **Branches: `if`**
+
+`if` takes one name, a condition you computed first with `op`: `op < x zero -> neg` then `if neg`.
 ```
 if <cond>
   ...lines run when cond is true...
@@ -37,21 +39,22 @@ A name defined inside a branch is not visible after its `end`. A `join` on the l
 
 **Loops**
 ```
-loop <start values...> [with <outside values...>]
+loop <start values...>
 carry <names...>
-invariant <names...>
   ...body...
 while <cond>
 next <names...>
 end <results...>
 ```
 - Each start value begins one carried variable. `carry` names them inside the body, in the same order.
-- Every outside value the body reads must come in through `with`, and `invariant` names them inside the body, in the same order. Write `invariant` with no names when there are none.
-- `while <cond>` is computed in the body from the carried values: the loop continues while it is true.
-- `next` gives each carried variable's value for the next round, in order.
-- `end` names the results: the carried values when the loop stops, in order.
+- The body can use any name defined before the loop.
+- `while <cond>` is computed in the body: the loop continues while it is true.
+- `next` gives each carried variable's value for the next round, in order. `while` and `next` can come in either order.
+- `end` names the results: the carried values when the loop stops, in order. Names defined inside the body are not visible after `end`.
 
-To loop over a collection, write `loop <start values...> of <collection> [with ...]`, then the `carry` and `invariant` lines, then `element <name>` for the current element, then the body. There is no `while`: the loop runs once per element. Then `next` and `end` as above.
+To loop over a collection, write `loop <start values...> of <collection>`, then `carry` and `element <name>` for the current element, then the body. There is no `while`: the loop runs once per element. Then `next` and `end` as above.
+
+The names on `carry` and `element` are new names for the body. They may reuse a name from outside the loop; inside the body that name then means the carried value or the element.
 
 **Functions**
 ```

@@ -65,6 +65,116 @@ export function canonicalJson(value: unknown): string {
 }
 
 /**
+ * Literals are constants, so where one is written and how often carry no structure (#1283). Each
+ * literal becomes one top-level source per value, visible in every region: a loop no longer takes
+ * one as an invariant, and a branch left with nothing inside is no branch at all (its joins are
+ * selects of existing values, which is the same graph).
+ */
+function hoistLiterals(
+  nodes: readonly DucNode[],
+  obs: readonly ValueId[],
+  branches: readonly DucBranch[],
+): { nodes: DucNode[]; obs: ValueId[]; branches: DucBranch[] } {
+  const subst = new Map<ValueId, ValueId>();
+  const sub = (v: ValueId): ValueId => {
+    let at = v;
+    for (let next = subst.get(at); next !== undefined; next = subst.get(at)) at = next;
+    return at;
+  };
+  const kept = new Map<string, ValueId>();
+  const literalValues = new Set<ValueId>();
+  let out: DucNode[] = [];
+  for (const node of nodes) {
+    if (node.kind !== "literal-source") {
+      out.push(node);
+      continue;
+    }
+    const v = node.outputs[0] as ValueId;
+    const first = kept.get(node.label ?? "");
+    if (first !== undefined) {
+      subst.set(v, first);
+      continue;
+    }
+    kept.set(node.label ?? "", v);
+    literalValues.add(v);
+    const { region: _region, ...top } = node;
+    out.push(top);
+  }
+  if (kept.size === 0) return { nodes: [...nodes], obs: [...obs], branches: [...branches] };
+
+  // An invariant whose outer value is a literal is that literal. Inner loops see the substitution
+  // of the outer one, so nested invariants fall away in turn.
+  const dropped = new Set<ValueId>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    out = out.map((node) => {
+      if (node.loop === undefined) return node;
+      const offset = invariantOffset(node);
+      const keep: number[] = [];
+      node.loop.invariant.forEach((inv, j) => {
+        const outer = sub(node.inputs[offset + j] as ValueId);
+        if (literalValues.has(outer)) {
+          subst.set(inv, outer);
+          dropped.add(inv);
+          changed = true;
+        } else keep.push(j);
+      });
+      if (keep.length === node.loop.invariant.length) return node;
+      return {
+        ...node,
+        inputs: [...node.inputs.slice(0, offset), ...keep.map((j) => node.inputs[offset + j] as ValueId)],
+        loop: { ...node.loop, invariant: keep.map((j) => (node.loop as DucLoop).invariant[j] as ValueId) },
+      };
+    });
+  }
+  // The remaining invariant sources take their new positions.
+  const invariantPosition = new Map<ValueId, number>();
+  for (const node of out) node.loop?.invariant.forEach((v, j) => invariantPosition.set(v, j));
+  out = out
+    .filter((n) => !(n.kind === "carry-source" && dropped.has(n.outputs[0] as ValueId)))
+    .map((n) => {
+      const pos = n.kind === "carry-source" ? invariantPosition.get(n.outputs[0] as ValueId) : undefined;
+      const relabelled = pos !== undefined ? { ...n, label: `invariant:${pos}` } : n;
+      const loop = relabelled.loop;
+      return {
+        ...relabelled,
+        inputs: relabelled.inputs.map(sub),
+        ...(loop !== undefined
+          ? {
+              loop: {
+                ...loop,
+                next: loop.next.map(sub),
+                ...(loop.cond !== undefined ? { cond: sub(loop.cond) } : {}),
+              },
+            }
+          : {}),
+      };
+    });
+
+  // A branch with nothing inside either side, nor any branch within it, is dropped.
+  let kept2 = branches.map((b) => ({ ...b, cond: sub(b.cond) }));
+  for (let changed = true; changed; ) {
+    changed = false;
+    kept2 = kept2.filter((b) => {
+      const sides = [`${b.within !== undefined ? `${b.within}/` : ""}${b.id}.t`, `${b.within !== undefined ? `${b.within}/` : ""}${b.id}.e`];
+      const inside = (region: string | undefined): boolean =>
+        region !== undefined && sides.some((s) => region === s || region.startsWith(`${s}/`));
+      const used = out.some((n) => inside(n.region)) || kept2.some((o) => o !== b && inside(o.within));
+      if (!used) changed = true;
+      return used;
+    });
+  }
+  // A literal nothing reads has no effect.
+  const read = new Set<ValueId>([...obs.map(sub), ...kept2.map((b) => b.cond)]);
+  for (const n of out) {
+    for (const v of n.inputs) read.add(v);
+    if (n.loop !== undefined) for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])]) read.add(v);
+  }
+  out = out.filter((n) => n.kind !== "literal-source" || read.has(n.outputs[0] as ValueId));
+  return { nodes: out, obs: obs.map(sub), branches: kept2 };
+}
+
+/**
  * Renumber a graph into canonical form. Node ids become `n0, n1, ...` in signature order,
  * value ids become `v0, v1, ...` in the same order, branch ids become `b0, b1, ...` in the
  * order of their condition signatures, and loop ids become `L<i>`, where `i` is the loop node's
@@ -73,10 +183,11 @@ export function canonicalJson(value: unknown): string {
  * this returns the input numbering unchanged.
  */
 export function canonicalizeGraph(
-  nodes: readonly DucNode[],
-  obs: readonly ValueId[],
-  branches: readonly DucBranch[] = [],
+  rawNodes: readonly DucNode[],
+  rawObs: readonly ValueId[],
+  rawBranches: readonly DucBranch[] = [],
 ): DucGraph {
+  const { nodes, obs, branches } = hoistLiterals(rawNodes, rawObs, rawBranches);
   const producer = new Map<ValueId, { node: DucNode; index: number }>();
   for (const node of nodes) node.outputs.forEach((v, index) => producer.set(v, { node, index }));
 
