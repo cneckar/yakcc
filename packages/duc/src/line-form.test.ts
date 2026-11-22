@@ -57,3 +57,16 @@ describe("line form (#1275, item 2)", () => {
     expect(() => parseLineForm("param a\nif a\n")).toThrow(/line 2.*unknown directive "if"/);
   });
 });
+
+describe("one unknown, one source (line form)", () => {
+  it("two references to the same ambient symbol are one source, as in the lifter", () => {
+    const twice = "param s\nparam t\nambient encodeURI -> e1\nop CallExpression e1 s -> x\nambient encodeURI -> e2\nop CallExpression e2 t -> y\nop + x y -> r\nout r\n";
+    const once = "param s\nparam t\nambient encodeURI -> e\nop CallExpression e s -> x\nop CallExpression e t -> y\nop + x y -> r\nout r\n";
+    expect(graphIdentity(parseLineForm(twice))).toBe(graphIdentity(parseLineForm(once)));
+  });
+  it("the lifter's graph for the same function has the same identity", () => {
+    expect(
+      graphIdentity(parseLineForm("param s\nparam t\nambient encodeURI -> e\nop CallExpression e s -> x\nop CallExpression e t -> y\nop + x y -> r\nout r\n")),
+    ).toBe(graphIdentity(liftAtom("export function f(s: string, t: string): string { return encodeURI(s) + encodeURI(t); }")));
+  });
+});

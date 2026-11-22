@@ -37,6 +37,8 @@ const LABEL = /^\S+$/;
 /** Parse and validate the line form, and return the canonical graph it denotes. */
 export function parseLineForm(text: string): DucGraph {
   const names = new Map<string, ValueId>();
+  // One unknown, one source: a symbol that is referenced twice is the same diamond, as in the lifter.
+  const diamondValues = new Map<string, ValueId>();
   const nodes: DucNode[] = [];
   const obs: ValueId[] = [];
   let valueCount = 0;
@@ -107,7 +109,18 @@ export function parseLineForm(text: string): DucGraph {
         reason: head === "free" ? "free-identifier" : "ambient-read",
         symbol,
       };
+      const key = `${diamond.reason}:${symbol}`;
+      const known = diamondValues.get(key);
+      if (known !== undefined) {
+        // The same unknown again: the name refers to the existing source, with no new node.
+        const name = rest[2] as string;
+        if (!NAME.test(name)) throw new LineFormError(line, `"${name}" is not a valid name`);
+        if (names.has(name)) throw new LineFormError(line, `"${name}" is already defined`);
+        names.set(name, known);
+        return;
+      }
       const out = define(rest[2] as string, line);
+      diamondValues.set(key, out);
       add({ kind: "diamond-source", inputs: [], outputs: [out], diamond });
       return;
     }
