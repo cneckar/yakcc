@@ -120,6 +120,12 @@ export interface DucNode {
   /** Present iff `kind === "diamond-source"`. */
   readonly diamond?: DiamondLabel;
   readonly origin?: NodeOrigin;
+  /**
+   * The structural label of the node, part of identity (D6, #1275). For a parameter, its
+   * index. For a literal, its value text. For a binary or compound operator, its symbol. For any
+   * other node, its syntactic kind. Origin text is never a label.
+   */
+  readonly label?: string;
 }
 
 /**

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { liftAtom } from "./lift.js";
 import { isWellFormed } from "./wellformed.js";
-import { canonicalJson } from "./canonical.js";
+import { canonicalJson, graphIdentity } from "./canonical.js";
 
 const canon = (src: string) => canonicalJson(liftAtom(src));
 
@@ -58,5 +58,31 @@ describe("pure URI codecs are explained (validator residue)", () => {
     const reasonOf = (sym: string) => g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
     expect(reasonOf("encodeURI")).toBe("ambient-read");
     expect(reasonOf("decodeURI")).toBe("ambient-read");
+  });
+});
+
+describe("D6 identity is structure only (#1275)", () => {
+  it("renaming a local does not change the identity", () => {
+    expect(graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }"))).toBe(
+      graphIdentity(liftAtom("export function f(b: number): number { return b + 1; }")),
+    );
+  });
+
+  it("a comment or formatting does not change the identity", () => {
+    expect(graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }"))).toBe(
+      graphIdentity(liftAtom("export function f (a: number): number {\n  // add one\n  return a + 1\n}")),
+    );
+  });
+
+  it("a real change in structure changes the identity", () => {
+    expect(graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }"))).not.toBe(
+      graphIdentity(liftAtom("export function f(a: number): number { return a * 1; }")),
+    );
+  });
+
+  it("the annotations are still present and lossless after renaming", () => {
+    const g = liftAtom("export function f(a: number): number { return a + 1; }");
+    const texts = g.nodes.map((n) => n.origin?.text).filter((t) => t !== undefined);
+    expect(texts).toContain("a");
   });
 });

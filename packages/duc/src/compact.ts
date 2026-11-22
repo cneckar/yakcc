@@ -21,9 +21,9 @@ export interface CompactGraph {
 }
 
 /**
- * `[kind, inputs, outputs, origin, diamond]`. `origin` is `[kindIndex, textIndex]` (textIndex is
- * -1 when absent), or null. `diamond` is `[reasonIndex, symbolIndex, moduleIndex]` (moduleIndex is
- * -1 when absent), or null.
+ * `[kind, inputs, outputs, origin, diamond, label]`. `origin` is `[kindIndex, textIndex]` (textIndex
+ * is -1 when absent), or null. `diamond` is `[reasonIndex, symbolIndex, moduleIndex]` (moduleIndex
+ * is -1 when absent), or null. `label` is the structural label's string index, or -1 when absent.
  */
 export type CompactNode = readonly [
   number,
@@ -31,6 +31,7 @@ export type CompactNode = readonly [
   readonly number[],
   readonly [number, number] | null,
   readonly [number, number, number] | null,
+  number,
 ];
 
 const NODE_ID = /^n(\d+)$/;
@@ -69,12 +70,14 @@ export function encodeGraph(g: DucGraph): CompactGraph {
           node.diamond.module === undefined ? -1 : intern(node.diamond.module),
         ]
       : null;
+    const label = node.label === undefined ? -1 : intern(node.label);
     return [
       intern(node.kind),
       node.inputs.map(valueIndex),
       node.outputs.map(valueIndex),
       origin,
       diamond,
+      label,
     ];
   });
   return { v: 1, s: table, n: nodes, o: g.obs.map(valueIndex) };
@@ -88,7 +91,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     return s;
   };
   const value = (k: number): ValueId => `v${k}` as ValueId;
-  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond], i) => {
+  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond, label], i) => {
     const node: {
       id: DucNode["id"];
       inputs: ValueId[];
@@ -96,6 +99,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
       kind: DucNode["kind"];
       origin?: NodeOrigin;
       diamond?: DiamondLabel;
+      label?: string;
     } = {
       id: `n${i}` as DucNode["id"],
       inputs: inputs.map(value),
@@ -108,6 +112,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
         ...(origin[1] !== -1 ? { text: str(origin[1]) } : {}),
       };
     }
+    if (label !== -1) node.label = str(label);
     if (diamond !== null) {
       node.diamond = {
         reason: str(diamond[0]) as DiamondLabel["reason"],

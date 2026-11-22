@@ -124,6 +124,7 @@ interface MutableNode {
   readonly kind: DucNode["kind"];
   readonly diamond?: DucNode["diamond"];
   readonly origin?: DucNode["origin"];
+  readonly label?: string;
 }
 
 /**
@@ -238,7 +239,7 @@ class Lifter {
     kind: DucNode["kind"],
     inputs: ValueId[],
     outCount: number,
-    extra?: { diamond?: DucNode["diamond"]; origin?: DucNode["origin"] },
+    extra?: { diamond?: DucNode["diamond"]; origin?: DucNode["origin"]; label?: string },
   ): ValueId[] {
     const outputs: ValueId[] = [];
     for (let i = 0; i < outCount; i++) outputs.push(this.freshValue());
@@ -249,6 +250,12 @@ class Lifter {
       kind,
       ...(extra?.diamond !== undefined ? { diamond: extra.diamond } : {}),
       ...(extra?.origin !== undefined ? { origin: extra.origin } : {}),
+      // Structural label (D6): explicit, else the syntactic kind of the origin.
+      ...(extra?.label !== undefined
+        ? { label: extra.label }
+        : extra?.origin !== undefined
+          ? { label: extra.origin.kind }
+          : {}),
     };
     this.nodes.push(node);
     return outputs;
@@ -293,10 +300,11 @@ class Lifter {
   }
 
   private liftFunction(fn: FunctionLike): void {
-    for (const param of fn.getParameters()) {
+    for (const [index, param] of fn.getParameters().entries()) {
       const nameNode = param.getNameNode();
       const [value] = this.emit("param-source", [], 1, {
         origin: { kind: "Parameter", text: truncate(nameNode.getText()) },
+        label: String(index),
       });
       // Destructured params: bind every identifier inside the pattern to the one
       // param-source value (conservative aliasing; sound).
@@ -595,6 +603,7 @@ class Lifter {
     if (isLiteralExpression(node)) {
       return this.emit("literal-source", [], 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
+        label: node.getText(),
       })[0] as ValueId;
     }
     if (Node.isParenthesizedExpression(node)) {
@@ -692,7 +701,10 @@ class Lifter {
       // `x += e` reads the old value and the rhs, then rebinds.
       const oldValue = this.liftExpr(left);
       const rhs = this.liftExpr(node.getRight());
-      const [out] = this.emit("op", [oldValue, rhs], 1, { origin: { kind: node.getKindName() } });
+      const [out] = this.emit("op", [oldValue, rhs], 1, {
+        origin: { kind: node.getKindName() },
+        label: node.getOperatorToken().getText(),
+      });
       this.assignTo(left, out as ValueId);
       return out as ValueId;
     }
@@ -700,6 +712,7 @@ class Lifter {
     const r = this.liftExpr(node.getRight());
     return this.emit("op", [l, r], 1, {
       origin: { kind: "Binary", text: node.getOperatorToken().getText() },
+      label: node.getOperatorToken().getText(),
     })[0] as ValueId;
   }
 
@@ -766,6 +779,7 @@ class Lifter {
       kind: n.kind,
       ...(n.diamond !== undefined ? { diamond: n.diamond } : {}),
       ...(n.origin !== undefined ? { origin: n.origin } : {}),
+      ...(n.label !== undefined ? { label: n.label } : {}),
     }));
     return canonicalizeGraph(nodes, dedupe(this.obs));
   }
