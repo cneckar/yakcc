@@ -106,6 +106,63 @@ interface MutationPolicy {
   readonly callsMutate: boolean;
   readonly handoffMutates: boolean;
 }
+/** Binary operators whose result is a primitive when both operands are primitives. */
+const PRIMITIVE_BINARY_OPS = new Set<SyntaxKind>([
+  SyntaxKind.PlusToken,
+  SyntaxKind.MinusToken,
+  SyntaxKind.AsteriskToken,
+  SyntaxKind.SlashToken,
+  SyntaxKind.PercentToken,
+  SyntaxKind.AsteriskAsteriskToken,
+  SyntaxKind.LessThanToken,
+  SyntaxKind.LessThanEqualsToken,
+  SyntaxKind.GreaterThanToken,
+  SyntaxKind.GreaterThanEqualsToken,
+  SyntaxKind.EqualsEqualsToken,
+  SyntaxKind.EqualsEqualsEqualsToken,
+  SyntaxKind.ExclamationEqualsToken,
+  SyntaxKind.ExclamationEqualsEqualsToken,
+  SyntaxKind.AmpersandToken,
+  SyntaxKind.BarToken,
+  SyntaxKind.CaretToken,
+  SyntaxKind.LessThanLessThanToken,
+  SyntaxKind.GreaterThanGreaterThanToken,
+  SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
+
+/**
+ * Whether an initializer always evaluates to a primitive, given the names already known to
+ * hold primitives. Literals, names in `primitive`, parentheses, unary `+ - ! ~` and the
+ * binary operators in PRIMITIVE_BINARY_OPS over primitives. Those operators invoke no user
+ * code on primitive operands, so the result is a primitive that no call can mutate.
+ */
+function isPrimitiveExpr(node: Node, primitive: ReadonlySet<string>): boolean {
+  if (Node.isParenthesizedExpression(node)) return isPrimitiveExpr(node.getExpression(), primitive);
+  if (
+    Node.isNumericLiteral(node) ||
+    Node.isStringLiteral(node) ||
+    Node.isNoSubstitutionTemplateLiteral(node) ||
+    Node.isBigIntLiteral(node) ||
+    node.getKind() === SyntaxKind.TrueKeyword ||
+    node.getKind() === SyntaxKind.FalseKeyword ||
+    node.getKind() === SyntaxKind.NullKeyword
+  ) {
+    return true;
+  }
+  if (Node.isIdentifier(node)) return primitive.has(node.getText());
+  if (Node.isPrefixUnaryExpression(node)) {
+    const op = node.getOperatorToken();
+    if (op !== SyntaxKind.PlusToken && op !== SyntaxKind.MinusToken && op !== SyntaxKind.ExclamationToken && op !== SyntaxKind.TildeToken) return false;
+    return isPrimitiveExpr(node.getOperand(), primitive);
+  }
+  if (Node.isBinaryExpression(node)) {
+    const op = node.getOperatorToken().getKind();
+    if (!PRIMITIVE_BINARY_OPS.has(op)) return false;
+    return isPrimitiveExpr(node.getLeft(), primitive) && isPrimitiveExpr(node.getRight(), primitive);
+  }
+  return false;
+}
+
 const OPAQUE: MutationPolicy = { callsMutate: true, handoffMutates: true };
 const INERT: MutationPolicy = { callsMutate: false, handoffMutates: false };
 
@@ -307,8 +364,19 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
     fns.set(name, { declHash: sha(text), text, reads: readsOf(text) });
   }
 
+  // Names whose value is always a primitive (a literal, or arithmetic over primitives). A
+  // call or hand-off cannot mutate a primitive, so these are inert. Writes are still
+  // checked separately below. A single pass in source order: an initializer may only read
+  // a name declared before it, since a later one is still in its temporal dead zone.
+  const primitive = new Set<string>();
+  for (const [name, v] of vars) {
+    if (v.init !== undefined && isPrimitiveExpr(v.init, primitive)) primitive.add(name);
+  }
   const varSites = new Map<string, Site[]>();
-  for (const [name, v] of vars) varSites.set(name, mutationSites(sf, name, policyForInit(v.init)));
+  for (const [name, v] of vars) {
+    const policy = primitive.has(name) ? INERT : policyForInit(v.init);
+    varSites.set(name, mutationSites(sf, name, policy));
+  }
   const fnSites = new Map<string, Site[]>();
   for (const name of fns.keys()) fnSites.set(name, mutationSites(sf, name, INERT));
 

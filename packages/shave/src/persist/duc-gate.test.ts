@@ -508,3 +508,23 @@ describe("module-binding classification pins (#1266 mutable state, #1267 init wi
     expect(b.get("A")?.binding).toBe("pure");
   });
 });
+
+describe("primitive initializers are inert under hand-off (ms unit constants)", () => {
+  it("an arithmetic initializer over a pure constant stays pure when passed to a call", () => {
+    const b = moduleBindingsOf("var s = 1000;\nvar m = s * 60;\nexport const r = g(m);");
+    expect(b.get("m")?.binding).toBe("pure");
+    expect(b.get("s")?.binding).toBe("pure");
+  });
+  it("a chain of primitive arithmetic is pure", () => {
+    const b = moduleBindingsOf("const A = 2;\nconst B = A * A + 1;\nexport const r = g(B);");
+    expect(b.get("B")?.binding).toBe("pure");
+  });
+  it("a primitive that is written later stays mutable", () => {
+    const b = moduleBindingsOf("let C = 1 + 1;\nexport function bump() { C++; }");
+    expect(b.get("C")?.binding).toBe("mutable");
+  });
+  it("an object initializer is still mutable under hand-off", () => {
+    const b = moduleBindingsOf("const O = [];\nexport const r = g(O);");
+    expect(b.get("O")?.binding).toBe("mutable");
+  });
+});
