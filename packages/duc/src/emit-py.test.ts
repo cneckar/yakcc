@@ -265,3 +265,37 @@ describe.skipIf(!python)("lowering to Python: platform calls inside loops (#1278
     expect(runPython(emitPython(liftAtom(src)), inputs)).toEqual(runJs(src, inputs));
   });
 });
+
+describe.skipIf(!python)("lowering to Python: platform functions as values (#1278)", () => {
+  it("a platform function passed as a value is that function", () => {
+    const src =
+      "export function f(xs: string[]) { const g = (h: (s: string) => number) => h(xs[0] as string) + 1; return [g(parseInt), g(Number)]; }";
+    expect(runPython(emitPython(liftAtom(src)), [[["41"]]])).toEqual(runJs(src, [[["41"]]]));
+  });
+});
+
+describe.skipIf(!python)("lowering to Python: array callbacks (#1278)", () => {
+  const cases: [string, string, unknown[][]][] = [
+    [
+      "map, filter and reduce with closures",
+      "export function f(xs: number[]) { return xs.map((x) => x * 2).filter((x) => x > 2).reduce((a, b) => a + b, 0); }",
+      [[[1, 2, 3]], [[]]],
+    ],
+    [
+      "a callback that ignores the index and the array",
+      "export function f(xs: number[]) { return [xs.some((x) => x < 0), xs.every((x) => x < 10), xs.find((x) => x > 1), xs.findIndex((x) => x > 1)]; }",
+      [[[1, 2, 3]], [[-1]]],
+    ],
+    [
+      "parseInt as a callback gets the index as its radix",
+      "export function f(xs: string[]) { return xs.map(parseInt); }",
+      [[["1", "2", "3"]]],
+    ],
+  ];
+  for (const [name, src, inputs] of cases) {
+    it(`computes what the source computes: ${name}`, () => {
+      const code = emitPython(liftAtom(src));
+      expect(runPython(code, inputs), code).toEqual(runJs(src, inputs));
+    });
+  }
+});

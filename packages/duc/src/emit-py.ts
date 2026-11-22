@@ -320,6 +320,58 @@ def _pop(xs):
     return xs.pop() if xs else UNDEFINED
 
 
+def _map(xs, f):
+    return [f(e, i, xs) for i, e in enumerate(list(xs))]
+
+
+def _filter(xs, f):
+    return [e for i, e in enumerate(list(xs)) if _truthy(f(e, i, xs))]
+
+
+def _for_each(xs, f):
+    for i, e in enumerate(list(xs)):
+        f(e, i, xs)
+    return UNDEFINED
+
+
+def _some(xs, f):
+    return any(_truthy(f(e, i, xs)) for i, e in enumerate(list(xs)))
+
+
+def _every(xs, f):
+    return all(_truthy(f(e, i, xs)) for i, e in enumerate(list(xs)))
+
+
+def _find(xs, f):
+    for i, e in enumerate(list(xs)):
+        if _truthy(f(e, i, xs)):
+            return e
+    return UNDEFINED
+
+
+def _find_index(xs, f):
+    for i, e in enumerate(list(xs)):
+        if _truthy(f(e, i, xs)):
+            return i
+    return -1
+
+
+_NO_INIT = object()
+
+
+def _reduce(xs, f, init=_NO_INIT):
+    items = list(xs)
+    if init is _NO_INIT:
+        if not items:
+            raise JsError("Reduce of empty array with no initial value", "TypeError")
+        acc, start = items[0], 1
+    else:
+        acc, start = init, 0
+    for i in range(start, len(items)):
+        acc = f(acc, items[i], i, xs)
+    return acc
+
+
 def _max(*xs):
     return max((_num(x) for x in xs), default=-math.inf)
 
@@ -349,6 +401,14 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
   concat: (r, a) => `(${r} + ${a.map((x) => `_str(${x})`).join(" + ") || '""'})`,
   toString: (r: string) => `_str(${r})`,
   test: (r, a) => `_test(${r}, ${a[0] ?? "UNDEFINED"})`,
+  map: (r, a) => `_map(${r}, ${a[0]})`,
+  filter: (r, a) => `_filter(${r}, ${a[0]})`,
+  forEach: (r, a) => `_for_each(${r}, ${a[0]})`,
+  some: (r, a) => `_some(${r}, ${a[0]})`,
+  every: (r, a) => `_every(${r}, ${a[0]})`,
+  find: (r, a) => `_find(${r}, ${a[0]})`,
+  findIndex: (r, a) => `_find_index(${r}, ${a[0]})`,
+  reduce: (r, a) => `_reduce(${[r, ...a].join(", ")})`,
   replace: (r, a) => `_replace(${r}, ${a[0] ?? "UNDEFINED"}, ${a[1] ?? "UNDEFINED"})`,
   push: (r, a) => `_push(${[r, ...a].join(", ")})`,
   pop: (r) => `_pop(${r})`,
@@ -380,6 +440,17 @@ const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
   isFinite: (a) =>
     `(not _isnan(${a[0] ?? "UNDEFINED"}) and not math.isinf(_num(${a[0] ?? "UNDEFINED"})))`,
   Boolean: (a) => `_truthy(${a[0] ?? "UNDEFINED"})`,
+};
+
+/** Platform functions used as values (passed, stored), as the prelude functions that are them. */
+const PLATFORM_VALUES: Record<string, string> = {
+  // Called back with (element, index, array), as JavaScript does; the rest is ignored.
+  parseInt: "(lambda s=UNDEFINED, radix=UNDEFINED, *_rest: _parse_int(s, radix))",
+  parseFloat: "(lambda s=UNDEFINED, *_rest: _parse_float(s))",
+  String: '(lambda x="", *_rest: _str(x))',
+  Number: "(lambda x=0, *_rest: _num(x))",
+  Boolean: "(lambda x=UNDEFINED, *_rest: _truthy(x))",
+  isNaN: "(lambda x=UNDEFINED, *_rest: _isnan(x))",
 };
 
 const ERRORS = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError"]);
@@ -593,10 +664,16 @@ function pyFunction(
     const p = producer.get(v);
     if (p === undefined || !inline.has(p.id)) {
       const name = nameOf(v);
-      if (name.startsWith("@"))
-        throw new PyEmitError(
-          `the platform name ${name.slice(1)} is used as a value; Python has no form for it`,
-        );
+      if (name.startsWith("@")) {
+        // A platform function passed as a value is its prelude helper.
+        const asValue = PLATFORM_VALUES[name.slice(1)];
+        if (asValue === undefined) {
+          throw new PyEmitError(
+            `the platform name ${name.slice(1)} is used as a value; Python has no form for it`,
+          );
+        }
+        return asValue;
+      }
       return name;
     }
     return `(${render(p)})`;
@@ -971,6 +1048,8 @@ function pyFunction(
     .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
     .sort((a, b) => Number(a.label) - Number(b.label))
     .map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`);
+  // A JavaScript function ignores arguments past its parameters.
+  params.push("*_rest");
   const body = emitScope(undefined);
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)}`);
