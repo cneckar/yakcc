@@ -35,7 +35,11 @@ export interface DucInfluenceAttestation {
   readonly matrix: readonly (readonly boolean[])[];
 }
 
-/** One witnessed high-to-low leak found by graph non-interference. */
+/**
+ * One witnessed high-to-low path found by graph non-interference. A leak is a
+ * structural may-influence path (DEC-DUC-NI-REACHABILITY-001), not a claim that the
+ * path is feasible or exploitable.
+ */
 export interface DucNiLeak {
   /** The ♦-symbol of the high source (or the source value name if unlabelled). */
   readonly highSource: string;

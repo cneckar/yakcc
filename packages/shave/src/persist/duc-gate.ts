@@ -260,7 +260,7 @@ export function enforceDucGate(
     const detail =
       result.liftError !== undefined
         ? `could not be lifted for analysis (${result.liftError})`
-        : `has unexplained free references: ${result.unexplained.map((u) => u.symbol).join(", ")}`;
+        : `has unresolved references with no declared source: ${result.unexplained.map((u) => u.symbol).join(", ")} (a structural finding, not a feasibility claim)`;
     const message = `[duc-gate] atom "${atomName}" ${detail}`;
     if (mode === "reject") {
       throw new DucGateRejection(`${message} — rejected (YAKCC_DUC_GATE=reject)`, result);

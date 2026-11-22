@@ -432,3 +432,19 @@ describe("external surface from the sidecar (WI-EXPLAIN-03, #1172)", () => {
     expect(externalSurfaceOf("not json")).toBeNull();
   });
 });
+
+describe("report wording is structural, not feasibility (WI-GUARD A4, #1257)", () => {
+  it("the gate warning states a structural finding and does not claim feasibility", () => {
+    const messages: string[] = [];
+    enforceDucGate(
+      "export function f(x: number): number { return helper(x); }",
+      "f",
+      "warn",
+      (m) => messages.push(m),
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("unresolved references with no declared source");
+    expect(messages[0]).toContain("structural finding, not a feasibility claim");
+    expect(messages[0]).not.toMatch(/exploit|vulnerab|will be reached/i);
+  });
+});
