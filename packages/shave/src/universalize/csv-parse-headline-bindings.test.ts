@@ -476,7 +476,9 @@ describe("csv-parse/lib/sync.js -- per-entry shave (WI-510 Slice 11 / #642 S11)"
       //   -> lib/utils/underscore.js; lib/api/normalize_columns_array.js -> lib/utils/is_object.js;
       //   lib/api/init_state.js -> lib/utils/ResizeableBuffer.js
       // NOTE: lib/index.js is NOT reached (sync.js doesn't import it).
-      expect(forest.moduleCount, "csv-parse sync moduleCount must be 8 (plan ss3.2)").toBe(8);
+      // The BFS above lists 9 files: the plan's 8 counted one that stubbed. Every one of the 9 now
+      // decomposes, so moduleCount is 9 (#1276: the DUC lifter lifts what it used to stub).
+      expect(forest.moduleCount, "csv-parse sync moduleCount must be 9 (the BFS above)").toBe(9);
 
       // DEC-WI510-S11-NO-PRIVATE-FIELDS-001: no #foo private fields; full decomposition expected.
       expect(
@@ -811,7 +813,7 @@ describe("csv-parse -- compound interaction: both entries end-to-end (WI-510 Sli
         {
           name: "csv-parse/sync",
           entry: "lib/sync.js",
-          expectedModuleCount: 8,
+          expectedModuleCount: 9,
           expectedExternalSpecifiers: [] as string[],
         },
       ];

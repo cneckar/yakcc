@@ -254,3 +254,37 @@ describe("loops that break, continue and return (#1276)", () => {
     });
   }
 });
+
+describe("do loops (#1276)", () => {
+  const cases: [string, string, unknown[][]][] = [
+    [
+      "runs once before it tests",
+      "export function f(n: number) { let i = 0; let s = 0; do { s = s + 10; i = i + 1; } while (i < n); return s * 100 + i; }",
+      [[0], [1], [3]],
+    ],
+    [
+      "a lazy condition is not run on the first pass",
+      "export function f(xs: number[]) { let i = 0; do { i = i + 1; } while (i < xs.length && xs[i] > 0); return i; }",
+      [[[]], [[5, 4, 0, 2]]],
+    ],
+    [
+      "break and continue",
+      "export function f(n: number) { let i = 0; let s = 0; do { i = i + 1; if (i % 2 === 0) continue; if (i > 7) break; s = s + i; } while (i < n); return s; }",
+      [[1], [5], [20]],
+    ],
+  ];
+  for (const [name, src, inputs] of cases) {
+    it(`${name}: lifts as a loop, computes the same, and lifts back`, () => {
+      const g = liftAtom(src);
+      expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(true);
+      const code = emitTypeScript(g);
+      const run = (c: string, args: unknown[]): unknown =>
+        new Function(
+          `${c.replace("export ", "").replace(/: [a-z[\]]+/g, "")}; return f(...${JSON.stringify(args)});`,
+        )();
+      for (const args of inputs)
+        expect(run(code, args), `${name} ${JSON.stringify(args)}`).toEqual(run(src, args));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+});

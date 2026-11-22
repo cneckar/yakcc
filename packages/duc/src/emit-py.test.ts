@@ -307,3 +307,12 @@ describe.skipIf(!python)("lowering to Python: arguments (#1278)", () => {
     expect(runPython(emitPython(liftAtom(src)), inputs)).toEqual(runJs(src, inputs));
   });
 });
+
+describe.skipIf(!python)("lowering to Python: do loops (#1278)", () => {
+  it("a do loop runs once before it tests", () => {
+    const src =
+      "export function f(n: number) { let i = 0; do { i = i + 1; } while (i < n); return i; }";
+    const inputs = [[0], [4]];
+    expect(runPython(emitPython(liftAtom(src)), inputs)).toEqual(runJs(src, inputs));
+  });
+});

@@ -830,7 +830,8 @@ export function printLineForm(g: DucGraph): string {
     }
     for (const v of [...rec.next, ...(rec.cond !== undefined ? [rec.cond] : [])]) {
       const p = producerOf(v);
-      if (p.region === undefined || !isPrefix(body, p.region)) {
+      // A literal is a constant, visible everywhere (a do loop's first-pass flag is next `false`).
+      if (p.kind !== "literal-source" && (p.region === undefined || !isPrefix(body, p.region))) {
         throw new Error(`loop ${loop.id} takes its next value or condition from outside its body`);
       }
     }

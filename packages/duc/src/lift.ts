@@ -732,7 +732,11 @@ class Lifter {
       this.liftIf(node);
       return;
     }
-    if ((Node.isForStatement(node) || Node.isWhileStatement(node)) && this.liftLoop(node)) return;
+    if (
+      (Node.isForStatement(node) || Node.isWhileStatement(node) || Node.isDoStatement(node)) &&
+      this.liftLoop(node)
+    )
+      return;
     if ((Node.isForOfStatement(node) || Node.isForInStatement(node)) && this.liftIterate(node))
       return;
     if (
@@ -921,7 +925,10 @@ class Lifter {
    * loop), and the caller keeps the opaque summary.
    */
   private liftLoop(
-    node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement,
+    node:
+      | import("ts-morph").WhileStatement
+      | import("ts-morph").ForStatement
+      | import("ts-morph").DoStatement,
   ): boolean {
     if (hasJump(node)) {
       // A loop that only breaks and continues lifts here; one that returns needs the rest of the
@@ -939,7 +946,7 @@ class Lifter {
    */
   private liftLoopWithExits(node: Node): { ret: ValueId; retv: ValueId } | undefined {
     if (
-      !(Node.isWhileStatement(node) || Node.isForStatement(node)) ||
+      !(Node.isWhileStatement(node) || Node.isForStatement(node) || Node.isDoStatement(node)) ||
       !jumpsSupported(node) ||
       this.bodyExits !== undefined
     )
@@ -1003,8 +1010,21 @@ class Lifter {
     node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement | Node,
     exitNames: readonly string[] = [],
   ): boolean {
-    if (!(Node.isWhileStatement(node) || Node.isForStatement(node))) return false;
+    if (!(Node.isWhileStatement(node) || Node.isForStatement(node) || Node.isDoStatement(node)))
+      return false;
     const isFor = Node.isForStatement(node);
+    // A do loop is a while loop whose first test is skipped: a carried flag, true at the start.
+    const isDo = Node.isDoStatement(node);
+    const firstName = isDo ? `%first${this.loopCount}` : undefined;
+    if (firstName !== undefined) {
+      this.env.set(
+        firstName,
+        this.emit("literal-source", [], 1, {
+          origin: { kind: "TrueKeyword", text: "true" },
+          label: "true",
+        })[0] as ValueId,
+      );
+    }
     const cond = Node.isForStatement(node) ? node.getCondition() : node.getExpression();
     const incrementor = Node.isForStatement(node) ? node.getIncrementor() : undefined;
     const body = node.getStatement();
@@ -1024,7 +1044,11 @@ class Lifter {
         if (!assigned.includes(name)) assigned.push(name);
       }
     }
-    const carried = [...assigned.filter((name) => this.env.has(name)), ...exitNames];
+    const carried = [
+      ...assigned.filter((name) => this.env.has(name)),
+      ...exitNames,
+      ...(firstName !== undefined ? [firstName] : []),
+    ];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
 
     // The body runs on a copy of the environment, and the original object is restored after it: an
@@ -1077,18 +1101,41 @@ class Lifter {
                 label: "!",
               })[0] as ValueId)
             : undefined;
+        // The written condition: a do loop's first pass does not test it (`first || cond`, lazily).
+        const condInert = cond === undefined || isInert(cond);
+        const liftCond = (): ValueId => {
+          const c = cond as Node;
+          if (firstName === undefined) return this.liftExpr(c);
+          const first = this.env.get(firstName) as ValueId;
+          if (isInert(c)) {
+            return this.emit("op", [first, this.liftExpr(c)], 1, {
+              origin: { kind: "Binary", text: "||" },
+              label: "||",
+            })[0] as ValueId;
+          }
+          return this.liftLazy(
+            first,
+            () => first,
+            () => this.liftExpr(c),
+          );
+        };
         const written =
-          cond !== undefined && going !== undefined && !isInert(cond)
-            ? this.liftLazy(
-                going,
-                () => this.liftExpr(cond),
-                () => going,
-              )
+          cond !== undefined && going !== undefined && !condInert
+            ? this.liftLazy(going, liftCond, () => going)
             : cond !== undefined
-              ? this.liftExpr(cond)
+              ? liftCond()
               : undefined;
+        if (firstName !== undefined) {
+          this.env.set(
+            firstName,
+            this.emit("literal-source", [], 1, {
+              origin: { kind: "FalseKeyword", text: "false" },
+              label: "false",
+            })[0] as ValueId,
+          );
+        }
         condition =
-          going !== undefined && written !== undefined && isInert(cond as Node)
+          going !== undefined && written !== undefined && condInert
             ? (this.emit("op", [going, written], 1, {
                 origin: { kind: "Binary", text: "&&" },
                 label: "&&",
@@ -2430,7 +2477,8 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
  * rest of the body could read.
  */
 function jumpsSupported(loop: Node): boolean {
-  if (!(Node.isWhileStatement(loop) || Node.isForStatement(loop))) return false;
+  if (!(Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop)))
+    return false;
   if (
     loop
       .getDescendantsOfKind(SyntaxKind.ThrowStatement)

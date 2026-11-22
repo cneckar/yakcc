@@ -44,11 +44,11 @@ describe("line form (#1275, item 2)", () => {
     expect(() => parseLineForm("param a\nparam a\n")).toThrow(/already defined/);
   });
 
-  it("a do loop is refused by the printer: it has no line form yet", () => {
+  it("a do loop prints as a loop with a first-pass flag, and parses back (#1276)", () => {
     const g = liftAtom(
       "export function f(n: number): number { let i = 0; do { i = i + 1; } while (i < n); return i; }",
     );
-    expect(() => printLineForm(g)).toThrow(/do loop/);
+    expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
   });
 
   it("a ternary prints as select, and parses back to the same structure", () => {
