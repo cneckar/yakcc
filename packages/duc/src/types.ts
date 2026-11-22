@@ -97,6 +97,12 @@ export interface DiamondLabel {
   readonly symbol: string;
   /** For `unlinked-reference`: the module the symbol was imported from. */
   readonly module?: string;
+  /**
+   * The key of the atom this reference is linked to (#1275, P7). Absent until the reference is
+   * resolved. An atom is submitted only when every reference is linked and every link is in the
+   * submission or the store.
+   */
+  readonly spec?: string;
 }
 
 /**

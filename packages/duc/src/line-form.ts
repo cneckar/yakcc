@@ -9,8 +9,11 @@
  *   param <name>                        the next parameter (index = order of param lines); top level only
  *   lit "<text>" -> <name>              a literal; the JSON string is its structural label
  *   op <label> [<name> ...] [-> <name>] an operation; the label is an operator or syntactic kind
- *   free <symbol> -> <name>             a name the graph does not define (free-identifier)
- *   ambient <symbol> -> <name>          a platform primitive (platform-primitive)
+ *   free <symbol> -> <name> [link <key>]     a name the graph does not define (free-identifier)
+ *   ambient <symbol> -> <name> [link <key>]  a platform primitive (platform-primitive)
+ *   unlinked <symbol> [from <module>] -> <name> [link <key>]
+ *                                       a binding imported from outside (unlinked-reference)
+ *                                       `link <key>` names the atom it is linked to
  *   if <name>                           open a branch on a condition; its then-side follows
  *   else                                open the else-side of the innermost branch
  *   end                                 close the innermost branch
@@ -35,7 +38,7 @@
  * value out. A free or ambient source is one per symbol, so it is top level wherever it is written.
  */
 import { canonicalizeGraph } from "./canonical.js";
-import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
+import type { DiamondLabel, DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class LineFormError extends Error {
   constructor(
@@ -97,6 +100,7 @@ export function parseLineForm(text: string): DucGraph {
   let names = new Map<string, ValueId>();
   // One unknown, one source: a symbol that is referenced twice is the same diamond, as in the lifter.
   const diamondValues = new Map<string, ValueId>();
+  const diamondSpecs = new Map<string, string | undefined>();
   const nodes: DucNode[] = [];
   const obs: ValueId[] = [];
   const branches: DucBranch[] = [];
@@ -188,28 +192,43 @@ export function parseLineForm(text: string): DucGraph {
       return;
     }
 
-    if (head === "free" || head === "ambient") {
-      if (rest.length !== 3 || rest[1] !== "->") {
-        throw new LineFormError(line, `expected: ${head} <symbol> -> <name>`);
+    if (head === "free" || head === "ambient" || head === "unlinked") {
+      const arrow = rest.indexOf("->");
+      const before = arrow === -1 ? rest : rest.slice(0, arrow);
+      const after = arrow === -1 ? [] : rest.slice(arrow + 1);
+      const usage = `expected: ${head} <symbol>${head === "unlinked" ? " [from <module>]" : ""} -> <name> [link <key>]`;
+      if (arrow === -1 || after.length !== 1 && !(after.length === 3 && after[1] === "link")) {
+        throw new LineFormError(line, usage);
       }
-      const symbol = rest[0] as string;
-      if (!SYMBOL.test(symbol)) throw new LineFormError(line, `"${symbol}" is not a valid symbol`);
+      let symbol: string | undefined = before[0];
+      let module: string | undefined;
+      if (head === "unlinked" && before.length === 3 && before[1] === "from") module = before[2];
+      else if (before.length !== 1) throw new LineFormError(line, usage);
+      if (symbol === undefined || !SYMBOL.test(symbol)) throw new LineFormError(line, `"${symbol ?? ""}" is not a valid symbol`);
+      const reason: DiamondReason =
+        head === "free" ? "free-identifier" : head === "ambient" ? "platform-primitive" : "unlinked-reference";
+      const spec = after.length === 3 ? after[2] : undefined;
       const diamond: DiamondLabel = {
-        reason: head === "free" ? "free-identifier" : "platform-primitive",
+        reason,
         symbol,
+        ...(module !== undefined ? { module } : {}),
+        ...(spec !== undefined ? { spec } : {}),
       };
-      const key = `${diamond.reason}:${symbol}`;
+      const name = after[0] as string;
+      const key = `${reason}:${symbol}:${module ?? ""}`;
       const known = diamondValues.get(key);
       if (known !== undefined) {
-        // The same unknown again: the name refers to the existing source, with no new node.
-        const name = rest[2] as string;
+        // The same unknown again: the name refers to the existing source, with no new node. Its
+        // link is the one it was first given.
+        if (diamondSpecs.get(key) !== spec) throw new LineFormError(line, `"${symbol}" is linked to another key`);
         if (!NAME.test(name)) throw new LineFormError(line, `"${name}" is not a valid name`);
         if (names.has(name)) throw new LineFormError(line, `"${name}" is already defined`);
         names.set(name, known);
         return;
       }
-      const out = define(rest[2] as string, line);
+      const out = define(name, line);
       diamondValues.set(key, out);
+      diamondSpecs.set(key, spec);
       add({ kind: "diamond-source", inputs: [], outputs: [out], diamond }, undefined);
       return;
     }
@@ -563,11 +582,13 @@ export function printLineForm(g: DucGraph): string {
       }
       case "diamond-source": {
         if (out === undefined || node.diamond === undefined) throw new Error("unresolved name without a label");
-        const head = node.diamond.reason === "free-identifier" ? "free" : node.diamond.reason === "platform-primitive" ? "ambient" : null;
-        if (head === null) {
-          throw new Error(`reason "${node.diamond.reason}" is not expressible in the line form (D5)`);
-        }
-        return `${head} ${node.diamond.symbol} -> ${out}`;
+        const d = node.diamond;
+        const head =
+          d.reason === "free-identifier" ? "free" : d.reason === "platform-primitive" ? "ambient" : d.reason === "unlinked-reference" ? "unlinked" : null;
+        if (head === null) throw new Error(`reason "${d.reason}" is not expressible in the line form (D5)`);
+        const from = head === "unlinked" && d.module !== undefined ? ` from ${d.module}` : "";
+        const link = d.spec !== undefined ? ` link ${d.spec}` : "";
+        return `${head} ${d.symbol}${from} -> ${out}${link}`;
       }
       case "sel": {
         if (out === undefined || node.inputs.length !== 3) throw new Error(`select ${node.id} needs a value and two inputs`);
