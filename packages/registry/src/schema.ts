@@ -176,7 +176,7 @@
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1550,5 +1550,27 @@ export function applyMigrations(db: MigrationsDb): void {
       }
     }
     db.prepare("UPDATE schema_version SET version = ?").run(15);
+  }
+
+  // Migration 15 → 16: add derivation_json column to blocks
+  // (DEC-RETRIEVAL-DERIVATION-001 / WI-REUSE B2 / GH #1259).
+  //
+  // Records how a block's corpus artifact was derived: human-written, tool-extracted,
+  // or AI-derived. The SEAM finding is that an agent-maintained cache can cost more
+  // than it saves, so consumers must be able to filter by derivation. Same
+  // duplicate-column recovery as migration 15 (MIGRATION_12 pattern).
+  //
+  // No backfill: NULL is the sentinel for pre-v16 rows, meaning derivation was not
+  // recorded. It is provenance metadata only and is NOT folded into blockMerkleRoot.
+  if (currentVersion < 16) {
+    try {
+      db.exec("ALTER TABLE blocks ADD COLUMN derivation_json TEXT NULL");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(16);
   }
 }

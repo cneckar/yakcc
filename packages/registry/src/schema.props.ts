@@ -285,3 +285,44 @@ export const prop_migration_15_idempotent_at_current_version = fc.property(
     return !execLog.some((sql) => /duc_usupp/i.test(sql));
   },
 );
+
+// ---------------------------------------------------------------------------
+// SC8: migration 15 → 16 adds the derivation_json column (DEC-RETRIEVAL-DERIVATION-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * prop_migration_16_adds_derivation_column
+ *
+ * When called on a DB at version 15, applyMigrations() issues an
+ * `ALTER TABLE blocks ADD COLUMN derivation_json` and bumps the version to 16.
+ * Additive and nullable, with duplicate-column recovery, as in migration 15.
+ */
+export const prop_migration_16_adds_derivation_column = fc.property(
+  fc.constant(15),
+  (startVersion) => {
+    const { db, execLog, runLog } = makeMockDb(startVersion);
+    applyMigrations(db);
+    const altered = execLog.some((sql) =>
+      /ALTER TABLE blocks ADD COLUMN derivation_json/i.test(sql),
+    );
+    const bumpedTo16 = runLog.some(
+      (r) => r.sql.includes("UPDATE schema_version") && r.args[0] === 16,
+    );
+    return altered && bumpedTo16;
+  },
+);
+
+/**
+ * prop_migration_16_idempotent_at_current_version
+ *
+ * When called on a DB already at SCHEMA_VERSION, applyMigrations() issues no
+ * `ALTER TABLE ... derivation_json` statement.
+ */
+export const prop_migration_16_idempotent_at_current_version = fc.property(
+  fc.constant(SCHEMA_VERSION),
+  (version) => {
+    const { db, execLog } = makeMockDb(version);
+    applyMigrations(db);
+    return !execLog.some((sql) => /derivation_json/i.test(sql));
+  },
+);

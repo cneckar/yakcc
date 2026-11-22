@@ -202,6 +202,11 @@ export interface BlockTripletRow {
    * @decision DEC-DUC-USUPP-PROVENANCE-001
    */
   readonly ducUsupp?: string | null;
+  /**
+   * JSON provenance of how the corpus artifact was derived: `{"derivation":"human"|"tool"|"ai"}`
+   * (DEC-RETRIEVAL-DERIVATION-001). Null when not recorded. Not part of the block identity.
+   */
+  readonly derivationJson?: string | null;
 }
 
 /**

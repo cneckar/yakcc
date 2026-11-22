@@ -143,6 +143,7 @@ interface BlockRow {
    * pre-v15 rows.
    */
   duc_usupp: string | null;
+  derivation_json: string | null;
 }
 
 interface TestHistoryRow {
@@ -348,9 +349,10 @@ class SqliteRegistry implements Registry {
         string | null,
         number | null,
         string | null,
+        string | null,
       ]
     >(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset, duc_usupp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset, duc_usupp, derivation_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -408,6 +410,7 @@ class SqliteRegistry implements Registry {
         // Migration-15 column (DEC-DUC-USUPP-PROVENANCE-001). Serialized DUC
         // unknown-support; null for closed atoms. First-observed-wins.
         row.ducUsupp ?? null,
+        row.derivationJson ?? null,
       );
       insertChanges = Number(r.changes ?? 0);
       // Only write the embedding if the spec_hash doesn't already have one.
@@ -2193,6 +2196,7 @@ function hydrateBlock(row: BlockRow, artifactRows: readonly BlockArtifactRow[]):
     sourceOffset: row.source_offset ?? null,
     // Migration-15 field (DEC-DUC-USUPP-PROVENANCE-001). Pre-v15 rows return null.
     ducUsupp: row.duc_usupp ?? null,
+    derivationJson: row.derivation_json ?? null,
   };
 }
 
