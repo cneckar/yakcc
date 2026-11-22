@@ -7,6 +7,7 @@
  *
  * This is checked from the graph alone. It does not run the code.
  */
+import { graphIdentity } from "./canonical.js";
 import type { DiamondLabel, DucGraph } from "./types.js";
 
 export interface ClosureReport {
@@ -51,19 +52,25 @@ export function closureOf(g: DucGraph, options: ClosureOptions = {}): ClosureRep
   };
 }
 
-/** An atom offered for submission: its key (its spec id, or its identity) and its graph. */
+/**
+ * An atom offered for submission (#1275, decision 1): its graph, and the contract it implements, as
+ * the contract's `specHash` (@yakcc/contracts). The atom itself is keyed by its graph identity.
+ */
 export interface SubmittedAtom {
-  readonly key: string;
+  readonly spec: string;
   readonly graph: DucGraph;
 }
 
 export interface AtomSubmission {
-  readonly key: string;
-  /** True when every reference is linked to an atom in the batch or the store. */
+  /** The contract the atom implements. */
+  readonly spec: string;
+  /** The atom's key: the identity of its graph. */
+  readonly identity: string;
+  /** True when every reference is linked to a contract in the batch or the store. */
   readonly closed: boolean;
   /** Symbols that have no link: holes that must be filled by shaving the dependency. */
   readonly holes: readonly string[];
-  /** Keys the atom links to that are neither in the batch nor in the store. */
+  /** Contracts the atom links to that are neither in the batch nor in the store. */
   readonly unresolved: readonly string[];
 }
 
@@ -74,16 +81,17 @@ export interface SubmissionReport {
 }
 
 /**
- * Checks a batch of atoms for submission. An atom is closed when each of its references is a
- * platform primitive, or is linked (`spec`) to a key that is in the batch, in the store, or both.
+ * Checks a batch of atoms for submission. A reference names the contract it needs (`spec`), not an
+ * atom. An atom is closed when each of its references is a platform primitive, or is linked to a
+ * contract that an atom in the batch implements or that the store already holds (`storedContracts`).
  * The batch closes its own references: atoms that depend on each other are submitted together.
  */
 export function checkSubmission(
   batch: readonly SubmittedAtom[],
-  store: ReadonlySet<string>,
+  storedContracts: ReadonlySet<string>,
 ): SubmissionReport {
-  const present = new Set<string>([...store, ...batch.map((a) => a.key)]);
-  const atoms = batch.map(({ key, graph }): AtomSubmission => {
+  const present = new Set<string>([...storedContracts, ...batch.map((a) => a.spec)]);
+  const atoms = batch.map(({ spec, graph }): AtomSubmission => {
     const holes = new Set<string>();
     const unresolved = new Set<string>();
     for (const node of graph.nodes) {
@@ -93,7 +101,8 @@ export function checkSubmission(
       else if (!present.has(d.spec)) unresolved.add(d.spec);
     }
     return {
-      key,
+      spec,
+      identity: graphIdentity(graph),
       closed: holes.size === 0 && unresolved.size === 0,
       holes: [...holes].sort(),
       unresolved: [...unresolved].sort(),
@@ -103,8 +112,8 @@ export function checkSubmission(
 }
 
 /**
- * Links a graph's references through a resolver: `resolve` gives the key of the atom a reference
- * names, or undefined when there is none. Platform primitives are never linked.
+ * Links a graph's references through a resolver: `resolve` gives the contract (`specHash`) a
+ * reference needs, or undefined when there is none. Platform primitives are never linked.
  */
 export function linkReferences(
   g: DucGraph,
