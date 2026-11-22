@@ -13,11 +13,7 @@
     }
   },
   "private": true,
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist", "README.md", "LICENSE"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cneckar/yakcc.git",
@@ -27,13 +23,7 @@
   "bugs": {
     "url": "https://github.com/cneckar/yakcc/issues"
   },
-  "keywords": [
-    "yakcc",
-    "def-use",
-    "influence",
-    "non-interference",
-    "typescript"
-  ],
+  "keywords": ["yakcc", "def-use", "influence", "non-interference", "typescript"],
   "scripts": {
     "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
     "typecheck": "tsc --noEmit -p .",
