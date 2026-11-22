@@ -678,12 +678,27 @@ class Lifter {
       }
       return true;
     }
+    if (exits !== undefined && Node.isThrowStatement(node)) {
+      // A throw in a loop body ends its path; the function's return state is not touched.
+      this.emit("op", [this.liftExpr(node.getExpression())], 0, {
+        origin: { kind: "ThrowStatement" },
+        label: "throw",
+      });
+      this.dead = true;
+      return true;
+    }
     this.liftStatementInner(node, cont);
     if (Node.isReturnStatement(node) || Node.isThrowStatement(node)) return true;
     return Node.isBlock(node) ? this.lastBlockExited : false;
   }
 
   private lastBlockExited = false;
+  /**
+   * Whether every path from here has thrown, so nothing after it runs. A branch side that is dead
+   * never reaches the join after its if, and the join takes the other side's values.
+   */
+  private dead = false;
+  private lastSideDead = false;
 
   private liftStatementInner(node: Node, cont?: readonly Node[]): void {
     if (Node.isClassDeclaration(node) && node.getName() !== undefined) {
@@ -764,6 +779,7 @@ class Lifter {
         label: "throw",
       });
       this.reportThrow();
+      this.dead = true;
       return;
     }
     // Any other statement (expression-less, declarations we don't bind):
@@ -802,16 +818,21 @@ class Lifter {
         if (!this.liftStatements(stmts, cont) && total) returns.push(this.undefinedValue());
       });
     const thenReturns: ValueId[] = [];
+    const sidesStart = this.valueCounter;
     const thenEnv = this.inRegion(`${id}.t`, () =>
       this.inReturnFrame(total ? thenReturns : undefined, side(thenStmts, thenReturns)),
     );
+    const thenDead = this.lastSideDead;
     const elseReturns: ValueId[] = [];
+    let elseDead = false;
     const elseEnv =
       elseStmts.length > 0 || sides !== undefined
         ? this.inRegion(`${id}.e`, () =>
             this.inReturnFrame(total ? elseReturns : undefined, side(elseStmts, elseReturns)),
           )
         : before;
+    if (elseStmts.length > 0 || sides !== undefined) elseDead = this.lastSideDead;
+    if (thenDead && elseDead) this.dead = true;
 
     if (total) {
       // Every path through the if returns: one observation, the return of the path taken.
@@ -832,11 +853,31 @@ class Lifter {
     for (const [name, beforeValue] of before) {
       const thenValue = thenEnv.get(name) ?? beforeValue;
       const elseValue = elseEnv.get(name) ?? beforeValue;
+      // A side that has thrown on every path never reaches here. When the other side's value was made
+      // before the if, it is the value; otherwise the join keeps the value from before on the dead side.
+      if (thenDead !== elseDead) {
+        const live = thenDead ? elseValue : thenValue;
+        if (valueIndex(live) < sidesStart) {
+          this.env.set(name, live);
+          continue;
+        }
+        const [joined] = this.emit(
+          "sel",
+          [condValue, thenDead ? beforeValue : live, thenDead ? live : beforeValue],
+          1,
+          { origin: { kind: "IfJoin", text: name } },
+        );
+        this.env.set(name, joined as ValueId);
+        continue;
+      }
       if (thenValue !== elseValue) {
         const [joined] = this.emit("sel", [condValue, thenValue, elseValue], 1, {
           origin: { kind: "IfJoin", text: name },
         });
         this.env.set(name, joined as ValueId);
+      } else if (thenValue !== beforeValue) {
+        // Both sides hold the same new value (made before the if): it is the value after it.
+        this.env.set(name, thenValue);
       }
     }
   }
@@ -947,8 +988,7 @@ class Lifter {
   private liftLoopWithExits(node: Node): { ret: ValueId; retv: ValueId } | undefined {
     if (
       !(Node.isWhileStatement(node) || Node.isForStatement(node) || Node.isDoStatement(node)) ||
-      !jumpsSupported(node) ||
-      this.bodyExits !== undefined
+      !jumpsSupported(node)
     )
       return undefined;
     const id = this.loopCount;
@@ -1149,6 +1189,8 @@ class Lifter {
         // The body ends on every path, so a continue, a break or a return ends only its own path.
         if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
         else this.liftStatement(body, []);
+        // A body that throws on every path still may run no iterations.
+        this.dead = false;
         if (incrementor !== undefined) {
           const after = stopped();
           if (after === undefined) this.liftExpr(incrementor);
@@ -1194,7 +1236,8 @@ class Lifter {
   private liftIterate(
     node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
   ): boolean {
-    if (hasJump(node)) return false;
+    const jumps = hasJump(node);
+    if (jumps && !jumpsSupported(node)) return false;
     if (Node.isForOfStatement(node) && node.isAwaited()) return false;
     const init = node.getInitializer();
     if (!Node.isVariableDeclarationList(init) || init.getDeclarations().length !== 1) return false;
@@ -1239,7 +1282,16 @@ class Lifter {
           origin: { kind: "LoopElement", text: truncate(decl.getNameNode().getText()) },
         }) as [ValueId];
         this.bindPattern(decl.getNameNode(), element);
-        this.liftStatement(body);
+        // With continues and throws, each ends its own path, and an if holding one takes the rest.
+        const outer = this.bodyExits;
+        if (jumps) this.bodyExits = { node };
+        try {
+          if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
+          else this.liftStatement(body, []);
+        } finally {
+          this.bodyExits = outer;
+          this.dead = false;
+        }
         for (const name of carried) nexts.push(this.env.get(name) as ValueId);
       });
     } finally {
@@ -1422,8 +1474,15 @@ class Lifter {
     const clone = new Map(base);
     // Swap in the clone as the live env for the duration of the branch.
     this.env = clone;
-    body();
-    this.env = saved;
+    const deadBefore = this.dead;
+    this.dead = false;
+    try {
+      body();
+    } finally {
+      this.lastSideDead = this.dead;
+      this.dead = deadBefore;
+      this.env = saved;
+    }
     return clone;
   }
 
@@ -2454,6 +2513,13 @@ function loopJumpsOf(loop: Node): Node[] {
     ...loop
       .getDescendantsOfKind(SyntaxKind.ReturnStatement)
       .filter((r) => !isInsideNestedFunction(r, loop)),
+    // A throw ends its path; one inside an inner loop is that loop's.
+    ...loop.getDescendantsOfKind(SyntaxKind.ThrowStatement).filter((t) => {
+      if (isInsideNestedFunction(t, loop)) return false;
+      for (let p: Node | undefined = t.getParent(); p !== undefined; p = p.getParent())
+        if (isLoopStatement(p)) return p === loop;
+      return false;
+    }),
   ];
 }
 
@@ -2477,12 +2543,12 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
  * rest of the body could read.
  */
 function jumpsSupported(loop: Node): boolean {
-  if (!(Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop)))
-    return false;
-  if (
-    loop
-      .getDescendantsOfKind(SyntaxKind.ThrowStatement)
-      .some((t) => !isInsideNestedFunction(t, loop))
+  if (Node.isForOfStatement(loop) || Node.isForInStatement(loop)) {
+    // An iterating loop has no condition to stop it: only continues and throws, which end a path.
+    if (loopJumpsOf(loop).some((j) => Node.isBreakStatement(j) || Node.isReturnStatement(j)))
+      return false;
+  } else if (
+    !(Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop))
   )
     return false;
   const labelled = [

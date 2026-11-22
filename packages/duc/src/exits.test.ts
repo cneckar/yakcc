@@ -57,11 +57,83 @@ describe("exits (#1276)", () => {
     expect(calls.every((n) => n.region !== undefined)).toBe(true);
   });
 
-  it("a loop whose body throws stays opaque, so the rest of its body is not unguarded", () => {
+  it("a loop whose body throws lifts, with the rest of its body on the side that does not throw", () => {
+    const src =
+      "export function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) throw new Error('neg'); s = s + x; } return s; }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(true);
+    const thrown = g.nodes.find((n) => n.label === "throw");
+    const added = g.nodes.find((n) => n.label === "+");
+    expect(thrown?.region).toMatch(/\.t$/);
+    expect(added?.region).toMatch(/\.e$/);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      xs: number[],
+    ) => number;
+    expect(run([1, 2, 3])).toBe(6);
+    expect(() => run([1, -1, 3])).toThrow("neg");
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+
+  it("a join whose sides hold the same new value takes it, and a side that throws does not join", () => {
+    expect(
+      id(
+        "export function f(c: boolean, y: number) { let x = 0; if (c) { x = y; } else { x = y; } return x; }",
+      ),
+    ).toBe(id("export function f(c: boolean, y: number) { return y; }"));
+    // The throwing side never reaches the join: the counter is the incremented one on every path.
     const g = liftAtom(
-      "export function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) throw new Error('neg'); s = s + x; } return s; }",
+      "export function f(n: number, a: boolean, b: boolean) { let i = 0; let s = 0; while (i < n) { const j = i + 1; if (a) { s = 1; } else if (b) { throw new Error('b'); } else { s = 2; } i = j; } return [i, s]; }",
     );
-    expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(false);
+    const sels = g.nodes.filter((n) => n.kind === "sel");
+    const plus = g.nodes.find((n) => n.label === "+")?.outputs[0];
+    expect(sels.some((n) => n.inputs.includes(plus as string))).toBe(false);
+  });
+
+  it("loops lift with continues and throws in for-of, nested exits, and a throw in an inner loop", () => {
+    const cases: [string, unknown[][]][] = [
+      [
+        "export function f(xs: any[]) { const out: any[] = []; for (const x of xs) { if (x === null) continue; if (typeof x !== 'number') throw new TypeError('bad ' + x); out.push(x * 2); } return out; }",
+        [[[1, null, 3]], [[1, "a"]]],
+      ],
+      [
+        "export function f(o: any) { let n = 0; for (const k in o) { if (k === 'skip') continue; n = n + o[k]; } return n; }",
+        [[{ a: 1, skip: 5, b: 2 }]],
+      ],
+      [
+        "export function f(rows: number[][]) { let s = 0; for (let i = 0; i < rows.length; i++) { let j = 0; while (j < rows[i].length) { if (rows[i][j] < 0) break; s = s + rows[i][j]; j = j + 1; } if (s > 100) break; } return s; }",
+        [[[[1, 2, -1, 9], [3]]], [[[200], [5]]]],
+      ],
+      [
+        "export function f(rows: number[][]) { let s = 0; for (const r of rows) { for (const v of r) { if (v < 0) throw new RangeError('negative'); s = s + v; } } return s; }",
+        [[[[1, 2], [3]]], [[[1], [-2]]]],
+      ],
+    ];
+    for (const [src, inputs] of cases) {
+      const g = liftAtom(src);
+      expect(
+        g.nodes.filter((n) => n.kind === "loop").every((n) => n.loop !== undefined),
+        src,
+      ).toBe(true);
+      const code = emitTypeScript(g);
+      const lifted = new Function(`${code.replace("export ", "")}; return f;`)() as (
+        ...a: unknown[]
+      ) => unknown;
+      const source = new Function(
+        `${src.replace("export ", "").replace(/: [a-z]+(\[\])*(\[\])?/g, "")}; return f;`,
+      )() as (...a: unknown[]) => unknown;
+      for (const args of inputs) {
+        const outcome = (fn: (...a: unknown[]) => unknown): unknown => {
+          try {
+            return { value: fn(...structuredClone(args)) };
+          } catch (e) {
+            return { threw: String(e) };
+          }
+        };
+        expect(outcome(lifted), code).toEqual(outcome(source));
+      }
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    }
   });
 
   it("the emitter writes what does not depend on a throwing branch before it", () => {
