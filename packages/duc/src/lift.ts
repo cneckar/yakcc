@@ -210,6 +210,8 @@ class Lifter {
   private nodeCounter = 0;
   /** Flat current-value environment: name -> its current SSA value. */
   private env = new Map<string, ValueId>();
+  /** Function declarations already bound by hoisting (compiler nodes). */
+  private readonly hoisted = new Set<unknown>();
   /** Import bindings, name -> classification. */
   private readonly imports = new Map<string, ImportBinding>();
   /** Memoized diamond-sources, keyed by symbol so one unknown = one source. */
@@ -276,9 +278,7 @@ class Lifter {
     } else {
       // No single exported function: lift the top-level statements in one scope,
       // and treat every exported binding's final value as an observation.
-      for (const stmt of file.getChildSyntaxListOrThrow().getChildren()) {
-        this.liftStatement(stmt);
-      }
+      this.liftStatements(file.getChildSyntaxListOrThrow().getChildren());
       for (const name of exportedBindingNames(file)) {
         const value = this.env.get(name);
         if (value !== undefined) this.obs.push(value);
@@ -299,7 +299,7 @@ class Lifter {
     const body = fn.getBody();
     if (body === undefined) return;
     if (Node.isBlock(body)) {
-      for (const stmt of body.getStatements()) this.liftStatement(stmt);
+      this.liftStatements(body.getStatements());
     } else {
       // Arrow with expression body: the expression is the observation.
       this.obs.push(this.liftExpr(body));
@@ -307,7 +307,76 @@ class Lifter {
   }
 
   // --- statements ---
+
+  /**
+   * Lifts a statement list. Function declarations are bound before the statements run
+   * (hoisting), so a call that precedes the declaration resolves to it. A function is
+   * hoisted only when every name it reads that is declared in this list is already
+   * bound; otherwise it is bound at its own position. The deferred case is sound: a
+   * call before that position resolves to an unknown, never to a missing edge.
+   */
+  private liftStatements(stmts: readonly Node[]): void {
+    const declared = new Set<string>();
+    for (const stmt of stmts) {
+      if (Node.isVariableStatement(stmt)) {
+        for (const decl of stmt.getDeclarations()) {
+          for (const name of patternNames(decl.getNameNode())) declared.add(name);
+        }
+      } else if (Node.isFunctionDeclaration(stmt)) {
+        const name = stmt.getName();
+        if (name !== undefined) declared.add(name);
+      }
+    }
+    const hoistedNames = new Set<string>();
+    for (const stmt of stmts) {
+      if (!Node.isFunctionDeclaration(stmt)) continue;
+      const name = stmt.getName();
+      if (name === undefined) continue;
+      const pending = this.readNamesOf(stmt).some(
+        (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
+      );
+      if (pending) continue;
+      this.bindFunctionDeclaration(stmt, name);
+      this.hoisted.add(stmt.compilerNode);
+      hoistedNames.add(name);
+    }
+    for (const stmt of stmts) this.liftStatement(stmt);
+  }
+
+  /** Binds a function declaration to a closure value over the names it reads. */
+  private bindFunctionDeclaration(
+    stmt: import("ts-morph").FunctionDeclaration,
+    name: string,
+  ): void {
+    // A function's own name inside its body is recursion, not an external read: the
+    // recursive result is a value of the closure itself, not a new input to it.
+    const value = this.emit("op", this.collectReads(stmt, new Set([name])), 1, {
+      origin: { kind: "Closure", text: truncate(name) },
+    })[0] as ValueId;
+    this.env.set(name, value);
+  }
+
+  /** Names a subtree reads from an enclosing scope (identifiers not bound inside it). */
+  private readNamesOf(node: Node): string[] {
+    const locals = collectRegionLocals(node);
+    const names = new Set<string>();
+    for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
+      if (!isValueRead(id)) continue;
+      const name = id.getText();
+      if (!locals.has(name)) names.add(name);
+    }
+    return [...names];
+  }
+
   private liftStatement(node: Node): void {
+    if (Node.isFunctionDeclaration(node)) {
+      // Bound by liftStatements when hoisted; otherwise bind at this position.
+      const name = node.getName();
+      if (name !== undefined && !this.hoisted.has(node.compilerNode)) {
+        this.bindFunctionDeclaration(node, name);
+      }
+      return;
+    }
     if (Node.isVariableStatement(node)) {
       for (const decl of node.getDeclarations()) {
         const init = decl.getInitializer();
@@ -345,7 +414,7 @@ class Lifter {
       return;
     }
     if (Node.isBlock(node)) {
-      for (const stmt of node.getStatements()) this.liftStatement(stmt);
+      this.liftStatements(node.getStatements());
       return;
     }
     if (Node.isSwitchStatement(node) || Node.isTryStatement(node)) {
@@ -459,8 +528,9 @@ class Lifter {
    * internal to the opaque region and are skipped — resolving them would mint a
    * spurious diamond-source for a name that is not actually an external unknown.
    */
-  private collectReads(node: Node): ValueId[] {
+  private collectReads(node: Node, extraLocals: ReadonlySet<string> = new Set()): ValueId[] {
     const locals = collectRegionLocals(node);
+    for (const name of extraLocals) locals.add(name);
     const values: ValueId[] = [];
     const seen = new Set<ValueId>();
     for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
@@ -728,6 +798,9 @@ function isLiteralExpression(node: Node): boolean {
 
 /** Whether an identifier node is a *value read* (not a declaration name, property key, etc.). */
 function isValueRead(id: import("ts-morph").Identifier): boolean {
+  // Names inside JSDoc (tags such as @param, @returns, and type expressions) are
+  // documentation, not value reads.
+  if (id.getFirstAncestor((n) => n.getKindName().startsWith("JSDoc")) !== undefined) return false;
   const parent = id.getParent();
   if (parent === undefined) return false;
   // Property access member name (`obj.PROP`) is not a free read.

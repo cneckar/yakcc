@@ -488,3 +488,42 @@ describe("region-scoped returns: a return belongs to its own scope (class method
     expect(g.obs).toHaveLength(0);
   });
 });
+
+describe("nested function declarations and JSDoc (residue defects found in bcryptjs)", () => {
+  it("a call to a nested function declaration resolves to it, not a free identifier", () => {
+    const g = lift("function outer (len) { function random (n) { return n } return random(len) }");
+    expect(diamondSymbols(g)).not.toContain("random");
+  });
+  it("a call that precedes a nested function declaration (hoisting) resolves to it", () => {
+    const g = lift("function outer (len) { return random(len); function random (n) { return n } }");
+    expect(diamondSymbols(g)).not.toContain("random");
+  });
+  it("a recursive nested function does not report its own name as free", () => {
+    const g = lift(
+      "function outer (n) { function fact (k) { return k <= 1 ? 1 : k * fact(k - 1) } return fact(n) }",
+    );
+    expect(diamondSymbols(g)).not.toContain("fact");
+  });
+  it("a nested function reading an outer parameter binds it, not a free identifier", () => {
+    const g = lift("function outer (p) { function f () { return p } return f() }");
+    expect(diamondSymbols(g)).not.toContain("p");
+  });
+  it("a genuine free read inside a nested function is still reported", () => {
+    const g = lift("function outer (len) { function f (n) { return n + g } return f(len) }");
+    expect(diamondSymbols(g)).toContain("g");
+  });
+  it("JSDoc tag names on a nested function are not free identifiers", () => {
+    const g = lift(
+      "function outer (len) {\n/**\n * Generates bytes.\n * @param {number} len Bytes length\n * @returns {number} Random bytes\n */\nfunction random (n) { return n }\nreturn random(len) }",
+    );
+    expect(diamondSymbols(g)).not.toContain("param");
+    expect(diamondSymbols(g)).not.toContain("returns");
+    expect(diamondSymbols(g)).not.toContain("random");
+  });
+  it("a nested function reading a later-declared local is reported (sound, conservative)", () => {
+    // The function is bound at its own position because it reads a name declared later
+    // in the same body. That name is an unknown here, never a missing edge.
+    const g = lift("function outer () { function f () { return K } const K = 1; return f() }");
+    expect(diamondSymbols(g)).toContain("K");
+  });
+});
