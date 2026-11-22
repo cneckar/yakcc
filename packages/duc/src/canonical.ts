@@ -18,6 +18,17 @@ import { createHash } from "node:crypto";
 import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 /**
+ * Operations whose two operands can be swapped for every type of operand (#1275, decision 4A). Not
+ * `+` (string concatenation does not commute), nor `&&` / `||` (their value is an operand).
+ */
+const COMMUTATIVE = new Set(["===", "!=="]);
+
+/** Where a loop's invariants start among its inputs: after the initial values of its carries. */
+function invariantOffset(node: DucNode): number {
+  return (node.loop as DucLoop).carry.length;
+}
+
+/**
  * The structural part of a reference label. A link (`spec`) is not structure (#1275, 2B): the same
  * logic is the same atom whatever its dependencies are linked to. Links travel with the graph.
  */
@@ -74,13 +85,25 @@ export function canonicalizeGraph(
   // on its body, which depends on the loop; the body is summarized by the kinds and labels inside.
   const loopNodeOf = new Map<string, DucNode>();
   for (const node of nodes) if (node.loop !== undefined) loopNodeOf.set(node.loop.id, node);
+  // An invariant source stands for an outer value. Its identity is that value's, not its position
+  // among the loop's invariants, so the order the body happened to read them in does not matter.
+  const invariantOuterOf = new Map<DucNode, ValueId>();
+  for (const node of nodes) {
+    if (node.loop === undefined) continue;
+    const offset = invariantOffset(node);
+    node.loop.invariant.forEach((v, j) => {
+      const p = producer.get(v);
+      const outer = node.inputs[offset + j];
+      if (p !== undefined && outer !== undefined) invariantOuterOf.set(p.node, outer);
+    });
+  }
   const bodySummaries = new Map<string, string>();
   const bodySummaryOf = (id: string): string => {
     const cached = bodySummaries.get(id);
     if (cached !== undefined) return cached;
     const body = nodes
       .filter((n) => n.region !== undefined && n.region.split("/").includes(`${id}.b`))
-      .map((n) => `${n.kind}:${n.label ?? ""}:${n.diamond?.symbol ?? ""}`)
+      .map((n) => `${n.kind}:${invariantOuterOf.has(n) ? "invariant" : (n.label ?? "")}:${n.diamond?.symbol ?? ""}`)
       .sort();
     const summary = canonicalJson(body);
     bodySummaries.set(id, summary);
@@ -112,11 +135,20 @@ export function canonicalizeGraph(
       return "cycle";
     }
     onPath.add(node);
-    const inputSigs = node.inputs.map(sigOfValue);
+    let inputSigs = node.inputs.map(sigOfValue);
+    if (node.kind === "op" && COMMUTATIVE.has(node.label ?? "") && inputSigs.length === 2) {
+      inputSigs = [...inputSigs].sort();
+    }
+    if (node.loop !== undefined) {
+      const offset = invariantOffset(node);
+      inputSigs = [...inputSigs.slice(0, offset), ...inputSigs.slice(offset).sort()];
+    }
+    const outer = invariantOuterOf.get(node);
+    const label = outer !== undefined ? `invariant@${sigOfValue(outer)}` : (node.label ?? null);
     onPath.delete(node);
     const fields: unknown[] = [
       node.kind,
-      node.label ?? null,
+      label,
       structuralDiamond(node.diamond) ?? null,
       node.outputs.length,
       inputSigs,
@@ -191,24 +223,59 @@ export function canonicalizeGraph(
     }),
   );
   const renameValue = (v: ValueId): ValueId => renamed.get(v) ?? v;
+
+  // Invariants in canonical order, by the signature of the outer value each stands for; the
+  // sources are renumbered to match.
+  const invariantOrder = new Map<DucNode, number[]>();
+  const relabel = new Map<DucNode, string>();
+  for (const node of nodes) {
+    if (node.loop === undefined) continue;
+    const offset = invariantOffset(node);
+    const order = node.loop.invariant
+      .map((_, j) => j)
+      .sort((a, b) => {
+        const sa = sigOfValue(node.inputs[offset + a] as ValueId);
+        const sb = sigOfValue(node.inputs[offset + b] as ValueId);
+        return sa < sb ? -1 : sa > sb ? 1 : a - b;
+      });
+    invariantOrder.set(node, order);
+    order.forEach((j, k) => {
+      const p = producer.get(node.loop?.invariant[j] as ValueId);
+      if (p !== undefined) relabel.set(p.node, `invariant:${k}`);
+    });
+  }
+
   const canonicalNodes: DucNode[] = ordered.map(({ node }, i) => {
     const region = canonicalRegion(node.region);
+    let inputs = node.inputs;
+    if (node.kind === "op" && COMMUTATIVE.has(node.label ?? "") && inputs.length === 2) {
+      const [a, b] = inputs as [ValueId, ValueId];
+      if (sigOfValue(b) < sigOfValue(a)) inputs = [b, a];
+    }
+    const order = invariantOrder.get(node);
+    if (order !== undefined) {
+      const offset = invariantOffset(node);
+      inputs = [...inputs.slice(0, offset), ...order.map((j) => inputs[offset + j] as ValueId)];
+    }
     const loop: DucLoop | undefined =
       node.loop === undefined
         ? undefined
         : {
             id: loopRank.get(node.loop.id) ?? node.loop.id,
             carry: node.loop.carry.map(renameValue),
-            invariant: node.loop.invariant.map(renameValue),
+            invariant: (order ?? node.loop.invariant.map((_, j) => j)).map((j) =>
+              renameValue(node.loop?.invariant[j] as ValueId),
+            ),
             next: node.loop.next.map(renameValue),
             cond: renameValue(node.loop.cond),
           };
+    const label = relabel.get(node) ?? node.label;
     return {
       id: `n${i}` as DucNode["id"],
-      inputs: node.inputs.map(renameValue),
+      inputs: inputs.map(renameValue),
       outputs: outputsOf[i] ?? [],
       kind: node.kind,
-      ...(node.label !== undefined ? { label: node.label } : {}),
+      ...(label !== undefined ? { label } : {}),
       ...(node.diamond !== undefined ? { diamond: node.diamond } : {}),
       ...(node.origin !== undefined ? { origin: node.origin } : {}),
       ...(region !== undefined ? { region } : {}),
