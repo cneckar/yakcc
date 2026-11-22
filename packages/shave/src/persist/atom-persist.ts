@@ -32,7 +32,7 @@ import type { Registry } from "@yakcc/registry";
 import { runMutationTesting } from "@yakcc/variance";
 import type { MutationResult } from "@yakcc/variance";
 import { extractCorpus } from "../corpus/index.js";
-import type { CorpusAtomSpec, CorpusExtractionOptions } from "../corpus/index.js";
+import type { CorpusAtomSpec, CorpusExtractionOptions, CorpusSource } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import {
@@ -283,6 +283,8 @@ export async function persistNovelGlueAtom(
     sourceOffset: sc?.sourceOffset ?? null,
     // DUC unknown-support provenance (DEC-DUC-USUPP-PROVENANCE-001).
     ducUsupp: gate.ducUsupp,
+    // DEC-RETRIEVAL-DERIVATION-001 (WI-REUSE B2, #1259): how the corpus artifact was made.
+    derivationJson: JSON.stringify({ derivation: derivationOf(corpusResult.source) }),
   };
 
   // Mutation-testing gate: verify corpus tests kill a minimum fraction of
@@ -352,4 +354,22 @@ export async function maybePersistNovelGlueAtom(
   // registry satisfies the storeBlock contract even if it doesn't implement
   // every Registry method. Only storeBlock is called in this flow.
   return persistNovelGlueAtom(entry, registry as unknown as Registry, options);
+}
+
+/**
+ * How a corpus source was derived (DEC-RETRIEVAL-DERIVATION-001). `ai-derived` is the
+ * only model-written source, so it is the one that must be filterable. Tests and
+ * documented examples were written by people. props-file is a hand-written property file.
+ */
+function derivationOf(source: CorpusSource): "human" | "tool" | "ai" {
+  switch (source) {
+    case "ai-derived":
+      return "ai";
+    case "props-file":
+    case "upstream-test":
+    case "documented-usage":
+      return "human";
+    default:
+      return "tool";
+  }
 }
