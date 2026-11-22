@@ -48,6 +48,10 @@ export const ECMASCRIPT: BaseSet = {
     Math: { members: { random: { nondeterministic: true } } },
     // `new Date()` and `Date.now()` read the clock.
     Date: { nondeterministic: true },
+    // What a weak reference holds, and when a finalizer runs, depend on the collector.
+    WeakRef: { nondeterministic: true },
+    FinalizationRegistry: { nondeterministic: true },
+    Atomics: {},
   },
 };
 
@@ -57,7 +61,9 @@ export const NODE: BaseSet = {
   version: 1,
   primitives: {
     ...ECMASCRIPT.primitives,
-    ...pure(["Buffer", "TextEncoder", "TextDecoder", "URL", "URLSearchParams", "structuredClone", "atob", "btoa", "AbortController"]),
+    ...pure(["Buffer", "TextEncoder", "TextDecoder", "URL", "URLSearchParams", "structuredClone", "atob", "btoa", "AbortController", "Event", "EventTarget", "Blob"]),
+    // `AbortSignal.timeout` arms a timer.
+    AbortSignal: { members: { timeout: { capability: "timers" } } },
     process: { capability: "process" },
     console: { capability: "io" },
     setTimeout: { capability: "timers" },

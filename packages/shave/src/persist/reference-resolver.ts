@@ -41,7 +41,9 @@ interface ImportBinding {
 type ExportTarget =
   | { readonly kind: "local"; readonly local: string }
   | { readonly kind: "atom"; readonly atom: number }
-  | { readonly kind: "reexport"; readonly specifier: string; readonly imported: string };
+  | { readonly kind: "reexport"; readonly specifier: string; readonly imported: string }
+  /** Written in a statement that no atom holds. */
+  | { readonly kind: "unshaved" };
 
 /** The top-level scope of a module. */
 export interface ModuleScope {
@@ -51,14 +53,19 @@ export interface ModuleScope {
   readonly exports: ReadonlyMap<string, ExportTarget>;
   /** `export * from` specifiers. */
   readonly starExports: readonly string[];
+  /** Names declared inside the module's functions and blocks, not at its top level. */
+  readonly innerNames: ReadonlySet<string>;
 }
 
 export type HoleCause =
   | "external-package"
   | "unresolved-module"
   | "missing-export"
+  /** Declared at the module's top level by a statement that no atom holds (shave kept it as glue). */
+  | "not-shaved"
+  /** A local of a function the atom was shaved out of: the atom is a piece of that function. */
+  | "enclosing-scope"
   | "undeclared"
-  | "undeclared-in-atom"
   | "dynamic-require";
 
 export type Resolution =
@@ -84,11 +91,23 @@ function requireSpecifier(node: ts.Node | undefined): string | undefined {
   return ts.isStringLiteralLike(arg) ? arg.text : undefined;
 }
 
-/** `require("s")` or `require("s").name`: the specifier, and the name imported. */
+/** Interop helpers compilers wrap a require in, and the name the wrapped value stands for. */
+const INTEROP: Record<string, string> = {
+  _interopRequireDefault: "default",
+  __importDefault: "default",
+  _interopRequireWildcard: "*",
+  __importStar: "*",
+};
+
+/** `require("s")`, `require("s").name`, or an interop helper around a require: the specifier, and the name imported. */
 function requireBinding(init: ts.Expression | undefined): ImportBinding | undefined {
   if (init === undefined) return undefined;
   const direct = requireSpecifier(init);
   if (direct !== undefined) return { specifier: direct, imported: "*" };
+  if (ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text in INTEROP && init.arguments.length === 1) {
+    const spec = requireSpecifier(init.arguments[0]);
+    if (spec !== undefined) return { specifier: spec, imported: INTEROP[init.expression.text] as string };
+  }
   if (ts.isPropertyAccessExpression(init)) {
     const spec = requireSpecifier(init.expression);
     if (spec !== undefined) return { specifier: spec, imported: init.name.text };
@@ -166,6 +185,16 @@ export function moduleScopeOf(mod: ModuleRecord): ModuleScope {
     for (const n of declaredBy(stmt, imports)) declared.add(n);
     const exported = ts.canHaveModifiers(stmt) && (ts.getModifiers(stmt) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
     const isDefault = ts.canHaveModifiers(stmt) && (ts.getModifiers(stmt) ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword);
+    // `var x = exports.x = value`: a declaration that is also an export.
+    if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        const init = d.initializer;
+        if (ts.isIdentifier(d.name) && init !== undefined && ts.isBinaryExpression(init) && init.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          const target = exportsTarget(init.left);
+          if (target !== undefined && target !== "*") exports.set(target, { kind: "local", local: d.name.text });
+        }
+      }
+    }
     if (exported) {
       if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name !== undefined) {
         exports.set(isDefault ? "default" : stmt.name.text, { kind: "local", local: stmt.name.text });
@@ -205,6 +234,11 @@ export function moduleScopeOf(mod: ModuleRecord): ModuleScope {
           } else if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) {
             const spec2 = requireBinding(p.initializer);
             if (spec2 !== undefined) exports.set(p.name.text, { kind: "reexport", specifier: spec2.specifier, imported: spec2.imported });
+            else {
+              // A value written in the export object itself: the statement's atom holds it.
+              const atom = atomContaining(mod, stmt.getText(sf));
+              exports.set(p.name.text, atom !== undefined ? { kind: "atom", atom } : { kind: "unshaved" });
+            }
           }
         }
       } else {
@@ -220,7 +254,15 @@ export function moduleScopeOf(mod: ModuleRecord): ModuleScope {
     const scratch = new Map<string, ImportBinding>();
     for (const stmt of parse(atom).statements) for (const n of declaredBy(stmt, scratch)) if (declarations.has(n) && declarations.get(n) === undefined) declarations.set(n, i);
   });
-  return { declarations, imports, exports, starExports };
+  // Every name declared anywhere in the module; one that is not a top-level declaration is inner.
+  const innerNames = new Set<string>();
+  const visit = (n: ts.Node): void => {
+    if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) && ts.isIdentifier(n.name)) innerNames.add(n.name.text);
+    if ((ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name !== undefined) innerNames.add(n.name.text);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { declarations, imports, exports, starExports, innerNames };
 }
 
 /** The atom whose text contains a statement of the module, or the statement's start. */
@@ -316,6 +358,7 @@ export class ReferenceResolver {
       return { kind: "hole", cause: "missing-export", detail: `${name} in ${file}` };
     }
     if (target.kind === "atom") return { kind: "atom", filePath: file, atom: target.atom };
+    if (target.kind === "unshaved") return { kind: "hole", cause: "not-shaved", detail: `${name} in ${file}` };
     if (target.kind === "local") return this.resolveName(file, target.local, seen);
     return this.resolveImport(file, { specifier: target.specifier, imported: target.imported }, seen);
   }
@@ -334,9 +377,11 @@ export class ReferenceResolver {
     if (name === "exports" || name === "module") return { kind: "module-self" };
     const binding = scope.imports.get(name);
     if (binding !== undefined) return this.resolveImport(file, binding, seen);
-    if (!scope.declarations.has(name)) return { kind: "hole", cause: "undeclared", detail: name };
+    if (!scope.declarations.has(name)) {
+      return { kind: "hole", cause: scope.innerNames.has(name) ? "enclosing-scope" : "undeclared", detail: name };
+    }
     const atom = scope.declarations.get(name);
-    if (atom === undefined) return { kind: "hole", cause: "undeclared-in-atom", detail: name };
+    if (atom === undefined) return { kind: "hole", cause: "not-shaved", detail: name };
     return { kind: "atom", filePath: file, atom };
   }
 

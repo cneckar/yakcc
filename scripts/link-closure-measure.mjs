@@ -4,14 +4,39 @@
 // how many atoms are closed without linking, how many with linking (every reference resolves to a
 // stored atom, a platform module or primitive), how many are closed transitively (and so are the
 // atoms they link to), and the remaining holes by cause.
-// Usage: node scripts/link-closure-measure.mjs <modules.json>
+// With --admit-glue, each top-level statement that declares a name no atom holds (shave kept it as
+// glue) is admitted as an atom too: what closure would be if the strict-subset gate admitted it.
+// Usage: node scripts/link-closure-measure.mjs <modules.json> [--admit-glue]
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { liftAtom } from "../packages/duc/dist/lift.js";
 import { closureOf } from "../packages/duc/dist/closure.js";
 import { NODE } from "../packages/duc/dist/base-set.js";
 import { ReferenceResolver, isImportBinding } from "../packages/shave/dist/persist/reference-resolver.js";
 
-const packages = JSON.parse(readFileSync(process.argv[2], "utf8")).map((p) => ({ ...p, modules: p.modules.filter((m) => m.filePath !== undefined) }));
+const admitGlue = process.argv.includes("--admit-glue");
+const { ts } = createRequire(new URL("../packages/shave/package.json", import.meta.url))("ts-morph");
+const admit = (mod) => {
+  const declaredByAtoms = new Set();
+  for (const atom of mod.atoms) {
+    for (const st of ts.createSourceFile("a.ts", atom, ts.ScriptTarget.Latest, true).statements) for (const n of namesOf(st)) declaredByAtoms.add(n);
+  }
+  const extra = [];
+  for (const st of ts.createSourceFile("m.ts", mod.source, ts.ScriptTarget.Latest, true).statements) {
+    const names = namesOf(st);
+    if (names.length > 0 && names.some((n) => !declaredByAtoms.has(n))) extra.push(st.getText());
+  }
+  return { ...mod, atoms: [...mod.atoms, ...extra] };
+};
+function namesOf(st) {
+  if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name) return [st.name.text];
+  if (ts.isVariableStatement(st)) return st.declarationList.declarations.flatMap((d) => (ts.isIdentifier(d.name) ? [d.name.text] : []));
+  return [];
+}
+const packages = JSON.parse(readFileSync(process.argv[2], "utf8")).map((p) => {
+  const modules = p.modules.filter((m) => m.filePath !== undefined);
+  return { ...p, modules: admitGlue ? modules.map(admit) : modules };
+});
 const resolver = new ReferenceResolver(packages);
 
 const atoms = [];

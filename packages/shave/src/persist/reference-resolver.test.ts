@@ -96,3 +96,37 @@ describe("reference resolution (#1281)", () => {
     expect(scope.declarations.get("a")).toBe(0);
   });
 });
+
+describe("reference resolution of compiled modules (#1281)", () => {
+  const util = packageOf("v", {
+    "util/assert.js": {
+      source: "Object.defineProperty(exports, '__esModule', { value: true });\nexports.default = assert;\nfunction assert(x) { if (!x) throw new Error('no'); }\n",
+      atoms: ["function assert(x) { if (!x) throw new Error('no'); }"],
+    },
+    "alpha.js": { source: "var decimal = exports.decimal = { a: '.' };\n", atoms: [] },
+    "isX.js": {
+      source:
+        "var _assert = _interopRequireDefault(require('./util/assert'));\nvar alpha = _interopRequireWildcard(require('./alpha'));\nfunction isX(s) { (0, _assert.default)(s); return alpha.decimal; }\nfunction outer(n) { const inner = () => n; return inner; }\n",
+      atoms: ["function isX(s) { (0, _assert.default)(s); return alpha.decimal; }", "() => n"],
+    },
+  });
+  const r = new ReferenceResolver([util]);
+  const at = (rel: string): string => join(util.root, rel);
+
+  it("an interop default import links to the module's default export", () => {
+    expect(r.resolve(at("isX.js"), "_assert")).toEqual({ kind: "atom", filePath: at("util/assert.js"), atom: 0 });
+  });
+
+  it("an interop wildcard import is the module's namespace", () => {
+    expect(r.resolve(at("isX.js"), "alpha")).toEqual({ kind: "module", filePath: at("alpha.js") });
+  });
+
+  it("a chained export in a declaration is an export of that name", () => {
+    expect(moduleScopeOf({ filePath: "/a.js", source: "var decimal = exports.decimal = {};\n", atoms: [] }).exports.get("decimal")).toEqual({ kind: "local", local: "decimal" });
+  });
+
+  it("a declaration no atom holds, and a local of an enclosing function, are holes with their causes", () => {
+    expect(r.resolve(at("alpha.js"), "decimal")).toMatchObject({ kind: "hole", cause: "not-shaved" });
+    expect(r.resolve(at("isX.js"), "n")).toMatchObject({ kind: "hole", cause: "enclosing-scope" });
+  });
+});
