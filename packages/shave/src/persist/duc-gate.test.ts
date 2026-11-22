@@ -84,11 +84,23 @@ describe("enforceDucGate — warn mode (default rollout)", () => {
     });
   });
 
-  it("admits a closed atom with null usupp and no warning", () => {
+  it("admits a closed atom with no warning; the sidecar records an empty usupp and its attestation", () => {
     const { warn, messages } = withWarnings();
     const { ducUsupp } = enforceDucGate(CLOSED, "add", "warn", warn);
-    expect(ducUsupp).toBeNull();
     expect(messages).toEqual([]);
+    const parsed = JSON.parse(ducUsupp as string) as {
+      unknowns: unknown[];
+      attestations: { duc_influence: { kind: string; matrix: boolean[][] } };
+    };
+    expect(parsed.unknowns).toEqual([]);
+    expect(parsed.attestations.duc_influence.kind).toBe("duc_influence");
+    expect(parsed.attestations.duc_influence.matrix).toEqual([[true], [true]]);
+  });
+
+  it("an unliftable fragment has no attestation in its sidecar", () => {
+    const { ducUsupp } = enforceDucGate(SYNTAX_ERROR, "broken", "warn", () => {});
+    const parsed = JSON.parse(ducUsupp as string) as { attestations?: unknown };
+    expect(parsed.attestations).toBeUndefined();
   });
 
   it("warns and records the liftError for an unliftable fragment", () => {

@@ -58,3 +58,16 @@ export {
   refinementIsMonotone,
   refinesInfluence,
 } from "./compose.js";
+
+export type {
+  DucAttestation,
+  DucInfluenceAttestation,
+  DucNiAttestation,
+  DucNiLeak,
+} from "./attest.js";
+export {
+  DUC_ATTESTATION_VERSION,
+  influenceAttestation,
+  niAttestation,
+  validateDucAttestation,
+} from "./attest.js";

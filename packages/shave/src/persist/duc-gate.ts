@@ -26,8 +26,15 @@
 //   recorded lift error (warn) rather than throwing — the gate must never break
 //   the existing shave pipeline in its default mode.
 
-import { DucLiftError, isWellFormed, liftAtom, usuppOfObservations } from "@yakcc/duc";
-import type { DiamondReason } from "@yakcc/duc";
+import {
+  type DiamondReason,
+  type DucInfluenceAttestation,
+  DucLiftError,
+  influenceAttestation,
+  isWellFormed,
+  liftAtom,
+  usuppOfObservations,
+} from "@yakcc/duc";
 
 /** Gate enforcement mode. */
 export type DucGateMode = "warn" | "reject";
@@ -66,6 +73,11 @@ export interface DucGateResult {
   readonly composition: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
+  /**
+   * The `duc_influence` attestation of the lifted atom (DEC-DUC-ATTESTATION-SIDECAR-001).
+   * Absent when the fragment could not be lifted.
+   */
+  readonly influence?: DucInfluenceAttestation;
 }
 
 /** Thrown in `reject` mode when an atom has an unexplained unknown or lift error. */
@@ -103,9 +115,11 @@ export function runDucConservationGate(
 ): DucGateResult {
   let unknowns: DucUnknown[];
   let wellFormed: boolean;
+  let influence: DucInfluenceAttestation;
   try {
     const graph = liftAtom(source);
     wellFormed = isWellFormed(graph).wellFormed;
+    influence = influenceAttestation(graph);
     const seen = new Map<string, DucUnknown>();
     for (const supports of usuppOfObservations(graph).values()) {
       for (const support of supports) {
@@ -130,12 +144,16 @@ export function runDucConservationGate(
     (u) => u.reason === "free-identifier" && u.composition !== true,
   );
   const composition = unknowns.filter((u) => u.composition === true);
-  return { wellFormed, unknowns, unexplained, composition };
+  return { wellFormed, unknowns, unexplained, composition, influence };
 }
 
 /** The outcome of enforcing the gate: what to persist plus the raw result. */
 export interface EnforceDucGateResult {
-  /** JSON to store in `BlockTripletRow.ducUsupp`, or null when closed and clean. */
+  /**
+   * JSON sidecar to store in `BlockTripletRow.ducUsupp`. Always present for a lifted
+   * atom (it carries the `duc_influence` attestation even when closed); null only when
+   * the fragment could not be lifted AND had no unknowns to record.
+   */
   readonly ducUsupp: string | null;
   readonly result: DucGateResult;
 }
@@ -158,14 +176,16 @@ export function enforceDucGate(
   internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
 ): EnforceDucGateResult {
   const result = runDucConservationGate(source, internalSymbols);
-  const ducUsupp =
-    result.unknowns.length > 0 || result.liftError !== undefined
-      ? JSON.stringify({
-          wellFormed: result.wellFormed,
-          ...(result.liftError !== undefined ? { liftError: result.liftError } : {}),
-          unknowns: result.unknowns,
-        })
-      : null;
+  // The sidecar always records the usupp and, when the atom lifted, the
+  // `duc_influence` attestation. It is not part of the block's content address.
+  const ducUsupp = JSON.stringify({
+    wellFormed: result.wellFormed,
+    ...(result.liftError !== undefined ? { liftError: result.liftError } : {}),
+    unknowns: result.unknowns,
+    ...(result.influence !== undefined
+      ? { attestations: { duc_influence: result.influence } }
+      : {}),
+  });
 
   const hasProblem = result.liftError !== undefined || result.unexplained.length > 0;
   if (hasProblem) {
