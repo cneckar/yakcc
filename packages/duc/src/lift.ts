@@ -22,7 +22,7 @@
 
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
 import { canonicalizeGraph } from "./canonical.js";
-import type { DiamondReason, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
+import type { DiamondReason, DucBranch, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
 export class DucLiftError extends Error {
@@ -125,6 +125,7 @@ interface MutableNode {
   readonly diamond?: DucNode["diamond"];
   readonly origin?: DucNode["origin"];
   readonly label?: string;
+  readonly region?: string;
 }
 
 /**
@@ -219,6 +220,11 @@ class Lifter {
   private env = new Map<string, ValueId>();
   /** Function declarations already bound by hoisting (compiler nodes). */
   private readonly hoisted = new Set<unknown>();
+  /** The `if` branches recorded so far, in lifting order (ids are assigned here). */
+  private readonly branches: DucBranch[] = [];
+  private branchCount = 0;
+  /** The branch path the statement being lifted lies in, outermost first. */
+  private readonly regionStack: string[] = [];
   /** Import bindings, name -> classification. */
   private readonly imports = new Map<string, ImportBinding>();
   /** Memoized diamond-sources, keyed by symbol so one unknown = one source. */
@@ -248,6 +254,7 @@ class Lifter {
       inputs,
       outputs,
       kind,
+      ...(this.regionStack.length > 0 ? { region: this.regionStack.join("/") } : {}),
       ...(extra?.diamond !== undefined ? { diamond: extra.diamond } : {}),
       ...(extra?.origin !== undefined ? { origin: extra.origin } : {}),
       // Structural label (D6): explicit, else the syntactic kind of the origin.
@@ -453,11 +460,18 @@ class Lifter {
   private liftIf(node: import("ts-morph").IfStatement): void {
     const condValue = this.liftExpr(node.getExpression());
     const before = new Map(this.env);
+    // Record the branch, and lift each side inside its own region, so the structure is kept.
+    const id = `b${this.branchCount++}`;
+    this.branches.push({ id, cond: condValue });
 
-    const thenEnv = this.branch(before, () => this.liftStatement(node.getThenStatement()));
+    const thenEnv = this.inRegion(`${id}.t`, () =>
+      this.branch(before, () => this.liftStatement(node.getThenStatement())),
+    );
     const elseStmt = node.getElseStatement();
     const elseEnv =
-      elseStmt !== undefined ? this.branch(before, () => this.liftStatement(elseStmt)) : before;
+      elseStmt !== undefined
+        ? this.inRegion(`${id}.e`, () => this.branch(before, () => this.liftStatement(elseStmt)))
+        : before;
 
     // Join: for every name live before the if, if the two branches disagree emit
     // a sel gate with the condition as an ordinary input (control-as-data).
@@ -470,6 +484,16 @@ class Lifter {
         });
         this.env.set(name, joined as ValueId);
       }
+    }
+  }
+
+  /** Run `body` with `segment` pushed onto the region path, then restore it. */
+  private inRegion<T>(segment: string, body: () => T): T {
+    this.regionStack.push(segment);
+    try {
+      return body();
+    } finally {
+      this.regionStack.pop();
     }
   }
 
@@ -780,8 +804,9 @@ class Lifter {
       ...(n.diamond !== undefined ? { diamond: n.diamond } : {}),
       ...(n.origin !== undefined ? { origin: n.origin } : {}),
       ...(n.label !== undefined ? { label: n.label } : {}),
+      ...(n.region !== undefined ? { region: n.region } : {}),
     }));
-    return canonicalizeGraph(nodes, dedupe(this.obs));
+    return canonicalizeGraph(nodes, dedupe(this.obs), this.branches);
   }
 }
 

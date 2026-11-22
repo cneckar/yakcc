@@ -117,6 +117,11 @@ export interface DucNode {
   readonly inputs: readonly ValueId[];
   readonly outputs: readonly ValueId[];
   readonly kind: NodeKind;
+  /**
+   * The branch path this node lies in, outermost first, for example `b0.t/b1.e`: branch id, then `t`
+   * (then-side) or `e` (else-side). Absent for a node outside every branch.
+   */
+  readonly region?: string;
   /** Present iff `kind === "diamond-source"`. */
   readonly diamond?: DiamondLabel;
   readonly origin?: NodeOrigin;
@@ -141,6 +146,18 @@ export interface DucGraph {
   readonly nodes: readonly DucNode[];
   readonly values: readonly ValueId[];
   readonly obs: readonly ValueId[];
+  /**
+   * The `if` branches of the atom (structured control, option B of #1275). Each branch has an id and
+   * the condition value. A node that lies inside a branch carries its region path in `region`. Absent
+   * or empty when the atom has no branches.
+   */
+  readonly branches?: readonly DucBranch[];
+}
+
+/** One `if` in the atom: its id, and the value of its condition. */
+export interface DucBranch {
+  readonly id: string;
+  readonly cond: ValueId;
 }
 
 // ---------------------------------------------------------------------------

@@ -18,6 +18,8 @@ export interface CompactGraph {
   readonly n: readonly CompactNode[];
   /** Observations, as value indices. */
   readonly o: readonly number[];
+  /** Branches, as `[branchNumber, conditionValueIndex]`; branch ids are canonical `b<number>`. */
+  readonly b: readonly (readonly [number, number])[];
 }
 
 /**
@@ -31,6 +33,7 @@ export type CompactNode = readonly [
   readonly number[],
   readonly [number, number] | null,
   readonly [number, number, number] | null,
+  number,
   number,
 ];
 
@@ -71,6 +74,7 @@ export function encodeGraph(g: DucGraph): CompactGraph {
         ]
       : null;
     const label = node.label === undefined ? -1 : intern(node.label);
+    const region = node.region === undefined ? -1 : intern(node.region);
     return [
       intern(node.kind),
       node.inputs.map(valueIndex),
@@ -78,9 +82,15 @@ export function encodeGraph(g: DucGraph): CompactGraph {
       origin,
       diamond,
       label,
+      region,
     ];
   });
-  return { v: 1, s: table, n: nodes, o: g.obs.map(valueIndex) };
+  const branches = (g.branches ?? []).map((br): [number, number] => {
+    const m = /^b(\d+)$/.exec(br.id);
+    if (m === null) throw new Error(`encodeGraph: branch ${br.id} is not in canonical numbering`);
+    return [Number(m[1]), valueIndex(br.cond)];
+  });
+  return { v: 1, s: table, n: nodes, o: g.obs.map(valueIndex), b: branches };
 }
 
 export function decodeGraph(c: CompactGraph): DucGraph {
@@ -91,7 +101,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     return s;
   };
   const value = (k: number): ValueId => `v${k}` as ValueId;
-  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond, label], i) => {
+  const nodes: DucNode[] = c.n.map(([kind, inputs, outputs, origin, diamond, label, region], i) => {
     const node: {
       id: DucNode["id"];
       inputs: ValueId[];
@@ -100,6 +110,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
       origin?: NodeOrigin;
       diamond?: DiamondLabel;
       label?: string;
+      region?: string;
     } = {
       id: `n${i}` as DucNode["id"],
       inputs: inputs.map(value),
@@ -113,6 +124,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
       };
     }
     if (label !== -1) node.label = str(label);
+    if (region !== -1) node.region = str(region);
     if (diamond !== null) {
       node.diamond = {
         reason: str(diamond[0]) as DiamondLabel["reason"],
@@ -124,5 +136,6 @@ export function decodeGraph(c: CompactGraph): DucGraph {
   });
   const values: ValueId[] = [];
   for (const node of nodes) for (const out of node.outputs) values.push(out);
-  return { nodes, values, obs: c.o.map(value) };
+  const branches = c.b.map(([n, cond]) => ({ id: `b${n}`, cond: value(cond) }));
+  return { nodes, values, obs: c.o.map(value), ...(branches.length > 0 ? { branches } : {}) };
 }
