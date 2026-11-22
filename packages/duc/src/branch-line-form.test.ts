@@ -11,6 +11,7 @@ const SOURCES = [
   "export function f(c: boolean, x: number): number { let r = x; if (c) { r = x * 2; } return r; }",
   "export function f(a: boolean, b: boolean, x: number): number { let r = x; if (a) { if (b) { r = x + 1; } else { r = x - 1; } } return r; }",
   "export function f(c: boolean, x: number): number { let r = x; if (c) { r = Math.abs(x); } return Math.abs(r); }",
+  "export function f(a: number, b: number): number { let r = a; if (b > a) { r = b; } return r; }",
 ];
 
 describe("structured if in the line form (#1275)", () => {
@@ -106,6 +107,12 @@ describe("structured if in the line form (#1275)", () => {
     it("a join must use the condition of its own if", () => {
       const text = "param c\nparam d\nif c\nend\njoin r d c c\n";
       expect(() => parseLineForm(text)).toThrow(/uses the condition of its if/);
+    });
+
+    it("a branch whose sides only take existing values round-trips", () => {
+      const text = "param c\nparam x\nparam y\nif c\nend\njoin r c x y\nout r\n";
+      const g = parseLineForm(text);
+      expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
     });
 
     it("an if that is not closed is an error at the if's line", () => {

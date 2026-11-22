@@ -55,7 +55,7 @@ describe("line form (#1275, item 2)", () => {
 
   it("a ternary is refused by the printer: its join has no if block", () => {
     const g = liftAtom("export function f(c: boolean, x: number): number { return c ? x : 0; }");
-    expect(() => printLineForm(g)).toThrow(/join .* has no branch|does not belong/);
+    expect(() => printLineForm(g)).toThrow(/join .* has no if at its level/);
   });
 
   it("an unknown directive is rejected, with its line", () => {

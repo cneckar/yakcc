@@ -262,21 +262,23 @@ export function printLineForm(g: DucGraph): string {
     return p;
   };
 
-  // Each join belongs to the one branch at its level whose condition it selects on, and whose
-  // side produces one of its inputs. Values are single-assignment, so there is exactly one.
+  // Each join belongs to an if at its level with the same condition. When one of the if's sides
+  // produces an input of the join, that if is the owner, and there is only one. When neither side
+  // does (the branch just takes existing values), the join could follow any such if: the graph is
+  // the same, since the join's region depends only on its level. The first is taken.
   const joinOwner = new Map<NodeId, DucBranch>();
   for (const node of g.nodes) {
     if (node.kind !== "sel") continue;
     if (node.inputs.length !== 3) throw new Error(`join ${node.id} needs a condition and two values`);
     const [cond, thenV, elseV] = node.inputs as [ValueId, ValueId, ValueId];
-    const owners = branches.filter(
-      (b) =>
-        b.cond === cond &&
-        b.within === node.region &&
-        (isPrefix(sidePath(b, "t"), producerOf(thenV).region) || isPrefix(sidePath(b, "e"), producerOf(elseV).region)),
+    const sameSite = branches.filter((b) => b.cond === cond && b.within === node.region);
+    const strong = sameSite.filter(
+      (b) => isPrefix(sidePath(b, "t"), producerOf(thenV).region) || isPrefix(sidePath(b, "e"), producerOf(elseV).region),
     );
-    if (owners.length !== 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
-    joinOwner.set(node.id, owners[0] as DucBranch);
+    if (strong.length > 1) throw new Error(`join ${node.id} does not belong to exactly one if`);
+    const owner = strong[0] ?? sameSite[0];
+    if (owner === undefined) throw new Error(`join ${node.id} has no if at its level`);
+    joinOwner.set(node.id, owner);
   }
 
   // Visibility: a value is used only where its producer's scope encloses the use (D5 scope rules).
