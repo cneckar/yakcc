@@ -637,6 +637,15 @@ class Lifter {
 
   /** Names a subtree reads from an enclosing scope (identifiers not bound inside it). */
   private readNamesOf(node: Node): string[] {
+    // Syntactic, and asked again for each tail an exit takes: memoized per node.
+    const cached = readNamesCache.get(node.compilerNode);
+    if (cached !== undefined) return cached;
+    const names = this.readNamesOfUncached(node);
+    readNamesCache.set(node.compilerNode, names);
+    return names;
+  }
+
+  private readNamesOfUncached(node: Node): string[] {
     const locals = collectRegionLocals(node);
     const names = new Set<string>();
     for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
@@ -1944,6 +1953,15 @@ function closureLocals(fn: Node): Set<string> {
 
 /** The targets of assignments, compound assignments and ++/-- in a subtree. */
 function assignmentTargets(node: Node): Node[] {
+  // The whole file is asked for once per closure: memoized per node.
+  const cached = assignmentTargetsCache.get(node.compilerNode);
+  if (cached !== undefined) return cached;
+  const targets = assignmentTargetsOf(node);
+  assignmentTargetsCache.set(node.compilerNode, targets);
+  return targets;
+}
+
+function assignmentTargetsOf(node: Node): Node[] {
   const targets: Node[] = [];
   for (const bin of node.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
     const op = bin.getOperatorToken().getKind();
@@ -2284,6 +2302,14 @@ interface SwitchArm {
  * stays opaque.
  */
 function switchArms(sw: import("ts-morph").SwitchStatement): SwitchArm[] | undefined {
+  const cached = switchArmsCache.get(sw.compilerNode);
+  if (cached !== undefined) return cached ?? undefined;
+  const arms = switchArmsOf(sw);
+  switchArmsCache.set(sw.compilerNode, arms ?? null);
+  return arms;
+}
+
+function switchArmsOf(sw: import("ts-morph").SwitchStatement): SwitchArm[] | undefined {
   const clauses = sw.getCaseBlock().getClauses();
   const arms: SwitchArm[] = [];
   let tests: string[] = [];
@@ -2503,11 +2529,21 @@ function containsDirectReturn(node: Node): boolean {
 
 /** True when the node has a return or a throw that is not inside a nested function, loop, switch or try. */
 function containsDirectExit(node: Node): boolean {
-  return (
+  // Asked of the same statements many times (each list position, each tail): memoized per node.
+  const key = node.compilerNode;
+  const known = exitCache.get(key);
+  if (known !== undefined) return known;
+  const result =
     containsDirectReturn(node) ||
-    node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node))
-  );
+    node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
+  exitCache.set(key, result);
+  return result;
 }
+
+const exitCache = new WeakMap<object, boolean>();
+const readNamesCache = new WeakMap<object, string[]>();
+const switchArmsCache = new WeakMap<object, SwitchArm[] | null>();
+const assignmentTargetsCache = new WeakMap<object, Node[]>();
 
 function insideOpaque(ret: Node, root: Node): boolean {
   for (

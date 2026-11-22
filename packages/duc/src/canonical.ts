@@ -223,15 +223,20 @@ function hoistLiterals(
     );
     if (live.length !== out.length) changed = true;
     out = live;
+    // Every region path that holds a node or a branch, with all its prefixes: a branch side is used
+    // when its path is one of them.
+    const occupied = new Set<string>();
+    const occupy = (region: string | undefined): void => {
+      if (region === undefined || occupied.has(region)) return;
+      occupied.add(region);
+      const cut = region.lastIndexOf("/");
+      if (cut !== -1) occupy(region.slice(0, cut));
+    };
+    for (const n of out) occupy(n.region);
+    for (const b of kept2) occupy(b.within);
     kept2 = kept2.filter((b) => {
       const prefix = `${b.within !== undefined ? `${b.within}/` : ""}${b.id}.`;
-      const inside = (region: string | undefined): boolean =>
-        region !== undefined &&
-        [`${prefix}t`, `${prefix}e`].some(
-          (side) => region === side || region.startsWith(`${side}/`),
-        );
-      const used =
-        out.some((n) => inside(n.region)) || kept2.some((o) => o !== b && inside(o.within));
+      const used = occupied.has(`${prefix}t`) || occupied.has(`${prefix}e`);
       if (!used) changed = true;
       return used;
     });
