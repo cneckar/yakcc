@@ -574,6 +574,12 @@ function pyFunction(
   }
   const owners = joinOwners(g);
   const loops = g.nodes.filter((n) => n.kind === "loop");
+  // A function that reads `arguments` takes what it is called with as one list.
+  const usesArguments =
+    bound.length === 0 &&
+    g.nodes.some(
+      (n) => n.diamond?.reason === "platform-primitive" && n.diamond.symbol === "arguments",
+    );
   const invariantOuter = new Map<ValueId, ValueId>();
   for (const loop of loops) {
     const rec = loop.loop as DucLoop;
@@ -588,6 +594,13 @@ function pyFunction(
     if (p?.kind === "param-source" && Number(p.label) < bound.length)
       return bound[Number(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
+      // `arguments` is the list of what the function was called with.
+      if (
+        p.diamond.reason === "platform-primitive" &&
+        p.diamond.symbol === "arguments" &&
+        usesArguments
+      )
+        return "_arguments";
       if (p.diamond.reason === "platform-primitive") return `@${p.diamond.symbol}`;
       return p.diamond.symbol;
     }
@@ -1044,13 +1057,23 @@ function pyFunction(
     return lines;
   }
 
-  const params = g.nodes
+  const own = g.nodes
     .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
-    .sort((a, b) => Number(a.label) - Number(b.label))
-    .map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`);
-  // A JavaScript function ignores arguments past its parameters.
-  params.push("*_rest");
-  const body = emitScope(undefined);
+    .sort((a, b) => Number(a.label) - Number(b.label));
+  const params = usesArguments
+    ? ["*_args"]
+    : // A JavaScript function ignores arguments past its parameters.
+      [...own.map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`), "*_rest"];
+  const bindings = usesArguments
+    ? [
+        "_arguments = list(_args)",
+        ...own.map(
+          (n, i) =>
+            `${nameOf(n.outputs[0] as ValueId)} = _args[${i}] if len(_args) > ${i} else UNDEFINED`,
+        ),
+      ]
+    : [];
+  const body = [...bindings, ...emitScope(undefined)];
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)}`);
   else body.push("return UNDEFINED");

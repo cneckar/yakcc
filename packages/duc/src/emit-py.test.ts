@@ -299,3 +299,11 @@ describe.skipIf(!python)("lowering to Python: array callbacks (#1278)", () => {
     });
   }
 });
+
+describe.skipIf(!python)("lowering to Python: arguments (#1278)", () => {
+  it("arguments is what the function was called with", () => {
+    const src = "export function f(a: number) { return [arguments.length, a, arguments[1]]; }";
+    const inputs = [[1], [1, 2], []];
+    expect(runPython(emitPython(liftAtom(src)), inputs)).toEqual(runJs(src, inputs));
+  });
+});
