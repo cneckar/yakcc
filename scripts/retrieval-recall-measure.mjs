@@ -18,6 +18,7 @@ import { join, resolve } from "node:path";
 import { liftAtom } from "../packages/duc/dist/lift.js";
 import { printLineForm, parseLineForm } from "../packages/duc/dist/line-form.js";
 import { retrievalSignature } from "../packages/duc/dist/retrieval-signature.js";
+import { graphIdentity } from "../packages/duc/dist/canonical.js";
 import { shavePackage, collectForestSlicePlans } from "../packages/shave/dist/universalize/module-graph.js";
 import { slice } from "../packages/shave/dist/universalize/slicer.js";
 
@@ -139,7 +140,9 @@ for (const a of atoms) {
   let g;
   try { g = liftAtom(a.source); } catch { continue; }
   a.sig = retrievalSignature(g);
-  index.push({ id: a.id, vec: await embed(a.sig) });
+  // Structurally identical atoms are one distinct structure (D1/D6): a hit is any member of the group.
+  a.identity = graphIdentity(g);
+  index.push({ id: a.id, identity: a.identity, vec: await embed(a.sig) });
 }
 const dot = (x, y) => { let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * y[i]; return s; };
 
@@ -155,7 +158,11 @@ const note = (fam, rank, id) => {
   if (rank > 10 && f.misses.length < 6) f.misses.push(id);
 };
 let straight = 0;
+const queried = new Set();
 for (const a of atoms) {
+  // One query per distinct structure: identical copies would otherwise count the same case many times.
+  if (a.identity === undefined || queried.has(a.identity)) continue;
+  queried.add(a.identity);
   let base;
   try { base = printLineForm(liftAtom(a.source)); } catch { continue; }
   straight++;
@@ -168,8 +175,10 @@ for (const a of atoms) {
   for (const [fam, text] of Object.entries(queries)) {
     const sig = retrievalSignature(parseLineForm(text));
     const q = await embed(sig);
-    const sims = index.map((e) => ({ id: e.id, s: dot(q, e.vec) })).sort((x, y) => y.s - x.s);
-    const rank = sims.findIndex((e) => e.id === a.id) + 1;
+    const sims = index.map((e) => ({ id: e.id, identity: e.identity, s: dot(q, e.vec) })).sort((x, y) => y.s - x.s);
+    const hit = sims.findIndex((e) => e.identity === a.identity);
+    if (hit === -1) throw new Error(`atom ${a.id} is not in the index`);
+    const rank = hit + 1;
     note(fam, rank, a.id);
   }
 }
@@ -180,6 +189,7 @@ for (const [fam, f] of Object.entries(families)) {
   f.ranks.sort((x, y) => x - y);
   summary[fam] = { queries: f.n, recall1: +(f.top1 / f.n).toFixed(3), recall5: +(f.top5 / f.n).toFixed(3), recall10: +(f.top10 / f.n).toFixed(3), medianRank: f.ranks[Math.floor(f.n / 2)], missedIds: f.misses };
 }
-writeFileSync(join(OUT, "recall.json"), JSON.stringify({ atoms: atoms.length, indexed: index.length, straightLine: straight, summary }, null, 2));
-console.log(JSON.stringify({ atoms: atoms.length, indexed: index.length, straightLine: straight, summary }, null, 2));
+const report = { atoms: atoms.length, indexed: index.length, distinctStructures: queried.size, straightLine: straight, summary };
+writeFileSync(join(OUT, "recall.json"), JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report, null, 2));
 console.log("ALL DONE");
