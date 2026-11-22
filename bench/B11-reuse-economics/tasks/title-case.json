@@ -1,0 +1,33 @@
+{
+  "id": "title-case",
+  "entry": "titleCase",
+  "spec": "Write `export function titleCase(s: string): string` that uppercases the first letter of each whitespace-separated word and lowercases the rest, keeping the spacing as it was.",
+  "reference": "export function titleCase(s: string): string {\n  return s.replace(/[^\\s]+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());\n}",
+  "slice": [
+    {
+      "id": "word-split",
+      "score": 0.81,
+      "sourcePkg": "shadow-utils",
+      "text": "function splitWords(s) { /* split on whitespace */ }",
+      "citation": {
+        "merkleRoot": "fixture-word-split",
+        "sourceFile": "shadow-utils/text.ts",
+        "lineStart": 4,
+        "lineEnd": 9
+      }
+    },
+    {
+      "id": "unrelated",
+      "score": 0.22,
+      "sourcePkg": "shadow-misc",
+      "text": "function hashString(s) { /* ... */ }",
+      "citation": {
+        "merkleRoot": "fixture-unrelated",
+        "sourceFile": "shadow-misc/hash.ts",
+        "lineStart": 1,
+        "lineEnd": 3
+      }
+    }
+  ],
+  "heldOut": "const cases = [['hello WORLD','Hello World'],['  a  b ','  A  B '],['',''],['\u00e9lan vital','\u00c9lan Vital']];\nfor (const [input, want] of cases) { const got = fn(input); if (got !== want) throw new Error('titleCase(' + JSON.stringify(input) + ') = ' + JSON.stringify(got)); }"
+}

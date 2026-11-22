@@ -1,0 +1,33 @@
+{
+  "id": "slugify",
+  "entry": "slugify",
+  "spec": "Write `export function slugify(s: string): string` that lowercases the string, replaces each run of characters other than ASCII letters and digits with a single dash, and trims leading and trailing dashes.",
+  "reference": "export function slugify(s: string): string {\n  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\n}",
+  "slice": [
+    {
+      "id": "normalize-text",
+      "score": 0.73,
+      "sourcePkg": "shadow-utils",
+      "text": "function normalizeText(s) { /* trim and collapse spaces */ }",
+      "citation": {
+        "merkleRoot": "fixture-normalize-text",
+        "sourceFile": "shadow-utils/text.ts",
+        "lineStart": 4,
+        "lineEnd": 9
+      }
+    },
+    {
+      "id": "unrelated",
+      "score": 0.22,
+      "sourcePkg": "shadow-misc",
+      "text": "function ceilDiv(a, b) { /* ... */ }",
+      "citation": {
+        "merkleRoot": "fixture-unrelated",
+        "sourceFile": "shadow-misc/math.ts",
+        "lineStart": 1,
+        "lineEnd": 3
+      }
+    }
+  ],
+  "heldOut": "const cases = [['Hello, World!','hello-world'],['  a__b  ','a-b'],['---','']];\nfor (const [input, want] of cases) { const got = fn(input); if (got !== want) throw new Error('slugify(' + JSON.stringify(input) + ') = ' + JSON.stringify(got)); }"
+}

@@ -2,9 +2,9 @@
 // B11 reuse-economics harness: arms, prompts, sandboxed scoring, metrics.
 // Scoring transpiles the candidate TypeScript and runs the task's held-out check in a
 // fresh vm context. Nothing here touches the network except the explicit Anthropic client.
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
@@ -51,7 +51,18 @@ export function scoreSolution(task, candidateTs) {
     return { pass: false, error: `transpile: ${err.message}` };
   }
   const module = { exports: {} };
-  const context = vm.createContext({ module, exports: module.exports, RangeError, Error, Math, Number, JSON, String, Array, Object });
+  const context = vm.createContext({
+    module,
+    exports: module.exports,
+    RangeError,
+    Error,
+    Math,
+    Number,
+    JSON,
+    String,
+    Array,
+    Object,
+  });
   try {
     vm.runInContext(js, context, { timeout: 2000 });
   } catch (err) {
@@ -72,7 +83,10 @@ export function buildPrompt(task, arm, slice = []) {
   const lines = [`Task: ${task.spec}`, "Return only the TypeScript code in one fenced block."];
   if (arm !== "scratch" && slice.length > 0) {
     lines.push("", "Kept work from the registry (cite it if you use it):");
-    for (const c of slice) lines.push(`- ${c.citation.sourceFile}:${c.citation.lineStart}-${c.citation.lineEnd}: ${c.text}`);
+    for (const c of slice)
+      lines.push(
+        `- ${c.citation.sourceFile}:${c.citation.lineStart}-${c.citation.lineEnd}: ${c.text}`,
+      );
   }
   return lines.join("\n");
 }

@@ -10,7 +10,11 @@ export function offlineClient(tasksById) {
       const id = matchTaskId(prompt, tasksById);
       const task = id ? tasksById[id] : undefined;
       const text = task ? "```ts\n" + task.reference + "\n```" : "```ts\n// no task\n```";
-      return { text, inputTokens: Math.ceil(prompt.length / 4), outputTokens: Math.ceil(text.length / 4) };
+      return {
+        text,
+        inputTokens: Math.ceil(prompt.length / 4),
+        outputTokens: Math.ceil(text.length / 4),
+      };
     },
   };
 }

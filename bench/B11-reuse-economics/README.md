@@ -27,7 +27,7 @@ tokens, mean time. Cost is derived from tokens and the model's price, not stored
 
 ## Status
 
-- **Harness: built and tested.** `node --test harness/` passes 12 of 12. The offline
+- **Harness: built and tested.** `node --test harness/harness.test.mjs` passes every test (the reference solution of each of the ten tasks passes, and a stub fails each one). The offline
   validation (`results/offline-validation.json`) exercises every arm end to end. It uses
   reference solutions, so its numbers are **not** a measurement of reuse.
 - **Live run: blocked.** Every arm needs a model call. `ANTHROPIC_API_KEY` is not set
@@ -38,9 +38,9 @@ tokens, mean time. Cost is derived from tokens and the model's price, not stored
   ANTHROPIC_API_KEY=... node harness/run.mjs --client anthropic --model claude-sonnet-5-5 --out results/<run>.json
   ```
 
-- **Scale: three seed tasks.** The design calls for about ten composition tasks, with
-  held-out tests, drawn from the corpus. Authoring the rest is the remaining work for
-  this track.
+- **Scale: ten tasks.** Each has a held-out check, a reference solution, and retrieved
+  candidates with citations. The tasks are small, self-contained functions, not drawn
+  from the corpus. Corpus-derived composition tasks are a follow-up.
 
 ## Break-even
 

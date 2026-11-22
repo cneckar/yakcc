@@ -1,6 +1,6 @@
 {
   "client": "offline",
-  "tasks": 3,
+  "tasks": 10,
   "rows": [
     {
       "arm": "scratch",
@@ -64,6 +64,96 @@
     },
     {
       "arm": "scratch",
+      "task": "group-by",
+      "pass": true,
+      "error": null,
+      "inputTokens": 65,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "group-by",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "group-by",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "parse-int-strict",
+      "pass": true,
+      "error": null,
+      "inputTokens": 71,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "parse-int-strict",
+      "pass": true,
+      "error": null,
+      "inputTokens": 121,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "parse-int-strict",
+      "pass": true,
+      "error": null,
+      "inputTokens": 121,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "range",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "range",
+      "pass": true,
+      "error": null,
+      "inputTokens": 113,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "range",
+      "pass": true,
+      "error": null,
+      "inputTokens": 113,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
       "task": "safe-filename",
       "pass": true,
       "error": null,
@@ -90,7 +180,127 @@
       "inputTokens": 103,
       "outputTokens": 42,
       "turns": 1,
-      "ms": 1
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "shallow-equal",
+      "pass": true,
+      "error": null,
+      "inputTokens": 69,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "shallow-equal",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "shallow-equal",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "slugify",
+      "pass": true,
+      "error": null,
+      "inputTokens": 66,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "slugify",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "slugify",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "title-case",
+      "pass": true,
+      "error": null,
+      "inputTokens": 59,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "title-case",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "title-case",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "unique",
+      "pass": true,
+      "error": null,
+      "inputTokens": 60,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "unique",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "unique",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0
     }
   ],
   "decisions": [
@@ -106,41 +316,78 @@
       "reason": "near-miss-only"
     },
     {
+      "task": "group-by",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    },
+    {
+      "task": "parse-int-strict",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    },
+    {
+      "task": "range",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    },
+    {
       "task": "safe-filename",
       "action": "synthesize",
       "reason": "near-miss-only"
+    },
+    {
+      "task": "shallow-equal",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    },
+    {
+      "task": "slugify",
+      "action": "synthesize",
+      "reason": "near-miss-only"
+    },
+    {
+      "task": "title-case",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "unique",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
     }
   ],
   "summary": {
     "scratch": {
-      "n": 3,
-      "passes": 3,
-      "inputTokens": 183,
-      "outputTokens": 164,
+      "n": 10,
+      "passes": 10,
+      "inputTokens": 637,
+      "outputTokens": 547,
       "ms": 0,
       "passRate": 1,
-      "meanTokens": 115.66666666666667,
+      "meanTokens": 118.4,
       "meanMs": 0
     },
     "slice": {
-      "n": 3,
-      "passes": 3,
-      "inputTokens": 312,
-      "outputTokens": 164,
+      "n": 10,
+      "passes": 10,
+      "inputTokens": 1118,
+      "outputTokens": 547,
       "ms": 0,
       "passRate": 1,
-      "meanTokens": 158.66666666666666,
+      "meanTokens": 166.5,
       "meanMs": 0
     },
     "fallback": {
-      "n": 3,
-      "passes": 3,
-      "inputTokens": 312,
-      "outputTokens": 164,
+      "n": 10,
+      "passes": 10,
+      "inputTokens": 1118,
+      "outputTokens": 547,
       "ms": 1,
       "passRate": 1,
-      "meanTokens": 158.66666666666666,
-      "meanMs": 0.3333333333333333
+      "meanTokens": 166.5,
+      "meanMs": 0.1
     }
   }
 }

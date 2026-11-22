@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: MIT
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { dirname, join } from "node:path";
+// SPDX-License-Identifier: MIT
+import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildPrompt, extractCode, loadTasks, runArm, scoreSolution, summarize } from "./lib.mjs";
 import { offlineClient } from "./offline-client.mjs";
@@ -26,12 +26,25 @@ describe("held-out scoring", () => {
     assert.match(r.error, /transpile|load/);
   });
   it("a solution missing the entry name fails", () => {
-    assert.match(scoreSolution(byId["safe-filename"], "export function other() {}").error, /no exported function/);
+    assert.match(
+      scoreSolution(byId["safe-filename"], "export function other() {}").error,
+      /no exported function/,
+    );
   });
   it("the sandbox has no access to the host process", () => {
-    const probe = "export function clamp(v, lo, hi) { if (typeof process !== 'undefined') throw new Error('host visible'); return v; }";
+    const probe =
+      "export function clamp(v, lo, hi) { if (typeof process !== 'undefined') throw new Error('host visible'); return v; }";
     assert.doesNotMatch(scoreSolution(byId.clamp, probe).error ?? "", /host visible/);
   });
+});
+
+describe("every task rejects a trivially wrong answer", () => {
+  for (const task of tasks) {
+    it(`${task.id} rejects a stub that returns null`, () => {
+      const stub = `export function ${task.entry}() { return null; }`;
+      assert.equal(scoreSolution(task, stub).pass, false);
+    });
+  }
 });
 
 describe("prompting and extraction", () => {
