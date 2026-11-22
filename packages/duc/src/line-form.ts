@@ -10,7 +10,7 @@
  *   lit "<text>" -> <name>              a literal; the JSON string is its structural label
  *   op <label> [<name> ...] [-> <name>] an operation; the label is an operator or syntactic kind
  *   free <symbol> -> <name>             a name the graph does not define (free-identifier)
- *   ambient <symbol> -> <name>          a platform primitive (ambient-read)
+ *   ambient <symbol> -> <name>          a platform primitive (platform-primitive)
  *   out <name>                          an observation, in order
  *   # ...                               a comment line
  *
@@ -106,7 +106,7 @@ export function parseLineForm(text: string): DucGraph {
       const symbol = rest[0] as string;
       if (!SYMBOL.test(symbol)) throw new LineFormError(line, `"${symbol}" is not a valid symbol`);
       const diamond: DiamondLabel = {
-        reason: head === "free" ? "free-identifier" : "ambient-read",
+        reason: head === "free" ? "free-identifier" : "platform-primitive",
         symbol,
       };
       const key = `${diamond.reason}:${symbol}`;
@@ -168,7 +168,7 @@ export function printLineForm(g: DucGraph): string {
       }
       case "diamond-source": {
         if (out === undefined || node.diamond === undefined) throw new Error("unresolved name without a label");
-        const head = node.diamond.reason === "free-identifier" ? "free" : node.diamond.reason === "ambient-read" ? "ambient" : null;
+        const head = node.diamond.reason === "free-identifier" ? "free" : node.diamond.reason === "platform-primitive" ? "ambient" : null;
         if (head === null) {
           throw new Error(`reason "${node.diamond.reason}" is not expressible in the line form (D5)`);
         }

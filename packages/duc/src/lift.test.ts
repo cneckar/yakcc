@@ -64,7 +64,7 @@ describe("unresolved references become diamond-sources (W1/W2)", () => {
       'import { readFileSync } from "node:fs";\nexport function f(p: string): string { return readFileSync(p); }',
     );
     const diamond = g.nodes.find((n) => n.diamond?.symbol === "readFileSync")?.diamond;
-    expect(diamond?.reason).toBe("foreign-import");
+    expect(diamond?.reason).toBe("unlinked-reference");
     expect(diamond?.module).toBe("node:fs");
   });
 
@@ -74,7 +74,7 @@ describe("unresolved references become diamond-sources (W1/W2)", () => {
         "export function f(): unknown { return def(ns.z, b); }",
     );
     expect(diamondSymbols(g).sort()).toEqual(["b", "def", "ns"]);
-    expect(diamondReasons(g).every((r) => r === "foreign-import")).toBe(true);
+    expect(diamondReasons(g).every((r) => r === "unlinked-reference")).toBe(true);
   });
 
   it("type-only imports carry no runtime value and are never sources", () => {
@@ -84,10 +84,10 @@ describe("unresolved references become diamond-sources (W1/W2)", () => {
     expect(diamondSymbols(g)).toEqual(["c"]);
   });
 
-  it("ambient globals are diamond-sources labelled ambient-read", () => {
+  it("ambient globals are diamond-sources labelled platform-primitive", () => {
     const g = lift("export function f(x: number): number { return Math.max(x, 0); }");
     const math = g.nodes.find((n) => n.diamond?.symbol === "Math")?.diamond;
-    expect(math?.reason).toBe("ambient-read");
+    expect(math?.reason).toBe("platform-primitive");
   });
 
   it("honors a custom ambient-globals set", () => {
@@ -95,7 +95,7 @@ describe("unresolved references become diamond-sources (W1/W2)", () => {
       ambientGlobals: ["CUSTOM"],
     });
     expect(g.nodes.find((n) => n.diamond?.symbol === "CUSTOM")?.diamond?.reason).toBe(
-      "ambient-read",
+      "platform-primitive",
     );
   });
 });
@@ -438,10 +438,10 @@ describe("non-statement fragments lift through analysis forms (WI-EXPLAIN-04, #1
 });
 
 describe("the implicit arguments binding is an explained ambient read (WI-EXPLAIN, #1173)", () => {
-  it("arguments is an ambient-read diamond that still feeds the result", () => {
+  it("arguments is an platform-primitive diamond that still feeds the result", () => {
     const g = lift("function f() { return arguments[0]; }");
     const d = g.nodes.find((n) => n.diamond?.symbol === "arguments")?.diamond;
-    expect(d?.reason).toBe("ambient-read");
+    expect(d?.reason).toBe("platform-primitive");
     expect(usupp(g, onlyObs(g)).map((s) => s.label.symbol)).toContain("arguments");
   });
 });
@@ -451,7 +451,7 @@ describe("host globals: pure host data is explained, authority-bearing names are
     const g = lift(
       "export function f(s: string) { return new TextEncoder().encode(Buffer.from(s)); }",
     );
-    expect(diamondReasons(g)).toEqual(expect.arrayContaining(["ambient-read"]));
+    expect(diamondReasons(g)).toEqual(expect.arrayContaining(["platform-primitive"]));
     expect(diamondSymbols(g)).toEqual(expect.arrayContaining(["Buffer", "TextEncoder"]));
   });
   it("process, require, and the timers are not ambient reads", () => {
@@ -544,8 +544,8 @@ describe("labels, class self-reference, and pure legacy globals (residue defects
   it("the pure legacy codecs escape and unescape are explained", () => {
     const g = lift("function f (x) { return unescape(escape(x)) }");
     const reasonOf = (sym: string) => g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
-    expect(reasonOf("unescape")).toBe("ambient-read");
-    expect(reasonOf("escape")).toBe("ambient-read");
+    expect(reasonOf("unescape")).toBe("platform-primitive");
+    expect(reasonOf("escape")).toBe("platform-primitive");
   });
   it("WeakRef stays unexplained: its deref is not a pure function of its argument", () => {
     const g = lift("function f (x) { return new WeakRef(x) }");

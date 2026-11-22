@@ -299,7 +299,7 @@ function allowedRead(
   read: { symbol: string; reason: DiamondReason },
   ok: ReadonlySet<string>,
 ): boolean {
-  if (read.reason === "ambient-read" || read.reason === "foreign-import") return true;
+  if (read.reason === "platform-primitive" || read.reason === "unlinked-reference") return true;
   return ok.has(read.symbol);
 }
 
@@ -493,7 +493,7 @@ function functionIsPure(
     if ((fnSites.get(name) ?? []).length > 0) return false;
     const reads = info.reads;
     for (const read of reads) {
-      if (read.reason === "ambient-read" || read.reason === "foreign-import") continue;
+      if (read.reason === "platform-primitive" || read.reason === "unlinked-reference") continue;
       if (pure.has(read.symbol)) continue;
       if (fns.has(read.symbol)) {
         if (!seen.has(read.symbol)) {

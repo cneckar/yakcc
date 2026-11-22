@@ -72,10 +72,10 @@ export type NodeKind = "param-source" | "literal-source" | "diamond-source" | "o
 
 /** Why a use could not be resolved to a def inside the lifted atom. */
 export type DiamondReason =
-  | "foreign-import" // a binding imported from outside the workspace
+  | "unlinked-reference" // a binding imported from outside the workspace
   | "free-identifier" // a free identifier with no in-atom binding
   | "unresolved-module" // a cross-module edge the resolver could not follow
-  | "ambient-read"; // a read of an ambient/global the atom does not own
+  | "platform-primitive"; // a read of an ambient/global the atom does not own
 
 /**
  * The distinguished label the conservative builder attaches to a source it
@@ -88,7 +88,7 @@ export interface DiamondLabel {
   readonly reason: DiamondReason;
   /** The unresolved name, e.g. `"FLAGS"` or `"readFileSync"`. */
   readonly symbol: string;
-  /** For `foreign-import`: the module the symbol was imported from. */
+  /** For `unlinked-reference`: the module the symbol was imported from. */
   readonly module?: string;
 }
 

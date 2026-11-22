@@ -67,7 +67,7 @@ const graph = liftAtom(
 );
 
 isWellFormed(graph).wellFormed; // true — the unresolved read is a ♦-source, not a drop
-usupp(graph, graph.obs[0]);      // [{ label: { reason: "foreign-import", symbol: "readFileSync", module: "node:fs" } }]
+usupp(graph, graph.obs[0]);      // [{ label: { reason: "unlinked-reference", symbol: "readFileSync", module: "node:fs" } }]
 
 // Non-interference: does a secret reach a low observation?
 const labeling = labelBySymbol(graph, new Set(["readFileSync"]), graph.obs);

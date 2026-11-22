@@ -56,8 +56,8 @@ describe("pure URI codecs are explained (validator residue)", () => {
   it("encodeURI and decodeURI are explained ambient reads", () => {
     const g = liftAtom("export function f (x: string) { return decodeURI(encodeURI(x)); }");
     const reasonOf = (sym: string) => g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
-    expect(reasonOf("encodeURI")).toBe("ambient-read");
-    expect(reasonOf("decodeURI")).toBe("ambient-read");
+    expect(reasonOf("encodeURI")).toBe("platform-primitive");
+    expect(reasonOf("decodeURI")).toBe("platform-primitive");
   });
 });
 

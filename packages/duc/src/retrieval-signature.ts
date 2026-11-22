@@ -49,8 +49,8 @@ export function retrievalSignature(g: DucGraph, options: RetrievalSignatureOptio
     .filter((n) => n.kind === "literal-source")
     .map((n) => n.label ?? "");
   const diamonds = g.nodes.filter((n) => n.diamond !== undefined).map((n) => n.diamond);
-  const primitives = diamonds.filter((d) => d?.reason === "ambient-read").map((d) => d?.symbol ?? "");
-  const unlinked = diamonds.filter((d) => d?.reason !== "ambient-read").map((d) => d?.symbol ?? "");
+  const primitives = diamonds.filter((d) => d?.reason === "platform-primitive").map((d) => d?.symbol ?? "");
+  const unlinked = diamonds.filter((d) => d?.reason !== "platform-primitive").map((d) => d?.symbol ?? "");
   const sel = g.nodes.filter((n) => n.kind === "sel").length;
   const loop = g.nodes.filter((n) => n.kind === "loop").length;
 

@@ -38,7 +38,7 @@ export class DucLiftError extends Error {
 /** Options controlling how free identifiers are classified into diamond reasons. */
 export interface LiftOptions {
   /**
-   * Free identifiers that name one of these are labelled `ambient-read` rather
+   * Free identifiers that name one of these are labelled `platform-primitive` rather
    * than `free-identifier`. Defaults to the standard JS ambient globals a pure
    * atom may reference (Math, JSON, ...). They are still diamond-sources — the
    * label only records *why* the use is unresolved.
@@ -268,7 +268,7 @@ class Lifter {
       const moduleSpec = decl.getModuleSpecifierValue();
       if (decl.isTypeOnly()) continue; // type-only imports carry no runtime value
       const record = (name: string): void => {
-        this.imports.set(name, { reason: "foreign-import", module: moduleSpec });
+        this.imports.set(name, { reason: "unlinked-reference", module: moduleSpec });
       };
       const clause = decl.getImportClause();
       if (clause === undefined) continue;
@@ -754,9 +754,9 @@ class Lifter {
     const imported = this.imports.get(name);
     const reason: DiamondReason =
       imported !== undefined
-        ? "foreign-import"
+        ? "unlinked-reference"
         : this.ambient.has(name)
-          ? "ambient-read"
+          ? "platform-primitive"
           : "free-identifier";
     const [value] = this.emit("diamond-source", [], 1, {
       diamond: {

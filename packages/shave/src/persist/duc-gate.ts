@@ -337,9 +337,9 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
   const compositions: string[] = [];
   const unexplained: string[] = [];
   for (const u of unknowns) {
-    if (u.reason === "foreign-import") {
+    if (u.reason === "unlinked-reference") {
       foreign.push({ symbol: u.symbol, ...(u.module !== undefined ? { module: u.module } : {}) });
-    } else if (u.reason === "ambient-read") {
+    } else if (u.reason === "platform-primitive") {
       ambient.push(u.symbol);
     } else if (u.composition === true) {
       compositions.push(u.symbol);

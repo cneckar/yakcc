@@ -43,7 +43,7 @@ describe("boundary + summary", () => {
           id: "n1",
           out: ["x"],
           kind: "diamond-source",
-          diamond: { reason: "ambient-read", symbol: "Math" },
+          diamond: { reason: "platform-primitive", symbol: "Math" },
         },
         { id: "n2", in: ["a", "x"], out: ["c"], kind: "op" },
       ],

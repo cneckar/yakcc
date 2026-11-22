@@ -44,7 +44,7 @@ describe("runDucConservationGate", () => {
     const result = runDucConservationGate(FOREIGN);
     expect(result.unknowns).toContainEqual({
       symbol: "readFileSync",
-      reason: "foreign-import",
+      reason: "unlinked-reference",
       module: "node:fs",
     });
     expect(result.unexplained).toEqual([]);
@@ -52,7 +52,7 @@ describe("runDucConservationGate", () => {
 
   it("records an ambient global as a known unknown", () => {
     const result = runDucConservationGate(AMBIENT);
-    expect(result.unknowns).toContainEqual({ symbol: "Math", reason: "ambient-read" });
+    expect(result.unknowns).toContainEqual({ symbol: "Math", reason: "platform-primitive" });
     expect(result.unexplained).toEqual([]);
   });
 

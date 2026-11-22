@@ -49,7 +49,7 @@ describe("analyzeProgramInfluence — external unknown-support (W1/W2 at program
     expect(symbols).not.toContain("helper"); // resolved by composition — internal
     // the module is recorded for the foreign import
     expect(result.externalUnknowns.find((u) => u.symbol === "getData")).toMatchObject({
-      reason: "foreign-import",
+      reason: "unlinked-reference",
       module: "external-pkg",
     });
   });
