@@ -209,24 +209,30 @@ Recorded 2026-11-22, checked against the code. Commits are on `claude/tender-tho
 
 | Slice | Issue | Delivered | Open |
 |---|---|---|---|
-| S1 graph model + lifter | #1162 | `68550d1`, `c74dd94`, `1aa29cf` (bare-function primary) | — |
-| S2 conservation gate | #1163 | `bb23b97`; warn default | reject flip (#1173) |
-| S3 may-influence + witness + `duc_influence` | #1164 | `68550d1`, `d5cd2c3` | — |
-| S4 graph-NI + `duc_ni` | #1165 | `68550d1`, `d5cd2c3` (API + validator) | persistence of `duc_ni` waits on checker-spec labelings (#1256) |
-| S5 composition + strictness falsifier | #1166 | `3b30a2b` | — |
-| S6 Rocq mechanization | #1167 | `e794927`, `507cea1`, `53edfe6` (order theory, transfer) | independence of depmap from emission order: named open item, not claimed |
-| S7 closer | #1168 | this section, `VERIFICATION.md` I-axis, `DESIGN.md` | — |
+| S1 graph model + lifter | #1162 | `68550d1`, `c74dd94`, `1aa29cf` (bare-function primary) | closed |
+| S2 conservation gate | #1163 | `bb23b97`; warn default; captures and host globals (`3193431`) | reject flip (#1173), gated on the full corpus run |
+| S3 may-influence + witness + `duc_influence` | #1164 | `68550d1`, `d5cd2c3` (sidecar) | closed |
+| S4 graph-NI + `duc_ni` | #1165 | `68550d1`, `d5cd2c3` (API + validator) | persistence of `duc_ni` waits on a declared labeling (checker specs, #1256) |
+| S5 composition + strictness falsifier | #1166 | `3b30a2b` | closed |
+| S6 Rocq mechanization | #1167 | `e794927`, `507cea1`, `53edfe6` (order theory, transfer) | verifier-as-block not built; Nix flake not validated; independence of depmap from emission order not claimed |
+| S7 closer | #1168 | `61aa2cb` (I-axis docs, roll-up, deferred register) | closed |
 
 ### Decision roll-up (changes from §7)
 
 - **Revised:** `DEC-DUC-ARTIFACT-KINDS-001` → `DEC-DUC-ATTESTATION-SIDECAR-001`. Analyses are sidecar attestations, not manifest kinds. The manifest is hashed into the `BlockMerkleRoot`. No migration is needed, because the sidecar JSON carries the attestation.
-- **Added in code:** `DEC-DUC-COMPOSITION-EDGE-001` (sibling references classified as composition edges at the gate, metadata-only).
-- **Added in code:** `DEC-DUC-ATTESTATION-SIDECAR-001` (above).
+- **Added:** `DEC-DUC-COMPOSITION-EDGE-001` (sibling references are composition edges at the gate, metadata-only).
+- **Added:** `DEC-DUC-MODULE-CAPTURE-001` (a free read of a pure module binding is a recorded capture).
+- **Added:** `DEC-DUC-MODULE-INIT-CLOSURE-001` (a binding filled by top-level writes during module initialization is pure, when every write is top-level and every writing statement reads only allowed names; an alias or hand-off disqualifies it).
+- **Added:** `DEC-DUC-HOST-GLOBALS-001` (pure host data is an explained ambient read; authority-bearing names are not).
+- **Added:** `DEC-DUC-AUTHORITY-DELTA-001`, `DEC-DUC-GUARD-LABELS-001`, `DEC-DUC-CHECKER-SPEC-001` (WI-GUARD).
 
 ### Deferred register (named, not forgotten)
 
 - Side-channel and timing analysis (discipline 3).
-- Path-sensitive guard layer (DUC §7). Partly addressed by guard labels in `WI-GUARD-A2` (#1255), as annotations only.
+- Path-sensitive guard layer (DUC §7). Partly addressed by guard labels (`DEC-DUC-GUARD-LABELS-001`), as annotations only.
+- Control dependence of a sink call under a branch: the call node is emitted unconditionally, so such a call is reported unguarded. Conservative, not unsound.
+- Authority-bearing host globals (`process`, `require`, `module`, `exports`, `__dirname`, `__filename`, the timers) stay unexplained until a checker classifies them.
+- Mutable module state that is not initialization-fixed (for example, a binding mutated from inside a function) stays unexplained.
 - Def-use-graph isomorphism strengthening `canonical_ast_hash` (W7).
 - Behavioral-embedding cross-wire (`DEC-VERIFY-010`).
 - Independence of depmap / valuation from the choice of well-ordered emission order. Not mechanized, not claimed.
