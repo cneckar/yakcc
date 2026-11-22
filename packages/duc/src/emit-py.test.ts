@@ -218,3 +218,50 @@ describe.skipIf(!python)("lowering to Python: more of the platform (#1278)", () 
     });
   }
 });
+
+describe.skipIf(!python)("lowering to Python: regular expressions (#1278)", () => {
+  const cases: [string, string, unknown[][]][] = [
+    [
+      "test with classes and anchors",
+      "export function f(s: string) { return [/^[a-z]+\\d*$/i.test(s), /\\s/.test(s), /a.c/.test(s)]; }",
+      [["Abc12"], ["a c"], ["a\nc"], ["abc\n"]],
+    ],
+    [
+      "replace once and globally, with groups",
+      "export function f(s: string) { return [s.replace(/(\\w)(\\d)/, '$2$1'), s.replace(/o/g, '0'), s.replace(/x/g, '$&$&')]; }",
+      [["a1 b2 foo"], ["xox"]],
+    ],
+    [
+      "named groups",
+      "export function f(s: string) { return /(?<y>\\d{4})-(?<m>\\d{2})/.test(s); }",
+      [["2024-05"], ["24-5"]],
+    ],
+  ];
+  for (const [name, src, inputs] of cases) {
+    it(`computes what the source computes: ${name}`, () => {
+      const code = emitPython(liftAtom(src));
+      expect(runPython(code, inputs), code).toEqual(runJs(src, inputs));
+    });
+  }
+
+  it("a flag or construct whose meaning differs is refused", () => {
+    expect(() =>
+      emitPython(liftAtom("export function f(s: string) { return /a/y.test(s); }")),
+    ).toThrow(PyEmitError);
+    expect(() =>
+      emitPython(liftAtom("export function f(s: string) { return /(?<=a)b/.test(s); }")),
+    ).toThrow(PyEmitError);
+    expect(() =>
+      emitPython(liftAtom("export function f(s: string) { return /\\p{L}/u.test(s); }")),
+    ).toThrow(PyEmitError);
+  });
+});
+
+describe.skipIf(!python)("lowering to Python: platform calls inside loops (#1278)", () => {
+  it("a platform function read through a loop's invariant is still that function", () => {
+    const src =
+      "export function f(xs: string[]) { let s = 0; for (const x of xs) { s = s + parseInt(x, 10); } return [s, 'hello'.substring(4, 1)]; }";
+    const inputs = [[["1", "22", "3x"]]];
+    expect(runPython(emitPython(liftAtom(src)), inputs)).toEqual(runJs(src, inputs));
+  });
+});

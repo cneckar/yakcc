@@ -24,6 +24,7 @@ export class PyEmitError extends Error {
 /** JavaScript's meaning, in Python: the prelude every lowered module starts with. */
 export const PY_PRELUDE = `import functools
 import math
+import re
 
 
 class _Undefined:
@@ -229,6 +230,19 @@ def _slice(s, start=UNDEFINED, end=UNDEFINED):
     return s[a:b] if a < b else s[0:0]
 
 
+def _substring(s, start=UNDEFINED, end=UNDEFINED):
+    n = len(s)
+    def clamp(x, d):
+        if x is UNDEFINED:
+            return d
+        v = _num(x)
+        if isinstance(v, float) and math.isnan(v):
+            return 0
+        return max(0, min(int(v), n))
+    a, b = clamp(start, 0), clamp(end, n)
+    return s[min(a, b):max(a, b)]
+
+
 def _split(s, sep=UNDEFINED):
     if sep is UNDEFINED:
         return [s]
@@ -270,7 +284,30 @@ def _isnan(x):
     return isinstance(x, float) and math.isnan(x)
 
 
+class JsRegExp:
+    def __init__(self, compiled, is_global):
+        self.compiled = compiled
+        self.is_global = is_global
+
+
+@functools.lru_cache(maxsize=None)
+def _re(pattern, flags, is_global):
+    import re
+    return JsRegExp(re.compile(pattern, flags), is_global)
+
+
+def _test(r, s):
+    return r.compiled.search(_str(s)) is not None
+
+
 def _replace(s, pattern, replacement):
+    if isinstance(pattern, JsRegExp):
+        import re
+        rep = _str(replacement)
+        # $1, $& and $$ in JavaScript's replacement text, as Python's.
+        py = rep.replace("\\\\", "\\\\\\\\")
+        py = re.sub(r"\\$(\\d{1,2})", r"\\\\g<\\1>", py).replace("$&", "\\\\g<0>").replace("$$", "$")
+        return pattern.compiled.sub(py, s, count=0 if pattern.is_global else 1)
     return s.replace(_str(pattern), _str(replacement), 1)
 
 
@@ -303,6 +340,7 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
   includes: (r, a) => `_includes(${r}, ${a[0] ?? "UNDEFINED"})`,
   indexOf: (r, a) => `_index_of(${r}, ${a[0] ?? "UNDEFINED"})`,
   slice: (r, a) => `_slice(${[r, ...a].join(", ")})`,
+  substring: (r, a) => `_substring(${[r, ...a].join(", ")})`,
   split: (r, a) => `_split(${[r, ...a].join(", ")})`,
   join: (r, a) => `_join(${[r, ...a].join(", ")})`,
   repeat: (r, a) => `(${r} * int(_num(${a[0] ?? "0"})))`,
@@ -310,6 +348,7 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
   charCodeAt: (r, a) => `ord(${r}[int(_num(${a[0] ?? "0"}))])`,
   concat: (r, a) => `(${r} + ${a.map((x) => `_str(${x})`).join(" + ") || '""'})`,
   toString: (r: string) => `_str(${r})`,
+  test: (r, a) => `_test(${r}, ${a[0] ?? "UNDEFINED"})`,
   replace: (r, a) => `_replace(${r}, ${a[0] ?? "UNDEFINED"}, ${a[1] ?? "UNDEFINED"})`,
   push: (r, a) => `_push(${[r, ...a].join(", ")})`,
   pop: (r) => `_pop(${r})`,
@@ -348,8 +387,81 @@ const ERRORS = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "Refe
 const isMemberRead = (label: string): boolean =>
   (label.startsWith(".") || label.startsWith("?.")) && !label.endsWith("=") && label !== "...";
 
+/** JavaScript's whitespace (`\s`), as the contents of a character class. */
+const JS_SPACE =
+  "\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff";
+const JS_NOT_LINE = "[^\\n\\r\\u2028\\u2029]";
+
+/**
+ * A regular expression literal as Python `re`, where the two mean the same: `.` stops at every
+ * JavaScript line terminator, `$` without the m flag is the end, `\d` and `\w` are ASCII (the A
+ * flag) and `\s` is JavaScript's whitespace. Refuses the sticky, unicode, multiline and dotAll
+ * flags, unicode escapes and properties, and lookbehind.
+ */
+export function regexToPython(text: string): {
+  readonly pattern: string;
+  readonly flags: string;
+  readonly global: boolean;
+} {
+  const close = text.lastIndexOf("/");
+  const body = text.slice(1, close);
+  const flags = text.slice(close + 1);
+  for (const f of flags)
+    if (!"gi".includes(f))
+      throw new PyEmitError(`the regular expression flag ${f} has no Python form here`);
+  let out = "";
+  let inClass = false;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i] as string;
+    if (c === "\\") {
+      const n = body[i + 1] ?? "";
+      i++;
+      if (n === "s") out += inClass ? JS_SPACE : `[${JS_SPACE}]`;
+      else if (n === "S") {
+        if (inClass) throw new PyEmitError("\\S inside a character class has no Python form here");
+        out += `[^${JS_SPACE}]`;
+      } else if (n === "/") out += "/";
+      else if (n === "u" || n === "p" || n === "P" || n === "c" || n === "k")
+        throw new PyEmitError(`the escape \\${n} has no Python form here`);
+      else out += `\\${n}`;
+      continue;
+    }
+    if (inClass) {
+      if (c === "]") inClass = false;
+      out += c;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      out += c;
+      if (body[i + 1] === "^") {
+        out += "^";
+        i++;
+      }
+      continue;
+    }
+    if (c === ".") out += JS_NOT_LINE;
+    else if (c === "$") out += "\\Z";
+    else if (c === "(" && body.startsWith("(?<", i) && body[i + 3] !== "=" && body[i + 3] !== "!") {
+      out += "(?P<";
+      i += 2;
+    } else if (c === "(" && (body.startsWith("(?<=", i) || body.startsWith("(?<!", i)))
+      throw new PyEmitError("lookbehind has no Python form here");
+    else out += c;
+  }
+  return {
+    pattern: out,
+    flags: `re.ASCII${flags.includes("i") ? " | re.IGNORECASE" : ""}`,
+    global: flags.includes("g"),
+  };
+}
+
 /** A literal label (JavaScript text) as Python. */
 function literal(label: string): string {
+  if (label.startsWith("/") && label.lastIndexOf("/") > 0) {
+    const r = regexToPython(label);
+    return `_re(${JSON.stringify(r.pattern)}, ${r.flags}, ${r.global ? "True" : "False"})`;
+  }
   if (label === "true") return "True";
   if (label === "false") return "False";
   if (label === "null") return "None";
@@ -490,11 +602,17 @@ function pyFunction(
     return `(${render(p)})`;
   };
 
+  /** The value an invariant stands for, through each loop it reaches into. */
+  const outerOf = (v: ValueId): ValueId => {
+    const outer = invariantOuter.get(v);
+    return outer === undefined ? v : outerOf(outer);
+  };
+
   /** The platform namespace and member a callee reads, when it is one. */
   const ambientMember = (callee: ValueId): { ns: string; member: string } | undefined => {
     const p = producer.get(callee);
     if (p === undefined || !inline.has(p.id) || !isMemberRead(p.label ?? "")) return undefined;
-    const base = producer.get(p.inputs[0] as ValueId);
+    const base = producer.get(outerOf(p.inputs[0] as ValueId));
     if (base?.kind !== "diamond-source" || base.diamond?.reason !== "platform-primitive")
       return undefined;
     return { ns: base.diamond.symbol, member: (p.label ?? "").replace(/^\??\./, "") };
@@ -595,6 +713,17 @@ function pyFunction(
         return fn(args);
       }
       const cp = producer.get(callee);
+      const platform = producer.get(outerOf(callee));
+      if (
+        platform?.kind === "diamond-source" &&
+        platform.diamond?.reason === "platform-primitive"
+      ) {
+        const sym = platform.diamond.symbol;
+        if (ERRORS.has(sym)) return `JsError(${args[0] ?? "UNDEFINED"}, ${JSON.stringify(sym)})`;
+        const call = AMBIENT_CALLS[sym];
+        if (call === undefined) throw new PyEmitError(`${sym}(...) has no Python form here`);
+        return call(args);
+      }
       if (cp?.kind === "diamond-source" && cp.diamond?.reason === "platform-primitive") {
         const sym = cp.diamond.symbol;
         if (ERRORS.has(sym)) return `JsError(${args[0] ?? "UNDEFINED"}, ${JSON.stringify(sym)})`;
