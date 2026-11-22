@@ -148,7 +148,6 @@ function emitFunction(
   /** An operation, literal or select, as an expression. */
   const render = (node: DucNode): string => {
     if (node.kind === "literal-source") {
-      if (node.label === "undefined") throw new EmitError("the return state of returns on some paths has no TypeScript form yet");
       return node.label ?? "";
     }
     if (node.kind === "sel") {
@@ -305,7 +304,8 @@ function emitFunction(
   function emitScope(scope: string | undefined): string[] {
     interface Item {
       readonly first: number;
-      readonly last: boolean;
+      /** 0 for a statement, 1 for a branch that may throw, 2 for a throw: each waits for the ones before. */
+      readonly last: number;
       readonly produces: readonly ValueId[];
       readonly requires: readonly ValueId[];
       readonly lines: () => string[];
@@ -316,7 +316,7 @@ function emitFunction(
       if (node.kind === "param-source" || node.kind === "diamond-source" || node.kind === "carry-source" || node.kind === "loop") continue;
       items.push({
         first: nodeIndex.get(node.id) as number,
-        last: node.label === "throw",
+        last: node.label === "throw" ? 2 : 0,
         produces: node.outputs,
         requires: needs(node),
         lines: () => statementsOf(node),
@@ -326,10 +326,10 @@ function emitFunction(
       if (loop.region !== scope) continue;
       items.push({
         first: nodeIndex.get(loop.id) as number,
-        last: false,
         produces: loop.outputs,
         requires: loop.inputs,
         lines: () => emitLoop(loop),
+        last: 0,
       });
     }
     for (const b of branches) {
@@ -342,27 +342,30 @@ function emitFunction(
       const requires = [b.cond, ...subtree.flatMap((n) => n.inputs), ...joins.flatMap((n) => n.inputs)];
       items.push({
         first: Math.min(g.nodes.length, ...[...subtree, ...joins].map((n) => nodeIndex.get(n.id) as number)),
-        last: false,
+        // A side that throws leaves the function: what does not depend on the branch comes first,
+        // as it came before the if in the source (the rest of a function is inside its sides).
+        last: subtree.some((n) => n.label === "throw") ? 1 : 0,
         produces: joins.flatMap((n) => n.outputs),
         requires: [...new Set(requires)].filter((v) => !innerValues.has(v)),
         lines: () => emitBranch(b),
       });
     }
     // A throw ends its scope, so it comes after everything else there.
-    items.sort((a, b) => (a.last === b.last ? a.first - b.first : a.last ? 1 : -1));
+    items.sort((a, b) => (a.last === b.last ? a.first - b.first : a.last - b.last));
     const producedBy = new Map<ValueId, number>();
     items.forEach((item, i) => item.produces.forEach((v) => producedBy.set(v, i)));
     const done = new Set<number>();
     const lines: string[] = [];
     while (done.size < items.length) {
-      const next = items.findIndex(
-        (item, i) =>
-          !done.has(i) &&
-          item.requires.every((v) => {
-            const p = producedBy.get(v);
-            return p === undefined || done.has(p);
-          }),
-      );
+      const ready = (item: Item, i: number): boolean =>
+        !done.has(i) &&
+        item.requires.every((v) => {
+          const p = producedBy.get(v);
+          return p === undefined || done.has(p);
+        });
+      // The earliest rank that has a ready item: a later rank waits while an earlier one can run.
+      const rank = Math.min(...items.filter(ready).map((item) => item.last));
+      const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);
       if (next === -1) throw new EmitError("the graph has a cycle");
       done.add(next);
       lines.push(...(items[next] as Item).lines());

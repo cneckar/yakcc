@@ -175,6 +175,8 @@ class Lifter {
   private readonly topLevel = new Set<ValueId>();
   /** Return frames: a total side collects its returns; undefined is a flat frame (observations). */
   private readonly returnFrames: (ValueId[] | undefined)[] = [];
+  /** A function body exits by return or throw, and ends with `return undefined`; a file does not. */
+  private exitMode: "function" | "file" = "file";
   /** Import bindings, name -> classification. */
   private readonly imports = new Map<string, ImportBinding>();
   /** Memoized diamond-sources, keyed by symbol so one unknown = one source. */
@@ -271,9 +273,12 @@ class Lifter {
     const body = fn.getBody();
     if (body === undefined) return;
     if (Node.isBlock(body)) {
-      this.liftStatements(body.getStatements());
-      // Returns on some paths: the observation is the value of the return state at the end.
+      this.exitMode = "function";
+      const exited = this.liftStatements(body.getStatements(), []);
+      // Returns on some paths: the observation is the value of the return state at the end. With
+      // no return state, a body that falls off its end returns undefined.
       if (this.env.has(RETURN_DONE)) this.obs.push(this.env.get(RETURN_VALUE) as ValueId);
+      else if (!exited) this.obs.push(this.undefinedValue());
     } else {
       // Arrow with expression body: the expression is the observation.
       this.obs.push(this.liftExpr(body));
@@ -289,7 +294,13 @@ class Lifter {
    * bound; otherwise it is bound at its own position. The deferred case is sound: a
    * call before that position resolves to an unknown, never to a missing edge.
    */
-  private liftStatements(stmts: readonly Node[]): void {
+  /**
+   * `cont` is what runs after the list, up to the end of the function, when that is known. An `if`
+   * that exits on some paths takes the rest of the list and `cont` onto both of its sides, so every
+   * path ends in an exit and the exits join in one total `if` (#1276). Returns true when every path
+   * through the list exits, so the continuation has been lifted.
+   */
+  private liftStatements(stmts: readonly Node[], cont?: readonly Node[]): boolean {
     const declared = new Set<string>();
     for (const stmt of stmts) {
       if (Node.isVariableStatement(stmt)) {
@@ -315,16 +326,67 @@ class Lifter {
       hoistedNames.add(name);
     }
     for (const [i, stmt] of stmts.entries()) {
-      // An `if` whose side always returns takes the rest of the list onto its other side, so every
-      // return is on one path, and the two returns join into one observation (see totalSides).
-      if (Node.isIfStatement(stmt)) {
-        const sides = totalSides(stmt, stmts.slice(i + 1));
-        if (sides !== undefined) {
-          this.liftIf(stmt, sides);
-          return;
-        }
+      const rest = stmts.slice(i + 1);
+      const full = cont === undefined ? undefined : [...rest, ...cont];
+      if (Node.isIfStatement(stmt) && full !== undefined && this.canTakeTail(stmt, full)) {
+        const elseNode = stmt.getElseStatement();
+        this.liftIf(stmt, { then: [stmt.getThenStatement(), ...full], else: [...(elseNode !== undefined ? [elseNode] : []), ...full] });
+        return true;
       }
-      this.liftStatement(stmt);
+      const blockCont = Node.isBlock(stmt) && full !== undefined && this.blockMayTake(stmt, full) ? full : undefined;
+      if (this.liftStatement(stmt, blockCont)) return true;
+      // An exit on some paths that no if could take the rest for: the rest runs only on the paths
+      // that have not exited, under the return state (the fallback).
+      if (containsDirectExit(stmt) && rest.length > 0 && this.env.has(RETURN_DONE)) {
+        this.guardTail(rest);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
+  private canTakeTail(stmt: import("ts-morph").IfStatement, tail: readonly Node[]): boolean {
+    if (this.exitMode !== "function" || !containsDirectExit(stmt)) return false;
+    // The tail's function declarations are hoisted by its own list.
+    if (tail.some((t) => Node.isFunctionDeclaration(t))) return false;
+    // A tail that both sides continue into is lifted twice: bound its size outside a total side.
+    const elseNode = stmt.getElseStatement();
+    const both = !alwaysReturns(stmt.getThenStatement()) && !(elseNode !== undefined && alwaysReturns(elseNode));
+    const size = tail.reduce((n, t) => n + t.getText().length, 0);
+    return !(both && this.returnFrames.length === 0 && size > 4000);
+  }
+
+  /** Whether a block's statements can run with `tail` after them in the block's scope. */
+  private blockMayTake(block: import("ts-morph").Block, tail: readonly Node[]): boolean {
+    if (!containsDirectExit(block)) return false;
+    const lexical = new Set<string>();
+    for (const st of block.getStatements()) {
+      if (Node.isVariableStatement(st)) for (const d of st.getDeclarations()) for (const n of patternNames(d.getNameNode())) lexical.add(n);
+      if ((Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) && st.getName() !== undefined) lexical.add(st.getName() as string);
+    }
+    return !tail.some((t) => this.readNamesOf(t).some((n) => lexical.has(n)));
+  }
+
+  /**
+   * The rest of a statement list after an exit on some paths, as the else-side of a branch on the
+   * exited flag: its effects happen, and its names change, only on the paths that have not exited.
+   */
+  private guardTail(rest: readonly Node[]): void {
+    const flag = this.env.get(RETURN_DONE) as ValueId;
+    const before = new Map(this.env);
+    const id = `b${this.branchCount++}`;
+    const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
+    this.branches.push({ id, cond: flag, ...(within !== undefined ? { within } : {}) });
+    const elseEnv = this.inRegion(`${id}.e`, () =>
+      this.inReturnFrame(undefined, () => this.branch(before, () => this.liftStatements(rest))),
+    );
+    for (const [name, beforeValue] of before) {
+      const elseValue = elseEnv.get(name) ?? beforeValue;
+      if (elseValue !== beforeValue) {
+        const [joined] = this.emit("sel", [flag, beforeValue, elseValue], 1, { origin: { kind: "ExitGuard", text: name } });
+        this.env.set(name, joined as ValueId);
+      }
     }
   }
 
@@ -417,7 +479,16 @@ class Lifter {
     return [...names];
   }
 
-  private liftStatement(node: Node): void {
+  /** Lifts one statement; true when every path through it exits. */
+  private liftStatement(node: Node, cont?: readonly Node[]): boolean {
+    this.liftStatementInner(node, cont);
+    if (Node.isReturnStatement(node) || Node.isThrowStatement(node)) return true;
+    return Node.isBlock(node) ? this.lastBlockExited : false;
+  }
+
+  private lastBlockExited = false;
+
+  private liftStatementInner(node: Node, cont?: readonly Node[]): void {
     if (Node.isClassDeclaration(node) && node.getName() !== undefined) {
       // A named class is bound at its own position. Its own name inside its body is
       // a self-reference, not an external read, as with a recursive function.
@@ -456,8 +527,7 @@ class Lifter {
     }
     if (Node.isReturnStatement(node)) {
       const expr = node.getExpression();
-      if (expr !== undefined) this.reportReturn(this.liftExpr(expr));
-      else if (this.env.has(RETURN_DONE)) this.recordPartialReturn(this.undefinedValue());
+      this.reportReturn(expr !== undefined ? this.liftExpr(expr) : this.undefinedValue());
       return;
     }
     if (Node.isIfStatement(node)) {
@@ -477,7 +547,7 @@ class Lifter {
       return;
     }
     if (Node.isBlock(node)) {
-      this.liftStatements(node.getStatements());
+      this.lastBlockExited = this.liftStatements(node.getStatements(), cont);
       return;
     }
     if (Node.isSwitchStatement(node) || Node.isTryStatement(node)) {
@@ -490,6 +560,7 @@ class Lifter {
         origin: { kind: "ThrowStatement" },
         label: "throw",
       });
+      this.reportThrow();
       return;
     }
     // Any other statement (expression-less, declarations we don't bind):
@@ -498,14 +569,14 @@ class Lifter {
   }
 
   /**
-   * Lifts an `if`. With `sides`, the statement list's rest belongs to a side (see totalSides): both
-   * sides always return, so the result is the join of their returns, one observation under the
+   * Lifts an `if`. With `sides`, the rest of the function is on both sides (see liftStatements):
+   * every path exits, so the result is the join of the sides' returns, one observation under the
    * condition. Otherwise the sides are the statements written, and their values join as names.
    */
   private liftIf(node: import("ts-morph").IfStatement, sides?: IfSides): void {
     const condValue = this.liftExpr(node.getExpression());
     // A return on some paths: the return state must exist before the branch, so the join carries it.
-    if (sides === undefined && containsDirectReturn(node)) this.ensureReturnState();
+    if (sides === undefined && containsDirectExit(node)) this.ensureReturnState();
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
     const id = `b${this.branchCount++}`;
@@ -516,20 +587,17 @@ class Lifter {
     const elseNode = node.getElseStatement();
     const thenStmts: readonly Node[] = sides?.then ?? [node.getThenStatement()];
     const elseStmts: readonly Node[] = sides?.else ?? (elseNode !== undefined ? [elseNode] : []);
+    // A total side runs to the end of the function: falling off its end returns undefined.
+    const side = (stmts: readonly Node[], returns: ValueId[]) => () =>
+      this.branch(before, () => {
+        if (!this.liftStatements(stmts, total ? [] : undefined) && total) returns.push(this.undefinedValue());
+      });
     const thenReturns: ValueId[] = [];
-    const thenEnv = this.inRegion(`${id}.t`, () =>
-      this.inReturnFrame(total ? thenReturns : undefined, () =>
-        this.branch(before, () => this.liftStatements(thenStmts)),
-      ),
-    );
+    const thenEnv = this.inRegion(`${id}.t`, () => this.inReturnFrame(total ? thenReturns : undefined, side(thenStmts, thenReturns)));
     const elseReturns: ValueId[] = [];
     const elseEnv =
-      elseStmts.length > 0
-        ? this.inRegion(`${id}.e`, () =>
-            this.inReturnFrame(total ? elseReturns : undefined, () =>
-              this.branch(before, () => this.liftStatements(elseStmts)),
-            ),
-          )
+      elseStmts.length > 0 || total
+        ? this.inRegion(`${id}.e`, () => this.inReturnFrame(total ? elseReturns : undefined, side(elseStmts, elseReturns)))
         : before;
 
     if (total) {
@@ -569,6 +637,19 @@ class Lifter {
     if (frame !== undefined) frame.push(value);
     else if (this.env.has(RETURN_DONE)) this.recordPartialReturn(value);
     else this.obs.push(value);
+  }
+
+  /**
+   * A throw is an exit with no value. In a total side its value is undefined (the path never
+   * observes it); on some paths it marks the path as exited, keeping the return value.
+   */
+  private reportThrow(): void {
+    const frame = this.returnFrames[this.returnFrames.length - 1];
+    if (frame !== undefined) frame.push(this.undefinedValue());
+    else if (this.env.has(RETURN_DONE)) {
+      const [flag] = this.emit("literal-source", [], 1, { origin: { kind: "TrueKeyword", text: "true" }, label: "true" });
+      this.env.set(RETURN_DONE, flag as ValueId);
+    }
   }
 
   /**
@@ -971,6 +1052,8 @@ class Lifter {
   // --- expressions ---
   private liftExpr(node: Node): ValueId {
     if (Node.isIdentifier(node)) {
+      // `undefined`, unless a binding shadows it, is the literal: the same value a bare `return;` has.
+      if (node.getText() === "undefined" && !this.env.has("undefined")) return this.undefinedValue();
       return this.resolveIdentifier(node.getText());
     }
     if (isLiteralExpression(node)) {
@@ -1581,6 +1664,8 @@ function hasJump(node: Node): boolean {
     ...node.getDescendantsOfKind(SyntaxKind.BreakStatement),
     ...node.getDescendantsOfKind(SyntaxKind.ContinueStatement),
     ...node.getDescendantsOfKind(SyntaxKind.ReturnStatement),
+    // A throw leaves the loop too: the rest of the body would run unguarded (#1276).
+    ...node.getDescendantsOfKind(SyntaxKind.ThrowStatement),
   ];
   return jumps.some((jump) => !isInsideNestedFunction(jump, node));
 }
@@ -1595,9 +1680,9 @@ interface IfSides {
   readonly else: readonly Node[];
 }
 
-/** True when every path through the node reaches a return with a value. Loops and switches are not followed. */
+/** True when every path through the node reaches a return or a throw. Loops and switches are not followed. */
 function alwaysReturns(node: Node): boolean {
-  if (Node.isReturnStatement(node)) return node.getExpression() !== undefined;
+  if (Node.isReturnStatement(node) || Node.isThrowStatement(node)) return true;
   if (Node.isBlock(node)) return node.getStatements().some(alwaysReturns);
   if (Node.isIfStatement(node)) {
     const elseNode = node.getElseStatement();
@@ -1606,55 +1691,19 @@ function alwaysReturns(node: Node): boolean {
   return false;
 }
 
-/**
- * The sides of an `if` that takes the rest of its statement list (`tail`) onto the side that does not
- * always return. Undefined when no side returns on its own, or when a total `if` would need the tail
- * to be dead, or when the tail declares functions (their hoisting is bound by the list).
- */
-function totalSides(node: import("ts-morph").IfStatement, tail: readonly Node[]): IfSides | undefined {
-  if (tail.some((t) => Node.isFunctionDeclaration(t))) return undefined;
-  const thenNode = node.getThenStatement();
-  const elseNode = node.getElseStatement();
-  const thenReturns = alwaysReturns(thenNode);
-  const elseReturns = elseNode !== undefined && alwaysReturns(elseNode);
-  let sides: IfSides | undefined;
-  if (thenReturns && elseReturns) {
-    if (tail.length === 0) sides = { then: [thenNode], else: [elseNode as Node] };
-  } else if (thenReturns) {
-    const side = [...(elseNode !== undefined ? [elseNode] : []), ...tail];
-    if (side.some(alwaysReturns)) sides = { then: [thenNode], else: side };
-  } else if (elseReturns) {
-    const side = [thenNode, ...tail];
-    if (side.some(alwaysReturns)) sides = { then: side, else: [elseNode as Node] };
-  }
-  if (sides === undefined) return undefined;
-  // A side with a return on some paths only would leave its value to the return state, which the frame does not see.
-  return totalCover(sides.then) && totalCover(sides.else) ? sides : undefined;
-}
-
-/**
- * True when every direct return in the list is inside a total `if` (or a block holding one): the
- * returns then all reach a frame. A return on some paths, or inside a loop or a switch, is not covered.
- */
-function totalCover(stmts: readonly Node[]): boolean {
-  for (let i = 0; i < stmts.length; i++) {
-    const stmt = stmts[i] as Node;
-    if (!containsDirectReturn(stmt)) continue;
-    if (Node.isBlock(stmt)) {
-      if (!totalCover(stmt.getStatements())) return false;
-      continue;
-    }
-    if (Node.isIfStatement(stmt)) return totalSides(stmt, stmts.slice(i + 1)) !== undefined;
-    return false;
-  }
-  return true;
-}
-
 /** True when the node has a return that is not inside a nested function, loop, switch or try. */
 function containsDirectReturn(node: Node): boolean {
   return node
     .getDescendantsOfKind(SyntaxKind.ReturnStatement)
     .some((ret) => !insideOpaque(ret, node));
+}
+
+/** True when the node has a return or a throw that is not inside a nested function, loop, switch or try. */
+function containsDirectExit(node: Node): boolean {
+  return (
+    containsDirectReturn(node) ||
+    node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node))
+  );
 }
 
 function insideOpaque(ret: Node, root: Node): boolean {

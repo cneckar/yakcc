@@ -100,7 +100,6 @@ function hoistLiterals(
     const { region: _region, ...top } = node;
     out.push(top);
   }
-  if (kept.size === 0) return { nodes: [...nodes], obs: [...obs], branches: [...branches] };
 
   // An invariant whose outer value is a literal is that literal. Inner loops see the substitution
   // of the outer one, so nested invariants fall away in turn.
@@ -151,27 +150,68 @@ function hoistLiterals(
       };
     });
 
-  // A branch with nothing inside either side, nor any branch within it, is dropped.
+  let observed = obs.map(sub);
+  const undefinedValue = kept.get("undefined");
   let kept2 = branches.map((b) => ({ ...b, cond: sub(b.cond) }));
+
+  // Dead structure: a literal or a select nothing reads has no effect, and a branch with nothing
+  // inside either side, nor any branch within it, is no branch. A select of one value on both sides
+  // is that value. Removing one can make another dead.
   for (let changed = true; changed; ) {
     changed = false;
+    // A select on c inside an arm of a select on the same c takes the same arm: sel(c, a, sel(c, b, x))
+    // is sel(c, a, x), and sel(c, sel(c, x, b), a) is sel(c, x, a).
+    const selOf = new Map<ValueId, DucNode>();
+    for (const n of out) if (n.kind === "sel" && n.inputs.length === 3) selOf.set(n.outputs[0] as ValueId, n);
+    out = out.map((n) => {
+      if (n.kind !== "sel" || n.inputs.length !== 3) return n;
+      const [c, t, e] = n.inputs as [ValueId, ValueId, ValueId];
+      const inT = selOf.get(t);
+      const inE = selOf.get(e);
+      const t2 = inT !== undefined && inT.inputs[0] === c ? (inT.inputs[1] as ValueId) : t;
+      const e2 = inE !== undefined && inE.inputs[0] === c ? (inE.inputs[2] as ValueId) : e;
+      if (t2 === t && e2 === e) return n;
+      changed = true;
+      return { ...n, inputs: [c, t2, e2] };
+    });
+    const trivial = out.filter((n) => n.kind === "sel" && n.inputs.length === 3 && n.inputs[1] === n.inputs[2]);
+    if (trivial.length > 0) {
+      for (const n of trivial) subst.set(n.outputs[0] as ValueId, n.inputs[1] as ValueId);
+      const gone = new Set(trivial);
+      out = out
+        .filter((n) => !gone.has(n))
+        .map((n) => ({
+          ...n,
+          inputs: n.inputs.map(sub),
+          ...(n.loop !== undefined
+            ? { loop: { ...n.loop, next: n.loop.next.map(sub), ...(n.loop.cond !== undefined ? { cond: sub(n.loop.cond) } : {}) } }
+            : {}),
+        }));
+      observed = observed.map(sub);
+      kept2 = kept2.map((b) => ({ ...b, cond: sub(b.cond) }));
+      changed = true;
+    }
+    // A function whose one result is undefined on every path has no result to observe: it is the
+    // same as a function that returns nothing (#1276).
+    if (observed.length === 1 && observed[0] === undefinedValue) observed = [];
+    const read = new Set<ValueId>([...observed, ...kept2.map((b) => b.cond)]);
+    for (const n of out) {
+      for (const v of n.inputs) read.add(v);
+      if (n.loop !== undefined) for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])]) read.add(v);
+    }
+    const live = out.filter((n) => (n.kind !== "literal-source" && n.kind !== "sel") || n.outputs.some((v) => read.has(v)));
+    if (live.length !== out.length) changed = true;
+    out = live;
     kept2 = kept2.filter((b) => {
-      const sides = [`${b.within !== undefined ? `${b.within}/` : ""}${b.id}.t`, `${b.within !== undefined ? `${b.within}/` : ""}${b.id}.e`];
+      const prefix = `${b.within !== undefined ? `${b.within}/` : ""}${b.id}.`;
       const inside = (region: string | undefined): boolean =>
-        region !== undefined && sides.some((s) => region === s || region.startsWith(`${s}/`));
+        region !== undefined && [`${prefix}t`, `${prefix}e`].some((side) => region === side || region.startsWith(`${side}/`));
       const used = out.some((n) => inside(n.region)) || kept2.some((o) => o !== b && inside(o.within));
       if (!used) changed = true;
       return used;
     });
   }
-  // A literal nothing reads has no effect.
-  const read = new Set<ValueId>([...obs.map(sub), ...kept2.map((b) => b.cond)]);
-  for (const n of out) {
-    for (const v of n.inputs) read.add(v);
-    if (n.loop !== undefined) for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])]) read.add(v);
-  }
-  out = out.filter((n) => n.kind !== "literal-source" || read.has(n.outputs[0] as ValueId));
-  return { nodes: out, obs: obs.map(sub), branches: kept2 };
+  return { nodes: out, obs: observed, branches: kept2 };
 }
 
 /**

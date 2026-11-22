@@ -68,10 +68,11 @@ describe("structured if in the line form (#1275)", () => {
     expect(() => parseLineForm("param c\nparam x\nselect r c x\n")).toThrow(/expected: select/);
   });
 
-  it("an if with an empty body keeps its branch through a round trip", () => {
+  it("an if with an empty body has no effect, so it is no branch, and round-trips", () => {
     const text = "param c\nif c\nend\nout c\n";
     const g = parseLineForm(text);
-    expect(g.branches?.length).toBe(1);
+    expect(g.branches).toBeUndefined();
+    expect(graphIdentity(g)).toBe(graphIdentity(parseLineForm("param c\nout c\n")));
     expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
   });
 
@@ -101,11 +102,13 @@ describe("structured if in the line form (#1275)", () => {
     expect(graphIdentity(back)).toBe(graphIdentity(g));
   });
 
-  it("a return on some paths joins into one observation, the return state, and prints", () => {
+  it("a return on some paths takes the rest of the function onto both sides, joins into one observation, and prints", () => {
     const src = "export function f(c: boolean, x: number): number { if (c) { if (x > 0) { return 1; } } return x; }";
     const g = liftAtom(src);
     expect(g.obs.length).toBe(1);
-    expect(g.nodes.some((n) => n.origin?.kind === "ReturnSelect")).toBe(true);
+    // The rest (`return x`) is on both sides of the outer if and the else of the inner one (#1276).
+    expect(g.nodes.some((n) => n.origin?.kind === "ReturnSelect")).toBe(false);
+    expect(g.nodes.filter((n) => n.origin?.kind === "IfReturn")).toHaveLength(2);
     expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
   });
 
