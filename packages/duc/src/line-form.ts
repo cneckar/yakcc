@@ -22,12 +22,15 @@
  *                                       defined on that side). It must directly follow its end.
  *   select <name> <cond> <then> <else>  a value chosen by a condition, with no branch around it (a
  *                                       ternary). Both values are computed; the condition picks one.
- *   loop <name> ... [with <name> ...]   open a loop. The names before `with` start the carried
- *                                       variables; the names after it are the outer values the body
- *                                       reads (invariants).
+ *   loop <name> ... [of|in <name>] [with <name> ...]
+ *                                       open a loop. The names first start the carried variables;
+ *                                       `of <x>` iterates the values of x, `in <x>` its keys; the
+ *                                       names after `with` are the outer values the body reads.
  *   carry <name> ...                    the body's names for the carried variables, in order
  *   invariant <name> ...                the body's names for the invariants, in order
+ *   element <name>                      an iterating loop's name for the current element
  *   while <name>                        the body's condition: the loop continues while it is true
+ *                                       (not for an iterating loop, which runs once per element)
  *   next <name> ...                     the next value of each carried variable, in order
  *   end <name> ...                      close the loop; the names are its results, one per carry
  *   out <name>                          an observation, in order; top level only
@@ -77,8 +80,12 @@ interface LoopFrame {
   readonly before: ReadonlyMap<string, ValueId>;
   readonly inits: readonly ValueId[];
   readonly invariantOuter: readonly ValueId[];
+  /** An iterating loop: what it iterates, and whether over values (`of`) or keys (`in`). */
+  readonly iterable: ValueId | undefined;
+  readonly of: "values" | "keys" | undefined;
   /** The next directive that the loop accepts, in order. */
-  stage: "carry" | "invariant" | "body" | "next" | "end";
+  stage: "carry" | "invariant" | "element" | "body" | "next" | "end";
+  element: ValueId | undefined;
   carry: ValueId[];
   invariant: ValueId[];
   cond: ValueId | undefined;
@@ -87,7 +94,7 @@ interface LoopFrame {
 
 type Frame = IfFrame | LoopFrame;
 
-const RESERVED = new Set(["with"]);
+const RESERVED = new Set(["with", "of", "in"]);
 
 /** The region path of a loop's body. */
 function bodyPathOf(node: DucNode): string {
@@ -149,13 +156,14 @@ export function parseLineForm(text: string): DucGraph {
     // A loop takes its header parts in order, and nothing else until they are all written.
     const top = open[open.length - 1];
     if (top?.kind === "loop" && top.stage !== "body") {
-      const expected = top.stage === "end" ? "end <name> ..." : top.stage === "next" ? "next <name> ..." : top.stage;
-      const ok =
-        (top.stage === "carry" && head === "carry") ||
-        (top.stage === "invariant" && head === "invariant") ||
-        (top.stage === "next" && head === "next") ||
-        (top.stage === "end" && head === "end");
-      if (!ok) throw new LineFormError(line, `expected: ${expected === "carry" || expected === "invariant" ? `${expected} <name> ...` : expected}`);
+      const expected: Record<string, string> = {
+        carry: "carry <name> ...",
+        invariant: "invariant <name> ...",
+        element: "element <name>",
+        next: "next <name> ...",
+        end: "end <name> ...",
+      };
+      if (head !== top.stage) throw new LineFormError(line, `expected: ${expected[top.stage]}`);
     }
 
     if (trimmed.startsWith("lit")) {
@@ -266,10 +274,17 @@ export function parseLineForm(text: string): DucGraph {
     }
 
     if (head === "loop") {
+      const usage = "expected: loop <name> ... [of|in <name>] [with <name> ...]";
       const withAt = rest.indexOf("with");
-      const initNames = withAt === -1 ? rest : rest.slice(0, withAt);
+      const head1 = withAt === -1 ? rest : rest.slice(0, withAt);
       const invNames = withAt === -1 ? [] : rest.slice(withAt + 1);
-      if (rest.filter((n) => n === "with").length > 1) throw new LineFormError(line, 'expected: loop <name> ... [with <name> ...]');
+      if (rest.filter((n) => n === "with").length > 1 || invNames.some((n) => n === "of" || n === "in")) {
+        throw new LineFormError(line, usage);
+      }
+      const iterAt = head1.findIndex((n) => n === "of" || n === "in");
+      const initNames = iterAt === -1 ? head1 : head1.slice(0, iterAt);
+      if (iterAt !== -1 && head1.length !== iterAt + 2) throw new LineFormError(line, usage);
+      const of = iterAt === -1 ? undefined : head1[iterAt] === "of" ? ("values" as const) : ("keys" as const);
       const within = currentRegion();
       const frame: LoopFrame = {
         kind: "loop",
@@ -279,6 +294,9 @@ export function parseLineForm(text: string): DucGraph {
         before: new Map(names),
         inits: initNames.map((n) => use(n, line)),
         invariantOuter: invNames.map((n) => use(n, line)),
+        iterable: iterAt === -1 ? undefined : use(head1[iterAt + 1] as string, line),
+        of,
+        element: undefined,
         stage: "carry",
         carry: [],
         invariant: [],
@@ -310,8 +328,18 @@ export function parseLineForm(text: string): DucGraph {
         frame.stage = "invariant";
       } else {
         frame.invariant = values;
-        frame.stage = "body";
+        frame.stage = frame.of !== undefined ? "element" : "body";
       }
+      return;
+    }
+
+    if (head === "element") {
+      if (top?.kind !== "loop" || top.stage !== "element") throw new LineFormError(line, "element must follow the invariant line of an iterating loop");
+      if (rest.length !== 1) throw new LineFormError(line, "expected: element <name>");
+      const value = define(rest[0] as string, line);
+      add({ kind: "carry-source", inputs: [], outputs: [value], label: "element" }, currentRegion());
+      top.element = value;
+      top.stage = "body";
       return;
     }
 
@@ -320,6 +348,7 @@ export function parseLineForm(text: string): DucGraph {
       if (frame === undefined || frame.kind !== "loop" || frame.stage !== "body") {
         throw new LineFormError(line, "while must follow the body of a loop, and come once");
       }
+      if (frame.of !== undefined) throw new LineFormError(line, "an iterating loop has no while: it runs once per element");
       if (rest.length !== 1) throw new LineFormError(line, "expected: while <name>");
       frame.cond = use(rest[0] as string, line);
       frame.stage = "next";
@@ -327,7 +356,8 @@ export function parseLineForm(text: string): DucGraph {
     }
 
     if (head === "next") {
-      if (top?.kind !== "loop" || top.stage !== "next") throw new LineFormError(line, "next must follow while");
+      const ready = top?.kind === "loop" && (top.stage === "next" || (top.stage === "body" && top.of !== undefined));
+      if (!ready || top?.kind !== "loop") throw new LineFormError(line, "next must follow while, or the body of an iterating loop");
       const frame = top;
       if (rest.length !== frame.inits.length) {
         throw new LineFormError(line, `expected ${frame.inits.length} name(s): next <name> ... (one per carried variable)`);
@@ -351,14 +381,17 @@ export function parseLineForm(text: string): DucGraph {
         add(
           {
             kind: "loop",
-            inputs: [...frame.inits, ...frame.invariantOuter],
+            inputs: [...frame.inits, ...(frame.iterable !== undefined ? [frame.iterable] : []), ...frame.invariantOuter],
             outputs,
+            ...(frame.of !== undefined ? { label: frame.of === "values" ? "for-of" : "for-in" } : {}),
             loop: {
               id: frame.id,
               carry: frame.carry,
               invariant: frame.invariant,
               next: frame.next,
-              cond: frame.cond as ValueId,
+              ...(frame.of === undefined
+                ? { cond: frame.cond as ValueId }
+                : { iterate: { element: frame.element as ValueId, of: frame.of } }),
             },
           },
           currentRegion(),
@@ -487,11 +520,25 @@ export function printLineForm(g: DucGraph): string {
   for (const loop of loopNodes) {
     const rec = loop.loop;
     if (rec === undefined) {
-      throw new Error(`loop ${loop.id} is over an iterable or a do loop, which the line form does not express yet`);
+      throw new Error(
+        `loop ${loop.id} is a do loop, or has a break, continue or return, which the line form does not express yet`,
+      );
     }
     const body = bodyPathOf(loop);
-    if (loop.inputs.length !== rec.carry.length + rec.invariant.length || loop.outputs.length !== rec.carry.length) {
-      throw new Error(`loop ${loop.id} does not match its carried and invariant values`);
+    const iterating = rec.iterate !== undefined ? 1 : 0;
+    if (
+      loop.inputs.length !== rec.carry.length + iterating + rec.invariant.length ||
+      loop.outputs.length !== rec.carry.length ||
+      (rec.cond === undefined) === (rec.iterate === undefined)
+    ) {
+      throw new Error(`loop ${loop.id} does not match its carried and invariant values, or its condition or iteration`);
+    }
+    if (rec.iterate !== undefined) {
+      const p = producerOf(rec.iterate.element);
+      if (p.kind !== "carry-source" || p.region !== body || p.label !== "element") {
+        throw new Error(`loop ${loop.id} has an element that is not its body's source`);
+      }
+      headerOf.set(p.id, loop);
     }
     for (const [i, v] of rec.carry.entries()) {
       const p = producerOf(v);
@@ -507,7 +554,7 @@ export function printLineForm(g: DucGraph): string {
       }
       headerOf.set(p.id, loop);
     }
-    for (const v of [...rec.next, rec.cond]) {
+    for (const v of [...rec.next, ...(rec.cond !== undefined ? [rec.cond] : [])]) {
       const p = producerOf(v);
       if (p.region === undefined || !isPrefix(body, p.region)) {
         throw new Error(`loop ${loop.id} takes its next value or condition from outside its body`);
@@ -604,17 +651,21 @@ export function printLineForm(g: DucGraph): string {
   const printLoop = (loop: DucNode): string[] => {
     const rec = loop.loop as DucLoop;
     const count = rec.carry.length;
+    const offset = count + (rec.iterate !== undefined ? 1 : 0);
     printed.add(loop.id);
     for (const v of [...rec.carry, ...rec.invariant]) printed.add(producerOf(v).id);
+    if (rec.iterate !== undefined) printed.add(producerOf(rec.iterate.element).id);
     const header = ["loop", ...loop.inputs.slice(0, count)];
-    if (rec.invariant.length > 0) header.push("with", ...loop.inputs.slice(count));
+    if (rec.iterate !== undefined) header.push(rec.iterate.of === "values" ? "of" : "in", loop.inputs[count] as ValueId);
+    if (rec.invariant.length > 0) header.push("with", ...loop.inputs.slice(offset));
     const body = printScope(bodyPathOf(loop));
     return [
       header.join(" "),
       ["carry", ...rec.carry].join(" "),
       ["invariant", ...rec.invariant].join(" "),
+      ...(rec.iterate !== undefined ? [`element ${rec.iterate.element}`] : []),
       ...body,
-      `while ${rec.cond}`,
+      ...(rec.cond !== undefined ? [`while ${rec.cond}`] : []),
       ["next", ...rec.next].join(" "),
       ["end", ...loop.outputs].join(" "),
     ];

@@ -23,9 +23,10 @@ import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } fro
  */
 const COMMUTATIVE = new Set(["===", "!=="]);
 
-/** Where a loop's invariants start among its inputs: after the initial values of its carries. */
+/** Where a loop's invariants start among its inputs: after the carries' initial values and the iterable. */
 function invariantOffset(node: DucNode): number {
-  return (node.loop as DucLoop).carry.length;
+  const loop = node.loop as DucLoop;
+  return loop.carry.length + (loop.iterate !== undefined ? 1 : 0);
 }
 
 /**
@@ -267,7 +268,10 @@ export function canonicalizeGraph(
               renameValue(node.loop?.invariant[j] as ValueId),
             ),
             next: node.loop.next.map(renameValue),
-            cond: renameValue(node.loop.cond),
+            ...(node.loop.cond !== undefined ? { cond: renameValue(node.loop.cond) } : {}),
+            ...(node.loop.iterate !== undefined
+              ? { iterate: { element: renameValue(node.loop.iterate.element), of: node.loop.iterate.of } }
+              : {}),
           };
     const label = relabel.get(node) ?? node.label;
     return {

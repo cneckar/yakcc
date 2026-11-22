@@ -62,6 +62,49 @@ describe("loops in the line form (#1275)", () => {
     expect(outer?.inputs).toContain(param?.outputs[0]);
   });
 
+  describe("iterating loops (3A)", () => {
+    const ITERATING = [
+      "export function f(xs: number[], k: number): number { let s = 0; for (const x of xs) { s = s + x * k; } return s; }",
+      "export function f(o: object): number { let n = 0; for (const key in o) { n = n + 1; } return n; }",
+      "export function f(xs: number[], ys: number[]): number { let s = 0; for (const x of xs) { for (const y of ys) { s = s + x * y; } } return s; }",
+      "export function f(xs: number[]): number { let s = 0; for (const x of xs) { if (x > 0) { s = s + x; } } return s; }",
+    ];
+    for (const src of ITERATING) {
+      it(`prints and parses back to the same structure: ${src.slice(40, 120)}`, () => {
+        const g = liftAtom(src);
+        expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+      });
+    }
+
+    it("a hand-written for...of parses to the graph the lifter produces for it", () => {
+      const text = [
+        "param xs",
+        "param k",
+        'lit "0" -> s0',
+        "loop s0 of xs with k",
+        "carry s",
+        "invariant kk",
+        "element x",
+        "op * x kk -> t",
+        "op + s t -> s2",
+        "next s2",
+        "end r",
+        "out r",
+      ].join("\n");
+      expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom(ITERATING[0] as string)));
+    });
+
+    it("an iterating loop has no while", () => {
+      const text = 'param xs\nlit "0" -> s0\nloop s0 of xs\ncarry s\ninvariant\nelement x\nwhile x\n';
+      expect(() => parseLineForm(text)).toThrow(/no while/);
+    });
+
+    it("an iterating loop needs its element line", () => {
+      const text = 'param xs\nlit "0" -> s0\nloop s0 of xs\ncarry s\ninvariant\nnext s\n';
+      expect(() => parseLineForm(text)).toThrow(/expected: element/);
+    });
+  });
+
   describe("errors", () => {
     it("a loop that is not closed is an error at its line", () => {
       expect(() => parseLineForm("param n\nloop n\ncarry a\ninvariant\n")).toThrow(/line 2: loop is not closed by end/);

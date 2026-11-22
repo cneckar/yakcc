@@ -38,7 +38,8 @@ export type CompactNode = readonly [
   readonly [number, number, number] | null,
   number,
   number,
-  readonly [number, readonly number[], readonly number[], readonly number[], number] | null,
+  // Loop: [id, carry, invariant, next, cond (-1: none), element (-1: none), kind of iteration (-1, 0 values, 1 keys)]
+  readonly [number, readonly number[], readonly number[], readonly number[], number, number, number] | null,
 ];
 
 const NODE_ID = /^n(\d+)$/;
@@ -79,7 +80,7 @@ export function encodeGraph(g: DucGraph): CompactGraph {
       : null;
     const label = node.label === undefined ? -1 : intern(node.label);
     const region = node.region === undefined ? -1 : intern(node.region);
-    const loop: [number, number[], number[], number[], number] | null =
+    const loop: [number, number[], number[], number[], number, number, number] | null =
       node.loop === undefined
         ? null
         : [
@@ -87,7 +88,9 @@ export function encodeGraph(g: DucGraph): CompactGraph {
             node.loop.carry.map(valueIndex),
             node.loop.invariant.map(valueIndex),
             node.loop.next.map(valueIndex),
-            valueIndex(node.loop.cond),
+            node.loop.cond === undefined ? -1 : valueIndex(node.loop.cond),
+            node.loop.iterate === undefined ? -1 : valueIndex(node.loop.iterate.element),
+            node.loop.iterate === undefined ? -1 : node.loop.iterate.of === "values" ? 0 : 1,
           ];
     return [
       intern(node.kind),
@@ -147,8 +150,9 @@ export function decodeGraph(c: CompactGraph): DucGraph {
         carry: loop[1].map(value),
         invariant: loop[2].map(value),
         next: loop[3].map(value),
-        cond: value(loop[4]),
-      };
+        ...(loop[4] !== -1 ? { cond: value(loop[4]) } : {}),
+        ...(loop[5] !== -1 ? { iterate: { element: value(loop[5]), of: loop[6] === 0 ? "values" : "keys" } } : {}),
+      } as DucLoop;
     }
     if (diamond !== null) {
       node.diamond = {

@@ -21,6 +21,8 @@ function literal(label: string): unknown {
   if (label === "true") return true;
   if (label === "false") return false;
   if (label === "undefined") return undefined;
+  // A quoted string without escapes (the test sources use only these).
+  if (/^(['"]).*\1$/.test(label)) return label.slice(1, -1);
   const n = Number(label);
   if (Number.isNaN(n)) throw new Error(`unsupported literal ${label}`);
   return n;
@@ -60,13 +62,30 @@ function evalScope(g: DucGraph, scope: string | undefined, values: Map<ValueId, 
     if (node.kind === "loop" && node.loop !== undefined) {
       const loop = node.loop;
       const count = loop.carry.length;
+      const offset = count + (loop.iterate !== undefined ? 1 : 0);
       let carry = node.inputs.slice(0, count).map((v) => values.get(v));
-      for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+      const runBody = (element?: unknown): Map<ValueId, unknown> => {
         const local = new Map(values);
         loop.carry.forEach((v, i) => local.set(v, carry[i]));
-        loop.invariant.forEach((v, j) => local.set(v, values.get(node.inputs[count + j] as ValueId)));
+        loop.invariant.forEach((v, j) => local.set(v, values.get(node.inputs[offset + j] as ValueId)));
+        if (loop.iterate !== undefined) local.set(loop.iterate.element, element);
         evalScope(g, loop.id, local);
-        if (!local.get(loop.cond)) return carry;
+        return local;
+      };
+      if (loop.iterate !== undefined) {
+        const iterable = values.get(node.inputs[count] as ValueId) as Iterable<unknown> & object;
+        const elements: unknown[] = [];
+        if (loop.iterate.of === "values") for (const el of iterable) elements.push(el);
+        else for (const key in iterable) elements.push(key);
+        for (const el of elements) {
+          const local = runBody(el);
+          carry = loop.next.map((v) => local.get(v));
+        }
+        return carry;
+      }
+      for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+        const local = runBody();
+        if (!local.get(loop.cond as ValueId)) return carry;
         carry = loop.next.map((v) => local.get(v));
       }
       throw new Error("the loop did not stop");
@@ -150,6 +169,30 @@ const CASES: { name: string; source: string; args: unknown[][]; fn: (...a: any[]
     source: "export function f(n: number): number { let s = 0; for (let i = 0; i < n; i = i + 1) { let j = 0; while (j < i) { s = s + 1; j = j + 1; } } return s; }",
     args: [[0], [1], [2], [4]],
     fn: (n: number) => { let s = 0; for (let i = 0; i < n; i = i + 1) { let j = 0; while (j < i) { s = s + 1; j = j + 1; } } return s; },
+  },
+  {
+    name: "for...of sums an array",
+    source: "export function f(xs: number[], k: number): number { let s = 0; for (const x of xs) { s = s + x * k; } return s; }",
+    args: [[[], 2], [[1, 2, 3], 2], [[5, -1], -3]],
+    fn: (xs: number[], k: number) => { let s = 0; for (const x of xs) { s = s + x * k; } return s; },
+  },
+  {
+    name: "for...of over a string's characters",
+    source: "export function f(s: string): number { let n = 0; for (const c of s) { if (c === 'a') { n = n + 1; } } return n; }",
+    args: [[""], ["banana"], ["xyz"]],
+    fn: (s: string) => { let n = 0; for (const c of s) { if (c === "a") { n = n + 1; } } return n; },
+  },
+  {
+    name: "for...in counts an object's keys",
+    source: "export function f(o: object): number { let n = 0; for (const k in o) { n = n + 1; } return n; }",
+    args: [[{}], [{ a: 1, b: 2 }], [{ x: 0, y: 0, z: 0 }]],
+    fn: (o: object) => { let n = 0; for (const k in o) { void k; n = n + 1; } return n; },
+  },
+  {
+    name: "nested iteration",
+    source: "export function f(xs: number[], ys: number[]): number { let s = 0; for (const x of xs) { for (const y of ys) { s = s + x * y; } } return s; }",
+    args: [[[], [1]], [[1, 2], [3, 4]], [[2], [5, -5, 1]]],
+    fn: (xs: number[], ys: number[]) => { let s = 0; for (const x of xs) { for (const y of ys) { s = s + x * y; } } return s; },
   },
 ];
 

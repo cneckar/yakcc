@@ -461,6 +461,7 @@ class Lifter {
       return;
     }
     if ((Node.isForStatement(node) || Node.isWhileStatement(node)) && this.liftLoop(node)) return;
+    if ((Node.isForOfStatement(node) || Node.isForInStatement(node)) && this.liftIterate(node)) return;
     if (
       Node.isForStatement(node) ||
       Node.isForOfStatement(node) ||
@@ -694,6 +695,86 @@ class Lifter {
       invariant: frame.invariantSources,
       next: nexts,
       cond: condition as ValueId,
+    };
+    carried.forEach((name, i) => {
+      const out = results[i];
+      if (out !== undefined) this.env.set(name, out);
+    });
+    return true;
+  }
+
+  /**
+   * Lifts a `for...of` (values) or `for...in` (keys) loop as a loop node that iterates (#1275, 3A).
+   * The iterable is lifted before the loop and is the loop's input after the carries' initial values;
+   * the declared loop variable is the body's element source. Iterating is a platform primitive, so
+   * this holds for any iterable. Returns false for a form it does not express (`for await`, a jump,
+   * a loop variable that is not a single declaration).
+   */
+  private liftIterate(node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement): boolean {
+    if (hasJump(node)) return false;
+    if (Node.isForOfStatement(node) && node.isAwaited()) return false;
+    const init = node.getInitializer();
+    if (!Node.isVariableDeclarationList(init) || init.getDeclarations().length !== 1) return false;
+    const decl = init.getDeclarations()[0] as import("ts-morph").VariableDeclaration;
+    const declared = patternNames(decl.getNameNode());
+    const of: "values" | "keys" = Node.isForOfStatement(node) ? "values" : "keys";
+    const body = node.getStatement();
+
+    const iterable = this.liftExpr(node.getExpression());
+    const carried = this.collectAssignedOuterNames(body).filter(
+      (name) => this.env.has(name) && !declared.includes(name),
+    );
+    const inits = carried.map((name) => this.env.get(name) as ValueId);
+
+    const saved = this.env;
+    this.env = new Map(saved);
+    const frame: LoopFrame = {
+      id: `L${this.loopCount++}`,
+      start: this.valueCounter,
+      depth: 0,
+      invariants: [],
+      invariantSources: [],
+      byOuter: new Map(),
+    };
+    const carrySources: ValueId[] = [];
+    const nexts: ValueId[] = [];
+    let element: ValueId | undefined;
+    this.loopFrames.push(frame);
+    try {
+      this.inRegion(`${frame.id}.b`, () => {
+        frame.depth = this.regionStack.length;
+        carried.forEach((name, i) => {
+          const [value] = this.emit("carry-source", [], 1, {
+            label: `carry:${i}`,
+            origin: { kind: "LoopCarry", text: truncate(name) },
+          });
+          carrySources.push(value as ValueId);
+          this.env.set(name, value as ValueId);
+        });
+        [element] = this.emit("carry-source", [], 1, {
+          label: "element",
+          origin: { kind: "LoopElement", text: truncate(decl.getNameNode().getText()) },
+        }) as [ValueId];
+        for (const name of declared) this.env.set(name, element);
+        this.liftStatement(body);
+        for (const name of carried) nexts.push(this.env.get(name) as ValueId);
+      });
+    } finally {
+      this.loopFrames.pop();
+      this.env = saved;
+    }
+
+    const results = this.emit("loop", [...inits, iterable, ...frame.invariants], carried.length, {
+      origin: { kind: node.getKindName(), text: truncate(node.getText()) },
+      label: of === "values" ? "for-of" : "for-in",
+    });
+    const loopNode = this.nodes[this.nodes.length - 1] as MutableNode;
+    loopNode.loop = {
+      id: frame.id,
+      carry: carrySources,
+      invariant: frame.invariantSources,
+      next: nexts,
+      iterate: { element: element as ValueId, of },
     };
     carried.forEach((name, i) => {
       const out = results[i];

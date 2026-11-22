@@ -48,9 +48,9 @@ describe("line form (#1275, item 2)", () => {
     expect(() => parseLineForm("param a\nparam a\n")).toThrow(/already defined/);
   });
 
-  it("a loop over an iterable is refused by the printer: only while and for loops have a line form", () => {
-    const g = liftAtom("export function f(xs: number[]): number { let s = 0; for (const x of xs) { s = s + x; } return s; }");
-    expect(() => printLineForm(g)).toThrow(/loop/);
+  it("a do loop is refused by the printer: it has no line form yet", () => {
+    const g = liftAtom("export function f(n: number): number { let i = 0; do { i = i + 1; } while (i < n); return i; }");
+    expect(() => printLineForm(g)).toThrow(/do loop/);
   });
 
   it("a ternary prints as select, and parses back to the same structure", () => {

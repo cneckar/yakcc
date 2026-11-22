@@ -180,7 +180,14 @@ export interface DucLoop {
   readonly carry: readonly ValueId[];
   readonly invariant: readonly ValueId[];
   readonly next: readonly ValueId[];
-  readonly cond: ValueId;
+  /** A `while` or `for` loop: the body's condition to continue. Absent for an iteration. */
+  readonly cond?: ValueId;
+  /**
+   * An iteration (`for...of` over values, `for...in` over keys): the body's source for the current
+   * element. The iterable is the loop's input right after the carries' initial values. Iterating is
+   * a platform primitive, so this holds for any iterable.
+   */
+  readonly iterate?: { readonly element: ValueId; readonly of: "values" | "keys" };
 }
 
 /**
