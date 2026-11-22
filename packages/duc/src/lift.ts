@@ -253,7 +253,7 @@ class Lifter {
       // Structural label (D6): explicit, else the syntactic kind of the origin.
       ...(extra?.label !== undefined
         ? { label: extra.label }
-        : extra?.origin !== undefined
+        : extra?.origin !== undefined && (kind === "op" || kind === "literal-source")
           ? { label: extra.origin.kind }
           : {}),
     };
@@ -407,7 +407,7 @@ class Lifter {
         const value =
           init !== undefined
             ? this.liftExpr(init)
-            : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" } })[0];
+            : this.emit("literal-source", [], 1, { origin: { kind: "Uninitialized" }, label: "Uninitialized" })[0];
         for (const name of patternNames(decl.getNameNode())) {
           this.env.set(name, value as ValueId);
         }

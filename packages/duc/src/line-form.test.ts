@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it } from "vitest";
+import { graphIdentity } from "./canonical.js";
+import { liftAtom } from "./lift.js";
+import { LineFormError, parseLineForm, printLineForm } from "./line-form.js";
+
+describe("line form (#1275, item 2)", () => {
+  const SOURCES = [
+    "export function f(a: number): number { return a + 1; }",
+    "export function f(a: number, b: number): number { return a * 2 + b; }",
+    "export function f(s: string): string { return encodeURI(s) + 'x'; }",
+    "export function f(xs: number[]): number { return xs[0] - xs[1]; }",
+  ];
+
+  for (const src of SOURCES) {
+    it(`prints and parses back to the same structure: ${src.slice(0, 50)}`, () => {
+      const g = liftAtom(src);
+      const text = printLineForm(g);
+      expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a model-style text parses to the graph the lifter produces for the same function", () => {
+    const text = [
+      "# a + 1",
+      "param a",
+      'lit "1" -> one',
+      "op + a one -> r",
+      "out r",
+    ].join("\n");
+    expect(graphIdentity(parseLineForm(text))).toBe(
+      graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }")),
+    );
+  });
+
+  it("the author's names do not affect identity", () => {
+    const named = "param x\nlit \"1\" -> k\nop + x k -> y\nout y\n";
+    const other = "param a\nlit \"1\" -> one\nop + a one -> r\nout r\n";
+    expect(graphIdentity(parseLineForm(named))).toBe(graphIdentity(parseLineForm(other)));
+  });
+
+  it("a name used before it is defined is rejected, with its line", () => {
+    expect(() => parseLineForm("param a\nop + a b -> r\nout r\n")).toThrow(LineFormError);
+    expect(() => parseLineForm("param a\nop + a b -> r\nout r\n")).toThrow(/line 2.*"b" is used before it is defined/);
+  });
+
+  it("a name defined twice is rejected", () => {
+    expect(() => parseLineForm("param a\nparam a\n")).toThrow(/already defined/);
+  });
+
+  it("control flow is refused by the printer", () => {
+    const g = liftAtom("export function f(c: boolean, x: number): number { return c ? x : 0; }");
+    expect(() => printLineForm(g)).toThrow(/control flow/);
+  });
+
+  it("an unknown directive is rejected, with its line", () => {
+    expect(() => parseLineForm("param a\nif a\n")).toThrow(/line 2.*unknown directive "if"/);
+  });
+});
