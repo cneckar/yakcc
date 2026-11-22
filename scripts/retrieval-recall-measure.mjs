@@ -55,8 +55,11 @@ const embed = async (text) => Float32Array.from((await pipe(text, { pooling: "me
 
 // 3. Line-form directives, for rewriting. Printing and parsing go through the real line form.
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Block directives (if, loop, ...) pass through unchanged: the rewrites act on operations and literals.
+const BLOCK_HEADS = new Set(["if", "else", "end", "join", "select", "loop", "carry", "invariant", "while", "next"]);
 function toDirectives(text) {
   return text.split("\n").map((raw) => raw.trim()).filter((l) => l && !l.startsWith("#")).map((l) => {
+    if (BLOCK_HEADS.has(l.split(/\s+/)[0])) return { t: "raw", text: l };
     const m = /^lit\s+("(?:[^"\\]|\\.)*")\s*->\s*(\S+)$/.exec(l);
     if (m) return { t: "lit", label: JSON.parse(m[1]), name: m[2] };
     const p = l.split(/\s+/);
@@ -70,6 +73,7 @@ function toDirectives(text) {
 }
 function toText(ds) {
   return ds.map((d) => {
+    if (d.t === "raw") return d.text;
     if (d.t === "param") return `param ${d.name}`;
     if (d.t === "out") return `out ${d.name}`;
     if (d.t === "lit") return `lit ${JSON.stringify(d.label)} -> ${d.name}`;
