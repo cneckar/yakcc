@@ -1,0 +1,8 @@
+{
+  "name": "foreign-import-to-send",
+  "version": 1,
+  "description": "A value from a foreign module reaches a network send without the declared encrypt step.",
+  "sources": [{ "kind": "diamond", "reason": "foreign-import" }],
+  "sinks": ["send"],
+  "sanitizers": ["encrypt"]
+}

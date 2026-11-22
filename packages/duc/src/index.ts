@@ -71,3 +71,18 @@ export {
   niAttestation,
   validateDucAttestation,
 } from "./attest.js";
+export type { AuthorityDelta, AuthorityEdge } from "./authority.js";
+export { authorityDelta } from "./authority.js";
+export type { GuardedFlow } from "./guard.js";
+export { guardedInfluence } from "./guard.js";
+export type {
+  CheckerFinding,
+  CheckerSpec,
+  SourceSelector,
+} from "./checker.js";
+export {
+  CHECKER_SPEC_VERSION,
+  checkerSpecHash,
+  runChecker,
+  validateCheckerSpec,
+} from "./checker.js";
