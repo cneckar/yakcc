@@ -225,6 +225,8 @@ class Lifter {
   private branchCount = 0;
   /** The branch path the statement being lifted lies in, outermost first. */
   private readonly regionStack: string[] = [];
+  /** Return frames: a total side collects its returns; undefined is a flat frame (observations). */
+  private readonly returnFrames: (ValueId[] | undefined)[] = [];
   /** Import bindings, name -> classification. */
   private readonly imports = new Map<string, ImportBinding>();
   /** Memoized diamond-sources, keyed by symbol so one unknown = one source. */
@@ -361,7 +363,18 @@ class Lifter {
       this.hoisted.add(stmt.compilerNode);
       hoistedNames.add(name);
     }
-    for (const stmt of stmts) this.liftStatement(stmt);
+    for (const [i, stmt] of stmts.entries()) {
+      // An `if` whose side always returns takes the rest of the list onto its other side, so every
+      // return is on one path, and the two returns join into one observation (see totalSides).
+      if (Node.isIfStatement(stmt)) {
+        const sides = totalSides(stmt, stmts.slice(i + 1));
+        if (sides !== undefined) {
+          this.liftIf(stmt, sides);
+          return;
+        }
+      }
+      this.liftStatement(stmt);
+    }
   }
 
   /** Binds a function declaration to a closure value over the names it reads. */
@@ -427,7 +440,7 @@ class Lifter {
     }
     if (Node.isReturnStatement(node)) {
       const expr = node.getExpression();
-      if (expr !== undefined) this.obs.push(this.liftExpr(expr));
+      if (expr !== undefined) this.reportReturn(this.liftExpr(expr));
       return;
     }
     if (Node.isIfStatement(node)) {
@@ -457,7 +470,12 @@ class Lifter {
     this.liftOpaqueRegion(node, "op", { discardOutputs: true });
   }
 
-  private liftIf(node: import("ts-morph").IfStatement): void {
+  /**
+   * Lifts an `if`. With `sides`, the statement list's rest belongs to a side (see totalSides): both
+   * sides always return, so the result is the join of their returns, one observation under the
+   * condition. Otherwise the sides are the statements written, and their values join as names.
+   */
+  private liftIf(node: import("ts-morph").IfStatement, sides?: IfSides): void {
     const condValue = this.liftExpr(node.getExpression());
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
@@ -465,14 +483,39 @@ class Lifter {
     const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
     this.branches.push({ id, cond: condValue, ...(within !== undefined ? { within } : {}) });
 
+    const total = sides !== undefined;
+    const elseNode = node.getElseStatement();
+    const thenStmts: readonly Node[] = sides?.then ?? [node.getThenStatement()];
+    const elseStmts: readonly Node[] = sides?.else ?? (elseNode !== undefined ? [elseNode] : []);
+    const thenReturns: ValueId[] = [];
     const thenEnv = this.inRegion(`${id}.t`, () =>
-      this.branch(before, () => this.liftStatement(node.getThenStatement())),
+      this.inReturnFrame(total ? thenReturns : undefined, () =>
+        this.branch(before, () => this.liftStatements(thenStmts)),
+      ),
     );
-    const elseStmt = node.getElseStatement();
+    const elseReturns: ValueId[] = [];
     const elseEnv =
-      elseStmt !== undefined
-        ? this.inRegion(`${id}.e`, () => this.branch(before, () => this.liftStatement(elseStmt)))
+      elseStmts.length > 0
+        ? this.inRegion(`${id}.e`, () =>
+            this.inReturnFrame(total ? elseReturns : undefined, () =>
+              this.branch(before, () => this.liftStatements(elseStmts)),
+            ),
+          )
         : before;
+
+    if (total) {
+      // Every path through the if returns: one observation, the return of the path taken.
+      const [thenValue] = thenReturns;
+      const [elseValue] = elseReturns;
+      if (thenValue === undefined || elseValue === undefined) {
+        throw new Error("internal: a total if has a side without a return");
+      }
+      const [returned] = this.emit("sel", [condValue, thenValue, elseValue], 1, {
+        origin: { kind: "IfReturn" },
+      });
+      this.reportReturn(returned as ValueId);
+      return;
+    }
 
     // Join: for every name live before the if, if the two branches disagree emit
     // a sel gate with the condition as an ordinary input (control-as-data).
@@ -485,6 +528,26 @@ class Lifter {
         });
         this.env.set(name, joined as ValueId);
       }
+    }
+  }
+
+  /**
+   * A return's value. Inside a total side it is collected by that side's frame; otherwise (no
+   * frame, or a frame of a branch that does not always return) it is a flat observation, as before.
+   */
+  private reportReturn(value: ValueId): void {
+    const frame = this.returnFrames[this.returnFrames.length - 1];
+    if (frame !== undefined) frame.push(value);
+    else this.obs.push(value);
+  }
+
+  /** Run `body` with a return frame pushed: `frame` collects the side's returns, or undefined for flat. */
+  private inReturnFrame<T>(frame: ValueId[] | undefined, body: () => T): T {
+    this.returnFrames.push(frame);
+    try {
+      return body();
+    } finally {
+      this.returnFrames.pop();
     }
   }
 
@@ -1033,4 +1096,44 @@ function truncate(text: string, max = 60): string {
 
 function dedupe(values: readonly ValueId[]): ValueId[] {
   return [...new Set(values)];
+}
+
+/** The statements of an `if`'s two sides, once the rest of its statement list is placed on a side. */
+interface IfSides {
+  readonly then: readonly Node[];
+  readonly else: readonly Node[];
+}
+
+/** True when every path through the node reaches a return with a value. Loops and switches are not followed. */
+function alwaysReturns(node: Node): boolean {
+  if (Node.isReturnStatement(node)) return node.getExpression() !== undefined;
+  if (Node.isBlock(node)) return node.getStatements().some(alwaysReturns);
+  if (Node.isIfStatement(node)) {
+    const elseNode = node.getElseStatement();
+    return elseNode !== undefined && alwaysReturns(node.getThenStatement()) && alwaysReturns(elseNode);
+  }
+  return false;
+}
+
+/**
+ * The sides of an `if` that takes the rest of its statement list (`tail`) onto the side that does not
+ * always return. Undefined when no side returns on its own, or when a total `if` would need the tail
+ * to be dead, or when the tail declares functions (their hoisting is bound by the list).
+ */
+function totalSides(node: import("ts-morph").IfStatement, tail: readonly Node[]): IfSides | undefined {
+  if (tail.some((t) => Node.isFunctionDeclaration(t))) return undefined;
+  const thenNode = node.getThenStatement();
+  const elseNode = node.getElseStatement();
+  const thenReturns = alwaysReturns(thenNode);
+  const elseReturns = elseNode !== undefined && alwaysReturns(elseNode);
+  if (thenReturns && elseReturns) return tail.length === 0 ? { then: [thenNode], else: [elseNode as Node] } : undefined;
+  if (thenReturns) {
+    const side = [...(elseNode !== undefined ? [elseNode] : []), ...tail];
+    return side.some(alwaysReturns) ? { then: [thenNode], else: side } : undefined;
+  }
+  if (elseReturns) {
+    const side = [thenNode, ...tail];
+    return side.some(alwaysReturns) ? { then: side, else: [elseNode as Node] } : undefined;
+  }
+  return undefined;
 }

@@ -101,6 +101,30 @@ describe("structured if in the line form (#1275)", () => {
     expect(graphIdentity(back)).toBe(graphIdentity(g));
   });
 
+  it("early returns on every path become one observation, the join of the returns", () => {
+    const src = "export function f(c: boolean, x: number): number { if (c) { return x + 1; } return x - 1; }";
+    const g = liftAtom(src);
+    expect(g.obs.length).toBe(1);
+    expect(g.nodes.some((n) => n.kind === "sel" && n.origin?.kind === "IfReturn")).toBe(true);
+    expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+  });
+
+  it("an early return keeps its branch, so it is a different structure from the equivalent ternary", () => {
+    // Option B (#1275): the branch is part of the structure, as it is for an if that assigns.
+    const early = liftAtom("export function f(c: boolean, x: number): number { if (c) { return x + 1; } return x - 1; }");
+    const ternary = liftAtom("export function f(c: boolean, x: number): number { return c ? x + 1 : x - 1; }");
+    expect(early.branches?.length).toBe(1);
+    expect(ternary.branches).toBeUndefined();
+    expect(graphIdentity(early)).not.toBe(graphIdentity(ternary));
+    expect(graphIdentity(parseLineForm(printLineForm(ternary)))).toBe(graphIdentity(ternary));
+  });
+
+  it("the return of a total if depends on its condition", () => {
+    const g = liftAtom("export function f(c: boolean, x: number): number { if (c) { return x; } return 0 - x; }");
+    const sel = g.nodes.find((n) => n.kind === "sel" && n.origin?.kind === "IfReturn");
+    expect(sel?.inputs[0]).toBe(g.branches?.[0]?.cond);
+  });
+
   describe("scope and structure errors", () => {
     it("a name defined inside the then-side is not visible after the end", () => {
       const text = "param c\nparam x\nif c\nlit \"2\" -> k\nend\nop + k x -> r\nout r\n";
@@ -150,8 +174,8 @@ describe("structured if in the line form (#1275)", () => {
       expect(() => parseLineForm('param c\nif c\nlit "1" -> k\nout k\nend\n')).toThrow(LineFormError);
     });
 
-    it("the printer refuses an observation inside an if, since the form has none yet", () => {
-      const g = liftAtom("export function f(c: boolean, x: number): number { if (c) { return x + 1; } return x - 1; }");
+    it("the printer refuses a return on only some paths, since the form has no such observation yet", () => {
+      const g = liftAtom("export function f(c: boolean, x: number): number { if (c) { if (x > 0) { return 1; } } return x; }");
       expect(() => printLineForm(g)).toThrow(/observation inside an if/);
     });
   });
