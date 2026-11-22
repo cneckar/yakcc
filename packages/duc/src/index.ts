@@ -31,6 +31,11 @@ export { isWellFormed } from "./wellformed.js";
 
 export type { LiftOptions } from "./lift.js";
 export { DucLiftError, liftAtom } from "./lift.js";
+export type { EmitSignature } from "./emit-ts.js";
+export { EmitError, emitTypeScript } from "./emit-ts.js";
+export type { PackedGraph, StoredLink } from "./store.js";
+export { GRAPH_FORMAT_VERSION, LIFTER_VERSION, packGraph, unpackGraph } from "./store.js";
+export { canonicalizeGraph, graphIdentity } from "./canonical.js";
 
 export type { DiamondSupport, InfluenceIndex, NodeSummary, WitnessTerm } from "./influence.js";
 export {

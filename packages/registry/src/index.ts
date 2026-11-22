@@ -743,6 +743,41 @@ export interface FindCandidatesByQueryResult {
  *   - `selectBlocks(specHash)` returns all blocks satisfying a spec.
  *   - `getBlock(merkleRoot)` retrieves a specific block by content address.
  */
+/**
+ * One reference's link, stored outside the graph's identity (#1279, #1275 decision 2B): the
+ * reference by reason, symbol and module, and the contract (`specHash`) it links to.
+ */
+export interface DucLinkRow {
+  readonly reason: string;
+  readonly symbol: string;
+  readonly module?: string;
+  readonly spec: string;
+}
+
+/**
+ * An implementation as a DUC graph (#1279), keyed by the pair (contract `specHash`, graph identity).
+ * Several graphs may implement one contract. The structure is the authoritative form; the TypeScript
+ * text, when present, is a cache of what the emitter generates from it.
+ */
+export interface DucImplementationRow {
+  readonly specHash: string;
+  readonly graphIdentity: string;
+  /** The version of the structure's encoding. */
+  readonly formatVersion: number;
+  /** The version of the lifter that produced the graph. */
+  readonly lifterVersion: number;
+  /** The structure (no origins, no links), brotli-compressed. */
+  readonly structure: Uint8Array;
+  readonly links: readonly DucLinkRow[];
+  /** Origin annotations, brotli-compressed, or null. */
+  readonly annotations?: Uint8Array | null;
+  /** The block this implementation was shaved as, when there is one. */
+  readonly blockMerkleRoot?: string | null;
+  /** The emitted TypeScript, a cache of the graph. */
+  readonly tsCache?: string | null;
+  readonly createdAt?: number;
+}
+
 export interface Registry {
   /**
    * Store a block triplet in the registry.
@@ -1190,6 +1225,22 @@ export interface Registry {
   getSourceFileContentHash(sourcePkg: string, sourceFile: string): Promise<string | null>;
 
   /** Release all resources held by this registry instance. */
+  /**
+   * Store an implementation's graph (#1279). Idempotent on the pair (specHash, graphIdentity): the
+   * structure of an identity is stored once; links, annotations and the TypeScript cache of the
+   * pair are replaced by the latest store.
+   */
+  storeDucImplementation(row: DucImplementationRow): Promise<void>;
+
+  /** The implementation with this pair, or null. */
+  getDucImplementation(
+    specHash: string,
+    graphIdentity: string,
+  ): Promise<DucImplementationRow | null>;
+
+  /** The graph identities that implement a contract, oldest first. */
+  listDucImplementations(specHash: string): Promise<readonly string[]>;
+
   close(): Promise<void>;
 
   /**

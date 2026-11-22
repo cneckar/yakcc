@@ -52,6 +52,7 @@ import type {
   BootstrapManifestEntry,
   CandidateMatch,
   CandidateNearMiss,
+  DucImplementationRow,
   FindCandidatesByQueryOptions,
   FindCandidatesByQueryResult,
   FindCandidatesOptions,
@@ -2172,6 +2173,121 @@ class SqliteRegistry implements Registry {
 
   // close
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // DUC implementations (#1279)
+  // -------------------------------------------------------------------------
+
+  async storeDucImplementation(row: DucImplementationRow): Promise<void> {
+    const now = row.createdAt ?? Date.now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO duc_graphs(graph_identity, format_version, lifter_version, structure, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          row.graphIdentity,
+          row.formatVersion,
+          row.lifterVersion,
+          Buffer.from(row.structure),
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO duc_implementations(spec_hash, graph_identity, block_merkle_root, ts_cache, created_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(spec_hash, graph_identity) DO UPDATE SET
+             block_merkle_root = COALESCE(excluded.block_merkle_root, duc_implementations.block_merkle_root),
+             ts_cache = COALESCE(excluded.ts_cache, duc_implementations.ts_cache)`,
+        )
+        .run(
+          row.specHash,
+          row.graphIdentity,
+          row.blockMerkleRoot ?? null,
+          row.tsCache ?? null,
+          now,
+        );
+      this.db
+        .prepare("DELETE FROM duc_links WHERE spec_hash = ? AND graph_identity = ?")
+        .run(row.specHash, row.graphIdentity);
+      const insertLink = this.db.prepare(
+        "INSERT OR REPLACE INTO duc_links(spec_hash, graph_identity, reason, symbol, module, target_spec) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      for (const l of row.links)
+        insertLink.run(row.specHash, row.graphIdentity, l.reason, l.symbol, l.module ?? "", l.spec);
+      if (row.annotations !== undefined && row.annotations !== null) {
+        this.db
+          .prepare(
+            "INSERT OR REPLACE INTO duc_annotations(spec_hash, graph_identity, annotations) VALUES (?, ?, ?)",
+          )
+          .run(row.specHash, row.graphIdentity, Buffer.from(row.annotations));
+      }
+    });
+    tx();
+  }
+
+  async getDucImplementation(
+    specHash: string,
+    graphIdentity: string,
+  ): Promise<DucImplementationRow | null> {
+    const impl = this.db
+      .prepare(
+        `SELECT i.spec_hash, i.graph_identity, i.block_merkle_root, i.ts_cache, i.created_at, g.format_version, g.lifter_version, g.structure
+         FROM duc_implementations i JOIN duc_graphs g ON g.graph_identity = i.graph_identity
+         WHERE i.spec_hash = ? AND i.graph_identity = ?`,
+      )
+      .get(specHash, graphIdentity) as
+      | {
+          spec_hash: string;
+          graph_identity: string;
+          block_merkle_root: string | null;
+          ts_cache: string | null;
+          created_at: number;
+          format_version: number;
+          lifter_version: number;
+          structure: Buffer;
+        }
+      | undefined;
+    if (impl === undefined) return null;
+    const links = this.db
+      .prepare(
+        "SELECT reason, symbol, module, target_spec FROM duc_links WHERE spec_hash = ? AND graph_identity = ? ORDER BY reason, symbol, module",
+      )
+      .all(specHash, graphIdentity) as {
+      reason: string;
+      symbol: string;
+      module: string;
+      target_spec: string;
+    }[];
+    const notes = this.db
+      .prepare("SELECT annotations FROM duc_annotations WHERE spec_hash = ? AND graph_identity = ?")
+      .get(specHash, graphIdentity) as { annotations: Buffer } | undefined;
+    return {
+      specHash: impl.spec_hash,
+      graphIdentity: impl.graph_identity,
+      formatVersion: impl.format_version,
+      lifterVersion: impl.lifter_version,
+      structure: new Uint8Array(impl.structure),
+      links: links.map((l) => ({
+        reason: l.reason,
+        symbol: l.symbol,
+        ...(l.module !== "" ? { module: l.module } : {}),
+        spec: l.target_spec,
+      })),
+      annotations: notes !== undefined ? new Uint8Array(notes.annotations) : null,
+      blockMerkleRoot: impl.block_merkle_root,
+      tsCache: impl.ts_cache,
+      createdAt: impl.created_at,
+    };
+  }
+
+  async listDucImplementations(specHash: string): Promise<readonly string[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT graph_identity FROM duc_implementations WHERE spec_hash = ? ORDER BY created_at, graph_identity",
+      )
+      .all(specHash) as { graph_identity: string }[];
+    return rows.map((r) => r.graph_identity);
+  }
 
   async close(): Promise<void> {
     if (this.closed) return;

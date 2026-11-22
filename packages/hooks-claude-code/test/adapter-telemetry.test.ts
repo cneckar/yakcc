@@ -305,6 +305,10 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
       // Added: exportAllEmbeddings() added to Registry interface in WI-1117 Slice 2.
       exportAllEmbeddings: registry.exportAllEmbeddings.bind(registry),
+      // Added: DUC implementations (#1279).
+      storeDucImplementation: registry.storeDucImplementation.bind(registry),
+      getDucImplementation: registry.getDucImplementation.bind(registry),
+      listDucImplementations: registry.listDucImplementations.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {

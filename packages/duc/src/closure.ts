@@ -133,10 +133,15 @@ export function linkReferences(
   return {
     ...g,
     nodes: g.nodes.map((node) => {
-      const d = node.diamond;
-      if (d === undefined || d.reason === "platform-primitive") return node;
+      // A closure's own graph is linked too (its free names are usually captures, linked here).
+      const inner =
+        node.closure !== undefined
+          ? { ...node, closure: linkReferences(node.closure, resolve) }
+          : node;
+      const d = inner.diamond;
+      if (d === undefined || d.reason === "platform-primitive") return inner;
       const spec = resolve(d);
-      return spec === undefined ? node : { ...node, diamond: { ...d, spec } };
+      return spec === undefined ? inner : { ...inner, diamond: { ...d, spec } };
     }),
   };
 }

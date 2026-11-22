@@ -252,6 +252,16 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     > {
       return [];
     },
+    // DUC implementations (#1279): none in this mock.
+    async storeDucImplementation(): Promise<void> {
+      throw new Error("not implemented in mock");
+    },
+    async getDucImplementation(): Promise<null> {
+      return null;
+    },
+    async listDucImplementations(): Promise<readonly string[]> {
+      return [];
+    },
     async close(): Promise<void> {},
   };
 }

@@ -27,7 +27,8 @@
 //     that have a full Registry pass it directly.
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
-import type { BlockTripletRow } from "@yakcc/registry";
+import { emitTypeScript, liftAtom, packGraph } from "@yakcc/duc";
+import type { BlockTripletRow, DucImplementationRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { runMutationTesting } from "@yakcc/variance";
 import type { MutationResult } from "@yakcc/variance";
@@ -321,7 +322,51 @@ export async function persistNovelGlueAtom(
   // blockMerkleRoot twice is a no-op (per Registry contract).
   await registry.storeBlock(row);
 
+  // The graph beside the block (#1279): the implementation keyed by (specHash, graph identity),
+  // with the emitted TypeScript as its cache. A registry view without the method, or an atom the
+  // lifter refuses, stores the block alone.
+  if (typeof registry.storeDucImplementation === "function") {
+    const stored = ducImplementationOf(entry.source, triplet.specHash, triplet.merkleRoot);
+    if (stored !== undefined) await registry.storeDucImplementation(stored);
+  }
+
   return triplet.merkleRoot;
+}
+
+/**
+ * The DUC implementation of an atom's source: its packed graph under the contract, with the emitted
+ * TypeScript as a cache (undefined when the emitter does not express the graph). Undefined when the
+ * source does not lift.
+ */
+export function ducImplementationOf(
+  source: string,
+  specHash: string,
+  blockMerkleRoot: string | null,
+): DucImplementationRow | undefined {
+  let graph: ReturnType<typeof liftAtom>;
+  try {
+    graph = liftAtom(source);
+  } catch {
+    return undefined;
+  }
+  const packed = packGraph(graph);
+  let tsCache: string | null = null;
+  try {
+    tsCache = emitTypeScript(graph);
+  } catch {
+    tsCache = null;
+  }
+  return {
+    specHash,
+    graphIdentity: packed.identity,
+    formatVersion: packed.formatVersion,
+    lifterVersion: packed.lifterVersion,
+    structure: packed.structure,
+    links: packed.links,
+    annotations: packed.annotations ?? null,
+    blockMerkleRoot,
+    tsCache,
+  };
 }
 
 /**

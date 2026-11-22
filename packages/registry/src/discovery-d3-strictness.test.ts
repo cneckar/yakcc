@@ -35,11 +35,17 @@ import {
   blockMerkleRoot,
   canonicalize,
   createOfflineEmbeddingProvider,
-  specHash as deriveSpecHash,
   canonicalAstHash as deriveCanonicalAstHash,
+  specHash as deriveSpecHash,
 } from "@yakcc/contracts";
-import { afterAll, beforeAll, describe, it, expect } from "vitest";
-import type { BlockMerkleRoot, BlockTripletRow, CanonicalAstHash, Registry, SpecHash } from "./index.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type {
+  BlockMerkleRoot,
+  BlockTripletRow,
+  CanonicalAstHash,
+  Registry,
+  SpecHash,
+} from "./index.js";
 import { openRegistry } from "./storage.js";
 
 // ---------------------------------------------------------------------------
@@ -66,7 +72,10 @@ function makeSpecYak(fields: Partial<SpecYak> & { name: string; behavior: string
 /** Minimal impl source for making a BlockTripletRow. Not semantically meaningful. */
 const STUB_IMPL = "export function stub(): void {}";
 /** Stub proof manifest with no artifacts. */
-const STUB_MANIFEST = { version: 1, artifacts: [] as { path: string; algorithm: string; hash: string }[] };
+const STUB_MANIFEST = {
+  version: 1,
+  artifacts: [] as { path: string; algorithm: string; hash: string }[],
+};
 
 async function makeBlockRow(spec: SpecYak): Promise<BlockTripletRow> {
   const implSource = STUB_IMPL;
@@ -212,7 +221,7 @@ describe("R1 — bare candidate not rejected by behavior-only query", () => {
     // unrelated should not appear (different behavior)
     // (With offline BLAKE3 provider, this may vary — just verify bare-parse is found)
     console.log(
-      `[R1] bare-parse in candidates: ${bareInCandidates}, near-misses: ${bareInNearMisses}`
+      `[R1] bare-parse in candidates: ${bareInCandidates}, near-misses: ${bareInNearMisses}`,
     );
     console.log(`[R1] Candidates: ${candidateRoots.length}, near-misses: ${nearMissRoots.length}`);
   });
@@ -253,7 +262,7 @@ describe("R2 — candidate with guarantees not demoted when query omits guarante
     expect(pdInNearMisses).toBe(false); // NOT filtered into near-misses
 
     console.log(
-      `[R2] parse-digit in candidates: ${pdInCandidates}, near-misses: ${pdInNearMisses}`
+      `[R2] parse-digit in candidates: ${pdInCandidates}, near-misses: ${pdInNearMisses}`,
     );
   });
 });

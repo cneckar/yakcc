@@ -176,7 +176,7 @@
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1573,4 +1573,54 @@ export function applyMigrations(db: MigrationsDb): void {
     }
     db.prepare("UPDATE schema_version SET version = ?").run(16);
   }
+
+  // Migration 16 → 17: DUC graphs as the stored implementation form (#1279, #1275).
+  //
+  // duc_graphs holds each graph structure once, keyed by its identity (structure only, no origins,
+  // no links; brotli-compressed compact encoding). duc_implementations keys an implementation by
+  // the pair (spec_hash, graph_identity): several graphs may implement one contract, and the same
+  // graph may implement several. Links and annotations are separate records, outside identity
+  // (decision 2B). ts_cache is the emitted TypeScript, a cache of the graph.
+  //
+  // Pure DDL; the tables start empty. No backfill: existing blocks keep their impl_source, and a
+  // shave from now on stores the graph beside the block.
+  if (currentVersion < 17) {
+    for (const ddl of MIGRATION_17_DDL) db.exec(ddl);
+    db.prepare("UPDATE schema_version SET version = ?").run(17);
+  }
 }
+
+const MIGRATION_17_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS duc_graphs (
+    graph_identity TEXT    PRIMARY KEY,
+    format_version INTEGER NOT NULL,
+    lifter_version INTEGER NOT NULL,
+    structure      BLOB    NOT NULL,
+    created_at     INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS duc_implementations (
+    spec_hash         TEXT    NOT NULL,
+    graph_identity    TEXT    NOT NULL REFERENCES duc_graphs(graph_identity),
+    block_merkle_root TEXT    NULL,
+    ts_cache          TEXT    NULL,
+    created_at        INTEGER NOT NULL,
+    PRIMARY KEY (spec_hash, graph_identity)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_implementations_graph ON duc_implementations(graph_identity)",
+  `CREATE TABLE IF NOT EXISTS duc_links (
+    spec_hash      TEXT NOT NULL,
+    graph_identity TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    module         TEXT NOT NULL DEFAULT '',
+    target_spec    TEXT NOT NULL,
+    PRIMARY KEY (spec_hash, graph_identity, reason, symbol, module)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_links_target ON duc_links(target_spec)",
+  `CREATE TABLE IF NOT EXISTS duc_annotations (
+    spec_hash      TEXT NOT NULL,
+    graph_identity TEXT NOT NULL,
+    annotations    BLOB NOT NULL,
+    PRIMARY KEY (spec_hash, graph_identity)
+  )`,
+];
