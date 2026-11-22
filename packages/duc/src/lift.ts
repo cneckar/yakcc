@@ -476,11 +476,38 @@ class Lifter {
     }
     if (selfName !== undefined && captures.includes(selfName)) return undefined;
     if (lexicalThis) captures.push(THIS);
-    // A captured name assigned anywhere outside the closure could change after it is made.
+    // A captured name reassigned outside the closure could change after it is made. A write to a
+    // member keeps the same object, so the closure still holds it. A reassignment that is certainly
+    // done before the closure is made (earlier, in the same function, not in another closure, with
+    // the closure in no loop and not hoisted) is the value the closure captures.
     const outside = assignmentTargets(fn.getSourceFile()).filter(
       (t) => !t.getAncestors().some((a) => a.compilerNode === fn.compilerNode),
     );
-    if (outside.some((t) => captures.includes(baseIdentifierOfTarget(t) ?? ""))) return undefined;
+    const scopeOf = (n: Node): Node | undefined => n.getAncestors().find((a) => isFunctionLikeNode(a));
+    const inLoop = (n: Node, scope: Node | undefined): boolean => {
+      for (const a of n.getAncestors()) {
+        if (scope !== undefined && a.compilerNode === scope.compilerNode) return false;
+        if (Node.isForStatement(a) || Node.isForOfStatement(a) || Node.isForInStatement(a) || Node.isWhileStatement(a) || Node.isDoStatement(a)) return true;
+      }
+      return false;
+    };
+    const fnScope = scopeOf(fn);
+    const changesCapture = (t: Node): boolean => {
+      // A destructuring assignment rebinds every name in it.
+      if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t)) {
+        return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => captures.includes(id.getText()));
+      }
+      const base = baseIdentifierOfTarget(t);
+      if (base === undefined || !captures.includes(base)) return false;
+      if (!Node.isIdentifier(t)) return false;
+      const doneBefore =
+        !Node.isFunctionDeclaration(fn) &&
+        t.getEnd() <= fn.getStart() &&
+        scopeOf(t)?.compilerNode === fnScope?.compilerNode &&
+        !inLoop(fn, fnScope);
+      return !doneBefore;
+    };
+    if (outside.some(changesCapture)) return undefined;
 
     let graph: DucGraph;
     try {
@@ -1912,6 +1939,13 @@ function breakTarget(node: Node): Node | undefined {
     if (Node.isSwitchStatement(p) || Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p) || Node.isWhileStatement(p) || Node.isDoStatement(p)) return p;
   }
   return undefined;
+}
+
+function isFunctionLikeNode(n: Node): boolean {
+  return (
+    Node.isFunctionDeclaration(n) || Node.isFunctionExpression(n) || Node.isArrowFunction(n) || Node.isMethodDeclaration(n) ||
+    Node.isConstructorDeclaration(n) || Node.isGetAccessorDeclaration(n) || Node.isSetAccessorDeclaration(n)
+  );
 }
 
 /** The env name of the receiver (not a valid source name). */
