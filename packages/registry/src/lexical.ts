@@ -69,7 +69,12 @@ export function buildBm25(
  * Rank documents for a query by BM25. Documents with no matching term are omitted.
  * Ties keep document order (stable), so the ranking is deterministic.
  */
-export function bm25Search(index: Bm25Index, query: string, limit = 10): RankedHit[] {
+export function bm25Search(
+  index: Bm25Index,
+  query: string,
+  limit = 10,
+  options: { minRelative?: number } = {},
+): RankedHit[] {
   const terms = [...new Set(tokenize(query))];
   const n = index.docs.length;
   const scored: { id: string; score: number; i: number }[] = [];
@@ -88,7 +93,15 @@ export function bm25Search(index: Bm25Index, query: string, limit = 10): RankedH
     if (score > 0) scored.push({ id: index.docs[i]?.id ?? "", score, i });
   }
   scored.sort((a, b) => b.score - a.score || a.i - b.i);
-  return scored.slice(0, limit).map(({ id, score }) => ({ id, score }));
+  // Relevance cutoff: a hit must reach `minRelative` of the best score. Without it, a document
+  // that matches one generic token ("a", "value") counts as a lexical hit and crowds out the
+  // real match in the fusion.
+  const top = scored[0]?.score ?? 0;
+  const floor = top * (options.minRelative ?? 0);
+  return scored
+    .filter((h) => h.score >= floor)
+    .slice(0, limit)
+    .map(({ id, score }) => ({ id, score }));
 }
 
 /**

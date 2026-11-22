@@ -40,6 +40,14 @@ describe("BM25 lexical channel (WI-REUSE B3, #1260)", () => {
     expect(bm25Search(idx, "filename")[0]?.id).toBe("a");
   });
 
+  it("a relevance cutoff drops hits that match only a generic token", () => {
+    const idx = buildBm25(docs);
+    const all = bm25Search(idx, "sanitizeFilename a value");
+    const cut = bm25Search(idx, "sanitizeFilename a value", 10, { minRelative: 0.2 });
+    expect(all.length).toBeGreaterThan(cut.length);
+    expect(cut.map((h) => h.id)).toEqual(["a"]);
+  });
+
   it("returns nothing for a query with no shared terms", () => {
     expect(bm25Search(buildBm25(docs), "zebra")).toEqual([]);
   });

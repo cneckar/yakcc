@@ -64,6 +64,7 @@ import type {
   SourceFileGlueEntry,
   WorkspacePlumbingEntry,
 } from "./index.js";
+import { bm25Search, buildBm25, reciprocalRankFusion } from "./lexical.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
 import { structuralMatch } from "./search.js";
 
@@ -648,6 +649,25 @@ class SqliteRegistry implements Registry {
   //   spec's embedding is derived from its behavior+parameter text; the query
   //   uses the same template so query and document vectors are comparable.
 
+  /**
+   * The spec hashes ranked by BM25 against the query text, best first. Scans one spec per
+   * spec hash (the first stored spec text for that hash). Linear in registry size.
+   */
+  private lexicalSpecHashes(queryText: string, limit: number): string[] {
+    const rows = this.db
+      .prepare<[], { spec_hash: string; spec_canonical_bytes: Buffer }>(
+        "SELECT spec_hash, MIN(spec_canonical_bytes) AS spec_canonical_bytes FROM blocks GROUP BY spec_hash",
+      )
+      .all();
+    const docs = rows.map((r) => ({
+      id: r.spec_hash,
+      text: Buffer.from(r.spec_canonical_bytes).toString("utf-8"),
+    }));
+    if (docs.length === 0) return [];
+    // Keep only lexical hits that reach 20% of the best score (see bm25Search).
+    return bm25Search(buildBm25(docs), queryText, limit, { minRelative: 0.2 }).map((hit) => hit.id);
+  }
+
   async findCandidatesByIntent(
     card: IntentQuery,
     options: FindCandidatesOptions = {},
@@ -655,6 +675,9 @@ class SqliteRegistry implements Registry {
     this.assertOpen();
 
     const k = options.k ?? 10;
+    // With the lexical channel, fuse over a deeper KNN pool. Otherwise a lexical-only hit can
+    // never reach the fused top k, because the KNN list was already cut to k (#1260).
+    const knnK = options.lexical === true ? k * 4 : k;
 
     // Derive query text from the card (DEC-VECTOR-RETRIEVAL-002).
     // behavior + each input as "name: typeHint" + each output as "name: typeHint"
@@ -691,25 +714,42 @@ class SqliteRegistry implements Registry {
         .prepare<[Buffer, number], EmbeddingRow>(
           "SELECT spec_hash, distance FROM contract_embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance",
         )
-        .all(queryBuf, k);
+        .all(queryBuf, knnK);
     } catch {
       // If the embeddings table is empty, vec0 may throw. Return [] gracefully.
       return [];
     }
 
-    if (embeddingRows.length === 0) return [];
+    const useLexical = options.lexical === true;
+    if (embeddingRows.length === 0 && !useLexical) return [];
 
-    // For each spec_hash, find the best block (first from selectBlocks which uses
-    // the strictness-aware sort). We hydrate one block per spec_hash hit.
+    // KNN order and distance per spec. Without the lexical channel this is the whole answer.
+    const knnDistance = new Map<string, number>();
+    for (const eRow of embeddingRows) knnDistance.set(eRow.spec_hash, eRow.distance);
+    let orderedSpecs: string[] = embeddingRows.map((r) => r.spec_hash);
+    const channel = new Map<string, "knn" | "lexical" | "both">();
+    for (const spec of orderedSpecs) channel.set(spec, "knn");
+
+    // Lexical channel (DEC-RETRIEVAL-LEXICAL-001): BM25 over the stored spec text, fused with
+    // the KNN ranking by reciprocal rank fusion. A spec found by both channels rises.
+    if (useLexical) {
+      const lexicalSpecs = this.lexicalSpecHashes(queryText, k * 4);
+      for (const spec of lexicalSpecs) {
+        channel.set(spec, channel.has(spec) ? "both" : "lexical");
+      }
+      orderedSpecs = reciprocalRankFusion([orderedSpecs, lexicalSpecs], 60)
+        .slice(0, k)
+        .map((hit) => hit.id);
+    }
+
+    // For each spec in order, take its best block (first from selectBlocks, strictness order).
     const results: CandidateMatch[] = [];
 
-    for (const eRow of embeddingRows) {
-      const specHash = eRow.spec_hash as SpecHash;
-      // Get all blocks for this spec, ordered by strictness/quality.
+    for (const spec of orderedSpecs) {
+      const specHash = spec as SpecHash;
       const roots = await this.selectBlocks(specHash);
       if (roots.length === 0) continue;
 
-      // Take the best block (first in strictness order).
       const bestRoot = roots[0];
       if (bestRoot === undefined) continue;
 
@@ -718,7 +758,9 @@ class SqliteRegistry implements Registry {
 
       results.push({
         block,
-        cosineDistance: eRow.distance,
+        // A lexical-only hit has no embedding distance. It is reported as 1 (no similarity signal).
+        cosineDistance: knnDistance.get(spec) ?? 1,
+        ...(useLexical ? { retrievalChannel: channel.get(spec) } : {}),
       });
     }
 

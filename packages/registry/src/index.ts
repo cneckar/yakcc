@@ -538,6 +538,11 @@ export interface CandidateMatch {
   /** The full block triplet row. */
   readonly block: BlockTripletRow;
   /**
+   * Which channel found this candidate: the embedding KNN, the lexical index, or both.
+   * Set only when a lexical channel was requested.
+   */
+  readonly retrievalChannel?: "knn" | "lexical" | "both" | undefined;
+  /**
    * Cosine distance from the query embedding to this block's spec embedding.
    * Lower values indicate greater semantic similarity.
    * Results are ordered ascending in cosineDistance by default.
@@ -576,6 +581,13 @@ export interface FindCandidatesOptions {
    * - "structural": reorder by combined (1 - cosineDistance) + structuralScore descending.
    */
   readonly rerank?: "structural" | "none" | undefined;
+  /**
+   * Add a lexical (BM25) channel over the stored specs, fused with the embedding KNN by
+   * reciprocal rank fusion (DEC-RETRIEVAL-LEXICAL-001, WI-REUSE B3, #1260). Off by
+   * default. Enabling it scans every spec in the registry once per call, so the cost is
+   * linear in registry size. Use it when rare identifiers matter more than cost.
+   */
+  readonly lexical?: boolean | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1309,3 +1321,6 @@ export {
   type ReleaseLock,
   type WriteLockOptions,
 } from "./lock.js";
+
+export { bm25Search, buildBm25, reciprocalRankFusion, tokenize } from "./lexical.js";
+export type { Bm25Index, LexicalDoc, RankedHit } from "./lexical.js";

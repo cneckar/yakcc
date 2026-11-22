@@ -4615,3 +4615,69 @@ describe("commons-push storeBlock seam (#794 slice 3)", () => {
     await registry.close();
   });
 });
+
+describe("intent search: lexical channel (DEC-RETRIEVAL-LEXICAL-001, #1260)", () => {
+  // A provider that embeds every text to the same vector. The KNN channel therefore has no
+  // semantic signal at all, which is the failure the lexical channel exists to cover.
+  // Every text sits at the same point as the query, except the target spec, which is far away.
+  // The decoys and the query are then equidistant, so k=2 KNN returns decoys and misses the target.
+  function blurredEmbeddingProvider(): EmbeddingProvider {
+    return {
+      dimension: 384,
+      modelId: "mock/blurred",
+      async embed(text: string): Promise<Float32Array> {
+        const vec = new Float32Array(384);
+        if (text.includes("sanitize-filename")) vec[1] = 1;
+        else vec[0] = 1;
+        return vec;
+      },
+    };
+  }
+
+  const CARD = {
+    behavior: "sanitizeFilename removes unsafe characters from a file name",
+    inputs: [{ name: "name", typeHint: "string" }],
+    outputs: [{ name: "result", typeHint: "string" }],
+  };
+
+  it("recovers a block whose rare identifier is in the query, which the blurred KNN cannot", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: blurredEmbeddingProvider() });
+    try {
+      const decoys = ["parse-int", "sum-list", "min-max", "unique-keys", "pad-left"];
+      for (const name of decoys) {
+        await reg.storeBlock(makeBlockRow(makeSpecYak(name, `Computes ${name} of a value`)));
+      }
+      const target = makeBlockRow(
+        makeSpecYak(
+          "sanitize-filename",
+          "sanitizeFilename removes unsafe characters from a file name",
+        ),
+        "export function sanitizeFilename(name: string): string { return name.replace(/[^\\w.]/g, ''); }",
+      );
+      await reg.storeBlock(target);
+
+      // The premise: with no lexical channel the blurred KNN does NOT surface the target at k=2.
+      const knnOnly = await reg.findCandidatesByIntent(CARD, { k: 2 });
+      expect(knnOnly.some((c) => c.block.blockMerkleRoot === target.blockMerkleRoot)).toBe(false);
+
+      const lexical = await reg.findCandidatesByIntent(CARD, { k: 2, lexical: true });
+      const hit = lexical.find((c) => c.block.blockMerkleRoot === target.blockMerkleRoot);
+      expect(hit).toBeDefined();
+      expect(["lexical", "both"]).toContain(hit?.retrievalChannel);
+    } finally {
+      await reg.close();
+    }
+  });
+
+  it("without the lexical option the result is unchanged and carries no channel label", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+    try {
+      await reg.storeBlock(makeBlockRow(makeSpecYak("parse-int", "Parse a JSON integer")));
+      const plain = await reg.findCandidatesByIntent(CARD, { k: 5 });
+      expect(plain.length).toBeGreaterThan(0);
+      expect(plain.every((c) => c.retrievalChannel === undefined)).toBe(true);
+    } finally {
+      await reg.close();
+    }
+  });
+});
