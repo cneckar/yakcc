@@ -440,10 +440,25 @@ class Lifter {
    * assigns to a name outside it, whose captured names are assigned elsewhere (a closure sees the
    * latest value), that uses this, super or arguments, that is recursive, async or a generator.
    */
+  /**
+   * The receiver: inside an arrow it is the enclosing function's, a capture; otherwise the function's
+   * own, an operation of the graph with no inputs.
+   */
+  private thisValue(): ValueId {
+    if (this.env.has(THIS)) return this.resolveIdentifier(THIS);
+    const [value] = this.emit("op", [], 1, { origin: { kind: "ThisKeyword", text: "this" }, label: "this" });
+    this.env.set(THIS, value as ValueId);
+    return value as ValueId;
+  }
+
   private liftClosure(fn: FunctionLike, selfName?: string): ValueId | undefined {
     if (fn.isAsync() || (!Node.isArrowFunction(fn) && fn.isGenerator())) return undefined;
-    if (fn.getDescendantsOfKind(SyntaxKind.ThisKeyword).length > 0) return undefined;
     if (fn.getDescendantsOfKind(SyntaxKind.SuperKeyword).length > 0) return undefined;
+    // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
+    // caller's receiver, so the closure is a `function` (#1276).
+    const thisUses = fn.getDescendantsOfKind(SyntaxKind.ThisKeyword).filter((t) => receiverOwner(t) === fn || (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)));
+    const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
+    const dynamicThis = !Node.isArrowFunction(fn) && thisUses.length > 0;
     const locals = closureLocals(fn);
     const reads = fn.getDescendantsOfKind(SyntaxKind.Identifier);
     if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments"))) return undefined;
@@ -460,6 +475,7 @@ class Lifter {
       if (!locals.has(name) && !captures.includes(name)) captures.push(name);
     }
     if (selfName !== undefined && captures.includes(selfName)) return undefined;
+    if (lexicalThis) captures.push(THIS);
     // A captured name assigned anywhere outside the closure could change after it is made.
     const outside = assignmentTargets(fn.getSourceFile()).filter(
       (t) => !t.getAncestors().some((a) => a.compilerNode === fn.compilerNode),
@@ -472,10 +488,10 @@ class Lifter {
     } catch {
       return undefined;
     }
-    const inputs = captures.map((name) => this.resolveIdentifier(name));
+    const inputs = captures.map((name) => (name === THIS ? this.thisValue() : this.resolveIdentifier(name)));
     const [value] = this.emit("op", inputs, 1, {
       origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
-      label: "closure",
+      label: dynamicThis ? "function" : "closure",
     });
     (this.nodes[this.nodes.length - 1] as MutableNode).closure = graph;
     return value as ValueId;
@@ -1141,6 +1157,7 @@ class Lifter {
 
   // --- expressions ---
   private liftExpr(node: Node): ValueId {
+    if (node.getKind() === SyntaxKind.ThisKeyword) return this.thisValue();
     if (Node.isIdentifier(node)) {
       // `undefined`, unless a binding shadows it, is the literal: the same value a bare `return;` has.
       if (node.getText() === "undefined" && !this.env.has("undefined")) return this.undefinedValue();
@@ -1893,6 +1910,19 @@ function breakTarget(node: Node): Node | undefined {
   for (let p = node.getParent(); p !== undefined; p = p.getParent()) {
     if (Node.isFunctionDeclaration(p) || Node.isFunctionExpression(p) || Node.isArrowFunction(p)) return undefined;
     if (Node.isSwitchStatement(p) || Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p) || Node.isWhileStatement(p) || Node.isDoStatement(p)) return p;
+  }
+  return undefined;
+}
+
+/** The env name of the receiver (not a valid source name). */
+const THIS = "%this";
+
+/** The function whose `this` a node sees: its nearest enclosing function that is not an arrow. */
+function receiverOwner(node: Node): Node | undefined {
+  for (let p = node.getParent(); p !== undefined; p = p.getParent()) {
+    if (Node.isFunctionDeclaration(p) || Node.isFunctionExpression(p) || Node.isMethodDeclaration(p) || Node.isConstructorDeclaration(p) || Node.isGetAccessorDeclaration(p) || Node.isSetAccessorDeclaration(p) || Node.isClassDeclaration(p) || Node.isClassExpression(p)) {
+      return p;
+    }
   }
   return undefined;
 }

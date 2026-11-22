@@ -56,8 +56,21 @@ describe("closures as graphs (#1275)", () => {
     expect(node).toBeUndefined();
   });
 
-  it("a closure that uses this stays opaque", () => {
-    expect(closureNode("export function f(x: number): unknown { return function () { return this; }; }")).toBeUndefined();
+  it("a function that uses this has its own receiver; an arrow captures the enclosing one", () => {
+    const fn = closureNode("export function f(x: number): unknown { return function () { return this; }; }");
+    expect(fn?.label).toBe("function");
+    expect(fn?.closure?.nodes.some((n) => n.label === "this")).toBe(true);
+    const arrow = closureNode("export function f(x: number): unknown { return () => this; }");
+    expect(arrow?.label).toBe("closure");
+    expect(arrow?.inputs).toHaveLength(1);
+    expect(arrow?.closure?.nodes.some((n) => n.label === "this")).toBe(false);
+  });
+
+  it("a function's receiver survives emission", () => {
+    const src = "export function f(k: number): unknown { const o = { k, get: function () { return this.k * 2; } }; return o.get(); }";
+    const code = emitTypeScript(liftAtom(src));
+    expect(code).toContain("function (");
+    expect(new Function(`${code.replace("export ", "")}; return f(21);`)()).toBe(42);
   });
 
   it("a hand-written closure parses to the lifted one", () => {

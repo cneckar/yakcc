@@ -177,7 +177,7 @@ function emitFunction(
     if (label === "ArrayLiteral") return `[${ins.map((v) => ref(v)).join(", ")}]`;
     if (label === "...") return `...${arg(0)}`;
     if (label.startsWith("OmittedExpression#")) return "";
-    if (label.startsWith("ThisKeyword#")) return "this";
+    if (label === "this" || label.startsWith("ThisKeyword#")) return "this";
     if (label.startsWith("object:")) {
       const entries = JSON.parse(label.slice("object:".length)) as unknown[];
       let at = 0;
@@ -223,7 +223,9 @@ function emitFunction(
     const name = nameOf(out);
     if (node.closure !== undefined) {
       const inner = emitFunction(node.closure, `${prefix}${node.id}_`, node.inputs.map((v) => ref(v)), imports);
-      return [`const ${name} = (${inner.params.join(", ")}) => {`, ...inner.body.map((l) => `  ${l}`), "};"];
+      // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture.
+      const head = label === "function" ? `function (${inner.params.join(", ")}) {` : `(${inner.params.join(", ")}) => {`;
+      return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that
     // captures the value then captures a name that is never assigned again.

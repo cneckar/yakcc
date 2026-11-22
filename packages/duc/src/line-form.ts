@@ -43,6 +43,8 @@
  *   end <name> ...                      close the loop; the names are its results, one per carry
  *   function <name> [with <name> ...]   a closure: the lines up to its `end` are a program of their
  *                                       own, whose first params are the captured names after `with`
+ *   method <name> [with <name> ...]     a function with its own receiver: `op this -> <name>` in its
+ *                                       program reads the receiver it is called on
  *   out <name>                          an observation, in order; top level only
  *   # ...                               a comment line
  *
@@ -537,8 +539,8 @@ export function parseLineForm(text: string): DucGraph {
       return;
     }
 
-    if (head === "function") {
-      const usage = "expected: function <name> [with <name> ...]";
+    if (head === "function" || head === "method") {
+      const usage = `expected: ${head} <name> [with <name> ...]`;
       const withAt = rest.indexOf("with");
       if (rest.length === 0 || (withAt !== -1 && withAt !== 1) || (withAt === -1 && rest.length !== 1)) {
         throw new LineFormError(line, usage);
@@ -551,7 +553,7 @@ export function parseLineForm(text: string): DucGraph {
         const t = (lines[j] as string).trim();
         if (t === "" || t.startsWith("#")) continue;
         const h = t.split(/\s+/)[0];
-        if (h === "if" || h === "loop" || h === "function") depth++;
+        if (h === "if" || h === "loop" || h === "function" || h === "method") depth++;
         else if (h === "end") {
           if (depth === 0) break;
           depth--;
@@ -571,7 +573,7 @@ export function parseLineForm(text: string): DucGraph {
         throw new LineFormError(line, `a function that captures ${captures.length} value(s) takes them as its first params`);
       }
       const out = define(rest[0] as string, line);
-      add({ kind: "op", inputs: captures, outputs: [out], label: "closure", closure: inner }, currentRegion());
+      add({ kind: "op", inputs: captures, outputs: [out], label: head === "method" ? "function" : "closure", closure: inner }, currentRegion());
       skipUntil = j + 1;
       return;
     }
@@ -803,7 +805,7 @@ export function printLineForm(g: DucGraph): string {
   /** The lines of a closure: its header, its own program, and its end. */
   const printClosure = (node: DucNode): string[] => {
     printed.add(node.id);
-    const header = ["function", node.outputs[0] as string, ...(node.inputs.length > 0 ? ["with", ...node.inputs] : [])];
+    const header = [node.label === "function" ? "method" : "function", node.outputs[0] as string, ...(node.inputs.length > 0 ? ["with", ...node.inputs] : [])];
     const inner = printLineForm(node.closure as DucGraph).trimEnd().split("\n").map((l) => `  ${l}`);
     return [header.join(" "), ...inner, "end"];
   };
