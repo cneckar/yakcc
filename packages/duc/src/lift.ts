@@ -72,6 +72,8 @@ const DEFAULT_AMBIENT_GLOBALS: readonly string[] = [
   "isFinite",
   "encodeURIComponent",
   "decodeURIComponent",
+  "encodeURI",
+  "decodeURI",
   // Pure legacy string codecs. Like encodeURIComponent they are total functions of their argument.
   "escape",
   "unescape",
