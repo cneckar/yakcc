@@ -527,3 +527,28 @@ describe("nested function declarations and JSDoc (residue defects found in bcryp
     expect(diamondSymbols(g)).toContain("K");
   });
 });
+
+describe("labels, class self-reference, and pure legacy globals (residue defects)", () => {
+  it("a statement label and its break target are not free identifiers", () => {
+    const g = lift("function f (xs) { loop1: for (const x of xs) { if (x) break loop1; } return xs }");
+    expect(diamondSymbols(g)).not.toContain("loop1");
+  });
+  it("a continue to a label is not a free identifier", () => {
+    const g = lift("function f (xs) { outer: for (const x of xs) { for (const y of x) { continue outer; } } return xs }");
+    expect(diamondSymbols(g)).not.toContain("outer");
+  });
+  it("a class's own name inside its method is a self-reference, not a free identifier", () => {
+    const g = lift("class C { m (range, options) { return new C(range, options) } }");
+    expect(diamondSymbols(g)).not.toContain("C");
+  });
+  it("the pure legacy codecs escape and unescape are explained", () => {
+    const g = lift("function f (x) { return unescape(escape(x)) }");
+    const reasonOf = (sym: string) => g.nodes.find((n) => n.diamond?.symbol === sym)?.diamond?.reason;
+    expect(reasonOf("unescape")).toBe("ambient-read");
+    expect(reasonOf("escape")).toBe("ambient-read");
+  });
+  it("WeakRef stays unexplained: its deref is not a pure function of its argument", () => {
+    const g = lift("function f (x) { return new WeakRef(x) }");
+    expect(diamondSymbols(g)).toContain("WeakRef");
+  });
+});

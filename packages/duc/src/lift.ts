@@ -71,6 +71,9 @@ const DEFAULT_AMBIENT_GLOBALS: readonly string[] = [
   "isFinite",
   "encodeURIComponent",
   "decodeURIComponent",
+  // Pure legacy string codecs. Like encodeURIComponent they are total functions of their argument.
+  "escape",
+  "unescape",
   "globalThis",
   // Implicit per-call binding of a non-arrow function. It is a runtime input, not a
   // dangling name. The diamond still feeds the result, so influence is kept.
@@ -369,6 +372,16 @@ class Lifter {
   }
 
   private liftStatement(node: Node): void {
+    if (Node.isClassDeclaration(node) && node.getName() !== undefined) {
+      // A named class is bound at its own position. Its own name inside its body is
+      // a self-reference, not an external read, as with a recursive function.
+      const name = node.getName() as string;
+      const value = this.emit("op", this.collectReads(node, new Set([name])), 1, {
+        origin: { kind: "Class", text: truncate(name) },
+      })[0] as ValueId;
+      this.env.set(name, value);
+      return;
+    }
     if (Node.isFunctionDeclaration(node)) {
       // Bound by liftStatements when hoisted; otherwise bind at this position.
       const name = node.getName();
@@ -803,6 +816,16 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
   if (id.getFirstAncestor((n) => n.getKindName().startsWith("JSDoc")) !== undefined) return false;
   const parent = id.getParent();
   if (parent === undefined) return false;
+  // Statement labels (`outer:` and `break outer` / `continue outer`) name a statement,
+  // not a value.
+  if (
+    (Node.isLabeledStatement(parent) ||
+      Node.isBreakStatement(parent) ||
+      Node.isContinueStatement(parent)) &&
+    (parent as { getLabel?: () => Node | undefined }).getLabel?.() === id
+  ) {
+    return false;
+  }
   // Property access member name (`obj.PROP`) is not a free read.
   if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === id) return false;
   // Property assignment key (`{ KEY: v }`) is not a read.
