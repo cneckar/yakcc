@@ -43,6 +43,7 @@
  * value out. A free or ambient source is one per symbol, so it is top level wherever it is written.
  */
 import { canonicalizeGraph } from "./canonical.js";
+import { normalizeLiteral } from "./literal.js";
 import type { DiamondLabel, DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class LineFormError extends Error {
@@ -175,7 +176,7 @@ export function parseLineForm(text: string): DucGraph {
     if (trimmed.startsWith("lit")) {
       const m = LIT.exec(trimmed);
       if (m === null) throw new LineFormError(line, 'expected: lit "<text>" -> <name>');
-      const label = JSON.parse(m[1] as string) as string;
+      const label = normalizeLiteral(JSON.parse(m[1] as string) as string);
       const out = define(m[2] as string, line);
       add({ kind: "literal-source", inputs: [], outputs: [out], label }, currentRegion());
       return;

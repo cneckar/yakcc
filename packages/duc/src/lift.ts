@@ -23,6 +23,7 @@
 import { createHash } from "node:crypto";
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-morph";
 import { canonicalizeGraph } from "./canonical.js";
+import { normalizeLiteral } from "./literal.js";
 import type { DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
@@ -1036,7 +1037,7 @@ class Lifter {
     if (isLiteralExpression(node)) {
       return this.emit("literal-source", [], 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
-        label: node.getText(),
+        label: normalizeLiteral(node.getText()),
       })[0] as ValueId;
     }
     if (Node.isParenthesizedExpression(node)) {
