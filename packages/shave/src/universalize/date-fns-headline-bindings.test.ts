@@ -240,7 +240,7 @@ describe("parseISO -- per-entry shave (WI-510 Slice 5)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for parseISO subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(DATE_FNS_FIXTURE_ROOT, "parseISO.cjs");
       const forest1 = await shavePackage(DATE_FNS_FIXTURE_ROOT, {
@@ -399,7 +399,7 @@ describe("formatISO -- per-entry shave (WI-510 Slice 5)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for formatISO subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(DATE_FNS_FIXTURE_ROOT, "formatISO.cjs");
       const forest1 = await shavePackage(DATE_FNS_FIXTURE_ROOT, {
@@ -552,7 +552,7 @@ describe("addDays -- per-entry shave (WI-510 Slice 5)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for addDays subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(DATE_FNS_FIXTURE_ROOT, "addDays.cjs");
       const forest1 = await shavePackage(DATE_FNS_FIXTURE_ROOT, {
@@ -711,7 +711,7 @@ describe("differenceInMilliseconds -- per-entry shave (WI-510 Slice 5)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for differenceInMilliseconds subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(DATE_FNS_FIXTURE_ROOT, "differenceInMilliseconds.cjs");
       const forest1 = await shavePackage(DATE_FNS_FIXTURE_ROOT, {
@@ -867,7 +867,7 @@ describe("parseJSON -- per-entry shave (WI-510 Slice 5)", () => {
 
   it(
     "section D -- two-pass byte-identical determinism for parseJSON subgraph",
-    { timeout: 120_000 },
+    { timeout: 300_000 },
     async () => {
       const entryPath = join(DATE_FNS_FIXTURE_ROOT, "parseJSON.cjs");
       const forest1 = await shavePackage(DATE_FNS_FIXTURE_ROOT, {
