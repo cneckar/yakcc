@@ -436,3 +436,12 @@ describe("non-statement fragments lift through analysis forms (WI-EXPLAIN-04, #1
     expect(onlyObs(g)).toBe(paramValue(g));
   });
 });
+
+describe("the implicit arguments binding is an explained ambient read (WI-EXPLAIN, #1173)", () => {
+  it("arguments is an ambient-read diamond that still feeds the result", () => {
+    const g = lift("function f() { return arguments[0]; }");
+    const d = g.nodes.find((n) => n.diamond?.symbol === "arguments")?.diamond;
+    expect(d?.reason).toBe("ambient-read");
+    expect(usupp(g, onlyObs(g)).map((s) => s.label.symbol)).toContain("arguments");
+  });
+});

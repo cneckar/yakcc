@@ -72,6 +72,9 @@ const DEFAULT_AMBIENT_GLOBALS: readonly string[] = [
   "encodeURIComponent",
   "decodeURIComponent",
   "globalThis",
+  // Implicit per-call binding of a non-arrow function. It is a runtime input, not a
+  // dangling name. The diamond still feeds the result, so influence is kept.
+  "arguments",
   "undefined",
   "NaN",
   "Infinity",
