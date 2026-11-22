@@ -685,6 +685,15 @@ Unknowns are classified by reason. `foreign-import` and `ambient-read` are
 explained by construction. A `free-identifier` that names a sibling atom in the
 same forest is a composition edge, not an unknown. The reason is never silently dropped.
 
+"Explained" means the read is recorded in the atom's external surface. It does not
+mean the read is deterministic. The default ambient set includes names whose values
+can differ between calls in one run, such as `Date` (`Date.now()`, `new Date()`)
+and `Math` (`Math.random()`). The I-axis treats each such read as an unknown value
+supplied by the environment. It does not model that two reads in one run may
+disagree, and the current attestations do not record that. Results that depend on
+these reads should be read with that caveat until the determinism assumption is
+either checked or made explicit in a checker spec (`WI-DUC-08`, #1270).
+
 ### Attestations
 
 Two analyses are issued as sidecar attestations, not manifest entries:
