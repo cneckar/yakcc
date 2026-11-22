@@ -20,7 +20,8 @@
 // node (mirrors shave's loop-is-the-atom bottoming-out); recursion-as-fixpoint
 // is out of scope.
 
-import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
+import { createHash } from "node:crypto";
+import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-morph";
 import { canonicalizeGraph } from "./canonical.js";
 import type { DiamondReason, DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -395,6 +396,7 @@ class Lifter {
     // recursive result is a value of the closure itself, not a new input to it.
     const value = this.emit("op", this.collectReads(stmt, new Set([name])), 1, {
       origin: { kind: "Closure", text: truncate(name) },
+      label: this.opaqueLabel("Closure", stmt, new Set([name])),
     })[0] as ValueId;
     this.env.set(name, value);
   }
@@ -418,6 +420,7 @@ class Lifter {
       const name = node.getName() as string;
       const value = this.emit("op", this.collectReads(node, new Set([name])), 1, {
         origin: { kind: "Class", text: truncate(name) },
+        label: this.opaqueLabel("Class", node, new Set([name])),
       })[0] as ValueId;
       this.env.set(name, value);
       return;
@@ -476,7 +479,15 @@ class Lifter {
       this.liftOpaqueRegion(node, "op");
       return;
     }
-    // Any other statement (throw, expression-less, declarations we don't bind):
+    if (Node.isThrowStatement(node)) {
+      // The thrown value is structure: it is lifted like any expression.
+      this.emit("op", [this.liftExpr(node.getExpression())], 0, {
+        origin: { kind: "ThrowStatement" },
+        label: "throw",
+      });
+      return;
+    }
+    // Any other statement (expression-less, declarations we don't bind):
     // still resolve its reads so nothing is dropped.
     this.liftOpaqueRegion(node, "op", { discardOutputs: true });
   }
@@ -769,6 +780,7 @@ class Lifter {
     const assigned = opts.discardOutputs ? [] : this.collectAssignedOuterNames(node);
     const outputs = this.emit(kind, reads, assigned.length, {
       origin: { kind: node.getKindName(), text: truncate(node.getText()) },
+      label: this.opaqueLabel(node.getKindName(), node),
     });
     assigned.forEach((name, i) => {
       const out = outputs[i];
@@ -788,7 +800,7 @@ class Lifter {
       const locals = collectRegionLocals(node);
       const scope =
         locals.size > 0
-          ? (this.emit("op", reads, 1, { origin: { kind: "RegionScope" } })[0] as ValueId)
+          ? (this.emit("op", reads, 1, { origin: { kind: "RegionScope" }, label: this.opaqueLabel("RegionScope", node) })[0] as ValueId)
           : undefined;
       for (const ret of returns) {
         const expr = ret.getExpression() as Node;
@@ -899,7 +911,12 @@ class Lifter {
     if (Node.isPrefixUnaryExpression(node) || Node.isPostfixUnaryExpression(node)) {
       const operand = node.getOperand();
       const value = this.liftExpr(operand);
-      const [out] = this.emit("op", [value], 1, { origin: { kind: node.getKindName() } });
+      // The operator is structure: `-x` and `+x`, `++x` and `x++` are different operations.
+      const token = ts.tokenToString(node.getOperatorToken()) ?? node.getKindName();
+      const [out] = this.emit("op", [value], 1, {
+        origin: { kind: node.getKindName() },
+        label: Node.isPrefixUnaryExpression(node) ? token : `post${token}`,
+      });
       // ++/-- on a bound identifier reassigns it.
       if (Node.isIdentifier(operand) && this.env.has(operand.getText())) {
         this.env.set(operand.getText(), out as ValueId);
@@ -919,13 +936,17 @@ class Lifter {
       const callee = node.getExpression();
       if (callee !== undefined) inputs.push(this.liftExpr(callee));
       for (const arg of node.getArguments()) inputs.push(this.liftExpr(arg as Node));
+      const optional = Node.isCallExpression(node) && node.hasQuestionDotToken();
       return this.emit("op", inputs, 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
+        ...(optional ? { label: `${node.getKindName()}?.` } : {}),
       })[0] as ValueId;
     }
     if (Node.isPropertyAccessExpression(node)) {
+      // The member name is structure: `o.a` and `o.b` are different reads.
       return this.emit("op", [this.liftExpr(node.getExpression())], 1, {
         origin: { kind: "PropertyAccess", text: truncate(node.getText()) },
+        label: `${node.hasQuestionDotToken() ? "?." : "."}${node.getName()}`,
       })[0] as ValueId;
     }
     if (Node.isElementAccessExpression(node)) {
@@ -933,20 +954,47 @@ class Lifter {
         this.liftExpr(node.getExpression()),
         this.liftExpr(node.getArgumentExpressionOrThrow()),
       ];
-      return this.emit("op", inputs, 1, { origin: { kind: "ElementAccess" } })[0] as ValueId;
+      return this.emit("op", inputs, 1, {
+        origin: { kind: "ElementAccess" },
+        ...(node.hasQuestionDotToken() ? { label: "ElementAccess?." } : {}),
+      })[0] as ValueId;
+    }
+    if (Node.isSpreadElement(node)) {
+      return this.emit("op", [this.liftExpr(node.getExpression())], 1, {
+        origin: { kind: "SpreadElement" },
+        label: "...",
+      })[0] as ValueId;
     }
     if (Node.isArrayLiteralExpression(node)) {
       const inputs = node.getElements().map((el) => this.liftExpr(el));
       return this.emit("op", inputs, 1, { origin: { kind: "ArrayLiteral" } })[0] as ValueId;
     }
     if (Node.isObjectLiteralExpression(node)) {
-      return this.emit("op", this.collectReads(node), 1, {
-        origin: { kind: "ObjectLiteral" },
-      })[0] as ValueId;
+      return this.liftObjectLiteral(node);
     }
     if (Node.isTemplateExpression(node)) {
+      // The literal parts are structure; the expressions between them are the inputs.
+      const parts = [rawTextOf(node.getHead()), ...node.getTemplateSpans().map((span) => rawTextOf(span.getLiteral()))];
       const inputs = node.getTemplateSpans().map((span) => this.liftExpr(span.getExpression()));
-      return this.emit("op", inputs, 1, { origin: { kind: "Template" } })[0] as ValueId;
+      return this.emit("op", inputs, 1, {
+        origin: { kind: "Template" },
+        label: `template:${labelJson(parts)}`,
+      })[0] as ValueId;
+    }
+    if (Node.isTaggedTemplateExpression(node)) {
+      const template = node.getTemplate();
+      const inputs = [this.liftExpr(node.getTag())];
+      let parts: string[];
+      if (Node.isTemplateExpression(template)) {
+        parts = [rawTextOf(template.getHead()), ...template.getTemplateSpans().map((span) => rawTextOf(span.getLiteral()))];
+        for (const span of template.getTemplateSpans()) inputs.push(this.liftExpr(span.getExpression()));
+      } else {
+        parts = [rawTextOf(template)];
+      }
+      return this.emit("op", inputs, 1, {
+        origin: { kind: "TaggedTemplate" },
+        label: `tagged:${labelJson(parts)}`,
+      })[0] as ValueId;
     }
     if (Node.isAwaitExpression(node) || Node.isYieldExpression(node)) {
       const inner = node.getExpression();
@@ -957,12 +1005,88 @@ class Lifter {
       // A closure is a value that carries the free variables it captures.
       return this.emit("op", this.collectReads(node), 1, {
         origin: { kind: "Closure" },
+        label: this.opaqueLabel("Closure", node),
       })[0] as ValueId;
     }
     // Fallback: opaque node over every value the expression reads (sound).
     return this.emit("op", this.collectReads(node), 1, {
       origin: { kind: node.getKindName(), text: truncate(node.getText()) },
+      label: this.opaqueLabel(node.getKindName(), node),
     })[0] as ValueId;
+  }
+
+  /**
+   * An object literal: one input per entry, in order, and its keys as structure. A static key is a
+   * string, a spread is null, a computed key is 1 (its value is the input before the entry's
+   * value), and a method or accessor is an object naming its kind and key, with an opaque value.
+   */
+  private liftObjectLiteral(node: import("ts-morph").ObjectLiteralExpression): ValueId {
+    const entries: unknown[] = [];
+    const inputs: ValueId[] = [];
+    const keyOf = (name: Node): string | 1 => {
+      if (Node.isComputedPropertyName(name)) {
+        inputs.push(this.liftExpr(name.getExpression()));
+        return 1;
+      }
+      if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralValue();
+      if (Node.isNumericLiteral(name)) return String(name.getLiteralValue());
+      return name.getText();
+    };
+    for (const prop of node.getProperties()) {
+      if (Node.isPropertyAssignment(prop)) {
+        entries.push(keyOf(prop.getNameNode()));
+        inputs.push(this.liftExpr(prop.getInitializerOrThrow()));
+      } else if (Node.isShorthandPropertyAssignment(prop)) {
+        entries.push(prop.getName());
+        inputs.push(this.resolveIdentifier(prop.getName()));
+      } else if (Node.isSpreadAssignment(prop)) {
+        entries.push(null);
+        inputs.push(this.liftExpr(prop.getExpression()));
+      } else {
+        // A method or an accessor: a closure-like value, opaque.
+        const nameNode = (prop as import("ts-morph").MethodDeclaration).getNameNode();
+        entries.push({ [prop.getKindName()]: keyOf(nameNode) });
+        inputs.push(
+          this.emit("op", this.collectReads(prop), 1, {
+            origin: { kind: "Closure" },
+            label: this.opaqueLabel("Closure", prop),
+          })[0] as ValueId,
+        );
+      }
+    }
+    return this.emit("op", inputs, 1, {
+      origin: { kind: "ObjectLiteral" },
+      label: `object:${labelJson(entries)}`,
+    })[0] as ValueId;
+  }
+
+  /**
+   * The structural label of an opaque node: its kind and a hash of its text. The names it reads from
+   * outside are replaced by their order of first use, so renaming an outer name keeps the label; the
+   * rest of the text is the structure, since the node has no other.
+   */
+  private opaqueLabel(kind: string, node: Node, extraLocals: ReadonlySet<string> = new Set()): string {
+    const locals = collectRegionLocals(node);
+    for (const name of extraLocals) locals.add(name);
+    const start = node.getStart();
+    const text = node.getText();
+    const order = new Map<string, number>();
+    const spans: [number, number, string][] = [];
+    for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
+      if (!isValueRead(id)) continue;
+      const name = id.getText();
+      if (locals.has(name)) continue;
+      if (!order.has(name)) order.set(name, order.size);
+      spans.push([id.getStart() - start, id.getEnd() - start, `$${order.get(name)}`]);
+    }
+    let normalized = "";
+    let at = 0;
+    for (const [from, to, placeholder] of spans.sort((a, b) => a[0] - b[0])) {
+      normalized += text.slice(at, from) + placeholder;
+      at = to;
+    }
+    normalized += text.slice(at);
+    return `${kind}#${createHash("sha256").update(normalized).digest("hex").slice(0, 16)}`;
   }
 
   private liftBinary(node: import("ts-morph").BinaryExpression): ValueId {
@@ -1007,7 +1131,8 @@ class Lifter {
         inputs.push(this.liftExpr(lhs.getArgumentExpressionOrThrow()));
       }
       inputs.push(value);
-      const [mutated] = this.emit("op", inputs, 1, { origin: { kind: "Write" } });
+      const label = Node.isPropertyAccessExpression(lhs) ? `.${lhs.getName()}=` : "[]=";
+      const [mutated] = this.emit("op", inputs, 1, { origin: { kind: "Write" }, label });
       if (Node.isIdentifier(base) && this.env.has(base.getText())) {
         this.env.set(base.getText(), mutated as ValueId);
       }
@@ -1289,6 +1414,17 @@ function truncate(text: string, max = 60): string {
 
 function dedupe(values: readonly ValueId[]): ValueId[] {
   return [...new Set(values)];
+}
+
+/** JSON as one token: whitespace inside strings is escaped, so a label is one word of the line form. */
+function labelJson(value: unknown): string {
+  return JSON.stringify(value).replace(/\s/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+/** The raw text of a template part, exactly as written (escapes kept). */
+function rawTextOf(part: Node): string {
+  const raw = (part.compilerNode as { rawText?: string }).rawText;
+  return raw ?? (part as import("ts-morph").TemplateHead).getLiteralText();
 }
 
 /** A loop being lifted (see `liftLoop`). */

@@ -44,7 +44,10 @@ export function retrievalSignature(g: DucGraph, options: RetrievalSignatureOptio
     });
   });
 
-  const ops = g.nodes.filter((n) => n.kind === "op").map((n) => n.label ?? n.origin?.kind ?? "op");
+  // An opaque node's label ends in a content hash, which is noise for retrieval: keep its kind.
+  const ops = g.nodes
+    .filter((n) => n.kind === "op")
+    .map((n) => (n.label ?? n.origin?.kind ?? "op").replace(/#[0-9a-f]+$/, ""));
   const literals = g.nodes
     .filter((n) => n.kind === "literal-source")
     .map((n) => n.label ?? "");
