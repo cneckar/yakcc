@@ -21,6 +21,7 @@
 // is out of scope.
 
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
+import { canonicalizeGraph } from "./canonical.js";
 import type { DiamondReason, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
@@ -755,6 +756,7 @@ class Lifter {
   }
 
   finish(): DucGraph {
+    // Renumber by structure, so the graph does not depend on traversal order (P1, #1275).
     const nodes: DucNode[] = this.nodes.map((n) => ({
       id: n.id,
       inputs: n.inputs,
@@ -763,9 +765,7 @@ class Lifter {
       ...(n.diamond !== undefined ? { diamond: n.diamond } : {}),
       ...(n.origin !== undefined ? { origin: n.origin } : {}),
     }));
-    const values: ValueId[] = [];
-    for (const node of nodes) for (const out of node.outputs) values.push(out);
-    return { nodes, values, obs: dedupe(this.obs) };
+    return canonicalizeGraph(nodes, dedupe(this.obs));
   }
 }
 

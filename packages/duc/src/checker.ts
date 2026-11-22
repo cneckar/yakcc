@@ -13,6 +13,7 @@
 // feasibility claims. Guard predicates are reported as annotations (A2).
 
 import { createHash } from "node:crypto";
+import { canonicalJson } from "./canonical.js";
 import { guardedFlows } from "./guard.js";
 import { renderWitness, witness } from "./influence.js";
 import type { DiamondReason, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
@@ -73,15 +74,6 @@ export function checkerSpecHash(spec: CheckerSpec): string {
   return createHash("sha256").update(canonicalJson(spec)).digest("hex");
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const keys = Object.keys(value as object).sort();
-  return `{${keys
-    .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
-    .map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`)
-    .join(",")}}`;
-}
 
 /** The callee symbol of a call node: the ♦-symbol its first input is defined by. */
 function calleeSymbolOf(
