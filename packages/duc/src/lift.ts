@@ -398,7 +398,7 @@ class Lifter {
     for (const [i, written] of stmts.entries()) {
       // A switch whose clauses each end in an exit is the if chain it means (#1276).
       const stmt = Node.isSwitchStatement(written)
-        ? (this.lowerSwitch(written) ?? written)
+        ? (this.lowerSwitch(written) ?? this.lowerSwitchAsPass(written) ?? written)
         : Node.isTryStatement(written)
           ? (this.lowerTry(written) ?? written)
           : written;
@@ -673,6 +673,66 @@ class Lifter {
       .getSourceFile()
       .getProject()
       .createSourceFile(`__try${n}_${t.getStart()}.ts`, source, { overwrite: true });
+    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+  }
+
+  /**
+   * Any switch, as one pass of a loop (#1276): the index of the clause to start at (the first case
+   * that matches, tested lazily in order, else the default's, else past the end), then each clause
+   * in order under `if ($at <= i)`, so a clause falls into the next, and a break leaves the pass.
+   * Undefined for a continue inside (it would continue the pass) and for a name a clause declares
+   * and another clause reads (the clauses share one scope).
+   */
+  private lowerSwitchAsPass(sw: import("ts-morph").SwitchStatement): Node | undefined {
+    const clauses = sw.getCaseBlock().getClauses();
+    const own = (n: Node): boolean => !isInsideNestedFunction(n, sw);
+    if (sw.getDescendantsOfKind(SyntaxKind.ContinueStatement).some(own)) return undefined;
+    if (
+      sw
+        .getDescendantsOfKind(SyntaxKind.BreakStatement)
+        .some((b) => b.getLabel() !== undefined && own(b))
+    )
+      return undefined;
+    for (const clause of clauses) {
+      const declared = clause
+        .getStatements()
+        .flatMap((st) =>
+          Node.isVariableStatement(st)
+            ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
+            : Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)
+              ? [st.getName() ?? ""]
+              : [],
+        );
+      const elsewhere = clauses
+        .filter((c) => c !== clause)
+        .flatMap((c) => c.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()));
+      if (declared.some((name) => elsewhere.includes(name))) return undefined;
+    }
+    const n = this.switchCount++;
+    const tmp = `$switch${n}`;
+    const at = `$at${n}`;
+    const end = clauses.length;
+    const fallback = clauses.findIndex((c) => Node.isDefaultClause(c));
+    let chain = String(fallback === -1 ? end : fallback);
+    for (let i = clauses.length - 1; i >= 0; i--) {
+      const c = clauses[i] as Node;
+      if (Node.isCaseClause(c))
+        chain = `${tmp} === (${c.getExpression().getText()}) ? ${i} : ${chain}`;
+    }
+    const bodies = clauses
+      .map(
+        (c, i) =>
+          `if (${at} <= ${i}) {\n${c
+            .getStatements()
+            .map((st) => st.getText())
+            .join("\n")}\n}`,
+      )
+      .join("\n");
+    const source = `function __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\nconst ${at} = ${chain};\ndo {\n${bodies}\n} while (false);\n}\n}`;
+    const file = sw
+      .getSourceFile()
+      .getProject()
+      .createSourceFile(`__switchpass${n}_${sw.getStart()}.ts`, source, { overwrite: true });
     return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
   }
 
@@ -1198,11 +1258,15 @@ class Lifter {
       const thenValue = thenEnv.get(name) ?? beforeValue;
       const elseValue = elseEnv.get(name) ?? beforeValue;
       // A side that has thrown on every path never reaches here. When the other side's value was made
-      // before the if, it is the value; otherwise the join keeps the value from before on the dead side.
+      // before the if (or is a constant), it is the value; otherwise the join keeps the value from before
+      // on the dead side.
       // The heap token keeps the throwing side's: what follows waits for the branch (#1285).
       if (thenDead !== elseDead && name !== HEAP) {
         const live = thenDead ? elseValue : thenValue;
-        if (valueIndex(live) < sidesStart) {
+        const constant = this.nodes.some(
+          (n) => n.kind === "literal-source" && n.outputs[0] === live,
+        );
+        if (valueIndex(live) < sidesStart || constant) {
           this.env.set(name, live);
           continue;
         }

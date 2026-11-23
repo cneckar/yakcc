@@ -10,6 +10,23 @@ export interface Case {
 
 export const EMIT_CASES: Case[] = [
   {
+    name: "a switch whose clauses fall into the next, and a default that is not last",
+    source:
+      "export function f(k: any, o: any): string[] { const out: string[] = []; switch (k) { case o.a: out.push('a'); case 2: out.push('two'); break; default: out.push('d'); case 3: out.push('three'); if (k === 3) break; out.push('after'); } return out; }",
+    args: [
+      [1, { a: 1 }],
+      [2, { a: 1 }],
+      [3, { a: 1 }],
+      [9, { a: 1 }],
+    ],
+  },
+  {
+    name: "a switch that falls through and throws in its default",
+    source:
+      "export function f(k: number): number { let n = 0; switch (k) { case 1: n = n + 1; case 2: n = n + 10; break; default: throw new Error('no ' + k); } return n; }",
+    args: [[1], [2]],
+  },
+  {
     name: "arithmetic",
     source: "export function f(a: number, b: number): number { return (a + b) * (a - b); }",
     args: [

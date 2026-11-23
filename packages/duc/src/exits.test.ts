@@ -318,11 +318,30 @@ describe("switch (#1276)", () => {
     expect(run("z", 5)).toBe(6);
   });
 
-  it("a clause that falls into the next stays opaque", () => {
+  it("a clause that falls into the next runs the next clause's statements too", () => {
     const g = liftAtom(
       src("let r = 0; switch (k) { case 'a': r = 1; case 'b': r = r + 1; break; } return r;"),
     );
-    expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(true);
+    expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = (k: string): unknown =>
+      new Function(`${code.replace("export ", "")}; return f(${JSON.stringify(k)}, 0);`)();
+    expect([run("a"), run("b"), run("z")]).toEqual([2, 1, 0]);
+  });
+
+  it("a switch with a continue inside (and so its loop), or clauses sharing a name, stays opaque", () => {
+    const opaque = (body: string): boolean =>
+      liftAtom(src(body)).nodes.some((n) =>
+        /^(SwitchStatement|ForOfStatement)#/.test(n.label ?? ""),
+      );
+    expect(
+      opaque(
+        "let r = 0; for (const c of [k]) { switch (c) { case 'a': if (x) continue; r = 1; case 'b': r = r + 2; } } return r;",
+      ),
+    ).toBe(true);
+    expect(
+      opaque("switch (k) { case 'a': const y = 1; case 'b': return y; default: return x; }"),
+    ).toBe(true);
   });
 });
 
