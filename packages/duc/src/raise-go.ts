@@ -8,6 +8,11 @@
  */
 import { type Expr, RaiseError, type Stmt, writeFunction } from "./raise-rust.js";
 
+/** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
+function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return table !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 type Tok = { readonly k: "id" | "num" | "str" | "p" | "nl"; readonly v: string };
 
 function tokenize(src: string): Tok[] {
@@ -388,7 +393,7 @@ class Parser {
       return { t: "call", fn: "Entry::Spread", args: [e] };
     }
     if (!this.is("(")) {
-      const platform = PLATFORM_NAMES[t.v];
+      const platform = entry(PLATFORM_NAMES, t.v);
       if (platform !== undefined) return platform;
       if (t.v === "true" || t.v === "false") return { t: "name", name: t.v };
       return { t: "name", name: t.v };
@@ -440,9 +445,9 @@ class Parser {
       return { t: "call", fn: "spread", args: [{ t: "vec", items: parts }] };
     }
     if (goName === "newError" || goName === "callError") {
-      return { t: "call", fn: NAMES[goName] as string, args };
+      return { t: "call", fn: entry(NAMES, goName) as string, args };
     }
-    const fn = NAMES[goName] ?? goName;
+    const fn = entry(NAMES, goName) ?? goName;
     if (LIST_ALL.has(fn)) return { t: "call", fn, args: [{ t: "vec", items: args }] };
     if (LIST_AFTER_FIRST.has(fn))
       return { t: "call", fn, args: [args[0] as Expr, { t: "vec", items: args.slice(1) }] };

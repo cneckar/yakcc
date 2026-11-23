@@ -18,6 +18,11 @@ import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./t
 
 export { GO_PRELUDE } from "./go-prelude.js";
 
+/** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
+function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return table !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 export class GoEmitError extends Error {
   constructor(message: string) {
     super(message);
@@ -267,7 +272,9 @@ function goFunction(
     if (p === undefined || !inline.has(p.id)) {
       const name = nameOf(v);
       if (name === "@arguments" && bound.length === 0) return "argumentsOf(args)";
-      const platformValue = name.startsWith("@") ? PLATFORM_VALUES[name.slice(1)] : undefined;
+      const platformValue = name.startsWith("@")
+        ? entry(PLATFORM_VALUES, name.slice(1))
+        : undefined;
       if (platformValue !== undefined) return platformValue;
       if (name.startsWith("@"))
         throw new GoEmitError(
@@ -321,7 +328,7 @@ function goFunction(
         ">>>": "ushr",
         in: "hasKey",
       };
-      const fn = binary[label];
+      const fn = entry(binary, label);
       if (fn !== undefined) return `${fn}(${arg(0)}, ${arg(1)})`;
       const compare: Record<string, string> = {
         "<": "lt",
@@ -330,7 +337,7 @@ function goFunction(
         ">=": "ge",
         "===": "seq",
       };
-      const cmp = compare[label];
+      const cmp = entry(compare, label);
       if (cmp !== undefined) return `any(${cmp}(${arg(0)}, ${arg(1)}))`;
       if (label === "!==") return `sne(${arg(0)}, ${arg(1)})`;
       if (label === "==" && producer.get(ins[1] as ValueId)?.label === "null")
@@ -365,7 +372,7 @@ function goFunction(
       const args = ins.slice(1).map((v) => ref(v));
       const amb = ambientMember(callee);
       if (amb !== undefined) {
-        const fn = AMBIENT_MEMBERS[amb.ns]?.[amb.member];
+        const fn = entry(entry(AMBIENT_MEMBERS, amb.ns), amb.member);
         if (fn === undefined) throw new GoEmitError(`${amb.ns}.${amb.member} has no Go form here`);
         return fn(args);
       }
@@ -377,7 +384,7 @@ function goFunction(
         const sym = platform.diamond.symbol;
         if (ERRORS.has(sym))
           return `${label === "NewExpression" ? "newError" : "callError"}(${JSON.stringify(sym)}, ${args[0] ?? NONE})`;
-        const call = AMBIENT_CALLS[sym];
+        const call = entry(AMBIENT_CALLS, sym);
         if (call === undefined) throw new GoEmitError(`${sym}(...) has no Go form here`);
         return call(args);
       }
@@ -386,7 +393,7 @@ function goFunction(
         if ((cp.label ?? "").startsWith("?."))
           throw new GoEmitError("an optional method call has no Go form here");
         const method = (cp.label ?? "").replace(/^\??\./, "");
-        const fn = METHODS[method];
+        const fn = entry(METHODS, method);
         if (fn === undefined) throw new GoEmitError(`the method ${method} has no Go form here`);
         return fn(ref(cp.inputs[0] as ValueId), args);
       }
@@ -468,7 +475,7 @@ function goFunction(
       "/=": "divAssign",
       "%=": "remAssign",
     };
-    const fn = compound[label];
+    const fn = entry(compound, label);
     if (fn !== undefined) return declare(name, `${fn}(${arg(0)}, ${arg(1)})`);
     const steps: Record<string, string> = {
       "++": "preInc",
@@ -476,7 +483,7 @@ function goFunction(
       "--": "preDec",
       "post--": "postDec",
     };
-    const step = steps[label];
+    const step = entry(steps, label);
     if (step !== undefined) return declare(name, `${step}(${arg(0)})`);
     if (label.startsWith(".") && label.endsWith("="))
       return declare(
@@ -488,11 +495,25 @@ function goFunction(
   };
 
   const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i] as const));
-  const needs = (node: DucNode): ValueId[] =>
-    [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
+  /** The values of the inline nodes a statement writes inside it. */
+  const inlined = (node: DucNode): ValueId[] =>
+    node.inputs.flatMap((v) => {
+      const p = producer.get(v);
+      return p !== undefined && inline.has(p.id) && p.kind === "op"
+        ? [...p.outputs, ...inlined(p)]
+        : [];
+    });
+  const needs = (node: DucNode): ValueId[] => [
+    ...node.inputs.flatMap((v) => {
       const p = producer.get(v);
       return p !== undefined && inline.has(p.id) ? needs(p) : [v];
-    });
+    }),
+    // An order edge to an inline operation waits for the statement that writes it.
+    ...(after.get(node.id) ?? []).flatMap((v) => {
+      const p = producer.get(v);
+      return p !== undefined && inline.has(p.id) ? [v, ...needs(p)] : [v];
+    }),
+  ];
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
     g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs);
@@ -579,7 +600,8 @@ function goFunction(
       items.push({
         first: nodeIndex.get(node.id) as number,
         last: node.label === "throw" ? 2 : 0,
-        produces: node.outputs,
+        // A heap operation written inline (a spread) is done by the statement that writes it.
+        produces: [...node.outputs, ...inlined(node)],
         requires: needs(node),
         lines: () => statementsOf(node),
       });
@@ -632,7 +654,7 @@ function goFunction(
         !done.has(i) &&
         item.requires.every((v) => {
           const p = producedBy.get(v);
-          return p === undefined || done.has(p);
+          return p === undefined || p === i || done.has(p);
         });
       const rank = Math.min(...items.filter(ready).map((item) => item.last));
       const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);

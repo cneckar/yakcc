@@ -10,9 +10,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
 import { runnable } from "./__fixtures__/runnable.js";
+import { graphIdentity } from "./canonical.js";
 import { PY_PRELUDE, PyEmitError, emitPython } from "./emit-py.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
+import { raisePython } from "./raise-py.js";
 
 const UNDEF = { $undefined: true };
 
@@ -314,4 +316,32 @@ describe.skipIf(!python)("lowering to Python: do loops (#1278)", () => {
     const inputs = [[0], [4]];
     expect(runPython(emitPython(liftAtom(src)), inputs)).toEqual(runJs(src, inputs));
   });
+});
+
+describe("raising the Python lowering: round trip (#1278)", () => {
+  const sources: [string, string][] = [
+    ...EMIT_CASES.map((c): [string, string] => [c.name, c.source]),
+    [
+      "operations the lowering keeps apart",
+      "export function f(o: any, xs: number[], k: string) { let n = 0; n += xs.length; n++; const t = `a${n}b`; o.k = t; o[k] = n; const e = new Error('x'); const c = Error('y'); return [o?.k, xs?.[0], (0, o.g)?.(1), String(n), n.toString(16), void n, (n, k), Math.pow(n, 2), n ** 2, /a+b/i.test(k), e, c, [...xs, n], { ...o, z: 1 }]; }",
+    ],
+    ["a spread argument", "export function f(g: any, xs: number[]) { return g(...xs); }"],
+    ["an unread free name, and nothing returned", "const g = strict ? a : b;"],
+    [
+      "a method named as one of Object's is refused, not looked up",
+      "export function f(o: any) { return o.hasOwnProperty('a'); }",
+    ],
+  ];
+  for (const [name, source] of sources) {
+    it(`lowers, raises and lifts to the same identity: ${name}`, () => {
+      const g = liftAtom(source);
+      if (name.startsWith("a method named")) {
+        expect(() => emitPython(g)).toThrow(PyEmitError);
+        return;
+      }
+      const py = emitPython(g);
+      const ts = raisePython(py);
+      expect(graphIdentity(liftAtom(ts)), `${py}\n${ts}`).toBe(graphIdentity(g));
+    });
+  }
 });

@@ -9,6 +9,11 @@
  * anything else is a RaiseError.
  */
 
+/** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
+function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return table !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 export class RaiseError extends Error {
   constructor(message: string) {
     super(message);
@@ -533,9 +538,9 @@ export class Writer {
 
   private call(fn: string, args: readonly Expr[]): string {
     const a = (i: number): string => this.e(args[i] as Expr);
-    const op = BINARY[fn];
+    const op = entry(BINARY, fn);
     if (op !== undefined) return `(${a(0)} ${op} ${a(1)})`;
-    const pre = PREFIX[fn];
+    const pre = entry(PREFIX, fn);
     if (pre !== undefined) return `${pre}${a(0)}`;
     if (fn === "type_of") return `(typeof ${a(0)})`;
     if (fn === "void_of") return `(void ${a(0)})`;
@@ -553,6 +558,7 @@ export class Writer {
       return this.e(inner);
     }
     if (fn === "uninit") return "undefined";
+    if (fn === "__spread_arg") return `...${a(0)}`;
     if (fn === "is_nullish") return `(${a(0)} == null)`;
     if (fn === "get") return `${a(0)}.${(args[1] as { v: string }).v}`;
     if (fn === "get_opt") return `${a(0)}?.${(args[1] as { v: string }).v}`;
@@ -613,11 +619,11 @@ export class Writer {
       const [src, flags] = args as unknown as [{ v: string }, { v: string }];
       return `/${src.v}/${flags.v}`;
     }
-    const platform = PLATFORM[fn];
+    const platform = entry(PLATFORM, fn);
     if (platform !== undefined) return platform;
-    const method = METHODS[fn];
+    const method = entry(METHODS, fn);
     if (method !== undefined) return `${a(0)}.${method}(${this.argList(args.slice(1)).join(", ")})`;
-    const ambient = AMBIENT[fn];
+    const ambient = entry(AMBIENT, fn);
     if (ambient !== undefined) return `${ambient}(${this.argList(args).join(", ")})`;
     if (fn.startsWith("Ref_") && args.length === 0) return fn.slice("Ref_".length);
     if (fn === "platform") return (args[0] as { v: string }).v;
@@ -645,7 +651,7 @@ export class Writer {
             );
             break;
           }
-          const compound = e.t === "call" ? COMPOUND[e.fn] : undefined;
+          const compound = e.t === "call" ? entry(COMPOUND, e.fn) : undefined;
           if (compound !== undefined && e.t === "call") {
             out.push(
               `${indent}let ${st.name}$ = ${this.e(e.args[0] as Expr)};`,
@@ -654,7 +660,7 @@ export class Writer {
             );
             break;
           }
-          const step = e.t === "call" ? STEPS[e.fn] : undefined;
+          const step = e.t === "call" ? entry(STEPS, e.fn) : undefined;
           if (step !== undefined && e.t === "call") {
             const [tok, prefix] = step;
             out.push(
