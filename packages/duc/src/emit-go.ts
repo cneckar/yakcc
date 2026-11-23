@@ -521,6 +521,11 @@ function goFunction(
         : `for truthy(${ref(rec.cond as ValueId)}) {`;
     const body = emitScope(bodyPathOf(loop));
     const element = rec.iterate !== undefined ? [`_ = ${nameOf(rec.iterate.element)}`] : [];
+    // An iterating loop's condition stops it before an element's body (#1276).
+    const guard =
+      rec.iterate !== undefined && rec.cond !== undefined
+        ? [`if !truthy(${ref(rec.cond)}) {`, "\tbreak", "}"]
+        : [];
     const next =
       carried.length > 0
         ? [`${carried.join(", ")} = ${rec.next.map((v) => ref(v)).join(", ")}`]
@@ -529,7 +534,7 @@ function goFunction(
       `var ${nameOf(v)} any = ${carried[i]}`,
       `_ = ${nameOf(v)}`,
     ]);
-    return [...before, header, ...indent([...element, ...body, ...next]), "}", ...after];
+    return [...before, header, ...indent([...element, ...guard, ...body, ...next]), "}", ...after];
   };
 
   function emitScope(scope: string | undefined): string[] {

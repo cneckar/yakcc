@@ -41,8 +41,9 @@
  *   element <name>                      an iterating loop's name for the current element
  *                                       (carry, invariant and element come first, in any order, and
  *                                       their names may shadow outer names inside the body)
- *   while <name>                        the body's condition: the loop continues while it is true
- *                                       (not for an iterating loop, which runs once per element)
+ *   while <name>                        the body's condition: the loop continues while it is true.
+ *                                       An iterating loop runs once per element, and with a while,
+ *                                       stops before an element's body when it is false (#1276)
  *   next <name> ...                     the next value of each carried variable, in order (while
  *                                       and next come once each, in either order)
  *   end <name> ...                      close the loop; the names are its results, one per carry
@@ -540,8 +541,7 @@ export function parseLineForm(text: string): DucGraph {
       if (frame.seen.has(head)) throw new LineFormError(line, `a loop has one ${head} line`);
       frame.seen.add(head);
       if (head === "while") {
-        if (frame.of !== undefined)
-          throw new LineFormError(line, "an iterating loop has no while: it runs once per element");
+        // An iterating loop's while is tested before each element's body: it stops the loop (#1276).
         if (rest.length !== 1) throw new LineFormError(line, "expected: while <name>");
         frame.cond = use(rest[0] as string, line);
         return;
@@ -594,9 +594,10 @@ export function parseLineForm(text: string): DucGraph {
               carry: frame.carry,
               invariant: frame.invariant,
               next: frame.next,
-              ...(frame.of === undefined
-                ? { cond: frame.cond as ValueId }
-                : { iterate: { element: frame.element as ValueId, of: frame.of } }),
+              ...(frame.cond !== undefined ? { cond: frame.cond } : {}),
+              ...(frame.of !== undefined
+                ? { iterate: { element: frame.element as ValueId, of: frame.of } }
+                : {}),
             },
           },
           currentRegion(),
@@ -837,7 +838,7 @@ export function printLineForm(g: DucGraph): string {
     if (
       loop.inputs.length !== rec.carry.length + iterating + rec.invariant.length ||
       loop.outputs.length !== rec.carry.length ||
-      (rec.cond === undefined) === (rec.iterate === undefined)
+      (rec.cond === undefined && rec.iterate === undefined)
     ) {
       throw new Error(
         `loop ${loop.id} does not match its carried and invariant values, or its condition or iteration`,

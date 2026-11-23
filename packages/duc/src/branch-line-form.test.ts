@@ -114,11 +114,14 @@ describe("structured if in the line form (#1275)", () => {
     expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
   });
 
-  it("a return inside a loop is still an observation the form refuses", () => {
+  it("a return inside an iterating loop is a loop with a condition, and one observation (#1276)", () => {
     const g = liftAtom(
       "export function f(xs: number[]): number { for (const x of xs) { if (x > 0) { return x; } } return 0; }",
     );
-    expect(() => printLineForm(g)).toThrow(/loop|observation/);
+    const text = printLineForm(g);
+    expect(text).toMatch(/\nwhile /);
+    expect(g.obs.length).toBe(1);
+    expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(g));
   });
 
   it("early returns on every path become one observation, the join of the returns", () => {

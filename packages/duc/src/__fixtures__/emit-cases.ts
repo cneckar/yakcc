@@ -161,4 +161,23 @@ export const EMIT_CASES: Case[] = [
       'export function f(xs: number[]): number { let total = 0; try { for (const x of xs) { if (x < 0) throw new Error("neg"); total = total + x; } } catch (e: any) { total = -1; } return total; }',
     args: [[[1, 2]], [[1, -1]]],
   },
+  // An iterating loop that breaks or returns has a condition, tested before each element (#1276).
+  {
+    name: "a for...of that returns",
+    source:
+      // The returned value is carried, undefined until a return sets it: inference does not tie it
+      // to the flag that says it was set, so it allows undefined.
+      'export function f(xs: number[], k: number): string | undefined { for (const x of xs) { if (x === k) return "found " + x; } return "none"; }',
+    args: [
+      [[1, 2, 3], 2],
+      [[1, 2, 3], 9],
+      [[], 1],
+    ],
+  },
+  {
+    name: "a for...in that breaks",
+    source:
+      'export function f(o: Record<string, number>): number { let n = 0; for (const key in o) { if (key === "stop") break; n = n + o[key]; } return n; }',
+    args: [[{ a: 1, b: 2 }], [{ a: 1, stop: 5, b: 2 }]],
+  },
 ];

@@ -1001,7 +1001,12 @@ function pyFunction(
           ]
         : [];
     const after = loop.outputs.map((v, i) => `${nameOf(v)} = ${carried[i]}`);
-    const inner = [...body, ...next];
+    // An iterating loop's condition stops it before an element's body (#1276).
+    const guard =
+      rec.iterate !== undefined && rec.cond !== undefined
+        ? [`if not _truthy(${ref(rec.cond)}):`, "    break"]
+        : [];
+    const inner = [...guard, ...body, ...next];
     return [...before, header, ...indent(inner.length > 0 ? inner : ["pass"]), ...after];
   };
 

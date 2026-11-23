@@ -98,10 +98,26 @@ describe("loops in the line form (#1275)", () => {
       );
     });
 
-    it("an iterating loop has no while", () => {
-      const text =
-        'param xs\nlit "0" -> s0\nloop s0 of xs\ncarry s\ninvariant\nelement x\nwhile x\n';
-      expect(() => parseLineForm(text)).toThrow(/no while/);
+    it("an iterating loop may have a while, which stops it before an element's body (#1276)", () => {
+      const text = [
+        "param xs",
+        'lit "0" -> s0',
+        'lit "undefined" -> h0',
+        "loop s0 h0 of xs",
+        "carry s ^h",
+        "invariant",
+        "element x",
+        'lit "10" -> ten',
+        "op < s ten -> going",
+        "while going",
+        "op + s x -> s2",
+        "next s2 h",
+        "end r h1",
+        "out r",
+      ].join("\n");
+      const loop = parseLineForm(text).nodes.find((n) => n.kind === "loop");
+      expect(loop?.loop?.cond).toBeDefined();
+      expect(loop?.loop?.iterate?.of).toBe("values");
     });
 
     it("an iterating loop needs its element line", () => {

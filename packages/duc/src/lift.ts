@@ -1146,8 +1146,15 @@ class Lifter {
    * the returned value is carried too. Returns the loop's results for the return flag and value.
    */
   private liftLoopWithExits(node: Node): { ret: ValueId; retv: ValueId } | undefined {
+    const iterating =
+      (Node.isForOfStatement(node) || Node.isForInStatement(node)) && iterateLiftable(node);
     if (
-      !(Node.isWhileStatement(node) || Node.isForStatement(node) || Node.isDoStatement(node)) ||
+      !(
+        iterating ||
+        Node.isWhileStatement(node) ||
+        Node.isForStatement(node) ||
+        Node.isDoStatement(node)
+      ) ||
       !jumpsSupported(node)
     )
       return undefined;
@@ -1172,10 +1179,13 @@ class Lifter {
     const outer = this.bodyExits;
     this.bodyExits = exits;
     try {
-      this.liftLoopBody(
-        node,
-        [exits.brk, exits.ret, exits.retv].filter((n): n is string => n !== undefined),
-      );
+      const names = [exits.brk, exits.ret, exits.retv].filter((n): n is string => n !== undefined);
+      if (iterating)
+        this.liftIterateBody(
+          node as import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
+          names,
+        );
+      else this.liftLoopBody(node, names);
     } finally {
       this.bodyExits = outer;
     }
@@ -1401,22 +1411,40 @@ class Lifter {
   private liftIterate(
     node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
   ): boolean {
-    const jumps = hasJump(node);
-    if (jumps && !jumpsSupported(node)) return false;
-    if (Node.isForOfStatement(node) && node.isAwaited()) return false;
-    const init = node.getInitializer();
-    if (!Node.isVariableDeclarationList(init) || init.getDeclarations().length !== 1) return false;
+    if (!iterateLiftable(node)) return false;
+    // A lowering writes an iterating loop's condition as a leading `if (!(c)) break;`: it is that.
+    const guard = iterateGuard(node);
+    if (guard !== undefined) return this.liftIterateBody(node, [], guard);
+    if (hasJump(node)) {
+      // A loop that returns needs the rest of the function, and lifts from liftStatements.
+      if (loopReturns(node) || !jumpsSupported(node)) return false;
+      return this.liftLoopWithExits(node) !== undefined;
+    }
+    return this.liftIterateBody(node, []);
+  }
+
+  /**
+   * The body of an iterating loop, with the exit flags `exitNames` carried (#1276): the loop goes on
+   * while none is set, its condition, tested before the body. `guard` is a written condition.
+   */
+  private liftIterateBody(
+    node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
+    exitNames: readonly string[],
+    guard?: Node,
+  ): boolean {
+    const init = node.getInitializer() as import("ts-morph").VariableDeclarationList;
     const decl = init.getDeclarations()[0] as import("ts-morph").VariableDeclaration;
     const declared = patternNames(decl.getNameNode());
     const of: "values" | "keys" = Node.isForOfStatement(node) ? "values" : "keys";
     const body = node.getStatement();
 
     const iterable = this.liftExpr(node.getExpression());
-    // Each step reads the iterable, so an iterating loop always carries the heap token.
+    // Each step reads the iterable, so an iterating loop always carries the heap token, last.
     const carried = [
       ...this.collectAssignedOuterNames(body).filter(
         (name) => this.env.has(name) && !declared.includes(name),
       ),
+      ...exitNames,
       HEAP,
     ];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
@@ -1434,6 +1462,7 @@ class Lifter {
     const carrySources: ValueId[] = [];
     const nexts: ValueId[] = [];
     let element: ValueId | undefined;
+    let condition: ValueId | undefined;
     this.loopFrames.push(frame);
     try {
       this.inRegion(`${frame.id}.b`, () => {
@@ -1450,15 +1479,30 @@ class Lifter {
           label: "element",
           origin: { kind: "LoopElement", text: truncate(decl.getNameNode().getText()) },
         }) as [ValueId];
+        // The condition is tested first: none of the exits is set (or the written guard holds).
+        const flags = exitNames
+          .filter((n) => !n.startsWith("%returnValue"))
+          .map((n) => this.env.get(n) as ValueId);
+        if (guard !== undefined) condition = this.liftExpr(guard);
+        else if (flags.length > 0) {
+          const stop = flags.slice(1).reduce(
+            (acc, f) =>
+              this.emit("op", [acc, f], 1, {
+                origin: { kind: "Binary", text: "||" },
+                label: "||",
+              })[0] as ValueId,
+            flags[0] as ValueId,
+          );
+          condition = this.emit("op", [stop], 1, {
+            origin: { kind: "PrefixUnaryExpression" },
+            label: "!",
+          })[0] as ValueId;
+        }
         this.bindPattern(decl.getNameNode(), element);
-        // With continues and throws, each ends its own path, and an if holding one takes the rest.
-        const outer = this.bodyExits;
-        if (jumps) this.bodyExits = { node };
         try {
-          if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
-          else this.liftStatement(body, []);
+          const statements = Node.isBlock(body) ? body.getStatements() : [body];
+          this.liftStatements(guard !== undefined ? statements.slice(1) : statements, []);
         } finally {
-          this.bodyExits = outer;
           this.dead = false;
         }
         for (const name of carried) nexts.push(this.env.get(name) as ValueId);
@@ -1478,6 +1522,7 @@ class Lifter {
       carry: carrySources,
       invariant: frame.invariantSources,
       next: nexts,
+      ...(condition !== undefined ? { cond: condition } : {}),
       iterate: { element: element as ValueId, of },
     };
     carried.forEach((name, i) => {
@@ -2809,6 +2854,44 @@ function isLoopStatement(n: Node): boolean {
   );
 }
 
+/** Whether an iterating loop has a form the lifter expresses: not `for await`, one declared variable. */
+function iterateLiftable(
+  node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
+): boolean {
+  if (Node.isForOfStatement(node) && node.isAwaited()) return false;
+  const init = node.getInitializer();
+  return Node.isVariableDeclarationList(init) && init.getDeclarations().length === 1;
+}
+
+/**
+ * The condition `c` of an iterating loop whose body starts with `if (!(c)) break;` and has no other
+ * jump of its own: how a lowering writes an iterating loop's condition (#1276).
+ */
+function iterateGuard(loop: Node): Node | undefined {
+  if (!(Node.isForOfStatement(loop) || Node.isForInStatement(loop))) return undefined;
+  const body = loop.getStatement();
+  if (!Node.isBlock(body)) return undefined;
+  const first = body.getStatements()[0];
+  if (first === undefined || !Node.isIfStatement(first) || first.getElseStatement() !== undefined)
+    return undefined;
+  const then = first.getThenStatement();
+  const inner =
+    Node.isBlock(then) && then.getStatements().length === 1 ? then.getStatements()[0] : then;
+  if (inner === undefined || !Node.isBreakStatement(inner) || inner.getLabel() !== undefined)
+    return undefined;
+  const jumps = loopJumpsOf(loop);
+  if (jumps.length !== 1 || jumps[0]?.compilerNode !== inner.compilerNode) return undefined;
+  const test = first.getExpression();
+  if (
+    !Node.isPrefixUnaryExpression(test) ||
+    test.getOperatorToken() !== SyntaxKind.ExclamationToken
+  )
+    return undefined;
+  let c: Node = test.getOperand();
+  while (Node.isParenthesizedExpression(c)) c = c.getExpression();
+  return c;
+}
+
 /** The jumps of a loop that leave it or end its iteration: its own breaks and continues, and its returns. */
 function loopJumpsOf(loop: Node): Node[] {
   const own = (
@@ -2859,20 +2942,14 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
  * rest of the body could read.
  */
 function jumpsSupported(loop: Node): boolean {
-  if (Node.isForOfStatement(loop) || Node.isForInStatement(loop)) {
-    // An iterating loop has no condition to stop it: only continues and throws, which end a path.
-    if (loopJumpsOf(loop).some((j) => Node.isBreakStatement(j) || Node.isReturnStatement(j)))
-      return false;
-  } else if (
-    !(Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop))
-  )
-    return false;
+  if (!isLoopStatement(loop)) return false;
   const labelled = [
     ...loop.getDescendantsOfKind(SyntaxKind.BreakStatement),
     ...loop.getDescendantsOfKind(SyntaxKind.ContinueStatement),
   ].some((j) => j.getLabel() !== undefined && !isInsideNestedFunction(j, loop));
   if (labelled) return false;
-  const body = loop.getStatement();
+  // Every loop statement has a body statement.
+  const body = (loop as import("ts-morph").WhileStatement).getStatement();
   for (const j of loopJumpsOf(loop)) {
     for (
       let p: Node | undefined = j.getParent();

@@ -450,10 +450,15 @@ function emitFunction(
       rec.iterate !== undefined
         ? `for (const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "values" ? "of" : "in"} ${ref(loop.inputs[count] as ValueId)}) {`
         : `while (${ref(rec.cond as ValueId)}) {`;
+    // An iterating loop's condition stops it before an element's body (#1276).
+    const guard =
+      rec.iterate !== undefined && rec.cond !== undefined
+        ? [`if (!(${ref(rec.cond)})) break;`]
+        : [];
     const body = emitScope(bodyPathOf(loop));
     const next = rec.next.map((v, i) => `${carried[i]} = ${ref(v)};`);
     const after = loop.outputs.map((v, i) => `const ${nameOf(v)} = ${carried[i]};`);
-    return [...before, header, ...indent([...body, ...next]), "}", ...after];
+    return [...before, header, ...indent([...guard, ...body, ...next]), "}", ...after];
   };
 
   /** The statements of one scope, each after the values it needs. */
