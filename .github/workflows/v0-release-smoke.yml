@@ -47,7 +47,7 @@ name: v0-release-smoke
 
 on:
   schedule:
-    - cron: "0 10 * * *"   # daily 10:00 UTC — after B1 nightly (09:00 UTC)
+    - cron: "0 10 * * 0"   # weekly, Sundays 10:00 UTC — after B1 (09:00 UTC)
   workflow_dispatch:          # manual trigger for ad-hoc runs
   push:
     branches: [main]          # also run on push to main to validate every merge

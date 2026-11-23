@@ -77,7 +77,7 @@ describe("project mode — cross-file fixture", () => {
 
     expect(result.violations).toHaveLength(0);
     expect(result.filesValidated).toBeGreaterThanOrEqual(2); // a.ts + b.ts
-  });
+  }, 60_000); // project-mode validation takes ~6s on the CI runner; default 5s budget flaked nightly
 
   it("cross-validation: isolated mode emits no-untyped-imports where project mode does not", () => {
     // b.ts imports from './a.js'. Isolated mode (in-memory project) has no a.ts source,
