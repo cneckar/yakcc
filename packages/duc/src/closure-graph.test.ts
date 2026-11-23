@@ -228,3 +228,24 @@ describe("captures that change (#1276)", () => {
     expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
   });
 });
+
+describe("a capture rebound by destructuring (#1173)", () => {
+  const opaque = (src: string): boolean => /\S+#[0-9a-f]{16}/.test(printLineForm(liftAtom(src)));
+  it("before the closure is made: the closure is a graph", () => {
+    expect(opaque("export function f(c) { ({c} = c); const g = () => c; return g; }")).toBe(false);
+    expect(
+      opaque(
+        "export function f(c) { let r = false; ({c, r = false} = c); const g = () => r; return g(); }",
+      ),
+    ).toBe(false);
+  });
+  it("after it: the name is shared, and the closure sees the write", () => {
+    const src = "export function f(c) { const g = () => c; ({c} = {c: 2}); return g(); }";
+    expect(opaque(src)).toBe(false);
+    const code = emitTypeScript(liftAtom(src));
+    const f = new Function(`${code.replace(/^export /m, "")}; return f;`)() as (
+      c: number,
+    ) => number;
+    expect(f(5)).toBe(2);
+  });
+});

@@ -1226,24 +1226,27 @@ class Lifter {
       return false;
     };
     const fnScope = scopeOf(fn);
+    // A write the closure sees as it was made: before it, in its own scope, and in no loop.
+    const doneBefore = (t: Node): boolean =>
+      !Node.isFunctionDeclaration(fn) &&
+      t.getEnd() <= fn.getStart() &&
+      scopeOf(t)?.compilerNode === fnScope?.compilerNode &&
+      !inLoop(fn, fnScope);
+    // The closure holds the cell (or the binding), which every write changes.
+    const shared = (name: string): boolean => this.cells.has(name) || this.bindings.has(name);
     const changesCapture = (t: Node): boolean => {
-      // A destructuring assignment rebinds every name in it.
+      // A destructuring assignment rebinds every name in it, under the same rules as a single
+      // name: a shared one, or one rebound before the closure is made, does not change it (#1173).
       if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t)) {
         return t
           .getDescendantsOfKind(SyntaxKind.Identifier)
-          .some((id) => captures.includes(id.getText()));
+          .some((id) => captures.includes(id.getText()) && !shared(id.getText()) && !doneBefore(t));
       }
       const base = baseIdentifierOfTarget(t);
       if (base === undefined || !captures.includes(base)) return false;
       if (!Node.isIdentifier(t)) return false;
-      // The closure holds the cell (or the binding), which every write changes.
-      if (this.cells.has(base) || this.bindings.has(base)) return false;
-      const doneBefore =
-        !Node.isFunctionDeclaration(fn) &&
-        t.getEnd() <= fn.getStart() &&
-        scopeOf(t)?.compilerNode === fnScope?.compilerNode &&
-        !inLoop(fn, fnScope);
-      return !doneBefore;
+      if (shared(base)) return false;
+      return !doneBefore(t);
     };
     // Only the closure's own enclosing function can change a capture under it: an assignment in a
     // scope further out was settled there (a cell, or a value captured by the closure in between).
