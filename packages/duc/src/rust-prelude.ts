@@ -21,6 +21,7 @@ pub enum V {
     Obj(Rc<RefCell<Obj>>),
     Fun(Rc<dyn Fn(Vec<V>) -> V>),
     Err(Rc<JsErr>),
+    Re(Rc<Re>),
 }
 
 pub struct Obj {
@@ -242,6 +243,7 @@ pub fn str_of(x: &V) -> String {
             .join(","),
         V::Err(e) => if e.message.is_empty() { e.kind.clone() } else { format!("{}: {}", e.kind, e.message) },
         V::Fun(_) => "function () { [native code] }".to_string(),
+        V::Re(r) => format!("/{}/{}", r.source, r.flags),
         V::Obj(_) => "[object Object]".to_string(),
     }
 }
@@ -318,6 +320,7 @@ pub fn seq_b(a: &V, b: &V) -> bool {
         (V::Obj(x), V::Obj(y)) => Rc::ptr_eq(x, y),
         (V::Fun(x), V::Fun(y)) => Rc::ptr_eq(x, y),
         (V::Err(x), V::Err(y)) => Rc::ptr_eq(x, y),
+        (V::Re(x), V::Re(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }
 }
@@ -790,6 +793,9 @@ pub fn starts_with(x: V, y: V) -> V { B(str_method(&x).starts_with(str_of(&y).as
 pub fn ends_with(x: V, y: V) -> V { B(str_method(&x).ends_with(str_of(&y).as_str())) }
 
 pub fn replace_str(x: V, pat: V, with: V) -> V {
+    if let V::Re(r) = &pat {
+        return re_replace(r, str_method(&x), with);
+    }
     let t = str_method(&x);
     let p = str_of(&pat);
     match t.find(p.as_str()) {
@@ -900,4 +906,520 @@ pub fn fn_string() -> V { fun(|a| str_v(arg(&a, 0))) }
 pub fn fn_number() -> V { fun(|a| n(num(&arg(&a, 0)))) }
 pub fn fn_boolean() -> V { fun(|a| B(truthy(&arg(&a, 0)))) }
 pub fn fn_parse_int() -> V { fun(|a| parse_int(arg(&a, 0), arg(&a, 1))) }
+
+// --- Regular expressions: a backtracking matcher for JavaScript's syntax, over chars. ---
+
+pub struct Re {
+    pub source: String,
+    pub flags: String,
+    pub global: bool,
+    icase: bool,
+    multiline: bool,
+    dotall: bool,
+    node: RNode,
+    groups: usize,
+}
+
+enum RNode {
+    Empty,
+    Char(char),
+    Any,
+    Class(bool, Vec<CItem>),
+    Start,
+    End,
+    WordB(bool),
+    Group(Box<RNode>, Option<usize>),
+    Look(bool, Box<RNode>),
+    Backref(usize),
+    Concat(Vec<RNode>),
+    Alt(Vec<RNode>),
+    Repeat(Box<RNode>, usize, usize, bool),
+}
+
+enum CItem {
+    Range(char, char),
+    Digit(bool),
+    Word(bool),
+    Space(bool),
+}
+
+struct RParse<'a> {
+    c: &'a [char],
+    i: usize,
+    groups: usize,
+}
+
+fn is_word(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn is_space(c: char) -> bool {
+    c.is_whitespace() || c == '\u{feff}'
+}
+
+impl<'a> RParse<'a> {
+    fn peek(&self) -> Option<char> {
+        self.c.get(self.i).copied()
+    }
+    fn alt(&mut self) -> Result<RNode, String> {
+        let mut alts = vec![self.seq()?];
+        while self.peek() == Some('|') {
+            self.i += 1;
+            alts.push(self.seq()?);
+        }
+        Ok(if alts.len() == 1 { alts.pop().unwrap() } else { RNode::Alt(alts) })
+    }
+    fn seq(&mut self) -> Result<RNode, String> {
+        let mut items = Vec::new();
+        while let Some(c) = self.peek() {
+            if c == '|' || c == ')' {
+                break;
+            }
+            let atom = self.atom()?;
+            let atom = self.quantified(atom)?;
+            items.push(atom);
+        }
+        Ok(if items.len() == 1 { items.pop().unwrap() } else { RNode::Concat(items) })
+    }
+    fn number(&mut self) -> Option<usize> {
+        let start = self.i;
+        while matches!(self.peek(), Some(d) if d.is_ascii_digit()) {
+            self.i += 1;
+        }
+        if start == self.i { None } else { self.c[start..self.i].iter().collect::<String>().parse().ok() }
+    }
+    fn quantified(&mut self, atom: RNode) -> Result<RNode, String> {
+        let (min, max) = match self.peek() {
+            Some('*') => { self.i += 1; (0, usize::MAX) }
+            Some('+') => { self.i += 1; (1, usize::MAX) }
+            Some('?') => { self.i += 1; (0, 1) }
+            Some('{') => {
+                let save = self.i;
+                self.i += 1;
+                match self.number() {
+                    None => { self.i = save; return Ok(atom); }
+                    Some(lo) => {
+                        let hi = if self.peek() == Some(',') {
+                            self.i += 1;
+                            self.number().unwrap_or(usize::MAX)
+                        } else {
+                            lo
+                        };
+                        if self.peek() != Some('}') { self.i = save; return Ok(atom); }
+                        self.i += 1;
+                        (lo, hi)
+                    }
+                }
+            }
+            _ => return Ok(atom),
+        };
+        let greedy = if self.peek() == Some('?') { self.i += 1; false } else { true };
+        Ok(RNode::Repeat(Box::new(atom), min, max, greedy))
+    }
+    fn escape_char(&mut self, e: char) -> Result<char, String> {
+        Ok(match e {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            'f' => '\u{c}',
+            'v' => '\u{b}',
+            '0' => '\0',
+            'x' => {
+                let h: String = self.c.get(self.i..self.i + 2).ok_or("bad escape")?.iter().collect();
+                self.i += 2;
+                char::from_u32(u32::from_str_radix(&h, 16).map_err(|_| "bad escape")?).ok_or("bad escape")?
+            }
+            'u' => {
+                let h: String = self.c.get(self.i..self.i + 4).ok_or("bad escape")?.iter().collect();
+                self.i += 4;
+                char::from_u32(u32::from_str_radix(&h, 16).map_err(|_| "bad escape")?).unwrap_or('\u{fffd}')
+            }
+            other => other,
+        })
+    }
+    fn atom(&mut self) -> Result<RNode, String> {
+        let c = self.peek().ok_or("unexpected end")?;
+        self.i += 1;
+        Ok(match c {
+            '.' => RNode::Any,
+            '^' => RNode::Start,
+            '$' => RNode::End,
+            '(' => {
+                let mut capture = true;
+                let mut look: Option<bool> = None;
+                if self.peek() == Some('?') {
+                    self.i += 1;
+                    match self.peek() {
+                        Some(':') => { self.i += 1; capture = false; }
+                        Some('=') => { self.i += 1; look = Some(true); }
+                        Some('!') => { self.i += 1; look = Some(false); }
+                        Some('<') => {
+                            self.i += 1;
+                            while self.peek().map(|x| x != '>').unwrap_or(false) { self.i += 1; }
+                            self.i += 1;
+                        }
+                        _ => return Err("unsupported group".to_string()),
+                    }
+                }
+                let index = if capture && look.is_none() { self.groups += 1; Some(self.groups) } else { None };
+                let inner = self.alt()?;
+                if self.peek() != Some(')') { return Err("unterminated group".to_string()); }
+                self.i += 1;
+                match look {
+                    Some(pos) => RNode::Look(pos, Box::new(inner)),
+                    None => RNode::Group(Box::new(inner), index),
+                }
+            }
+            '[' => {
+                let neg = if self.peek() == Some('^') { self.i += 1; true } else { false };
+                let mut items = Vec::new();
+                let mut first = true;
+                loop {
+                    let x = self.peek().ok_or("unterminated class")?;
+                    if x == ']' && !first { self.i += 1; break; }
+                    if x == ']' { self.i += 1; break; }
+                    first = false;
+                    self.i += 1;
+                    let lo = if x == '\\' {
+                        let e = self.peek().ok_or("bad escape")?;
+                        self.i += 1;
+                        match e {
+                            'd' => { items.push(CItem::Digit(true)); continue; }
+                            'D' => { items.push(CItem::Digit(false)); continue; }
+                            'w' => { items.push(CItem::Word(true)); continue; }
+                            'W' => { items.push(CItem::Word(false)); continue; }
+                            's' => { items.push(CItem::Space(true)); continue; }
+                            'S' => { items.push(CItem::Space(false)); continue; }
+                            'b' => '\u{8}',
+                            other => self.escape_char(other)?,
+                        }
+                    } else {
+                        x
+                    };
+                    if self.peek() == Some('-') && self.c.get(self.i + 1).map(|&y| y != ']').unwrap_or(false) {
+                        self.i += 1;
+                        let y = self.peek().ok_or("bad range")?;
+                        self.i += 1;
+                        let hi = if y == '\\' {
+                            let e = self.peek().ok_or("bad escape")?;
+                            self.i += 1;
+                            self.escape_char(e)?
+                        } else {
+                            y
+                        };
+                        items.push(CItem::Range(lo, hi));
+                    } else {
+                        items.push(CItem::Range(lo, lo));
+                    }
+                }
+                RNode::Class(neg, items)
+            }
+            '\\' => {
+                let e = self.peek().ok_or("bad escape")?;
+                self.i += 1;
+                match e {
+                    'd' => RNode::Class(false, vec![CItem::Digit(true)]),
+                    'D' => RNode::Class(false, vec![CItem::Digit(false)]),
+                    'w' => RNode::Class(false, vec![CItem::Word(true)]),
+                    'W' => RNode::Class(false, vec![CItem::Word(false)]),
+                    's' => RNode::Class(false, vec![CItem::Space(true)]),
+                    'S' => RNode::Class(false, vec![CItem::Space(false)]),
+                    'b' => RNode::WordB(true),
+                    'B' => RNode::WordB(false),
+                    '1'..='9' => {
+                        self.i -= 1;
+                        RNode::Backref(self.number().unwrap_or(0))
+                    }
+                    other => RNode::Char(self.escape_char(other)?),
+                }
+            }
+            other => RNode::Char(other),
+        })
+    }
+}
+
+fn fold(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+type Caps = Vec<Option<(usize, usize)>>;
+
+impl Re {
+    fn class_has(&self, items: &[CItem], c: char) -> bool {
+        items.iter().any(|it| match it {
+            CItem::Range(lo, hi) => {
+                (*lo <= c && c <= *hi)
+                    || (self.icase && {
+                        let l = fold(c);
+                        let u = c.to_uppercase().next().unwrap_or(c);
+                        (*lo <= l && l <= *hi) || (*lo <= u && u <= *hi)
+                    })
+            }
+            CItem::Digit(p) => c.is_ascii_digit() == *p,
+            CItem::Word(p) => is_word(c) == *p,
+            CItem::Space(p) => is_space(c) == *p,
+        })
+    }
+
+    fn m(&self, n: &RNode, s: &[char], i: usize, caps: &mut Caps, k: &mut dyn FnMut(usize, &mut Caps) -> bool) -> bool {
+        match n {
+            RNode::Empty => k(i, caps),
+            RNode::Char(c) => i < s.len() && (s[i] == *c || (self.icase && fold(s[i]) == fold(*c))) && k(i + 1, caps),
+            RNode::Any => i < s.len() && (self.dotall || !matches!(s[i], '\n' | '\r' | '\u{2028}' | '\u{2029}')) && k(i + 1, caps),
+            RNode::Class(neg, items) => i < s.len() && self.class_has(items, s[i]) != *neg && k(i + 1, caps),
+            RNode::Start => (i == 0 || (self.multiline && s[i - 1] == '\n')) && k(i, caps),
+            RNode::End => (i == s.len() || (self.multiline && s[i] == '\n')) && k(i, caps),
+            RNode::WordB(want) => {
+                let a = i > 0 && is_word(s[i - 1]);
+                let b = i < s.len() && is_word(s[i]);
+                ((a != b) == *want) && k(i, caps)
+            }
+            RNode::Group(inner, index) => match index {
+                None => self.m(inner, s, i, caps, k),
+                Some(g) => {
+                    let g = *g;
+                    self.m(inner, s, i, caps, &mut |j, c: &mut Caps| {
+                        let old = c[g];
+                        c[g] = Some((i, j));
+                        if k(j, c) {
+                            true
+                        } else {
+                            c[g] = old;
+                            false
+                        }
+                    })
+                }
+            },
+            RNode::Look(pos, inner) => {
+                let mut trial = caps.clone();
+                let found = self.m(inner, s, i, &mut trial, &mut |_: usize, _: &mut Caps| true);
+                if *pos {
+                    if !found {
+                        return false;
+                    }
+                    let saved = caps.clone();
+                    *caps = trial;
+                    if k(i, caps) {
+                        true
+                    } else {
+                        *caps = saved;
+                        false
+                    }
+                } else {
+                    !found && k(i, caps)
+                }
+            }
+            RNode::Backref(g) => match caps.get(*g).copied().flatten() {
+                None => k(i, caps),
+                Some((a, b)) => {
+                    let len = b - a;
+                    if i + len > s.len() {
+                        return false;
+                    }
+                    let same = (0..len).all(|d| s[a + d] == s[i + d] || (self.icase && fold(s[a + d]) == fold(s[i + d])));
+                    same && k(i + len, caps)
+                }
+            },
+            RNode::Concat(items) => self.seq(items, s, i, caps, k),
+            RNode::Alt(alts) => alts.iter().any(|a| self.m(a, s, i, caps, k)),
+            RNode::Repeat(inner, min, max, greedy) => self.rep(inner, *min, *max, *greedy, 0, s, i, caps, k),
+        }
+    }
+
+    fn seq(&self, items: &[RNode], s: &[char], i: usize, caps: &mut Caps, k: &mut dyn FnMut(usize, &mut Caps) -> bool) -> bool {
+        match items.split_first() {
+            None => k(i, caps),
+            Some((first, rest)) => self.m(first, s, i, caps, &mut |j, c: &mut Caps| self.seq(rest, s, j, c, k)),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn rep(&self, inner: &RNode, min: usize, max: usize, greedy: bool, count: usize, s: &[char], i: usize, caps: &mut Caps, k: &mut dyn FnMut(usize, &mut Caps) -> bool) -> bool {
+        if count < min {
+            return self.m(inner, s, i, caps, &mut |j, c: &mut Caps| self.rep(inner, min, max, greedy, count + 1, s, j, c, k));
+        }
+        let mut again = |caps: &mut Caps, k: &mut dyn FnMut(usize, &mut Caps) -> bool| {
+            count < max && self.m(inner, s, i, caps, &mut |j, c: &mut Caps| j != i && self.rep(inner, min, max, greedy, count + 1, s, j, c, k))
+        };
+        if greedy {
+            again(caps, k) || k(i, caps)
+        } else {
+            k(i, caps) || again(caps, k)
+        }
+    }
+
+    /// The first match at or after from: each group's span, group 0 the whole match.
+    pub fn exec(&self, s: &[char], from: usize) -> Option<Caps> {
+        for start in from..=s.len() {
+            let mut caps: Caps = vec![None; self.groups + 1];
+            let mut end = None;
+            if self.m(&self.node, s, start, &mut caps, &mut |j: usize, _: &mut Caps| {
+                end = Some(j);
+                true
+            }) {
+                caps[0] = Some((start, end.unwrap_or(start)));
+                return Some(caps);
+            }
+        }
+        None
+    }
+}
+
+thread_local! {
+    static RE_CACHE: RefCell<HashMap<String, Rc<Re>>> = RefCell::new(HashMap::new());
+}
+
+pub fn compile_re(source: &str, flags: &str) -> Result<Rc<Re>, String> {
+    let key = format!("{}/{}", source, flags);
+    if let Some(r) = RE_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return Ok(r);
+    }
+    let chars: Vec<char> = source.chars().collect();
+    let mut p = RParse { c: &chars, i: 0, groups: 0 };
+    let node = if chars.is_empty() { RNode::Empty } else { p.alt()? };
+    if p.i < chars.len() {
+        return Err("unmatched ')'".to_string());
+    }
+    let r = Rc::new(Re {
+        source: source.to_string(),
+        flags: flags.to_string(),
+        global: flags.contains('g'),
+        icase: flags.contains('i'),
+        multiline: flags.contains('m'),
+        dotall: flags.contains('s'),
+        node,
+        groups: p.groups,
+    });
+    RE_CACHE.with(|c| c.borrow_mut().insert(key, r.clone()));
+    Ok(r)
+}
+
+/// A regular expression literal: checked when it is lowered.
+pub fn re(source: &str, flags: &str) -> V {
+    V::Re(compile_re(source, flags).expect("a regular expression the lowering checked"))
+}
+
+/// new RegExp(pattern, flags): a SyntaxError for a pattern it cannot read.
+pub fn re_new(pattern: V, flags: V) -> V {
+    let source = match &pattern { V::Re(r) => r.source.clone(), V::Undef => "(?:)".to_string(), other => str_of(other) };
+    let f = match flags { V::Undef => String::new(), other => str_of(&other) };
+    match compile_re(&source, &f) {
+        Ok(r) => V::Re(r),
+        Err(e) => throw(V::Err(Rc::new(JsErr { kind: "SyntaxError".to_string(), message: format!("Invalid regular expression: /{}/: {}", source, e) }))),
+    }
+}
+
+pub fn re_test(r: V, x: V) -> V {
+    match &r {
+        V::Re(re) => {
+            let t: Vec<char> = str_of(&x).chars().collect();
+            B(re.exec(&t, 0).is_some())
+        }
+        _ => type_error("test is not a function".to_string()),
+    }
+}
+
+fn span(t: &[char], a: usize, b: usize) -> String {
+    t[a..b].iter().collect()
+}
+
+fn re_replace(r: &Re, text: String, with: V) -> V {
+    let t: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut last = 0;
+    let mut from = 0;
+    while from <= t.len() {
+        let caps = match r.exec(&t, from) {
+            Some(c) => c,
+            None => break,
+        };
+        let (a, b) = caps[0].unwrap();
+        out.push_str(&span(&t, last, a));
+        match &with {
+            V::Fun(_) => {
+                let mut args: Vec<V> = caps.iter().map(|g| g.map(|(x, y)| s(&span(&t, x, y))).unwrap_or(V::Undef)).collect();
+                args.push(n(a as f64));
+                args.push(s(&text));
+                out.push_str(&str_of(&call(with.clone(), args)));
+            }
+            other => out.push_str(&expand_groups(&str_of(other), &t, &caps)),
+        }
+        last = b;
+        if !r.global {
+            break;
+        }
+        from = if b == a { b + 1 } else { b };
+    }
+    if last <= t.len() {
+        out.push_str(&span(&t, last, t.len()));
+    }
+    s(&out)
+}
+
+fn expand_groups(rep: &str, t: &[char], caps: &Caps) -> String {
+    let c: Vec<char> = rep.chars().collect();
+    let (a, b) = caps[0].unwrap();
+    let groups = caps.len() - 1;
+    let mut out = String::new();
+    let mut i = 0;
+    while i < c.len() {
+        if c[i] == '$' && i + 1 < c.len() {
+            let d = c[i + 1];
+            match d {
+                '$' => { out.push('$'); i += 2; continue; }
+                '&' => { out.push_str(&span(t, a, b)); i += 2; continue; }
+                '\x60' => { out.push_str(&span(t, 0, a)); i += 2; continue; }
+                '\'' => { out.push_str(&span(t, b, t.len())); i += 2; continue; }
+                '0'..='9' => {
+                    let mut k = d as usize - '0' as usize;
+                    let mut used = 1;
+                    if let Some(e) = c.get(i + 2).filter(|e| e.is_ascii_digit()) {
+                        let kk = k * 10 + (*e as usize - '0' as usize);
+                        if kk >= 1 && kk <= groups { k = kk; used = 2; }
+                    }
+                    if k >= 1 && k <= groups {
+                        if let Some((x, y)) = caps[k] { out.push_str(&span(t, x, y)); }
+                        i += 1 + used;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push(c[i]);
+        i += 1;
+    }
+    out
+}
+
+pub fn match_str(x: V, r: V) -> V {
+    let text = str_method(&x);
+    let re = match &r {
+        V::Re(re) => re.clone(),
+        other => {
+            let src: String = str_of(other).chars().map(|c| if "\\^$.|?*+()[]{}/".contains(c) { format!("\\{}", c) } else { c.to_string() }).collect();
+            compile_re(&src, "").unwrap()
+        }
+    };
+    let t: Vec<char> = text.chars().collect();
+    if re.global {
+        let mut all = Vec::new();
+        let mut from = 0;
+        while from <= t.len() {
+            match re.exec(&t, from) {
+                None => break,
+                Some(caps) => {
+                    let (a, b) = caps[0].unwrap();
+                    all.push(s(&span(&t, a, b)));
+                    from = if b == a { b + 1 } else { b };
+                }
+            }
+        }
+        return if all.is_empty() { V::Null } else { arr(all) };
+    }
+    match re.exec(&t, 0) {
+        None => V::Null,
+        Some(caps) => arr(caps.iter().map(|g| g.map(|(a, b)| s(&span(&t, a, b))).unwrap_or(V::Undef)).collect()),
+    }
+}
 `;

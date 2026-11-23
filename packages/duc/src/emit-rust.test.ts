@@ -228,6 +228,19 @@ const MORE: [string, string, unknown[][]][] = [
     [[0], [1]],
   ],
   [
+    "regular expressions",
+    "export function f(s: string) { return [/^a+b/.test(s), s.replace(/a(b)/g, '[$1]'), s.replace('a', '$$'), s.match(/(a)(x)?/), s.match(/a/g), /^[\\w.]+@(?:x|y)\\.com$/i.test(s), s.replace(/\\b(\\w)(\\w*)/g, (m: string, h: string, t: string) => h.toUpperCase() + t)]; }",
+    [["aab"], ["xabab"], [""], ["Jo.e@Y.COM"], ["hello big world"]],
+  ],
+  [
+    "a regular expression made at run time",
+    "export function f(p: string, s: string) { return new RegExp(p, 'g').test(s) && s.replace(new RegExp(p, 'g'), '_'); }",
+    [
+      ["a.", "xabyacz"],
+      ["q", "abc"],
+    ],
+  ],
+  [
     "a read of a property of undefined throws a TypeError",
     "export function f(o: any) { return o.a.b; }",
     [[{ a: { b: 1 } }], [{}]],
@@ -270,11 +283,9 @@ describe.skipIf(!rustc)("lowering to Rust: conformance (#1278)", () => {
     return results.slice(offset, offset + (cases[i]?.[2].length ?? 0));
   };
 
-  it("lowers every case but those that need a regular expression", () => {
+  it("lowers every case", () => {
     const refused = lowered.flatMap((x, i) =>
-      x instanceof RustEmitError && !/regular expression/.test(x.message)
-        ? [`${cases[i]?.[0]}: ${x.message}`]
-        : [],
+      x instanceof RustEmitError ? [`${cases[i]?.[0]}: ${x.message}`] : [],
     );
     expect(refused).toEqual([]);
   });

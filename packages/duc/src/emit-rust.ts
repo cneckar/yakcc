@@ -55,6 +55,8 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
   charCodeAt: (r, a) => `char_code_at(${r}, ${a[0] ?? U})`,
   at: (r, a) => `at(${r}, ${a[0] ?? U})`,
   pop: (r) => `pop(${r})`,
+  test: (r, a) => `re_test(${r}, ${a[0] ?? U})`,
+  match: (r, a) => `match_str(${r}, ${a[0] ?? U})`,
   shift: (r) => `shift(${r})`,
   reverse: (r) => `reverse(${r})`,
 };
@@ -97,6 +99,7 @@ const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
   parseInt: (a) => `parse_int(${a[0] ?? U}, ${a[1] ?? U})`,
   isNaN: (a) => `B(num(&${a[0] ?? U}).is_nan())`,
   isFinite: (a) => `B(num(&${a[0] ?? U}).is_finite())`,
+  RegExp: (a) => `re_new(${a[0] ?? U}, ${a[1] ?? U})`,
 };
 
 const PLATFORM_VALUES: Record<string, string> = {
@@ -126,8 +129,16 @@ function rustString(text: string): string {
 }
 
 function literal(label: string): string {
-  if (label.startsWith("/") && label.lastIndexOf("/") > 0)
-    throw new RustEmitError("a regular expression has no Rust form here (no regex in std)");
+  if (label.startsWith("/") && label.lastIndexOf("/") > 0) {
+    const end = label.lastIndexOf("/");
+    const body = label.slice(1, end);
+    const flags = label.slice(end + 1);
+    // The prelude's matcher reads JavaScript's syntax but for lookbehind, property escapes and
+    // named back references; a sticky or unicode-sets regex is refused too.
+    if (/\(\?<[=!]|\\[pPk]/.test(body) || /[yv]/.test(flags))
+      throw new RustEmitError(`the regular expression ${label} has no Rust form here`);
+    return `re(${rustString(body)}, ${rustString(flags)})`;
+  }
   if (label === "true" || label === "false") return `B(${label})`;
   if (label === "null") return "V::Null";
   if (label === "undefined" || label === "Uninitialized") return U;
