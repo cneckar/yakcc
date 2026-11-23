@@ -13,6 +13,7 @@
 //
 // Decidable in linear time: one backward reachability from the low observations.
 
+import { type BaseSet, nondeterministicObservations } from "./base-set.js";
 import { influenceCone, influenceIndex, witness } from "./influence.js";
 import type { WitnessTerm } from "./influence.js";
 import type { DucGraph, NodeId, ValueId } from "./types.js";
@@ -40,17 +41,33 @@ export interface NILeak {
   readonly witness: WitnessTerm;
 }
 
-/** The verdict of a graph-NI check. */
+/** A low observation a nondeterministic primitive may reach (#1270). */
+export interface NondeterministicRead {
+  readonly obs: ValueId;
+  /** The primitive, as `Date` or `Math.random`. */
+  readonly source: string;
+}
+
+/**
+ * The verdict of a graph-NI check. With a base set, `nondeterministic` lists the low observations a
+ * nondeterministic primitive may reach: graph-NI treats every ambient read as one fixed unknown
+ * value, so for those observations the verdict holds only under that assumption (#1270).
+ */
 export type NIResult =
-  | { readonly holds: true }
-  | { readonly holds: false; readonly leaks: readonly NILeak[] };
+  | { readonly holds: true; readonly nondeterministic?: readonly NondeterministicRead[] }
+  | {
+      readonly holds: false;
+      readonly leaks: readonly NILeak[];
+      readonly nondeterministic?: readonly NondeterministicRead[];
+    };
 
 /**
  * Decide graph non-interference. Returns `{ holds: true }` when no high source
  * may-influence any low observation under *any* interpretation, else every
- * witnessed leak.
+ * witnessed leak. Given the target's base set, the verdict also names the low
+ * observations a nondeterministic primitive reaches (#1270, DEC-DUC-NI-DETERMINISM-001).
  */
-export function graphNI(graph: DucGraph, labeling: Labeling): NIResult {
+export function graphNI(graph: DucGraph, labeling: Labeling, base?: BaseSet): NIResult {
   const nodes = nodeIndex(graph);
   const def = defMap(graph);
   const index = influenceIndex(graph);
@@ -84,7 +101,19 @@ export function graphNI(graph: DucGraph, labeling: Labeling): NIResult {
   // caller should have caught with isWellFormed; treat it as no leak here.
   void def;
 
-  return leaks.length === 0 ? { holds: true } : { holds: false, leaks };
+  // @decision DEC-DUC-NI-DETERMINISM-001 (#1270): an ambient read is one unknown value per run in
+  // graph-NI, but `Date.now()` or `Math.random()` can differ between two reads in one run. The verdict
+  // is not weakened (the reachability answer is still exact over the graph); it is qualified: the low
+  // observations such a read reaches are named, so a consumer can tell a verdict that rests on the
+  // assumption from one that does not.
+  const nondeterministic =
+    base === undefined
+      ? undefined
+      : nondeterministicObservations(graph, base)
+          .map((r) => ({ obs: graph.obs[r.obs] as ValueId, source: r.source }))
+          .filter((r) => labeling.lowObs.includes(r.obs));
+  const qualified = nondeterministic !== undefined ? { nondeterministic } : {};
+  return leaks.length === 0 ? { holds: true, ...qualified } : { holds: false, leaks, ...qualified };
 }
 
 /**
