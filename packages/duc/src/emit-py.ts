@@ -384,14 +384,25 @@ def _min(*xs):
     return min((_num(x) for x in xs), default=math.inf)
 
 
-def _try(body, handler):
-    # A try statement as the lifter writes it (#1276): the handler gets what the body threw.
+def _try(body, handler, finalizer=UNDEFINED):
+    # A try statement as the lifter writes it (#1276): the handler gets what the body threw (with no
+    # handler, the throw goes on); the finalizer runs however that ends, and its return wins.
     try:
-        return body()
-    except JsThrow as t:
-        return handler(t.value)
-    except JsError as e:
-        return handler(e)
+        try:
+            return body()
+        except JsThrow as t:
+            if handler is UNDEFINED:
+                raise
+            return handler(t.value)
+        except JsError as e:
+            if handler is UNDEFINED:
+                raise
+            return handler(e)
+    finally:
+        if finalizer is not UNDEFINED:
+            done = finalizer()
+            if isinstance(done, list) and len(done) > 0 and done[0] == 1:
+                return done
 `;
 
 /** String and array methods, as Python: `(receiver, args) => expression`. */
@@ -446,7 +457,7 @@ const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) =
 };
 
 const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
-  __yakccTry: (a) => `_try(${a[0]}, ${a[1]})`,
+  __yakccTry: (a) => `_try(${a.join(", ")})`,
   String: (a) => `_str(${a[0] ?? '""'})`,
   Number: (a) => `_num(${a[0] ?? "0"})`,
   parseInt: (a) => `_parse_int(${a.join(", ")})`,

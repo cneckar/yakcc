@@ -988,8 +988,30 @@ func isIntegerNumber(x any) any {
 	return ok && !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f)
 }
 
-// tryCatch is a try statement as the lifter writes it (#1276): the handler gets what the body threw.
-func tryCatch(body any, handler any) (out any) {
+// tryCatch is a try statement as the lifter writes it (#1276): the handler gets what the body threw
+// (with no handler, the throw goes on); a finalizer runs however that ends, and its return wins.
+func tryCatch(body any, handler any, rest ...any) (out any) {
+	if len(rest) > 0 && rest[0] != Undefined {
+		finalizer := rest[0]
+		defer func() {
+			r := recover()
+			done := call(finalizer)
+			if a, ok := done.(*Array); ok && len(a.Items) > 0 && seq(a.Items[0], float64(1)) {
+				out = done
+				return
+			}
+			if r != nil {
+				panic(r)
+			}
+		}()
+	}
+	return catchOnly(body, handler)
+}
+
+func catchOnly(body any, handler any) (out any) {
+	if handler == Undefined {
+		return call(body)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			t, ok := r.(*JsThrow)

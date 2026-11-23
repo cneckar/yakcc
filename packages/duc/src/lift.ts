@@ -497,16 +497,25 @@ class Lifter {
    */
   private lowerTry(t: import("ts-morph").TryStatement): Node | undefined {
     const handler = t.getCatchClause();
-    if (handler === undefined || t.getFinallyBlock() !== undefined) return undefined;
-    const parts = [t.getTryBlock(), handler.getBlock()];
+    const finalizer = t.getFinallyBlock();
+    const parts = [
+      t.getTryBlock(),
+      ...(handler !== undefined ? [handler.getBlock()] : []),
+      ...(finalizer !== undefined ? [finalizer] : []),
+    ];
+    const vars: string[] = [];
     for (const part of parts) {
       const own = (n: Node): boolean => !isInsideNestedFunction(n, part);
-      if (
-        part
-          .getDescendantsOfKind(SyntaxKind.VariableDeclarationList)
-          .some((l) => own(l) && l.getDeclarationKind() === "var")
-      )
-        return undefined;
+      for (const list of part.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+        if (!own(list) || list.getDeclarationKind() !== "var") continue;
+        // A var belongs to the function: only a plain name can be declared there instead.
+        const header = list.getParent();
+        if (Node.isForInStatement(header) || Node.isForOfStatement(header)) return undefined;
+        for (const d of list.getDeclarations()) {
+          if (!Node.isIdentifier(d.getNameNode())) return undefined;
+          if (!vars.includes(d.getName())) vars.push(d.getName());
+        }
+      }
       if (
         [
           ...part.getDescendantsOfKind(SyntaxKind.YieldExpression),
@@ -539,24 +548,62 @@ class Lifter {
     const rewrite = (block: import("ts-morph").Block): string => {
       const start = block.getStart() + 1;
       const end = block.getEnd() - 1;
-      let text = full.slice(start, end);
-      const own = returns
-        .filter((r) => r.getStart() >= start && r.getEnd() <= end)
-        .sort((a, b) => b.getStart() - a.getStart());
-      for (const r of own) {
+      const edits: { from: number; to: number; text: string }[] = [];
+      for (const r of returns) {
+        if (r.getStart() < start || r.getEnd() > end) continue;
         const expr = r.getExpression();
         const value = expr === undefined ? "undefined" : `(${expr.getText()})`;
-        text = `${text.slice(0, r.getStart() - start)}return [1, ${value}];${text.slice(r.getEnd() - start)}`;
+        edits.push({ from: r.getStart(), to: r.getEnd(), text: `return [1, ${value}];` });
       }
+      // `var x = v` inside is the assignment `x = v` of the function's x, declared before the call.
+      for (const list of block.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+        if (isInsideNestedFunction(list, block) || list.getDeclarationKind() !== "var") continue;
+        const statement = list.getParent();
+        const inFor = Node.isForStatement(statement);
+        const target = inFor ? list : (statement as Node);
+        if (edits.some((e) => e.from <= target.getStart() && target.getEnd() <= e.to)) continue;
+        const assigned = list
+          .getDeclarations()
+          .filter((d) => d.getInitializer() !== undefined)
+          .map((d) => `${d.getName()} = (${d.getInitializer()?.getText()})`)
+          .join(", ");
+        edits.push({
+          from: target.getStart(),
+          to: target.getEnd(),
+          text: inFor ? assigned : `${assigned};`,
+        });
+      }
+      edits.sort((a, b) => b.from - a.from);
+      let text = full.slice(start, end);
+      for (const e of edits)
+        text = `${text.slice(0, e.from - start)}${e.text}${text.slice(e.to - start)}`;
       return completes ? `${text}\nreturn [0];` : text;
     };
     const n = this.tryCount++;
     const tmp = `$try${n}`;
-    const param = handler.getVariableDeclaration()?.getText() ?? "";
-    const call = `${TRY_PRIMITIVE}(() => {\n${rewrite(parts[0] as import("ts-morph").Block)}\n}, (${param}) => {\n${rewrite(parts[1] as import("ts-morph").Block)}\n})`;
+    const body = `() => {\n${rewrite(t.getTryBlock())}\n}`;
+    const caught =
+      handler !== undefined
+        ? `(${handler.getVariableDeclaration()?.getText() ?? ""}) => {\n${rewrite(handler.getBlock())}\n}`
+        : "undefined";
+    const last = finalizer !== undefined ? `, () => {\n${rewrite(finalizer)}\n}` : "";
+    const call = `${TRY_PRIMITIVE}(${body}, ${caught}${last})`;
     const source = completes
       ? `function __try() {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
       : `function __try() {\n${call};\n}`;
+    // The function's own names declared in the blocks are bound before the call, as JavaScript
+    // hoists them; the closures assign them, so they are cells.
+    for (const name of vars) {
+      if (this.env.has(name)) continue;
+      const start = this.undefinedValue();
+      if (this.cells.has(name)) {
+        const [cell] = this.emit("op", [start], 1, {
+          origin: { kind: "ObjectLiteral", text: truncate(name) },
+          label: 'object:["value"]',
+        });
+        this.env.set(name, cell as ValueId);
+      } else this.env.set(name, start);
+    }
     const file = t
       .getSourceFile()
       .getProject()
@@ -929,6 +976,8 @@ class Lifter {
       this.liftOpaqueRegion(node, "op");
       return;
     }
+    // An empty statement computes nothing.
+    if (Node.isEmptyStatement(node)) return;
     // A local export list computes nothing: the names it exports are observed (exportedBindingNames).
     if (Node.isExportDeclaration(node) && node.getModuleSpecifier() === undefined) return;
     if (Node.isThrowStatement(node)) {
@@ -2351,9 +2400,7 @@ function cellNames(scope: Node): Set<string> {
     .filter(
       (d) =>
         isFunctionLikeNode(d) ||
-        (Node.isBlock(d) &&
-          d.getParent()?.asKind(SyntaxKind.TryStatement)?.getTryBlock().compilerNode ===
-            d.compilerNode) ||
+        (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
         Node.isCatchClause(d),
     );
   if (nested.length === 0) return new Set();
@@ -2393,6 +2440,18 @@ function cellNames(scope: Node): Set<string> {
   const out = new Set<string>();
   for (const fn of nested) {
     const locals = closureLocals(fn);
+    if (!isFunctionLikeNode(fn)) {
+      // A var in a try statement's block is the function's: the block's closure assigns it.
+      for (const list of fn.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+        if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, fn)) continue;
+        for (const d of list.getDeclarations()) {
+          for (const name of patternNames(d.getNameNode())) {
+            locals.delete(name);
+            if (declared.has(name)) out.add(name);
+          }
+        }
+      }
+    }
     for (const t of assignmentTargets(fn)) {
       const ids = Node.isIdentifier(t)
         ? [t]

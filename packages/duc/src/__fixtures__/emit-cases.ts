@@ -161,6 +161,18 @@ export const EMIT_CASES: Case[] = [
       'export function f(xs: number[]): number { let total = 0; try { for (const x of xs) { if (x < 0) throw new Error("neg"); total = total + x; } } catch (e: any) { total = -1; } return total; }',
     args: [[[1, 2]], [[1, -1]]],
   },
+  {
+    name: "a finally that runs on every path, and a var declared in a try",
+    source:
+      'export function f(x: number): string[] { const log: string[] = []; try { var half = x / 2; if (x < 0) throw new Error("neg"); log.push("body " + half); } catch (e: any) { log.push("caught " + e.message); } finally { log.push("finally"); } log.push("half " + half); return log; }',
+    args: [[4], [-2]],
+  },
+  {
+    name: "a return in a try, and a finally without a catch",
+    source:
+      "export function f(xs: number[]): number { let seen = 0; try { for (const x of xs) { seen = seen + 1; if (x > 2) return x; } return -1; } finally { seen = seen * 10; } }",
+    args: [[[1, 5, 2]], [[1, 2]]],
+  },
   // An iterating loop that breaks or returns has a condition, tested before each element (#1276).
   {
     name: "a for...of that returns",
