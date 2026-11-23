@@ -312,9 +312,9 @@ class Lifter {
       // and treat every exported binding's final value as an observation.
       for (const name of cellNames(file)) this.cells.add(name);
       this.liftStatements(file.getChildSyntaxListOrThrow().getChildren());
-      for (const name of exportedBindingNames(file)) {
-        if (this.env.has(name)) this.obs.push(this.resolveIdentifier(name));
-      }
+      // An exported name is observed: one the file binds, an import exported again, or a name the
+      // fragment exports without binding it (free).
+      for (const name of exportedBindingNames(file)) this.obs.push(this.resolveIdentifier(name));
     }
   }
 
@@ -929,6 +929,8 @@ class Lifter {
       this.liftOpaqueRegion(node, "op");
       return;
     }
+    // A local export list computes nothing: the names it exports are observed (exportedBindingNames).
+    if (Node.isExportDeclaration(node) && node.getModuleSpecifier() === undefined) return;
     if (Node.isThrowStatement(node)) {
       // The thrown value is structure: it is lifted like any expression.
       this.emit("op", [this.liftExpr(node.getExpression())], 0, {
@@ -2584,9 +2586,19 @@ function findPrimaryFunction(file: Node): FunctionLike | undefined {
 
 /** Names of all exported top-level bindings (for the no-primary-function case). */
 function exportedBindingNames(file: Node): string[] {
+  const sf = file as import("ts-morph").SourceFile;
   const names: string[] = [];
-  for (const decl of (file as import("ts-morph").SourceFile).getVariableDeclarations()) {
+  for (const decl of sf.getVariableDeclarations()) {
     if (decl.isExported()) names.push(...patternNames(decl.getNameNode()));
+  }
+  // `export { a, b as c }` exports the file's own bindings a and b (#1276).
+  for (const ex of sf.getExportDeclarations()) {
+    if (ex.getModuleSpecifier() !== undefined || ex.isTypeOnly()) continue;
+    for (const spec of ex.getNamedExports()) {
+      if (spec.isTypeOnly()) continue;
+      const local = spec.getNameNode().getText();
+      if (!names.includes(local)) names.push(local);
+    }
   }
   return names;
 }
