@@ -116,3 +116,5 @@ export {
 } from "./base-set.js";
 export type { Ambiguity, DucType, Signature, TypeReport } from "./infer-types.js";
 export { assignable, inferTypes, parseType, typeToText } from "./infer-types.js";
+export type { WasmModule, WasmSignature } from "./emit-wasm.js";
+export { WASM_HOST, WasmEmitError, emitWasm, instantiateWasm } from "./emit-wasm.js";
