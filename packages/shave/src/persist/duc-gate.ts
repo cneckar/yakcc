@@ -35,9 +35,20 @@
 //   contain that binding, so the lifter reports it as a `free-identifier`. Its value
 //   is fixed only if the binding is a `const` with a literal initializer and the
 //   module never mutates it. Such a capture is explained: it is recorded with a hash
-//   of its declaration, so a consumer can see exactly what the atom depends on. A
-//   mutable module binding stays unexplained. Like composition edges, this is
-//   classification only. The atom's bytes and content address are unchanged.
+//   of its declaration, so a consumer can see exactly what the atom depends on. Like
+//   composition edges, this is classification only. The atom's bytes and content
+//   address are unchanged.
+//
+// @decision DEC-DUC-MODULE-STATE-001 (#1266)
+// title: A free identifier naming a mutable module binding is recorded module state
+// status: decided
+// rationale:
+//   A mutable module binding (a table filled after its declaration, a counter, an alias
+//   or hand-off of a shared object) is module state. The module record (#1290) holds the
+//   statements that declare and change it, in the module's order, and a receiver runs
+//   them before the atom: the state is part of what is checked, so it is explained. It
+//   is recorded apart from pure captures (`moduleState`, with its declaration hash), so
+//   the atoms that depend on module state stay visible to an audit.
 
 import { createHash } from "node:crypto";
 import {
@@ -80,6 +91,13 @@ export interface DucUnknown {
    * captures (DEC-DUC-MODULE-CAPTURE-001). `declHash` is the hash of its declaration.
    */
   readonly capture?: boolean;
+  /**
+   * True when this `free-identifier` names a mutable module binding: module state
+   * (DEC-DUC-MODULE-STATE-001, #1266). It is explained by the module record (#1290), which
+   * holds the statements that declare and change it and runs them in order; it is recorded
+   * apart from pure captures, so the atoms that read module state are visible.
+   */
+  readonly moduleState?: boolean;
   readonly declHash?: string;
 }
 
@@ -105,6 +123,8 @@ export interface DucGateResult {
   readonly composition: readonly DucUnknown[];
   /** Module-scope pure constants the atom captures (recorded, never a gate problem). */
   readonly captures: readonly DucUnknown[];
+  /** Mutable module bindings the atom reads: module state (recorded, never a gate problem). */
+  readonly moduleState: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
   /**
@@ -172,12 +192,14 @@ export function runDucConservationGate(
       const isComposition = isFree && internalSymbols.has(symbol);
       const binding = isFree && !isComposition ? moduleBindings.get(symbol) : undefined;
       const isCapture = binding?.binding === "pure";
+      const isModuleState = binding?.binding === "mutable";
       seen.set(symbol, {
         symbol,
         reason,
         ...(module !== undefined ? { module } : {}),
         ...(isComposition ? { composition: true } : {}),
         ...(isCapture ? { capture: true, declHash: binding.declHash } : {}),
+        ...(isModuleState ? { moduleState: true, declHash: binding.declHash } : {}),
       });
     }
     unknowns = [...seen.values()];
@@ -189,14 +211,17 @@ export function runDucConservationGate(
       unexplained: [],
       composition: [],
       captures: [],
+      moduleState: [],
       liftError,
     };
   }
-  const isExplained = (u: DucUnknown): boolean => u.composition === true || u.capture === true;
+  const isExplained = (u: DucUnknown): boolean =>
+    u.composition === true || u.capture === true || u.moduleState === true;
   const unexplained = unknowns.filter((u) => u.reason === "free-identifier" && !isExplained(u));
   const composition = unknowns.filter((u) => u.composition === true);
   const captures = unknowns.filter((u) => u.capture === true);
-  return { wellFormed, unknowns, unexplained, composition, captures, influence };
+  const moduleState = unknowns.filter((u) => u.moduleState === true);
+  return { wellFormed, unknowns, unexplained, composition, captures, moduleState, influence };
 }
 
 /** The outcome of enforcing the gate: what to persist plus the raw result. */
@@ -239,6 +264,11 @@ export function enforceDucGate(
     ...(result.captures.length > 0
       ? {
           captures: result.captures.map((c) => ({ symbol: c.symbol, declHash: c.declHash })),
+        }
+      : {}),
+    ...(result.moduleState.length > 0
+      ? {
+          moduleState: result.moduleState.map((c) => ({ symbol: c.symbol, declHash: c.declHash })),
         }
       : {}),
     ...(result.influence !== undefined
@@ -313,6 +343,8 @@ export interface ExternalSurface {
   readonly foreign: readonly { readonly symbol: string; readonly module?: string }[];
   readonly ambient: readonly string[];
   readonly captures: readonly { readonly symbol: string; readonly declHash?: string }[];
+  /** Mutable module bindings read: module state, explained by the module record (#1266). */
+  readonly moduleState: readonly { readonly symbol: string; readonly declHash?: string }[];
   readonly compositions: readonly string[];
   readonly unexplained: readonly string[];
 }
@@ -334,6 +366,7 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
   const foreign: { symbol: string; module?: string }[] = [];
   const ambient: string[] = [];
   const captures: { symbol: string; declHash?: string }[] = [];
+  const moduleState: { symbol: string; declHash?: string }[] = [];
   const compositions: string[] = [];
   const unexplained: string[] = [];
   for (const u of unknowns) {
@@ -348,9 +381,14 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
         symbol: u.symbol,
         ...(u.declHash !== undefined ? { declHash: u.declHash } : {}),
       });
+    } else if (u.moduleState === true) {
+      moduleState.push({
+        symbol: u.symbol,
+        ...(u.declHash !== undefined ? { declHash: u.declHash } : {}),
+      });
     } else if (u.reason === "free-identifier") {
       unexplained.push(u.symbol);
     }
   }
-  return { foreign, ambient, captures, compositions, unexplained };
+  return { foreign, ambient, captures, moduleState, compositions, unexplained };
 }

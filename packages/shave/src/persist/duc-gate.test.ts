@@ -368,12 +368,14 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     expect(result.captures[0]?.declHash).toBe(bindings.get("TABLE")?.declHash);
   });
 
-  it("a free read of a mutable module binding stays unexplained", () => {
+  it("a free read of a mutable module binding is recorded module state (#1266)", () => {
     const bindings = moduleBindingsOf(MODULE);
     const src = "function pick(i: number): number { return MUTABLE_TABLE[i]; }";
     const result = runDucConservationGate(src, new Set(), bindings);
-    expect(result.unexplained.map((u) => u.symbol)).toEqual(["MUTABLE_TABLE"]);
+    expect(result.unexplained).toEqual([]);
     expect(result.captures).toEqual([]);
+    expect(result.moduleState.map((u) => u.symbol)).toEqual(["MUTABLE_TABLE"]);
+    expect(result.moduleState[0]?.declHash).toBe(bindings.get("MUTABLE_TABLE")?.declHash);
   });
 
   it("reject mode admits an atom whose only free reference is a pure capture", () => {
@@ -384,9 +386,18 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     ).not.toThrow();
   });
 
-  it("reject mode still rejects an atom that captures a mutable binding", () => {
+  it("reject mode admits an atom that reads module state, and the sidecar records it (#1266)", () => {
     const bindings = moduleBindingsOf(MODULE);
     const src = "function pick(i: number): number { return COUNTER + i; }";
+    const { ducUsupp } = enforceDucGate(src, "pick", "reject", undefined, new Set(), bindings);
+    const surface = externalSurfaceOf(ducUsupp);
+    expect(surface?.moduleState.map((m) => m.symbol)).toEqual(["COUNTER"]);
+    expect(surface?.unexplained).toEqual([]);
+  });
+
+  it("reject mode still rejects a free name the module does not declare", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return NOT_DECLARED + i; }";
     expect(() => enforceDucGate(src, "pick", "reject", undefined, new Set(), bindings)).toThrow(
       DucGateRejection,
     );
@@ -457,6 +468,7 @@ describe("external surface from the sidecar (WI-EXPLAIN-03, #1172)", () => {
       foreign: [],
       ambient: [],
       captures: [],
+      moduleState: [],
       compositions: [],
       unexplained: [],
     });

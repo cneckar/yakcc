@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 // SPDX-License-Identifier: MIT
 /**
  * duc-module-submission.test.ts — a corpus package as a shared submission (#1287, #1290).
@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
  * graphs, in the module's order, and must compute what the package computes.
  */
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type SpecYak, specHash } from "@yakcc/contracts";
 import { atomShape, liftAtom, packGraph } from "@yakcc/duc";
@@ -297,5 +298,65 @@ describe("a corpus package as a shared submission (#1287, #1290)", () => {
     const v4 = await checkSharedSubmission(external.batch, store, { modules: external.modules });
     expect(v4.implementations[0]?.refused?.check).toBe("closure");
     expect(v4.implementations[0]?.refused?.reason).toContain("require");
+  });
+
+  it("a require cycle: the receiver sees the partial exports Node sees (#1267)", async () => {
+    // a.js starts, requires b.js, which requires a.js back while a is half-initialized.
+    const A = [
+      "exports.x = 1;",
+      'const b = require("./b.js");',
+      "exports.get = function () { return [b.z, b.sawGet]; };",
+    ];
+    const B = [
+      'const a = require("./a.js");',
+      "exports.z = a.x * 10;",
+      "exports.sawGet = typeof a.get;",
+    ];
+    const dir = mkdtempSync(join(tmpdir(), "yakcc-cycle-"));
+    writeFileSync(join(dir, "a.js"), A.join("\n"));
+    writeFileSync(join(dir, "b.js"), B.join("\n"));
+    const expected = json(
+      (createRequire(__filename)(join(dir, "a.js")) as { get: () => unknown }).get(),
+    );
+    expect(expected).toEqual([10, "undefined"]); // b ran before a defined get
+    const batch: SharedImplementation[] = [];
+    const recordOf = (id: string, lines: string[]): ModuleRecord => ({
+      id,
+      requires: { "./a.js": "a.js", "./b.js": "b.js" },
+      statements: lines.map((line, k) => {
+        const graph = liftAtom(line);
+        const shape = atomShape(line);
+        const spec = contract(`${id}#${k}`, 0);
+        const packed = packGraph(graph);
+        batch.push({
+          spec,
+          specHash: specHash(spec),
+          formatVersion: packed.formatVersion,
+          structure: packed.structure,
+          identity: packed.identity,
+          links: packed.links,
+          evidence: [],
+          baseSet: { target: "node", version: 2 },
+        });
+        return {
+          specHash: specHash(spec),
+          identity: packed.identity,
+          kind: shape.kind,
+          declares: shape.kind === "statement" ? shape.names : [],
+        };
+      }),
+    });
+    const modules = [
+      { ...recordOf("a.js", A), evidence: [{ member: "get", inputs: [], output: expected }] },
+      recordOf("b.js", B),
+    ];
+    const verdict = await checkSharedSubmission(
+      batch,
+      { contracts: new Set(), implementationsOf: () => [] },
+      { modules },
+    );
+    expect(verdict.implementations.filter((v) => v.refused !== undefined)).toEqual([]);
+    expect(verdict.modules).toEqual([{ id: "a.js", conforming: true }]);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
