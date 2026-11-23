@@ -571,6 +571,43 @@ class Lifter {
           return true;
         }
       }
+      // A loop that returns where the rest of the function is not known (under the return state):
+      // its return is a partial return on the paths where it returned, and the rest is guarded.
+      if (
+        full === undefined &&
+        this.exitMode === "function" &&
+        this.env.has(RETURN_DONE) &&
+        this.returnFrames[this.returnFrames.length - 1] === undefined &&
+        isLoopStatement(stmt) &&
+        loopReturns(stmt)
+      ) {
+        const tested =
+          Node.isWhileStatement(stmt) || Node.isForStatement(stmt) || Node.isDoStatement(stmt)
+            ? this.testedInBody(stmt)
+            : undefined;
+        const flags = this.liftLoopWithExits(tested ?? stmt);
+        if (flags !== undefined) {
+          const done = this.env.get(RETURN_DONE) as ValueId;
+          const current = this.env.get(RETURN_VALUE) as ValueId;
+          const [first] = this.emit("sel", [done, current, flags.retv], 1, {
+            origin: { kind: "ReturnSelect" },
+          });
+          const [value] = this.emit("sel", [flags.ret, first as ValueId, current], 1, {
+            origin: { kind: "ReturnSelect" },
+          });
+          const [flag] = this.emit("literal-source", [], 1, {
+            origin: { kind: "TrueKeyword", text: "true" },
+            label: "true",
+          });
+          const [nowDone] = this.emit("sel", [flags.ret, flag as ValueId, done], 1, {
+            origin: { kind: "ReturnSelect" },
+          });
+          this.env.set(RETURN_VALUE, value as ValueId);
+          this.env.set(RETURN_DONE, nowDone as ValueId);
+          if (rest.length > 0) this.guardTail(rest);
+          return false;
+        }
+      }
       if (Node.isIfStatement(stmt) && full !== undefined && this.canTakeTail(stmt, full)) {
         const elseNode = stmt.getElseStatement();
         this.liftIf(stmt, {
@@ -875,7 +912,7 @@ class Lifter {
 
   /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
   private canTakeTail(stmt: import("ts-morph").IfStatement, tail: readonly Node[]): boolean {
-    if (this.exitMode !== "function" || !containsDirectExit(stmt)) return false;
+    if (this.exitMode !== "function" || !containsExitOrLoopReturn(stmt)) return false;
     // The tail's function declarations are hoisted by its own list.
     if (tail.some((t) => Node.isFunctionDeclaration(t))) return false;
     // A tail that both sides continue into is lifted twice: bound its size outside a total side.
@@ -889,7 +926,7 @@ class Lifter {
 
   /** Whether a block's statements can run with `tail` after them in the block's scope. */
   private blockMayTake(block: import("ts-morph").Block, tail: readonly Node[]): boolean {
-    if (!containsDirectExit(block)) return false;
+    if (!containsExitOrLoopReturn(block)) return false;
     const lexical = new Set<string>();
     for (const st of block.getStatements()) {
       if (Node.isVariableStatement(st))
@@ -910,6 +947,15 @@ class Lifter {
    */
   private guardTail(rest: readonly Node[]): void {
     const flag = this.env.get(RETURN_DONE) as ValueId;
+    // No path has returned yet (an exit so far was a throw): the rest runs unguarded.
+    if (
+      this.nodes.some(
+        (n) => n.kind === "literal-source" && n.outputs[0] === flag && n.label === "false",
+      )
+    ) {
+      this.liftStatements(rest);
+      return;
+    }
     const before = new Map(this.env);
     const id = `b${this.branchCount++}`;
     const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
@@ -4039,6 +4085,35 @@ function containsDirectExit(node: Node): boolean {
     node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
   exitCache.set(key, result);
   return result;
+}
+
+/**
+ * Whether a statement exits on some path, by a direct exit or by a return from a loop inside it:
+ * a loop that returns lifts with the rest of the function after it (#1276).
+ */
+function containsExitOrLoopReturn(node: Node): boolean {
+  if (containsDirectExit(node)) return true;
+  const loops = [...node.getDescendants()].filter(
+    (d) => isLoopStatement(d) && !insideOpaqueNonLoop(d, node),
+  );
+  return loops.some((l) => loopReturns(l));
+}
+
+/** Whether a node lies inside a nested function, a try, or a switch with no arms, below `root`. */
+function insideOpaqueNonLoop(n: Node, root: Node): boolean {
+  for (
+    let p = n.getParent();
+    p !== undefined && p.compilerNode !== root.compilerNode;
+    p = p.getParent()
+  ) {
+    if (
+      isFunctionLikeNode(p) ||
+      (Node.isSwitchStatement(p) && switchArms(p) === undefined) ||
+      Node.isTryStatement(p)
+    )
+      return true;
+  }
+  return false;
 }
 
 const exitCache = new WeakMap<object, boolean>();

@@ -10,6 +10,16 @@ export interface Case {
 
 export const EMIT_CASES: Case[] = [
   {
+    name: "a loop that returns, inside an else, after an if that throws",
+    source:
+      "export function f(n: number, cb: any) { if (n < 0) throw new Error('negative'); if (cb === 1) { n = n + 1; } else { let i = 0; while (true) { if (i * i >= n) return i; i = i + 1; } } return -n; }",
+    args: [
+      [10, 0],
+      [10, 1],
+      [0, 0],
+    ],
+  },
+  {
     name: "a labelled continue and break of an outer loop, and a return from an inner one",
     source:
       "export function f(xs: number[][], k: number) { let n = 0; outer: for (const row of xs) { for (const x of row) { if (x < 0) continue outer; if (x === k) return [n, x]; if (x > 100) break outer; n = n + x; } n = n * 2; } return n; }",
