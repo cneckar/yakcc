@@ -205,7 +205,7 @@
     "rust": "refused"
   },
   "tokenize": {
-    "python": "disagrees",
+    "python": "identical",
     "go": "disagrees",
     "rust": "disagrees"
   },
@@ -310,7 +310,7 @@
     "rust": "identical"
   },
   "probe:integer-division": {
-    "python": "refused",
+    "python": "identical",
     "go": "identical",
     "rust": "identical"
   },
@@ -338,6 +338,11 @@
     "python": "identical",
     "go": "identical",
     "rust": "identical"
+  },
+  "probe:index-of": {
+    "python": "identical",
+    "go": "refused",
+    "rust": "refused"
   },
   "probe:caught-throw": {
     "python": "identical",

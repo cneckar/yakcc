@@ -52,8 +52,8 @@ get two identities.
   The sample takes every one of these whose inputs can be generated as data: no host objects such as `Logger`, `ServerResponse` or ts-morph `Node`. Duplicates by identity are dropped.
   It then adds the seed parsers without imports, for exceptions and loops (`base64-alphabet` lifts as a module and was left out). `scripts/build-corpus-sample.mjs` rebuilds the sample.
 - **Coverage by construct:** strings 31, exceptions 16, objects 15, numbers 14, arrays 13, regular expressions 11, loops 10, closures 9. Also switch, `in`, `typeof`, optional chains, spread, computed keys, default parameters, tuples and `sort`.
-- **Probes:** 11 more small functions cover the semantics #1299 names for each target. They are not corpus atoms, so they carry no identity:
-  - Python: integer precision and division, truthiness, `null` versus `undefined`, `+`, number to string, `JSON.stringify`;
+- **Probes:** 12 more small functions cover the semantics #1299 names for each target. They are not corpus atoms, so they carry no identity:
+  - Python: integer precision and division, truthiness, `null` versus `undefined`, `+`, number to string, `JSON.stringify`, `indexOf` / `lastIndexOf`;
   - Go and Rust: caught and uncaught throws, for the error-value question;
   - Rust: an array shared by two names and by a closure, for ownership.
 - **Inputs:** from a seeded generator (`__fixtures__/differential.ts`), 40 distinct argument lists per atom, or the whole domain when it is smaller. That is 2268 inputs over the sample.
@@ -73,18 +73,18 @@ get two identities.
 
 | Target | Identical | Refused (with reason) | Disagrees | Disagrees with characters past U+FFFF left out |
 |---|---|---|---|---|
-| Python | 36 / 61 | 8 | 17 | 3 |
+| Python | 37 / 61 | 8 | 16 | 2 |
 | Go | 36 / 61 | 8 | 17 | 3 |
 | Rust | 39 / 61 | 7 | 15 | 2 |
 
-On the probes, Python is identical on 9 of 11, Go on 11 of 11 and Rust on 11 of 11. Nothing fails to build.
+On the 12 probes, Python is identical on 11. The other is integer precision (A5). Go and Rust are identical on 11, and refuse `lastIndexOf` on the twelfth. Nothing fails to build.
 
 Most disagreements are one gap: **the UTF-16 string model** (A1). With characters past U+FFFF
 left out, only these disagree:
 - `emitEntry`: C1, the template label;
-- `tokenize`: A4;
+- `tokenize` on Go and Rust: A4;
 - `stemToCamelCase` on Python and Go: A3;
-- Python's integer precision: A7.
+- Python's integer precision: A5.
 
 ### Fixed in this change (lowering gaps found by the test)
 
@@ -94,6 +94,11 @@ left out, only these disagree:
 - **Number to string** in Python and Go: ECMA-262's Number::toString layout. They wrote `1e-07` for `1e-7`, and `1e-05` for `0.00001`.
 - Python's **`Math.max` / `Math.min`** with NaN and ±0, which gave `1` where JavaScript gives NaN.
 - Python's **`in`** on a value that is not an object now throws JavaScript's TypeError, where it used to crash.
+- Python's **`split` with a regular expression** (ECMA-262's algorithm: an empty match does not split, captures are spliced in). `tokenize` now agrees.
+- Python's **bitwise operators** (`<<`, `>>`, `>>>`, `&`, `|`, `^`, `~`), with ToInt32 / ToUint32. This came up in #1298, where `heapq` needs `>>`.
+- Python's **`indexOf` with a start position**, and **`lastIndexOf`**.
+- Python's **`Math.floor` / `ceil` / `trunc`** on ±Infinity and NaN, which used to crash. A zero result now keeps the sign of a negative argument, as JavaScript does (`Math.ceil(-0.5)` is `-0`).
+- Python's **`%`** on integers now gives `-0` for a negative dividend with no remainder (`-4 % 2`).
 
 ## (a) — the lowering lacks it, and it can be added
 
@@ -102,9 +107,9 @@ left out, only these disagree:
 | A1 | **Strings are UTF-16 code units in JavaScript.** Python's `str` holds code points, Go's `string` and Rust's `str` hold UTF-8. So `length`, indexing, `slice`, `charCodeAt` and the comparisons of a string with a character past U+FFFF differ. The native runtime already settled this: strings are UTF-16 (DEC-DUC-NATIVE-RUNTIME-001). The same representation, or a code-unit view over UTF-8, closes it. | all | `truncate`, `renderAtomNewComment` and twelve seed parsers (`non-ascii-rejector` agrees on Rust) |
 | A2 | Template quasis are read as values. This is the lowering side of C1. If C1 is fixed, the lowerings need no change; if not, they must cook the text. | all | `emitEntry` |
 | A3 | `replace` with a function as the replacement | Python, Go | `stemToCamelCase` |
-| A4 | `split` with a regular expression | all | `tokenize` |
+| A4 | `split` with a regular expression (Python has it now) | Go, Rust | `tokenize` |
 | A5 | Python integers past 2^53 are exact, where JavaScript rounds. Python must round every integer result to a double, or use floats where the type inference does not show a safe integer (see B4). | Python | probe: integer precision |
-| A6 | The bitwise operators (`\|` and others) | Python | probe: integer division |
+| A6 | `lastIndexOf`, and `indexOf` with a start position | Go, Rust | probe: `index-of` |
 | A7 | Platform functions refused with a reason: `Array.from`, `Object.entries`, `RegExp.prototype.exec`, `Array.prototype.sort`, `Number.prototype.toFixed`, `ArrayBuffer` / `DataView`, the optional call `a?.()` | all | `bytesToHex`, `parseArgv`, `extractFunctionName`, `worstHitRateEntries`, `buildSuggestion`, `f64Bytes`, `refBytesToHex` |
 | A8 | An object literal with a computed key (Rust has it) | Python, Go | `withHitIncrement` |
 
@@ -180,7 +185,7 @@ Probes are listed last.
 | `computeAtomComplexity` | `d0a5ca1c69f5` | object, number, nullish | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `computeNeedComplexity` | `c8fe85d625ad` | number, math | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `buildSuggestion` | `1c4451dab5df` | switch, string, number-format | 40 | refused: the method toFixed | refused: the method toFixed | refused: the method toFixed |
-| `tokenize` | `55829234954f` | string, regex, closure, array | 40 | **disagrees** 0/40 | **disagrees** 21/40 | **disagrees** 21/40 |
+| `tokenize` | `55829234954f` | string, regex, closure, array | 40 | identical 40/40 | **disagrees** 21/40 | **disagrees** 21/40 |
 | `withCompletion` | `b37c8738c458` | object, spread, array | 14 | identical 14/14 | identical 14/14 | identical 14/14 |
 | `withHitIncrement` | `f2efd15031e9` | object, spread, computed-key | 40 | refused: an object with a computed key, a method or an accessor | refused: an object with a computed key, a method or an accessor | identical 40/40 |
 | `makeBindingKey` | `0f089e81fcc3` | string | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
@@ -201,12 +206,13 @@ Probes are listed last.
 | `seed:comma-separated-integers` | seed:comma-separated-integers | loop, exception, array, tuple | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `seed:nonempty-list-content` | seed:nonempty-list-content | loop, exception, array | 40 | **disagrees** 37/40 (BMP: identical) | **disagrees** 37/40 (BMP: identical) | **disagrees** 37/40 (BMP: identical) |
 | `probe:integer-precision` | probe | — | 20 | **disagrees** 19/20 | identical 20/20 | identical 20/20 |
-| `probe:integer-division` | probe | — | 40 | refused: the operation "\|" | identical 40/40 | identical 40/40 |
+| `probe:integer-division` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `probe:truthiness` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `probe:null-undefined` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `probe:plus` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `probe:number-to-string` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `probe:json-stringify` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
+| `probe:index-of` | probe | — | 40 | identical 40/40 | refused: the method lastIndexOf | refused: the method lastIndexOf |
 | `probe:caught-throw` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |
 | `probe:uncaught-throw` | probe | — | 14 | identical 14/14 | identical 14/14 | identical 14/14 |
 | `probe:shared-array` | probe | — | 40 | identical 40/40 | identical 40/40 | identical 40/40 |

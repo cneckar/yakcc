@@ -100,6 +100,11 @@ const PROBES: SampleAtom[] = [
     ["any"],
   ],
   [
+    "probe:index-of",
+    "export function f(s: string, x: string, p: number) { return [s.indexOf(x, p), s.lastIndexOf(x, p), s.indexOf(x), s.lastIndexOf(x)]; }",
+    [{ str: "abca", max: 6 }, { lit: ["a", "bc", "", "z"] }, { union: ["idx", "num"] }],
+  ],
+  [
     "probe:caught-throw",
     "export function f(a: number) { try { if (a < 0) throw new RangeError('negative ' + a); return a * 2; } catch (e) { return (e as Error).name + ':' + (e as Error).message; } }",
     ["int"],
