@@ -574,6 +574,7 @@ class Lifter {
       ...(finalizer !== undefined ? [finalizer] : []),
     ];
     const vars: string[] = [];
+    let awaits = false;
     for (const part of parts) {
       const own = (n: Node): boolean => !isInsideNestedFunction(n, part);
       for (const list of part.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
@@ -586,13 +587,11 @@ class Lifter {
           if (!vars.includes(d.getName())) vars.push(d.getName());
         }
       }
-      if (
-        [
-          ...part.getDescendantsOfKind(SyntaxKind.YieldExpression),
-          ...part.getDescendantsOfKind(SyntaxKind.AwaitExpression),
-        ].some(own)
-      )
-        return undefined;
+      // A yield cannot move into a closure; an await can, into an async one.
+      if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) return undefined;
+      if (part.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own)) awaits = true;
+      if (part.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited()))
+        awaits = true;
       const inside = (target: Node | undefined): boolean =>
         target?.getAncestors().some((a) => a.compilerNode === part.compilerNode) === true;
       for (const j of [
@@ -650,16 +649,20 @@ class Lifter {
     };
     const n = this.tryCount++;
     const tmp = `$try${n}`;
-    const body = `() => {\n${rewrite(t.getTryBlock())}\n}`;
+    // A block that awaits is an async closure, and the call is of the async primitive, awaited.
+    const a = awaits ? "async " : "";
+    const body = `${a}() => {\n${rewrite(t.getTryBlock())}\n}`;
     const caught =
       handler !== undefined
-        ? `(${handler.getVariableDeclaration()?.getText() ?? ""}) => {\n${rewrite(handler.getBlock())}\n}`
+        ? `${a}(${handler.getVariableDeclaration()?.getText() ?? ""}) => {\n${rewrite(handler.getBlock())}\n}`
         : "undefined";
-    const last = finalizer !== undefined ? `, () => {\n${rewrite(finalizer)}\n}` : "";
-    const call = `${TRY_PRIMITIVE}(${body}, ${caught}${last})`;
+    const last = finalizer !== undefined ? `, ${a}() => {\n${rewrite(finalizer)}\n}` : "";
+    const call = awaits
+      ? `(await ${ASYNC_TRY_PRIMITIVE}(${body}, ${caught}${last}))`
+      : `${TRY_PRIMITIVE}(${body}, ${caught}${last})`;
     const source = completes
-      ? `function __try() {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
-      : `function __try() {\n${call};\n}`;
+      ? `${a}function __try() {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
+      : `${a}function __try() {\n${call};\n}`;
     // The function's own names declared in the blocks are bound before the call, as JavaScript
     // hoists them; the closures assign them, so they are cells.
     for (const name of vars) {
@@ -912,7 +915,7 @@ class Lifter {
     const platform = (name: string): boolean =>
       !this.env.has(name) &&
       !this.imports.has(name) &&
-      (this.ambient.has(name) || name === TRY_PRIMITIVE);
+      (this.ambient.has(name) || RUNTIME_PRIMITIVES.has(name));
     const captures = outerReads.filter((name) => !platform(name));
     if (lexicalThis) captures.push(THIS);
     // A captured name reassigned outside the closure could change after it is made. A write to a
@@ -2704,7 +2707,7 @@ class Lifter {
     const reason: DiamondReason =
       imported !== undefined
         ? "unlinked-reference"
-        : this.ambient.has(name) || name === TRY_PRIMITIVE
+        : this.ambient.has(name) || RUNTIME_PRIMITIVES.has(name)
           ? "platform-primitive"
           : "free-identifier";
     // A source is one per symbol and is reused wherever the name is read, so it lives at the top
@@ -3548,6 +3551,8 @@ const THIS = "%this";
 const HEAP = "%heap";
 /** The platform primitive a try statement is a call of (#1276); see runtime.ts. */
 const TRY_PRIMITIVE = "__yakccTry";
+const ASYNC_TRY_PRIMITIVE = "__yakccTryAsync";
+const RUNTIME_PRIMITIVES = new Set([TRY_PRIMITIVE, ASYNC_TRY_PRIMITIVE]);
 
 const HEAP_LABELS = new Set([
   "delete[]",

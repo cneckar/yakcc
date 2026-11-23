@@ -100,6 +100,8 @@ export const ECMASCRIPT: BaseSet = {
     Atomics: {},
     // A try statement as the lifter writes it (#1276): the body's result, or the handler's for a throw.
     __yakccTry: {},
+    // A try statement whose blocks await: the same, over async closures, as a promise.
+    __yakccTryAsync: {},
   },
 };
 

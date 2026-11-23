@@ -34,3 +34,25 @@ export function __yakccTry<T>(
     }
   }
 }
+
+/** `__yakccTry` for a try statement whose blocks await: its closures are async (#1276). */
+export async function __yakccTryAsync<T>(
+  body: () => Promise<T>,
+  handler: ((thrown: unknown) => Promise<T>) | undefined,
+  finalizer?: () => Promise<unknown>,
+): Promise<T> {
+  try {
+    try {
+      return await body();
+    } catch (thrown) {
+      if (handler === undefined) throw thrown;
+      return await handler(thrown);
+    }
+  } finally {
+    if (finalizer !== undefined) {
+      const done = await finalizer();
+      // biome-ignore lint/correctness/noUnsafeFinally: a return in a finally block is the result.
+      if (Array.isArray(done) && done[0] === 1) return done as T;
+    }
+  }
+}

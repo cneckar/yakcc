@@ -179,7 +179,7 @@ function emitFunction(
         imports.set(module, new Set([...(imports.get(module) ?? []), p.diamond.symbol]));
       }
       // A runtime primitive (a try statement's call) is imported from the DUC runtime (#1276).
-      if (p.diamond.reason === "platform-primitive" && p.diamond.symbol === "__yakccTry")
+      if (p.diamond.reason === "platform-primitive" && p.diamond.symbol.startsWith("__yakccTry"))
         imports.set(
           RUNTIME_MODULE,
           new Set([...(imports.get(RUNTIME_MODULE) ?? []), p.diamond.symbol]),

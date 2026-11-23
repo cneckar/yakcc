@@ -101,6 +101,17 @@ describe("async functions and generators (#1276)", () => {
     expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(g));
   });
 
+  it("a try whose blocks await is an awaited call of the async try primitive", async () => {
+    const src =
+      "export async function f(p: any) { let r = 0; try { r = await p; if (r > 5) return 'big'; } catch (e) { r = -1; } finally { r = r + 1; } return r; }";
+    const code = roundTrip(src);
+    expect(code).toContain("__yakccTryAsync");
+    const run = load(code);
+    await expect(run(Promise.resolve(2))).resolves.toBe(3);
+    await expect(run(Promise.resolve(9))).resolves.toBe("big");
+    await expect(run(Promise.reject(new Error("x")))).resolves.toBe(0);
+  });
+
   it("a lowering without async refuses it with a reason", () => {
     expect(() =>
       emitPython(liftAtom("export async function f(p: any) { return await p; }")),
