@@ -114,6 +114,9 @@ export const ECMASCRIPT: BaseSet = {
     WeakRef: { nondeterministic: true },
     FinalizationRegistry: { nondeterministic: true },
     Atomics: {},
+    // Code made from a string at run time: the authority to run any code (#1297).
+    Function: { capability: "dynamic-code" },
+    eval: { capability: "dynamic-code" },
     // A try statement as the lifter writes it (#1276): the body's result, or the handler's for a throw.
     __yakccTry: {},
     // A try statement whose blocks await: the same, over async closures, as a promise.
@@ -191,6 +194,8 @@ export const NODE: BaseSet = {
     fetch: { capability: "network" },
     __dirname: { capability: "module-location" },
     __filename: { capability: "module-location" },
+    // An ES module's own URL, as `__filename` is a CommonJS module's (#1297).
+    "import.meta": { capability: "module-location" },
     performance: { nondeterministic: true },
     crypto: {
       members: {

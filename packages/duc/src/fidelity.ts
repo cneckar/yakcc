@@ -49,6 +49,8 @@ function isValueReference(id: ts.Identifier): boolean {
   )
     return false;
   if (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p)) return false;
+  // An import attribute's key (`with { type: "json" }`) names the attribute (#1297).
+  if (ts.isImportAttribute(p) && p.name === id) return false;
   if (ts.isExportSpecifier(p)) return (p.propertyName ?? p.name) === id;
   return true;
 }
@@ -64,6 +66,10 @@ export function sourceFreeNames(source: string): Set<string> {
     if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return;
     if (ts.isHeritageClause(node) && node.token === ts.SyntaxKind.ImplementsKeyword) return;
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
+    // A type-only export, and a re-export from another module, read no value of this atom (#1297).
+    if (ts.isExportDeclaration(node) && (node.isTypeOnly || node.moduleSpecifier !== undefined))
+      return;
+    if (ts.isExportSpecifier(node) && node.isTypeOnly) return;
     if (ts.isIdentifier(node) && isValueReference(node)) {
       const p = node.parent;
       const symbol = ts.isShorthandPropertyAssignment(p)

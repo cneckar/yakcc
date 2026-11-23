@@ -550,3 +550,101 @@ function functionIsPure(
   }
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Enclosing-scope bindings (#1297)
+// ---------------------------------------------------------------------------
+
+/** The names a binding name declares: an identifier, or each name a destructuring pattern binds. */
+function boundNames(name: Node): string[] {
+  if (Node.isIdentifier(name)) return [name.getText()];
+  return name.getDescendantsOfKind(SyntaxKind.BindingElement).flatMap((el) => {
+    const n = el.getNameNode();
+    return Node.isIdentifier(n) ? [n.getText()] : [];
+  });
+}
+
+/** The names declared directly in a statement list: its variables, functions and classes. */
+function declaredIn(statements: readonly Node[]): string[] {
+  const names: string[] = [];
+  for (const st of statements) {
+    if (Node.isVariableStatement(st))
+      for (const d of st.getDeclarations()) names.push(...boundNames(d.getNameNode()));
+    else if (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) {
+      const n = st.getName();
+      if (n !== undefined) names.push(n);
+    }
+  }
+  return names;
+}
+
+let lastEnclosing: { source: string; file: SourceFile } | undefined;
+
+/**
+ * The names bound in the scopes that enclose a fragment of a module, below the module's top level
+ * (#1297): the parameters of each enclosing function, a named function expression's own name, the
+ * declarations of each enclosing block, a for loop's variables, a catch clause's. A fragment sliced
+ * out of a function body reads these as free names; each is declared in the same file, as a module
+ * binding is. Empty for a fragment at the module's top level.
+ */
+export function enclosingBindingsOf(
+  moduleSource: string,
+  range: { readonly start: number; readonly end: number },
+): Set<string> {
+  if (lastEnclosing?.source !== moduleSource) {
+    const project = new Project({
+      useInMemoryFileSystem: true,
+      skipAddingFilesFromTsConfig: true,
+      compilerOptions: { allowJs: false, noEmit: true },
+    });
+    lastEnclosing = {
+      source: moduleSource,
+      file: project.createSourceFile("__enclosing__.ts", moduleSource, {
+        scriptKind: ScriptKind.TS,
+      }),
+    };
+  }
+  const names = new Set<string>();
+  const at = lastEnclosing.file.getDescendantAtPos(range.start);
+  if (at === undefined) return names;
+  for (const node of [at, ...at.getAncestors()]) {
+    if (Node.isSourceFile(node)) break;
+    // Only a scope that holds the whole fragment encloses it.
+    if (node.getStart() > range.start || node.getEnd() < range.end) continue;
+    if (
+      Node.isFunctionDeclaration(node) ||
+      Node.isFunctionExpression(node) ||
+      Node.isArrowFunction(node) ||
+      Node.isMethodDeclaration(node) ||
+      Node.isConstructorDeclaration(node) ||
+      Node.isGetAccessorDeclaration(node) ||
+      Node.isSetAccessorDeclaration(node)
+    ) {
+      // A function encloses the fragment only when the fragment is inside its body.
+      const body = node.getBody();
+      if (body === undefined || body.getStart() > range.start || body.getEnd() < range.end)
+        continue;
+      for (const p of node.getParameters())
+        for (const n of boundNames(p.getNameNode())) names.add(n);
+      if (Node.isFunctionExpression(node)) {
+        const own = node.getName();
+        if (own !== undefined) names.add(own);
+      }
+    } else if (Node.isBlock(node) || Node.isCaseClause(node) || Node.isDefaultClause(node))
+      for (const n of declaredIn(node.getStatements())) names.add(n);
+    else if (
+      Node.isForStatement(node) ||
+      Node.isForOfStatement(node) ||
+      Node.isForInStatement(node)
+    ) {
+      const init = node.getInitializer();
+      if (init !== undefined && Node.isVariableDeclarationList(init))
+        for (const d of init.getDeclarations())
+          for (const n of boundNames(d.getNameNode())) names.add(n);
+    } else if (Node.isCatchClause(node)) {
+      const v = node.getVariableDeclaration();
+      if (v !== undefined) for (const n of boundNames(v.getNameNode())) names.add(n);
+    }
+  }
+  return names;
+}
