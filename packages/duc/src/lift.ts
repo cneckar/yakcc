@@ -524,8 +524,7 @@ class Lifter {
       )
         return undefined;
       const inside = (target: Node | undefined): boolean =>
-        target !== undefined &&
-        target.getAncestors().some((a) => a.compilerNode === part.compilerNode);
+        target?.getAncestors().some((a) => a.compilerNode === part.compilerNode) === true;
       for (const j of [
         ...part.getDescendantsOfKind(SyntaxKind.BreakStatement),
         ...part.getDescendantsOfKind(SyntaxKind.ContinueStatement),
