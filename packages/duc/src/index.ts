@@ -92,3 +92,11 @@ export {
   validateCheckerSpec,
 } from "./checker.js";
 export { isHeapToken, type LoweringView, loweringView } from "./ordering.js";
+export type {
+  AtomSubmission,
+  ClosureOptions,
+  ClosureReport,
+  SubmissionReport,
+  SubmittedAtom,
+} from "./closure.js";
+export { checkSubmission, closureOf, linkReferences } from "./closure.js";

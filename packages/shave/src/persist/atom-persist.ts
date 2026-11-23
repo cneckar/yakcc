@@ -27,7 +27,7 @@
 //     that have a full Registry pass it directly.
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
-import { emitTypeScript, liftAtom, packGraph } from "@yakcc/duc";
+import { emitTypeScript, liftAtom, linkReferences, packGraph } from "@yakcc/duc";
 import type { BlockTripletRow, DucImplementationRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { runMutationTesting } from "@yakcc/variance";
@@ -39,6 +39,7 @@ import type { NovelGlueEntry } from "../universalize/types.js";
 import {
   type DucGateMode,
   type ModuleBindingInfo,
+  atomDefinedNames,
   ducGateModeFromEnv,
   enforceDucGate,
 } from "./duc-gate.js";
@@ -417,4 +418,76 @@ function derivationOf(source: CorpusSource): "human" | "tool" | "ai" {
     default:
       return "tool";
   }
+}
+
+/**
+ * Links each persisted atom's references to the atoms of the same plan that declare them (#1279):
+ * a free name another atom of the module declares is linked to that atom's contract (its
+ * specHash), and the implementation is stored again with its links (links are records outside
+ * the graph's identity, so the pair it is keyed by does not change). Atoms with nothing to link,
+ * and a registry without the DUC methods, are left as they are. Returns how many references were
+ * linked.
+ */
+export async function linkPlanAtoms(
+  atoms: readonly { readonly source: string; readonly merkleRoot?: BlockMerkleRoot | undefined }[],
+  registry: {
+    readonly getBlock?: (root: BlockMerkleRoot) => Promise<BlockTripletRow | null | undefined>;
+    readonly storeDucImplementation?: Registry["storeDucImplementation"];
+  },
+): Promise<number> {
+  if (
+    typeof registry.getBlock !== "function" ||
+    typeof registry.storeDucImplementation !== "function"
+  )
+    return 0;
+  // The contract of each name an atom of the plan declares.
+  const declared = new Map<string, string>();
+  const persisted: { source: string; specHash: string; merkleRoot: BlockMerkleRoot }[] = [];
+  for (const atom of atoms) {
+    if (atom.merkleRoot === undefined) continue;
+    const row = await registry.getBlock(atom.merkleRoot);
+    if (row === null || row === undefined) continue;
+    persisted.push({ source: atom.source, specHash: row.specHash, merkleRoot: atom.merkleRoot });
+    for (const name of atomDefinedNames(atom.source))
+      if (!declared.has(name)) declared.set(name, row.specHash);
+  }
+  let linked = 0;
+  for (const atom of persisted) {
+    let graph: ReturnType<typeof liftAtom>;
+    try {
+      graph = liftAtom(atom.source);
+    } catch {
+      continue;
+    }
+    let count = 0;
+    const withLinks = linkReferences(graph, (label) => {
+      if (label.reason !== "free-identifier") return undefined;
+      const spec = declared.get(label.symbol);
+      // A name the atom declares itself is not a reference to another atom.
+      if (spec === undefined || spec === atom.specHash) return undefined;
+      count++;
+      return spec;
+    });
+    if (count === 0) continue;
+    const packed = packGraph(withLinks);
+    let tsCache: string | null = null;
+    try {
+      tsCache = emitTypeScript(withLinks);
+    } catch {
+      tsCache = null;
+    }
+    await registry.storeDucImplementation({
+      specHash: atom.specHash,
+      graphIdentity: packed.identity,
+      formatVersion: packed.formatVersion,
+      lifterVersion: packed.lifterVersion,
+      structure: packed.structure,
+      links: packed.links,
+      annotations: packed.annotations ?? null,
+      blockMerkleRoot: atom.merkleRoot,
+      tsCache,
+    });
+    linked += count;
+  }
+  return linked;
 }
