@@ -502,6 +502,17 @@ function liftsWhole(source: string): boolean {
   return !opaque(graph) && graph.nodes.some((n) => n.kind !== "diamond-source");
 }
 
+/**
+ * Whether a node lifts whole: an atom by its own source, a branch when each of its children does
+ * and so does it (a declaration nothing in the branch reads is dead in the branch's graph, so its
+ * own source is what tells).
+ */
+function liftsWholeNode(node: RecursionNode): boolean {
+  if (node.kind === "atom") return liftsWhole(node.source);
+  const branch = node as BranchNode;
+  return branch.children.every(liftsWholeNode) && liftsWhole(branch.source);
+}
+
 async function walkNodeGlueAware(
   node: RecursionNode,
   registry: Pick<ShaveRegistryView, "findByCanonicalAstHash" | "getBlock">,
@@ -609,9 +620,11 @@ async function walkNodeGlueAware(
       ? `${firstError.rule}: ${firstError.message}`
       : "strict-subset-failure";
 
-  // The graph decides what is stored (#1281, #1279): an atom the DUC lifter lifts with no opaque
-  // node is an atom, though the strict-subset predicate refuses it.
-  if (node.kind === "atom" && liftsWhole(node.source)) {
+  // The graph decides what is stored (#1281, #1279): a node the DUC lifter lifts with no opaque
+  // node is an atom, though the strict-subset predicate refuses it. A branch that lifts whole is
+  // stored whole, as one that passes the predicate is: a piece cut from inside a function is then
+  // a closure inside that function's graph, never an atom of its own.
+  if (liftsWholeNode(node)) {
     acc.entries.push({
       kind: "novel-glue",
       sourceRange: node.sourceRange,
