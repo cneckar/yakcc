@@ -148,6 +148,12 @@ export const EMIT_CASES: Case[] = [
       [3, 2],
     ],
   },
+  {
+    name: "a closure that reads a variable reassigned after it is made",
+    source:
+      "export function f(xs: number[]): number[] { let last = 0; const get = (): number => last; const out: number[] = []; for (const x of xs) { last = x; out.push(get()); } return out; }",
+    args: [[[]], [[3, 1, 4]]],
+  },
   // A try statement is a call of the try primitive over two closures (#1276).
   {
     name: "a try whose body returns, and a catch that reads what was thrown",

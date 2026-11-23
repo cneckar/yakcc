@@ -1859,7 +1859,8 @@ class Lifter {
     const names = new Set<string>();
     const consider = (target: Node | undefined): void => {
       const base = baseIdentifierOfTarget(target);
-      if (base !== undefined && this.env.has(base)) names.add(base);
+      // A cell is one object for the whole scope: writing it rebinds nothing (#1276).
+      if (base !== undefined && this.env.has(base) && !this.cells.has(base)) names.add(base);
     };
     // The node itself counts too: a loop's incrementor is often a bare assignment (`i = i + 1`).
     const bins = [
@@ -1959,6 +1960,23 @@ class Lifter {
           label: `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
         });
         inputs.push(method as ValueId, ...args);
+      } else if (
+        callee !== undefined &&
+        Node.isIdentifier(callee) &&
+        this.cells.has(callee.getText()) &&
+        this.env.has(callee.getText())
+      ) {
+        // A call through a cell is `(0, cell.value)(args)`: the function, with no receiver (#1276).
+        const read = this.resolveIdentifier(callee.getText());
+        const [zero] = this.emit("literal-source", [], 1, {
+          origin: { kind: "NumericLiteral", text: "0" },
+          label: "0",
+        });
+        const [fn] = this.emit("op", [zero as ValueId, read], 1, {
+          origin: { kind: "Binary", text: "," },
+          label: ",",
+        });
+        inputs.push(fn as ValueId, ...this.liftElements(node.getArguments() as Node[]));
       } else {
         if (callee !== undefined) inputs.push(this.liftExpr(callee));
         inputs.push(...this.liftElements(node.getArguments() as Node[]));
@@ -2279,7 +2297,12 @@ class Lifter {
       inputs.push(value);
       const label = Node.isPropertyAccessExpression(lhs) ? `.${lhs.getName()}=` : "[]=";
       const [mutated] = this.emit("op", inputs, 1, { origin: { kind: "Write" }, label });
-      if (Node.isIdentifier(base) && this.env.has(base.getText())) {
+      // The base name is the written object after the write, unless it is a cell, which holds it.
+      if (
+        Node.isIdentifier(base) &&
+        this.env.has(base.getText()) &&
+        !this.cells.has(base.getText())
+      ) {
         this.env.set(base.getText(), mutated as ValueId);
       }
       return;
@@ -2301,14 +2324,16 @@ class Lifter {
     })[0] as ValueId;
   }
 
-  /** Writes a cell's value: the cell after the write is the name's value. */
+  /**
+   * Writes a cell's value. The cell stays the name's value: it is one object, shared with the
+   * closures that hold it, and heap order puts every later read after the write.
+   */
   private writeCell(name: string, value: ValueId): void {
     const cell = this.throughLoop(this.env.get(name) as ValueId);
-    const [written] = this.emit("op", [cell, value], 1, {
+    this.emit("op", [cell, value], 1, {
       origin: { kind: "Write", text: truncate(name) },
       label: ".value=",
     });
-    this.env.set(name, written as ValueId);
   }
 
   private resolveName(name: string): ValueId {
@@ -2452,18 +2477,53 @@ function cellNames(scope: Node): Set<string> {
       }
     }
     for (const t of assignmentTargets(fn)) {
-      const ids = Node.isIdentifier(t)
-        ? [t]
-        : Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)
-          ? []
-          : t.getDescendantsOfKind(SyntaxKind.Identifier);
-      for (const id of ids) {
+      for (const id of targetNames(t)) {
         const name = id.getText();
         if (declared.has(name) && !locals.has(name)) out.add(name);
       }
     }
   }
+  // A name a closure reads and the scope reassigns after the closure may exist is shared too: the
+  // closure sees its value when it runs. A reassignment certainly done before the closure is made (in
+  // the scope itself, earlier, with the closure in no loop and not hoisted) is the value it captures.
+  const scopeAssignments = assignmentTargets(scope).filter((t) => !insideNested(t));
+  const inLoopOf = (n: Node): boolean => {
+    for (const a of n.getAncestors()) {
+      if (a.compilerNode === scope.compilerNode) return false;
+      if (isLoopStatement(a)) return true;
+    }
+    return false;
+  };
+  for (const fn of nested) {
+    if (!isFunctionLikeNode(fn)) continue;
+    const locals = closureLocals(fn);
+    const reads = new Set(
+      fn
+        .getDescendantsOfKind(SyntaxKind.Identifier)
+        .filter((id) => isValueRead(id) && !locals.has(id.getText()))
+        .map((id) => id.getText()),
+    );
+    for (const t of scopeAssignments) {
+      const before =
+        !Node.isFunctionDeclaration(fn) &&
+        t.getEnd() <= fn.getStart() &&
+        !inLoopOf(fn) &&
+        !insideNested(fn.getParent() ?? fn);
+      if (before) continue;
+      for (const id of targetNames(t)) {
+        const name = id.getText();
+        if (declared.has(name) && reads.has(name)) out.add(name);
+      }
+    }
+  }
   return out;
+}
+
+/** The names an assignment target rebinds: itself, or those inside a destructuring; none for a member. */
+function targetNames(t: Node): Node[] {
+  if (Node.isIdentifier(t)) return [t];
+  if (Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)) return [];
+  return t.getDescendantsOfKind(SyntaxKind.Identifier);
 }
 
 /** The targets of assignments, compound assignments and ++/-- in a subtree. */

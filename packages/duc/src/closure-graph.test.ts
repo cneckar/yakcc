@@ -48,11 +48,17 @@ describe("closures as graphs (#1275)", () => {
     });
   }
 
-  it("a closure that reads a variable assigned after it is made stays opaque", () => {
-    const node = closureNode(
-      "export function f(x: number): number { let k = 1; const g = () => k; k = x; return g(); }",
-    );
-    expect(node).toBeUndefined();
+  it("a closure that reads a variable assigned after it is made sees it through a cell (#1276)", () => {
+    const src =
+      "export function f(x: number): number { let k = 1; const g = () => k; k = x; return g(); }";
+    const g = liftAtom(src);
+    expect(closureNode(src)).toBeDefined();
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      x: number,
+    ) => number;
+    expect(run(7)).toBe(7);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
   it("a recursive function stays opaque", () => {
@@ -110,9 +116,16 @@ describe("captures that change (#1276)", () => {
     expect(closureNode(src)).toBeDefined();
   });
 
-  it("a name reassigned after the closure is made keeps it opaque", () => {
-    const src = "export function f(x: number) { const g = () => x; x = x + 1; return g; }";
-    expect(closureNode(src)).toBeUndefined();
+  it("a name reassigned after the closure is made is a cell the closure reads when called", () => {
+    const src = "export function f(x: number) { const g = () => x; x = x + 1; return g(); }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => n.label?.startsWith("Closure#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      x: number,
+    ) => number;
+    expect(run(2)).toBe(3);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
   it("a name another closure rebinds is a cell both closures share", () => {
