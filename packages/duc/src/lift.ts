@@ -514,6 +514,11 @@ class Lifter {
       if (!Node.isFunctionDeclaration(stmt)) continue;
       const name = stmt.getName();
       if (name === undefined) continue;
+      // Already bound by the list it was hoisted in (a tail lifted again on a side).
+      if (this.hoisted.has(stmt.compilerNode)) {
+        hoistedNames.add(name);
+        continue;
+      }
       const pending = this.readNamesOf(stmt).some(
         (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
       );
@@ -913,8 +918,9 @@ class Lifter {
   /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
   private canTakeTail(stmt: import("ts-morph").IfStatement, tail: readonly Node[]): boolean {
     if (this.exitMode !== "function" || !containsExitOrLoopReturn(stmt)) return false;
-    // The tail's function declarations are hoisted by its own list.
-    if (tail.some((t) => Node.isFunctionDeclaration(t))) return false;
+    // A function declaration of the tail that its own list has not hoisted binds at its place.
+    if (tail.some((t) => Node.isFunctionDeclaration(t) && !this.hoisted.has(t.compilerNode)))
+      return false;
     // A tail that both sides continue into is lifted twice: bound its size outside a total side.
     const elseNode = stmt.getElseStatement();
     const both =
@@ -945,10 +951,15 @@ class Lifter {
    * The rest of a statement list after an exit on some paths, as the else-side of a branch on the
    * exited flag: its effects happen, and its names change, only on the paths that have not exited.
    */
+  /** The return flags of the guards the statement being lifted is under. */
+  private readonly guardFlags: ValueId[] = [];
+
   private guardTail(rest: readonly Node[]): void {
     const flag = this.env.get(RETURN_DONE) as ValueId;
-    // No path has returned yet (an exit so far was a throw): the rest runs unguarded.
+    // No path has returned yet (an exit so far was a throw), or an enclosing guard already tests
+    // this flag (no return since): the rest runs unguarded.
     if (
+      this.guardFlags.includes(flag) ||
       this.nodes.some(
         (n) => n.kind === "literal-source" && n.outputs[0] === flag && n.label === "false",
       )
@@ -960,9 +971,11 @@ class Lifter {
     const id = `b${this.branchCount++}`;
     const within = this.regionStack.length > 0 ? this.regionStack.join("/") : undefined;
     this.branches.push({ id, cond: flag, ...(within !== undefined ? { within } : {}) });
+    this.guardFlags.push(flag);
     const elseEnv = this.inRegion(`${id}.e`, () =>
       this.inReturnFrame(undefined, () => this.branch(before, () => this.liftStatements(rest))),
     );
+    this.guardFlags.pop();
     for (const [name, beforeValue] of before) {
       const elseValue = elseEnv.get(name) ?? beforeValue;
       if (elseValue !== beforeValue) {
@@ -1081,17 +1094,19 @@ class Lifter {
     // A name in a cell is shared: the closure writes the cell it captures.
     const rebindsOutside = (t: Node): boolean => {
       if (Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)) return false;
-      const outer = (name: string): boolean =>
-        !locals.has(name) && !this.cells.has(name) && !this.bindings.has(name);
-      if (Node.isIdentifier(t)) return outer(t.getText());
-      return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => outer(id.getText()));
+      const outer = (id: Node): boolean =>
+        !declaredWithin(id, fn) &&
+        !this.cells.has(id.getText()) &&
+        !this.bindings.has(id.getText());
+      if (Node.isIdentifier(t)) return outer(t);
+      return t.getDescendantsOfKind(SyntaxKind.Identifier).some(outer);
     };
     if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
     const outerReads: string[] = [];
     for (const id of reads) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
-      if (!locals.has(name) && !outerReads.includes(name)) outerReads.push(name);
+      if (!declaredWithin(id, fn) && !outerReads.includes(name)) outerReads.push(name);
     }
     // A class's own name in its members is the class (`class-self`), not a capture.
     if (classSelf !== undefined) {
@@ -3107,6 +3122,73 @@ class Lifter {
 // ---------------------------------------------------------------------------
 
 /** The names bound inside a closure: its declarations, parameters, inner functions and classes, and its own name. */
+/**
+ * Whether the name an identifier reads is declared between it and `fn`, `fn` included: by a
+ * function's parameters, own name or `var`s, a block's or a case block's declarations, a loop's
+ * header or a catch clause. A name declared only in a nested function elsewhere is not.
+ */
+function declaredWithin(id: Node, fn: Node): boolean {
+  const name = id.getText();
+  for (let p: Node | undefined = id.getParent(); p !== undefined; p = p.getParent()) {
+    if (scopeNames(p).has(name)) return true;
+    if (p.compilerNode === fn.compilerNode) return false;
+  }
+  return false;
+}
+
+const scopeNamesCache = new WeakMap<object, Set<string>>();
+const NO_NAMES: Set<string> = new Set();
+
+/** The names a node declares as a scope (see declaredWithin), memoized. */
+function scopeNames(scope: Node): Set<string> {
+  const known = scopeNamesCache.get(scope.compilerNode);
+  if (known !== undefined) return known;
+  const names = new Set<string>();
+  const add = (n: Node): void => {
+    for (const x of patternNames(n)) names.add(x);
+  };
+  const statements =
+    Node.isBlock(scope) || Node.isSourceFile(scope)
+      ? scope.getStatements()
+      : Node.isCaseBlock(scope)
+        ? scope.getClauses().flatMap((c) => c.getStatements())
+        : [];
+  for (const st of statements) {
+    if (Node.isVariableStatement(st) && st.getDeclarationKind() !== "var")
+      for (const d of st.getDeclarations()) add(d.getNameNode());
+    if (
+      (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) &&
+      st.getName() !== undefined
+    )
+      names.add(st.getName() as string);
+  }
+  if (Node.isForStatement(scope) || Node.isForOfStatement(scope) || Node.isForInStatement(scope)) {
+    const init = scope.getInitializer();
+    if (Node.isVariableDeclarationList(init))
+      for (const d of init.getDeclarations()) add(d.getNameNode());
+  }
+  if (Node.isCatchClause(scope)) {
+    const v = scope.getVariableDeclaration();
+    if (v !== undefined) add(v.getNameNode());
+  }
+  if (isFunctionLikeNode(scope)) {
+    const f = scope as FunctionLike;
+    for (const p of f.getParameters()) add(p.getNameNode());
+    if (Node.isFunctionExpression(scope) || Node.isClassExpression(scope)) {
+      const own = scope.getName();
+      if (own !== undefined) names.add(own);
+    }
+    // A `var` anywhere in the function, outside nested functions, is the function's.
+    for (const list of scope.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+      if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, scope)) continue;
+      for (const d of list.getDeclarations()) add(d.getNameNode());
+    }
+  }
+  const result = names.size > 0 ? names : NO_NAMES;
+  scopeNamesCache.set(scope.compilerNode, result);
+  return result;
+}
+
 function closureLocals(fn: Node): Set<string> {
   const locals = collectRegionLocals(fn);
   for (const decl of [
@@ -3192,7 +3274,7 @@ function cellNames(scope: Node): Set<string> {
     for (const t of assignmentTargets(fn)) {
       for (const id of targetNames(t)) {
         const name = id.getText();
-        if (declared.has(name) && !locals.has(name)) out.add(name);
+        if (declared.has(name) && !declaredWithin(id, fn)) out.add(name);
       }
     }
   }
@@ -3213,7 +3295,7 @@ function cellNames(scope: Node): Set<string> {
     const reads = new Set(
       fn
         .getDescendantsOfKind(SyntaxKind.Identifier)
-        .filter((id) => isValueRead(id) && !locals.has(id.getText()))
+        .filter((id) => isValueRead(id) && !declaredWithin(id, fn))
         .map((id) => id.getText()),
     );
     for (const t of scopeAssignments) {

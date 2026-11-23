@@ -177,4 +177,29 @@ describe("captures that change (#1276)", () => {
     expect(closureNode(src)).toBeDefined();
     expect(new Function(`${code.replace("export ", "")}; return f()();`)()).toBe(1);
   });
+
+  it("a name a nested function declares does not hide the outer one a closure reads", () => {
+    const g = liftAtom(
+      "export function f(s: number) { const a = () => { const b = (s: number) => s; return s + b(1); }; return a; }",
+    );
+    const walk = (x: typeof g): boolean =>
+      x.nodes.some(
+        (n) => n.diamond?.symbol === "s" || (n.closure !== undefined && walk(n.closure)),
+      );
+    expect(walk(g)).toBe(false);
+  });
+
+  it("a captured constant is part of the closure's own graph", () => {
+    const id = (src: string): string => graphIdentity(liftAtom(src));
+    expect(
+      id("export function f(c: any) { let r = 0; if (c) r = 10; else throw 1; return () => r; }"),
+    ).toBe(id("export function f(c: any) { if (c) {} else throw 1; return () => 10; }"));
+  });
+
+  it("two ifs on the same condition are numbered by what they hold, not by source order", () => {
+    const src =
+      "export function f(r: any, cb: any) { if (cb) r = 10; else if (r) throw 1; function g(c: any) { return r; } if (cb) { return g; } else return 1; }";
+    const g = liftAtom(src);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
 });

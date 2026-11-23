@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
  * `graphIdentity` hashes the structure alone. Renaming a local or changing a comment changes
  * annotations only, so the identity does not change.
  */
-import { paramIndex } from "./params.js";
+import { isRestParam, paramIndex } from "./params.js";
 import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 /**
@@ -23,6 +23,44 @@ import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } fro
  * `+` (string concatenation does not commute), nor `&&` / `||` (their value is an operand).
  */
 const COMMUTATIVE = new Set(["===", "!=="]);
+
+/**
+ * A closure that captures a constant has the constant in its own graph instead (#1276): the capture
+ * becomes a literal there, and the captures after it move up one. A lowering writes a captured
+ * constant where it is used, so this is the graph that lowering lifts back to.
+ */
+function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
+  const literal = new Map<ValueId, DucNode>();
+  for (const n of nodes) if (n.kind === "literal-source") literal.set(n.outputs[0] as ValueId, n);
+  return nodes.map((node) => {
+    if (node.closure === undefined) return node;
+    const drop = node.inputs.flatMap((v, i) => (literal.has(v) ? [i] : []));
+    if (drop.length === 0) return node;
+    const captures = node.inputs.length;
+    const inner = node.closure.nodes.map((n): DucNode => {
+      if (n.kind !== "param-source") return n;
+      const at = paramIndex(n.label);
+      if (at < captures && drop.includes(at)) {
+        const l = literal.get(node.inputs[at] as ValueId) as DucNode;
+        return {
+          id: n.id,
+          inputs: [],
+          outputs: n.outputs,
+          kind: "literal-source",
+          ...(l.label !== undefined ? { label: l.label } : {}),
+          ...(l.origin !== undefined ? { origin: l.origin } : {}),
+        };
+      }
+      const shift = drop.filter((d) => d < at).length;
+      return shift === 0 ? n : { ...n, label: `${at - shift}${isRestParam(n.label) ? "..." : ""}` };
+    });
+    return {
+      ...node,
+      inputs: node.inputs.filter((_, i) => !drop.includes(i)),
+      closure: { ...node.closure, nodes: inner },
+    };
+  });
+}
 
 /**
  * A closure's graph with its captures renumbered: capture `order[k]` becomes capture k. The
@@ -258,7 +296,9 @@ export function canonicalizeGraph(
   rawObs: readonly ValueId[],
   rawBranches: readonly DucBranch[] = [],
 ): DucGraph {
-  const { nodes, obs, branches } = hoistLiterals(rawNodes, rawObs, rawBranches);
+  const hoisted = hoistLiterals(rawNodes, rawObs, rawBranches);
+  const { obs, branches } = hoisted;
+  const nodes = inlineLiteralCaptures(hoisted.nodes);
   const producer = new Map<ValueId, { node: DucNode; index: number }>();
   for (const node of nodes) node.outputs.forEach((v, index) => producer.set(v, { node, index }));
 
@@ -512,12 +552,34 @@ export function canonicalizeGraph(
   // conditions in the same place are the same structure, so the tie does not affect identity).
   const branchKey = (b: DucBranch): string =>
     `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
+  const contentsMemo = new Map<string, string>();
+  const contentsKey = (b: DucBranch): string => {
+    const known = contentsMemo.get(b.id);
+    if (known !== undefined) return known;
+    const side = (s: "t" | "e"): string =>
+      nodes
+        .filter(
+          (n) => n.region === `${b.id}.${s}` || n.region?.startsWith(`${b.id}.${s}/`) === true,
+        )
+        .map((n) => key.get(n) ?? "")
+        .sort()
+        .join(",");
+    const k = createHash("sha256")
+      .update(`${side("t")}|${side("e")}`)
+      .digest("hex");
+    contentsMemo.set(b.id, k);
+    return k;
+  };
   const branchRank = new Map<string, string>();
   [...branches]
     .sort((a, b) => {
       const ka = branchKey(a);
       const kb = branchKey(b);
       if (ka !== kb) return ka < kb ? -1 : 1;
+      // Branches on the same condition are told apart by what their sides hold.
+      const ca = contentsKey(a);
+      const cb = contentsKey(b);
+      if (ca !== cb) return ca < cb ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     })
     .forEach((b, i) => branchRank.set(b.id, `b${i}`));
