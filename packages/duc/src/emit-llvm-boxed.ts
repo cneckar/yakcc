@@ -46,6 +46,12 @@ const BINARY: Readonly<Record<string, string>> = {
   "*": "yk_mul",
   "/": "yk_div",
   "%": "yk_mod",
+  "|": "yk_bitor",
+  "&": "yk_bitand",
+  "^": "yk_bitxor",
+  "<<": "yk_shl",
+  ">>": "yk_shr",
+  ">>>": "yk_ushr",
   "===": "yk_seq",
   "!==": "yk_sne",
   "==": "yk_eq",
@@ -60,9 +66,30 @@ const UNARY: Readonly<Record<string, string>> = {
   "+": "yk_pos",
   "!": "yk_not",
   TypeOfExpression: "yk_typeof",
+  "~": "yk_bitnot",
 };
 /** The global functions the runtime gives as values. */
-const GLOBALS = new Set(["String", "Number", "Boolean"]);
+const GLOBALS = new Set([
+  "String",
+  "Number",
+  "Boolean",
+  "parseFloat",
+  "parseInt",
+  "isNaN",
+  "isFinite",
+  "Array",
+  "NaN",
+  "Infinity",
+  "__yakccTry",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "Map",
+  "Set",
+  "Object",
+  "JSON",
+]);
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
@@ -85,6 +112,17 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_arg: "declare i64 @yk_arg(i64, ptr, i64)",
   yk_math1: "declare i64 @yk_math1(ptr, i64)",
   yk_global: "declare i64 @yk_global(ptr, i64)",
+  yk_new: "declare i64 @yk_new(i64, i64, ptr)",
+  yk_string_is: "declare i32 @yk_string_is(i64, ptr, i64)",
+  yk_fail: "declare void @yk_fail(ptr)",
+  yk_throw: "declare void @yk_throw(i64) noreturn",
+  yk_inc: "declare i64 @yk_inc(i64)",
+  yk_dec: "declare i64 @yk_dec(i64)",
+  yk_is_nullish: "declare i32 @yk_is_nullish(i64)",
+  yk_instanceof: "declare i64 @yk_instanceof(i64, i64)",
+  yk_in: "declare i64 @yk_in(i64, i64)",
+  yk_iter_new: "declare i64 @yk_iter_new(i64, i32)",
+  yk_iter_next: "declare i32 @yk_iter_next(i64, ptr)",
   yk_math_minmax: "declare i64 @yk_math_minmax(i32, i64, ptr)",
   ...Object.fromEntries(Object.values(BINARY).map((f) => [f, `declare i64 @${f}(i64, i64)`])),
   ...Object.fromEntries(Object.values(UNARY).map((f) => [f, `declare i64 @${f}(i64)`])),
@@ -145,15 +183,36 @@ class ModuleBuilder {
  * One graph lowered to one LLVM function. The entry function takes its parameters as `i64`s; a
  * closure's function takes the closure, the receiver, and the arguments.
  */
+/**
+ * A module's scope, for a graph that is one of its statements (#1290): what a free name is (a load of
+ * a module binding, `module`, `exports`, `require`), how a written binding is stored, and, for a
+ * statement, the bindings its results are stored in.
+ */
+interface ModuleScope {
+  /** The value of a free name in the module, as IR emitted by `emit`, or undefined when it is not one. */
+  readonly read: (
+    name: string,
+    emit: (line: string) => void,
+    fresh: () => string,
+  ) => string | undefined;
+  readonly write: (name: string, value: string, emit: (line: string) => void) => boolean;
+  /** For a statement: the globals its results (its graph's observations) are stored in, in order. */
+  readonly outs?: readonly string[];
+}
+
 function lowerFunction(
   m: ModuleBuilder,
   source: DucGraph,
   name: string,
   closure: { readonly captures: number } | undefined,
+  scope?: ModuleScope,
 ): void {
   if (source.mode !== undefined)
     throw new LlvmEmitError(`an ${source.mode} function is not in the subset yet`);
-  if (source.obs.length !== 1) throw new LlvmEmitError("a native function has exactly one result");
+  if (scope?.outs === undefined && source.obs.length > 1)
+    throw new LlvmEmitError("a native function has at most one result");
+  if (scope?.outs !== undefined && scope.outs.length !== source.obs.length)
+    throw new LlvmEmitError("a statement's results and the names it declares differ in number");
   const { graph: g, after } = loweringView(source);
   const owners = joinOwners(g);
   const producer = new Map<ValueId, DucNode>();
@@ -162,9 +221,11 @@ function lowerFunction(
   const alias = new Map<ValueId, ValueId>();
   for (const loop of g.nodes.filter((n) => n.kind === "loop")) {
     const rec = loop.loop as DucLoop;
-    if (rec.iterate !== undefined) throw new LlvmEmitError("iteration is not in the subset yet");
-    if (rec.cond === undefined) throw new LlvmEmitError("a loop with no condition");
-    rec.invariant.forEach((v, j) => alias.set(v, loop.inputs[rec.carry.length + j] as ValueId));
+    if (rec.iterate === undefined && rec.cond === undefined)
+      throw new LlvmEmitError("a loop with no condition");
+    // An iteration's iterable is the input after the carries; the invariants come after it.
+    const offset = rec.carry.length + (rec.iterate !== undefined ? 1 : 0);
+    rec.invariant.forEach((v, j) => alias.set(v, loop.inputs[offset + j] as ValueId));
   }
   const resolve = (v: ValueId): ValueId => {
     const a = alias.get(v);
@@ -175,12 +236,19 @@ function lowerFunction(
   // Math, whose members a call names; and the global functions the runtime gives as values.
   const mathValue = new Set<ValueId>();
   const globalValue = new Map<ValueId, string>();
+  const freeValue = new Map<ValueId, string>();
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
     if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
     else if (n.diamond?.reason === "platform-primitive" && GLOBALS.has(sym))
+      globalValue.set(n.outputs[0] as ValueId, sym);
+    else if (scope !== undefined && n.diamond?.reason === "free-identifier")
+      freeValue.set(n.outputs[0] as ValueId, sym);
+    else if (scope !== undefined && n.diamond?.reason === "platform-primitive")
+      // In a module, a platform global the runtime lacks is undefined, as on a platform without it:
+      // what a `typeof` probe for it sees. Any other use fails when it runs.
       globalValue.set(n.outputs[0] as ValueId, sym);
     else throw new LlvmEmitError(`"${sym}" is not in the native base set`);
   }
@@ -243,7 +311,8 @@ function lowerFunction(
       if (text === "true") return TRUE;
       if (text === "false") return FALSE;
       if (text === "null") return NULL;
-      if (text === "undefined") return UNDEFINED;
+      // `let x;`: undefined until written.
+      if (text === "undefined" || text === "Uninitialized") return UNDEFINED;
       if (text.startsWith('"')) return str(JSON.parse(text) as string);
       const n = Number(text.replace(/_/g, ""));
       if (text === "" || (Number.isNaN(n) && text !== "NaN"))
@@ -251,6 +320,13 @@ function lowerFunction(
       return boxedNumber(n);
     }
     if (p?.kind === "diamond-source") {
+      const free = freeValue.get(v);
+      if (free !== undefined) {
+        // A name the module does not declare and the platform does not give is absent: undefined,
+        // what a probe for it (`typeof define`) sees. The gate admits such a name only when it is
+        // probed (DEC-DUC-FEATURE-DETECTION-001).
+        return scope?.read(free, emit, fresh) ?? UNDEFINED;
+      }
       const sym = globalValue.get(v);
       if (sym === undefined) throw new LlvmEmitError("Math is not a value here");
       const key = m.constant(sym);
@@ -277,7 +353,10 @@ function lowerFunction(
     if (lbl !== "closure" && lbl !== "function")
       throw new LlvmEmitError(`a "${lbl}" function is not in the subset yet`);
     const fn = m.closureName(name);
-    lowerFunction(m, graph, fn, { captures: n.inputs.length });
+    // Inside a module, a closure's free names are its captures; it keeps the module's platform rule.
+    const inner: ModuleScope | undefined =
+      scope === undefined ? undefined : { read: () => undefined, write: () => false };
+    lowerFunction(m, graph, fn, { captures: n.inputs.length }, inner);
     const caps = n.inputs.map(operand);
     m.used.add("yk_closure_new");
     const r = fresh();
@@ -311,8 +390,108 @@ function lowerFunction(
     }
     if (n.kind !== "op") throw new LlvmEmitError(`a ${n.kind} node is not in the subset`);
     if (lbl === "this" || lbl.startsWith("ThisKeyword#")) {
-      if (closure === undefined) throw new LlvmEmitError("`this` outside a function");
-      set(out, "%this");
+      // At a CommonJS module's top level, `this` is its exports.
+      const top = closure === undefined ? scope?.read("this", emit, fresh) : "%this";
+      if (top === undefined) throw new LlvmEmitError("`this` outside a function");
+      set(out, top);
+      return;
+    }
+    if (lbl === "instanceof" || lbl === "in") {
+      const [a, b] = ins as [ValueId, ValueId];
+      set(
+        out,
+        call(lbl === "in" ? "yk_in" : "yk_instanceof", `i64 ${operand(a)}, i64 ${operand(b)}`),
+      );
+      return;
+    }
+    // Optional chaining: undefined when the object (or the callee) is null or undefined.
+    if (lbl.startsWith("?.") || lbl === "ElementAccess?." || lbl === "CallExpression?.") {
+      const base = ins[0] as ValueId;
+      m.used.add("yk_is_nullish");
+      const i = fresh();
+      emit(`${i} = call i32 @yk_is_nullish(i64 ${operand(base)})`);
+      const nullish = fresh();
+      emit(`${nullish} = icmp ne i32 ${i}, 0`);
+      const skip = freshLabel("absent");
+      const go = freshLabel("present");
+      const end = freshLabel("chained");
+      emit(`br i1 ${nullish}, label %${skip}, label %${go}`);
+      block(skip);
+      set(out, UNDEFINED);
+      emit(`br label %${end}`);
+      block(go);
+      const plain =
+        lbl === "ElementAccess?."
+          ? "ElementAccess"
+          : lbl === "CallExpression?."
+            ? "CallExpression"
+            : `.${lbl.slice(2)}`;
+      emitNode({ ...n, label: plain });
+      emit(`br label %${end}`);
+      block(end);
+      return;
+    }
+    if (lbl === "VoidExpression") {
+      set(out, UNDEFINED);
+      return;
+    }
+    if (lbl === ",") {
+      set(out, operand(ins[ins.length - 1] as ValueId));
+      return;
+    }
+    if (lbl === "throw") {
+      m.used.add("yk_throw");
+      emit(`call void @yk_throw(i64 ${operand(ins[0] as ValueId)})`);
+      set(out, UNDEFINED);
+      return;
+    }
+    if (
+      (lbl === "++" || lbl === "post++" || lbl === "--" || lbl === "post--") &&
+      ins.length === 1
+    ) {
+      set(out, call(lbl.endsWith("++") ? "yk_inc" : "yk_dec", `i64 ${operand(ins[0] as ValueId)}`));
+      return;
+    }
+    // a ?? b, and the conditional assignments: a ??= b, a ||= b, a &&= b.
+    if (ins.length === 2 && (lbl === "??" || lbl === "??=" || lbl === "||=" || lbl === "&&=")) {
+      const [a, b] = ins as [ValueId, ValueId];
+      let c: string;
+      if (lbl === "??" || lbl === "??=") {
+        m.used.add("yk_is_nullish");
+        const i = fresh();
+        emit(`${i} = call i32 @yk_is_nullish(i64 ${operand(a)})`);
+        c = fresh();
+        emit(`${c} = icmp eq i32 ${i}, 0`);
+      } else c = truthy(a);
+      const x = operand(a);
+      const y = operand(b);
+      const r = fresh();
+      emit(
+        lbl === "&&="
+          ? `${r} = select i1 ${c}, i64 ${y}, i64 ${x}`
+          : `${r} = select i1 ${c}, i64 ${x}, i64 ${y}`,
+      );
+      set(out, r);
+      return;
+    }
+    if (
+      ins.length === 2 &&
+      lbl.endsWith("=") &&
+      BINARY[lbl.slice(0, -1)] !== undefined &&
+      lbl !== "==" &&
+      lbl !== "!=" &&
+      lbl !== "<=" &&
+      lbl !== ">=" &&
+      lbl !== "===" &&
+      lbl !== "!=="
+    ) {
+      set(
+        out,
+        call(
+          BINARY[lbl.slice(0, -1)] as string,
+          `i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}`,
+        ),
+      );
       return;
     }
     if (lbl === "function-self") {
@@ -356,6 +535,25 @@ function lowerFunction(
     if (lbl === "[]=" && ins.length === 3) {
       const [o, k, v] = ins as [ValueId, ValueId, ValueId];
       set(out, call("yk_set", `i64 ${operand(o)}, i64 ${operand(k)}, i64 ${operand(v)}`));
+      return;
+    }
+    // A module binding the graph reads or writes as itself (#1276): a load or a store of its global.
+    if ((lbl === "binding" || lbl === "binding=") && freeValue.has(resolve(ins[0] as ValueId))) {
+      const sym = freeValue.get(resolve(ins[0] as ValueId)) as string;
+      if (lbl === "binding") {
+        set(out, operand(ins[0] as ValueId));
+        return;
+      }
+      const value = operand(ins[1] as ValueId);
+      if (scope?.write(sym, value, emit) !== true)
+        throw new LlvmEmitError(`"${sym}" is not a binding of the module`);
+      set(out, value);
+      return;
+    }
+    if (lbl === "NewExpression") {
+      const callee = operand(ins[0] as ValueId);
+      const args = ins.slice(1).map(operand);
+      set(out, call("yk_new", `i64 ${callee}, i64 ${args.length}, ptr ${list(args)}`));
       return;
     }
     if (lbl === "CallExpression") {
@@ -499,11 +697,36 @@ function lowerFunction(
     const head = freshLabel("loop");
     const inner = freshLabel("body");
     const exit = freshLabel("exit");
+    // An iteration: an iterator over the input after the carries, asked for the next element first.
+    let iterator: string | undefined;
+    if (rec.iterate !== undefined) {
+      m.used.add("yk_iter_new");
+      const iterable = operand(loop.inputs[rec.carry.length] as ValueId);
+      iterator = fresh();
+      emit(
+        `${iterator} = call i64 @yk_iter_new(i64 ${iterable}, i32 ${rec.iterate.of === "keys" ? 1 : 0})`,
+      );
+    }
     emit(`br label %${head}`);
     block(head);
+    if (rec.iterate !== undefined && iterator !== undefined) {
+      m.used.add("yk_iter_next");
+      const cell = fresh();
+      entryAllocas.push(`  ${cell} = alloca i64`);
+      const has = fresh();
+      emit(`${has} = call i32 @yk_iter_next(i64 ${iterator}, ptr ${cell})`);
+      const more = fresh();
+      emit(`${more} = icmp ne i32 ${has}, 0`);
+      const got = freshLabel("element");
+      emit(`br i1 ${more}, label %${got}, label %${exit}`);
+      block(got);
+      const element = fresh();
+      emit(`${element} = load i64, ptr ${cell}`);
+      set(rec.iterate.element, element);
+    }
     const items = planner.ordered(planner.itemsOf(bodyPathOf(loop)));
     const forCond = new Set<ScopeItem>();
-    const want = [resolve(rec.cond as ValueId)];
+    const want = rec.cond !== undefined ? [resolve(rec.cond)] : [];
     const producedBy = new Map<ValueId, ScopeItem>();
     for (const it of items) for (const v of planner.producesOf(it)) producedBy.set(v, it);
     while (want.length > 0) {
@@ -514,7 +737,8 @@ function lowerFunction(
       want.push(...planner.needsOf(it));
     }
     emitItems(items.filter((it) => forCond.has(it)));
-    emit(`br i1 ${truthy(rec.cond as ValueId)}, label %${inner}, label %${exit}`);
+    if (rec.cond !== undefined) emit(`br i1 ${truthy(rec.cond)}, label %${inner}, label %${exit}`);
+    else emit(`br label %${inner}`);
     block(inner);
     emitItems(items.filter((it) => !forCond.has(it)));
     const next = rec.next.map((nv) => operand(nv));
@@ -532,7 +756,14 @@ function lowerFunction(
     else set(v, call("yk_arg", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
   });
   emitScope(undefined);
-  emit(`ret i64 ${operand(g.obs[0] as ValueId)}`);
+  if (scope?.outs !== undefined) {
+    // A statement: its results are the values of the names it declares.
+    scope.outs.forEach((global, k) =>
+      emit(`store i64 ${operand(g.obs[k] as ValueId)}, ptr ${global}`),
+    );
+    emit(`ret i64 ${UNDEFINED}`);
+  } else if (g.obs.length === 0) emit(`ret i64 ${UNDEFINED}`);
+  else emit(`ret i64 ${operand(g.obs[0] as ValueId)}`);
 
   const head =
     closure === undefined
@@ -569,4 +800,172 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     "",
   ].join("\n");
   return { ir, symbol, params: Array(params).fill("i64"), result: "i64" };
+}
+
+/** One statement of a module (#1290): a function declaration, or a statement, and the names it declares. */
+export interface NativeModuleStatement {
+  readonly kind: "function" | "statement";
+  readonly declares: readonly string[];
+  readonly graph: DucGraph;
+}
+
+/** A module of a package: its statements in order, and each relative `require` to the module it names. */
+export interface NativeModule {
+  readonly id: string;
+  readonly statements: readonly NativeModuleStatement[];
+  readonly requires?: Readonly<Record<string, string>>;
+}
+
+export interface NativeModules {
+  readonly ir: string;
+  /** For each module id, the exported function that initializes it and returns its exports. */
+  readonly symbols: Readonly<Record<string, string>>;
+}
+
+/** A module id as a C symbol: `lib/parse.js` is `yk_module_lib_parse_js`. */
+export function moduleSymbol(id: string): string {
+  return `yk_module_${id.replace(/[^A-Za-z0-9]/g, "_")}`;
+}
+
+/**
+ * A package's modules lowered to one LLVM module (#1292, #1290), as the receiver runs them: each
+ * module's bindings are globals; its initializer makes `module` and `exports`, defines its function
+ * declarations, runs its statements in order, and stores each statement's results in the bindings it
+ * declares. `require` resolves a relative specifier to the module the record names and initializes
+ * it once; a cycle sees the exports as they are so far, as in CommonJS. A specifier the record does
+ * not name fails when it is required.
+ */
+export function emitNativeModules(modules: readonly NativeModule[]): NativeModules {
+  const m = new ModuleBuilder();
+  const index = new Map(modules.map((mod, i) => [mod.id, i] as const));
+  const globals: string[] = [];
+  const symbols: Record<string, string> = {};
+  const g = (i: number, what: string): string => `@"m${i}.${what}"`;
+  modules.forEach((mod, i) => {
+    const names = new Set(mod.statements.flatMap((st) => st.declares));
+    for (const what of ["module", "exports", "require"])
+      globals.push(`${g(i, what)} = internal global i64 ${UNDEFINED}`);
+    for (const name of names)
+      globals.push(`${g(i, `b.${name}`)} = internal global i64 ${UNDEFINED}`);
+    globals.push(`${g(i, "state")} = internal global i32 0`);
+    const scope = (outs?: readonly string[]): ModuleScope => ({
+      read: (name, emit, fresh) => {
+        const slot =
+          name === "module" || name === "exports" || name === "require"
+            ? g(i, name)
+            : name === "this"
+              ? g(i, "exports")
+              : names.has(name)
+                ? g(i, `b.${name}`)
+                : undefined;
+        if (slot === undefined) return undefined;
+        const r = fresh();
+        emit(`${r} = load i64, ptr ${slot}`);
+        return r;
+      },
+      write: (name, value, emit) => {
+        if (!names.has(name)) return false;
+        emit(`store i64 ${value}, ptr ${g(i, `b.${name}`)}`);
+        return true;
+      },
+      ...(outs !== undefined ? { outs } : {}),
+    });
+    // Each statement: a function of its own. A function declaration is a closure the binding holds.
+    const init: string[] = [];
+    mod.statements.forEach((st, k) => {
+      const fn = `m${i}_s${k}`;
+      if (st.kind === "function") {
+        const name = st.declares[0];
+        if (name === undefined) throw new LlvmEmitError("a function statement with no name");
+        lowerFunction(m, st.graph, fn, { captures: 0 }, scope());
+        m.used.add("yk_closure_new");
+        init.push(`  %f${k} = call i64 @yk_closure_new(ptr @${fn}, i32 1, i64 0, ptr null)`);
+        init.push(`  store i64 %f${k}, ptr ${g(i, `b.${name}`)}`);
+      }
+    });
+    mod.statements.forEach((st, k) => {
+      if (st.kind !== "statement") return;
+      const fn = `m${i}_s${k}`;
+      lowerFunction(m, st.graph, fn, undefined, scope(st.declares.map((d) => g(i, `b.${d}`))));
+      init.push(`  call i64 @${fn}()`);
+    });
+    // require: each specifier the record names, to its module's initializer.
+    const req = [
+      `define internal i64 ${g(i, "require.fn")}(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`,
+      "entry:",
+    ];
+    m.used.add("yk_arg");
+    m.used.add("yk_string_is");
+    m.used.add("yk_fail");
+    req.push("  %spec = call i64 @yk_arg(i64 %argc, ptr %argv, i64 0)");
+    Object.entries(mod.requires ?? {}).forEach(([spec, target], r) => {
+      const t = index.get(target);
+      if (t === undefined)
+        throw new LlvmEmitError(`require("${spec}") names ${target}, which is not in the package`);
+      const key = m.constant(spec);
+      req.push(`  %is${r} = call i32 @yk_string_is(i64 %spec, ptr ${key.ptr}, i64 ${key.length})`);
+      req.push(`  %c${r} = icmp ne i32 %is${r}, 0`);
+      req.push(`  br i1 %c${r}, label %hit${r}, label %next${r}`);
+      req.push(`hit${r}:`);
+      req.push(`  %v${r} = call i64 ${g(t, "init")}()`);
+      req.push(`  ret i64 %v${r}`);
+      req.push(`next${r}:`);
+    });
+    const missing = m.constant(`Error: Cannot find module (required from ${mod.id})`, true);
+    req.push(`  call void @yk_fail(ptr ${missing.ptr})`, "  unreachable", "}", "");
+    m.functions.push(req.join("\n"));
+    // The initializer: once; a second call (a cycle, or another require) gets the exports so far.
+    const exportsKey = m.constant("exports");
+    m.used.add("yk_object_of");
+    m.used.add("yk_get_named");
+    m.functions.push(
+      [
+        `define i64 ${g(i, "init")}() {`,
+        "entry:",
+        "  %keys = alloca [1 x i64]",
+        "  %vals = alloca [1 x i64]",
+        `  %st = load i32, ptr ${g(i, "state")}`,
+        "  %again = icmp ne i32 %st, 0",
+        "  br i1 %again, label %done, label %first",
+        "first:",
+        `  store i32 1, ptr ${g(i, "state")}`,
+        "  %ex = call i64 @yk_object_of(i64 0, ptr null, ptr null)",
+        `  store i64 %ex, ptr ${g(i, "exports")}`,
+        `  %ek = call i64 @yk_string_utf8(ptr ${exportsKey.ptr}, i64 ${exportsKey.length})`,
+        "  store i64 %ek, ptr %keys",
+        "  store i64 %ex, ptr %vals",
+        "  %mod = call i64 @yk_object_of(i64 1, ptr %keys, ptr %vals)",
+        `  store i64 %mod, ptr ${g(i, "module")}`,
+        `  %req = call i64 @yk_closure_new(ptr ${g(i, "require.fn")}, i32 0, i64 0, ptr null)`,
+        `  store i64 %req, ptr ${g(i, "require")}`,
+        ...init,
+        "  br label %done",
+        "done:",
+        `  %m = load i64, ptr ${g(i, "module")}`,
+        `  %out = call i64 @yk_get_named(i64 %m, ptr ${exportsKey.ptr}, i64 ${exportsKey.length})`,
+        "  ret i64 %out",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    m.used.add("yk_string_utf8");
+    m.used.add("yk_closure_new");
+    const symbol = moduleSymbol(mod.id);
+    symbols[mod.id] = symbol;
+    m.functions.push(
+      `define i64 @${symbol}() {\nentry:\n  %r = call i64 ${g(i, "init")}()\n  ret i64 %r\n}\n`,
+    );
+  });
+  const ir = [
+    "; yakcc native lowering, a package's modules (#1292, #1290)",
+    'source_filename = "modules"',
+    "",
+    ...m.globals,
+    ...globals,
+    "",
+    ...m.functions,
+    ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
+    "",
+  ].join("\n");
+  return { ir, symbols };
 }

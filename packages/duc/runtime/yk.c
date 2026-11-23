@@ -12,6 +12,7 @@
  *       0xFFFB: an array  (pointer to yk_array)
  *       0xFFFC: an object (pointer to yk_object: own properties in insertion order)
  *       0xFFFD: a function (pointer to yk_closure: its code and the values it captures)
+ *       0xFFFE: the runtime's own (an iterator), never a program's value
  * Strings are UTF-16 code units, as JavaScript's are. Memory is allocated and not freed: a collector
  * is a later slice.
  *
@@ -20,6 +21,7 @@
  * ===, typeof, truthiness, `.length`, indexing, and the string and array methods listed below.
  */
 #include <math.h>
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,13 +43,17 @@ typedef struct {
   uint32_t len, cap;
   yk *keys; /* strings */
   yk *values;
+  int32_t error; /* made by Error / TypeError / …: its ToString is Error.prototype.toString's */
+  int32_t kind;  /* 0 a plain object; 1 a Map, 2 a Set: their entries in `entries` */
+  yk_array *entries; /* a Map's [key, value] pairs, a Set's values, in insertion order */
 } yk_object;
 
 /* Every function has one calling convention: the closure, the receiver, the arguments. */
 typedef yk (*yk_code)(void *closure, yk self, uint64_t argc, const yk *argv);
 typedef struct {
   yk_code code;
-  int32_t has_this; /* a `function` (1) takes the receiver; an arrow (0) does not */
+  int32_t has_this;  /* a `function` (1) takes the receiver; an arrow (0) does not */
+  yk props;          /* its own properties (an object), or 0 until one is written */
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -58,6 +64,7 @@ typedef struct {
 #define T_ARRAY 0xFFFBu
 #define T_OBJECT 0xFFFCu
 #define T_CLOSURE 0xFFFDu
+#define T_INTERNAL 0xFFFEu
 #define PTR(v) ((void *)(uintptr_t)((v) & 0x0000FFFFFFFFFFFFull))
 #define BOX(tag, p) (((yk)(tag) << 48) | (yk)(uintptr_t)(p))
 
@@ -161,8 +168,12 @@ yk yk_array_of(uint64_t n, const yk *items) {
 }
 
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv);
+static void type_error(const char *what);
 static int own_get(yk_object *o, yk key, yk *out);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
+static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
+static int same_value_zero(yk a, yk b);
+static yk_array *iterable_items(yk v);
 
 /* --- ToString --- */
 
@@ -249,6 +260,7 @@ static yk to_primitive(yk v) {
   if (is_array(v)) return to_string(v);
   if (is_closure(v)) return ascii("function () { [native code] }");
   if (!is_object(v)) return v;
+  yk_object *self = (yk_object *)PTR(v);
   static const char *names[2] = {"valueOf", "toString"};
   for (int i = 0; i < 2; i++) {
     yk f;
@@ -256,6 +268,15 @@ static yk to_primitive(yk v) {
       yk r = call_value(f, v, 0, NULL);
       if (!is_reference(r)) return r;
     }
+  }
+  if (self->error) {
+    /* Error.prototype.toString: name, ": ", message (either alone when the other is empty). */
+    yk name, message;
+    yk n = own_get(self, ascii("name"), &name) ? to_string(name) : ascii("Error");
+    yk msg = own_get(self, ascii("message"), &message) ? to_string(message) : ascii("");
+    if (str(msg)->len == 0) return n;
+    if (str(n)->len == 0) return msg;
+    return concat(str(concat(str(n), str(ascii(": ")))), str(msg));
   }
   return ascii("[object Object]");
 }
@@ -353,6 +374,9 @@ yk yk_mod(yk a, yk b) { return yk_number(fmod(to_number(a), to_number(b))); }
 yk yk_neg(yk a) { return yk_number(-to_number(a)); }
 yk yk_pos(yk a) { return yk_number(to_number(a)); }
 yk yk_not(yk a) { return yk_bool(!yk_truthy(a)); }
+yk yk_inc(yk a) { return yk_number(to_number(a) + 1); }
+yk yk_dec(yk a) { return yk_number(to_number(a) - 1); }
+int yk_is_nullish(yk a) { return is_nullish(a); }
 
 static int string_equal(yk_string *a, yk_string *b) {
   return a->len == b->len && memcmp(a->units, b->units, (size_t)a->len * 2) == 0;
@@ -453,10 +477,7 @@ static int key_is(yk key, const char *name) {
 }
 
 yk yk_get(yk obj, yk key) {
-  if (is_nullish(obj)) {
-    fprintf(stderr, "TypeError: Cannot read properties of %s\n", obj == YK_NULL ? "null" : "undefined");
-    exit(70);
-  }
+  if (is_nullish(obj)) type_error(obj == YK_NULL ? "Cannot read properties of null" : "Cannot read properties of undefined");
   if (is_string(obj)) {
     yk_string *s = str(obj);
     if (key_is(key, "length")) return yk_number(s->len);
@@ -476,8 +497,15 @@ yk yk_get(yk obj, yk key) {
     return YK_UNDEFINED;
   }
   if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind != 0 && key_is(key, "size")) return yk_number(o->entries->len);
     yk v;
-    return own_get((yk_object *)PTR(obj), to_string(key), &v) ? v : YK_UNDEFINED;
+    return own_get(o, to_string(key), &v) ? v : YK_UNDEFINED;
+  }
+  if (is_closure(obj)) {
+    yk_closure *c = (yk_closure *)PTR(obj);
+    yk v;
+    return c->props != 0 && own_get((yk_object *)PTR(c->props), to_string(key), &v) ? v : YK_UNDEFINED;
   }
   return YK_UNDEFINED;
 }
@@ -500,8 +528,19 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   yk key = yk_string_utf8(name, n);
   if (is_object(recv)) {
+    yk_object *o = (yk_object *)PTR(recv);
     yk f;
-    if (own_get((yk_object *)PTR(recv), key, &f)) return call_value(f, recv, argc, argv);
+    if (o->kind != 0) {
+      yk out;
+      if (collection_method(o, recv, key, argc, argv, &out)) return out;
+    } else if (own_get(o, key, &f))
+      return call_value(f, recv, argc, argv);
+  }
+  if (is_closure(recv)) {
+    yk_closure *c = (yk_closure *)PTR(recv);
+    yk f;
+    if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, &f)) return call_value(f, recv, argc, argv);
+    if (key_is(key, "call")) return call_value(recv, arg0, argc > 0 ? argc - 1 : 0, argv + (argc > 0 ? 1 : 0));
   }
   if (is_array(recv)) {
     yk out;
@@ -645,20 +684,71 @@ static void own_set(yk_object *o, yk key, yk value) {
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   yk_object *o = alloc(sizeof(yk_object));
   o->len = o->cap = 0;
+  o->error = 0;
+  o->kind = 0;
+  o->entries = NULL;
   o->keys = o->values = NULL;
   for (uint64_t i = 0; i < n; i++) own_set(o, to_string(keys[i]), values[i]);
   return BOX(T_OBJECT, o);
 }
 
-static void type_error(const char *what) {
-  fprintf(stderr, "TypeError: %s\n", what);
-  exit(70);
+static yk make_error(const char *name, yk message) {
+  yk keys[2] = {ascii("name"), ascii("message")};
+  yk values[2] = {ascii(name), message};
+  yk e = yk_object_of(2, keys, values);
+  ((yk_object *)PTR(e))->error = 1;
+  return e;
+}
+
+/* --- exceptions: a stack of handlers, unwound by longjmp --- */
+
+typedef struct handler {
+  jmp_buf env;
+  struct handler *prev;
+} handler;
+static handler *handlers = NULL;
+static yk thrown;
+
+_Noreturn void yk_throw(yk v) {
+  if (handlers == NULL) {
+    yk_string *s = str(to_string(v));
+    fputs("Uncaught ", stderr);
+    for (uint32_t i = 0; i < s->len; i++) fputc(s->units[i] < 0x80 ? (int)s->units[i] : '?', stderr);
+    fputc('\n', stderr);
+    exit(70);
+  }
+  thrown = v;
+  longjmp(handlers->env, 1);
+}
+
+static void type_error(const char *what) { yk_throw(make_error("TypeError", ascii(what))); }
+
+/* Calls f; 1 when it threw, with what it threw in *result, else 0 with its result. */
+static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
+  handler h;
+  h.prev = handlers;
+  handlers = &h;
+  if (setjmp(h.env) == 0) {
+    yk r = call_value(f, YK_UNDEFINED, argc, argv);
+    handlers = h.prev;
+    *result = r;
+    return 0;
+  }
+  handlers = h.prev;
+  *result = thrown;
+  return 1;
 }
 
 /* obj[key] = value. The graph's write yields the object, as written. */
 yk yk_set(yk obj, yk key, yk value) {
   if (is_object(obj)) {
     own_set((yk_object *)PTR(obj), to_string(key), value);
+    return obj;
+  }
+  if (is_closure(obj)) {
+    yk_closure *c = (yk_closure *)PTR(obj);
+    if (c->props == 0) c->props = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(c->props), to_string(key), value);
     return obj;
   }
   if (is_array(obj)) {
@@ -677,12 +767,106 @@ yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
   return yk_set(obj, yk_string_utf8(name, n), value);
 }
 
+/* --- keys, in the order JavaScript gives them: array indexes ascending, then strings as added --- */
+
+static int canonical_index(yk_string *s, uint32_t *out) {
+  if (s->len == 0 || s->len > 10 || (s->len > 1 && s->units[0] == '0')) return 0;
+  double d = 0;
+  for (uint32_t i = 0; i < s->len; i++) {
+    if (s->units[i] < '0' || s->units[i] > '9') return 0;
+    d = d * 10 + (s->units[i] - '0');
+  }
+  if (d > 4294967294.0) return 0;
+  *out = (uint32_t)d;
+  return 1;
+}
+
+static yk_array *ordered_keys(yk_object *o) {
+  yk_array *r = new_array(o->len);
+  uint32_t *idx = alloc((size_t)o->len * sizeof(uint32_t) + 4);
+  yk *ik = alloc((size_t)o->len * sizeof(yk) + 8);
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < o->len; i++) {
+    uint32_t k;
+    if (canonical_index(str(o->keys[i]), &k)) {
+      uint32_t j = n++;
+      while (j > 0 && idx[j - 1] > k) idx[j] = idx[j - 1], ik[j] = ik[j - 1], j--;
+      idx[j] = k;
+      ik[j] = o->keys[i];
+    }
+  }
+  for (uint32_t i = 0; i < n; i++) push(r, ik[i]);
+  for (uint32_t i = 0; i < o->len; i++) {
+    uint32_t k;
+    if (!canonical_index(str(o->keys[i]), &k)) push(r, o->keys[i]);
+  }
+  free(idx);
+  free(ik);
+  return r;
+}
+
+/* --- iteration: for…of over arrays (live) and strings (by code point); for…in over keys --- */
+
+typedef struct {
+  yk src;
+  uint32_t i;
+  yk_array *keys; /* for…in: the keys, taken when the loop starts */
+} yk_iter;
+
+yk yk_iter_new(yk v, int32_t keys) {
+  yk_iter *it = alloc(sizeof(yk_iter));
+  it->src = v;
+  it->i = 0;
+  it->keys = NULL;
+  if (keys) {
+    if (is_object(v))
+      it->keys = ordered_keys((yk_object *)PTR(v));
+    else {
+      it->keys = new_array(4);
+      uint32_t n = is_array(v) ? arr(v)->len : is_string(v) ? str(v)->len : 0;
+      for (uint32_t i = 0; i < n; i++) push(it->keys, to_string(yk_number(i)));
+    }
+  } else if (is_object(v) && ((yk_object *)PTR(v))->kind != 0) {
+    it->src = BOX(T_ARRAY, iterable_items(v));
+  } else if (!is_array(v) && !is_string(v))
+    type_error("the value is not iterable here");
+  return BOX(T_INTERNAL, it);
+}
+
+int yk_iter_next(yk itv, yk *out) {
+  yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->keys != NULL) {
+    if (it->i >= it->keys->len) return 0;
+    *out = it->keys->items[it->i++];
+    return 1;
+  }
+  if (is_array(it->src)) {
+    yk_array *a = arr(it->src);
+    if (it->i >= a->len) return 0;
+    *out = a->items[it->i++];
+    return 1;
+  }
+  yk_string *s = str(it->src);
+  if (it->i >= s->len) return 0;
+  uint16_t u = s->units[it->i];
+  uint32_t n = (u >= 0xD800 && u <= 0xDBFF && it->i + 1 < s->len && s->units[it->i + 1] >= 0xDC00 &&
+                s->units[it->i + 1] <= 0xDFFF)
+                   ? 2
+                   : 1;
+  yk_string *c = new_string(n);
+  memcpy(c->units, s->units + it->i, (size_t)n * 2);
+  it->i += n;
+  *out = string_of(c);
+  return 1;
+}
+
 /* --- functions --- */
 
 yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures) {
   yk_closure *c = alloc(sizeof(yk_closure) + (size_t)n * sizeof(yk));
   c->code = code;
   c->has_this = has_this;
+  c->props = 0;
   c->n = (uint32_t)n;
   memcpy(c->captures, captures, (size_t)n * sizeof(yk));
   return BOX(T_CLOSURE, c);
@@ -792,7 +976,414 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   return *out = yk_number(-1), 1;
 }
 
-/* --- the global functions, as values: String, Number, Boolean --- */
+/* --- bitwise operators, on ToInt32 / ToUint32 --- */
+
+static uint32_t to_uint32(yk v) {
+  double d = to_number(v);
+  if (d != d || isinf(d)) return 0;
+  d = trunc(d);
+  d = fmod(d, 4294967296.0);
+  if (d < 0) d += 4294967296.0;
+  return (uint32_t)d;
+}
+static int32_t to_int32(yk v) { return (int32_t)to_uint32(v); }
+
+yk yk_bitor(yk a, yk b) { return yk_number(to_int32(a) | to_int32(b)); }
+yk yk_bitand(yk a, yk b) { return yk_number(to_int32(a) & to_int32(b)); }
+yk yk_bitxor(yk a, yk b) { return yk_number(to_int32(a) ^ to_int32(b)); }
+yk yk_shl(yk a, yk b) { return yk_number((int32_t)((uint32_t)to_int32(a) << (to_uint32(b) & 31))); }
+yk yk_shr(yk a, yk b) { return yk_number(to_int32(a) >> (to_uint32(b) & 31)); }
+yk yk_ushr(yk a, yk b) { return yk_number(to_uint32(a) >> (to_uint32(b) & 31)); }
+yk yk_bitnot(yk a) { return yk_number(~to_int32(a)); }
+
+/* --- Map and Set: entries in insertion order, keys compared by SameValueZero --- */
+
+static yk new_collection(int32_t kind) {
+  yk v = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(v);
+  o->kind = kind;
+  o->entries = new_array(4);
+  return v;
+}
+
+static int64_t collection_find(yk_object *o, yk key) {
+  for (uint32_t i = 0; i < o->entries->len; i++) {
+    yk k = o->kind == 1 ? arr(o->entries->items[i])->items[0] : o->entries->items[i];
+    if (same_value_zero(k, key)) return i;
+  }
+  return -1;
+}
+
+static void collection_remove(yk_object *o, int64_t i) {
+  memmove(o->entries->items + i, o->entries->items + i + 1, (size_t)(o->entries->len - i - 1) * sizeof(yk));
+  o->entries->len--;
+}
+
+static yk_array *iterable_items(yk v);
+
+static void collection_put(yk_object *o, yk key, yk value) {
+  if (key == yk_number(-0.0)) key = yk_number(0); /* -0 is stored as +0 */
+  int64_t i = collection_find(o, key);
+  if (o->kind == 1) {
+    if (i >= 0)
+      arr(o->entries->items[i])->items[1] = value;
+    else {
+      yk pair[2] = {key, value};
+      push(o->entries, yk_array_of(2, pair));
+    }
+  } else if (i < 0)
+    push(o->entries, key);
+}
+
+static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
+  yk a0 = argc > 0 ? argv[0] : YK_UNDEFINED, a1 = argc > 1 ? argv[1] : YK_UNDEFINED;
+  int64_t i;
+  if (key_is(key, "has")) return *out = yk_bool(collection_find(o, a0) >= 0), 1;
+  if (o->kind == 1 && key_is(key, "get"))
+    return *out = (i = collection_find(o, a0)) >= 0 ? arr(o->entries->items[i])->items[1] : YK_UNDEFINED, 1;
+  if ((o->kind == 1 && key_is(key, "set")) || (o->kind == 2 && key_is(key, "add"))) {
+    collection_put(o, a0, a1);
+    return *out = recv, 1;
+  }
+  if (key_is(key, "delete")) {
+    if ((i = collection_find(o, a0)) < 0) return *out = YK_FALSE, 1;
+    collection_remove(o, i);
+    return *out = YK_TRUE, 1;
+  }
+  if (key_is(key, "clear")) {
+    o->entries->len = 0;
+    return *out = YK_UNDEFINED, 1;
+  }
+  /* keys / values / entries: the items, as an array (iterable, as the iterators they stand for). */
+  int keys = key_is(key, "keys"), values = key_is(key, "values"), entries = key_is(key, "entries");
+  if (keys || values || entries) {
+    yk_array *r = new_array(o->entries->len);
+    for (uint32_t j = 0; j < o->entries->len; j++) {
+      yk e = o->entries->items[j];
+      if (o->kind == 1) push(r, entries ? yk_array_of(2, arr(e)->items) : arr(e)->items[keys ? 0 : 1]);
+      else {
+        yk pair[2] = {e, e};
+        push(r, entries ? yk_array_of(2, pair) : e);
+      }
+    }
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  if (key_is(key, "forEach")) {
+    for (uint32_t j = 0; j < o->entries->len; j++) {
+      yk e = o->entries->items[j];
+      yk args[3] = {o->kind == 1 ? arr(e)->items[1] : e, o->kind == 1 ? arr(e)->items[0] : e, recv};
+      call_value(a0, a1, 3, args);
+    }
+    return *out = YK_UNDEFINED, 1;
+  }
+  return 0;
+}
+
+/* The items of an iterable, as for…of gives them: an array's, a string's code points, a Map's
+ * [key, value] pairs, a Set's values. */
+static yk_array *iterable_items(yk v) {
+  yk_array *r = new_array(4);
+  if (is_object(v) && ((yk_object *)PTR(v))->kind != 0) {
+    yk out, key = ascii(((yk_object *)PTR(v))->kind == 1 ? "entries" : "values");
+    collection_method((yk_object *)PTR(v), v, key, 0, NULL, &out);
+    return arr(out);
+  }
+  yk it = yk_iter_new(v, 0), e;
+  while (yk_iter_next(it, &e)) push(r, e);
+  return r;
+}
+
+/* --- JSON.stringify (no replacer, no indent) --- */
+
+static void json_quote(yk_array *parts, yk_string *s) {
+  yk_string *q = new_string(s->len * 6 + 2);
+  uint32_t n = 0;
+  q->units[n++] = '"';
+  for (uint32_t i = 0; i < s->len; i++) {
+    uint16_t c = s->units[i];
+    int lone = (c >= 0xD800 && c <= 0xDBFF && !(i + 1 < s->len && s->units[i + 1] >= 0xDC00 && s->units[i + 1] <= 0xDFFF)) ||
+               (c >= 0xDC00 && c <= 0xDFFF && !(i > 0 && s->units[i - 1] >= 0xD800 && s->units[i - 1] <= 0xDBFF));
+    const char *esc = c == '"' ? "\\\"" : c == '\\' ? "\\\\" : c == '\b' ? "\\b" : c == '\f' ? "\\f" : c == '\n' ? "\\n" : c == '\r' ? "\\r" : c == '\t' ? "\\t" : NULL;
+    if (esc != NULL)
+      for (const char *e = esc; *e; e++) q->units[n++] = (uint16_t)*e;
+    else if (c < 0x20 || lone) {
+      char buf[8];
+      snprintf(buf, sizeof buf, "\\u%04x", c);
+      for (const char *e = buf; *e; e++) q->units[n++] = (uint16_t)*e;
+    } else
+      q->units[n++] = c;
+  }
+  q->units[n++] = '"';
+  q->len = n;
+  push(parts, string_of(q));
+}
+
+/* 0: nothing written (undefined, a function); 1: written. */
+static int json_write(yk_array *parts, yk v) {
+  if (v == YK_UNDEFINED || is_closure(v)) return 0;
+  if (v == YK_NULL) return push(parts, ascii("null")), 1;
+  if (is_bool(v)) return push(parts, ascii(v == YK_TRUE ? "true" : "false")), 1;
+  if (is_number(v)) {
+    double d = num(v);
+    return push(parts, d != d || isinf(d) ? ascii("null") : to_string(v)), 1;
+  }
+  if (is_string(v)) return json_quote(parts, str(v)), 1;
+  if (is_array(v)) {
+    push(parts, ascii("["));
+    for (uint32_t i = 0; i < arr(v)->len; i++) {
+      if (i > 0) push(parts, ascii(","));
+      if (!json_write(parts, arr(v)->items[i])) push(parts, ascii("null"));
+    }
+    return push(parts, ascii("]")), 1;
+  }
+  yk_object *o = (yk_object *)PTR(v);
+  push(parts, ascii("{"));
+  if (o->kind == 0) {
+    yk_array *keys = ordered_keys(o);
+    int first = 1;
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk value;
+      own_get(o, keys->items[i], &value);
+      if (value == YK_UNDEFINED || is_closure(value)) continue;
+      if (!first) push(parts, ascii(","));
+      first = 0;
+      json_quote(parts, str(keys->items[i]));
+      push(parts, ascii(":"));
+      json_write(parts, value);
+    }
+  }
+  return push(parts, ascii("}")), 1;
+}
+
+static yk builtin_json_stringify(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk_array *parts = new_array(16);
+  if (!json_write(parts, argc > 0 ? argv[0] : YK_UNDEFINED)) return YK_UNDEFINED;
+  return array_join(parts, str(ascii("")));
+}
+
+/* --- Array.from, Array.isArray, Object.keys / values / entries / assign / freeze, Map, Set --- */
+
+static yk builtin_array_from(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (is_nullish(v)) type_error("Array.from needs an iterable or array-like");
+  yk_array *items;
+  if (is_array(v) || is_string(v) || (is_object(v) && ((yk_object *)PTR(v))->kind != 0))
+    items = iterable_items(v);
+  else {
+    /* array-like: length, then each index */
+    double n = to_number(yk_get(v, ascii("length")));
+    items = new_array(4);
+    for (uint32_t i = 0; n == n && i < n; i++) push(items, yk_get(v, yk_number(i)));
+  }
+  if (argc > 1 && is_closure(argv[1]))
+    for (uint32_t i = 0; i < items->len; i++) {
+      yk args[2] = {items->items[i], yk_number(i)};
+      items->items[i] = call_value(argv[1], YK_UNDEFINED, 2, args);
+    }
+  return BOX(T_ARRAY, items);
+}
+static yk builtin_array_is_array(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return yk_bool(argc > 0 && is_array(argv[0]));
+}
+
+static yk object_parts(yk v, int which) {
+  yk_array *r = new_array(4);
+  if (is_object(v) && ((yk_object *)PTR(v))->kind == 0) {
+    yk_object *o = (yk_object *)PTR(v);
+    yk_array *keys = ordered_keys(o);
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk value;
+      own_get(o, keys->items[i], &value);
+      yk pair[2] = {keys->items[i], value};
+      push(r, which == 0 ? keys->items[i] : which == 1 ? value : yk_array_of(2, pair));
+    }
+  } else if (is_array(v) || is_string(v)) {
+    uint32_t n = is_array(v) ? arr(v)->len : str(v)->len;
+    for (uint32_t i = 0; i < n; i++) {
+      yk k = to_string(yk_number(i)), value = yk_get(v, yk_number(i));
+      yk pair[2] = {k, value};
+      push(r, which == 0 ? k : which == 1 ? value : yk_array_of(2, pair));
+    }
+  } else if (is_nullish(v))
+    type_error("Cannot convert undefined or null to object");
+  return BOX(T_ARRAY, r);
+}
+static yk builtin_object_keys(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return object_parts(argc > 0 ? argv[0] : YK_UNDEFINED, 0); }
+static yk builtin_object_values(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return object_parts(argc > 0 ? argv[0] : YK_UNDEFINED, 1); }
+static yk builtin_object_entries(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return object_parts(argc > 0 ? argv[0] : YK_UNDEFINED, 2); }
+static yk builtin_object_assign(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk target = argc > 0 ? argv[0] : YK_UNDEFINED;
+  for (uint64_t i = 1; i < argc; i++) {
+    if (is_nullish(argv[i])) continue;
+    yk_array *entries = arr(object_parts(argv[i], 2));
+    for (uint32_t j = 0; j < entries->len; j++)
+      yk_set(target, arr(entries->items[j])->items[0], arr(entries->items[j])->items[1]);
+  }
+  return target;
+}
+static yk builtin_identity(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return argc > 0 ? argv[0] : YK_UNDEFINED; }
+static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return argc > 0 && is_reference(argv[0]) ? argv[0] : yk_object_of(0, NULL, NULL);
+}
+static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk m = new_collection(1);
+  if (argc > 0 && !is_nullish(argv[0])) {
+    yk_array *items = iterable_items(argv[0]);
+    for (uint32_t i = 0; i < items->len; i++) {
+      yk pair = items->items[i];
+      collection_put((yk_object *)PTR(m), yk_get(pair, yk_number(0)), yk_get(pair, yk_number(1)));
+    }
+  }
+  return m;
+}
+static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk set = new_collection(2);
+  if (argc > 0 && !is_nullish(argv[0])) {
+    yk_array *items = iterable_items(argv[0]);
+    for (uint32_t i = 0; i < items->len; i++) collection_put((yk_object *)PTR(set), items->items[i], YK_UNDEFINED);
+  }
+  return set;
+}
+
+static yk with_methods(yk_code code, int n, const char *const *names, const yk_code *codes) {
+  yk f = code != NULL ? yk_closure_new(code, 0, 0, NULL) : yk_object_of(0, NULL, NULL);
+  for (int i = 0; i < n; i++) yk_set(f, ascii(names[i]), yk_closure_new(codes[i], 0, 0, NULL));
+  return f;
+}
+
+/* --- the global functions, as values --- */
+
+/* __yakccTry(body, handler, finalizer): a try statement, as the TypeScript lowering's runtime has it. */
+static yk builtin_try(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk body = argv[0], handler_fn = argc > 1 ? argv[1] : YK_UNDEFINED, fin = argc > 2 ? argv[2] : YK_UNDEFINED;
+  yk r;
+  int threw = protected_call(body, 0, NULL, &r);
+  if (threw && is_closure(handler_fn)) {
+    yk exc = r;
+    threw = protected_call(handler_fn, 1, &exc, &r);
+  }
+  if (is_closure(fin)) {
+    yk done = call_value(fin, YK_UNDEFINED, 0, NULL);
+    if (is_array(done) && arr(done)->len > 0 && strict_equal(arr(done)->items[0], yk_number(1))) return done;
+  }
+  if (threw) yk_throw(r);
+  return r;
+}
+
+static yk builtin_error_named(const char *name, uint64_t argc, const yk *argv) {
+  return make_error(name, argc > 0 && argv[0] != YK_UNDEFINED ? to_string(argv[0]) : ascii(""));
+}
+static yk builtin_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("Error", argc, argv); }
+static yk builtin_type_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("TypeError", argc, argv); }
+static yk builtin_range_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("RangeError", argc, argv); }
+static yk builtin_syntax_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("SyntaxError", argc, argv); }
+
+/* parseFloat: the longest prefix that is a StrDecimalLiteral, after leading white space. */
+static double parse_float(yk_string *s) {
+  uint32_t i = 0;
+  while (i < s->len && is_space(s->units[i])) i++;
+  char buf[400];
+  uint32_t n = 0;
+  while (i < s->len && n < sizeof buf - 1 && s->units[i] < 0x80) buf[n++] = (char)s->units[i++];
+  buf[n] = 0;
+  const char *p = buf;
+  int neg = 0;
+  if (*p == '+' || *p == '-') neg = *p++ == '-';
+  if (strncmp(p, "Infinity", 8) == 0) return neg ? -INFINITY : INFINITY;
+  const char *q = p;
+  int digits = 0;
+  while (*q >= '0' && *q <= '9') q++, digits++;
+  if (*q == '.') {
+    q++;
+    while (*q >= '0' && *q <= '9') q++, digits++;
+  }
+  if (digits == 0) return NAN;
+  if (*q == 'e' || *q == 'E') {
+    const char *e = q + 1;
+    if (*e == '+' || *e == '-') e++;
+    if (*e >= '0' && *e <= '9') {
+      while (*e >= '0' && *e <= '9') e++;
+      q = e;
+    }
+  }
+  char num_buf[400];
+  size_t len = (size_t)(q - buf);
+  memcpy(num_buf, buf, len);
+  num_buf[len] = 0;
+  return strtod(num_buf, NULL);
+}
+
+/* parseInt: an optional sign, the radix's digits (16 after 0x when the radix allows), else NaN. */
+static double parse_int(yk_string *s, yk radix_v) {
+  uint32_t i = 0;
+  while (i < s->len && is_space(s->units[i])) i++;
+  int neg = 0;
+  if (i < s->len && (s->units[i] == '+' || s->units[i] == '-')) neg = s->units[i++] == '-';
+  int32_t radix = to_int32(radix_v);
+  int strip = 1;
+  if (radix != 0) {
+    if (radix < 2 || radix > 36) return NAN;
+    if (radix != 16) strip = 0;
+  } else
+    radix = 10;
+  if (strip && i + 1 < s->len && s->units[i] == '0' && (s->units[i + 1] == 'x' || s->units[i + 1] == 'X')) {
+    i += 2;
+    radix = 16;
+  }
+  double r = 0;
+  int any = 0;
+  for (; i < s->len; i++) {
+    uint16_t c = s->units[i];
+    int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
+    if (d >= radix) break;
+    r = r * radix + d;
+    any = 1;
+  }
+  if (!any) return NAN;
+  return neg ? -r : r;
+}
+
+static yk builtin_parse_float(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return yk_number(parse_float(str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED))));
+}
+static yk builtin_parse_int(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return yk_number(parse_int(str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED)), argc > 1 ? argv[1] : YK_UNDEFINED));
+}
+static yk builtin_is_nan(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  double d = to_number(argc > 0 ? argv[0] : YK_UNDEFINED);
+  return yk_bool(d != d);
+}
+static yk builtin_is_finite(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  double d = to_number(argc > 0 ? argv[0] : YK_UNDEFINED);
+  return yk_bool(d == d && !isinf(d));
+}
+/* Array(n) and new Array(n): n holes, read as undefined; Array(a, b, …): those elements. */
+static yk builtin_array(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  if (argc == 1 && is_number(argv[0])) {
+    double d = num(argv[0]);
+    if (d < 0 || d > 4294967295.0 || d != floor(d)) {
+      fprintf(stderr, "RangeError: Invalid array length\n");
+      exit(70);
+    }
+    yk_array *a = new_array((uint32_t)d);
+    for (uint32_t i = 0; i < (uint32_t)d; i++) push(a, YK_UNDEFINED);
+    return BOX(T_ARRAY, a);
+  }
+  return yk_array_of(argc, argv);
+}
 
 static yk builtin_string(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
@@ -807,17 +1398,104 @@ static yk builtin_boolean(void *c, yk self, uint64_t argc, const yk *argv) {
   return yk_bool(argc > 0 && yk_truthy(argv[0]));
 }
 
-/* A global the platform gives, by name: a function value, or undefined when there is none. */
+/*
+ * A global the platform gives, by name: a function value, NaN or Infinity, or undefined when the
+ * runtime has none (so a `typeof` probe for it sees what a platform without it gives).
+ */
+#define N_GLOBALS 19
 yk yk_global(const char *name, uint64_t n) {
-  static yk fns[3];
-  static const char *names[3] = {"String", "Number", "Boolean"};
-  static yk_code codes[3] = {builtin_string, builtin_number, builtin_boolean};
-  for (int i = 0; i < 3; i++)
+  if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
+  if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);
+  static yk fns[N_GLOBALS];
+  static const char *names[N_GLOBALS] = {"String", "Number", "Boolean", "parseFloat", "parseInt",
+                                         "isNaN", "isFinite", "Array", "globalThis", "__yakccTry",
+                                         "Error", "TypeError", "RangeError", "SyntaxError",
+                                         "Map", "Set", "Object", "JSON", "Symbol"};
+  static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
+                                     builtin_parse_float, builtin_parse_int, builtin_is_nan,
+                                     builtin_is_finite, builtin_array, NULL, builtin_try,
+                                     builtin_error, builtin_type_error, builtin_range_error,
+                                     builtin_syntax_error, builtin_map, builtin_set, builtin_object,
+                                     NULL, NULL};
+  for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
-      if (fns[i] == 0) fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
-      return fns[i];
+      if (fns[i] != 0) return fns[i];
+      if (strcmp(names[i], "JSON") == 0) {
+        static const char *const m[1] = {"stringify"};
+        static const yk_code k[1] = {builtin_json_stringify};
+        return fns[i] = with_methods(NULL, 1, m, k);
+      }
+      if (codes[i] == NULL) return YK_UNDEFINED;
+      if (codes[i] == builtin_array) {
+        static const char *const m[2] = {"from", "isArray"};
+        static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
+        return fns[i] = with_methods(builtin_array, 2, m, k);
+      }
+      if (codes[i] == builtin_object) {
+        static const char *const m[5] = {"keys", "values", "entries", "assign", "freeze"};
+        static const yk_code k[5] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
+                                     builtin_object_assign, builtin_identity};
+        return fns[i] = with_methods(builtin_object, 5, m, k);
+      }
+      return fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
     }
   return YK_UNDEFINED;
+}
+
+/* new F(…): the constructors the runtime has (Array). */
+yk yk_new(yk f, uint64_t argc, const yk *argv) {
+  if (is_closure(f)) {
+    yk_code code = ((yk_closure *)PTR(f))->code;
+    if (code == builtin_array || code == builtin_error || code == builtin_type_error ||
+        code == builtin_range_error || code == builtin_syntax_error || code == builtin_map ||
+        code == builtin_set || code == builtin_object)
+      return code(NULL, YK_UNDEFINED, argc, argv);
+  }
+  type_error("this constructor is not in the runtime yet");
+  return YK_UNDEFINED;
+}
+
+/* a instanceof F, for the constructors the runtime has: Array, and the Error family. */
+yk yk_instanceof(yk v, yk f) {
+  if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
+  yk_code code = ((yk_closure *)PTR(f))->code;
+  if (code == builtin_array) return yk_bool(is_array(v));
+  if (code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
+      code == builtin_syntax_error) {
+    if (!is_object(v) || !((yk_object *)PTR(v))->error) return YK_FALSE;
+    if (code == builtin_error) return YK_TRUE;
+    yk name;
+    own_get((yk_object *)PTR(v), ascii("name"), &name);
+    const char *want = code == builtin_type_error ? "TypeError" : code == builtin_range_error ? "RangeError" : "SyntaxError";
+    return yk_bool(strict_equal(name, ascii(want)));
+  }
+  return YK_FALSE;
+}
+
+/* key in obj: an object's own property, an array's index or length. */
+yk yk_in(yk key, yk obj) {
+  if (is_object(obj)) {
+    yk v;
+    return yk_bool(own_get((yk_object *)PTR(obj), to_string(key), &v));
+  }
+  if (is_array(obj)) {
+    if (key_is(to_string(key), "length")) return YK_TRUE;
+    int64_t i = index_of_key(key);
+    return yk_bool(i >= 0 && i < arr(obj)->len);
+  }
+  if (is_closure(obj)) return YK_FALSE;
+  type_error("Cannot use 'in' operator to search for a key in a primitive");
+  return YK_FALSE;
+}
+
+/* Whether a value is the string given in UTF-8 (a require's specifier). */
+int yk_string_is(yk v, const char *p, uint64_t n) {
+  return is_string(v) && string_equal(str(v), str(yk_string_utf8(p, n)));
+}
+
+void yk_fail(const char *message) {
+  fprintf(stderr, "%s\n", message);
+  exit(70);
 }
 
 /* --- Math, with JavaScript's results --- */
@@ -896,6 +1574,7 @@ yk yk_read(FILE *in) {
     if (fscanf(in, "%u", &len) != 1) exit(65);
     yk_object *o = alloc(sizeof(yk_object));
     o->len = o->cap = 0;
+    o->error = 0;
     o->keys = o->values = NULL;
     for (unsigned i = 0; i < len; i++) {
       yk k = yk_read(in);
@@ -929,12 +1608,15 @@ void yk_write(FILE *out, yk v) {
     }
   } else if (is_object(v)) {
     yk_object *o = (yk_object *)PTR(v);
-    fprintf(out, "o%u", o->len);
-    for (uint32_t i = 0; i < o->len; i++) {
+    yk_array *keys = ordered_keys(o);
+    fprintf(out, "o%u", keys->len);
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk value;
+      own_get(o, keys->items[i], &value);
       fputc(' ', out);
-      yk_write(out, o->keys[i]);
+      yk_write(out, keys->items[i]);
       fputc(' ', out);
-      yk_write(out, o->values[i]);
+      yk_write(out, value);
     }
   } else if (is_closure(v))
     fputc('F', out);

@@ -137,4 +137,5 @@ export {
   compileObject,
   compileRuntime,
 } from "./native.js";
-export { emitLlvmBoxed } from "./emit-llvm-boxed.js";
+export type { NativeModule, NativeModuleStatement, NativeModules } from "./emit-llvm-boxed.js";
+export { emitLlvmBoxed, emitNativeModules, moduleSymbol } from "./emit-llvm-boxed.js";

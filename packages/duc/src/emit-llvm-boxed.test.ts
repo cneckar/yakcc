@@ -193,7 +193,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
-    expect(refusal("export function f(x) { return new Map(); }")).toMatch(
+    expect(refusal("export function f(x) { return new Date(); }")).toMatch(
       /not in the native base set|not in the subset/,
     );
     expect(refusal("export function f(x) { return async () => x; }")).toMatch(/not in the subset/);
