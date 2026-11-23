@@ -220,4 +220,11 @@ describe("captures that change (#1276)", () => {
       expect(graphIdentity(liftAtom(emitTypeScript(g))), src).toBe(graphIdentity(g));
     }
   });
+
+  it("a method looked up by a key is ordered just before its call, as a lowering writes it", () => {
+    const src =
+      "export function f(len: number) { (self['crypto'] || self['msCrypto'])['getRandomValues'](a = new Uint32Array(len)); }";
+    const g = liftAtom(src);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
 });

@@ -2522,6 +2522,17 @@ class Lifter {
           label: `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
         });
         inputs.push(method as ValueId, ...args);
+      } else if (callee !== undefined && Node.isElementAccessExpression(callee)) {
+        // So is a method looked up by a key, `o[k](args)`: the object and the key first, then the
+        // arguments, then the lookup.
+        const base = this.liftExpr(callee.getExpression());
+        const key = this.liftExpr(callee.getArgumentExpressionOrThrow());
+        const args = this.liftElements(node.getArguments() as Node[]);
+        const [method] = this.emit("op", [base, key], 1, {
+          origin: { kind: "ElementAccess" },
+          ...(callee.hasQuestionDotToken() ? { label: "ElementAccess?." } : {}),
+        });
+        inputs.push(method as ValueId, ...args);
       } else if (
         callee !== undefined &&
         Node.isIdentifier(callee) &&
