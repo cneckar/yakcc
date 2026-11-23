@@ -83,6 +83,9 @@ const GLOBALS = new Set([
   "NaN",
   "Infinity",
   "__yakccTry",
+  "__yakccTryAsync",
+  "Promise",
+  "queueMicrotask",
   "Error",
   "TypeError",
   "RangeError",
@@ -133,6 +136,10 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_new_spread: "declare i64 @yk_new_spread(i64, i64)",
   yk_class_new: "declare i64 @yk_class_new(i64, i64, ptr, ptr, ptr, ptr)",
   yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
+  yk_await: "declare i64 @yk_await(i64)",
+  yk_yield: "declare i64 @yk_yield(i64)",
+  yk_yield_star: "declare i64 @yk_yield_star(i64)",
+  yk_closure_mode: "declare i64 @yk_closure_mode(i64, i32)",
   yk_super_get: "declare i64 @yk_super_get(ptr, i64, ptr, i64)",
   yk_closure_class: "declare i64 @yk_closure_class(ptr)",
   yk_closure_inherit: "declare i64 @yk_closure_inherit(i64, ptr)",
@@ -233,7 +240,9 @@ function lowerFunction(
   closure: { readonly captures: number } | undefined,
   scope?: ModuleScope,
 ): void {
-  if (source.mode !== undefined)
+  // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
+  // coroutine, which await and yield suspend (#1295). The closure carries the mode.
+  if (source.mode === "async generator" || (source.mode !== undefined && closure === undefined))
     throw new LlvmEmitError(`an ${source.mode} function is not in the subset yet`);
   if (scope?.outs === undefined && source.obs.length > 1)
     throw new LlvmEmitError("a native function has at most one result");
@@ -399,8 +408,17 @@ function lowerFunction(
   const makeClosure = (n: DucNode): string => {
     const graph = n.closure as DucGraph;
     const lbl = n.label ?? "";
-    if (lbl !== "closure" && lbl !== "function")
+    const MODES: Record<string, [number, number]> = {
+      closure: [0, 0],
+      function: [1, 0],
+      "async closure": [0, 1],
+      "async function": [1, 1],
+      "function*": [1, 2],
+    };
+    const shape = MODES[lbl];
+    if (shape === undefined)
       throw new LlvmEmitError(`a "${lbl}" function is not in the subset yet`);
+    const [hasThis, mode] = shape;
     const fn = m.closureName(name);
     // Inside a module, a closure's free names are its captures; it keeps the module's platform rule.
     const inner: ModuleScope | undefined =
@@ -410,10 +428,11 @@ function lowerFunction(
     m.used.add("yk_closure_new");
     const r = fresh();
     emit(
-      `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${lbl === "function" ? 1 : 0}, i64 ${caps.length}, ptr ${list(caps)})`,
+      `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${hasThis}, i64 ${caps.length}, ptr ${list(caps)})`,
     );
+    const made = mode === 0 ? r : call("yk_closure_mode", `i64 ${r}, i32 ${mode}`);
     // Made inside a class's member, it knows the class (`class-self`) as the member does.
-    return closure === undefined ? r : call("yk_closure_inherit", `i64 ${r}, ptr %closure`);
+    return closure === undefined ? made : call("yk_closure_inherit", `i64 ${made}, ptr %closure`);
   };
 
   const emitNode = (n: DucNode): void => {
@@ -495,6 +514,16 @@ function lowerFunction(
       throw new LlvmEmitError(
         "a class with a field, a static block, a computed or private name, or a parameter property is not in the subset yet",
       );
+    if (lbl === "AwaitExpression" && ins.length === 1) {
+      // The coroutine suspends until the value settles (#1295).
+      set(out, call("yk_await", `i64 ${operand(ins[0] as ValueId)}`));
+      return;
+    }
+    if (lbl === "YieldExpression" || lbl === "YieldExpression*") {
+      const v = ins.length === 0 ? UNDEFINED : operand(ins[0] as ValueId);
+      set(out, call(lbl === "YieldExpression" ? "yk_yield" : "yk_yield_star", `i64 ${v}`));
+      return;
+    }
     if (lbl === "super") {
       // A derived constructor's super(args): the parent's constructor on this receiver (#1294).
       if (closure === undefined) throw new LlvmEmitError("super() outside a constructor");
@@ -1040,8 +1069,31 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(symbol))
     throw new LlvmEmitError(`"${symbol}" is not a symbol a linker takes`);
   const m = new ModuleBuilder();
-  lowerFunction(m, source, symbol, undefined);
   const params = source.nodes.filter((n) => n.kind === "param-source").length;
+  if (source.mode === "async" || source.mode === "generator") {
+    // The body is a closure the runtime runs as a coroutine; the entry calls it, giving its promise
+    // or its generator (#1295).
+    const body = m.closureName(symbol);
+    lowerFunction(m, source, body, { captures: 0 });
+    for (const f of ["yk_closure_new", "yk_closure_mode", "yk_call"]) m.used.add(f);
+    const args = Array.from({ length: params }, (_, i) => `%a${i}`);
+    m.functions.push(
+      [
+        `define i64 @${symbol}(${args.map((a) => `i64 ${a}`).join(", ")}) {`,
+        `  %argv = alloca [${Math.max(params, 1)} x i64]`,
+        ...args.flatMap((a, i) => [
+          `  %p${i} = getelementptr [${Math.max(params, 1)} x i64], ptr %argv, i64 0, i64 ${i}`,
+          `  store i64 ${a}, ptr %p${i}`,
+        ]),
+        `  %c = call i64 @yk_closure_new(ptr @${body}, i32 0, i64 0, ptr null)`,
+        `  %m = call i64 @yk_closure_mode(i64 %c, i32 ${source.mode === "async" ? 1 : 2})`,
+        `  %r = call i64 @yk_call(i64 %m, i64 ${UNDEFINED}, i64 ${params}, ptr %argv)`,
+        "  ret i64 %r",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  } else lowerFunction(m, source, symbol, undefined);
   const ir = [
     "; yakcc native lowering, boxed values (#1292)",
     `source_filename = "${symbol}"`,

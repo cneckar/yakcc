@@ -119,8 +119,59 @@ Not yet:
 
 The lifter keeps these opaque or the runtime refuses them by name.
 
+## Async functions, promises and generators (#1295)
+
+**Coroutines.** An async function's or a generator's body is lowered exactly as any function's. Its
+closure carries a mode (async or generator), and a call dispatches on it:
+- Each call runs the body on a stack of its own, a coroutine. On Linux this is glibc's `ucontext`,
+  which every target here has.
+- `await v` and `yield v` are runtime calls that suspend the coroutine.
+- The exception handlers are per coroutine: a throw unwinds only its own stack.
+
+The lowering needs no state machine, and no graph construct changes.
+
+**Promises** follow ECMA-262 §27.2:
+- resolving functions share one already-resolved flag;
+- a thenable resolves through a NewPromiseResolveThenableJob;
+- reactions are jobs in one FIFO queue.
+
+`await v` is PerformPromiseThen(PromiseResolve(v), resume), one job after v settles (ES2019). An
+async function's result resolves its promise through the resolving functions, so a returned promise
+takes its two extra jobs, as in V8.
+
+The runtime gives:
+- `then`, `catch`, `finally`;
+- `Promise.resolve`, `reject`, `all`, `allSettled`, `race`;
+- `new Promise`;
+- `queueMicrotask`;
+- `__yakccTryAsync`, as the TypeScript runtime defines it.
+
+**Generators.**
+- `next(v)`, `throw(e)` and `return(v)`.
+- `return(v)` unwinds the body as a throw that no catch sees and every finally does.
+- `yield*` over a generator or an iterable.
+- for…of, spread and `Array.from` draw from a generator one step at a time.
+
+**The harness.** It runs the jobs after each call (`yk_settle`). A promise is written as its value,
+or as `["rejected", String(reason)]`.
+
+**Evidence.** Four async programs, each on 200 generated inputs, give Node's results exactly:
+- the interleaving of concurrent awaits, then chains and queueMicrotask, all, allSettled, race,
+  finally, and a caught rejection;
+- thenables, and an async function returning a promise;
+- rejections before and after an await;
+- a p-limit-style limiter, whose start and end order depends on the job order.
+
+A generator program covers `yield*`, `next(v)`, `return()`, `throw()`, spread and `Array.from`. The
+job-order program also runs on AArch64, ARMv7 and RISC-V under QEMU, with the same results.
+
+Not yet:
+- async generators and `for await`;
+- timers (`setTimeout`, a host API, not ECMAScript);
+- closing a generator when a for…of over it breaks early (IteratorClose);
+- a try block that contains a `yield`, which the lifter keeps opaque.
+
 ## Next slices
 
-- Async functions, promises and generators (#1295).
 - A collector.
 - The boundary a contract's types give, so a typed caller need not box.
