@@ -80,7 +80,7 @@ export {
 export type { AuthorityDelta, AuthorityEdge } from "./authority.js";
 export { authorityDelta } from "./authority.js";
 export type { GuardedFlow } from "./guard.js";
-export { guardedInfluence } from "./guard.js";
+export { controlInfluence, guardedInfluence } from "./guard.js";
 export type {
   CheckerFinding,
   CheckerSpec,

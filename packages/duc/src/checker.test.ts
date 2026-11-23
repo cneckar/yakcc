@@ -51,13 +51,32 @@ describe("declarative checker specs (WI-GUARD A3, #1256)", () => {
     expect(guarded?.guards.length).toBeGreaterThan(0);
   });
 
-  it("a sink call inside a branch is reported as unguarded: control of the call itself is not modelled (over-approximation)", () => {
-    // Known, deliberate limitation: the sink call node is emitted unconditionally, so a
-    // call under a branch is reported as unguarded. This is conservative, not unsound.
+  it("a sink call inside a branch: the argument's flow is data, the condition's is control (#1269)", () => {
     const g = liftAtom("export function f(c: boolean, p: string) { if (c) { write(p); } }");
     const findings = runChecker(WRITE, g);
+    // p reaches the call's argument with no branch on its path; c decides whether the call happens.
+    expect(findings.map((f) => [f.kind, f.unguarded])).toEqual(
+      expect.arrayContaining([
+        ["data", true],
+        ["control", false],
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings.find((f) => f.kind === "control")?.guards).toHaveLength(1);
+  });
+
+  it("a call gated by a predicate with untainted arguments: control is reported, data is not (#1269)", () => {
+    const g = liftAtom(
+      'export function f(secret: boolean) { if (secret) { write("x"); } return 1; }',
+    );
+    const findings = runChecker(WRITE, g);
     expect(findings).toHaveLength(1);
-    expect(findings[0]?.unguarded).toBe(true);
+    expect(findings[0]?.kind).toBe("control");
+    // A call merely ordered after the branch is not reached through its heap token.
+    const after = liftAtom(
+      'export function f(secret: boolean) { let n = 0; if (secret) { n = 1; } write("x"); return n; }',
+    );
+    expect(runChecker(WRITE, after)).toEqual([]);
   });
 
   it("a source selector that matches nothing produces no findings", () => {

@@ -225,13 +225,13 @@ Recorded 2026-11-22, checked against the code. Commits are on `claude/tender-tho
 - **Added:** `DEC-DUC-MODULE-INIT-CLOSURE-001` (a binding filled by top-level writes during module initialization is pure, when every write is top-level and every writing statement reads only allowed names; an alias or hand-off disqualifies it).
 - **Added:** `DEC-DUC-HOST-GLOBALS-001` (pure host data is an explained ambient read; authority-bearing names are not).
 - **Added:** `DEC-DUC-AUTHORITY-DELTA-001`, `DEC-DUC-GUARD-LABELS-001`, `DEC-DUC-CHECKER-SPEC-001` (WI-GUARD).
+- **Added:** `DEC-DUC-CONTROL-DEPENDENCE-001` (#1269). A node inside a branch depends on whatever reaches the branch's condition. `controlInfluence` reports it, and the checker reports such a sink call as a `control` finding, separate from `data`. Earlier this was listed as deferred: the call was reported unguarded. It annotates only; may-influence is unchanged.
 - **Added:** `DEC-DUC-NI-DETERMINISM-001` (#1270). Influence and graph-NI assume an ambient read is one unknown value per run. Nondeterministic primitives (`Date`, `Math.random`, `performance`, `crypto.randomUUID` / `getRandomValues`) are labelled in each target's base set, apart from capabilities. `graphNI(…, base)` qualifies its verdict with the low observations such a read reaches. It does not weaken the verdict.
 
 ### Deferred register (named, not forgotten)
 
 - Side-channel and timing analysis (discipline 3).
 - Path-sensitive guard layer (DUC §7). Partly addressed by guard labels (`DEC-DUC-GUARD-LABELS-001`), as annotations only.
-- Control dependence of a sink call under a branch: the call node is emitted unconditionally, so such a call is reported unguarded. Conservative, not unsound.
 - Authority-bearing host globals (`process`, `require`, `module`, `exports`, `__dirname`, `__filename`, the timers) stay unexplained until a checker classifies them.
 - Mutable module state that is not initialization-fixed (for example, a binding mutated from inside a function) stays unexplained.
 - Def-use-graph isomorphism strengthening `canonical_ast_hash` (W7).
