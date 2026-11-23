@@ -30,7 +30,7 @@
 
 import { blockMerkleRoot, canonicalize, specHash, validateProofManifestL0 } from "@yakcc/contracts";
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
-import { openRegistry } from "@yakcc/registry";
+import { SCHEMA_VERSION, openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow } from "@yakcc/registry";
 import { describe, expect, it } from "vitest";
 import { mirrorRegistry } from "./mirror.js";
@@ -517,7 +517,7 @@ describe("mirrorRegistry — schema-version mismatch", () => {
     expect(caughtError).toBeInstanceOf(SchemaVersionMismatchError);
     const err = caughtError as SchemaVersionMismatchError;
     expect(err.remoteSchemaVersion).toBe(999);
-    expect(err.localSchemaVersion).toBe(10); // local SCHEMA_VERSION (bumped to 10 in issue-363 #363)
+    expect(err.localSchemaVersion).toBe(SCHEMA_VERSION); // the local registry's schema version
   });
 });
 
