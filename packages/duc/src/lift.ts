@@ -872,7 +872,12 @@ class Lifter {
         !inLoop(fn, fnScope);
       return !doneBefore;
     };
-    if (outside.some(changesCapture)) return undefined;
+    // Only the closure's own enclosing function can change a capture under it: an assignment in a
+    // scope further out was settled there (a cell, or a value captured by the closure in between).
+    const withinScope = (t: Node): boolean =>
+      fnScope === undefined ||
+      t.getAncestors().some((a) => a.compilerNode === fnScope.compilerNode);
+    if (outside.filter(withinScope).some(changesCapture)) return undefined;
 
     let graph: DucGraph;
     try {
