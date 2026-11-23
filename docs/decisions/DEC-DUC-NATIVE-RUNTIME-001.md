@@ -63,8 +63,8 @@ its stack slots.
 
 ## Evidence
 
-**Natively.** Six programs, each run on 500 generated inputs of every kind in the slice, are linked
-with the runtime and run on x86-64. They agree with Node exactly (`Object.is`, element by element
+**Natively.** Each program is linked
+with the runtime, run on x86-64 on generated inputs of every kind in the slice, and agrees with Node exactly (`Object.is`, element by element
 for arrays). The inputs include:
 - numbers with -0, NaN and ±Infinity, and 1e21 / 1e-7 at the formatting boundaries;
 - Unicode strings and awkward numeric strings (`" 0x1F "`, `".5"`, `"5."`, `"+.5e-3"`, NBSP and LS whitespace);
