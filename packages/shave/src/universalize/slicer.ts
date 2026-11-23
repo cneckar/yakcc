@@ -107,7 +107,7 @@
  */
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
-import { liftAtom } from "@yakcc/duc";
+import { DucLiftError, liftAtom } from "@yakcc/duc";
 import { validateStrictSubset } from "@yakcc/ir";
 import { Project, ScriptKind } from "ts-morph";
 import type { IntentCard } from "../intent/types.js";
@@ -481,7 +481,7 @@ async function walkNodeStrict(
  * then the graph, not the strict-subset predicate, decides that it is an atom (DEC-SHAVE-GRAPH-DECIDES-001).
  * An import or require binding is never one: it is a link, not a computation.
  */
-function liftsWhole(source: string): boolean {
+function liftsWhole(source: string, alone = true): boolean {
   if (/^\s*import\s/.test(source)) return false;
   let graph: ReturnType<typeof liftAtom>;
   try {
@@ -499,7 +499,9 @@ function liftsWhole(source: string): boolean {
         dynamic(n) ||
         (n.closure !== undefined && opaque(n.closure)),
     );
-  return !opaque(graph) && graph.nodes.some((n) => n.kind !== "diamond-source");
+  // Stored alone, a graph that only references names is not worth an atom; inside a parent that
+  // lifts whole it is fine (`return generator;`).
+  return !opaque(graph) && (!alone || graph.nodes.some((n) => n.kind !== "diamond-source"));
 }
 
 /**
@@ -507,10 +509,30 @@ function liftsWhole(source: string): boolean {
  * and so does it (a declaration nothing in the branch reads is dead in the branch's graph, so its
  * own source is what tells).
  */
-function liftsWholeNode(node: RecursionNode): boolean {
-  if (node.kind === "atom") return liftsWhole(node.source);
+function liftsWholeNode(node: RecursionNode, alone = true): boolean {
+  if (node.kind === "atom") return liftsWhole(node.source, alone);
   const branch = node as BranchNode;
-  return branch.children.every(liftsWholeNode) && liftsWhole(branch.source);
+  return branch.children.every(childLiftsWhole) && liftsWhole(branch.source, alone);
+}
+
+/**
+ * A child of a branch that lifts whole. A child that is not a statement on its own (a method or a
+ * property of an object literal, a fragment of an expression) is part of the parent's graph as
+ * written, not a declaration the parent's graph could drop as dead: it does not decide, and its
+ * own children still do (#1173).
+ */
+function childLiftsWhole(node: RecursionNode): boolean {
+  if (parsesAlone(node.source)) return liftsWholeNode(node, false);
+  return node.kind === "atom" || (node as BranchNode).children.every(childLiftsWhole);
+}
+
+function parsesAlone(source: string): boolean {
+  try {
+    liftAtom(source);
+    return true;
+  } catch (e) {
+    return !(e instanceof DucLiftError);
+  }
 }
 
 async function walkNodeGlueAware(
