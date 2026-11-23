@@ -45,6 +45,7 @@ typedef struct {
   yk *values;
   int32_t error; /* made by Error / TypeError / …: its ToString is Error.prototype.toString's */
   int32_t kind;  /* 0 a plain object; 1 a Map, 2 a Set: their entries in `entries` */
+  yk proto;      /* the object it inherits from (a class's prototype), or 0 */
   yk_array *entries; /* a Map's [key, value] pairs, a Set's values, in insertion order */
 } yk_object;
 
@@ -53,7 +54,9 @@ typedef yk (*yk_code)(void *closure, yk self, uint64_t argc, const yk *argv);
 typedef struct {
   yk_code code;
   int32_t has_this;  /* a `function` (1) takes the receiver; an arrow (0) does not */
+  int32_t is_class;  /* a class: called only with `new` */
   yk props;          /* its own properties (an object), or 0 until one is written */
+  yk class_self;     /* for a class's member (and closures inside it): the class, or 0 */
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -169,7 +172,11 @@ yk yk_array_of(uint64_t n, const yk *items) {
 
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv);
 static void type_error(const char *what);
+yk yk_object_of(uint64_t n, const yk *keys, const yk *values);
+yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures);
 static int own_get(yk_object *o, yk key, yk *out);
+static int chain_get(yk obj, yk key, yk *out);
+static yk resolve_slot(yk slot, yk receiver);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int same_value_zero(yk a, yk b);
@@ -264,7 +271,7 @@ static yk to_primitive(yk v) {
   static const char *names[2] = {"valueOf", "toString"};
   for (int i = 0; i < 2; i++) {
     yk f;
-    if (own_get((yk_object *)PTR(v), ascii(names[i]), &f) && is_closure(f)) {
+    if (chain_get(v, ascii(names[i]), &f) && is_closure(f = resolve_slot(f, v))) {
       yk r = call_value(f, v, 0, NULL);
       if (!is_reference(r)) return r;
     }
@@ -500,12 +507,11 @@ yk yk_get(yk obj, yk key) {
     yk_object *o = (yk_object *)PTR(obj);
     if (o->kind != 0 && key_is(key, "size")) return yk_number(o->entries->len);
     yk v;
-    return own_get(o, to_string(key), &v) ? v : YK_UNDEFINED;
+    return chain_get(obj, to_string(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
   }
   if (is_closure(obj)) {
-    yk_closure *c = (yk_closure *)PTR(obj);
     yk v;
-    return c->props != 0 && own_get((yk_object *)PTR(c->props), to_string(key), &v) ? v : YK_UNDEFINED;
+    return chain_get(obj, to_string(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
   }
   return YK_UNDEFINED;
 }
@@ -533,13 +539,12 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
     if (o->kind != 0) {
       yk out;
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
-    } else if (own_get(o, key, &f))
-      return call_value(f, recv, argc, argv);
+    } else if (chain_get(recv, key, &f))
+      return call_value(resolve_slot(f, recv), recv, argc, argv);
   }
   if (is_closure(recv)) {
-    yk_closure *c = (yk_closure *)PTR(recv);
     yk f;
-    if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, &f)) return call_value(f, recv, argc, argv);
+    if (chain_get(recv, key, &f)) return call_value(resolve_slot(f, recv), recv, argc, argv);
     if (key_is(key, "call")) return call_value(recv, arg0, argc > 0 ? argc - 1 : 0, argv + (argc > 0 ? 1 : 0));
   }
   if (is_array(recv)) {
@@ -680,12 +685,147 @@ static void own_set(yk_object *o, yk key, yk value) {
   o->values[o->len++] = value;
 }
 
+/* --- accessors, prototypes, classes --- */
+
+typedef struct {
+  int32_t internal; /* 2: an accessor */
+  yk get, set;      /* functions, or 0 */
+} yk_accessor;
+
+static int is_accessor(yk v) { return TAG(v) == T_INTERNAL && *(int32_t *)PTR(v) == 2; }
+
+/* A slot's value as a read sees it: an accessor calls its getter on the receiver. */
+static yk resolve_slot(yk slot, yk receiver) {
+  if (!is_accessor(slot)) return slot;
+  yk getter = ((yk_accessor *)PTR(slot))->get;
+  return getter == 0 ? YK_UNDEFINED : call_value(getter, receiver, 0, NULL);
+}
+
+static yk ensure_prototype(yk f);
+
+/* The object holding a value's own properties: an object itself, or a function's property object. */
+static yk_object *own_props(yk v) {
+  if (is_object(v)) return (yk_object *)PTR(v);
+  yk_closure *c = (yk_closure *)PTR(v);
+  if (c->props == 0) c->props = yk_object_of(0, NULL, NULL);
+  return (yk_object *)PTR(c->props);
+}
+
+/* A property along the prototype chain: its slot (perhaps an accessor). */
+static int chain_get(yk obj, yk key, yk *out) {
+  if (is_closure(obj)) {
+    yk_closure *c = (yk_closure *)PTR(obj);
+    /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
+    if ((c->has_this || c->is_class) && key_is(key, "prototype")) ensure_prototype(obj);
+    return c->props != 0 && own_get((yk_object *)PTR(c->props), key, out);
+  }
+  for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto)
+    if (own_get((yk_object *)PTR(v), key, out)) return 1;
+  return 0;
+}
+
+static yk ensure_prototype(yk f) {
+  yk_closure *c = (yk_closure *)PTR(f);
+  yk p;
+  if (c->props != 0 && own_get((yk_object *)PTR(c->props), ascii("prototype"), &p)) return p;
+  yk key = ascii("constructor");
+  p = yk_object_of(1, &key, &f);
+  own_set(own_props(f), ascii("prototype"), p);
+  return p;
+}
+
+/* An accessor slot on an object: its getter or setter, merged with the other if there is one. */
+static void define_accessor(yk_object *o, yk key, yk getter, yk setter) {
+  yk slot;
+  if (own_get(o, key, &slot) && is_accessor(slot)) {
+    yk_accessor *a = (yk_accessor *)PTR(slot);
+    if (getter != 0) a->get = getter;
+    if (setter != 0) a->set = setter;
+    return;
+  }
+  yk_accessor *a = alloc(sizeof(yk_accessor));
+  a->internal = 2;
+  a->get = getter;
+  a->set = setter;
+  own_set(o, key, BOX(T_INTERNAL, a));
+}
+
+/* An object literal built slot by slot (when it has a spread or an accessor). */
+yk yk_define(yk obj, yk key, yk value) {
+  own_set((yk_object *)PTR(obj), to_string(key), value);
+  return obj;
+}
+yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
+  define_accessor((yk_object *)PTR(obj), to_string(key), getter == YK_UNDEFINED ? 0 : getter,
+                  setter == YK_UNDEFINED ? 0 : setter);
+  return obj;
+}
+
+/* A class (kinds: 0 constructor, 1 method, 2 getter, 3 setter; each static or not). */
+static yk default_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self, (void)argc, (void)argv;
+  return YK_UNDEFINED;
+}
+yk yk_class_new(uint64_t n, const yk *kinds, const yk *names, const yk *statics, const yk *members) {
+  yk cls = 0;
+  for (uint64_t i = 0; i < n; i++)
+    if (num(kinds[i]) == 0) cls = members[i];
+  if (cls == 0) cls = yk_closure_new(default_constructor, 1, 0, NULL);
+  yk_closure *c = (yk_closure *)PTR(cls);
+  c->is_class = 1;
+  c->has_this = 1;
+  yk proto = ensure_prototype(cls);
+  for (uint64_t i = 0; i < n; i++) {
+    int kind = (int)num(kinds[i]);
+    ((yk_closure *)PTR(members[i]))->class_self = cls;
+    if (kind == 0) continue;
+    yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
+    yk name = to_string(names[i]);
+    if (kind == 1) own_set(target, name, members[i]);
+    else define_accessor(target, name, kind == 2 ? members[i] : 0, kind == 3 ? members[i] : 0);
+  }
+  c->class_self = cls;
+  return cls;
+}
+yk yk_closure_class(void *closure) {
+  yk cls = ((yk_closure *)closure)->class_self;
+  return cls == 0 ? YK_UNDEFINED : cls;
+}
+/* A closure made inside a class's member knows the class too. */
+yk yk_closure_inherit(yk child, void *parent) {
+  ((yk_closure *)PTR(child))->class_self = ((yk_closure *)parent)->class_self;
+  return child;
+}
+
+/* delete obj[key]: an own property removed; an array element becomes undefined. */
+yk yk_delete(yk obj, yk key) {
+  if (is_nullish(obj)) type_error("Cannot convert undefined or null to object");
+  if (is_object(obj) || is_closure(obj)) {
+    if (is_closure(obj) && ((yk_closure *)PTR(obj))->props == 0) return YK_TRUE;
+    yk_object *o = own_props(obj);
+    yk k = to_string(key);
+    for (uint32_t i = 0; i < o->len; i++)
+      if (string_equal(str(o->keys[i]), str(k))) {
+        memmove(o->keys + i, o->keys + i + 1, (size_t)(o->len - i - 1) * sizeof(yk));
+        memmove(o->values + i, o->values + i + 1, (size_t)(o->len - i - 1) * sizeof(yk));
+        o->len--;
+        break;
+      }
+  } else if (is_array(obj)) {
+    int64_t i = index_of_key(key);
+    if (i >= 0 && i < arr(obj)->len) arr(obj)->items[i] = YK_UNDEFINED;
+  }
+  return YK_TRUE;
+}
+yk yk_delete_named(yk obj, const char *name, uint64_t n) { return yk_delete(obj, yk_string_utf8(name, n)); }
+
 /* An object literal: its keys (by ToPropertyKey) and values, in source order. */
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   yk_object *o = alloc(sizeof(yk_object));
   o->len = o->cap = 0;
   o->error = 0;
   o->kind = 0;
+  o->proto = 0;
   o->entries = NULL;
   o->keys = o->values = NULL;
   for (uint64_t i = 0; i < n; i++) own_set(o, to_string(keys[i]), values[i]);
@@ -741,14 +881,16 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 
 /* obj[key] = value. The graph's write yields the object, as written. */
 yk yk_set(yk obj, yk key, yk value) {
-  if (is_object(obj)) {
-    own_set((yk_object *)PTR(obj), to_string(key), value);
-    return obj;
-  }
-  if (is_closure(obj)) {
-    yk_closure *c = (yk_closure *)PTR(obj);
-    if (c->props == 0) c->props = yk_object_of(0, NULL, NULL);
-    own_set((yk_object *)PTR(c->props), to_string(key), value);
+  if (is_object(obj) || is_closure(obj)) {
+    yk k = to_string(key), slot;
+    /* A setter along the chain is called; otherwise the property is the object's own. */
+    if (chain_get(obj, k, &slot) && is_accessor(slot)) {
+      yk setter = ((yk_accessor *)PTR(slot))->set;
+      if (setter == 0) type_error("Cannot set a property that has only a getter");
+      call_value(setter, obj, 1, &value);
+      return obj;
+    }
+    own_set(own_props(obj), k, value);
     return obj;
   }
   if (is_array(obj)) {
@@ -808,6 +950,7 @@ static yk_array *ordered_keys(yk_object *o) {
 /* --- iteration: for…of over arrays (live) and strings (by code point); for…in over keys --- */
 
 typedef struct {
+  int32_t internal; /* 1: an iterator */
   yk src;
   uint32_t i;
   yk_array *keys; /* for…in: the keys, taken when the loop starts */
@@ -815,6 +958,7 @@ typedef struct {
 
 yk yk_iter_new(yk v, int32_t keys) {
   yk_iter *it = alloc(sizeof(yk_iter));
+  it->internal = 1;
   it->src = v;
   it->i = 0;
   it->keys = NULL;
@@ -866,7 +1010,9 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
   yk_closure *c = alloc(sizeof(yk_closure) + (size_t)n * sizeof(yk));
   c->code = code;
   c->has_this = has_this;
+  c->is_class = 0;
   c->props = 0;
+  c->class_self = 0;
   c->n = (uint32_t)n;
   memcpy(c->captures, captures, (size_t)n * sizeof(yk));
   return BOX(T_CLOSURE, c);
@@ -874,10 +1020,13 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
 yk yk_closure_self(void *closure) { return BOX(T_CLOSURE, closure); }
 yk yk_capture(void *closure, uint64_t i) { return ((yk_closure *)closure)->captures[i]; }
 yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
+/* A rest parameter (...xs): the arguments from i on, as an array. */
+yk yk_rest(uint64_t argc, const yk *argv, uint64_t i) { return yk_array_of(i < argc ? argc - i : 0, argv + (i < argc ? i : argc)); }
 
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
   if (!is_closure(f)) type_error("not a function");
   yk_closure *c = (yk_closure *)PTR(f);
+  if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
   return c->code(c, c->has_this ? self : YK_UNDEFINED, argc, argv);
 }
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
@@ -1144,6 +1293,7 @@ static int json_write(yk_array *parts, yk v) {
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
       own_get(o, keys->items[i], &value);
+      value = resolve_slot(value, v);
       if (value == YK_UNDEFINED || is_closure(value)) continue;
       if (!first) push(parts, ascii(","));
       first = 0;
@@ -1197,6 +1347,7 @@ static yk object_parts(yk v, int which) {
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
       own_get(o, keys->items[i], &value);
+      value = resolve_slot(value, v);
       yk pair[2] = {keys->items[i], value};
       push(r, which == 0 ? keys->items[i] : which == 1 ? value : yk_array_of(2, pair));
     }
@@ -1450,6 +1601,14 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
         code == builtin_range_error || code == builtin_syntax_error || code == builtin_map ||
         code == builtin_set || code == builtin_object)
       return code(NULL, YK_UNDEFINED, argc, argv);
+    /* A class, or a `function`: an object inheriting its prototype, given to it as `this`. */
+    yk_closure *c = (yk_closure *)PTR(f);
+    if (c->is_class || c->has_this) {
+      yk o = yk_object_of(0, NULL, NULL);
+      ((yk_object *)PTR(o))->proto = ensure_prototype(f);
+      yk r = c->code(c, o, argc, argv);
+      return is_reference(r) ? r : o;
+    }
   }
   type_error("this constructor is not in the runtime yet");
   return YK_UNDEFINED;
@@ -1469,7 +1628,55 @@ yk yk_instanceof(yk v, yk f) {
     const char *want = code == builtin_type_error ? "TypeError" : code == builtin_range_error ? "RangeError" : "SyntaxError";
     return yk_bool(strict_equal(name, ascii(want)));
   }
+  yk_closure *c = (yk_closure *)PTR(f);
+  if (c->is_class || c->has_this) {
+    yk proto = ensure_prototype(f);
+    for (yk o = is_object(v) ? ((yk_object *)PTR(v))->proto : 0; o != 0 && is_object(o); o = ((yk_object *)PTR(o))->proto)
+      if (o == proto) return YK_TRUE;
+  }
   return YK_FALSE;
+}
+
+/* --- spread: a list's items, each spread one expanded (…xs) --- */
+
+yk yk_spread_list(uint64_t n, const yk *items, const yk *spread) {
+  yk_array *r = new_array((uint32_t)n);
+  for (uint64_t i = 0; i < n; i++) {
+    if (spread[i] != YK_TRUE) {
+      push(r, items[i]);
+      continue;
+    }
+    if (is_nullish(items[i])) type_error("the spread value is not iterable");
+    yk_array *more = iterable_items(items[i]);
+    for (uint32_t j = 0; j < more->len; j++) push(r, more->items[j]);
+  }
+  return BOX(T_ARRAY, r);
+}
+yk yk_call_spread(yk f, yk self, yk args) { return call_value(f, self, arr(args)->len, arr(args)->items); }
+yk yk_call_method_spread(yk recv, const char *name, uint64_t n, yk args) {
+  return yk_call_method(recv, name, n, arr(args)->len, arr(args)->items);
+}
+yk yk_new_spread(yk f, yk args) { return yk_new(f, arr(args)->len, arr(args)->items); }
+
+/* {…src}: src's own enumerable properties, copied in order (a getter's value, not the getter). */
+yk yk_spread_into(yk obj, yk src) {
+  if (is_nullish(src) || is_number(src) || is_bool(src)) return obj;
+  yk_object *o = (yk_object *)PTR(obj);
+  if (is_array(src) || is_string(src)) {
+    uint32_t n = is_array(src) ? arr(src)->len : str(src)->len;
+    for (uint32_t i = 0; i < n; i++) own_set(o, to_string(yk_number(i)), yk_get(src, yk_number(i)));
+    return obj;
+  }
+  if (is_closure(src) && ((yk_closure *)PTR(src))->props == 0) return obj;
+  yk_object *from = own_props(src);
+  if (from->kind != 0) return obj;
+  yk_array *keys = ordered_keys(from);
+  for (uint32_t i = 0; i < keys->len; i++) {
+    yk slot;
+    own_get(from, keys->items[i], &slot);
+    own_set(o, keys->items[i], resolve_slot(slot, src));
+  }
+  return obj;
 }
 
 /* key in obj: an object's own property, an array's index or length. */
@@ -1529,6 +1736,9 @@ static double minmax(int max, double a, double b) {
   return max ? (a > b ? a : b) : (a < b ? a : b);
 }
 
+yk yk_math_minmax(int max, uint64_t argc, const yk *argv);
+/* Math.min(...xs) / Math.max(...xs): the expanded list. */
+yk yk_math_minmax_list(int max, yk list) { return yk_math_minmax(max, arr(list)->len, arr(list)->items); }
 yk yk_math_minmax(int max, uint64_t argc, const yk *argv) {
   double r = max ? -INFINITY : INFINITY;
   for (uint64_t i = 0; i < argc; i++) r = minmax(max, r, to_number(argv[i]));
@@ -1613,6 +1823,7 @@ void yk_write(FILE *out, yk v) {
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
       own_get(o, keys->items[i], &value);
+      value = resolve_slot(value, v);
       fputc(' ', out);
       yk_write(out, keys->items[i]);
       fputc(' ', out);

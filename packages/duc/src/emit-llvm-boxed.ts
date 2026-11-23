@@ -110,6 +110,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_closure_self: "declare i64 @yk_closure_self(ptr)",
   yk_capture: "declare i64 @yk_capture(ptr, i64)",
   yk_arg: "declare i64 @yk_arg(i64, ptr, i64)",
+  yk_rest: "declare i64 @yk_rest(i64, ptr, i64)",
   yk_math1: "declare i64 @yk_math1(ptr, i64)",
   yk_global: "declare i64 @yk_global(ptr, i64)",
   yk_new: "declare i64 @yk_new(i64, i64, ptr)",
@@ -121,9 +122,22 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_is_nullish: "declare i32 @yk_is_nullish(i64)",
   yk_instanceof: "declare i64 @yk_instanceof(i64, i64)",
   yk_in: "declare i64 @yk_in(i64, i64)",
+  yk_define: "declare i64 @yk_define(i64, i64, i64)",
+  yk_define_accessor: "declare i64 @yk_define_accessor(i64, i64, i64, i64)",
+  yk_spread_into: "declare i64 @yk_spread_into(i64, i64)",
+  yk_spread_list: "declare i64 @yk_spread_list(i64, ptr, ptr)",
+  yk_call_spread: "declare i64 @yk_call_spread(i64, i64, i64)",
+  yk_call_method_spread: "declare i64 @yk_call_method_spread(i64, ptr, i64, i64)",
+  yk_new_spread: "declare i64 @yk_new_spread(i64, i64)",
+  yk_class_new: "declare i64 @yk_class_new(i64, ptr, ptr, ptr, ptr)",
+  yk_closure_class: "declare i64 @yk_closure_class(ptr)",
+  yk_closure_inherit: "declare i64 @yk_closure_inherit(i64, ptr)",
+  yk_delete: "declare i64 @yk_delete(i64, i64)",
+  yk_delete_named: "declare i64 @yk_delete_named(i64, ptr, i64)",
   yk_iter_new: "declare i64 @yk_iter_new(i64, i32)",
   yk_iter_next: "declare i32 @yk_iter_next(i64, ptr)",
   yk_math_minmax: "declare i64 @yk_math_minmax(i32, i64, ptr)",
+  yk_math_minmax_list: "declare i64 @yk_math_minmax_list(i32, i64)",
   ...Object.fromEntries(Object.values(BINARY).map((f) => [f, `declare i64 @${f}(i64, i64)`])),
   ...Object.fromEntries(Object.values(UNARY).map((f) => [f, `declare i64 @${f}(i64)`])),
 };
@@ -145,15 +159,20 @@ type Slot =
   | { readonly kind: "named"; readonly name: string }
   | { readonly kind: "computed" }
   | { readonly kind: "method"; readonly name: string }
+  | { readonly kind: "spread" }
+  | { readonly kind: "get" | "set"; readonly name?: string }
   | { readonly kind: "unsupported"; readonly what: string };
 
 function slotsOf(label: string): Slot[] {
   return (JSON.parse(label.slice("object:".length)) as unknown[]).map((entry): Slot => {
-    if (entry === null) return { kind: "unsupported", what: "spread in an object literal" };
+    if (entry === null) return { kind: "spread" };
     if (entry === 1) return { kind: "computed" };
     if (typeof entry === "string") return { kind: "named", name: entry };
     const [kind, k] = Object.entries(entry as Record<string, unknown>)[0] ?? [];
     if (kind === "method" && typeof k === "string") return { kind: "method", name: k };
+    // An accessor: named, or computed (its key the input before its function).
+    if (kind === "get" || kind === "set")
+      return typeof k === "string" ? { kind, name: k } : { kind };
     return { kind: "unsupported", what: `a ${kind} member` };
   });
 }
@@ -346,6 +365,15 @@ function lowerFunction(
     return b;
   };
 
+  /** Whether a value is a spread element (`...xs`): the list it is in expands it. */
+  const isSpread = (v: ValueId): boolean => producer.get(resolve(v))?.label === "...";
+  /** A list with spread elements, expanded: an array value. */
+  const spreadList = (vs: readonly ValueId[]): string => {
+    const items = vs.map(operand);
+    const flags = vs.map((v) => (isSpread(v) ? TRUE : FALSE));
+    return call("yk_spread_list", `i64 ${items.length}, ptr ${list(items)}, ptr ${list(flags)}`);
+  };
+
   /** A closure node: its graph lowered to a function, and the record that holds its captures. */
   const makeClosure = (n: DucNode): string => {
     const graph = n.closure as DucGraph;
@@ -363,7 +391,8 @@ function lowerFunction(
     emit(
       `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${lbl === "function" ? 1 : 0}, i64 ${caps.length}, ptr ${list(caps)})`,
     );
-    return r;
+    // Made inside a class's member, it knows the class (`class-self`) as the member does.
+    return closure === undefined ? r : call("yk_closure_inherit", `i64 ${r}, ptr %closure`);
   };
 
   const emitNode = (n: DucNode): void => {
@@ -429,6 +458,57 @@ function lowerFunction(
       emitNode({ ...n, label: plain });
       emit(`br label %${end}`);
       block(end);
+      return;
+    }
+    if (lbl === "...") {
+      // The value spread; the list it is in (an array literal, a call's arguments) expands it.
+      set(out, operand(ins[0] as ValueId));
+      return;
+    }
+    if (lbl === "class-self") {
+      if (closure === undefined) throw new LlvmEmitError("class-self outside a class's member");
+      set(out, call("yk_closure_class", "ptr %closure"));
+      return;
+    }
+    if (lbl.startsWith("Class#"))
+      throw new LlvmEmitError("a derived class (extends, super) is not in the subset yet");
+    if (lbl.startsWith("class:")) {
+      // [kind, name, static] per member; the inputs are the members' functions, in order.
+      const members = JSON.parse(lbl.slice("class:".length)) as [string, string?, boolean?][];
+      const KIND: Record<string, number> = { constructor: 0, method: 1, get: 2, set: 3 };
+      if (members.length !== ins.length || members.some(([k]) => KIND[k] === undefined))
+        throw new LlvmEmitError(
+          `a class member of kind ${members.map(([k]) => k).find((k) => KIND[k] === undefined) ?? "(computed)"} is not in the subset yet`,
+        );
+      const kinds = members.map(([k]) => boxedNumber(KIND[k] as number));
+      const names = members.map(([, name]) => (name === undefined ? UNDEFINED : str(name)));
+      const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
+      const fns = ins.map(operand);
+      set(
+        out,
+        call(
+          "yk_class_new",
+          `i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
+        ),
+      );
+      return;
+    }
+    if (lbl.startsWith("delete.") && ins.length === 1) {
+      const key = m.constant(lbl.slice("delete.".length));
+      set(
+        out,
+        call(
+          "yk_delete_named",
+          `i64 ${operand(ins[0] as ValueId)}, ptr ${key.ptr}, i64 ${key.length}`,
+        ),
+      );
+      return;
+    }
+    if (lbl === "delete[]" && ins.length === 2) {
+      set(
+        out,
+        call("yk_delete", `i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}`),
+      );
       return;
     }
     if (lbl === "VoidExpression") {
@@ -552,6 +632,10 @@ function lowerFunction(
     }
     if (lbl === "NewExpression") {
       const callee = operand(ins[0] as ValueId);
+      if (ins.slice(1).some(isSpread)) {
+        set(out, call("yk_new_spread", `i64 ${callee}, i64 ${spreadList(ins.slice(1))}`));
+        return;
+      }
       const args = ins.slice(1).map(operand);
       set(out, call("yk_new", `i64 ${callee}, i64 ${args.length}, ptr ${list(args)}`));
       return;
@@ -563,6 +647,14 @@ function lowerFunction(
         if (MATH1.has(callee.name) && args.length === 1) {
           const key = m.constant(callee.name, true);
           set(out, call("yk_math1", `ptr ${key.ptr}, i64 ${args[0]}`));
+          return;
+        }
+        if ((callee.name === "min" || callee.name === "max") && ins.slice(1).some(isSpread)) {
+          const listed = spreadList(ins.slice(1));
+          set(
+            out,
+            call("yk_math_minmax_list", `i32 ${callee.name === "max" ? 1 : 0}, i64 ${listed}`),
+          );
           return;
         }
         if (callee.name === "min" || callee.name === "max") {
@@ -580,6 +672,26 @@ function lowerFunction(
             `Math.${callee.name} is implementation-approximated in ECMAScript: a native libm need not give the reference's last bit`,
           );
         throw new LlvmEmitError(`Math.${callee.name} is not in the subset yet`);
+      }
+      if (callee !== undefined && ins.slice(1).some(isSpread)) {
+        const key = m.constant(callee.name);
+        const recv = operand(callee.node.inputs[0] as ValueId);
+        set(
+          out,
+          call(
+            "yk_call_method_spread",
+            `i64 ${recv}, ptr ${key.ptr}, i64 ${key.length}, i64 ${spreadList(ins.slice(1))}`,
+          ),
+        );
+        return;
+      }
+      if (callee === undefined && ins.slice(1).some(isSpread)) {
+        const fn = operand(ins[0] as ValueId);
+        set(
+          out,
+          call("yk_call_spread", `i64 ${fn}, i64 ${UNDEFINED}, i64 ${spreadList(ins.slice(1))}`),
+        );
+        return;
       }
       if (callee !== undefined) {
         // A method call: the receiver is the object the member is read from.
@@ -634,21 +746,63 @@ function lowerFunction(
       return;
     }
     if (lbl === "ArrayLiteral") {
-      if (ins.some((v) => producer.get(resolve(v))?.label === "..."))
-        throw new LlvmEmitError("spread is not in the subset yet");
+      if (ins.some(isSpread)) {
+        set(out, spreadList(ins));
+        return;
+      }
       const elems = ins.map(operand);
       set(out, call("yk_array_of", `i64 ${elems.length}, ptr ${list(elems)}`));
       return;
     }
     if (lbl.startsWith("object:")) {
+      const slots = slotsOf(lbl);
+      if (slots.some((x) => x.kind === "spread" || x.kind === "get" || x.kind === "set")) {
+        // Slot by slot, in source order: a spread copies, an accessor defines, a later key wins.
+        let obj = call("yk_object_of", "i64 0, ptr null, ptr null");
+        let at = 0;
+        for (const slot of slots) {
+          if (slot.kind === "unsupported")
+            throw new LlvmEmitError(`${slot.what} is not in the subset yet`);
+          if (slot.kind === "spread") {
+            obj = call("yk_spread_into", `i64 ${obj}, i64 ${operand(ins[at++] as ValueId)}`);
+            continue;
+          }
+          const key =
+            slot.kind === "computed" ||
+            ((slot.kind === "get" || slot.kind === "set") && slot.name === undefined)
+              ? operand(ins[at++] as ValueId)
+              : str((slot as { name: string }).name);
+          const value = operand(ins[at++] as ValueId);
+          obj =
+            slot.kind === "get"
+              ? call("yk_define_accessor", `i64 ${obj}, i64 ${key}, i64 ${value}, i64 ${UNDEFINED}`)
+              : slot.kind === "set"
+                ? call(
+                    "yk_define_accessor",
+                    `i64 ${obj}, i64 ${key}, i64 ${UNDEFINED}, i64 ${value}`,
+                  )
+                : call("yk_define", `i64 ${obj}, i64 ${key}, i64 ${value}`);
+        }
+        set(out, obj);
+        return;
+      }
       // Keys and values in source order: a computed key is the input before its value.
       const keys: string[] = [];
       const values: string[] = [];
       let at = 0;
-      for (const slot of slotsOf(lbl)) {
-        if (slot.kind === "unsupported")
-          throw new LlvmEmitError(`${slot.what} is not in the subset yet`);
-        keys.push(slot.kind === "computed" ? operand(ins[at++] as ValueId) : str(slot.name));
+      for (const slot of slots) {
+        if (
+          slot.kind === "unsupported" ||
+          slot.kind === "spread" ||
+          slot.kind === "get" ||
+          slot.kind === "set"
+        )
+          throw new LlvmEmitError("an object literal slot that is not a plain one");
+        keys.push(
+          slot.kind === "computed"
+            ? operand(ins[at++] as ValueId)
+            : str((slot as { name: string }).name),
+        );
         values.push(operand(ins[at++] as ValueId));
       }
       set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
@@ -751,8 +905,12 @@ function lowerFunction(
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;
+    if (closure === undefined && (p.label ?? "").endsWith("..."))
+      throw new LlvmEmitError("a rest parameter of the exported function is not in the subset yet");
     if (closure === undefined) set(v, `%p${i}`);
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
+    else if ((p.label ?? "").endsWith("..."))
+      set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
     else set(v, call("yk_arg", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
   });
   emitScope(undefined);

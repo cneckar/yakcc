@@ -149,6 +149,21 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { const v = { valueOf() { return a; } }; const t = { toString() { return 'T' + b; } }; return [v + 1, `${t}`, t + '', v == a, v < 5, String(1) + t]; }",
     2,
   ],
+  [
+    "classes: constructor, methods, getters and setters, statics, class-self, instanceof",
+    "export function f(a, b) { class Acc { constructor(x) { this.x = x; this.log = []; } get twice() { return this.x * 2; } set twice(v) { this.x = v / 2; } add(y) { this.x = this.x + y; this.log.push(y); return this; } static of(v) { return new Acc(v); } } const acc = Acc.of(typeof a === 'number' ? a : 1).add(1).add(2); acc.twice = 10; return [acc.x, acc.twice, acc.log, acc instanceof Acc, typeof Acc, Object.keys(acc)]; }",
+    2,
+  ],
+  [
+    "ES5 constructors and prototypes",
+    "export function f(a, b) { function Pt(x, y) { this.x = x; this.y = y; } Pt.prototype.sum = function () { return this.x + this.y; }; Pt.prototype.kind = 'pt'; const p = new Pt(a, b); return [p.sum(), p.kind, p instanceof Pt, Object.keys(p), p.missing]; }",
+    2,
+  ],
+  [
+    "spread: arrays, calls, objects; accessors in literals; delete",
+    "export function f(a, b) { const xs = [a, ...(typeof b === 'string' ? b : [b]), a]; const join = (...parts) => parts.join('/'); const o = { first: 1, ...(typeof b === 'object' && b !== null ? b : {}), last: a, get both() { return [this.first, this.last]; } }; delete o.first; delete o['nope']; return [xs, join(...xs), xs.length, Object.keys(o), o.both, Math.max(...xs.filter((x) => typeof x === 'number'), -1)]; }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
@@ -189,7 +204,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, async functions, accessors, approximated Math", () => {
+  it("free names, new, async functions, derived classes, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
@@ -197,9 +212,11 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
       /not in the native base set|not in the subset/,
     );
     expect(refusal("export function f(x) { return async () => x; }")).toMatch(/not in the subset/);
-    expect(refusal("export function f(x) { return { get v() { return x; } }; }")).toMatch(
-      /get member is not in the subset/,
-    );
+    expect(
+      refusal(
+        "export function f(x) { class A { m() { return 1; } } class B extends A { m() { return super.m() + x; } } return new B().m(); }",
+      ),
+    ).toMatch(/derived class|not in the subset/);
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
       /implementation-approximated/,
     );
