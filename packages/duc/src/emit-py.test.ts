@@ -326,7 +326,10 @@ describe("raising the Python lowering: round trip (#1278)", () => {
       "export function f(o: any, xs: number[], k: string) { let n = 0; n += xs.length; n++; const t = `a${n}b`; o.k = t; o[k] = n; const e = new Error('x'); const c = Error('y'); return [o?.k, xs?.[0], (0, o.g)?.(1), String(n), n.toString(16), void n, (n, k), Math.pow(n, 2), n ** 2, /a+b/i.test(k), e, c, [...xs, n], { ...o, z: 1 }]; }",
     ],
     ["a spread argument", "export function f(g: any, xs: number[]) { return g(...xs); }"],
-    ["an unread free name, and nothing returned", "const g = strict ? a : b;"],
+    [
+      "an unread free name, and nothing returned",
+      "export function f() { const g = strict ? a : b; }",
+    ],
     [
       "a method named as one of Object's is refused, not looked up",
       "export function f(o: any) { return o.hasOwnProperty('a'); }",

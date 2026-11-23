@@ -22,9 +22,10 @@ import {
   type DucGraph,
   ECMASCRIPT,
   NODE,
-  WEB,
   type StoredLink,
+  WEB,
   checkSubmission,
+  declaredNamesOf,
   emitTypeScript,
   graphIdentity,
   inferTypes,
@@ -362,13 +363,26 @@ export interface RunResult {
 /** The TypeScript lowering of a graph as a script: imports and `export` dropped, types stripped. */
 function scriptOf(graph: DucGraph, name: string): string {
   const code = emitTypeScript(graph, undefined, { name });
-  return stripTypeScriptTypes(
-    code
-      .split("\n")
-      .filter((line) => !/^import\s/.test(line))
-      .join("\n")
-      .replace(/^export\s+/m, ""),
-  );
+  const lines = code.split("\n").filter((line) => !/^import\s/.test(line));
+  const outs = moduleOutputs(graph, lines);
+  if (outs === undefined)
+    return stripTypeScriptTypes(lines.join("\n").replace(/^export\s+/m, ""));
+  // A module statement is a function here too: lowering it must not run it (#1292). It returns
+  // its one declared value, or the list of them.
+  const body = lines.filter((line) => !/^export\b/.test(line)).join("\n");
+  const result = outs.length === 1 ? (outs[0] as string) : `[${outs.join(", ")}]`;
+  return stripTypeScriptTypes(`function ${name}() {\n${body}\nreturn ${result};\n}`);
+}
+
+/**
+ * The names a module statement's emitted module form gives its declared values, in order; undefined
+ * when the graph emitted as a function (#1290, #1292).
+ */
+function moduleOutputs(graph: DucGraph, lines: readonly string[]): string[] | undefined {
+  const names = declaredNamesOf(graph);
+  if (names === undefined || lines.some((line) => /^export (async )?function\*? /.test(line)))
+    return undefined;
+  return names.map((n) => (n === "default" ? "__yakccExportDefault" : n));
 }
 
 /**
@@ -441,23 +455,12 @@ export function lowerForConformance(
 
 /** A module statement's observed values, run in the module's context: its declared names' values. */
 function runStatement(graph: DucGraph, context: vm.Context, timeoutMs: number): unknown[] {
-  const code = emitTypeScript(graph, undefined, { name: "__yakccStatement" });
-  const lines = code.split("\n").filter((line) => !/^import\s/.test(line));
-  if (lines.some((line) => line.startsWith("export function __yakccStatement("))) {
-    vm.runInContext(stripTypeScriptTypes(lines.join("\n").replace(/^export\s+/m, "")), context, {
-      timeout: timeoutMs,
-    });
-    const value = vm.runInContext("__yakccStatement()", context, { timeout: timeoutMs }) as unknown;
-    return graph.obs.length === 1 ? [value] : [];
-  }
-  // The module form: its statements in a block, each result through `$outK`, then an export list.
-  const outs = graph.obs.map((_, k) => `$out${k}`);
-  const body = lines.filter((line) => !/^export\s*\{/.test(line)).join("\n");
-  return vm.runInContext(
-    stripTypeScriptTypes(`(() => {\n${body}\nreturn [${outs.join(", ")}];\n})()`),
-    context,
-    { timeout: timeoutMs },
-  ) as unknown[];
+  const name = `__yakccStatement${subjects++}`;
+  vm.runInContext(scriptOf(graph, name), context, { timeout: timeoutMs });
+  const value = vm.runInContext(`${name}()`, context, { timeout: timeoutMs }) as unknown;
+  const names = declaredNamesOf(graph);
+  if (names === undefined) return graph.obs.length === 1 ? [value] : [];
+  return names.length === 1 ? [value] : (value as unknown[]);
 }
 
 type ModuleState = { context: vm.Context } | { unrunnable: string };

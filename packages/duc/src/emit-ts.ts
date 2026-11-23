@@ -1,6 +1,4 @@
 import { parseType, typeToTypeScript } from "./infer-types.js";
-import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
-import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Lowering to TypeScript (#1275, decision 5A): a graph is emitted as a TypeScript function whose
@@ -16,6 +14,9 @@ import { loweringView } from "./ordering.js";
  * that holds an opaque node (a closure, a class, a construct summarized by its text), or the return
  * state of returns on some paths, has no TypeScript form here: `emitTypeScript` throws EmitError.
  */
+import { DECLARES, declaredNamesOf } from "./lift.js";
+import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 import { isRestParam, paramIndex } from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
@@ -103,8 +104,9 @@ export function emitTypeScript(
     throw new EmitError(e instanceof Error ? e.message : String(e));
   }
   const imports = new Map<string, Set<string>>();
-  // A file's graph that exports several values is a module: its statements, then its exports.
-  const asModule = g.obs.length > 1 && !g.nodes.some((n) => n.kind === "param-source");
+  // A module statement's graph is a module: its statements, then the names it declares (#1290).
+  const asModule =
+    declaredNamesOf(g) !== undefined && !g.nodes.some((n) => n.kind === "param-source");
   const { params, body } = emitFunction(g, "", [], imports, asModule);
   const importLines = [...imports.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -435,6 +437,8 @@ function emitFunction(
     if (node.kind !== "op") throw new EmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
     if (label === "throw") return [`throw ${arg(0)};`];
+    // A module statement's one result: written below, as its declared names.
+    if (label.startsWith(DECLARES)) return [];
     // A write to a binding outside the atom: `name = value` (#1276).
     if (label === "binding=") {
       const written = node.outputs[0];
@@ -787,19 +791,53 @@ function emitFunction(
     .map((n) => `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}`);
   const body = [...unread, ...emitScope(undefined)];
   if (asModule) {
-    // Each observation is exported, in order, through a module-level name. The statements are in a
-    // block: a name a module statement declares at its top level is one of its observations
-    // (#1290), and the emitter's temporaries are not.
-    const outs = g.obs.map((_, k) => `$out${k}`);
+    // Each declared name is a module-level name, given its value at the end; the statements are in
+    // a block, so the emitter's temporaries are not the module's (#1290, #1292).
+    const names = declaredNamesOf(g) as string[];
+    const declares = g.nodes.find((n) => n.outputs.includes(g.obs[0] as ValueId)) as DucNode;
+    // `default` is not a variable: its value is held by the lowering's own name, exported as default.
+    const local = (name: string): string => (name === "default" ? "__yakccExportDefault" : name);
+    // A name exported as it is (`export { parse };` of a name the statement does not define) is
+    // the free name itself: no module-level name of its own, which would shadow it.
+    const itself = (name: string, k: number): boolean => {
+      const source = g.nodes.find((n) => n.outputs.includes(declares.inputs[k] as ValueId));
+      return (
+        source?.kind === "diamond-source" &&
+        source.diamond?.reason === "free-identifier" &&
+        source.diamond.symbol === name
+      );
+    };
+    const held = names.flatMap((name, k) => (itself(name, k) ? [] : [[name, k] as const]));
+    // A declared name the statements also read free (a function bound where it stands, read above
+    // its declaration) must not be in scope above it: the values are carried out of the block in
+    // the lowering's own names and declared after it.
+    const readFree = new Set(
+      g.nodes.flatMap((n) =>
+        n.kind === "diamond-source" && n.diamond?.reason === "free-identifier"
+          ? [n.diamond.symbol]
+          : [],
+      ),
+    );
+    const after = held.some(([name]) => readFree.has(name));
+    const carrier = (name: string, k: number): string =>
+      after ? `__yakccDeclared${k}` : local(name);
     return {
       params,
       body: [
-        `let ${outs.join(", ")};`,
+        ...(held.length > 0
+          ? [`let ${held.map(([name, k]) => carrier(name, k)).join(", ")};`]
+          : []),
         "{",
         ...body.map((l) => `  ${l}`),
-        ...g.obs.map((v, k) => `  ${outs[k]} = ${ref(v)};`),
+        ...held.map(
+          ([name, k]) => `  ${carrier(name, k)} = ${ref(declares.inputs[k] as ValueId)};`,
+        ),
         "}",
-        `export { ${outs.join(", ")} };`,
+        ...(after ? held.map(([name, k]) => `let ${local(name)} = ${carrier(name, k)};`) : []),
+        // Every declared name exported, in order: lifted again, the same names in the same order.
+        ...names.map((name) =>
+          name === "default" ? "export default __yakccExportDefault;" : `export { ${name} };`,
+        ),
       ],
     };
   }

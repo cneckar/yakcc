@@ -129,6 +129,22 @@ function functionsWithin(node: Node): Node[] {
   return fns;
 }
 
+/** The label prefix of a module statement's one result: the names it declares, and their values. */
+export const DECLARES = "declares:";
+
+/** The names a module statement's graph declares, in order, when it is one (#1290, #1292). */
+export function declaredNamesOf(graph: {
+  readonly nodes: readonly { readonly outputs: readonly string[]; readonly label?: string }[];
+  readonly obs: readonly string[];
+}): string[] | undefined {
+  if (graph.obs.length !== 1) return undefined;
+  const node = graph.nodes.find((n) => n.outputs.includes(graph.obs[0] as string));
+  const label = node?.label;
+  return label?.startsWith(DECLARES) === true
+    ? (JSON.parse(label.slice(DECLARES.length)) as string[])
+    : undefined;
+}
+
 export function parseAtomSource(source: string): { project: Project; file: SourceFile } {
   const forms = [source, ...wrapForms(source)];
   let file: SourceFile | undefined;
@@ -514,7 +530,14 @@ class Lifter {
       const observed = exportedBindingNames(file);
       for (const name of moduleDeclaredNames(file))
         if (!observed.includes(name)) observed.push(name);
-      for (const name of observed) this.obs.push(this.resolveIdentifier(name));
+      // One result, naming each declared value (#1292): two names with one value stay two, and a
+      // name that is undefined stays one, as a list of results would not keep them.
+      const values = observed.map((name) => this.resolveIdentifier(name));
+      const [declared] = this.emit("op", values, 1, {
+        origin: { kind: "Declares" },
+        label: `${DECLARES}${JSON.stringify(observed)}`,
+      });
+      this.obs.push(declared as ValueId);
     }
   }
 
@@ -1545,9 +1568,10 @@ class Lifter {
     }
     // An empty statement computes nothing.
     if (Node.isEmptyStatement(node)) return;
-    // `export default x` (and `export = x`) exports one value: it is observed (#1276).
+    // `export default x` (and `export = x`) exports one value: the module's name `default`
+    // (#1276, #1292), declared with the others.
     if (Node.isExportAssignment(node)) {
-      this.obs.push(this.liftExpr(node.getExpression()));
+      this.env.set("default", this.liftExpr(node.getExpression()));
       return;
     }
     // A local export list computes nothing: the names it exports are observed (exportedBindingNames).
@@ -3891,8 +3915,9 @@ export function closureLabel(dynamicThis: boolean, mode: FunctionMode | undefine
  */
 function moduleDeclaredNames(file: Node): string[] {
   const names: string[] = [];
+  // A `__yakcc` name is a lowering's own (the TypeScript lowering's default export), not the module's.
   const add = (name: string): void => {
-    if (!names.includes(name)) names.push(name);
+    if (!names.includes(name) && !name.startsWith("__yakcc")) names.push(name);
   };
   for (const stmt of (file as import("ts-morph").SourceFile).getStatements()) {
     if (Node.isVariableStatement(stmt)) {
@@ -3909,20 +3934,20 @@ function moduleDeclaredNames(file: Node): string[] {
 function exportedBindingNames(file: Node): string[] {
   const sf = file as import("ts-morph").SourceFile;
   const names: string[] = [];
-  // `export const x`: in declaration order. (isExported() is also true for a name an export list
-  // exports, which comes in the list's order below.)
-  for (const decl of sf.getVariableDeclarations()) {
-    if (decl.getVariableStatement()?.hasExportKeyword() === true)
-      names.push(...patternNames(decl.getNameNode()));
-  }
-  // `export { a, b as c }` exports the file's own bindings a and b (#1276).
-  for (const ex of sf.getExportDeclarations()) {
-    if (ex.getModuleSpecifier() !== undefined || ex.isTypeOnly()) continue;
-    for (const spec of ex.getNamedExports()) {
-      if (spec.isTypeOnly()) continue;
-      const local = spec.getNameNode().getText();
-      if (!names.includes(local)) names.push(local);
-    }
+  const add = (name: string): void => {
+    if (!names.includes(name)) names.push(name);
+  };
+  // In the order the file writes them (#1292): `export const x`, `export { a, b as c }` (the file's
+  // own bindings a and b, #1276), and `export default …` (the name `default`).
+  for (const stmt of sf.getStatements()) {
+    if (Node.isVariableStatement(stmt) && stmt.hasExportKeyword()) {
+      for (const decl of stmt.getDeclarations())
+        for (const n of patternNames(decl.getNameNode())) add(n);
+    } else if (Node.isExportDeclaration(stmt)) {
+      if (stmt.getModuleSpecifier() !== undefined || stmt.isTypeOnly()) continue;
+      for (const spec of stmt.getNamedExports())
+        if (!spec.isTypeOnly()) add(spec.getNameNode().getText());
+    } else if (Node.isExportAssignment(stmt)) add("default");
   }
   return names;
 }

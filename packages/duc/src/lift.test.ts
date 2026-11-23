@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import { mayInfluence, usupp } from "./influence.js";
-import { DucLiftError, liftAtom } from "./lift.js";
+import { DucLiftError, declaredNamesOf, liftAtom } from "./lift.js";
 import type { DiamondReason, DucGraph } from "./types.js";
 import type { ValueId } from "./types.js";
 import { isWellFormed } from "./wellformed.js";
@@ -318,7 +318,8 @@ describe("no single exported function: top-level fallback", () => {
 
   it("multiple exported bindings are each observed", () => {
     const g = lift("export const A = 1;\nexport const B = A + 1;");
-    expect(g.obs.length).toBe(2);
+    // One result naming each declared value (#1292).
+    expect(declaredNamesOf(g)).toEqual(["A", "B"]);
   });
 
   it("multiple exported functions fall back and still resolve their reads", () => {

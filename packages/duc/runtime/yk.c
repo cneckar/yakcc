@@ -37,6 +37,7 @@ typedef struct {
 typedef struct {
   uint32_t len, cap;
   yk *items;
+  yk props; /* its non-index properties (an object: an exec result's index, input, groups), or 0 */
 } yk_array;
 
 typedef struct {
@@ -46,6 +47,7 @@ typedef struct {
   int32_t error; /* made by Error / TypeError / …: its ToString is Error.prototype.toString's */
   int32_t kind;  /* 0 a plain object; 1 a Map, 2 a Set: their entries in `entries` */
   yk proto;      /* the object it inherits from (a class's prototype), or 0 */
+  yk *regex;     /* kind 3, a RegExp: its source, flags, matcher, and group names */
   yk_array *entries; /* a Map's [key, value] pairs, a Set's values, in insertion order */
 } yk_object;
 
@@ -150,6 +152,7 @@ static yk_array *new_array(uint32_t cap) {
   a->len = 0;
   a->cap = cap < 4 ? 4 : cap;
   a->items = alloc((size_t)a->cap * sizeof(yk));
+  a->props = 0;
   return a;
 }
 
@@ -180,6 +183,9 @@ static yk resolve_slot(yk slot, yk receiver);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int same_value_zero(yk a, yk b);
+static int string_pattern_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
+static int is_regexp(yk v);
+static yk regexp_exec(yk re, yk s);
 static yk_array *iterable_items(yk v);
 
 /* --- ToString --- */
@@ -268,6 +274,8 @@ static yk to_primitive(yk v) {
   if (is_closure(v)) return ascii("function () { [native code] }");
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
+  if (self->kind == 3)
+    return concat(str(concat(str(concat(str(ascii("/")), str(self->regex[0]))), str(ascii("/")))), str(self->regex[1]));
   static const char *names[2] = {"valueOf", "toString"};
   for (int i = 0; i < 2; i++) {
     yk f;
@@ -501,7 +509,23 @@ yk yk_get(yk obj, yk key) {
     if (key_is(key, "length")) return yk_number(a->len);
     int64_t i = index_of_key(key);
     if (i >= 0 && i < a->len) return a->items[i];
+    yk v;
+    if (i < 0 && a->props != 0 && own_get((yk_object *)PTR(a->props), to_string(key), &v)) return v;
     return YK_UNDEFINED;
+  }
+  if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 3) {
+    yk_object *o = (yk_object *)PTR(obj);
+    yk flags = o->regex[1];
+    const char *names[8] = {"global", "ignoreCase", "multiline", "dotAll", "unicode", "sticky", "hasIndices", NULL};
+    const char letters[8] = "gimsuyd";
+    if (key_is(key, "source")) return o->regex[0];
+    if (key_is(key, "flags")) return flags;
+    for (int f = 0; names[f] != NULL; f++)
+      if (key_is(key, names[f])) {
+        for (uint32_t i = 0; i < str(flags)->len; i++)
+          if (str(flags)->units[i] == (uint16_t)letters[f]) return YK_TRUE;
+        return YK_FALSE;
+      }
   }
   if (is_object(obj)) {
     yk_object *o = (yk_object *)PTR(obj);
@@ -533,10 +557,19 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   yk key = yk_string_utf8(name, n);
+  if (is_regexp(recv)) {
+    if (key_is(key, "exec")) return regexp_exec(recv, arg0);
+    if (key_is(key, "test")) return yk_bool(regexp_exec(recv, arg0) != YK_NULL);
+    if (key_is(key, "toString")) return to_primitive(recv);
+  }
+  if (is_string(recv)) {
+    yk out;
+    if (string_pattern_method(recv, key, argc, argv, &out)) return out;
+  }
   if (is_object(recv)) {
     yk_object *o = (yk_object *)PTR(recv);
     yk f;
-    if (o->kind != 0) {
+    if (o->kind != 0 && o->kind != 3) {
       yk out;
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
     } else if (chain_get(recv, key, &f))
@@ -612,6 +645,16 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   }
   if (is_string(recv)) {
     yk_string *s = str(recv);
+    if (key_is(key, "codePointAt")) {
+      double d = to_number(arg0);
+      d = d != d ? 0 : trunc(d);
+      if (d < 0 || d >= s->len) return YK_UNDEFINED;
+      uint32_t i = (uint32_t)d;
+      uint16_t hi = s->units[i];
+      if (hi >= 0xD800 && hi <= 0xDBFF && i + 1 < s->len && s->units[i + 1] >= 0xDC00 && s->units[i + 1] <= 0xDFFF)
+        return yk_number(0x10000 + ((hi - 0xD800) << 10) + (s->units[i + 1] - 0xDC00));
+      return yk_number(hi);
+    }
     if (key_is(key, "charCodeAt")) {
       double d = to_number(arg0);
       d = d != d ? 0 : trunc(d);
@@ -826,6 +869,7 @@ yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   o->error = 0;
   o->kind = 0;
   o->proto = 0;
+  o->regex = NULL;
   o->entries = NULL;
   o->keys = o->values = NULL;
   for (uint64_t i = 0; i < n; i++) own_set(o, to_string(keys[i]), values[i]);
@@ -896,7 +940,18 @@ yk yk_set(yk obj, yk key, yk value) {
   if (is_array(obj)) {
     yk_array *a = arr(obj);
     int64_t i = index_of_key(key);
-    if (i < 0) type_error("a non-index property of an array is not in the runtime yet");
+    if (i < 0) {
+      if (key_is(to_string(key), "length")) {
+        double n = to_number(value);
+        if (n < 0 || n != floor(n) || n > 4294967295.0) yk_throw(make_error("RangeError", ascii("Invalid array length")));
+        while (a->len < n) push(a, YK_UNDEFINED);
+        a->len = (uint32_t)n;
+        return obj;
+      }
+      if (a->props == 0) a->props = yk_object_of(0, NULL, NULL);
+      own_set((yk_object *)PTR(a->props), to_string(key), value);
+      return obj;
+    }
     while (a->len <= i) push(a, YK_UNDEFINED);
     a->items[i] = value;
     return obj;
@@ -1407,6 +1462,287 @@ static yk with_methods(yk_code code, int n, const char *const *names, const yk_c
   yk f = code != NULL ? yk_closure_new(code, 0, 0, NULL) : yk_object_of(0, NULL, NULL);
   for (int i = 0; i < n; i++) yk_set(f, ascii(names[i]), yk_closure_new(codes[i], 0, 0, NULL));
   return f;
+}
+
+/* --- RegExp: a matcher compiled from the literal (regex.ts), driven as ECMAScript drives one --- */
+
+static int is_regexp(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 3; }
+
+/* A regex literal's object: source, flags, the matcher (s, start, sticky) → indexes or null, names. */
+yk yk_regexp_new(yk source, yk flags, yk matcher, yk names) {
+  yk key = ascii("lastIndex"), zero = yk_number(0);
+  yk v = yk_object_of(1, &key, &zero);
+  yk_object *o = (yk_object *)PTR(v);
+  o->kind = 3;
+  o->regex = alloc(4 * sizeof(yk));
+  o->regex[0] = source;
+  o->regex[1] = flags;
+  o->regex[2] = matcher;
+  o->regex[3] = names;
+  return v;
+}
+
+static int has_flag(yk re, char f) {
+  yk_string *fl = str(((yk_object *)PTR(re))->regex[1]);
+  for (uint32_t i = 0; i < fl->len; i++)
+    if (fl->units[i] == (uint16_t)f) return 1;
+  return 0;
+}
+
+static yk substring(yk_string *s, uint32_t a, uint32_t b) {
+  yk_string *r = new_string(b > a ? b - a : 0);
+  if (b > a) memcpy(r->units, s->units + a, (size_t)(b - a) * 2);
+  return string_of(r);
+}
+
+/* The matcher at `start` (only there when sticky): the indexes array, or null. */
+static yk run_matcher(yk re, yk s, uint32_t start, int sticky) {
+  yk args[3] = {s, yk_number(start), yk_bool(sticky)};
+  return call_value(((yk_object *)PTR(re))->regex[2], YK_UNDEFINED, 3, args);
+}
+
+/* The match array exec gives: the matched text and the groups, with index, input, groups. */
+static yk match_array(yk re, yk s, yk idx) {
+  yk_array *ix = arr(idx);
+  yk_array *r = new_array(ix->len / 2);
+  for (uint32_t g = 0; g < ix->len / 2; g++) {
+    double a = num(ix->items[2 * g]), b = num(ix->items[2 * g + 1]);
+    push(r, a < 0 ? YK_UNDEFINED : substring(str(s), (uint32_t)a, (uint32_t)b));
+  }
+  yk v = BOX(T_ARRAY, r);
+  yk_set(v, ascii("index"), ix->items[0]);
+  yk_set(v, ascii("input"), s);
+  yk names = ((yk_object *)PTR(re))->regex[3];
+  yk groups = YK_UNDEFINED;
+  for (uint32_t g = 0; g < arr(names)->len; g++)
+    if (arr(names)->items[g] != YK_UNDEFINED) {
+      if (groups == YK_UNDEFINED) groups = yk_object_of(0, NULL, NULL);
+      yk_set(groups, arr(names)->items[g], r->items[g + 1]);
+    }
+  yk_set(v, ascii("groups"), groups);
+  return v;
+}
+
+/* RegExpBuiltinExec. */
+static yk regexp_exec(yk re, yk s) {
+  s = to_string(s);
+  int global = has_flag(re, 'g'), sticky = has_flag(re, 'y');
+  uint32_t start = 0;
+  if (global || sticky) {
+    double li = to_number(yk_get(re, ascii("lastIndex")));
+    li = li != li || li < 0 ? 0 : trunc(li);
+    if (li > str(s)->len) {
+      yk_set(re, ascii("lastIndex"), yk_number(0));
+      return YK_NULL;
+    }
+    start = (uint32_t)li;
+  }
+  yk idx = run_matcher(re, s, start, sticky);
+  if (idx == YK_NULL) {
+    if (global || sticky) yk_set(re, ascii("lastIndex"), yk_number(0));
+    return YK_NULL;
+  }
+  if (global || sticky) yk_set(re, ascii("lastIndex"), arr(idx)->items[1]);
+  return match_array(re, s, idx);
+}
+
+/* The index after i, by code point when the regex is unicode. */
+static uint32_t advance(yk_string *s, uint32_t i, int unicode) {
+  if (unicode && i + 1 < s->len && s->units[i] >= 0xD800 && s->units[i] <= 0xDBFF && s->units[i + 1] >= 0xDC00 &&
+      s->units[i + 1] <= 0xDFFF)
+    return i + 2;
+  return i + 1;
+}
+
+/* GetSubstitution: $$, $&, $`, $', $n, $nn, $<name> in a replacement string. */
+static yk substitute(yk_string *rep, yk m) {
+  yk_array *caps = arr(m);
+  yk_string *input = str(yk_get(m, ascii("input")));
+  uint32_t pos = (uint32_t)num(yk_get(m, ascii("index")));
+  yk_string *matched = str(caps->items[0]);
+  yk groups = yk_get(m, ascii("groups"));
+  yk out = ascii("");
+  for (uint32_t i = 0; i < rep->len; i++) {
+    uint16_t c = rep->units[i];
+    if (c != '$' || i + 1 >= rep->len) {
+      yk_string *one = new_string(1);
+      one->units[0] = c;
+      out = concat(str(out), one);
+      continue;
+    }
+    uint16_t d = rep->units[i + 1];
+    if (d == '$') out = concat(str(out), str(ascii("$"))), i++;
+    else if (d == '&') out = concat(str(out), matched), i++;
+    else if (d == '`') out = concat(str(out), str(substring(input, 0, pos))), i++;
+    else if (d == '\'') out = concat(str(out), str(substring(input, pos + matched->len, input->len))), i++;
+    else if (d >= '0' && d <= '9') {
+      uint32_t n = d - '0', used = 1;
+      if (i + 2 < rep->len && rep->units[i + 2] >= '0' && rep->units[i + 2] <= '9') {
+        uint32_t nn = n * 10 + (rep->units[i + 2] - '0');
+        if (nn >= 1 && nn < caps->len) n = nn, used = 2;
+      }
+      if (n >= 1 && n < caps->len) {
+        if (caps->items[n] != YK_UNDEFINED) out = concat(str(out), str(caps->items[n]));
+        i += used;
+      } else
+        out = concat(str(out), str(ascii("$")));
+    } else if (d == '<' && groups != YK_UNDEFINED) {
+      uint32_t close = i + 2;
+      while (close < rep->len && rep->units[close] != '>') close++;
+      if (close >= rep->len) {
+        out = concat(str(out), str(ascii("$")));
+        continue;
+      }
+      yk v = yk_get(groups, substring(rep, i + 2, close));
+      if (v != YK_UNDEFINED) out = concat(str(out), str(to_string(v)));
+      i = close;
+    } else
+      out = concat(str(out), str(ascii("$")));
+  }
+  return out;
+}
+
+/* The replacement for one match: a function's result, or the substituted string. */
+static yk replacement(yk repl, yk m) {
+  if (!is_closure(repl)) return substitute(str(to_string(repl)), m);
+  yk_array *caps = arr(m);
+  yk groups = yk_get(m, ascii("groups"));
+  yk_array *args = new_array(caps->len + 3);
+  for (uint32_t i = 0; i < caps->len; i++) push(args, caps->items[i]);
+  push(args, yk_get(m, ascii("index")));
+  push(args, yk_get(m, ascii("input")));
+  if (groups != YK_UNDEFINED) push(args, groups);
+  return to_string(call_value(repl, YK_UNDEFINED, args->len, args->items));
+}
+
+/* A match of a plain string at a position, as an exec result (for replace with a string pattern). */
+static yk string_match(yk s, yk_string *pat, uint32_t at) {
+  yk_array *r = new_array(1);
+  push(r, string_of(pat));
+  yk v = BOX(T_ARRAY, r);
+  yk_set(v, ascii("index"), yk_number(at));
+  yk_set(v, ascii("input"), s);
+  yk_set(v, ascii("groups"), YK_UNDEFINED);
+  return v;
+}
+
+static int64_t find_from(yk_string *s, yk_string *t, uint32_t from) {
+  for (uint32_t i = from; i + t->len <= s->len; i++)
+    if (memcmp(s->units + i, t->units, (size_t)t->len * 2) == 0) return i;
+  return -1;
+}
+
+/* The string methods that take a pattern: 1 when name is one, with its result in *out. */
+static int string_pattern_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
+  yk a0 = argc > 0 ? argv[0] : YK_UNDEFINED, a1 = argc > 1 ? argv[1] : YK_UNDEFINED;
+  yk_string *s = str(recv);
+  int replace_all = key_is(key, "replaceAll");
+  if (key_is(key, "replace") || replace_all) {
+    if (is_regexp(a0)) {
+      int global = has_flag(a0, 'g');
+      if (replace_all && !global) type_error("replaceAll must be called with a global RegExp");
+      if (global) yk_set(a0, ascii("lastIndex"), yk_number(0));
+      yk acc = ascii("");
+      uint32_t last = 0;
+      for (;;) {
+        yk m = regexp_exec(a0, recv);
+        if (m == YK_NULL) break;
+        uint32_t at = (uint32_t)num(yk_get(m, ascii("index")));
+        uint32_t len = str(arr(m)->items[0])->len;
+        if (at >= last) {
+          acc = concat(str(acc), str(substring(s, last, at)));
+          acc = concat(str(acc), str(replacement(a1, m)));
+          last = at + len;
+        }
+        if (!global) break;
+        if (len == 0) {
+          double li = num(yk_get(a0, ascii("lastIndex")));
+          yk_set(a0, ascii("lastIndex"), yk_number(advance(s, (uint32_t)li, has_flag(a0, 'u'))));
+        }
+      }
+      *out = concat(str(acc), str(substring(s, last, s->len)));
+      return 1;
+    }
+    yk_string *pat = str(to_string(a0));
+    yk acc = ascii("");
+    uint32_t last = 0;
+    int64_t at = find_from(s, pat, 0);
+    while (at >= 0) {
+      acc = concat(str(acc), str(substring(s, last, (uint32_t)at)));
+      acc = concat(str(acc), str(replacement(a1, string_match(recv, pat, (uint32_t)at))));
+      last = (uint32_t)at + pat->len;
+      if (!replace_all) break;
+      at = pat->len == 0 ? (at + 1 <= s->len ? find_from(s, pat, (uint32_t)at + 1) : -1) : find_from(s, pat, last);
+    }
+    *out = concat(str(acc), str(substring(s, last, s->len)));
+    return 1;
+  }
+  if (key_is(key, "match") || key_is(key, "matchAll") || key_is(key, "search")) {
+    if (!is_regexp(a0)) type_error("a pattern that is not a regex literal (a dynamic RegExp) is not in the native runtime");
+    if (key_is(key, "search")) {
+      yk saved = yk_get(a0, ascii("lastIndex"));
+      yk idx = run_matcher(a0, recv, 0, has_flag(a0, 'y'));
+      yk_set(a0, ascii("lastIndex"), saved);
+      *out = idx == YK_NULL ? yk_number(-1) : arr(idx)->items[0];
+      return 1;
+    }
+    int all = key_is(key, "matchAll");
+    if (all && !has_flag(a0, 'g')) type_error("matchAll must be called with a global RegExp");
+    if (!all && !has_flag(a0, 'g')) {
+      *out = regexp_exec(a0, recv);
+      return 1;
+    }
+    yk_set(a0, ascii("lastIndex"), yk_number(0));
+    yk_array *r = new_array(4);
+    for (;;) {
+      yk m = regexp_exec(a0, recv);
+      if (m == YK_NULL) break;
+      push(r, all ? m : arr(m)->items[0]);
+      if (str(arr(m)->items[0])->len == 0) {
+        double li = num(yk_get(a0, ascii("lastIndex")));
+        yk_set(a0, ascii("lastIndex"), yk_number(advance(s, (uint32_t)li, has_flag(a0, 'u'))));
+      }
+    }
+    *out = !all && r->len == 0 ? YK_NULL : BOX(T_ARRAY, r);
+    return 1;
+  }
+  if (key_is(key, "split") && is_regexp(a0)) {
+    /* RegExp.prototype[@@split]: sticky matches at each position, with the captures between. */
+    uint32_t limit = a1 == YK_UNDEFINED ? 0xFFFFFFFFu : to_uint32(a1);
+    yk_array *r = new_array(4);
+    if (limit == 0) return *out = BOX(T_ARRAY, r), 1;
+    if (s->len == 0) {
+      if (run_matcher(a0, recv, 0, 1) == YK_NULL) push(r, recv);
+      return *out = BOX(T_ARRAY, r), 1;
+    }
+    int unicode = has_flag(a0, 'u');
+    uint32_t p = 0, q = 0;
+    while (q < s->len) {
+      yk idx = run_matcher(a0, recv, q, 1);
+      if (idx == YK_NULL) {
+        q = advance(s, q, unicode);
+        continue;
+      }
+      uint32_t e = (uint32_t)num(arr(idx)->items[1]);
+      if (e > s->len) e = s->len;
+      if (e == p) {
+        q = advance(s, q, unicode);
+        continue;
+      }
+      push(r, substring(s, p, q));
+      if (r->len == limit) return *out = BOX(T_ARRAY, r), 1;
+      for (uint32_t g = 1; g < arr(idx)->len / 2; g++) {
+        double a = num(arr(idx)->items[2 * g]), b = num(arr(idx)->items[2 * g + 1]);
+        push(r, a < 0 ? YK_UNDEFINED : substring(s, (uint32_t)a, (uint32_t)b));
+        if (r->len == limit) return *out = BOX(T_ARRAY, r), 1;
+      }
+      p = e;
+      q = p;
+    }
+    push(r, substring(s, p, s->len));
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  return 0;
 }
 
 /* --- the global functions, as values --- */

@@ -20,9 +20,11 @@
  * iteration, async and generator functions, the approximated `Math` and `**`.
  */
 import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
+import { DECLARES } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
+import { RegexCompileError, regexMatcherGraph } from "./regex.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
@@ -133,6 +135,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_closure_class: "declare i64 @yk_closure_class(ptr)",
   yk_closure_inherit: "declare i64 @yk_closure_inherit(i64, ptr)",
   yk_delete: "declare i64 @yk_delete(i64, i64)",
+  yk_regexp_new: "declare i64 @yk_regexp_new(i64, i64, i64, i64)",
   yk_delete_named: "declare i64 @yk_delete_named(i64, ptr, i64)",
   yk_iter_new: "declare i64 @yk_iter_new(i64, i32)",
   yk_iter_next: "declare i32 @yk_iter_next(i64, ptr)",
@@ -182,6 +185,8 @@ class ModuleBuilder {
   readonly globals: string[] = [];
   readonly used = new Set<string>();
   readonly functions: string[] = [];
+  /** Each regex literal's matcher, lowered once: its function's name. */
+  readonly matchers = new Map<string, string>();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -230,8 +235,16 @@ function lowerFunction(
     throw new LlvmEmitError(`an ${source.mode} function is not in the subset yet`);
   if (scope?.outs === undefined && source.obs.length > 1)
     throw new LlvmEmitError("a native function has at most one result");
-  if (scope?.outs !== undefined && scope.outs.length !== source.obs.length)
-    throw new LlvmEmitError("a statement's results and the names it declares differ in number");
+  // A statement's one result names its declared values (#1292): they go to the module's bindings.
+  const declaredValues =
+    scope?.outs === undefined
+      ? undefined
+      : source.nodes.find(
+          (n) =>
+            n.outputs.includes(source.obs[0] as ValueId) && (n.label ?? "").startsWith(DECLARES),
+        )?.inputs;
+  if (scope?.outs !== undefined && declaredValues?.length !== scope.outs.length)
+    throw new LlvmEmitError("a statement's declared values and the names it declares differ");
   const { graph: g, after } = loweringView(source);
   const owners = joinOwners(g);
   const producer = new Map<ValueId, DucNode>();
@@ -333,6 +346,12 @@ function lowerFunction(
       // `let x;`: undefined until written.
       if (text === "undefined" || text === "Uninitialized") return UNDEFINED;
       if (text.startsWith('"')) return str(JSON.parse(text) as string);
+      // A regex literal: its object, made when the function starts.
+      if (text.startsWith("/")) {
+        const r = fresh();
+        emit(`${r} = load i64, ptr ${slotOf(v)}`);
+        return r;
+      }
       const n = Number(text.replace(/_/g, ""));
       if (text === "" || (Number.isNaN(n) && text !== "NaN"))
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
@@ -511,6 +530,7 @@ function lowerFunction(
       );
       return;
     }
+    if (lbl.startsWith(DECLARES)) return; // a statement's result: stored by the statement's end
     if (lbl === "VoidExpression") {
       set(out, UNDEFINED);
       return;
@@ -902,6 +922,37 @@ function lowerFunction(
     loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
   };
 
+  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
+  // its object made here (DEC-DUC-REGEX-GRAPH-001).
+  for (const n of g.nodes) {
+    const text = n.label ?? "";
+    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+    let compiled: ReturnType<typeof regexMatcherGraph>;
+    try {
+      compiled = regexMatcherGraph(text);
+    } catch (e) {
+      if (e instanceof RegexCompileError) throw new LlvmEmitError(e.message);
+      throw e;
+    }
+    let fn = m.matchers.get(text);
+    if (fn === undefined) {
+      fn = m.closureName(`${name.replace(/"/g, "")}.regex`);
+      m.matchers.set(text, fn);
+      lowerFunction(m, compiled.graph, fn, { captures: 0 });
+    }
+    m.used.add("yk_closure_new");
+    const matcher = fresh();
+    emit(`${matcher} = call i64 @yk_closure_new(ptr @${fn}, i32 0, i64 0, ptr null)`);
+    const names = compiled.parsed.names.map((nm) => (nm === undefined ? UNDEFINED : str(nm)));
+    const namesArray = call("yk_array_of", `i64 ${names.length}, ptr ${list(names)}`);
+    set(
+      n.outputs[0] as ValueId,
+      call(
+        "yk_regexp_new",
+        `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
+      ),
+    );
+  }
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;
@@ -915,9 +966,11 @@ function lowerFunction(
   });
   emitScope(undefined);
   if (scope?.outs !== undefined) {
-    // A statement: its results are the values of the names it declares.
+    // A statement: the values of the names it declares, from its one result.
     scope.outs.forEach((global, k) =>
-      emit(`store i64 ${operand(g.obs[k] as ValueId)}, ptr ${global}`),
+      emit(
+        `store i64 ${operand((declaredValues as readonly ValueId[])[k] as ValueId)}, ptr ${global}`,
+      ),
     );
     emit(`ret i64 ${UNDEFINED}`);
   } else if (g.obs.length === 0) emit(`ret i64 ${UNDEFINED}`);
@@ -1022,6 +1075,11 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         return r;
       },
       write: (name, value, emit) => {
+        // `exports` is the module's own variable: `exports = module.exports = …` rebinds it.
+        if (name === "exports") {
+          emit(`store i64 ${value}, ptr ${g(i, "exports")}`);
+          return true;
+        }
         if (!names.has(name)) return false;
         emit(`store i64 ${value}, ptr ${g(i, `b.${name}`)}`);
         return true;

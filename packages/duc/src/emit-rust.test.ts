@@ -323,7 +323,10 @@ describe("raising the Rust lowering: round trip (#1278)", () => {
       "operations the lowering keeps apart",
       "export function f(o: any, xs: number[], k: string) { let n = 0; n += xs.length; n++; const t = `a${n}b`; o.k = t; o[k] = n; const e = new Error('x'); const c = Error('y'); return [o?.k, xs?.[0], (0, o.g)?.(1), String(n), n.toString(16), Object.freeze(o), void n, (n, k), Math.pow(n, 2), n ** 2, /a+b/gi.test(k), e, c]; }",
     ] as const,
-    ["an unread free name, and nothing returned", "const g = strict ? a : b;"] as const,
+    [
+      "an unread free name, and nothing returned",
+      "export function f() { const g = strict ? a : b; }",
+    ] as const,
   ];
   for (const [name, source] of cases) {
     it(`lowers, raises and lifts to the same identity: ${name}`, () => {
