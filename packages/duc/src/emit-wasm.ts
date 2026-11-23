@@ -17,9 +17,10 @@
  * the reason.
  */
 import { type DucType, parseType } from "./infer-types.js";
-import { bodyPathOf, isPrefix, joinOwners, sidePath } from "./line-form.js";
+import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
+import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 export class WasmEmitError extends Error {
@@ -218,6 +219,20 @@ export function emitWasm(source: DucGraph, signature: WasmSignature): WasmModule
   const producer = new Map<ValueId, DucNode>();
   for (const n of g.nodes) for (const v of n.outputs) producer.set(v, n);
 
+  // Loops: invariants read the outer value; carries are the loop's locals.
+  const loops = g.nodes.filter((n) => n.kind === "loop");
+  const alias = new Map<ValueId, ValueId>();
+  for (const loop of loops) {
+    const rec = loop.loop as DucLoop;
+    if (rec.iterate !== undefined) throw new WasmEmitError("iteration is not in the subset");
+    if (rec.cond === undefined) throw new WasmEmitError("a loop with no condition");
+    rec.invariant.forEach((v, j) => alias.set(v, loop.inputs[rec.carry.length + j] as ValueId));
+  }
+  const resolve = (v: ValueId): ValueId => {
+    const a = alias.get(v);
+    return a === undefined ? v : resolve(a);
+  };
+
   // Math members read from the Math primitive: not values, but what a call names.
   const mathValue = new Set<ValueId>();
   const mathMember = new Map<ValueId, string>();
@@ -231,12 +246,19 @@ export function emitWasm(source: DucGraph, signature: WasmSignature): WasmModule
     }
   }
   for (const n of g.nodes) {
-    if (n.kind === "op" && mathValue.has(n.inputs[0] as ValueId) && /^\.\w+$/.test(n.label ?? ""))
+    // Inside a loop, Math arrives as an invariant standing for the outer value.
+    if (
+      n.kind === "op" &&
+      mathValue.has(resolve(n.inputs[0] as ValueId)) &&
+      /^\.\w+$/.test(n.label ?? "")
+    )
       mathMember.set(n.outputs[0] as ValueId, (n.label as string).slice(1));
   }
 
   const calledValues = new Set(
-    g.nodes.filter((n) => n.kind === "op" && n.label === "CallExpression").map((n) => n.inputs[0]),
+    g.nodes
+      .filter((n) => n.kind === "op" && n.label === "CallExpression")
+      .map((n) => resolve(n.inputs[0] as ValueId)),
   );
   const isCalled = (v: ValueId): boolean => calledValues.has(v);
 
@@ -273,20 +295,6 @@ export function emitWasm(source: DucGraph, signature: WasmSignature): WasmModule
     localTypes.push(t);
     local.set(v, at);
     return at;
-  };
-
-  // Loops: invariants read the outer value; carries are the loop's locals.
-  const loops = g.nodes.filter((n) => n.kind === "loop");
-  const alias = new Map<ValueId, ValueId>();
-  for (const loop of loops) {
-    const rec = loop.loop as DucLoop;
-    if (rec.iterate !== undefined) throw new WasmEmitError("iteration is not in the subset");
-    if (rec.cond === undefined) throw new WasmEmitError("a loop with no condition");
-    rec.invariant.forEach((v, j) => alias.set(v, loop.inputs[rec.carry.length + j] as ValueId));
-  }
-  const resolve = (v: ValueId): ValueId => {
-    const a = alias.get(v);
-    return a === undefined ? v : resolve(a);
   };
 
   const imports: string[] = [];
@@ -378,8 +386,8 @@ export function emitWasm(source: DucGraph, signature: WasmSignature): WasmModule
         throw new WasmEmitError(`Math.${name} is not a constant or a called function`);
       return;
     }
-    if (label === "CallExpression" && mathMember.has(ins[0] as ValueId)) {
-      const name = mathMember.get(ins[0] as ValueId) as string;
+    if (label === "CallExpression" && mathMember.has(resolve(ins[0] as ValueId))) {
+      const name = mathMember.get(resolve(ins[0] as ValueId)) as string;
       const args = ins.slice(1);
       if (NATIVE_MATH[name] !== undefined && args.length === 1) {
         pushNumber(args[0] as ValueId);
@@ -471,72 +479,13 @@ export function emitWasm(source: DucGraph, signature: WasmSignature): WasmModule
   const hostArity = new Map<string, number>();
 
   // Each scope's items in dependency order.
-  type Item =
-    | { kind: "node"; node: DucNode; at: number }
-    | { kind: "branch"; branch: DucBranch; at: number }
-    | { kind: "loop"; node: DucNode; at: number };
-  const indexOf = new Map(g.nodes.map((n, i) => [n.id, i]));
-  const madeWithin = (path: string): Set<ValueId> =>
-    new Set(g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs));
-  const needsOf = (item: Item): ValueId[] => {
-    if (item.kind === "node") return item.node.inputs.map(resolve);
-    if (item.kind === "loop") return item.node.inputs.map(resolve);
-    const b = item.branch;
-    const paths = [sidePath(b, "t"), sidePath(b, "e")];
-    const inside = new Set(paths.flatMap((p) => [...madeWithin(p)]));
-    const inner = g.nodes
-      .filter((n) => paths.some((p) => isPrefix(p, n.region)))
-      .flatMap((n) => n.inputs.map(resolve))
-      .filter((v) => !inside.has(v));
-    const joins = g.nodes
-      .filter((n) => owners.get(n.id)?.id === b.id)
-      .flatMap((n) => n.inputs.slice(1).map(resolve));
-    return [resolve(b.cond), ...inner, ...joins];
-  };
-  const producesOf = (item: Item): readonly ValueId[] =>
-    item.kind === "branch"
-      ? g.nodes.filter((n) => owners.get(n.id)?.id === item.branch.id).flatMap((n) => n.outputs)
-      : item.node.outputs;
-  const itemsOf = (scope: string | undefined): Item[] => {
-    const items: Item[] = [];
-    for (const n of g.nodes) {
-      if (n.region !== scope || owners.has(n.id)) continue;
-      if (n.kind === "loop") items.push({ kind: "loop", node: n, at: indexOf.get(n.id) as number });
-      else items.push({ kind: "node", node: n, at: indexOf.get(n.id) as number });
-    }
-    for (const b of branches) {
-      if (b.within !== scope) continue;
-      const firstInside = g.nodes.findIndex(
-        (n) => isPrefix(sidePath(b, "t"), n.region) || isPrefix(sidePath(b, "e"), n.region),
-      );
-      items.push({
-        kind: "branch",
-        branch: b,
-        at: firstInside === -1 ? g.nodes.length : firstInside,
-      });
-    }
-    return items;
-  };
-  const ordered = (items: Item[]): Item[] => {
-    const producedHere = new Map<ValueId, Item>();
-    for (const it of items) for (const v of producesOf(it)) producedHere.set(v, it);
-    const done = new Set<Item>();
-    const out: Item[] = [];
-    const pending = [...items].sort((a, b) => a.at - b.at);
-    while (pending.length > 0) {
-      const at = pending.findIndex((it) =>
-        needsOf(it).every((v) => {
-          const p = producedHere.get(v);
-          return p === undefined || p === it || done.has(p);
-        }),
-      );
-      if (at === -1) throw new WasmEmitError("a scope's statements depend on each other");
-      const [it] = pending.splice(at, 1) as [Item];
-      done.add(it);
-      out.push(it);
-    }
-    return out;
-  };
+  type Item = ScopeItem;
+  const { itemsOf, ordered, needsOf, producesOf } = scopePlanner(
+    g,
+    owners,
+    resolve,
+    (m) => new WasmEmitError(m),
+  );
 
   const emitItems = (items: readonly Item[]): void => {
     for (const it of items) {
