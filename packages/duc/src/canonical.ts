@@ -379,6 +379,7 @@ export function canonicalizeGraph(
       node.outputs.length,
       inputSigs,
       regionSig(node.region),
+      node.order ?? 0,
     ];
     if (node.loop !== undefined) fields.push(bodySummaryOf(node.loop.id));
     if (node.closure !== undefined) fields.push(graphIdentity(closureOf(node)));
@@ -583,6 +584,7 @@ export function canonicalizeGraph(
       outputs: outputsOf[i] ?? [],
       kind: node.kind,
       ...(label !== undefined ? { label } : {}),
+      ...(node.order !== undefined ? { order: node.order } : {}),
       ...(node.diamond !== undefined ? { diamond: node.diamond } : {}),
       ...(node.origin !== undefined ? { origin: node.origin } : {}),
       ...(region !== undefined ? { region } : {}),
@@ -623,6 +625,7 @@ export function graphIdentity(g: DucGraph): string {
     nodes: canon.nodes.map((n) => ({
       kind: n.kind,
       ...(n.label !== undefined ? { label: n.label } : {}),
+      ...(n.order !== undefined ? { order: n.order } : {}),
       inputs: n.inputs,
       outputs: n.outputs,
       ...(n.diamond !== undefined ? { diamond: structuralDiamond(n.diamond) } : {}),

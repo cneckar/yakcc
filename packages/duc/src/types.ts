@@ -157,6 +157,14 @@ export interface DucNode {
    * other node, its syntactic kind. Origin text is never a label.
    */
   readonly label?: string;
+  /**
+   * 1 when the node's last input orders it rather than feeding it (#1285): the heap token, the value
+   * of the heap operation before it (a call, `new`, a member read or write, an opaque operation).
+   * Heap operations are totally ordered by these edges, so their order is structure, as every
+   * happens-before relation of the graph is. A select or a carry of the token is labelled `heap`
+   * (`carry:<i>:heap`); it computes nothing, and a lowering writes nothing for it.
+   */
+  readonly order?: 1;
 }
 
 /**

@@ -91,3 +91,4 @@ export {
   runChecker,
   validateCheckerSpec,
 } from "./checker.js";
+export { isHeapToken, type LoweringView, loweringView } from "./ordering.js";

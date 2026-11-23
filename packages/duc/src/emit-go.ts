@@ -12,6 +12,7 @@
  */
 import { regexToPython } from "./emit-py.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export { GO_PRELUDE } from "./go-prelude.js";
@@ -151,7 +152,13 @@ export function emitGo(g: DucGraph): string {
 
 const indent = (lines: readonly string[]): string[] => lines.map((l) => `\t${l}`);
 
-function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { body: string[] } {
+function goFunction(
+  source: DucGraph,
+  prefix: string,
+  bound: readonly string[],
+): { body: string[] } {
+  // The heap token orders the statements and is not written (#1285).
+  const { graph: g, after } = loweringView(source);
   if (g.obs.length > 1) throw new GoEmitError("more than one observation");
   const branches = g.branches ?? [];
   const producer = new Map<ValueId, DucNode>();
@@ -460,10 +467,21 @@ function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { bo
 
   const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i] as const));
   const needs = (node: DucNode): ValueId[] =>
-    node.inputs.flatMap((v) => {
+    [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
       const p = producer.get(v);
       return p !== undefined && inline.has(p.id) ? needs(p) : [v];
     });
+  /** The values made inside a region (a branch side or a loop body), nested regions included. */
+  const madeWithin = (path: string): ValueId[] =>
+    g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs);
+  /** What the nodes inside a region need from outside it, their order included. */
+  const neededBy = (paths: readonly string[]): ValueId[] => {
+    const inside = new Set(paths.flatMap(madeWithin));
+    return g.nodes
+      .filter((n) => paths.some((path) => isPrefix(path, n.region)))
+      .flatMap((n) => [...n.inputs, ...(after.get(n.id) ?? [])])
+      .filter((v) => !inside.has(v));
+  };
 
   const emitBranch = (b: DucBranch): string[] => {
     const joins = g.nodes.filter((n) => owners.get(n.id)?.id === b.id);
@@ -541,11 +559,15 @@ function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { bo
     }
     for (const loop of loops) {
       if (loop.region !== scope) continue;
+      const body = bodyPathOf(loop);
       items.push({
         first: nodeIndex.get(loop.id) as number,
         last: 0,
-        produces: loop.outputs,
-        requires: loop.inputs,
+        // A statement ordered after one inside the body comes after the loop.
+        produces: [...loop.outputs, ...madeWithin(body)],
+        requires: [
+          ...new Set([...loop.inputs, ...(after.get(loop.id) ?? []), ...neededBy([body])]),
+        ],
         lines: () => emitLoop(loop),
       });
     }
@@ -558,7 +580,7 @@ function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { bo
       const innerValues = new Set(subtree.flatMap((n) => n.outputs));
       const requires = [
         b.cond,
-        ...subtree.flatMap((n) => n.inputs),
+        ...neededBy([sidePath(b, "t"), sidePath(b, "e")]),
         ...joins.flatMap((n) => n.inputs),
       ];
       items.push({
@@ -567,7 +589,8 @@ function goFunction(g: DucGraph, prefix: string, bound: readonly string[]): { bo
           ...[...subtree, ...joins].map((n) => nodeIndex.get(n.id) as number),
         ),
         last: subtree.some((n) => n.label === "throw") ? 1 : 0,
-        produces: joins.flatMap((n) => n.outputs),
+        // A statement ordered after one inside a side comes after the branch.
+        produces: [...joins.flatMap((n) => n.outputs), ...innerValues],
         requires: [...new Set(requires)].filter((v) => !innerValues.has(v)),
         lines: () => emitBranch(b),
       });

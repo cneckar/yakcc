@@ -11,7 +11,12 @@
  *                                       string, true, false, null, undefined, a big integer or a
  *                                       regular expression). Literals are constants: identical ones
  *                                       are one value, visible everywhere
- *   op <label> [<name> ...] [-> <name>] an operation; the label is an operator or syntactic kind
+ *   op <label> [<name> ...] [-> <name>] an operation; the label is an operator or syntactic kind.
+ *                                       A last operand written ^<name> is the heap token (#1285):
+ *                                       it orders the operation after the heap operation that made
+ *                                       it, and feeds it nothing. A join, select or carry whose
+ *                                       name is written ^<name> is the heap token's (it computes
+ *                                       nothing; a lowering writes nothing for it)
  *   free <symbol> -> <name> [link <key>]     a name the graph does not define (free-identifier)
  *   ambient <symbol> -> <name> [link <key>]  a platform primitive (platform-primitive)
  *   unlinked <symbol> [from <module>] -> <name> [link <key>]
@@ -307,9 +312,16 @@ export function parseLineForm(text: string): DucGraph {
       if (arrow !== -1 && results.length !== 1) {
         throw new LineFormError(line, "an operation has at most one result: -> <name>");
       }
-      const inputs = operands.map((n) => use(n, line));
+      // A last operand marked ^ is the heap token that orders the operation (#1285).
+      const marked = operands.findIndex((n) => n.startsWith("^"));
+      if (marked !== -1 && marked !== operands.length - 1)
+        throw new LineFormError(line, "only the last operand may be the heap token (^<name>)");
+      const inputs = operands.map((n) => use(n.replace(/^\^/, ""), line));
       const outputs = results.map((n) => define(n, line));
-      add({ kind: "op", inputs, outputs, label }, currentRegion());
+      add(
+        { kind: "op", inputs, outputs, label, ...(marked !== -1 ? { order: 1 as const } : {}) },
+        currentRegion(),
+      );
       return;
     }
 
@@ -455,9 +467,15 @@ export function parseLineForm(text: string): DucGraph {
         );
       }
       frame.carry = rest.map((n, j) => {
-        const v = define(n, line, true);
+        const heap = n.startsWith("^");
+        const v = define(n.replace(/^\^/, ""), line, true);
         add(
-          { kind: "carry-source", inputs: [], outputs: [v], label: `carry:${j}` },
+          {
+            kind: "carry-source",
+            inputs: [],
+            outputs: [v],
+            label: heap ? `carry:${j}:heap` : `carry:${j}`,
+          },
           bodyRegionOf(frame),
         );
         return v;
@@ -606,7 +624,9 @@ export function parseLineForm(text: string): DucGraph {
         throw new LineFormError(line, "a join must directly follow the end of its if");
       if (rest.length !== 4)
         throw new LineFormError(line, "expected: join <name> <cond> <then> <else>");
-      const [outName, condName, thenName, elseName] = rest as [string, string, string, string];
+      const [marked, condName, thenName, elseName] = rest as [string, string, string, string];
+      const heap = marked.startsWith("^");
+      const outName = marked.replace(/^\^/, "");
       const cond = use(condName, line);
       if (cond !== follows.cond)
         throw new LineFormError(line, "a join uses the condition of its if");
@@ -619,7 +639,15 @@ export function parseLineForm(text: string): DucGraph {
       if (elseValue === undefined)
         throw new LineFormError(line, `"${elseName}" is not visible on the else-side`);
       const out = define(outName, line);
-      add({ kind: "sel", inputs: [cond, thenValue, elseValue], outputs: [out] }, currentRegion());
+      add(
+        {
+          kind: "sel",
+          inputs: [cond, thenValue, elseValue],
+          outputs: [out],
+          ...(heap ? { label: "heap" } : {}),
+        },
+        currentRegion(),
+      );
       pendingJoin = follows;
       return;
     }
@@ -627,10 +655,18 @@ export function parseLineForm(text: string): DucGraph {
     if (head === "select") {
       if (rest.length !== 4)
         throw new LineFormError(line, "expected: select <name> <cond> <then> <else>");
-      const [outName, condName, thenName, elseName] = rest as [string, string, string, string];
+      const [marked, condName, thenName, elseName] = rest as [string, string, string, string];
       const inputs = [use(condName, line), use(thenName, line), use(elseName, line)];
-      const out = define(outName, line);
-      add({ kind: "sel", inputs, outputs: [out] }, currentRegion());
+      const out = define(marked.replace(/^\^/, ""), line);
+      add(
+        {
+          kind: "sel",
+          inputs,
+          outputs: [out],
+          ...(marked.startsWith("^") ? { label: "heap" } : {}),
+        },
+        currentRegion(),
+      );
       return;
     }
 
@@ -816,7 +852,11 @@ export function printLineForm(g: DucGraph): string {
     }
     for (const [i, v] of rec.carry.entries()) {
       const p = producerOf(v);
-      if (p.kind !== "carry-source" || p.region !== body || p.label !== `carry:${i}`) {
+      if (
+        p.kind !== "carry-source" ||
+        p.region !== body ||
+        (p.label !== `carry:${i}` && p.label !== `carry:${i}:heap`)
+      ) {
         throw new Error(`loop ${loop.id} has a carried value that is not its body's source`);
       }
       headerOf.set(p.id, loop);
@@ -906,7 +946,10 @@ export function printLineForm(g: DucGraph): string {
         }
         if (node.outputs.length > 1)
           throw new Error(`operation ${node.id} has more than one result`);
-        const operands = node.inputs.join(" ");
+        // The heap token that orders the operation is its last operand, marked ^ (#1285).
+        const operands = node.inputs
+          .map((v, k) => (node.order === 1 && k === node.inputs.length - 1 ? `^${v}` : v))
+          .join(" ");
         const result = node.outputs.length === 1 ? ` -> ${node.outputs[0]}` : "";
         return `op ${node.label}${operands ? ` ${operands}` : ""}${result}`;
       }
@@ -932,7 +975,7 @@ export function printLineForm(g: DucGraph): string {
         if (out === undefined || node.inputs.length !== 3)
           throw new Error(`select ${node.id} needs a value and two inputs`);
         const [cond, thenV, elseV] = node.inputs;
-        return `select ${out} ${cond} ${thenV} ${elseV}`;
+        return `select ${node.label === "heap" ? "^" : ""}${out} ${cond} ${thenV} ${elseV}`;
       }
       default:
         throw new Error(`"${node.kind}" has no line form on its own`);
@@ -969,7 +1012,10 @@ export function printLineForm(g: DucGraph): string {
     const body = printScope(bodyPathOf(loop));
     return [
       header.join(" "),
-      ["carry", ...rec.carry].join(" "),
+      [
+        "carry",
+        ...rec.carry.map((v) => (producerOf(v).label?.endsWith(":heap") === true ? `^${v}` : v)),
+      ].join(" "),
       ["invariant", ...rec.invariant].join(" "),
       ...(rec.iterate !== undefined ? [`element ${rec.iterate.element}`] : []),
       ...body,
@@ -1047,7 +1093,9 @@ export function printLineForm(g: DucGraph): string {
           for (const j of joins) {
             printed.add(j.id);
             const [cond, thenV, elseV] = j.inputs;
-            out.push(`join ${j.outputs[0]} ${cond} ${thenV} ${elseV}`);
+            out.push(
+              `join ${j.label === "heap" ? "^" : ""}${j.outputs[0]} ${cond} ${thenV} ${elseV}`,
+            );
           }
           return out;
         },

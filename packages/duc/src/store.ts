@@ -18,15 +18,15 @@ import { canonicalizeGraph, graphIdentity } from "./canonical.js";
 import { type CompactGraph, decodeGraph, encodeGraph } from "./compact.js";
 import type { DiamondLabel, DucGraph, DucNode, NodeOrigin } from "./types.js";
 
-/** The version of the stored structure's encoding. */
-export const GRAPH_FORMAT_VERSION = 1;
+/** The version of the stored structure's encoding. Version 2 adds the ordering flag (#1285). */
+export const GRAPH_FORMAT_VERSION = 2;
 
 /**
  * The version of the lifter whose graphs these are. A change to what the lifter produces for the
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 2;
+export const LIFTER_VERSION = 3;
 
 /** One reference's link: the reference, by reason, symbol and module, and the contract it links to. */
 export interface StoredLink {
@@ -146,7 +146,7 @@ function attach(
 export function unpackGraph(
   packed: Pick<PackedGraph, "formatVersion" | "structure" | "links" | "annotations">,
 ): DucGraph {
-  if (packed.formatVersion !== GRAPH_FORMAT_VERSION)
+  if (packed.formatVersion !== GRAPH_FORMAT_VERSION && packed.formatVersion !== 1)
     throw new Error(
       `graph format ${packed.formatVersion} is not one this reads (${GRAPH_FORMAT_VERSION})`,
     );

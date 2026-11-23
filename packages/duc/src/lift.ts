@@ -67,6 +67,7 @@ interface ImportBinding {
 interface MutableNode {
   readonly id: NodeId;
   inputs: ValueId[];
+  order?: 1;
   readonly outputs: ValueId[];
   loop?: DucLoop;
   closure?: DucGraph;
@@ -197,7 +198,13 @@ class Lifter {
   private readonly diamonds = new Map<string, ValueId>();
   private readonly obs: ValueId[] = [];
 
-  constructor(private readonly ambient: ReadonlySet<string>) {}
+  /** The heap token at the start: an operation after it alone needs no ordering edge. */
+  private readonly heapStart: ValueId;
+
+  constructor(private readonly ambient: ReadonlySet<string>) {
+    this.heapStart = this.undefinedValue();
+    this.env.set(HEAP, this.heapStart);
+  }
 
   // --- id minting ---
   private freshValue(): ValueId {
@@ -209,10 +216,35 @@ class Lifter {
 
   private emit(
     kind: DucNode["kind"],
-    inputs: ValueId[],
-    outCount: number,
-    extra?: { diamond?: DucNode["diamond"]; origin?: DucNode["origin"]; label?: string },
+    given: ValueId[],
+    count: number,
+    extra?: {
+      diamond?: DucNode["diamond"];
+      origin?: DucNode["origin"];
+      label?: string;
+      /** A heap operation whatever its label (an object literal with a spread entry). */
+      heap?: boolean;
+    },
   ): ValueId[] {
+    // A heap operation is ordered after the one before it on the path (#1285), and is the token after.
+    const label = extra?.label ?? (kind === "op" ? extra?.origin?.kind : undefined);
+    const heap =
+      extra?.heap === true ||
+      ((kind === "op" || (kind === "loop" && label?.includes("#") === true)) &&
+        label !== undefined &&
+        (isHeapLabel(label) || label === "throw"));
+    let inputs = given;
+    let outCount = count;
+    let ordered = false;
+    if (heap) {
+      const token = this.env.get(HEAP);
+      if (token !== undefined && token !== this.heapStart) {
+        inputs = [...given, this.loopFrames.length > 0 ? this.throughLoop(token) : token];
+        ordered = true;
+      }
+      // Every heap operation is a token, a throw too: what follows a branch that may throw waits for it.
+      if (outCount === 0) outCount = 1;
+    }
     const outputs: ValueId[] = [];
     for (let i = 0; i < outCount; i++) outputs.push(this.freshValue());
     if (this.regionStack.length === 0) for (const v of outputs) this.topLevel.add(v);
@@ -229,9 +261,13 @@ class Lifter {
         ? { label: extra.label }
         : extra?.origin !== undefined && (kind === "op" || kind === "literal-source")
           ? { label: extra.origin.kind }
-          : {}),
+          : kind === "sel" && extra?.origin?.text === HEAP
+            ? { label: "heap" }
+            : {}),
+      ...(ordered ? { order: 1 as const } : {}),
     };
     this.nodes.push(node);
+    if (heap && outputs[0] !== undefined) this.env.set(HEAP, outputs[0]);
     return outputs;
   }
 
@@ -546,14 +582,15 @@ class Lifter {
     const reads = fn.getDescendantsOfKind(SyntaxKind.Identifier);
     if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments")))
       return undefined;
-    if (
-      assignmentTargets(fn).some((t) => {
-        const base = baseIdentifierOfTarget(t);
-        return base === undefined || !locals.has(base);
-      })
-    ) {
-      return undefined;
-    }
+    // A closure that rebinds a name outside itself needs a shared cell, which the graph does not
+    // have. A write to a member of an outer object or of the receiver keeps the binding: it changes
+    // the shared object, as a call that changes its argument does.
+    const rebindsOutside = (t: Node): boolean => {
+      if (Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)) return false;
+      if (Node.isIdentifier(t)) return !locals.has(t.getText());
+      return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => !locals.has(id.getText()));
+    };
+    if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
     const captures: string[] = [];
     for (const id of reads) {
       if (!isValueRead(id)) continue;
@@ -855,7 +892,8 @@ class Lifter {
       const elseValue = elseEnv.get(name) ?? beforeValue;
       // A side that has thrown on every path never reaches here. When the other side's value was made
       // before the if, it is the value; otherwise the join keeps the value from before on the dead side.
-      if (thenDead !== elseDead) {
+      // The heap token keeps the throwing side's: what follows waits for the branch (#1285).
+      if (thenDead !== elseDead && name !== HEAP) {
         const live = thenDead ? elseValue : thenValue;
         if (valueIndex(live) < sidesStart) {
           this.env.set(name, live);
@@ -1084,10 +1122,15 @@ class Lifter {
         if (!assigned.includes(name)) assigned.push(name);
       }
     }
+    // The heap token is the last carry: the exit flags and a do loop's first-pass flag are ordinary
+    // names when the emitted loop is lifted again, and come before it there too.
     const carried = [
       ...assigned.filter((name) => this.env.has(name)),
       ...exitNames,
       ...(firstName !== undefined ? [firstName] : []),
+      ...([cond, body, incrementor].some((part) => part !== undefined && touchesHeap(part))
+        ? [HEAP]
+        : []),
     ];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
 
@@ -1112,7 +1155,7 @@ class Lifter {
         frame.depth = this.regionStack.length;
         carried.forEach((name, i) => {
           const [value] = this.emit("carry-source", [], 1, {
-            label: `carry:${i}`,
+            label: name === HEAP ? `carry:${i}:heap` : `carry:${i}`,
             origin: { kind: "LoopCarry", text: truncate(name) },
           });
           carrySources.push(value as ValueId);
@@ -1247,9 +1290,13 @@ class Lifter {
     const body = node.getStatement();
 
     const iterable = this.liftExpr(node.getExpression());
-    const carried = this.collectAssignedOuterNames(body).filter(
-      (name) => this.env.has(name) && !declared.includes(name),
-    );
+    // Each step reads the iterable, so an iterating loop always carries the heap token.
+    const carried = [
+      ...this.collectAssignedOuterNames(body).filter(
+        (name) => this.env.has(name) && !declared.includes(name),
+      ),
+      HEAP,
+    ];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
 
     const saved = this.env;
@@ -1271,7 +1318,7 @@ class Lifter {
         frame.depth = this.regionStack.length;
         carried.forEach((name, i) => {
           const [value] = this.emit("carry-source", [], 1, {
-            label: `carry:${i}`,
+            label: name === HEAP ? `carry:${i}:heap` : `carry:${i}`,
             origin: { kind: "LoopCarry", text: truncate(name) },
           });
           carrySources.push(value as ValueId);
@@ -1676,8 +1723,20 @@ class Lifter {
     if (Node.isCallExpression(node) || Node.isNewExpression(node)) {
       const inputs: ValueId[] = [];
       const callee = node.getExpression();
-      if (callee !== undefined) inputs.push(this.liftExpr(callee));
-      for (const arg of node.getArguments()) inputs.push(this.liftExpr(arg as Node));
+      if (callee !== undefined && Node.isPropertyAccessExpression(callee)) {
+        // A method's lookup is ordered just before its call, after the arguments (#1285): a
+        // lowering writes `o.f(args)`, the lookup inside the call, so that is the order it keeps.
+        const base = this.liftExpr(callee.getExpression());
+        const args = this.liftElements(node.getArguments() as Node[]);
+        const [method] = this.emit("op", [base], 1, {
+          origin: { kind: "PropertyAccess", text: truncate(callee.getText()) },
+          label: `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
+        });
+        inputs.push(method as ValueId, ...args);
+      } else {
+        if (callee !== undefined) inputs.push(this.liftExpr(callee));
+        inputs.push(...this.liftElements(node.getArguments() as Node[]));
+      }
       const optional = Node.isCallExpression(node) && node.hasQuestionDotToken();
       return this.emit("op", inputs, 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
@@ -1708,7 +1767,7 @@ class Lifter {
       })[0] as ValueId;
     }
     if (Node.isArrayLiteralExpression(node)) {
-      const inputs = node.getElements().map((el) => this.liftExpr(el));
+      const inputs = this.liftElements(node.getElements());
       return this.emit("op", inputs, 1, { origin: { kind: "ArrayLiteral" } })[0] as ValueId;
     }
     if (Node.isObjectLiteralExpression(node)) {
@@ -1816,6 +1875,8 @@ class Lifter {
     return this.emit("op", inputs, 1, {
       origin: { kind: "ObjectLiteral" },
       label: `object:${labelJson(entries)}`,
+      // A spread entry reads the object it spreads, so the literal is ordered among heap operations.
+      ...(entries.includes(null) ? { heap: true } : {}),
     })[0] as ValueId;
   }
 
@@ -1918,6 +1979,29 @@ class Lifter {
    * A value chosen by a condition whose arms run only when chosen: a branch whose sides compute the
    * arms, joined into one value. Names an arm assigns join as an if's do.
    */
+  /**
+   * The inputs for a list of elements or arguments. A spread's operand is lifted in its place, and its
+   * iteration (`...`) just before the list's consumer (#1285): a lowering writes `[a, ...xs, b]`, the
+   * iteration inside the list, so that is the order it keeps.
+   */
+  private liftElements(elements: readonly Node[]): ValueId[] {
+    const inputs: (ValueId | undefined)[] = [];
+    const spreads: { at: number; operand: ValueId }[] = [];
+    for (const el of elements) {
+      if (Node.isSpreadElement(el)) {
+        spreads.push({ at: inputs.length, operand: this.liftExpr(el.getExpression()) });
+        inputs.push(undefined);
+      } else inputs.push(this.liftExpr(el));
+    }
+    for (const { at, operand } of spreads) {
+      inputs[at] = this.emit("op", [operand], 1, {
+        origin: { kind: "SpreadElement" },
+        label: "...",
+      })[0] as ValueId;
+    }
+    return inputs as ValueId[];
+  }
+
   private liftLazy(cond: ValueId, whenTrue: () => ValueId, whenFalse: () => ValueId): ValueId {
     const before = new Map(this.env);
     const id = `b${this.branchCount++}`;
@@ -2027,6 +2111,7 @@ class Lifter {
       ...(n.diamond !== undefined ? { diamond: n.diamond } : {}),
       ...(n.origin !== undefined ? { origin: n.origin } : {}),
       ...(n.label !== undefined ? { label: n.label } : {}),
+      ...(n.order !== undefined ? { order: n.order } : {}),
       ...(n.region !== undefined ? { region: n.region } : {}),
       ...(n.loop !== undefined ? { loop: n.loop } : {}),
       ...(n.closure !== undefined ? { closure: n.closure } : {}),
@@ -2591,6 +2676,70 @@ function jumpsSupported(loop: Node): boolean {
 
 /** The env name of the receiver (not a valid source name). */
 const THIS = "%this";
+/** The heap token (#1285): the last heap operation on the path, or the start. */
+const HEAP = "%heap";
+
+const HEAP_LABELS = new Set([
+  "CallExpression",
+  "CallExpression?.",
+  "NewExpression",
+  "ElementAccess",
+  "[]=",
+  "in",
+  "instanceof",
+  "...",
+  "AwaitExpression",
+  "YieldExpression",
+  "TaggedTemplateExpression",
+  "DeleteExpression",
+]);
+
+/**
+ * Whether an operation reads or writes shared state, so its place among the others is structure: a
+ * call, `new`, a member read or write, `in`, a spread, an opaque summary (its label has a hash).
+ */
+export function isHeapLabel(label: string): boolean {
+  return (
+    HEAP_LABELS.has(label) ||
+    label.includes("#") ||
+    label.startsWith("?.") ||
+    label.startsWith("ElementAccess") ||
+    (label.startsWith(".") && label.length > 1)
+  );
+}
+
+const HEAP_SYNTAX = new Set([
+  SyntaxKind.CallExpression,
+  SyntaxKind.NewExpression,
+  SyntaxKind.PropertyAccessExpression,
+  SyntaxKind.ElementAccessExpression,
+  SyntaxKind.DeleteExpression,
+  SyntaxKind.SpreadElement,
+  SyntaxKind.SpreadAssignment,
+  SyntaxKind.ForOfStatement,
+  SyntaxKind.ForInStatement,
+  SyntaxKind.TaggedTemplateExpression,
+  SyntaxKind.AwaitExpression,
+  SyntaxKind.YieldExpression,
+  SyntaxKind.TryStatement,
+  SyntaxKind.SwitchStatement,
+  SyntaxKind.ClassDeclaration,
+  SyntaxKind.ClassExpression,
+  SyntaxKind.LabeledStatement,
+  SyntaxKind.WithStatement,
+  SyntaxKind.ObjectBindingPattern,
+  SyntaxKind.ArrayBindingPattern,
+  SyntaxKind.InKeyword,
+  SyntaxKind.InstanceOfKeyword,
+  SyntaxKind.WhileStatement,
+  SyntaxKind.DoStatement,
+  SyntaxKind.ForStatement,
+]);
+
+/** Whether code may run a heap operation: a loop over it carries the heap token. */
+function touchesHeap(node: Node): boolean {
+  return node.getDescendants().some((d) => HEAP_SYNTAX.has(d.getKind()));
+}
 
 /** The function whose `this` a node sees: its nearest enclosing function that is not an arrow. */
 function receiverOwner(node: Node): Node | undefined {

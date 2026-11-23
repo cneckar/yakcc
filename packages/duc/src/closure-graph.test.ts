@@ -94,7 +94,8 @@ describe("closures as graphs (#1275)", () => {
       'lit "2" -> two',
       "op CallExpression g two -> a",
       'lit "3" -> three',
-      "op CallExpression g three -> b",
+      // The second call comes after the first: its last operand, ^a, is the heap token (#1285).
+      "op CallExpression g three ^a -> b",
       "op + a b -> s",
       "out s",
     ].join("\n");

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Lowering to TypeScript (#1275, decision 5A): the emitted code lifts back to the same identity, and
 // computes what the original source computes.
+import { ts } from "ts-morph";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES as CASES } from "./__fixtures__/emit-cases.js";
 import { graphIdentity } from "./canonical.js";
@@ -16,7 +17,9 @@ function run(code: string, args: readonly unknown[]): unknown {
 }
 
 function runSource(source: string, args: readonly unknown[]): unknown {
-  const js = source.replace(/: (number|string|boolean|object|unknown|number\[\])(?=[,)\s{;])/g, "");
+  const js = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText;
   return run(js, args);
 }
 
@@ -26,9 +29,10 @@ describe("emitting TypeScript from the graph (5A)", () => {
       const g = liftAtom(tc.source);
       const code = emitTypeScript(g);
       expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+      // Each run gets its own copy of the arguments: a case may change them.
       for (const args of tc.args)
-        expect(run(code, args), `${JSON.stringify(args)}\n${code}`).toEqual(
-          runSource(tc.source, args),
+        expect(run(code, structuredClone(args)), `${JSON.stringify(args)}\n${code}`).toEqual(
+          runSource(tc.source, structuredClone(args)),
         );
     });
   }

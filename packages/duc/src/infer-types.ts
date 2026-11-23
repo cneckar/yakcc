@@ -14,6 +14,7 @@
  * each call, from the types of the captures and arguments).
  */
 import { ts } from "ts-morph";
+import { loweringView } from "./ordering.js";
 import type { DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 export type NumberKind = "integer" | "float" | "number";
@@ -353,12 +354,14 @@ export function assignable(a: DucType, b: DucType): boolean {
 }
 
 function inferGraph(
-  g: DucGraph,
+  source: DucGraph,
   inputs: readonly DucType[],
   types: Map<ValueId, DucType>,
   ambiguities: Ambiguity[],
   depth: number,
 ): DucType[] {
+  // The heap token orders operations and has no type (#1285).
+  const g = loweringView(source).graph;
   const producer = new Map<ValueId, DucNode>();
   for (const n of g.nodes) for (const v of n.outputs) producer.set(v, n);
   const typeOf = (v: ValueId): DucType => types.get(v) ?? UNKNOWN;
@@ -600,12 +603,14 @@ function opType(
   if (label === "closure" || label === "function") {
     const graph = n.closure;
     if (graph === undefined) return UNKNOWN;
-    return {
-      k: "fn",
-      params: [],
-      result: UNKNOWN,
-      closure: { graph, captures: n.inputs.map((_, i) => at(i)) },
-    };
+    const captures = n.inputs.map((_, i) => at(i));
+    // A closure with no parameters of its own has one result whatever calls it: infer it here.
+    const own = graph.nodes.filter((p) => p.kind === "param-source").length - captures.length;
+    const result =
+      own === 0 && depth < 4
+        ? (inferGraph(graph, captures, new Map(), ambiguities, depth + 1)[0] ?? UNDEFINED)
+        : UNKNOWN;
+    return { k: "fn", params: [], result, closure: { graph, captures } };
   }
   // A member read: `.length`, a field, a method (a function the call below types), a namespace member.
   if (arity === 1 && label.startsWith(".") && !label.endsWith("="))

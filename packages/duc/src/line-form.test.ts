@@ -77,7 +77,7 @@ describe("one unknown, one source (line form)", () => {
     expect(
       graphIdentity(
         parseLineForm(
-          "param s\nparam t\nambient encodeURI -> e\nop CallExpression e s -> x\nop CallExpression e t -> y\nop + x y -> r\nout r\n",
+          "param s\nparam t\nambient encodeURI -> e\nop CallExpression e s -> x\nop CallExpression e t ^x -> y\nop + x y -> r\nout r\n",
         ),
       ),
     ).toBe(

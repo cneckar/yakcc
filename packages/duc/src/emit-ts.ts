@@ -15,6 +15,7 @@
  */
 import { parseType, typeToTypeScript } from "./infer-types.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class EmitError extends Error {
@@ -126,11 +127,13 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
  * a closure's names apart from the names around it.
  */
 function emitFunction(
-  g: DucGraph,
+  source: DucGraph,
   prefix: string,
   bound: readonly string[],
   imports: Map<string, Set<string>>,
 ): { params: string[]; body: string[] } {
+  // The heap token orders the statements and is not written (#1285).
+  const { graph: g, after } = loweringView(source);
   if (g.obs.length > 1) throw new EmitError("more than one observation");
 
   const branches = g.branches ?? [];
@@ -379,10 +382,21 @@ function emitFunction(
 
   /** The values a node needs, through the inline nodes it writes. */
   const needs = (node: DucNode): ValueId[] =>
-    node.inputs.flatMap((v) => {
+    [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
       const p = producer.get(v);
       return p !== undefined && inline.has(p.id) ? needs(p) : [v];
     });
+  /** The values made inside a region (a branch side or a loop body), nested regions included. */
+  const madeWithin = (path: string): ValueId[] =>
+    g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs);
+  /** What the nodes inside a region need from outside it, their order included. */
+  const neededBy = (paths: readonly string[]): ValueId[] => {
+    const inside = new Set(paths.flatMap(madeWithin));
+    return g.nodes
+      .filter((n) => paths.some((path) => isPrefix(path, n.region)))
+      .flatMap((n) => [...n.inputs, ...(after.get(n.id) ?? [])])
+      .filter((v) => !inside.has(v));
+  };
 
   const emitBranch = (b: DucBranch): string[] => {
     const thenPath = sidePath(b, "t");
@@ -465,10 +479,14 @@ function emitFunction(
     }
     for (const loop of loops) {
       if (loop.region !== scope) continue;
+      const body = bodyPathOf(loop);
       items.push({
         first: nodeIndex.get(loop.id) as number,
-        produces: loop.outputs,
-        requires: loop.inputs,
+        // A statement ordered after one inside the body comes after the loop.
+        produces: [...loop.outputs, ...madeWithin(body)],
+        requires: [
+          ...new Set([...loop.inputs, ...(after.get(loop.id) ?? []), ...neededBy([body])]),
+        ],
         lines: () => emitLoop(loop),
         last: 0,
       });
@@ -484,7 +502,7 @@ function emitFunction(
       const innerValues = new Set(subtree.flatMap((n) => n.outputs));
       const requires = [
         b.cond,
-        ...subtree.flatMap((n) => n.inputs),
+        ...neededBy([thenPath, elsePath]),
         ...joins.flatMap((n) => n.inputs),
       ];
       items.push({
@@ -495,7 +513,8 @@ function emitFunction(
         // A side that throws leaves the function: what does not depend on the branch comes first,
         // as it came before the if in the source (the rest of a function is inside its sides).
         last: subtree.some((n) => n.label === "throw") ? 1 : 0,
-        produces: joins.flatMap((n) => n.outputs),
+        // A statement ordered after one inside a side comes after the branch.
+        produces: [...joins.flatMap((n) => n.outputs), ...innerValues],
         requires: [...new Set(requires)].filter((v) => !innerValues.has(v)),
         lines: () => emitBranch(b),
       });

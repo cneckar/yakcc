@@ -81,14 +81,16 @@ describe("loops in the line form (#1275)", () => {
         "param xs",
         "param k",
         'lit "0" -> s0',
-        "loop s0 of xs with k",
-        "carry s",
+        // An iterating loop reads its iterable at each step, so it carries the heap token (#1285).
+        'lit "undefined" -> h0',
+        "loop s0 h0 of xs with k",
+        "carry s ^h",
         "invariant kk",
         "element x",
         "op * x kk -> t",
         "op + s t -> s2",
-        "next s2",
-        "end r",
+        "next s2 h",
+        "end r h1",
         "out r",
       ].join("\n");
       expect(graphIdentity(parseLineForm(text))).toBe(

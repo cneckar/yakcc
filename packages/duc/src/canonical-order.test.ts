@@ -27,12 +27,25 @@ describe("canonical order of operands and invariants (4A)", () => {
   });
 
   it("the same program with its statements in another order has the same identity", () => {
-    // Two reads of Buffer.from have the same structure behind them; their users tell them apart.
+    // Two computations with the same structure behind them; their users tell them apart.
+    const a =
+      "export function f(n: number): unknown { const x = [n + 1, 2]; const y = [n + 1, 3]; return [x, y]; }";
+    const b =
+      "export function f(n: number): unknown { const y = [n + 1, 3]; const x = [n + 1, 2]; return [x, y]; }";
+    expect(id(b)).toBe(id(a));
+  });
+
+  it("heap operations in another order are another program (#1285)", () => {
+    // Each call may change what the other sees: their order is structure.
     const a =
       "export function f(): unknown { const x = Buffer.from([1, 2]); const y = Buffer.from([3]); return [x, y]; }";
     const b =
       "export function f(): unknown { const y = Buffer.from([3]); const x = Buffer.from([1, 2]); return [x, y]; }";
-    expect(id(b)).toBe(id(a));
+    expect(id(b)).not.toBe(id(a));
+    // A read after a call that may change it is not the read before the call.
+    expect(id("export function f(o: any) { g(o); return o.x; }")).not.toBe(
+      id("export function f(o: any) { const t = o.x; g(o); return t; }"),
+    );
   });
 
   it("a loop's invariants written in either order are the same structure", () => {

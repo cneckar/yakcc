@@ -119,4 +119,23 @@ export const EMIT_CASES: Case[] = [
       "export function f(o: object): number { let n = 0; for (const k in o) { n = n + 1; } return n; }",
     args: [[{}], [{ a: 1, b: 2 }]],
   },
+  // Heap order (#1285): each case reads what an earlier call or write changed.
+  {
+    name: "a read before and after a call that changes the array",
+    source:
+      "export function f(xs: number[]): number[] { const a = xs.length; xs.push(1); return [a, xs.length]; }",
+    args: [[[]], [[4, 5]]],
+  },
+  {
+    name: "a push before a loop over the array",
+    source:
+      "export function f(xs: number[]): number { xs.push(10); let s = 0; for (const x of xs) { s = s + x; } return s; }",
+    args: [[[]], [[1, 2]]],
+  },
+  {
+    name: "a closure that writes a member between two reads",
+    source:
+      "export function f(o: { n: number }): number[] { const bump = (): number => { o.n = o.n + 1; return o.n; }; const a = o.n; const b = bump(); return [a, b, o.n]; }",
+    args: [[{ n: 1 }], [{ n: -3 }]],
+  },
 ];
