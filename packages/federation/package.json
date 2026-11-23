@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/federation",
   "version": "0.6.0-alpha.0",
-  "description": "F1 read-only content-addressed block mirror for Yakcc registries — HTTP transport and local/remote pull primitives.",
+  "description": "F1 read-only content-addressed block mirror for Yakcc registries \u2014 HTTP transport and local/remote pull primitives.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
+    "@yakcc/duc": "workspace:*",
     "@yakcc/registry": "workspace:*"
   },
   "devDependencies": {

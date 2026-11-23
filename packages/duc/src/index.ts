@@ -105,3 +105,12 @@ export type { RetrievalSignatureOptions } from "./retrieval-signature.js";
 export { retrievalSignature } from "./retrieval-signature.js";
 export type { Candidate } from "./similarity.js";
 export { bagDistance, rankStructurally, structuralBag, structuralDistance } from "./similarity.js";
+export type { BaseSet, PrimitiveLabels, PrimitiveReport, PrimitiveUse } from "./base-set.js";
+export {
+  ECMASCRIPT,
+  NODE,
+  nondeterministicObservations,
+  primitiveReport,
+} from "./base-set.js";
+export type { Ambiguity, DucType, Signature, TypeReport } from "./infer-types.js";
+export { assignable, inferTypes, parseType, typeToText } from "./infer-types.js";
