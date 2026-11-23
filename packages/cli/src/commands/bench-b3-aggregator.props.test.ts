@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// bench-b3-aggregator.props.ts — fast-check property tests for aggregateSprintReport().
+// bench-b3-aggregator.props.test.ts — fast-check property tests for aggregateSprintReport().
 //
 // @decision DEC-WI187-005
 // @title Property tests: aggregator output order-invariant across event permutations

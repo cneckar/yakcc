@@ -25,17 +25,15 @@ export default defineConfig({
         __dirname,
         "../hooks-base/src/import-classifier.ts",
       ),
-      "@yakcc/hooks-base/telemetry.js": resolve(
-        __dirname,
-        "../hooks-base/src/telemetry.ts",
-      ),
+      "@yakcc/hooks-base/telemetry.js": resolve(__dirname, "../hooks-base/src/telemetry.ts"),
       "@yakcc/hooks-base": resolve(__dirname, "../hooks-base/src/index.ts"),
       "@yakcc/hooks-claude-code": resolve(__dirname, "../hooks-claude-code/src/index.ts"),
       "@yakcc/variance": resolve(__dirname, "../variance/src/index.ts"),
     },
   },
   test: {
-    include: ["src/**/*.test.ts", "src/**/*.props.ts", "test/**/*.test.ts"],
+    // A `.props.ts` file holds property definitions; its `.props.test.ts` harness runs them.
+    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
     pool: "forks",
     testTimeout: 60_000,
     hookTimeout: 60_000,
