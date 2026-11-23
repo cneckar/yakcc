@@ -167,6 +167,9 @@ def _get(o, k):
         return o.get(k, UNDEFINED)
     if k == "length" and isinstance(o, (str, list)):
         return len(o)
+    if isinstance(o, JsError):
+        # A caught error: its message and its name.
+        return o.message if k == "message" else o.kind if k == "name" else UNDEFINED
     if o is None or o is UNDEFINED:
         raise JsError("Cannot read properties of " + _str(o) + " (reading '" + k + "')", "TypeError")
     return UNDEFINED
@@ -379,6 +382,16 @@ def _max(*xs):
 
 def _min(*xs):
     return min((_num(x) for x in xs), default=math.inf)
+
+
+def _try(body, handler):
+    # A try statement as the lifter writes it (#1276): the handler gets what the body threw.
+    try:
+        return body()
+    except JsThrow as t:
+        return handler(t.value)
+    except JsError as e:
+        return handler(e)
 `;
 
 /** String and array methods, as Python: `(receiver, args) => expression`. */
@@ -433,6 +446,7 @@ const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) =
 };
 
 const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
+  __yakccTry: (a) => `_try(${a[0]}, ${a[1]})`,
   String: (a) => `_str(${a[0] ?? '""'})`,
   Number: (a) => `_num(${a[0] ?? "0"})`,
   parseInt: (a) => `_parse_int(${a.join(", ")})`,

@@ -98,6 +98,8 @@ export const ECMASCRIPT: BaseSet = {
     WeakRef: { nondeterministic: true },
     FinalizationRegistry: { nondeterministic: true },
     Atomics: {},
+    // A try statement as the lifter writes it (#1276): the body's result, or the handler's for a throw.
+    __yakccTry: {},
   },
 };
 

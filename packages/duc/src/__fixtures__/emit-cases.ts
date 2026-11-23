@@ -148,4 +148,17 @@ export const EMIT_CASES: Case[] = [
       [3, 2],
     ],
   },
+  // A try statement is a call of the try primitive over two closures (#1276).
+  {
+    name: "a try whose body returns, and a catch that reads what was thrown",
+    source:
+      'export function f(x: number): string { let note = "none"; try { if (x < 0) throw new RangeError("negative"); note = "ok"; return note + x; } catch (e: any) { return note + ":" + e.message; } }',
+    args: [[3], [-1]],
+  },
+  {
+    name: "a try that only assigns",
+    source:
+      'export function f(xs: number[]): number { let total = 0; try { for (const x of xs) { if (x < 0) throw new Error("neg"); total = total + x; } } catch (e: any) { total = -1; } return total; }',
+    args: [[[1, 2]], [[1, -1]]],
+  },
 ];

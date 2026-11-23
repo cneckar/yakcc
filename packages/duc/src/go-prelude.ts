@@ -988,5 +988,19 @@ func isIntegerNumber(x any) any {
 	return ok && !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f)
 }
 
+// tryCatch is a try statement as the lifter writes it (#1276): the handler gets what the body threw.
+func tryCatch(body any, handler any) (out any) {
+	defer func() {
+		if r := recover(); r != nil {
+			t, ok := r.(*JsThrow)
+			if !ok {
+				panic(r)
+			}
+			out = call(handler, t.Value)
+		}
+	}()
+	return call(body)
+}
+
 var _ = sort.Strings
 `;

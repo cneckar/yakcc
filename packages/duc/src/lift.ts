@@ -25,6 +25,7 @@ import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-m
 import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { normalizeLiteral } from "./literal.js";
+import { RUNTIME_MODULE } from "./runtime.js";
 import type {
   DiamondReason,
   DucBranch,
@@ -283,6 +284,8 @@ class Lifter {
       const decl = child.asKindOrThrow(SyntaxKind.ImportDeclaration);
       const moduleSpec = decl.getModuleSpecifierValue();
       if (decl.isTypeOnly()) continue; // type-only imports carry no runtime value
+      // The DUC runtime's names are platform primitives, as the lifter writes them (#1276).
+      if (moduleSpec === RUNTIME_MODULE) continue;
       const record = (name: string): void => {
         this.imports.set(name, { reason: "unlinked-reference", module: moduleSpec });
       };
@@ -389,7 +392,9 @@ class Lifter {
       // A switch whose clauses each end in an exit is the if chain it means (#1276).
       const stmt = Node.isSwitchStatement(written)
         ? (this.lowerSwitch(written) ?? written)
-        : written;
+        : Node.isTryStatement(written)
+          ? (this.lowerTry(written) ?? written)
+          : written;
       const rest = stmts.slice(i + 1);
       const full = cont === undefined ? undefined : [...rest, ...cont];
       if (this.bodyExits !== undefined) {
@@ -476,6 +481,86 @@ class Lifter {
       .getSourceFile()
       .getProject()
       .createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
+    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+  }
+
+  private tryCount = 0;
+
+  /**
+   * A try statement as the call it means (#1276): `__yakccTry(() => { body }, (e) => { handler })`, a
+   * platform primitive that runs the body and, when it throws, the handler on what it threw. A return
+   * inside returns `[1, value]` from its closure, and the call is followed by
+   * `if ($t[0] === 1) return $t[1]`; the closures end with `return [0]`. Outer names the blocks assign
+   * are cells (see cellNames), so the closures share them. Undefined when it is not that: a finally,
+   * a var (it belongs to the function, not the block), a yield or an await, or a break or continue that
+   * leaves the statement.
+   */
+  private lowerTry(t: import("ts-morph").TryStatement): Node | undefined {
+    const handler = t.getCatchClause();
+    if (handler === undefined || t.getFinallyBlock() !== undefined) return undefined;
+    const parts = [t.getTryBlock(), handler.getBlock()];
+    for (const part of parts) {
+      const own = (n: Node): boolean => !isInsideNestedFunction(n, part);
+      if (
+        part
+          .getDescendantsOfKind(SyntaxKind.VariableDeclarationList)
+          .some((l) => own(l) && l.getDeclarationKind() === "var")
+      )
+        return undefined;
+      if (
+        [
+          ...part.getDescendantsOfKind(SyntaxKind.YieldExpression),
+          ...part.getDescendantsOfKind(SyntaxKind.AwaitExpression),
+        ].some(own)
+      )
+        return undefined;
+      const inside = (target: Node | undefined): boolean =>
+        target !== undefined &&
+        target.getAncestors().some((a) => a.compilerNode === part.compilerNode);
+      for (const j of [
+        ...part.getDescendantsOfKind(SyntaxKind.BreakStatement),
+        ...part.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+      ]) {
+        if (!own(j)) continue;
+        if (j.getLabel() !== undefined) return undefined;
+        const target = Node.isBreakStatement(j)
+          ? breakTarget(j)
+          : j.getAncestors().find((a) => isLoopStatement(a));
+        if (!inside(target)) return undefined;
+      }
+    }
+    const returns = parts.flatMap((part) =>
+      part
+        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+        .filter((r) => !isInsideNestedFunction(r, part)),
+    );
+    const completes = returns.length > 0;
+    const full = t.getSourceFile().getFullText();
+    const rewrite = (block: import("ts-morph").Block): string => {
+      const start = block.getStart() + 1;
+      const end = block.getEnd() - 1;
+      let text = full.slice(start, end);
+      const own = returns
+        .filter((r) => r.getStart() >= start && r.getEnd() <= end)
+        .sort((a, b) => b.getStart() - a.getStart());
+      for (const r of own) {
+        const expr = r.getExpression();
+        const value = expr === undefined ? "undefined" : `(${expr.getText()})`;
+        text = `${text.slice(0, r.getStart() - start)}return [1, ${value}];${text.slice(r.getEnd() - start)}`;
+      }
+      return completes ? `${text}\nreturn [0];` : text;
+    };
+    const n = this.tryCount++;
+    const tmp = `$try${n}`;
+    const param = handler.getVariableDeclaration()?.getText() ?? "";
+    const call = `${TRY_PRIMITIVE}(() => {\n${rewrite(parts[0] as import("ts-morph").Block)}\n}, (${param}) => {\n${rewrite(parts[1] as import("ts-morph").Block)}\n})`;
+    const source = completes
+      ? `function __try() {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
+      : `function __try() {\n${call};\n}`;
+    const file = t
+      .getSourceFile()
+      .getProject()
+      .createSourceFile(`__try${n}_${t.getStart()}.ts`, source, { overwrite: true });
     return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
   }
 
@@ -600,13 +685,21 @@ class Lifter {
       return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => outer(id.getText()));
     };
     if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
-    const captures: string[] = [];
+    const outerReads: string[] = [];
     for (const id of reads) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
-      if (!locals.has(name) && !captures.includes(name)) captures.push(name);
+      if (!locals.has(name) && !outerReads.includes(name)) outerReads.push(name);
     }
-    if (selfName !== undefined && captures.includes(selfName)) return undefined;
+    if (selfName !== undefined && outerReads.includes(selfName)) return undefined;
+    // A platform primitive the scope does not bind is a source of its own in the closure's graph, so
+    // a lowering knows it there (`new RangeError`, `JSON.parse`). Every other name is captured: a free
+    // name or an import stays one source of the atom, at its top level, where it is linked.
+    const platform = (name: string): boolean =>
+      !this.env.has(name) &&
+      !this.imports.has(name) &&
+      (this.ambient.has(name) || name === TRY_PRIMITIVE);
+    const captures = outerReads.filter((name) => !platform(name));
     if (lexicalThis) captures.push(THIS);
     // A captured name reassigned outside the closure could change after it is made. A write to a
     // member keeps the same object, so the closure still holds it. A reassignment that is certainly
@@ -655,7 +748,9 @@ class Lifter {
 
     let graph: DucGraph;
     try {
-      graph = new Lifter(this.ambient).liftClosureBody(
+      const inner = new Lifter(this.ambient);
+      for (const [name, binding] of this.imports) inner.imports.set(name, binding);
+      graph = inner.liftClosureBody(
         fn,
         captures,
         captures.filter((name) => this.cells.has(name)),
@@ -2132,7 +2227,7 @@ class Lifter {
     const reason: DiamondReason =
       imported !== undefined
         ? "unlinked-reference"
-        : this.ambient.has(name)
+        : this.ambient.has(name) || name === TRY_PRIMITIVE
           ? "platform-primitive"
           : "free-identifier";
     // A source is one per symbol and is reused wherever the name is read, so it lives at the top
@@ -2203,7 +2298,17 @@ function closureLocals(fn: Node): Set<string> {
  * neither.
  */
 function cellNames(scope: Node): Set<string> {
-  const nested = scope.getDescendants().filter((d) => isFunctionLikeNode(d));
+  // A try statement's blocks are closures once it is lowered (Lifter.lowerTry): they count as nested.
+  const nested = scope
+    .getDescendants()
+    .filter(
+      (d) =>
+        isFunctionLikeNode(d) ||
+        (Node.isBlock(d) &&
+          d.getParent()?.asKind(SyntaxKind.TryStatement)?.getTryBlock().compilerNode ===
+            d.compilerNode) ||
+        Node.isCatchClause(d),
+    );
   if (nested.length === 0) return new Set();
   const insideNested = (n: Node): boolean => {
     for (const a of n.getAncestors()) {
@@ -2792,6 +2897,8 @@ function jumpsSupported(loop: Node): boolean {
 const THIS = "%this";
 /** The heap token (#1285): the last heap operation on the path, or the start. */
 const HEAP = "%heap";
+/** The platform primitive a try statement is a call of (#1276); see runtime.ts. */
+const TRY_PRIMITIVE = "__yakccTry";
 
 const HEAP_LABELS = new Set([
   "CallExpression",

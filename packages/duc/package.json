@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime.js",
+      "types": "./dist/runtime.d.ts"
     }
   },
   "private": true,

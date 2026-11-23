@@ -16,6 +16,7 @@
 import { parseType, typeToTypeScript } from "./infer-types.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
 import { loweringView } from "./ordering.js";
+import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class EmitError extends Error {
@@ -167,6 +168,12 @@ function emitFunction(
           throw new EmitError(`imported binding ${p.diamond.symbol} has no module`);
         imports.set(module, new Set([...(imports.get(module) ?? []), p.diamond.symbol]));
       }
+      // A runtime primitive (a try statement's call) is imported from the DUC runtime (#1276).
+      if (p.diamond.reason === "platform-primitive" && p.diamond.symbol === "__yakccTry")
+        imports.set(
+          RUNTIME_MODULE,
+          new Set([...(imports.get(RUNTIME_MODULE) ?? []), p.diamond.symbol]),
+        );
       return p.diamond.symbol;
     }
     return `$${prefix}${v}`;

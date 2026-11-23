@@ -4,15 +4,14 @@
 import { ts } from "ts-morph";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES as CASES } from "./__fixtures__/emit-cases.js";
+import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
 import { EmitError, emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
 
 /** Runs emitted code: it is untyped, so it is valid JavaScript once the export is dropped. */
 function run(code: string, args: readonly unknown[]): unknown {
-  const fn = new Function(`${code.replace("export function f", "return function f")}`)() as (
-    ...a: unknown[]
-  ) => unknown;
+  const fn = new Function(`${runnable(code)}; return f;`)() as (...a: unknown[]) => unknown;
   return fn(...args);
 }
 

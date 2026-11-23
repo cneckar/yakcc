@@ -85,6 +85,7 @@ const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) =
 };
 
 const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
+  __yakccTry: (a) => `tryCatch(${a[0]}, ${a[1]})`,
   String: (a) => `any(str(${a[0] ?? '""'}))`,
   Number: (a) => `any(num(${a[0] ?? "float64(0)"}))`,
   Boolean: (a) => `any(truthy(${a[0] ?? "Undefined"}))`,

@@ -71,6 +71,8 @@ describe("type inference against TypeScript's (#1277)", () => {
       for (const [v, t] of theirs) {
         const ours = report.types.get(v as never);
         if (ours === undefined || ours.k === "unknown" || t === "any" || t === "unknown") continue;
+        // A closure is typed at each of its calls (their results are compared), not as a value.
+        if (ours.k === "fn") continue;
         if (normal(typeToTypeScript(ours)) !== normal(t))
           disagreements.push(`${v}: ours ${typeToTypeScript(ours)}, TypeScript ${t}`);
       }

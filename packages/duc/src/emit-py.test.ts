@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
+import { runnable } from "./__fixtures__/runnable.js";
 import { PY_PRELUDE, PyEmitError, emitPython } from "./emit-py.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
@@ -68,9 +69,7 @@ const toJson = (x: unknown): unknown => {
 
 function runJs(source: string, inputs: readonly unknown[][]): unknown[] {
   const code = emitTypeScript(liftAtom(source));
-  const f = new Function(`${code.replace("export ", "")}; return f;`)() as (
-    ...a: unknown[]
-  ) => unknown;
+  const f = new Function(`${runnable(code)}; return f;`)() as (...a: unknown[]) => unknown;
   return inputs.map((args) => {
     try {
       return { value: toJson(f(...structuredClone(args))) };
