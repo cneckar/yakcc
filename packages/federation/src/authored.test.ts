@@ -19,6 +19,7 @@ import {
   type AuthoringRequest,
   checkAuthoredGraph,
   composeMissing,
+  tallyCompose,
 } from "./authored.js";
 import type { ConformanceVector } from "./duc-submission.js";
 
@@ -237,5 +238,48 @@ describe("the composition loop (#1288)", () => {
     expect(out?.attempts).toBe(3);
     expect(model.requests).toHaveLength(3);
     expect(out?.findings[0]?.check).toBe("conformance");
+  });
+
+  it("a search hit that fails a check is a gap: the model is asked, starting from it (#1263)", async () => {
+    const holed = "param a\nparam b\nfree helper -> h\nop CallExpression h a b -> r\nout r";
+    const model = scripted([SUB]);
+    const [out] = await composeMissing([need], {
+      search: async () => ({ identity: "g-holed", lineForm: holed }),
+      model,
+    });
+    expect(out?.outcome).toBe("authored");
+    expect(out?.trigger).toBe("closure");
+    expect(model.requests[0]?.previous).toBe(holed);
+    expect(model.requests[0]?.findings?.[0]?.check).toBe("closure");
+  });
+
+  it("trigger counts and the synthesis rate (#1263)", async () => {
+    const needs = [need, need, need];
+    let call = 0;
+    const outcomes = await composeMissing(
+      needs,
+      {
+        // A good hit, then no match, then a hit with a hole.
+        search: async () =>
+          [
+            { identity: "g-sub", lineForm: SUB },
+            undefined,
+            {
+              identity: "g-holed",
+              lineForm: "param a\nparam b\nfree helper -> h\nop CallExpression h a b -> r\nout r",
+            },
+          ][call++],
+        model: scripted([SUB]),
+      },
+      { maxAttempts: 2 },
+    );
+    expect(tallyCompose(outcomes)).toEqual({
+      needs: 3,
+      found: 1,
+      authored: 2,
+      failed: 0,
+      synthesisRate: 2 / 3,
+      triggers: { "no-match": 1, closure: 1 },
+    });
   });
 });

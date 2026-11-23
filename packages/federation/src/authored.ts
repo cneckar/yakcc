@@ -134,6 +134,11 @@ export interface ComposeOutcome {
   readonly outcome: "found" | "authored" | "failed";
   readonly lineForm?: string;
   readonly identity?: string;
+  /**
+   * Why the model was asked (#1263): "no-match" when the search had no graph for the contract;
+   * otherwise the check the search's graph failed ("closure" for a hole, …). Absent when found.
+   */
+  readonly trigger?: "no-match" | AuthoredFinding["check"];
   /** The model's attempts (0 when found). */
   readonly attempts: number;
   /** The last attempt's findings, when it failed. */
@@ -162,19 +167,34 @@ export async function composeMissing(
   const outcomes: ComposeOutcome[] = [];
   for (const need of needs) {
     const hit = await deps.search(need.contract);
-    if (hit !== undefined) {
-      outcomes.push({
-        contract: need.contract,
-        outcome: "found",
-        lineForm: hit.lineForm,
-        identity: hit.identity,
-        attempts: 0,
-        findings: [],
-      });
-      continue;
-    }
+    // A hit is reused only when it passes the same checks as an authored graph: the gap that
+    // triggers synthesis is no structural match, or a match that fails (a closure hole) (#1263).
+    let trigger: ComposeOutcome["trigger"] = "no-match";
     let previous: string | undefined;
     let findings: readonly AuthoredFinding[] = [];
+    if (hit !== undefined) {
+      const checked = await checkAuthoredGraph(
+        hit.lineForm,
+        need.contract,
+        need.vectors,
+        deps.store,
+      );
+      if (checked.ok) {
+        outcomes.push({
+          contract: need.contract,
+          outcome: "found",
+          lineForm: hit.lineForm,
+          identity: hit.identity,
+          attempts: 0,
+          findings: [],
+        });
+        continue;
+      }
+      trigger = checked.findings[0]?.check ?? "conformance";
+      // The model starts from the corpus's graph and why it failed.
+      previous = hit.lineForm;
+      findings = checked.findings;
+    }
     let done: ComposeOutcome | undefined;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const reply = await deps.model.author({
@@ -186,6 +206,7 @@ export async function composeMissing(
         done = {
           contract: need.contract,
           outcome: "authored",
+          trigger,
           lineForm: reply,
           ...(result.identity !== undefined ? { identity: result.identity } : {}),
           attempts: attempt,
@@ -200,8 +221,43 @@ export async function composeMissing(
           : [{ check: "conformance", reason: result.unchecked ?? "the vectors were not computed" }];
     }
     outcomes.push(
-      done ?? { contract: need.contract, outcome: "failed", attempts: maxAttempts, findings },
+      done ?? {
+        contract: need.contract,
+        outcome: "failed",
+        trigger,
+        attempts: maxAttempts,
+        findings,
+      },
     );
   }
   return outcomes;
+}
+
+/** Counts over a composition run (#1263): how often the model was asked, and why. */
+export interface ComposeTally {
+  readonly needs: number;
+  readonly found: number;
+  readonly authored: number;
+  readonly failed: number;
+  /** The model was asked for this share of the needs. */
+  readonly synthesisRate: number;
+  /** Why it was asked, by trigger. */
+  readonly triggers: Readonly<Record<string, number>>;
+}
+
+export function tallyCompose(outcomes: readonly ComposeOutcome[]): ComposeTally {
+  const triggers: Record<string, number> = {};
+  for (const o of outcomes)
+    if (o.trigger !== undefined) triggers[o.trigger] = (triggers[o.trigger] ?? 0) + 1;
+  const count = (k: ComposeOutcome["outcome"]): number =>
+    outcomes.filter((o) => o.outcome === k).length;
+  const asked = outcomes.filter((o) => o.trigger !== undefined).length;
+  return {
+    needs: outcomes.length,
+    found: count("found"),
+    authored: count("authored"),
+    failed: count("failed"),
+    synthesisRate: outcomes.length === 0 ? 0 : asked / outcomes.length,
+    triggers,
+  };
 }
