@@ -445,10 +445,20 @@ class Lifter {
       // No single exported function: lift the top-level statements in one scope,
       // and treat every exported binding's final value as an observation.
       for (const name of cellNames(file)) this.cells.add(name);
-      this.liftStatements(file.getChildSyntaxListOrThrow().getChildren());
+      // Import declarations are the file's imports (recorded above), not statements it runs.
+      this.liftStatements(
+        file
+          .getChildSyntaxListOrThrow()
+          .getChildren()
+          .filter((stmt) => !Node.isImportDeclaration(stmt)),
+      );
       // An exported name is observed: one the file binds, an import exported again, or a name the
-      // fragment exports without binding it (free).
-      for (const name of exportedBindingNames(file)) this.obs.push(this.resolveIdentifier(name));
+      // fragment exports without binding it (free). So is a name a module statement declares
+      // (#1290): it is the module's, and the atoms that read it read this value.
+      const observed = exportedBindingNames(file);
+      for (const name of moduleDeclaredNames(file))
+        if (!observed.includes(name)) observed.push(name);
+      for (const name of observed) this.obs.push(this.resolveIdentifier(name));
     }
   }
 
@@ -3686,6 +3696,27 @@ export function closureLabel(dynamicThis: boolean, mode: FunctionMode | undefine
 }
 
 /** Names of all exported top-level bindings (for the no-primary-function case). */
+/**
+ * The names a module statement declares at its top level (#1290): `var`/`let`/`const`, and
+ * function and class declarations, in order.
+ */
+function moduleDeclaredNames(file: Node): string[] {
+  const names: string[] = [];
+  const add = (name: string): void => {
+    if (!names.includes(name)) names.push(name);
+  };
+  for (const stmt of (file as import("ts-morph").SourceFile).getStatements()) {
+    if (Node.isVariableStatement(stmt)) {
+      for (const decl of stmt.getDeclarations())
+        for (const n of patternNames(decl.getNameNode())) add(n);
+    } else if (Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) {
+      const name = stmt.getName();
+      if (name !== undefined) add(name);
+    }
+  }
+  return names;
+}
+
 function exportedBindingNames(file: Node): string[] {
   const sf = file as import("ts-morph").SourceFile;
   const names: string[] = [];

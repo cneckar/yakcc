@@ -780,15 +780,21 @@ function emitFunction(
     .map((n) => `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}`);
   const body = [...unread, ...emitScope(undefined)];
   if (asModule) {
-    // Each observation is exported, in order: a value written as a name, or a const holding it.
-    const names = g.obs.map((v, k) => {
-      const r = ref(v);
-      if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(r)) return r;
-      body.push(`const $out${k} = ${r};`);
-      return `$out${k}`;
-    });
-    body.push(`export { ${[...new Set(names)].join(", ")} };`);
-    return { params, body };
+    // Each observation is exported, in order, through a module-level name. The statements are in a
+    // block: a name a module statement declares at its top level is one of its observations
+    // (#1290), and the emitter's temporaries are not.
+    const outs = g.obs.map((_, k) => `$out${k}`);
+    return {
+      params,
+      body: [
+        `let ${outs.join(", ")};`,
+        "{",
+        ...body.map((l) => `  ${l}`),
+        ...g.obs.map((v, k) => `  ${outs[k]} = ${ref(v)};`),
+        "}",
+        `export { ${outs.join(", ")} };`,
+      ],
+    };
   }
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)};`);

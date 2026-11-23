@@ -490,7 +490,10 @@ describe("region-scoped returns: a return belongs to its own scope (class method
   });
   it("a return inside a nested method is not an observation of the enclosing atom", () => {
     const g = lift("class A { m (y) { return y } }");
-    expect(g.obs).toHaveLength(0);
+    // The module's class A is observed (#1290); the method's `return y` is not.
+    expect(g.obs).toHaveLength(1);
+    const producer = g.nodes.find((n) => n.outputs.includes(g.obs[0] as never));
+    expect(producer?.kind).not.toBe("param-source");
   });
 });
 
