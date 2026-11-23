@@ -21,7 +21,15 @@
 // is out of scope.
 
 import { createHash } from "node:crypto";
-import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-morph";
+import {
+  Node,
+  Project,
+  ScriptKind,
+  type SourceFile,
+  SyntaxKind,
+  VariableDeclarationKind,
+  ts,
+} from "ts-morph";
 import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
@@ -483,6 +491,7 @@ class Lifter {
       // and treat every exported binding's final value as an observation.
       for (const name of cellNames(file)) this.cells.add(name);
       // Import declarations are the file's imports (recorded above), not statements it runs.
+      this.hoistVars(file);
       // Statements, not syntax-list children: those can include comment trivia.
       this.liftStatements(
         (file as SourceFile).getStatements().filter((stmt) => !Node.isImportDeclaration(stmt)),
@@ -516,6 +525,7 @@ class Lifter {
     if (body === undefined) return;
     if (Node.isBlock(body)) {
       this.exitMode = "function";
+      this.hoistVars(body);
       const exited = this.liftStatements(body.getStatements(), []);
       // Returns on some paths: the observation is the value of the return state at the end. With
       // no return state, a body that falls off its end returns undefined.
@@ -524,6 +534,18 @@ class Lifter {
     } else {
       // Arrow with expression body: the expression is the observation.
       this.obs.push(this.liftExpr(body));
+    }
+  }
+
+  /**
+   * `var` is function-scoped and hoisted (#1173): a name it declares inside a nested block
+   * (`if (c) var r = 1;`) is the function's from its start, `undefined` until assigned, so a read
+   * after the block reads it, not a free name. A parameter of that name keeps its value.
+   */
+  private hoistVars(body: Node): void {
+    for (const name of nestedVarNames(body)) {
+      if (this.env.has(name)) continue;
+      this.env.set(name, this.undefinedValue());
     }
   }
 
@@ -4350,4 +4372,40 @@ function insideOpaque(ret: Node, root: Node): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Names `var` declares inside nested blocks of a body (not at its top level, and not inside a
+ * nested function or class): the names hoisting binds at the body's start.
+ */
+function nestedVarNames(body: Node): string[] {
+  const names: string[] = [];
+  const topLevel = new Set(
+    (Node.isBlock(body) || Node.isSourceFile(body) ? body.getStatements() : []).map(
+      (st) => st.compilerNode,
+    ),
+  );
+  const visit = (node: Node): void => {
+    for (const child of node.getChildren()) {
+      // A try's own lowering carries the names its blocks declare out of them (#1276).
+      if (
+        isFunctionLikeNode(child) ||
+        Node.isClassDeclaration(child) ||
+        Node.isClassExpression(child) ||
+        Node.isTryStatement(child)
+      )
+        continue;
+      if (
+        Node.isVariableStatement(child) &&
+        !topLevel.has(child.compilerNode) &&
+        child.getDeclarationKind() === VariableDeclarationKind.Var
+      ) {
+        for (const decl of child.getDeclarations())
+          for (const n of patternNames(decl.getNameNode())) if (!names.includes(n)) names.push(n);
+      }
+      visit(child);
+    }
+  };
+  visit(body);
+  return names;
 }

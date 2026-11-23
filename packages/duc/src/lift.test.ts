@@ -565,3 +565,14 @@ describe("labels, class self-reference, and pure legacy globals (residue defects
     expect(diamondSymbols(g)).toContain("WeakRef");
   });
 });
+
+describe("var is hoisted to its function (#1173)", () => {
+  it("a var declared in a block is the function's, not a free name", () => {
+    const g = lift("export function f(c) { if (c) var r = 1, n = 2; return [r, n]; }");
+    expect(g.nodes.some((n) => n.diamond?.symbol === "r" || n.diamond?.symbol === "n")).toBe(false);
+  });
+  it("a parameter of the same name keeps its value", () => {
+    const g = lift("export function f(r) { if (false) var r = 9; return r; }");
+    expect(g.nodes.some((n) => n.diamond?.symbol === "r")).toBe(false);
+  });
+});
