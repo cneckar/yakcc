@@ -16,6 +16,22 @@ const regionOfCall = (src: string, callee: string): string | undefined => {
   return g.nodes.find((n) => n.label === "CallExpression" && n.inputs[0] === sym)?.region;
 };
 
+describe("delete (#1276)", () => {
+  it("delete is a heap operation on the object, its value delete's result, and lifts back the same", () => {
+    const src =
+      "export function f(o: any, k: string) { const had = delete o[k]; delete o.extra; return [had, Object.keys(o)]; }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => (n.label ?? "").startsWith("DeleteExpression#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      o: unknown,
+      k: string,
+    ) => unknown;
+    expect(run({ a: 1, b: 2, extra: 3 }, "a")).toEqual([true, ["b"]]);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+});
+
 describe("exits (#1276)", () => {
   it("what follows a throw on some paths runs only on the other paths", () => {
     // The call is inside the branch's else side, not at the top level where it would always run.

@@ -2150,6 +2150,28 @@ class Lifter {
       const lifted = this.liftClass(node);
       if (lifted !== undefined) return lifted;
     }
+    // `delete o.p` and `delete o[k]`: a heap operation on the object; its value is delete's result.
+    if (Node.isDeleteExpression(node)) {
+      const target = node.getExpression();
+      if (Node.isPropertyAccessExpression(target) && !target.hasQuestionDotToken())
+        return this.emit("op", [this.liftExpr(target.getExpression())], 1, {
+          origin: { kind: "DeleteExpression", text: truncate(node.getText()) },
+          label: `delete.${target.getName()}`,
+        })[0] as ValueId;
+      if (Node.isElementAccessExpression(target) && !target.hasQuestionDotToken())
+        return this.emit(
+          "op",
+          [
+            this.liftExpr(target.getExpression()),
+            this.liftExpr(target.getArgumentExpressionOrThrow()),
+          ],
+          1,
+          {
+            origin: { kind: "DeleteExpression", text: truncate(node.getText()) },
+            label: "delete[]",
+          },
+        )[0] as ValueId;
+    }
     if (Node.isArrowFunction(node) || Node.isFunctionExpression(node)) {
       const lifted = this.liftClosure(node);
       if (lifted !== undefined) return lifted;
@@ -3217,6 +3239,7 @@ const HEAP = "%heap";
 const TRY_PRIMITIVE = "__yakccTry";
 
 const HEAP_LABELS = new Set([
+  "delete[]",
   "CallExpression",
   "CallExpression?.",
   "NewExpression",
@@ -3240,6 +3263,7 @@ export function isHeapLabel(label: string): boolean {
     HEAP_LABELS.has(label) ||
     label.includes("#") ||
     label.startsWith("?.") ||
+    label.startsWith("delete.") ||
     label.startsWith("ElementAccess") ||
     (label.startsWith(".") && label.length > 1)
   );

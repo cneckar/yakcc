@@ -312,6 +312,8 @@ function emitFunction(
     if (label === "...") return `...${arg(0)}`;
     if (label.startsWith("OmittedExpression#")) return "";
     if (label === "this" || label.startsWith("ThisKeyword#")) return "this";
+    if (label.startsWith("delete.")) return `delete ${arg(0)}.${label.slice("delete.".length)}`;
+    if (label === "delete[]") return `delete ${arg(0)}[${arg(1)}]`;
     // The class a member belongs to: the class expression's own name (#1276).
     if (label === "class-self") return "Self_";
     if (label.startsWith("object:")) {
