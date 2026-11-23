@@ -38,14 +38,16 @@ export interface NativeSignature {
 }
 
 type LType = "double" | "i1";
+/** A value at the native boundary: a typed number or boolean, or a boxed value (emit-llvm-boxed.ts). */
+export type NativeType = LType | "i64";
 
 export interface LlvmModule {
   /** The module's text (`.ll`). */
   readonly ir: string;
   /** The exported symbol, as C names it. */
   readonly symbol: string;
-  readonly params: readonly LType[];
-  readonly result: LType;
+  readonly params: readonly NativeType[];
+  readonly result: NativeType;
 }
 
 const NATIVE_MATH: Readonly<Record<string, string>> = {

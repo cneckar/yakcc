@@ -4,7 +4,7 @@
  * #1292): each scope's items (nodes, branches, loops) in an order where every value is computed
  * before it is used. Shared by the WebAssembly and the native (LLVM) lowerings.
  */
-import { isPrefix, sidePath } from "./line-form.js";
+import { bodyPathOf, isPrefix, sidePath } from "./line-form.js";
 import type { DucBranch, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
 
 export type ScopeItem =
@@ -32,12 +32,31 @@ export function scopePlanner(
   owners: ReadonlyMap<NodeId, DucBranch>,
   resolve: (v: ValueId) => ValueId,
   fail: (message: string) => Error,
+  after: ReadonlyMap<NodeId, readonly ValueId[]> = new Map(),
 ): ScopePlanner {
   const branches = g.branches ?? [];
   const indexOf = new Map(g.nodes.map((n, i) => [n.id, i]));
   const madeWithin = (path: string): Set<ValueId> =>
     new Set(g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs));
-  const needsOf = (item: ScopeItem): ValueId[] => {
+  // The nodes an item holds: itself, or every node inside a branch's sides or a loop's body.
+  const nodesOf = (item: ScopeItem): DucNode[] => {
+    if (item.kind === "node") return [item.node];
+    const paths =
+      item.kind === "branch"
+        ? [sidePath(item.branch, "t"), sidePath(item.branch, "e")]
+        : [bodyPathOf(item.node)];
+    const inside = g.nodes.filter((n) => paths.some((p) => isPrefix(p, n.region)));
+    return item.kind === "loop" ? [item.node, ...inside] : inside;
+  };
+  // A heap operation comes after the operations its token names (loweringView's `after`), inside or
+  // outside the item that holds it.
+  const heapNeeds = (item: ScopeItem): ValueId[] => {
+    const held = nodesOf(item);
+    const madeHere = new Set(held.flatMap((n) => n.outputs));
+    return held.flatMap((n) => (after.get(n.id) ?? []).filter((v) => !madeHere.has(v)));
+  };
+  const needsOf = (item: ScopeItem): ValueId[] => [...dataNeeds(item), ...heapNeeds(item)];
+  const dataNeeds = (item: ScopeItem): ValueId[] => {
     if (item.kind === "node" || item.kind === "loop") return item.node.inputs.map(resolve);
     const b = item.branch;
     const paths = [sidePath(b, "t"), sidePath(b, "e")];
@@ -76,8 +95,13 @@ export function scopePlanner(
     return items;
   };
   const ordered = (items: readonly ScopeItem[]): ScopeItem[] => {
+    // Every value made within an item is the item's here (its joins, and every node inside it): a
+    // later item needing it, as data or as heap order, waits for it.
     const producedHere = new Map<ValueId, ScopeItem>();
-    for (const it of items) for (const v of producesOf(it)) producedHere.set(v, it);
+    for (const it of items) {
+      for (const n of nodesOf(it)) for (const v of n.outputs) producedHere.set(v, it);
+      for (const v of producesOf(it)) producedHere.set(v, it);
+    }
     const done = new Set<ScopeItem>();
     const out: ScopeItem[] = [];
     const pending = [...items].sort((a, b) => a.at - b.at);

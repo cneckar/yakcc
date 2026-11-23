@@ -127,7 +127,14 @@ export type { Ambiguity, DucType, Signature, TypeReport } from "./infer-types.js
 export { assignable, inferTypes, parseType, typeToText } from "./infer-types.js";
 export type { WasmModule, WasmSignature } from "./emit-wasm.js";
 export { WASM_HOST, WasmEmitError, emitWasm, instantiateWasm } from "./emit-wasm.js";
-export type { LlvmModule, NativeSignature } from "./emit-llvm.js";
+export type { LlvmModule, NativeSignature, NativeType } from "./emit-llvm.js";
 export { LlvmEmitError, emitLlvm } from "./emit-llvm.js";
 export type { ObjectOptions } from "./native.js";
-export { NATIVE_TARGETS, NativeToolError, compileObject } from "./native.js";
+export {
+  NATIVE_TARGETS,
+  NativeToolError,
+  RUNTIME_SOURCE,
+  compileObject,
+  compileRuntime,
+} from "./native.js";
+export { emitLlvmBoxed } from "./emit-llvm-boxed.js";

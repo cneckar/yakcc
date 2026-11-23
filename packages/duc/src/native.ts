@@ -9,6 +9,7 @@
  * says so. The same module and triple give byte-identical objects.
  */
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { LlvmModule } from "./emit-llvm.js";
 
 export class NativeToolError extends Error {
@@ -68,5 +69,49 @@ export function compileObject(m: LlvmModule, options: ObjectOptions = {}): Uint8
     );
   if (run.status !== 0)
     throw new NativeToolError(`llc failed for ${triple}: ${run.stderr.toString().trim()}`);
+  return new Uint8Array(run.stdout);
+}
+
+/** The runtime's C source (DEC-DUC-NATIVE-RUNTIME-001), shipped with the package. */
+export const RUNTIME_SOURCE = fileURLToPath(new URL("../runtime/yk.c", import.meta.url));
+
+/** The clang arguments that compile C for a target as `llc` compiles the lowering for it. */
+const CLANG_TARGET: Readonly<Record<string, readonly string[]>> = {
+  "armv7-unknown-linux-gnueabihf": ["-march=armv7-a", "-mfloat-abi=hard", "-mfpu=vfpv3-d16"],
+  "riscv64-unknown-linux-gnu": ["-march=rv64gc", "-mabi=lp64d"],
+};
+
+/**
+ * The runtime compiled to a relocatable object for the target, by clang: LLVM's own C compiler, so
+ * the boxed lowering and its runtime come from one toolchain. `cflags` adds the target's include
+ * flags (a sysroot) where the host's are not the target's.
+ */
+export function compileRuntime(
+  options: {
+    readonly target?: string;
+    readonly clang?: string;
+    readonly cflags?: readonly string[];
+  } = {},
+): Uint8Array {
+  const triple = NATIVE_TARGETS[options.target ?? "x86_64-linux"] ?? (options.target as string);
+  const args = [
+    `--target=${triple}`,
+    ...(CLANG_TARGET[triple] ?? []),
+    ...(options.cflags ?? []),
+    "-std=c11",
+    "-O2",
+    "-fPIC",
+    "-c",
+    RUNTIME_SOURCE,
+    "-o",
+    "-",
+  ];
+  const run = spawnSync(options.clang ?? "clang", args, { maxBuffer: 1 << 26 });
+  if (run.error !== undefined)
+    throw new NativeToolError(
+      `clang could not be run (${run.error.message}): the runtime needs it`,
+    );
+  if (run.status !== 0)
+    throw new NativeToolError(`clang failed for ${triple}: ${run.stderr.toString().trim()}`);
   return new Uint8Array(run.stdout);
 }
