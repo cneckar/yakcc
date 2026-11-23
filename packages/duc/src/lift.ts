@@ -132,12 +132,126 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
     );
   }
 
+  file = normalizeJumps(project, file);
   // Names a target provides are platform primitives (D5); which target is checked by the closure check.
   const ambient = new Set(options.ambientGlobals ?? KNOWN_PRIMITIVES);
   const builder = new Lifter(ambient);
   builder.collectImports(file);
   builder.run(file);
   return builder.finish();
+}
+
+/**
+ * Jumps that cross a loop, rewritten to jumps that do not (#1276): a return inside an inner loop,
+ * and a labelled break or continue of an outer loop, set a flag and break out of their own loop,
+ * and after it `if (flag)` jumps again, one loop further out, until each jump is one of its own
+ * loop's. A label whose jumps are all of its own loop is dropped. A jump with a switch between it
+ * and its loop, or to a labelled block, is left as it is.
+ */
+function normalizeJumps(project: Project, file: SourceFile): SourceFile {
+  let sf = file;
+  for (let round = 0; round < 64; round++) {
+    const text = nextJumpRewrite(sf, round);
+    if (text === undefined) return sf;
+    sf = project.createSourceFile("atom.ts", text, { overwrite: true, scriptKind: ScriptKind.TS });
+  }
+  return sf;
+}
+
+/** The innermost loop around a node, inside its own function. */
+function ownLoop(n: Node): Node | undefined {
+  for (let p: Node | undefined = n.getParent(); p !== undefined; p = p.getParent()) {
+    if (isFunctionLikeNode(p)) return undefined;
+    if (isLoopStatement(p)) return p;
+  }
+  return undefined;
+}
+
+/** The statement a jump labelled `name` leaves or continues, inside its own function. */
+function labelTarget(j: Node, name: string): import("ts-morph").LabeledStatement | undefined {
+  for (let p: Node | undefined = j.getParent(); p !== undefined; p = p.getParent()) {
+    if (isFunctionLikeNode(p)) return undefined;
+    if (Node.isLabeledStatement(p) && p.getLabel().getText() === name) return p;
+  }
+  return undefined;
+}
+
+/** The statement a label names, through any further labels on it. */
+function labelled(l: import("ts-morph").LabeledStatement): Node {
+  let st: Node = l.getStatement();
+  while (Node.isLabeledStatement(st)) st = st.getStatement();
+  return st;
+}
+
+function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
+  const full = sf.getFullText();
+  const jumps = [
+    ...sf.getDescendantsOfKind(SyntaxKind.ReturnStatement),
+    ...sf.getDescendantsOfKind(SyntaxKind.BreakStatement),
+    ...sf.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+  ];
+  // A label whose jumps are all of the loop it labels is dropped, and the labels from its jumps.
+  for (const l of sf.getDescendantsOfKind(SyntaxKind.LabeledStatement)) {
+    const name = l.getLabel().getText();
+    const target = labelled(l);
+    if (!isLoopStatement(target)) continue;
+    const mine = jumps.filter(
+      (j) =>
+        !Node.isReturnStatement(j) &&
+        (j as import("ts-morph").BreakStatement).getLabel()?.getText() === name &&
+        labelTarget(j, name) === l,
+    );
+    const own = mine.every((j) =>
+      Node.isBreakStatement(j) ? breakTarget(j) === target : ownLoop(j) === target,
+    );
+    if (!own) continue;
+    const edits = [
+      { from: l.getStart(), to: target.getStart(), text: "" },
+      ...mine.map((j) => ({
+        from: j.getStart(),
+        to: j.getEnd(),
+        text: Node.isBreakStatement(j) ? "break;" : "continue;",
+      })),
+    ].sort((a, b) => b.from - a.from);
+    let text = full;
+    for (const e of edits) text = text.slice(0, e.from) + e.text + text.slice(e.to);
+    return text;
+  }
+  // A jump that leaves its own loop for one further out: lifted one loop out.
+  for (const j of jumps) {
+    const inner = ownLoop(j);
+    if (inner === undefined) continue;
+    let needs: boolean;
+    if (Node.isReturnStatement(j)) needs = ownLoop(inner) !== undefined;
+    else {
+      const label = (j as import("ts-morph").BreakStatement).getLabel()?.getText();
+      if (label === undefined) continue;
+      const l = labelTarget(j, label);
+      if (l === undefined || !isLoopStatement(labelled(l))) continue;
+      needs = labelled(l) !== inner;
+    }
+    if (!needs) continue;
+    // A plain break must leave the inner loop: no switch between them.
+    let blocked = false;
+    for (let p: Node | undefined = j.getParent(); p !== undefined && p !== inner; p = p.getParent())
+      if (Node.isSwitchStatement(p)) blocked = true;
+    if (blocked) continue;
+    let outer: Node = inner;
+    while (Node.isLabeledStatement(outer.getParent())) outer = outer.getParent() as Node;
+    const flag = `$jump${round}`;
+    const value = `$jumpv${round}`;
+    const ret = Node.isReturnStatement(j) ? j : undefined;
+    const expr = ret?.getExpression();
+    const replaced = `{ ${flag} = true;${expr !== undefined ? ` ${value} = (${expr.getText()});` : ""} break; }`;
+    const again =
+      ret !== undefined ? (expr !== undefined ? `return ${value};` : "return;") : j.getText();
+    const start = outer.getStart();
+    const body =
+      full.slice(start, j.getStart()) + replaced + full.slice(j.getEnd(), outer.getEnd());
+    const wrapped = `{ let ${flag} = false;${expr !== undefined ? ` let ${value};` : ""}\n${body}\nif (${flag}) ${again} }`;
+    return full.slice(0, start) + wrapped + full.slice(outer.getEnd());
+  }
+  return undefined;
 }
 
 /**

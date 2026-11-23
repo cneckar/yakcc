@@ -73,6 +73,12 @@ describe("type inference against TypeScript's (#1277)", () => {
         if (ours === undefined || ours.k === "unknown" || t === "any" || t === "unknown") continue;
         // A closure is typed at each of its calls (their results are compared), not as a value.
         if (ours.k === "fn") continue;
+        // A `let` that starts undefined: TypeScript gives it the type of that first value where it
+        // is declared, the graph the type of every value it is assigned (a loop's carry).
+        if (t === "undefined" && ours.k === "union" && ours.of.some((m) => m.k === "undefined"))
+          continue;
+        // An array of values the graph does not know: no type to compare.
+        if (ours.k === "array" && ours.of?.k === "unknown" && t.endsWith("[]")) continue;
         if (normal(typeToTypeScript(ours)) !== normal(t))
           disagreements.push(`${v}: ours ${typeToTypeScript(ours)}, TypeScript ${t}`);
       }

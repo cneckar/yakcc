@@ -10,6 +10,29 @@ export interface Case {
 
 export const EMIT_CASES: Case[] = [
   {
+    name: "a labelled continue and break of an outer loop, and a return from an inner one",
+    source:
+      "export function f(xs: number[][], k: number) { let n = 0; outer: for (const row of xs) { for (const x of row) { if (x < 0) continue outer; if (x === k) return [n, x]; if (x > 100) break outer; n = n + x; } n = n * 2; } return n; }",
+    args: [
+      [[[1, 2], [3]], 9],
+      [[[1, -1, 5], [2]], 9],
+      [
+        [
+          [1, 2],
+          [3, 9],
+        ],
+        9,
+      ],
+      [[[1, 200], [3]], 9],
+    ],
+  },
+  {
+    name: "a return from a loop three deep",
+    source:
+      "export function f(n: number) { let i = 0; while (i < n) { let j = 0; while (j < n) { let k = 0; while (k < n) { if (i * j * k === 8) return [i, j, k]; k = k + 1; } j = j + 1; } i = i + 1; } return null; }",
+    args: [[2], [3], [5]],
+  },
+  {
     name: "rest parameters, of the function and of a closure",
     source:
       "export function f(a: number, ...xs: number[]) { const g = (...ys: number[]) => ys.length + a; return [xs, g(1, 2), g()]; }",
